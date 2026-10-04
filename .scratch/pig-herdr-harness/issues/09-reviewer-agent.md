@@ -58,3 +58,50 @@ rather than leaving a self-review behind a real reviewer.
 - Reviewer is spawned with no write capability; assert a denied edit.
 - Verdict arrives in the merger's transcript.
 - A worker with a seeded defect produces a review naming that defect.
+
+## Constraints — verified, do not re-derive
+
+**`herdr agent prompt` cannot work. Do not build on it.** Verified this
+session against herdr 0.9.1: `agent_not_ready: "agent <pane> is not an active
+named agent"`, whether targeted by name or by pane, mid-turn or post-turn,
+with or without a named session. herdr requires an `agent_session` it only
+accepts from a first-party integration, and `ctx.GetSessionFile()` returns nil
+even though pig does persist the session to disk. That is an SDK gap, not a
+configuration mistake. The verdict must return through `ctx.SendMessage`
+from the merger side.
+
+**Build and verify:**
+
+```bash
+export PATH="$HOME/go/bin:$PATH"
+cd wick && gofmt -w . && go vet ./... && go test ./... -count=1
+pig install $PWD --validate-only --json    # must print valid: true
+```
+
+`go build` and `go mod tidy` do not work — PiG substitutes a version-matched
+staged SDK at load time. Do not edit `go.mod`, `go.work` or `go.sum`.
+
+**`pane run` executes argv[0] as the program** and types the joined argv into
+the shell as one line. Env assignments must come first, multi-line prompts
+arrive as one run-on sentence, and any argument containing spaces must be
+pre-quoted — use the existing `shellArg()`, do not write another one.
+
+**Only plain strings reach the model.** Returning a struct or map from a tool
+handler renders as literally nothing; the model then reports "(no tool
+output)". Use `fmt.Sprintf`, as `renderStatus` and `renderFinish` do.
+
+**Skills are referenced by path, never copied.** `~/.agents/skills/<name>/SKILL.md`.
+There are tests asserting the brief does not contain skill text.
+
+**Cleanup:** `worktree remove` takes a workspace id, not a path, and
+`worktree create` opens *two* workspaces — the worktree and the source
+checkout. Close both; leaking them strands panes in `herdr workspace list`.
+
+**Worker state** is `~/.pig/state/wick/workers.json`, briefs in
+`~/.pig/state/wick/briefs/<id>.md`, guarded by `storeMu`.
+
+## Current state
+
+`go test ./... -count=1` — 34 passing. Six tools: `edit`, `read`,
+`spawn_worker`, `wait_workers`, `tell_worker`, `finish_worker`. Plus the
+`/implement` command. Do not regress any of them.
