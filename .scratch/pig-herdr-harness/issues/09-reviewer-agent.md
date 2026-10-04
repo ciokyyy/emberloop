@@ -1,10 +1,28 @@
 # A reviewer agent that never touches the code
 
 Type: build
-Status: deferred — user declined; `/implement` in the wick extension is the
-executor for now, no reviewer agent. Revisit only if self-review actually
-produces bad merges.
-Blocked by: 05
+Status: open — the earlier defer was reversed; build it.
+Blocked by: nothing. 05 gated this, but herdr-as-the-executor is shipped and
+running live, so 05 no longer blocks.
+
+## Decisions — made, do not re-ask
+
+A previous worker refused this ticket as deferred and asked. Answering, so the
+next one does not stall:
+
+- **Who calls the reviewer.** After every worker finishes, before its merge is
+  offered. Per-worker coverage, not on demand — the whole point is that nobody
+  has to remember.
+- **Does a failing verdict block the merge.** No. It is surfaced to the merger
+  and stops there. The human veto lives at the merge, which is the whole
+  design's premise; a hard block here would add a second veto nobody asked
+  for.
+- **Revision round-trip.** None. `tell_worker` cannot deliver — see the
+  constraints below — so a reviewer finding cannot bounce back to the worker
+  automatically. The reviewer reports; a human decides what happens next.
+- **Reviewer model.** Same model as the worker for now. Add a `reviewer:`
+  field next to ticket 04's harness field when 04 lands; do not invent the
+  model-assignment surface here.
 
 ## Why
 
@@ -35,17 +53,6 @@ with a different session.
    available inside a tool handler. The merger owns the merge decision; the
    reviewer only reports.
 
-## Decisions still open
-
-- **Who calls the reviewer.** The merger after every `finish_worker`, or the
-  human on demand? Per-worker is more coverage; on-demand is fewer tokens.
-- **Does a failed verdict block the merge?** If it does, the human has to
-  unblock it, which is the veto the whole design keeps anyway.
-- **Round trip.** Does the merger send a revision request back via
-  `tell_worker`, and how many rounds before it stops asking?
-- **Model.** A reviewer on the same model reviews the same blind spot. Worth
-  a different model, which puts a `reviewer:` field next to the worker
-  harness field from ticket 04.
 
 ## Effect on what exists
 
