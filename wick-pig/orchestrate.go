@@ -109,20 +109,45 @@ var spawnTool = fnTool{
 	},
 }
 
+// WaitCap is the longest wait_workers may block. A harness cuts a tool call at
+// its own MCP_TOOL_TIMEOUT, so a wait that outlives it fails while the wait
+// goroutine keeps running: the model sees an error and the worker is still
+// going. Staying under the cap means the wait always answers, and a caller that
+// wants longer calls again.
+const WaitCap = 5 * time.Minute
+
+// waitCap is WaitCap in use, a var only so a test can shrink it.
+var waitCap = WaitCap
+
+// waitExec is the exec wait_workers polls through. A var so the tool can be
+// driven by a fake exec rather than a real herdr.
+var waitExec Exec = osExec
+
 var waitTool = fnTool{
 	name: "wait_workers",
-	desc: "Worker status. Omit workers for all; timeout_ms 0 returns immediately.",
+	desc: fmt.Sprintf("Worker status. Omit workers for all; timeout_ms 0 returns immediately. "+
+		"timeout_ms is capped at %d ms: a longer request is clamped to that and the result says so.",
+		WaitCap/time.Millisecond),
 	schema: schema(map[string]any{
 		"workers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Worker ids. Omit for all."},
-		"timeout_ms": map[string]any{"type": "integer", "description": "Block up to this long. 0 returns now."},
+		"timeout_ms": map[string]any{"type": "integer", "description": fmt.Sprintf("Block up to this long. 0 returns now. Capped at %d.", WaitCap/time.Millisecond)},
 	}),
 	run: func(_ string, params map[string]any) (string, error) {
 		timeout := time.Duration(num(params, "timeout_ms")) * time.Millisecond
-		workers, pending, err := Wait(osExec, strs(params, "workers"), timeout)
+		clamped := timeout > waitCap
+		if clamped {
+			timeout = waitCap
+		}
+		workers, pending, err := Wait(waitExec, strs(params, "workers"), timeout)
 		if err != nil {
 			return "", err
 		}
-		return renderStatus(workers, pending), nil
+		out := renderStatus(workers, pending)
+		if clamped {
+			out += fmt.Sprintf("\ntimeout_ms was clamped to the %d ms cap, so this wait ended early. Call wait_workers again for the rest.",
+				waitCap/time.Millisecond)
+		}
+		return out, nil
 	},
 }
 
