@@ -52,6 +52,27 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	}
 }
 
+func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
+	t.Setenv("WICK_SKILLS_DIR", "/skills")
+	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
+
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "background") {
+		t.Errorf("a worker brief must carry the background rule, it only lives in the system prompt:\n%s", body)
+	}
+
+	if got := implementPrompt("/repo/.scratch/p/issues"); !strings.Contains(got, "background") {
+		t.Errorf("the merger prompt must carry the background rule for anything it runs:\n%s", got)
+	}
+}
+
 func TestRenderStatusIsProse(t *testing.T) {
 	if got := renderStatus(nil, nil); !strings.Contains(got, "no workers") {
 		t.Errorf("empty status must say so plainly, got %q", got)

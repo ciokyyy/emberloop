@@ -77,6 +77,7 @@ func writeBrief(id, ticket string) (string, error) {
 		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, skillPath(s.name), s.when)
 	}
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
+	b.WriteString("\nServers, watchers and log tails go to the background tool, never bash: it blocks until timeout.\n")
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		return "", err
@@ -130,6 +131,8 @@ func implementPrompt(target string) string {
    report. If finish_worker returns kept:true it conflicted: stop, report it,
    do not resolve it yourself.
 5. Recompute what is ready and go again. Stop when nothing is ready.
+
+Servers, watchers and log tails go to the background tool, never bash, for any command you run yourself.
 
 Report the merged shas and each worker's review verdict when the run is done.`, target, target)
 }
