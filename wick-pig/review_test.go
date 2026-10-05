@@ -125,9 +125,14 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 	}
 	switch args[0] + " " + args[1] {
 	case "pane list":
+		// herdr drops a closed pane from the list; the fake does too, so a
+		// dead reviewer really looks dead to the grid.
 		panes := []any{}
 		for _, tab := range f.tabIDs {
 			for _, id := range f.panesIn(tab) {
+				if f.panes[id].closed {
+					continue
+				}
 				panes = append(panes, map[string]any{"pane_id": id, "tab_id": tab})
 			}
 		}
@@ -142,6 +147,7 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		return Result{Stdout: `{"result":{"pane":{"pane_id":"` + id + `","tab_id":"` + tab + `"}}}`}, nil
 	case "pane run":
 		p := f.panes[args[2]]
+		p.launched = true
 		var dir, id, promptPath string
 		for i, w := range strings.Fields(args[3]) {
 			w = strings.Trim(w, `"`)
@@ -174,7 +180,6 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		}
 	case "pane send-text":
 		p := f.panes[args[2]]
-		p.launched = true
 		prompt := args[3]
 		// A follow-up names a file to read; the agent reads it.
 		for _, w := range strings.Fields(prompt) {
@@ -742,5 +747,31 @@ func TestReviewAfterARebaseShowsOnlyTheWorkersChange(t *testing.T) {
 	}
 	if p := f.paneOf(t, axisCode); !strings.Contains(p.prompts[1], "was rebased") {
 		t.Errorf("a rebased branch's follow-up must say so:\n%s", p.prompts[1])
+	}
+}
+
+// Both reviewers dead at once: each replacement finds a free slot, and the
+// review completes rather than failing on a source pane that is gone too.
+func TestCodeReviewReplacesBothDeadReviewers(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	// A new commit makes both reviewers due for review again, so both are
+	// replaced rather than left alone as already-passed.
+	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "move the tip")
+	for _, axis := range allAxes {
+		f.paneOf(t, axis).closed = true
+	}
+	out, err := CodeReview(f.run, tree, "", "")
+	if err != nil {
+		t.Fatalf("both reviewers replaced: %v\n%s", err, out)
+	}
+	for _, axis := range allAxes {
+		r := reviewersOf(tree)[axis]
+		if r.Verdict != verdictPass || r.Tab != reviewTab || !r.agent().alive(f.run) {
+			t.Errorf("%s reviewer after replacement = %+v", axis, r)
+		}
 	}
 }

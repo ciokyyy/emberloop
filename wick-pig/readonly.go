@@ -197,7 +197,11 @@ func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (re
 	var placed gridPane
 	if place.Slot >= 2 {
 		placed, err = replaceInGrid(run, tab, place.Slot, cwd)
-	} else {
+	}
+	if place.Slot < 2 || err != nil {
+		// The dead pane's slot needs a pane before it or a row above it to
+		// split. When that is gone too, a replacement appends to the grid
+		// instead of failing the launch.
 		placed, err = placeInGrid(run, tab, overflow, cwd)
 	}
 	if err != nil {

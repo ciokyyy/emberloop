@@ -304,10 +304,10 @@ func workspaceOf(tab string) string {
 	return os.Getenv("HERDR_WORKSPACE_ID")
 }
 
-// closeOverflowTabs closes the overflow tabs that belong to the tab labelled
-// base: base (2), base (3), .... The base tab is the caller's to close. A tab
-// already gone is not an error: wick owns its tabs, but a human may have
-// closed one.
+// closeOverflowTabs closes every overflow tab that belongs to the tab labelled
+// base: base (2), base (3), and any higher number, even when one in between is
+// already gone. The base tab is the caller's to close. wick owns its tabs, but
+// a missing one is not an error.
 func closeOverflowTabs(run Exec, tab, base string) {
 	if tab == "" || base == "" {
 		return
@@ -316,15 +316,23 @@ func closeOverflowTabs(run Exec, tab, base string) {
 	if err != nil {
 		return
 	}
-	present := map[string]string{}
 	for _, t := range reply.Result.Tabs {
-		present[t.Label] = t.TabID
-	}
-	for lbl := base + " (2)"; ; lbl = nextOverflow(lbl) {
-		tid, ok := present[lbl]
-		if !ok {
-			return
+		if overflowNumber(t.Label, base) == 0 {
+			continue
 		}
-		_, _ = herdrJSON(run, []string{"tab", "close", tid}, 30*time.Second)
+		_, _ = herdrJSON(run, []string{"tab", "close", t.TabID}, 30*time.Second)
 	}
+}
+
+// overflowNumber is the n in the overflow label "base (n)", or 0 when label is
+// not one of base's overflow tabs.
+func overflowNumber(label, base string) int {
+	if !strings.HasPrefix(label, base+" (") || !strings.HasSuffix(label, ")") {
+		return 0
+	}
+	n, err := strconv.Atoi(label[len(base)+2 : len(label)-1])
+	if err != nil || n < 2 {
+		return 0
+	}
+	return n
 }

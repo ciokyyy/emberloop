@@ -565,3 +565,22 @@ func TestGridOverflowsIntoTheNextTabOfItsFamily(t *testing.T) {
 		t.Errorf("overflow label = %q, want 07-x (3)", g.label[next.Tab])
 	}
 }
+
+// overflowNumber names a tab only when it is a numbered overflow of this base.
+func TestOverflowNumberRecognisesOnlyItsFamily(t *testing.T) {
+	for _, tc := range []struct {
+		label, base string
+		want        int
+	}{
+		{"07-x (2)", "07-x", 2},
+		{"07-x (10)", "07-x", 10},
+		{"07-x", "07-x", 0},
+		{"07-x (1)", "07-x", 0},
+		{"07-x (2) extra", "07-x", 0},
+		{"scouts (2)", "07-x", 0},
+	} {
+		if got := overflowNumber(tc.label, tc.base); got != tc.want {
+			t.Errorf("overflowNumber(%q, %q) = %d, want %d", tc.label, tc.base, got, tc.want)
+		}
+	}
+}
