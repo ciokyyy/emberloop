@@ -1,4 +1,4 @@
-# Spec: retro hardening, and DOX for this repo
+# Spec: retro hardening, review integrity, and DOX for this repo
 
 Status: ready-for-agent
 
@@ -12,6 +12,14 @@ A retrospective on the run-records implement run found failures that every run w
 - Nothing records that a ticket is done: statuses stay `ready-for-agent` and checkboxes stay empty, because the orchestrator cannot edit files and workers cannot safely edit shared status lines.
 - `edit` answers only "updated successfully", so a range edit that swallowed code went unnoticed until the worker re-read the whole file. Failed edits and vet loops cost whole turns.
 - The repo has no `AGENTS.md`. Three workers each re-read the same 18 KB harness file in full, and all six read the whole spec; workers find where things live by reading, not by being told.
+
+A second look at the live sessions' spawn calls found that **reviews were not judging what they claimed to**:
+
+- The review diff is `git diff <base>`, which leaves out files git does not yet track. Workers that created new files (the archive and memory tickets) were reviewed on a diff holding only the tracked hunks. One reviewer's own report said "the supplied diff only contains the one hunk"; another said a new file "is untracked, so it is again absent". Those reviewers passed incomplete work.
+- A pass on a dirty tree is stored as "the commit plus uncommitted", the same string for every dirty state. The memory worker rewrote its code after a first pass, called spawn again, and was told "every reviewer passed at <sha>; nothing to review" in 4 seconds, with nothing re-judged.
+- A follow-up review is given the diff since the reviewer's last commit. When the worker's changes sat uncommitted or the branch moved, that diff was the whole cumulative change again (one reviewer noted it), so follow-ups were neither narrow nor cheap.
+- Blocking spawns stopped waiting at about 4 minutes (213 to 247 seconds in every case) and answered "still running; end your turn". That is the intended hand-off, but it is undocumented and unmeasured, and it explains why some workers looked idle.
+- Spawn calls whose entries omitted `type` were rejected by the tool schema in under a second; that is the schema working, and a model error, not a wick fault.
 
 ## Solution
 
@@ -42,6 +50,13 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 21. As a claude worker, I want the same `AGENTS.md` chain, so that both harnesses get the same guidance.
 22. As a user, I want no duplicated rules across `AGENTS.md` files, so that a rule changes in one place.
 23. As a user, I want each doc's Verification section to name an existing check and nothing invented, so that no doc promises a gate that does not exist.
+24. As a reviewer, I want the change I judge to include files that are new and not yet tracked, so that I never pass work I could not see.
+25. As a reviewer, I want to be told when the diff I was given covers fewer files than the working tree holds, so that a gap is visible to me.
+26. As a worker, I want "nothing to review" only when my working tree is the same state a reviewer already passed, so that changed code is always reviewed again.
+27. As a worker, I want my second spawn of reviewers to give each one just what changed since it last looked, including uncommitted and new files, so that a follow-up is small and exact.
+28. As a user, I want a pass recorded against an exact working state, so that a pass on one version of the code never covers another.
+29. As a worker, I want a blocking spawn that outlasts its wait to say how long it waited and that the result arrives as a notice, so that I know to end my turn.
+30. As a user, I want the length of that wait written down and covered by a test, so that a change to it is deliberate.
 
 ## Implementation Decisions
 
@@ -55,6 +70,11 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - Review enforces the DOX pass: both built-in reviewer types are told to flag a change that alters a documented contract or structure without updating the owning doc, and a stale index. The implementer is not asked to police it.
 - Claude reads `CLAUDE.md`, not `AGENTS.md`. A one-line `CLAUDE.md` that imports the root `AGENTS.md` gives both harnesses one source of truth. A probe first confirms which context files each stripped harness loads, because the pig harness disables built-in tools and skills and the claude harness disables setting sources; if either does not load the file, the worker brief carries one line telling it to read the root `AGENTS.md`.
 - The root document stays short: always-loaded text costs every turn, so detail lives in children and the root only indexes and states the contract.
+- The review packet is built from a snapshot of the working state that holds tracked, modified and new files, taken without disturbing the worker's index. The snapshot's identity replaces "commit plus uncommitted" as what a pass is recorded against. A committed clean tree keeps using its commit, so the merge gate's "passed at the tip" rule is unchanged.
+- A reviewer's follow-up diff is the difference between the snapshot it last judged and the current one, so it covers new and uncommitted files and shrinks to the real change. If the previous snapshot is gone (a rebase, a gc), the full diff is given and the prompt says so, as now.
+- The reviewer prompt states how many files the diff covers and how many the working tree changed or added; a mismatch is flagged in the prompt, not left for the reviewer to notice.
+- "Nothing to review" compares snapshots, not commits.
+- The spawn wait for blocking agents keeps its current bound; the bound becomes a named setting, the "still running" reply states the wait in seconds, and the worker and orchestrator briefs mention it once.
 
 ## Testing Decisions
 
@@ -65,6 +85,9 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - `edit`: the result includes the changed region and flags a block deletion. Prior art: the hashline tests.
 - DOX: a repo test checks that every `AGENTS.md` is listed in its parent's child index and that every listed child exists, so the tree cannot rot silently. The probe of which context files each harness loads is a recorded finding, not a test.
 - Review wording is covered by the existing reviewer-type tests.
+- Review packet: a worktree with a new untracked file produces a diff that contains it; an unchanged dirty tree yields "nothing to review"; the same tree after another edit does not; a follow-up diff after an uncommitted edit contains only that edit; a rebase falls back to the full diff with a note. Prior art: the review tests with a fake herdr and a real temp git repo.
+- Merge gate: a pass on a clean commit still opens the gate; a pass on a dirty snapshot still does not.
+- Spawn wait: a fake slow reviewer exceeds the bound and the reply names it and says results arrive as notices.
 
 ## Out of Scope
 
@@ -72,7 +95,9 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - A `CODING_STANDARDS.md`: every miss found was mechanical and gets a check.
 - Model-side reliability of a particular worker model beyond the brief wording already shipped.
 - Automatic generation of docs after each commit; DOX relies on the agent's pass and the reviewers.
+- Re-reviewing work already merged under the old diff behaviour. The two affected tickets (archive, memory) are still open and get reviewed correctly when they next spawn reviewers.
+- Changing the reviewers' own judgement or prompts beyond the diff coverage notice.
 
 ## Further Notes
 
-Source of the findings: the retro run on the run-records implement session and this session's transcripts. The brief wording for the spawn tool (story 9) and the spec reviewer's holding pass are already delivered and need no work here. DOX comes from https://github.com/agent0ai/dox.
+Source of the findings: the retro run on the run-records implement session, this session's transcripts, and a second pass over the live worker sessions' spawn calls (durations, results and reviewer reports). The brief wording for the spawn tool (story 9) and the spec reviewer's holding pass are already delivered and need no work here. DOX comes from https://github.com/agent0ai/dox.
