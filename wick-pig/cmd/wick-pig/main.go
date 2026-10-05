@@ -6,6 +6,7 @@
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
 //	wick-pig exec <launch-file>                                run a launch file the pane typed
+//	wick-pig skills install                                    fill the skill library
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
 //	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
