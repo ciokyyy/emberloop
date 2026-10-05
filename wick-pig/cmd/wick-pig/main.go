@@ -1,5 +1,6 @@
 // wick-pig starts an agent session: pig or claude, with wick's tools over MCP.
 //
+//	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
 //	wick-pig [--pig|--claude] [--model M] [-p]                 full session
 //	wick-pig implement <path> [flags]                          restricted merger
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
@@ -27,6 +28,9 @@ func run(argv []string) error {
 	sub := ""
 	if len(argv) > 0 && !strings.HasPrefix(argv[0], "-") {
 		sub, argv = argv[0], argv[1:]
+	}
+	if sub == "settings" {
+		return runSettings(argv, os.Stdout, listModels)
 	}
 	fs := flag.NewFlagSet("wick-pig", flag.ContinueOnError)
 	harness := fs.String("harness", "pig", "pig or claude")
