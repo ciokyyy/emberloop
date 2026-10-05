@@ -538,8 +538,6 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 }
 
 // liveAgentFor finds the live agent a persistent type is re-prompted as rather
-// than replaced: the agent of that type this parent already has running.
-// liveAgentFor finds the live agent a persistent type is re-prompted as rather
 // than replaced: the agent of that type this parent already has running. A
 // worktree type is looked up by the id its ticket derives, so only a re-spawn
 // of the same ticket finds the agent working it; a read-only type keeps one
@@ -549,10 +547,12 @@ func liveAgentFor(run Exec, t AgentType, parentID, parentPane string, r spawnReq
 		if r.Ticket == "" {
 			return AgentState{}, false
 		}
-		s, ok, err := ReadAgentState(WorkerID(r.Ticket))
+		id := WorkerID(r.Ticket)
+		s, ok, err := ReadAgentState(id)
 		if err != nil || !ok || !liveFor(s, t.Name, parentID, parentPane, run) {
 			return AgentState{}, false
 		}
+		s.ID = id
 		return s, true
 	}
 	entries, err := os.ReadDir(agentStateDir())
@@ -563,10 +563,12 @@ func liveAgentFor(run Exec, t AgentType, parentID, parentPane string, r spawnReq
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		s, ok, err := ReadAgentState(strings.TrimSuffix(e.Name(), ".json"))
+		id := strings.TrimSuffix(e.Name(), ".json")
+		s, ok, err := ReadAgentState(id)
 		if err != nil || !ok || !liveFor(s, t.Name, parentID, parentPane, run) {
 			continue
 		}
+		s.ID = id
 		return s, true
 	}
 	return AgentState{}, false
