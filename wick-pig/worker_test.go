@@ -314,6 +314,9 @@ func TestSpawnAcceptsABranchName(t *testing.T) {
 	if worker.Base != want {
 		t.Errorf("base = %q, want main's sha %q", worker.Base, want)
 	}
+	if worker.Target != "main" {
+		t.Errorf("target = %q, want the branch it merges back into, main", worker.Target)
+	}
 }
 
 // TestFinishRebasesOntoARefBase covers a store written before bases were
@@ -367,6 +370,96 @@ func TestFinishRebasesOntoARefBase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "feature.txt")); err != nil {
 		t.Errorf("work not present on main: %v", err)
+	}
+}
+
+// Two workers spawned from the same commit: the first merge moves the target
+// branch, and the second must rebase onto where the target is *now*, not onto
+// the commit both were spawned from, or its fast-forward fails as "diverging".
+func TestFinishRebasesOntoTheTargetsCurrentTip(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "wick@test.local")
+	gitOut(t, repo, "config", "user.name", "wick")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "base")
+	base := gitOut(t, repo, "rev-parse", "main")
+
+	store := map[string]Worker{}
+	for _, id := range []string{"30-a", "31-b"} {
+		worktree := filepath.Join(repo, ".wick-worktrees", id)
+		gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/"+id, worktree, "main")
+		if err := os.WriteFile(filepath.Join(worktree, id+".txt"), []byte(id+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gitOut(t, worktree, "add", ".")
+		gitOut(t, worktree, "commit", "-qm", id)
+		store[id] = Worker{ID: id, Repo: repo, Base: base, Target: "main", Branch: "implement/" + id,
+			Worktree: worktree, Pane: "%1", Workspace: "%2"}
+	}
+	if err := save(store); err != nil {
+		t.Fatal(err)
+	}
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		if len(args) > 0 && args[0] == "worktree" {
+			return Result{Stdout: `{"result":{}}`}, nil
+		}
+		return Result{}, nil
+	}
+	for _, id := range []string{"30-a", "31-b"} {
+		res, err := Finish(run, id, true)
+		if err != nil {
+			t.Fatalf("finish %s: %v", id, err)
+		}
+		if !res.Merged {
+			t.Fatalf("%s not merged: %q", id, res.Detail)
+		}
+	}
+	for _, f := range []string{"30-a.txt", "31-b.txt"} {
+		if _, err := os.Stat(filepath.Join(repo, f)); err != nil {
+			t.Errorf("%s missing on main: %v", f, err)
+		}
+	}
+}
+
+// A worker merges into its target branch only; a repo that has since been
+// switched to another branch is refused rather than merged into by accident.
+func TestFinishRefusesWhenTheRepoIsOnAnotherBranch(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "wick@test.local")
+	gitOut(t, repo, "config", "user.name", "wick")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "base")
+	worktree := filepath.Join(repo, ".wick-worktrees", "32-c")
+	gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/32-c", worktree, "main")
+	gitOut(t, repo, "switch", "-q", "-c", "elsewhere")
+	if err := save(map[string]Worker{"32-c": {ID: "32-c", Repo: repo, Base: "main", Target: "main",
+		Branch: "implement/32-c", Worktree: worktree, Pane: "%1", Workspace: "%2"}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Finish(func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}, "32-c", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Merged || !res.Kept || !strings.Contains(res.Detail, "elsewhere") {
+		t.Errorf("want kept with the branch named, got %+v", res)
 	}
 }
 

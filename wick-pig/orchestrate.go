@@ -253,9 +253,12 @@ var scoutTool = fnTool{
 	},
 }
 
-// tell_worker messages a running worker through herdr rather than typing into
-// its pane: the answer lands in the agent's own input, so a steer reaches the
-// model instead of the shell.
+// tellExec is the exec tell_worker drives. A var, like waitExec, so a test can
+// stand in for herdr.
+var tellExec Exec = osExec
+
+// tell_worker messages a running worker in its own input, so a steer reaches
+// the model instead of the shell.
 var tellTool = fnTool{
 	name: "tell_worker",
 	desc: "Send a message to a running worker. Use for a steer, or to answer a question it raised.",
@@ -272,16 +275,12 @@ var tellTool = fnTool{
 		if err != nil {
 			return "", err
 		}
-		// No --until: herdr's default already matches idle, done or blocked, and
-		// --until takes one state per flag. A done worker is still promptable;
-		// only a blocked one is refused.
-		res, err := osExec(herdrBin(),
-			[]string{"agent", "prompt", worker.Pane, text, "--wait", "--timeout", "600000"}, ExecOpts{})
+		settled, err := Tell(tellExec, worker.Pane, text, toolBudget)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("could not deliver to %s: %w", id, err)
 		}
-		if res.Code != 0 {
-			return "", fmt.Errorf("herdr could not deliver to %s: %s", id, firstLine(res.Stderr, res.Stdout))
+		if !settled {
+			return fmt.Sprintf("delivered to %s; it is still working. Call wait_workers to see it settle.", id), nil
 		}
 		return fmt.Sprintf("delivered to %s and waited for it to settle", id), nil
 	},

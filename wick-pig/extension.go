@@ -51,7 +51,6 @@ func skillAddress(name string) string {
 // callers outside the package.
 func SkillLibraryDir() string { return skillsDir() }
 
-
 // reportExtension locates the herdr-report extension, which is what makes a
 // worker visible to herdr as an agent rather than just a pane. The env var
 // wins; otherwise the first candidate directory that exists wins. exe and home

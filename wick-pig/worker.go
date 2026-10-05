@@ -13,10 +13,14 @@ import (
 // Worker is one delegated implementer, isolated in its own git worktree and
 // terminal pane.
 type Worker struct {
-	ID        string `json:"id"`
-	Ticket    string `json:"ticket"`
-	Repo      string `json:"repo"`
-	Base      string `json:"base"`
+	ID     string `json:"id"`
+	Ticket string `json:"ticket"`
+	Repo   string `json:"repo"`
+	Base   string `json:"base"`
+	// Target is the branch the worker merges into: the branch the repo was on
+	// when it spawned, or the one named as its base. Base stays the commit it
+	// branched from, for diffs; finish rebases onto Target's current tip.
+	Target    string `json:"target,omitempty"`
 	Branch    string `json:"branch"`
 	Worktree  string `json:"worktree"`
 	Pane      string `json:"pane"`
@@ -252,6 +256,24 @@ func resolveRef(run Exec, repo, ref string) (string, error) {
 	return sha, nil
 }
 
+// targetBranch is the branch a worker spawned from base merges back into: base
+// itself when it names a local branch, otherwise the branch the repo has
+// checked out. A detached repo has none, and finish falls back to the base.
+func targetBranch(run Exec, repo, base string) string {
+	if base != "" && base != "HEAD" {
+		res, err := run("git", []string{"show-ref", "--verify", "--quiet", "refs/heads/" + base}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+		if err == nil && res.Code == 0 {
+			return base
+		}
+		return ""
+	}
+	res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+	if err != nil || res.Code != 0 {
+		return ""
+	}
+	return strings.TrimSpace(res.Stdout)
+}
+
 // Spawn creates a worktree, opens a pane on it, and starts the worker there.
 func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	id := WorkerID(in.Ticket)
@@ -276,6 +298,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		return nil, err
 	}
 	base = resolved
+	target := targetBranch(run, repo, in.Base)
 
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -298,6 +321,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		Ticket:    in.Ticket,
 		Repo:      repo,
 		Base:      base,
+		Target:    target,
 		Branch:    "implement/" + id,
 		Worktree:  worktreePath(repo, id),
 		Harness:   in.Harness,
@@ -515,10 +539,41 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	merged := false
 
 	if merge {
-		if res, err := run("git", []string{"rebase", w.Base}, ExecOpts{Cwd: w.Worktree}); err != nil {
+		// Rebase onto where the target is *now*: another worker may have moved
+		// it since this one spawned. Old records without a target fall back to
+		// the base they recorded.
+		onto := w.Target
+		if onto == "" {
+			onto = w.Base
+		}
+		if res, err := run("git", []string{"rebase", onto}, ExecOpts{Cwd: w.Worktree}); err != nil {
 			return nil, err
 		} else if res.Code != 0 {
-			return &FinishResult{ID: id, Detail: firstLine(res.Stderr, "rebase failed"), Kept: true}, nil
+			// Name the conflicts, then abort: the worker that is sent back to
+			// resolve them starts from its own clean branch, not a half rebase.
+			files := ""
+			if u, err := run("git", []string{"diff", "--name-only", "--diff-filter=U"}, ExecOpts{Cwd: w.Worktree}); err == nil {
+				files = strings.Join(strings.Fields(u.Stdout), ", ")
+			}
+			_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: w.Worktree})
+			detail := "rebase onto " + onto + " conflicted"
+			if files != "" {
+				detail += " in " + files
+			} else {
+				detail += ": " + firstLine(res.Stderr, "rebase failed")
+			}
+			return &FinishResult{ID: id, Detail: detail + "; the rebase was aborted, the branch is unchanged", Kept: true}, nil
+		}
+
+		// The fast-forward lands on whatever the repo has checked out, so that
+		// must be the worker's target.
+		if w.Target != "" {
+			if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: w.Repo}); err != nil {
+				return nil, err
+			} else if on := strings.TrimSpace(res.Stdout); on != w.Target {
+				return &FinishResult{ID: id, Kept: true,
+					Detail: fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, w.Target)}, nil
+			}
 		}
 
 		if res, err := run("git", []string{"merge", "--ff-only", w.Branch}, ExecOpts{Cwd: w.Repo}); err != nil {

@@ -99,13 +99,16 @@ func lastTurn(path string, classify func(rec map[string]any) (state, detail stri
 	return state, detail
 }
 
-// Nudge sends text to the agent in pane. herdr only prompts a named agent, and
-// a pane started by hand is not one, so that case types the text instead.
+// Nudge sends text to the agent in pane. herdr only prompts an agent it
+// detects itself; pig only reports its state, so herdr refuses to prompt it
+// ("not an active named agent") and the text is typed into the pane instead.
+// Typed text is one line: a newline would submit the message half-written.
 func Nudge(run Exec, pane, text string) error {
 	if res, err := run(herdrBin(), []string{"agent", "prompt", pane, text}, ExecOpts{Timeout: 30 * time.Second}); err == nil && res.Code == 0 {
 		return nil
 	}
-	for _, args := range [][]string{{"pane", "send-text", pane, text}, {"pane", "send-keys", pane, "Enter"}} {
+	line := strings.Join(strings.Fields(text), " ")
+	for _, args := range [][]string{{"pane", "send-text", pane, line}, {"pane", "send-keys", pane, "Enter"}} {
 		res, err := run(herdrBin(), args, ExecOpts{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
@@ -115,6 +118,26 @@ func Nudge(run Exec, pane, text string) error {
 		}
 	}
 	return nil
+}
+
+// Tell delivers text to the agent in pane and waits, up to budget, for it to
+// take the turn and settle again. settled is false when the agent is still
+// working at the budget: the message landed, the caller checks back later.
+func Tell(run Exec, pane, text string, budget time.Duration) (settled bool, err error) {
+	if err := Nudge(run, pane, text); err != nil {
+		return false, err
+	}
+	// The agent has to pick the message up before "settled" means anything:
+	// an idle agent matches idle at once. A fast turn can already be over by
+	// the time this runs, so not seeing it work is no error.
+	_, _ = run(herdrBin(), []string{"agent", "wait", pane, "--until", "working", "--timeout", "15000"},
+		ExecOpts{Timeout: 20 * time.Second})
+	ms := fmt.Sprint(budget.Milliseconds())
+	res, err := run(herdrBin(), []string{"agent", "wait", pane, "--timeout", ms}, ExecOpts{Timeout: budget + 10*time.Second})
+	if err != nil {
+		return false, nil
+	}
+	return res.Code == 0, nil
 }
 
 // WaitReply polls the session transcript until the agent ends a turn, and

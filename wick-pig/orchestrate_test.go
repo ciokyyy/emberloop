@@ -326,3 +326,70 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 		t.Errorf("worker launch must not carry a read exception; read opens any path:\n%s", launched)
 	}
 }
+
+// herdr refuses `agent prompt` for a pig worker: pig only reports its state,
+// it is not an agent herdr detects. tell_worker must still deliver, by typing
+// the message as one line into the pane, and then wait for the turn to settle.
+func TestTellWorkerTypesIntoAPigPane(t *testing.T) {
+	withWorker(t, "01-x")
+	rec := &recorder{reply: func(_ string, args []string) Result {
+		if args[0] == "agent" && args[1] == "prompt" {
+			return Result{Code: 1, Stdout: `{"error":{"code":"agent_not_ready","message":"agent p1 is not an active named agent"}}`}
+		}
+		return Result{}
+	}}
+	old := tellExec
+	tellExec = rec.run
+	t.Cleanup(func() { tellExec = old })
+
+	args, _ := json.Marshal(map[string]any{"worker": "01-x", "text": "rebase onto master,\nthen resolve"})
+	out, err := tellTool.Execute(context.Background(), "", args)
+	if err != nil {
+		t.Fatalf("tell_worker: %v", err)
+	}
+	if !strings.Contains(out, "settle") {
+		t.Errorf("an agent that settled must be reported as such, got %q", out)
+	}
+	var typed, entered, waited bool
+	for _, c := range rec.calls {
+		line := strings.Join(c[1:], " ")
+		switch {
+		case strings.HasPrefix(line, "pane send-text p1 "):
+			typed = true
+			if strings.Contains(line, "\n") || !strings.Contains(line, "rebase onto master, then resolve") {
+				t.Errorf("typed text must be one line, got %q", line)
+			}
+		case line == "pane send-keys p1 Enter":
+			entered = typed
+		case strings.HasPrefix(line, "agent wait p1") && !strings.Contains(line, "working"):
+			waited = entered
+		}
+	}
+	if !typed || !entered || !waited {
+		t.Errorf("want send-text, then Enter, then a settle wait; calls: %v", rec.calls)
+	}
+}
+
+// A worker still busy at the tool budget got the message; the reply says so
+// instead of failing, and points at wait_workers.
+func TestTellWorkerStillWorkingIsNotAnError(t *testing.T) {
+	withWorker(t, "01-x")
+	rec := &recorder{reply: func(_ string, args []string) Result {
+		if args[0] == "agent" && args[1] == "wait" && !strings.Contains(strings.Join(args, " "), "working") {
+			return Result{Code: 1, Stdout: `{"error":{"code":"timeout"}}`}
+		}
+		return Result{}
+	}}
+	old := tellExec
+	tellExec = rec.run
+	t.Cleanup(func() { tellExec = old })
+
+	args, _ := json.Marshal(map[string]any{"worker": "01-x", "text": "go on"})
+	out, err := tellTool.Execute(context.Background(), "", args)
+	if err != nil {
+		t.Fatalf("tell_worker: %v", err)
+	}
+	if !strings.Contains(out, "still working") || !strings.Contains(out, "wait_workers") {
+		t.Errorf("got %q", out)
+	}
+}
