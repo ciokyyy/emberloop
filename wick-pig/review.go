@@ -40,9 +40,12 @@ type reviewer struct {
 	Effort    string `json:"effort,omitempty"`
 	// Reviewed is the commit the reviewer last saw the worktree at.
 	Reviewed string `json:"reviewed"`
-	// Verdict holds at VerdictAt only: a pass on an older commit is stale.
-	Verdict   string `json:"verdict"`
-	VerdictAt string `json:"verdict_at"`
+	// Verdict holds at VerdictAt only: a pass on an older commit is stale,
+	// unless VerdictTree, the git tree of the content judged, is the content
+	// the commit holds: committing reviewed work changes nothing it judged.
+	Verdict     string `json:"verdict"`
+	VerdictAt   string `json:"verdict_at"`
+	VerdictTree string `json:"verdict_tree,omitempty"`
 	// Findings is its last reply, kept to brief a replacement.
 	Findings string `json:"findings"`
 }
@@ -135,7 +138,7 @@ func storeReviewerPane(tree, typ string, r reviewer) error {
 		}
 		prev := all[key][typ]
 		if prev.Verdict != "" {
-			r.Verdict, r.VerdictAt, r.Findings = prev.Verdict, prev.VerdictAt, prev.Findings
+			r.Verdict, r.VerdictAt, r.VerdictTree, r.Findings = prev.Verdict, prev.VerdictAt, prev.VerdictTree, prev.Findings
 		}
 		all[key][typ] = r
 		return nil
@@ -145,14 +148,14 @@ func storeReviewerPane(tree, typ string, r reviewer) error {
 // mergeReviewerVerdict folds a reviewer's submit into the record for its
 // worktree: its status is the verdict, its report the findings kept for
 // follow-ups and for briefing a replacement, and reviewed the commit it judged.
-func mergeReviewerVerdict(tree, typ, verdict, at, reviewed, findings string) error {
+func mergeReviewerVerdict(tree, typ, verdict, at, reviewed, treeID, findings string) error {
 	return updateReviewers(func(all map[string]map[string]reviewer) error {
 		key := filepath.Clean(tree)
 		if all[key] == nil {
 			all[key] = map[string]reviewer{}
 		}
 		r := all[key][typ]
-		r.Verdict, r.VerdictAt, r.Reviewed, r.Findings = verdict, at, reviewed, findings
+		r.Verdict, r.VerdictAt, r.VerdictTree, r.Reviewed, r.Findings = verdict, at, treeID, reviewed, findings
 		all[key][typ] = r
 		return nil
 	})
@@ -180,7 +183,7 @@ func closeReviewers(run Exec, tree string) {
 // reviewGate is why the worktree at tree, whose tip is head, may not merge
 // yet, or "" when every required reviewer type passed at head. A type whose
 // pass holds (holds[type]) needs a pass at some commit, not at head.
-func reviewGate(tree, head string, required []string, holds map[string]bool) string {
+func reviewGate(tree, head, headTree string, required []string, holds map[string]bool) string {
 	have := reviewersOf(tree)
 	var missing []string
 	for _, typ := range required {
@@ -190,7 +193,7 @@ func reviewGate(tree, head string, required []string, holds map[string]bool) str
 			missing = append(missing, typ+": no review yet")
 		case r.Verdict != verdictPass:
 			missing = append(missing, fmt.Sprintf("%s: %s at %s", typ, r.Verdict, short(r.VerdictAt)))
-		case r.VerdictAt != head && !holds[typ]:
+		case r.VerdictAt != head && !holds[typ] && (r.VerdictTree == "" || r.VerdictTree != headTree):
 			missing = append(missing, fmt.Sprintf("%s: passed at %s, not at the tip %s", typ, short(r.VerdictAt), short(head)))
 		}
 	}
@@ -227,6 +230,41 @@ func passHolds(repo string) map[string]bool {
 		out[name] = t.PassHolds
 	}
 	return out
+}
+
+// snapshotTree is the git tree of tree's working state: tracked, modified and
+// new files, taken through a throwaway index so the worker's own is untouched.
+// Empty when git cannot say; callers then fall back to the commit.
+func snapshotTree(run Exec, tree string) string {
+	f, err := os.CreateTemp("", "wick-index-*")
+	if err != nil {
+		return ""
+	}
+	idx := f.Name()
+	f.Close()
+	_ = os.Remove(idx)
+	defer os.Remove(idx)
+	env := []string{"GIT_INDEX_FILE=" + idx}
+	for _, args := range [][]string{{"read-tree", "HEAD"}, {"add", "-A"}} {
+		if res, err := run("git", args, ExecOpts{Cwd: tree, Env: env, Timeout: time.Minute}); err != nil || res.Code != 0 {
+			return ""
+		}
+	}
+	res, err := run("git", []string{"write-tree"}, ExecOpts{Cwd: tree, Env: env, Timeout: time.Minute})
+	if err != nil || res.Code != 0 {
+		return ""
+	}
+	return strings.TrimSpace(res.Stdout)
+}
+
+// samePassState says the pass on record covers the content in p: the same
+// tree when both know it, so changed code is reviewed again and unchanged code
+// is not; the commit string otherwise.
+func samePassState(prev reviewer, p *reviewPacket) bool {
+	if prev.VerdictTree != "" && p.treeID != "" {
+		return prev.VerdictTree == p.treeID
+	}
+	return prev.VerdictAt == p.verdictAt
 }
 
 func workerAt(tree string) *Worker {
@@ -293,6 +331,7 @@ func tail(text string, n int) string {
 type reviewPacket struct {
 	tree, head, base string
 	verdictAt        string // head, or head+"+uncommitted" when the tree is dirty
+	treeID           string // git tree of the working state, new files included
 	fullDiff         string // path of the full diff, base..working tree
 	checks           string
 	note             string
@@ -325,7 +364,14 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 		verdictAt = head + "+uncommitted"
 	}
 	base := diffBase(run, tree, w)
-	full, err := gitIn(run, tree, "diff", base)
+	treeID := snapshotTree(run, tree)
+	// The diff is base against a snapshot of the working state, so files git
+	// does not track yet are in it; a plain `git diff base` leaves them out.
+	diffArgs := []string{"diff", base}
+	if treeID != "" {
+		diffArgs = append(diffArgs, treeID)
+	}
+	full, err := gitIn(run, tree, diffArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +381,7 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 	}
 	name := filepath.Base(tree)
 	p := &reviewPacket{
-		tree: tree, head: head, verdictAt: verdictAt, base: base, note: note,
+		tree: tree, head: head, verdictAt: verdictAt, treeID: treeID, base: base, note: note,
 		fullDiff: filepath.Join(dir, name+".diff"),
 	}
 	p.noChanges = strings.TrimSpace(full) == ""
@@ -386,7 +432,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 			closeAgent(run, prev.agent())
 			return freshReviewer(run, p, t, prev, false, parentPane, parentID)
 		}
-		if prev.Verdict == verdictPass && prev.VerdictAt == p.verdictAt {
+		if prev.Verdict == verdictPass && samePassState(prev, p) {
 			return nil, nil
 		}
 		return followUpReviewer(run, p, t, prev, parentPane, parentID)
@@ -406,8 +452,17 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	// commit it saw, and a diff from it would show every other ticket merged
 	// meanwhile: the reviewer gets the full diff again.
 	incPath := p.fullDiff
+	// When the branch was not rebased, the increment is exact if both states
+	// are known by tree (uncommitted and new files included), else the diff
+	// since the commit the reviewer saw.
 	if _, err := gitIn(run, p.tree, "merge-base", "--is-ancestor", prev.Reviewed, "HEAD"); err == nil {
-		inc, err := gitIn(run, p.tree, "diff", prev.Reviewed)
+		args := []string{"diff", prev.Reviewed}
+		if prev.VerdictTree != "" && p.treeID != "" {
+			if _, err := gitIn(run, p.tree, "cat-file", "-e", prev.VerdictTree+"^{tree}"); err == nil {
+				args = []string{"diff", prev.VerdictTree, p.treeID}
+			}
+		}
+		inc, err := gitIn(run, p.tree, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -498,7 +553,7 @@ func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID stri
 	}
 	s.ID, s.Type = id, typ
 	s.Parent, s.ParentID, s.Deliver = parentPane, parentID, false
-	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt}
+	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID}
 	return WriteAgentState(s)
 }
 

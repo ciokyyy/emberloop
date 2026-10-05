@@ -41,6 +41,9 @@ type ReviewTarget struct {
 	Type string `json:"type"`
 	Head string `json:"head"`
 	At   string `json:"at"`
+	// TreeID is the git tree of the exact content the reviewer judged,
+	// uncommitted and new files included.
+	TreeID string `json:"tree_id,omitempty"`
 }
 
 // agentStateDir holds one file per spawned agent.
