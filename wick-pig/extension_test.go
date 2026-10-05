@@ -161,3 +161,27 @@ func TestRenderStatusExplainsAllUnknownWorkers(t *testing.T) {
 		t.Errorf("nothing is pending, so nothing is unexplained, got %q", settled)
 	}
 }
+
+// reportExtensionWarning is the spawn-side counterpart to reportExtension: it
+// must warn only for the harness that needs the extension, and only when the
+// lookup really comes up empty.
+func TestReportExtensionWarning(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WICK_HERDR_REPORT", "")
+
+	if got := reportExtensionWarning("pig"); !strings.Contains(got, "unknown") {
+		t.Errorf("a pig spawn with no extension must warn, got %q", got)
+	}
+	if got := reportExtensionWarning("claude"); got != "" {
+		t.Errorf("only pig registers through the extension, got %q", got)
+	}
+
+	ext := filepath.Join(home, ".pig", "agent", "extensions", "herdr-report")
+	if err := os.MkdirAll(ext, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := reportExtensionWarning("pig"); got != "" {
+		t.Errorf("a found extension must not warn, got %q", got)
+	}
+}
