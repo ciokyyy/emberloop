@@ -554,7 +554,11 @@ func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created b
 		// closes it rather than leaking a pane-less tab.
 		return tab, "", true, fmt.Errorf("herdr tab create returned no pane for %q; raw: %.600s", id, reply.raw)
 	}
-	recordGridSlot(tab, 1, pane)
+	if err := recordGridSlot(tab, 1, pane); err != nil {
+		// The tab exists now, so report it as created: the caller's undo
+		// closes it rather than leaking a pane-less tab.
+		return tab, "", true, err
+	}
 	return tab, pane, true, nil
 }
 

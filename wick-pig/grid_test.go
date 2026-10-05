@@ -3,6 +3,8 @@ package wick
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -36,12 +38,31 @@ func newFakeGrid() *fakeGrid {
 	return g
 }
 
-// resetGrid forgets the slots of every earlier test: the registry is
-// process-wide, and the fakes reuse tab and pane ids.
+// defaultStatePath is the state path before any test moves it: spotting it
+// tells resetGrid the test has no state dir of its own.
+var defaultStatePath = statePath
+
+// gridIsolation is the throwaway state dir the grid tests file their slot
+// record under when they have none of their own.
+var gridIsolation string
+
+// resetGrid forgets the slots of every earlier test: the record is one locked
+// file per tab, so forgetting is deleting them. The first call also moves the
+// record off the real state dir, unless the test already pointed statePath at
+// a temp dir of its own, so the tests never read live state and never leave
+// files behind in it.
 func resetGrid() {
-	gridPlacedMu.Lock()
-	gridPlaced = map[string]map[int]string{}
-	gridPlacedMu.Unlock()
+	if statePath == defaultStatePath {
+		if gridIsolation == "" {
+			dir, err := os.MkdirTemp("", "wick-grid-test")
+			if err != nil {
+				panic(err)
+			}
+			gridIsolation = dir
+		}
+		statePath = filepath.Join(gridIsolation, "workers.json")
+	}
+	_ = os.RemoveAll(gridDir())
 }
 
 // newTab adds a tab with one pane, the caller's, and returns it.
@@ -582,5 +603,304 @@ func TestOverflowNumberRecognisesOnlyItsFamily(t *testing.T) {
 		if got := overflowNumber(tc.label, tc.base); got != tc.want {
 			t.Errorf("overflowNumber(%q, %q) = %d, want %d", tc.label, tc.base, got, tc.want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// cross-session placement (spec stories 31, 32, 33)
+// ---------------------------------------------------------------------------
+
+// Two sessions that place panes in the same tab at the same moment get
+// distinct grid slots: six helper processes place at once against the
+// file-backed fake herdr, released by the same start barrier with a slowed
+// fake so every one overlaps every other. On the unfixed code every session
+// reads the same pane list into its own process memory and takes slot 2.
+func TestGridPlacementSurvivesSimultaneousSessions(t *testing.T) {
+	oldState := statePath
+	stateFile := filepath.Join(t.TempDir(), "workers.json")
+	statePath = stateFile
+	t.Cleanup(func() { statePath = oldState })
+
+	herdrDir := t.TempDir()
+	t.Setenv("WICK_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("WICK_CONCURRENCY_STATE", stateFile)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	saveConcurrencyHerdr(concurrencyHerdrState{
+		Tabs:   map[string]string{"callers": "w1:t1"},
+		Labels: map[string]string{"w1:t1": "callers"},
+		Panes:  map[string][]string{"w1:t1": {"w1:p1"}},
+		Next:   1,
+	})
+
+	const n = 6
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("grid-%d", i+1)
+	}
+	results := runConcurrencyHelpersTogether(t, "grid-place", ids, map[string]string{
+		"WICK_CONCURRENCY_STATE":    stateFile,
+		"WICK_CONCURRENCY_HERDR":    herdrDir,
+		"WICK_CONCURRENCY_TAB":      "w1:t1",
+		"WICK_CONCURRENCY_OVERFLOW": "scouts",
+		"WICK_CONCURRENCY_DELAY_MS": "50",
+	}, nil)
+
+	slots := map[string]string{}
+	panes := map[string]string{}
+	for _, r := range results {
+		if r["pane"] == "" {
+			t.Errorf("helper %s owns no pane", r["id"])
+		}
+		if r["tab"] != "w1:t1" {
+			t.Errorf("helper %s landed in %s, want the shared tab w1:t1", r["id"], r["tab"])
+		}
+		if prev, dup := slots[r["slot"]]; dup {
+			t.Errorf("helpers %s and %s both took slot %s: one pane displaces the other", prev, r["id"], r["slot"])
+		}
+		slots[r["slot"]] = r["id"]
+		if prev, dup := panes[r["pane"]]; dup {
+			t.Errorf("helpers %s and %s share pane %s", prev, r["id"], r["pane"])
+		}
+		panes[r["pane"]] = r["id"]
+	}
+
+	st := loadConcurrencyHerdr()
+	if got := len(st.Panes["w1:t1"]); got != n+1 {
+		t.Errorf("the shared tab holds %d panes, want %d: a placement displaced another", got, n+1)
+	}
+	if len(st.Tabs) != 1 {
+		t.Errorf("concurrent placements opened %d tabs, want 1: %v", len(st.Tabs), st.Tabs)
+	}
+	raw, err := os.ReadFile(concurrencyHerdrCalls())
+	if err != nil {
+		t.Fatalf("read the fake herdr log: %v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "pane close") {
+			t.Errorf("a placement closed a pane another session owns: %s", line)
+		}
+	}
+}
+
+// Sessions overflowing at the same moment open only one overflow tab per
+// label: three helpers race for the last slot of one tab while two more
+// overflow from another, already full tab, all under the same label. The
+// tab lock alone serializes the three that share a tab, but the pair from
+// the other tab needs the overflow creation itself to be shared: on the
+// unfixed code both pairs create their own tab labelled scouts.
+func TestGridOverflowCreatesOneTabAcrossSessions(t *testing.T) {
+	oldState := statePath
+	stateFile := filepath.Join(t.TempDir(), "workers.json")
+	statePath = stateFile
+	t.Cleanup(func() { statePath = oldState })
+
+	herdrDir := t.TempDir()
+	t.Setenv("WICK_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("WICK_CONCURRENCY_STATE", stateFile)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	saveConcurrencyHerdr(concurrencyHerdrState{
+		Tabs:   map[string]string{"callers": "w1:t1", "other": "w1:t2"},
+		Labels: map[string]string{"w1:t1": "callers", "w1:t2": "other"},
+		Panes: map[string][]string{
+			"w1:t1": {"w1:p1", "w1:p2", "w1:p3", "w1:p4", "w1:p5", "w1:p6", "w1:p7", "w1:p8"},
+			"w1:t2": {"w1:q1", "w1:q2", "w1:q3", "w1:q4", "w1:q5", "w1:q6", "w1:q7", "w1:q8", "w1:q9"},
+		},
+		Next: 100,
+	})
+
+	ids := []string{"ov-t1-a", "ov-t1-b", "ov-t1-c", "ov-t2-a", "ov-t2-b"}
+	tabFor := map[string]string{
+		"ov-t1-a": "w1:t1", "ov-t1-b": "w1:t1", "ov-t1-c": "w1:t1",
+		"ov-t2-a": "w1:t2", "ov-t2-b": "w1:t2",
+	}
+	results := runConcurrencyHelpersTogether(t, "grid-place", ids, map[string]string{
+		"WICK_CONCURRENCY_STATE":    stateFile,
+		"WICK_CONCURRENCY_HERDR":    herdrDir,
+		"WICK_CONCURRENCY_OVERFLOW": "scouts",
+		"WICK_CONCURRENCY_DELAY_MS": "50",
+	}, tabFor)
+
+	placed := map[string]string{}
+	for _, r := range results {
+		if r["pane"] == "" {
+			t.Errorf("helper %s owns no pane", r["id"])
+		}
+		key := r["tab"] + " slot " + r["slot"]
+		if prev, dup := placed[key]; dup {
+			t.Errorf("helpers %s and %s both took %s: one pane displaces the other", prev, r["id"], key)
+		}
+		placed[key] = r["id"]
+	}
+
+	st := loadConcurrencyHerdr()
+	scouts := 0
+	for _, label := range st.Labels {
+		if label == "scouts" {
+			scouts++
+		}
+	}
+	if scouts != 1 {
+		t.Errorf("simultaneous overflows opened %d tabs labelled scouts, want 1", scouts)
+	}
+	if got := len(st.Panes["w1:t1"]); got != 9 {
+		t.Errorf("the raced tab holds %d panes, want 9", got)
+	}
+	raw, err := os.ReadFile(concurrencyHerdrCalls())
+	if err != nil {
+		t.Fatalf("read the fake herdr log: %v", err)
+	}
+	creates := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "pane close") {
+			t.Errorf("a placement closed a pane another session owns: %s", line)
+		}
+		if strings.Contains(line, "tab create") {
+			creates++
+		}
+	}
+	if creates != 1 {
+		t.Errorf("simultaneous overflows created %d tabs, want 1", creates)
+	}
+}
+
+// Sessions placing directly into an overflow tab and sessions overflowing
+// into it share that tab's record: three helpers replace into the scouts tab
+// itself while three more overflow into it from a full tab, all at once. The
+// overflow path must read and write the tab's record under that tab's own
+// lock, the way a direct placement does, or the two read-modify-write cycles
+// interleave, lose a slot entry, and let two panes take one slot. (A reviewer
+// replaced in an overflow tab places into it directly while another session
+// overflows into the same family.)
+func TestGridDirectAndOverflowPlacementsShareOneTab(t *testing.T) {
+	oldState := statePath
+	stateFile := filepath.Join(t.TempDir(), "workers.json")
+	statePath = stateFile
+	t.Cleanup(func() { statePath = oldState })
+
+	herdrDir := t.TempDir()
+	t.Setenv("WICK_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("WICK_CONCURRENCY_STATE", stateFile)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	saveConcurrencyHerdr(concurrencyHerdrState{
+		Tabs:   map[string]string{"callers": "w1:t1", "scouts": "w1:t3"},
+		Labels: map[string]string{"w1:t1": "callers", "w1:t3": "scouts"},
+		Panes: map[string][]string{
+			"w1:t1": {"w1:p1", "w1:p2", "w1:p3", "w1:p4", "w1:p5", "w1:p6", "w1:p7", "w1:p8", "w1:p9"},
+			"w1:t3": {"w1:r1"},
+		},
+		Next: 100,
+	})
+
+	ids := []string{"ov-d-a", "ov-d-b", "ov-d-c", "ov-o-a", "ov-o-b", "ov-o-c"}
+	tabFor := map[string]string{
+		"ov-d-a": "w1:t3", "ov-d-b": "w1:t3", "ov-d-c": "w1:t3",
+		"ov-o-a": "w1:t1", "ov-o-b": "w1:t1", "ov-o-c": "w1:t1",
+	}
+	results := runConcurrencyHelpersTogether(t, "grid-place", ids, map[string]string{
+		"WICK_CONCURRENCY_STATE":    stateFile,
+		"WICK_CONCURRENCY_HERDR":    herdrDir,
+		"WICK_CONCURRENCY_OVERFLOW": "scouts",
+		"WICK_CONCURRENCY_DELAY_MS": "50",
+	}, tabFor)
+
+	placed := map[string]string{}
+	for _, r := range results {
+		if r["pane"] == "" {
+			t.Errorf("helper %s owns no pane", r["id"])
+		}
+		if r["tab"] != "w1:t3" {
+			t.Errorf("helper %s landed in %s, want the shared overflow tab w1:t3", r["id"], r["tab"])
+		}
+		key := r["tab"] + " slot " + r["slot"]
+		if prev, dup := placed[key]; dup {
+			t.Errorf("helpers %s and %s both took %s: one pane displaces the other", prev, r["id"], key)
+		}
+		placed[key] = r["id"]
+	}
+
+	st := loadConcurrencyHerdr()
+	if got := len(st.Panes["w1:t3"]); got != 7 {
+		t.Errorf("the overflow tab holds %d panes, want 7: a placement displaced another", got)
+	}
+	raw, err := os.ReadFile(concurrencyHerdrCalls())
+	if err != nil {
+		t.Fatalf("read the fake herdr log: %v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "pane close") {
+			t.Errorf("a placement closed a pane another session owns: %s", line)
+		}
+		if strings.Contains(line, "tab create") {
+			t.Errorf("a placement opened a new tab while scouts still had room: %s", line)
+		}
+	}
+}
+
+// A corrupt slot record surfaces an error instead of silently reusing slots:
+// the placement fails loudly rather than displacing another pane.
+func TestGridCorruptRecordSurfacesError(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+
+	if err := os.MkdirAll(gridDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gridFile("w1:t9"), []byte("not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
+			return jsonReply(map[string]any{"panes": []any{
+				map[string]any{"pane_id": "w1:p9", "tab_id": "w1:t9"},
+			}}), nil
+		}
+		return Result{Stdout: "{}"}, nil
+	}
+	if _, err := gridSlots(run, "w1:t9"); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Errorf("gridSlots over a corrupt record = %v, want a corrupt-record error", err)
+	}
+	if _, err := placeInGrid(run, "w1:t9", "scouts", "/repo"); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Errorf("placeInGrid over a corrupt record = %v, want a corrupt-record error", err)
+	}
+}
+
+// A slot record that cannot be written reports the failure: the spawn fails
+// instead of running an agent in a pane the grid does not know.
+func TestRecordGridSlotReportsWriteFailure(t *testing.T) {
+	oldState := statePath
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statePath = filepath.Join(blocker, "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+
+	if err := recordGridSlot("w1:t9", 1, "w1:p9"); err == nil {
+		t.Error("recordGridSlot with an unwritable state dir = nil, want the write error")
+	}
+}
+
+// A placement into a claimed tab that filled up first reports placed=false
+// instead of forcing a pane in: the caller looks at its source tab again
+// before claiming again.
+func TestPlaceInExistingOverflowReportsAFullTab(t *testing.T) {
+	g := newFakeGrid()
+	tab := g.tabs[0]
+	for i := 0; i < 8; i++ {
+		if _, err := placeInGrid(g.run, tab.tab, "scouts", "/repo"); err != nil {
+			t.Fatalf("placement %d: %v", i+2, err)
+		}
+	}
+	before := len(tab.boxes())
+	gp, placed, err := placeInExistingOverflow(g.run, tab.tab, "/repo")
+	if err != nil {
+		t.Fatalf("placeInExistingOverflow: %v", err)
+	}
+	if placed {
+		t.Errorf("placeInExistingOverflow placed %s in a full tab", gp.Pane)
+	}
+	if got := len(tab.boxes()); got != before {
+		t.Errorf("the full tab holds %d panes after a refused placement, want %d", got, before)
 	}
 }
