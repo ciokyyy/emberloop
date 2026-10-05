@@ -112,3 +112,126 @@ func write(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// The printed slots name their value's source, so an unset slot reads as the
+// default in force and a stored one as the file's.
+func TestSettingsPrintsSlotsWithTheirSource(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"decision_model":"typesafe/jev-1.13","threshold":0.3,"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"high"}}}`)
+	var out bytes.Buffer
+	if err := runSettings(nil, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"typesafe/jev-1.13 (file)",
+		"0.3 (file)",
+		"orchestrator: harness claude (file), model opus (file), effort high (file)",
+		"implementer: harness pig (default), model - (default), effort - (default)",
+		"scout: harness pig (default), model - (default), effort - (default)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("settings output does not mention %q:\n%s", want, got)
+		}
+	}
+	for _, slot := range []string{"orchestrator", "implementer", "code-review", "spec-review", "scout"} {
+		if !strings.Contains(got, slot+":") {
+			t.Errorf("settings output omits the %s slot:\n%s", slot, got)
+		}
+	}
+}
+
+func TestSettingsSetsRoleFields(t *testing.T) {
+	p := settingsFile(t)
+	cases := []struct {
+		argv []string
+		want tools.Role
+	}{
+		{[]string{"role", "scout", "harness", "claude"}, tools.Role{Harness: "claude"}},
+		{[]string{"role", "scout", "model", "haiku"}, tools.Role{Harness: "claude", Model: "haiku"}},
+		{[]string{"role", "scout", "effort", "low"}, tools.Role{Harness: "claude", Model: "haiku", Effort: "low"}},
+	}
+	var out bytes.Buffer
+	for _, c := range cases {
+		if err := runSettings(c.argv, &out, noModels); err != nil {
+			t.Fatalf("%v: %v", c.argv, err)
+		}
+		if got := tools.LoadSettings().Roles["scout"]; got != c.want {
+			t.Fatalf("after %v scout is %+v, want %+v", c.argv, got, c.want)
+		}
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("role settings were not written to %s: %v", p, err)
+	}
+}
+
+// A model and effort chosen for one harness mean nothing to another, so a
+// harness change clears them.
+func TestSettingsChangingRoleHarnessClearsModelAndEffort(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"m","effort":"high"}}}`)
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"]; got != (tools.Role{Harness: "claude"}) {
+		t.Fatalf("harness change left %+v, want only the harness", got)
+	}
+}
+
+// Setting the harness it already has is not a change, so it keeps model and
+// effort.
+func TestSettingsSamenessKeepsModelAndEffort(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"high"}}}`)
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"]; got != (tools.Role{Harness: "claude", Model: "opus", Effort: "high"}) {
+		t.Fatalf("same-harness set changed %+v", got)
+	}
+}
+
+func TestSettingsRejectsAnUnknownSlot(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	err := runSettings([]string{"role", "worker", "model", "m"}, &out, noModels)
+	if err == nil || !strings.Contains(err.Error(), "role slot") {
+		t.Fatalf("unknown slot must fail naming the slot, got %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected slot must not be saved")
+	}
+}
+
+func TestSettingsRejectsAnUnknownHarness(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	err := runSettings([]string{"role", "orchestrator", "harness", "gemini"}, &out, noModels)
+	if err == nil || !strings.Contains(err.Error(), "harness") {
+		t.Fatalf("unknown harness must fail naming the harness, got %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected harness must not be saved")
+	}
+}
+
+func TestSettingsRejectsAnUnknownRoleField(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "temperature", "0.5"}, &out, noModels); err == nil {
+		t.Fatal("an unknown role field should fail")
+	}
+}
+
+func TestSettingsRolePrintsTheNewValue(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "spec-review", "model", "opus"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "spec-review: harness pig (default), model opus (file)") {
+		t.Fatalf("output %q does not confirm the new model with its source", out.String())
+	}
+}

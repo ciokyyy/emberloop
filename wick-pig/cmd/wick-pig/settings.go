@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
+	"example.com/wick"
 	"example.com/wick/tools"
 	"example.com/wick/tools/systemone"
 )
 
 // settingsUsage is printed on an unknown subcommand and on a bad argument.
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|models]`
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|models]
+       wick-pig settings role <slot> harness|model|effort <value>`
 
 // defaultThreshold is find's passage cutoff when nothing is stored.
 const defaultThreshold = 0.20
+
+// defaultHarness is the harness a slot with nothing stored launches with.
+const defaultHarness = "pig"
 
 // runSettings serves the settings subcommand. argv is empty to print what is in
 // force; models is a function value so a test lists ids without a network call.
@@ -39,6 +45,10 @@ func runSettings(argv []string, out io.Writer, models func() ([]string, error)) 
 			return fmt.Errorf("threshold %q is not a number above zero\n%s", argv[1], settingsUsage)
 		}
 		s.Threshold = v
+	case "role":
+		if err := setRole(&s, argv[1:]); err != nil {
+			return err
+		}
 	case "models":
 		ids, err := models()
 		if err != nil {
@@ -58,20 +68,74 @@ func runSettings(argv []string, out io.Writer, models func() ([]string, error)) 
 	return nil
 }
 
+// setRole applies `role <slot> harness|model|effort <value>` to s. A harness
+// change clears the model and effort: they were chosen for the old harness and
+// ticket 02 is what re-checks whether the new one supports them.
+func setRole(s *tools.Settings, argv []string) error {
+	if len(argv) < 3 {
+		return fmt.Errorf("role needs a slot, a field and a value\n%s", settingsUsage)
+	}
+	slot, field, value := argv[0], argv[1], argv[2]
+	if !tools.IsRoleSlot(slot) {
+		return fmt.Errorf("unknown role slot %q (have %s)\n%s", slot, strings.Join(tools.RoleSlots, ", "), settingsUsage)
+	}
+	if s.Roles == nil {
+		s.Roles = map[string]tools.Role{}
+	}
+	role := s.Roles[slot]
+	switch field {
+	case "harness":
+		if wick.Registered(value) == nil {
+			return fmt.Errorf("unknown harness %q (have %s)", value, strings.Join(wick.HarnessNames(), ", "))
+		}
+		if value != role.Harness {
+			role.Model, role.Effort = "", ""
+		}
+		role.Harness = value
+	case "model":
+		role.Model = value
+	case "effort":
+		role.Effort = value
+	default:
+		return fmt.Errorf("unknown role field %q (have harness, model, effort)\n%s", field, settingsUsage)
+	}
+	s.Roles[slot] = role
+	return nil
+}
+
 // printSettings shows the stored choices, or the default in force when one is
-// unset. The env overrides already won inside LoadSettings.
+// unset, and where each value came from. The env overrides already won inside
+// LoadSettings.
 func printSettings(out io.Writer, s tools.Settings) {
-	model := s.DecisionModel
-	if model == "" {
-		model = fmt.Sprintf("(%s, the default)", systemone.JevModelPinned)
-	}
-	threshold := s.Threshold
-	if threshold == 0 {
-		threshold = defaultThreshold
-	}
 	fmt.Fprintf(out, "settings: %s\n", tools.SettingsPath())
-	fmt.Fprintf(out, "decision-model: %s\n", model)
-	fmt.Fprintf(out, "threshold: %g\n", threshold)
+	fmt.Fprintf(out, "decision-model: %s (%s)\n", orDefault(s.DecisionModel, systemone.JevModelPinned), s.SourceOf("decision_model"))
+	fmt.Fprintf(out, "threshold: %g (%s)\n", orDefault(s.Threshold, defaultThreshold), s.SourceOf("threshold"))
+	for _, slot := range tools.RoleSlots {
+		r := s.Roles[slot]
+		fmt.Fprintf(out, "%s: harness %s (%s), model %s (%s), effort %s (%s)\n",
+			slot,
+			orDefault(r.Harness, defaultHarness), sourceOf(r.Harness),
+			orDefault(r.Model, "-"), sourceOf(r.Model),
+			orDefault(r.Effort, "-"), sourceOf(r.Effort))
+	}
+}
+
+// sourceOf is where a role field came from: the file owns any value it holds,
+// and an unset field is the built-in default.
+func sourceOf(value string) string {
+	if value == "" {
+		return "default"
+	}
+	return "file"
+}
+
+// orDefault returns value, or the fallback when value is zero.
+func orDefault[T comparable](value, fallback T) T {
+	var zero T
+	if value == zero {
+		return fallback
+	}
+	return value
 }
 
 // listModels is the live id source for `settings models`.
