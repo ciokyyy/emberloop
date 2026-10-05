@@ -70,29 +70,32 @@ func DecideGate(in GateInput) GateDecision {
 	case in.Blocked >= gateMaxBlocks:
 		return GateDecision{Outcome: GateGiveUp}
 	case in.Blocked == gateMaxBlocks-1:
-		outcome := GateBlock
 		if in.CanPin {
-			outcome = GatePin
+			return GateDecision{Outcome: GatePin, Reminder: gateReminder(gateMaxBlocks) + gatePinned}
 		}
-		return GateDecision{Outcome: outcome, Reminder: gateReminder(gateMaxBlocks)}
+		return GateDecision{Outcome: GateBlock, Reminder: gateReminder(gateMaxBlocks) + gateLastBlock}
 	default:
 		return GateDecision{Outcome: GateBlock, Reminder: gateReminder(in.Blocked + 1)}
 	}
 }
 
+// gateLastBlock is claude's 3rd block. claude cannot pin a tool, so the 3rd
+// block only says it is the last.
+const gateLastBlock = " This is the last reminder; call submit now or your turn will be allowed to end."
+
+// gatePinned is the 3rd block where the harness pins the submit tool: the turn
+// will not be allowed to end until submit is called.
+const gatePinned = " Submit now: submit is pinned as your next tool call."
+
 // gateReminder is omp's yield reminder: the attempt, why every turn ends with a
-// tool call, and the choices in order, first applicable first. The last one
-// says it is the last, which is what a harness that cannot pin relies on.
+// tool call, and the choices in order, first applicable first. The caller adds
+// the 3rd attempt's suffix, which differs by what the harness can enforce.
 func gateReminder(n int) string {
-	last := ""
-	if n >= gateMaxBlocks {
-		last = " This is the last reminder; call submit now or your turn will be allowed to end."
-	}
 	return fmt.Sprintf("Your previous turn ended without calling submit (reminder %d of %d). "+
 		"Every turn ends with a tool call. Keep working — that is the default, not an order to stop. "+
 		"Call submit with a final status only when the work is genuinely complete, "+
 		"or with blocked only for a real, nameable blocker. "+
-		"Never invent a blocker. Never end a turn with text only.%s", n, gateMaxBlocks, last)
+		"Never invent a blocker. Never end a turn with text only.", n, gateMaxBlocks)
 }
 
 // StopHook is the subset of claude's `Stop` hook JSON the gate reads.
@@ -155,10 +158,6 @@ func RunStopGate(in io.Reader, out io.Writer) error {
 // caller enforces what the decision leaves: claude writes block JSON, pig
 // continues the agent.
 func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) (GateDecision, error) {
-	st, _, err := ReadAgentState(id)
-	if err != nil {
-		return GateDecision{}, err
-	}
 	// stop_hook_active false is a fresh turn (a tell, a delivered notice), so
 	// the attempt count starts over.
 	if fresh {
@@ -192,7 +191,7 @@ func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) 
 		if err := writeGateBlocked(id, 0); err != nil {
 			return d, err
 		}
-		return d, giveUpWithoutSubmit(id, st, lastMessage())
+		return d, giveUpWithoutSubmit(id, lastMessage())
 	default:
 		return d, writeGateBlocked(id, blocked+1)
 	}
@@ -222,24 +221,35 @@ func stopExcerpt(hook StopHook) string {
 // giveUpWithoutSubmit lets the stop through after the last block and reports
 // the agent to its parent the way a submit would: delivered as a notice for a
 // non-blocking agent, returned by the waiting spawn for a blocking one.
-func giveUpWithoutSubmit(id string, st AgentState, excerpt string) error {
+func giveUpWithoutSubmit(id, excerpt string) error {
 	typ := os.Getenv("WICK_AGENT_TYPE")
 	if typ == "" {
+		st, _, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
 		typ = st.Type
 	}
 	s := AgentSubmit{
-		AgentID:  id,
-		Type:     typ,
-		Status:   "stopped",
-		Report:   "stopped without submitting: " + excerpt,
-		Stopped:  true,
-		At:       time.Now().UTC().Format(time.RFC3339),
-		ThisTurn: false,
+		AgentID: id,
+		Type:    typ,
+		Status:  "stopped",
+		Report:  "stopped without submitting: " + excerpt,
+		Stopped: true,
+		At:      time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := WriteAgentSubmit(s); err != nil {
 		return err
 	}
-	if st.Deliver {
+	// Who owns the result is decided under the child's lock, after the submit
+	// exists, exactly as submitRun does: a spawn that auto-backgrounded the
+	// agent first leaves Deliver set, so the give-up goes out as a notice; one
+	// that runs afterwards sees the submit and leaves it to the waiting spawn.
+	st, deliver, err := submitDelivers(id)
+	if err != nil {
+		return err
+	}
+	if deliver {
 		return deliverToParent(st, stoppedNotice(typ, id, excerpt))
 	}
 	return nil

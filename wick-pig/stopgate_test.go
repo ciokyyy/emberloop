@@ -52,9 +52,47 @@ func TestGateReminderNumberingAndWording(t *testing.T) {
 			t.Errorf("reminder missing %q:\n%s", want, blocked)
 		}
 	}
-	// claude cannot pin a tool, so its 3rd block is its last.
+	// claude cannot pin a tool, so its 3rd block is its last and says so.
 	if last := DecideGate(GateInput{Blocked: 2}).Reminder; !strings.Contains(last, "last") {
 		t.Errorf("the 3rd claude block must say it is the last: %q", last)
+	}
+	// A harness that can pin does not claim the turn will be allowed to end: it
+	// forces submit instead.
+	pinned := DecideGate(GateInput{Blocked: 2, CanPin: true}).Reminder
+	if !strings.Contains(pinned, "pinned") || strings.Contains(pinned, "allowed to end") {
+		t.Errorf("the pinned reminder must reflect the pin, got %q", pinned)
+	}
+}
+
+// The harness reports whether it can pin the submit tool, which is what decides
+// the pin on the 3rd attempt.
+func TestHarnessGateCapability(t *testing.T) {
+	if g := Registered("pig").Gate(); g == nil || !g.CanPin() {
+		t.Error("pig pins tool_choice at the API level")
+	}
+	if g := Registered("claude").Gate(); g == nil || g.CanPin() {
+		t.Error("claude cannot pin a tool")
+	}
+}
+
+// The excerpt from the hook is preferred; a hook that omits it falls back to
+// the transcript, and a long message is bounded to one line.
+func TestStopExcerptPrefersTheHookFallsBackAndTruncates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	recLine := `{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"the last word"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(recLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := stopExcerpt(StopHook{TranscriptPath: path}); got != "the last word" {
+		t.Errorf("with no hook message the excerpt must come from the transcript, got %q", got)
+	}
+	if got := stopExcerpt(StopHook{LastAssistantMessage: "from the hook", TranscriptPath: path}); got != "from the hook" {
+		t.Errorf("the hook message must win, got %q", got)
+	}
+	long := strings.Repeat("x", stopExcerptLimit+50)
+	got := stopExcerpt(StopHook{LastAssistantMessage: long})
+	if len([]rune(got)) != stopExcerptLimit+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("a long message must be cut to %d runes and elided, got %d runes", stopExcerptLimit, len([]rune(got)))
 	}
 }
 
@@ -132,8 +170,8 @@ func TestStopGateRemindsThenGivesUpWithANotice(t *testing.T) {
 	}
 }
 
-// A blocking agent's give-up is its result in the waiting spawn, not a pane
-// notice.
+// A blocking agent's give-up is recorded as its result and never typed into a
+// pane; the waiting spawn is what returns it.
 func TestStopGateGiveUpBecomesTheWaitingSpawnResult(t *testing.T) {
 	rec := spawnAgent(t, false)
 	for i := 0; i < 4; i++ {
@@ -146,9 +184,90 @@ func TestStopGateGiveUpBecomesTheWaitingSpawnResult(t *testing.T) {
 	if err != nil || !ok || !s.Stopped {
 		t.Fatalf("the give-up must be recorded as a stopped result: %+v ok=%v err=%v", s, ok, err)
 	}
-	got := renderSpawn([]*spawnedAgent{{ID: "w1", Type: AgentType{Name: "worker", Blocking: true}}}, nil)
-	if !strings.Contains(got, "stopped without submitting: out of ideas") {
-		t.Errorf("the waiting spawn must return the stopped result, got %q", got)
+	if s.Report != "stopped without submitting: out of ideas" {
+		t.Errorf("the stopped result must carry the excerpt, got %q", s.Report)
+	}
+}
+
+// A blocking agent that gives up is returned by the waiting spawn as its
+// result, never typed into a pane.
+func TestBlockingGiveUpIsReturnedByTheWaitingSpawn(t *testing.T) {
+	spawnTestState(t)
+	t.Setenv("WICK_AGENT_TYPE", "scout")
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
+	oldDeliver := deliverExec
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
+	spawnExec = giveUpExec{g: g}.run
+
+	spawn, _ := spawnToolForRole(t, "implement")
+	out, err := spawn("/repo", map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "answer"},
+	}})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if !strings.Contains(out, "stopped without submitting: gave up") {
+		t.Errorf("the waiting spawn must return the stopped result, got:\n%s", out)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("a blocking agent's give-up must not be typed, got %v", rec.calls)
+	}
+}
+
+// giveUpExec plays a scout that never submits: the moment its pane starts it
+// writes the stopped result the stop gate gives up with, so the waiting spawn
+// must return that instead of a report.
+type giveUpExec struct{ g *fakeGrid }
+
+func (e giveUpExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "run" {
+		if err := giveUpWithoutSubmit(envIn(args[3], "WICK_AGENT_ID"), "gave up"); err != nil {
+			return Result{}, err
+		}
+		return Result{Stdout: "{}"}, nil
+	}
+	return e.g.run(cmd, args, opts)
+}
+
+// The give-up and a spawn's auto-background decide ownership under the child's
+// lock: whichever runs first owns the result, so the parent always hears.
+func TestGiveUpOwnershipIsDecidedUnderTheLock(t *testing.T) {
+	deliverTestState(t)
+	t.Setenv("WICK_AGENT_TYPE", "scout")
+	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
+	deliverExec = rec.run
+
+	// The spawn backgrounded the agent first: its give-up goes out as a notice.
+	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", ParentID: "p", Parent: "pP"}); err != nil {
+		t.Fatal(err)
+	}
+	if bg, err := backgroundAgent("a1"); err != nil || !bg {
+		t.Fatalf("background: %v bg=%v", err, bg)
+	}
+	if err := giveUpWithoutSubmit("a1", "lost"); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("a backgrounded agent's give-up must be delivered as a notice, got %v", rec.calls)
+	}
+
+	// The give-up wrote first: the waiting spawn owns it, nothing is typed.
+	rec2 := &recorder{reply: func(string, []string) Result { return Result{} }}
+	deliverExec = rec2.run
+	if err := WriteAgentState(AgentState{ID: "a2", Type: "scout", ParentID: "p", Parent: "pP"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := giveUpWithoutSubmit("a2", "lost"); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec2.calls) != 0 {
+		t.Fatalf("a waiting spawn's give-up must not be typed, got %v", rec2.calls)
+	}
+	if s, ok, _ := ReadAgentSubmit("a2"); !ok || !s.Stopped {
+		t.Errorf("the waiting spawn must find the stopped result: %+v ok=%v", s, ok)
 	}
 }
 
