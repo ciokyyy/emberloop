@@ -74,3 +74,24 @@ func TestCheckTurnLeavesRunningAlone(t *testing.T) {
 		t.Errorf("state %s", s)
 	}
 }
+
+func TestWaitReportsGonePaneAsFailed(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	save(map[string]Worker{"g": {ID: "g", Pane: "x:p1", Started: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)}})
+	run := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		if args[0] == "pane" {
+			return Result{Stdout: `{"error":{"code":"pane_not_found"}}`, Code: 1}, nil
+		}
+		return Result{Stdout: `{"result":{"agents":[]}}`}, nil
+	}
+	got, pending, err := Wait(run, []string{"g"}, 0)
+	if err != nil || len(pending) != 0 || got[0].State != "failed" {
+		t.Errorf("got %+v pending %v err %v", got, pending, err)
+	}
+	// still booting: not listed yet, young record
+	save(map[string]Worker{"g": {ID: "g", Pane: "x:p1", Started: time.Now().UTC().Format(time.RFC3339)}})
+	got, pending, _ = Wait(run, []string{"g"}, 0)
+	if got[0].State != "unknown" || len(pending) != 1 {
+		t.Errorf("young worker: %+v pending %v", got, pending)
+	}
+}

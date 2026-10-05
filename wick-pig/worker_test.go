@@ -23,6 +23,11 @@ func TestExecSeamReachesHerdr(t *testing.T) {
 	if _, err := exec.LookPath("herdr"); err != nil {
 		t.Skip("herdr not on PATH")
 	}
+	// It splits and closes real panes, and from inside a herdr session it can
+	// take a running worker's own pane down with it.
+	if os.Getenv("WICK_LIVE_HERDR") == "" {
+		t.Skip("set WICK_LIVE_HERDR=1 to run against a real herdr")
+	}
 	res, err := osExec("herdr", []string{"--version"}, ExecOpts{})
 	t.Logf("code=%d err=%v stdout=%q stderr=%q", res.Code, err, res.Stdout, res.Stderr)
 	if err != nil {

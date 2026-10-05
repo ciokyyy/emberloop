@@ -412,7 +412,10 @@ func Wait(run Exec, ids []string, timeout time.Duration) ([]Status, []string, er
 				// Naming it makes `herdr agent get <id>` resolve.
 				_, _ = herdrJSON(run, []string{"agent", "rename", w.Pane, herdrName(w.ID)}, 30*time.Second)
 			}
-			if contains(settled, state) {
+			if !ok && paneGone(run, w) {
+				state, detail = "failed", "pane is gone: the worker was closed or its herdr workspace died"
+			}
+			if contains(settled, state) && state != "failed" {
 				state, detail = checkTurn(run, w, state, detail)
 			}
 			out = append(out, Status{
@@ -564,3 +567,19 @@ func checkTurn(run Exec, w Worker, state, detail string) (string, string) {
 	}
 	return "retrying", why
 }
+
+// paneGone reports a worker whose pane no longer exists. An unlisted pane is
+// normal for the first seconds after spawn, while the agent boots, so only a
+// worker older than spawnGrace counts, and only when herdr itself says the pane
+// is not found rather than failing for some other reason.
+func paneGone(run Exec, w Worker) bool {
+	started, err := time.Parse(time.RFC3339, w.Started)
+	if err != nil || time.Since(started) < spawnGrace {
+		return false
+	}
+	res, err := run(herdrBin(), []string{"pane", "get", w.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	return err == nil && strings.Contains(res.Stdout+res.Stderr, "pane_not_found")
+}
+
+// spawnGrace is how long a worker may stay unlisted before its absence counts.
+var spawnGrace = 30 * time.Second
