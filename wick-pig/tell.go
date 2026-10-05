@@ -1,6 +1,7 @@
 package wick
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -36,6 +37,12 @@ func answersTell(s AgentSubmit) bool { return s.ThisTurn || s.Stopped }
 // outlasts the tool budget auto-backgrounds the agent, so its result arrives as
 // a notice and the caller ends its turn instead of waiting.
 func tellAgent(run Exec, id, text string) (string, error) {
+	return tellAgentCtx(context.Background(), run, id, text)
+}
+
+// tellAgentCtx is tellAgent for a call the harness can cancel: a cancelled wait
+// hands the answer to the notice path like a wait that ran out of budget.
+func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error) {
 	st, ok, err := ReadAgentState(id)
 	if err != nil {
 		return "", err
@@ -75,10 +82,13 @@ func tellAgent(run Exec, id, text string) (string, error) {
 		if s, ok, _ := ReadAgentSubmit(id); ok && answersTell(s) {
 			return renderSubmit(s), nil
 		}
-		if !time.Now().Before(deadline) {
+		if !time.Now().Before(deadline) || ctx.Err() != nil {
 			break
 		}
-		time.Sleep(pollEvery)
+		select {
+		case <-ctx.Done():
+		case <-time.After(pollEvery):
+		}
 	}
 
 	bg, err := backgroundToldAgent(id)

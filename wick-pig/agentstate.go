@@ -107,6 +107,23 @@ func backgroundAgent(id string) (bool, error) {
 	return backgrounded, err
 }
 
+// handOffToNotices gives a blocking child's result to the notice path for a
+// caller that has gone: still running, it is backgrounded so its submit is
+// delivered; already submitted and unread, the submit is delivered now.
+func handOffToNotices(id string) {
+	bg, err := backgroundAgent(id)
+	if err != nil || bg {
+		return
+	}
+	s, ok, err := ReadAgentSubmit(id)
+	if err != nil || !ok || !s.ThisTurn {
+		return
+	}
+	if st, ok, _ := ReadAgentState(id); ok {
+		_ = deliverSubmit(s, st)
+	}
+}
+
 // claimNextSubmit takes a blocking child's next submit for a waiting tell: it
 // points the child's result at the caller rather than the notice path, and
 // clears its last submit's this-turn and give-up flags so only a fresh turn's

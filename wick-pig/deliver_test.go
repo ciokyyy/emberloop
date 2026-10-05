@@ -247,3 +247,30 @@ func TestBackgroundAgentLeavesASubmittedChildAlone(t *testing.T) {
 		t.Errorf("a backgrounded agent must have Deliver set: %+v ok=%v", st, ok)
 	}
 }
+
+// A caller that has gone (a cancelled call) leaves nobody to read a blocking
+// agent's result: one still running is backgrounded so its submit is
+// delivered, and one that already submitted has its result delivered now.
+func TestHandOffToNoticesCoversRunningAndAlreadySubmitted(t *testing.T) {
+	deliverTestState(t)
+	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
+	deliverExec = rec.run
+	for _, id := range []string{"running", "finished"} {
+		if err := WriteAgentState(AgentState{ID: id, Type: "reviewer-standards", Parent: "wP", ParentID: "p"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: "finished", Type: "reviewer-standards", Status: "pass", Report: "all good", ThisTurn: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	handOffToNotices("running")
+	handOffToNotices("finished")
+
+	if st, _, _ := ReadAgentState("running"); !st.Deliver {
+		t.Error("a still-running agent must be backgrounded so its submit is delivered")
+	}
+	if len(rec.calls) != 1 || !strings.Contains(strings.Join(rec.calls[0], " "), "finished") {
+		t.Errorf("only the already-submitted result is delivered now, got %v", rec.calls)
+	}
+}

@@ -435,6 +435,16 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 		if prev.Verdict == verdictPass && samePassState(prev, p) {
 			return nil, nil
 		}
+		// The reviewer already judged exactly this state and asked for
+		// changes: a spawn that lost the first answer (a cancelled call, a
+		// restarted harness) gets that answer back, not a second review.
+		if prev.Verdict != "" && p.note == "" && samePassState(prev, p) {
+			if s, ok, _ := ReadAgentSubmit(prev.SessionID); ok && s.Status == prev.Verdict {
+				agent := prev.agent()
+				return &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab, Reused: true,
+					Notice: "(this reviewer already judged exactly this state; its answer is repeated, not re-reviewed)"}, nil
+			}
+		}
 		return followUpReviewer(run, p, t, prev, parentPane, parentID)
 	}
 	return freshReviewer(run, p, t, prev, had, parentPane, parentID)

@@ -80,6 +80,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, root string, served
 
 	var calls sync.WaitGroup
 	defer calls.Wait()
+	inflight := &inflightCalls{cancels: map[string]context.CancelFunc{}}
 
 	frames := bufio.NewScanner(in)
 	frames.Buffer(make([]byte, 0, 64*1024), maxFrameBytes)
@@ -94,22 +95,69 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, root string, served
 			continue
 		}
 		if req.ID == nil {
-			continue // a notification is never answered
+			// A notification is never answered. A cancellation ends the call
+			// it names, so a tool waiting on an agent stops waiting and hands
+			// that agent's result to the notice path instead of to a caller
+			// that has already gone.
+			if req.Method == "notifications/cancelled" {
+				var p struct {
+					RequestID json.RawMessage `json:"requestId"`
+				}
+				if json.Unmarshal(req.Params, &p) == nil {
+					inflight.cancel(string(p.RequestID))
+				}
+			}
+			continue
 		}
 		switch req.Method {
 		case "tools/call":
 			// A call can block for minutes (a blocking spawn or tell);
 			// ping and list must still be answered meanwhile.
 			calls.Add(1)
+			callCtx, cancel := context.WithCancel(ctx)
+			key := string(req.ID)
+			inflight.add(key, cancel)
 			go func() {
 				defer calls.Done()
-				s.call(ctx, req)
+				defer inflight.done(key)
+				s.call(callCtx, req)
 			}()
 		default:
 			s.handle(req)
 		}
 	}
 	return frames.Err()
+}
+
+// inflightCalls maps a request id to the cancel of its running tool call.
+type inflightCalls struct {
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
+}
+
+func (f *inflightCalls) add(id string, cancel context.CancelFunc) {
+	f.mu.Lock()
+	f.cancels[id] = cancel
+	f.mu.Unlock()
+}
+
+func (f *inflightCalls) cancel(id string) {
+	f.mu.Lock()
+	c := f.cancels[id]
+	f.mu.Unlock()
+	if c != nil {
+		c()
+	}
+}
+
+func (f *inflightCalls) done(id string) {
+	f.mu.Lock()
+	c := f.cancels[id]
+	delete(f.cancels, id)
+	f.mu.Unlock()
+	if c != nil {
+		c()
+	}
 }
 
 func (s *server) handle(req request) {

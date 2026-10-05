@@ -1,6 +1,7 @@
 package wick
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -98,8 +99,8 @@ func spawnToolFor(types map[string]AgentType, allowed []string) tools.Tool {
 		desc:     spawnDescription(types, allowed),
 		schema:   spawnSchema(),
 		readOnly: false,
-		run: func(root string, params map[string]any) (string, error) {
-			return runSpawn(root, types, allowed, params)
+		runCtx: func(ctx context.Context, root string, params map[string]any) (string, error) {
+			return runSpawnCtx(ctx, root, types, allowed, params)
 		},
 	}
 }
@@ -149,6 +150,10 @@ func spawnSchema() map[string]any {
 }
 
 func runSpawn(root string, types map[string]AgentType, allowed []string, params map[string]any) (string, error) {
+	return runSpawnCtx(context.Background(), root, types, allowed, params)
+}
+
+func runSpawnCtx(ctx context.Context, root string, types map[string]AgentType, allowed []string, params map[string]any) (string, error) {
 	reqs, err := spawnRequests(params)
 	if err != nil {
 		return "", err
@@ -167,7 +172,7 @@ func runSpawn(root string, types map[string]AgentType, allowed []string, params 
 			return "", fmt.Errorf("agents[%d].prompt is required", i)
 		}
 	}
-	return spawnAgents(spawnExec, root, types, reqs)
+	return spawnAgentsCtx(ctx, spawnExec, root, types, reqs)
 }
 
 func spawnRequests(params map[string]any) ([]spawnRequest, error) {
@@ -229,6 +234,14 @@ type spawnedAgent struct {
 // backgrounded: their submits are delivered as notices, so the caller never
 // calls the tool again.
 func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawnRequest) (string, error) {
+	return spawnAgentsCtx(context.Background(), run, root, types, reqs)
+}
+
+// spawnAgentsCtx is spawnAgents for a call the harness can cancel. When ctx
+// ends during the wait, nobody is left to read the result: every blocking agent
+// is handed to the notice path at once, and one that already submitted has its
+// result delivered now, so a cancelled call never strands a finished review.
+func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string]AgentType, reqs []spawnRequest) (string, error) {
 	// Reject the whole call before launching anything: a spawn that fails part
 	// way leaves panes a parent never learned the ids of.
 	for _, r := range reqs {
@@ -327,10 +340,21 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 		return fmt.Sprintf("every reviewer passed at %s; nothing to review.", short(review.head)), nil
 	}
 	for {
-		if allSubmitted(agents) || !time.Now().Before(deadline) {
+		if allSubmitted(agents) || !time.Now().Before(deadline) || ctx.Err() != nil {
 			break
 		}
-		time.Sleep(pollEvery)
+		select {
+		case <-ctx.Done():
+		case <-time.After(pollEvery):
+		}
+	}
+	if ctx.Err() != nil {
+		for _, a := range agents {
+			if a.Type.Blocking {
+				handOffToNotices(a.ID)
+			}
+		}
+		return "the call was cancelled; each agent's result will arrive as a system notice.", nil
 	}
 
 	// Whatever blocking agent is still out became backgrounded: from now on
