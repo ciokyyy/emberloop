@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -795,7 +796,7 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 				if files != "" {
 					detail += " in " + files
 				} else {
-					detail += ": " + firstLine(res.Stderr, "rebase failed")
+					detail += ": " + gitFullText(res.Stderr, "rebase failed")
 				}
 				r, err := kept(detail + "; the rebase was aborted, the branch is unchanged")
 				out = r
@@ -814,10 +815,41 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 				}
 			}
 
+			// The integration checkout may hold uncommitted work of its own: the
+			// orchestrator's notes and ticket edits. That is fine unless it
+			// overlaps what the merge would change, in which case git would
+			// refuse halfway with its own error. Refuse up front instead, naming
+			// the files, so the orchestrator knows to commit or stash them.
+			// -uall lists untracked files individually: the default collapses a
+			// wholly-untracked directory to `dir/`, which never matches an
+			// incoming `dir/file` the merge would overwrite.
+			if res, err := run("git", []string{"status", "--porcelain", "-uall"}, ExecOpts{Cwd: w.Repo}); err == nil && res.Code == 0 {
+				if dirty := porcelainFiles(res.Stdout); len(dirty) > 0 {
+					if diff, err := run("git", []string{"diff", "--name-only", onto + "..." + w.Branch}, ExecOpts{Cwd: w.Repo}); err == nil && diff.Code == 0 {
+						incoming := map[string]bool{}
+						for _, f := range strings.Fields(diff.Stdout) {
+							incoming[strings.Trim(strings.TrimSpace(f), `"`)] = true
+						}
+						var overlap []string
+						for _, f := range dirty {
+							if incoming[f] {
+								overlap = append(overlap, f)
+							}
+						}
+						if len(overlap) > 0 {
+							sort.Strings(overlap)
+							r, err := kept(fmt.Sprintf("the integration checkout has uncommitted changes overlapping the incoming change in %s; commit or stash them and finish again", strings.Join(overlap, ", ")))
+							out = r
+							return err
+						}
+					}
+				}
+			}
+
 			if res, err := run("git", []string{"merge", "--ff-only", w.Branch}, ExecOpts{Cwd: w.Repo}); err != nil {
 				return err
 			} else if res.Code != 0 {
-				r, err := kept(firstLine(res.Stderr, "merge failed"))
+				r, err := kept(gitFullText(res.Stderr, "merge failed"))
 				out = r
 				return err
 			}
@@ -858,7 +890,7 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 			ExecOpts{Cwd: w.Repo, Timeout: 60 * time.Second}); err != nil {
 			return err
 		} else if res.Code != 0 {
-			return fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
+			return fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, gitFullText(res.Stderr, "unknown error"))
 		}
 		// The worker's per-session files go with it: the MCP config and the
 		// launch file `wick-pig exec` read at startup. Either is already gone when
@@ -883,4 +915,39 @@ func firstLine(text, fallback string) string {
 		return strings.SplitN(trimmed, "\n", 2)[0]
 	}
 	return fallback
+}
+
+// gitFullText passes git's own error text through whole, never truncated, so a
+// refusal says why. Empty text falls back, so the reply still says something.
+func gitFullText(text, fallback string) string {
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
+// porcelainFiles lists the paths `git status --porcelain` reports as dirty, in
+// the repo-relative form `git diff --name-only` uses, so finish can compare
+// the two. Renames contribute both sides: either overlapping blocks the merge.
+func porcelainFiles(stdout string) []string {
+	var out []string
+	for _, line := range strings.Split(stdout, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if path == "" {
+			continue
+		}
+		if strings.Contains(path, " -> ") {
+			for _, p := range strings.Split(path, " -> ") {
+				if p = strings.Trim(strings.TrimSpace(p), `"`); p != "" {
+					out = append(out, p)
+				}
+			}
+			continue
+		}
+		out = append(out, strings.Trim(path, `"`))
+	}
+	return out
 }
