@@ -249,6 +249,9 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 				}
 				review = p
 			}
+			if review.noChanges {
+				continue
+			}
 			// A reviewer that already passed at the tip is left alone, so a
 			// re-spawn only reaches the reviewers that still have something
 			// to look at.
@@ -295,9 +298,12 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 	}
 
 	deadline := time.Now().Add(toolBudget)
-	// Every reviewer already passed at the tip: nothing to review, and no
-	// agent was started.
+	// Nothing to review, or every reviewer already passed: report that and
+	// start nothing.
 	if review != nil && len(agents) == 0 {
+		if review.noChanges {
+			return "no changes: nothing differs from the base. Nothing to review.", nil
+		}
 		return fmt.Sprintf("every reviewer passed at %s; nothing to review.", short(review.head)), nil
 	}
 	for {

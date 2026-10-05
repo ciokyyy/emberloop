@@ -400,6 +400,25 @@ func TestSpawnReviewersRunsChecksOnceAndReturnsBoth(t *testing.T) {
 	}
 }
 
+// A spawn on a worktree whose diff against its base is empty reports that and
+// starts no reviewer, the way the review machinery always did.
+func TestReviewSpawnWithNoChangesStartsNothing(t *testing.T) {
+	_, tree := reviewRepo(t)
+	// Drop the worker's change, so the branch and its base are the same tip.
+	gitOut(t, tree, "reset", "--hard", "HEAD~1")
+	f := newFakeReviewers(answers("pass", "pass"))
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "no changes") {
+		t.Errorf("an unchanged tree must report nothing to review, got %q", out)
+	}
+	if f.splits() != 0 {
+		t.Errorf("no reviewer may launch for an empty diff, got %d splits", f.splits())
+	}
+}
+
 // Spawning only one reviewer type starts only that reviewer.
 func TestReviewSpawnOnlyTheNamedType(t *testing.T) {
 	_, tree := reviewRepo(t)
@@ -705,7 +724,7 @@ requires_review: [reviewer-spec]
 {{prompt}}
 `)
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
-	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, tip, ""); err != nil {
+	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, tip, tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Finish(osExec, "07-x", true)
@@ -715,7 +734,7 @@ requires_review: [reviewer-spec]
 	if res.Merged {
 		t.Fatalf("the standards reviewer passed but the worker type requires only the spec reviewer, so it must wait: %+v", res)
 	}
-	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, tip, ""); err != nil {
+	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, tip, tip, ""); err != nil {
 		t.Fatal(err)
 	}
 	res, err = Finish(osExec, "07-x", true)
@@ -750,7 +769,7 @@ func passReviews(t *testing.T, tree, tip string) {
 	t.Helper()
 	w := workerAt(tree)
 	for _, typ := range requiredReviewers(w) {
-		if err := mergeReviewerVerdict(tree, typ, verdictPass, tip, ""); err != nil {
+		if err := mergeReviewerVerdict(tree, typ, verdictPass, tip, tip, ""); err != nil {
 			t.Fatal(err)
 		}
 	}

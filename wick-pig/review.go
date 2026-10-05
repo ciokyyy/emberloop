@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -57,8 +56,6 @@ func (r reviewer) agent() readOnlyAgent {
 // reviewersPath keeps the reviewers of every worktree, keyed by its path.
 func reviewersPath() string { return filepath.Join(filepath.Dir(statePath), "reviewers.json") }
 
-var reviewersMu sync.Mutex
-
 func loadReviewers() (map[string]map[string]reviewer, error) {
 	raw, err := os.ReadFile(reviewersPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -74,6 +71,9 @@ func loadReviewers() (map[string]map[string]reviewer, error) {
 	return out, nil
 }
 
+// saveReviewers writes the store through a temp file and a rename: the
+// reviewer's own process now writes it too, so a reader must never see a
+// half-written file.
 func saveReviewers(all map[string]map[string]reviewer) error {
 	raw, err := json.MarshalIndent(all, "", "  ")
 	if err != nil {
@@ -82,101 +82,98 @@ func saveReviewers(all map[string]map[string]reviewer) error {
 	if err := os.MkdirAll(filepath.Dir(reviewersPath()), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(reviewersPath(), raw, 0o644)
+	tmp := reviewersPath() + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, reviewersPath())
+}
+
+// updateReviewers runs fn on the store under a cross-process lock. A worker's
+// spawn and a reviewer's own submit are separate processes, so the in-process
+// mutex the store used to hold could not stop them dropping each other's
+// update; the file lock does.
+func updateReviewers(fn func(map[string]map[string]reviewer) error) error {
+	return withFileLock("reviewers", func() error {
+		all, err := loadReviewers()
+		if err != nil {
+			return err
+		}
+		if err := fn(all); err != nil {
+			return err
+		}
+		return saveReviewers(all)
+	})
 }
 
 // reviewersOf is the reviewers of the worktree at tree.
 func reviewersOf(tree string) map[string]reviewer {
-	reviewersMu.Lock()
-	defer reviewersMu.Unlock()
-	all, err := loadReviewers()
-	if err != nil {
+	var out map[string]reviewer
+	_ = withFileLock("reviewers", func() error {
+		all, err := loadReviewers()
+		if err != nil {
+			return err
+		}
+		out = all[filepath.Clean(tree)]
+		return nil
+	})
+	if out == nil {
 		return map[string]reviewer{}
 	}
-	if r := all[filepath.Clean(tree)]; r != nil {
-		return r
-	}
-	return map[string]reviewer{}
+	return out
 }
 
 // storeReviewerPane records where a reviewer runs, keeping any verdict already
 // on file: a replacement is set up before its pane starts, so its submit can
 // fold the new verdict in without losing the slot it took.
 func storeReviewerPane(tree, typ string, r reviewer) error {
-	reviewersMu.Lock()
-	defer reviewersMu.Unlock()
-	all, err := loadReviewers()
-	if err != nil {
-		return err
-	}
-	key := filepath.Clean(tree)
-	if all[key] == nil {
-		all[key] = map[string]reviewer{}
-	}
-	prev := all[key][typ]
-	if prev.Verdict != "" {
-		r.Verdict, r.VerdictAt, r.Findings = prev.Verdict, prev.VerdictAt, prev.Findings
-	}
-	all[key][typ] = r
-	return saveReviewers(all)
+	return updateReviewers(func(all map[string]map[string]reviewer) error {
+		key := filepath.Clean(tree)
+		if all[key] == nil {
+			all[key] = map[string]reviewer{}
+		}
+		prev := all[key][typ]
+		if prev.Verdict != "" {
+			r.Verdict, r.VerdictAt, r.Findings = prev.Verdict, prev.VerdictAt, prev.Findings
+		}
+		all[key][typ] = r
+		return nil
+	})
 }
 
 // mergeReviewerVerdict folds a reviewer's submit into the record for its
-// worktree: its status is the verdict, and its report the findings kept for
-// follow-ups and for briefing a replacement.
-func mergeReviewerVerdict(tree, typ, verdict, at, findings string) error {
-	reviewersMu.Lock()
-	defer reviewersMu.Unlock()
-	all, err := loadReviewers()
-	if err != nil {
-		return err
-	}
-	key := filepath.Clean(tree)
-	if all[key] == nil {
-		all[key] = map[string]reviewer{}
-	}
-	r := all[key][typ]
-	r.Verdict, r.VerdictAt, r.Findings = verdict, at, findings
-	all[key][typ] = r
-	return saveReviewers(all)
-}
-
-// mergeReviewerReviewed records the commit a re-prompted reviewer will judge,
-// so its next follow-up diffs from there.
-func mergeReviewerReviewed(tree, typ, head string) error {
-	reviewersMu.Lock()
-	defer reviewersMu.Unlock()
-	all, err := loadReviewers()
-	if err != nil {
-		return err
-	}
-	key := filepath.Clean(tree)
-	if all[key] == nil {
-		all[key] = map[string]reviewer{}
-	}
-	r := all[key][typ]
-	r.Reviewed = head
-	all[key][typ] = r
-	return saveReviewers(all)
+// worktree: its status is the verdict, its report the findings kept for
+// follow-ups and for briefing a replacement, and reviewed the commit it judged.
+func mergeReviewerVerdict(tree, typ, verdict, at, reviewed, findings string) error {
+	return updateReviewers(func(all map[string]map[string]reviewer) error {
+		key := filepath.Clean(tree)
+		if all[key] == nil {
+			all[key] = map[string]reviewer{}
+		}
+		r := all[key][typ]
+		r.Verdict, r.VerdictAt, r.Reviewed, r.Findings = verdict, at, reviewed, findings
+		all[key][typ] = r
+		return nil
+	})
 }
 
 // closeReviewers closes the reviewer panes of tree and forgets them. The
 // ticket is over, merged or discarded, and no reviewer outlives it.
 func closeReviewers(run Exec, tree string) {
-	reviewersMu.Lock()
-	defer reviewersMu.Unlock()
-	all, err := loadReviewers()
-	if err != nil {
-		return
-	}
-	key := filepath.Clean(tree)
-	for _, r := range all[key] {
-		if r.Pane != "" {
-			_, _ = run(herdrBin(), []string{"pane", "close", r.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	var panes []string
+	_ = updateReviewers(func(all map[string]map[string]reviewer) error {
+		key := filepath.Clean(tree)
+		for _, r := range all[key] {
+			if r.Pane != "" {
+				panes = append(panes, r.Pane)
+			}
 		}
+		delete(all, key)
+		return nil
+	})
+	for _, pane := range panes {
+		_, _ = run(herdrBin(), []string{"pane", "close", pane}, ExecOpts{Timeout: 15 * time.Second})
 	}
-	delete(all, key)
-	_ = saveReviewers(all)
 }
 
 // reviewGate is why the worktree at tree, whose tip is head, may not merge
@@ -286,6 +283,10 @@ type reviewPacket struct {
 	note             string
 	ticket, spec     string
 	model            string
+	// noChanges is set when the diff against the base is empty: there is
+	// nothing for a reviewer to judge, so the spawn reports that instead of
+	// starting one.
+	noChanges bool
 	// place is where the reviewers open: the worker's ticket tab, or the
 	// caller's tab when there is no ticket (a tree wick did not spawn).
 	place readOnlyPlace
@@ -323,6 +324,7 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 		tree: tree, head: head, verdictAt: verdictAt, base: base, note: note,
 		fullDiff: filepath.Join(dir, name+".diff"),
 	}
+	p.noChanges = strings.TrimSpace(full) == ""
 	if err := os.WriteFile(p.fullDiff, []byte(full), 0o644); err != nil {
 		return nil, err
 	}
@@ -398,9 +400,6 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	if err := Nudge(run, agent.Pane, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath)); err != nil {
 		return nil, err
 	}
-	if err := mergeReviewerReviewed(p.tree, t.Name, p.head); err != nil {
-		return nil, err
-	}
 	return &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab}, nil
 }
 
@@ -416,9 +415,14 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 	if harness == "" {
 		harness = "pig"
 	}
+	// The reviewer's type may name a model; otherwise it runs the worker's.
+	model := p.model
+	if t.Model != "" {
+		model = t.Model
+	}
 	id := newSessionID()
 	sess := Session{
-		Role: "agent", Cwd: p.tree, Model: p.model, ID: id,
+		Role: "agent", Cwd: p.tree, Model: model, ID: id,
 		AgentType: t.Name, AgentID: id,
 		Dir: filepath.Join(readOnlyDir(), "sessions"),
 	}
@@ -436,7 +440,7 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 		func(a readOnlyAgent) error {
 			if err := storeReviewerPane(p.tree, t.Name, reviewer{
 				Pane: a.Pane, Tab: a.Tab, Slot: a.Slot, Harness: harness,
-				SessionID: id, Cwd: p.tree, Model: p.model, Reviewed: p.head,
+				SessionID: id, Cwd: p.tree, Model: model, Reviewed: p.head,
 			}); err != nil {
 				return err
 			}
@@ -452,14 +456,16 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 // reviewer type, and the commit the review is tied to, plus the worker's pane
 // and id so an auto-backgrounded reviewer's submit still reaches it. The
 // reviewer process reads it back when it submits, so the verdict lands on the
-// right record even when the spawn auto-backgrounds it.
+// right record even when the spawn auto-backgrounds it. Deliver is cleared so a
+// re-prompt's result returns to the waiting spawn, not as a stale notice;
+// backgroundAgent sets it again only if this spawn runs out of budget.
 func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID string) error {
 	s, _, err := ReadAgentState(id)
 	if err != nil {
 		return err
 	}
 	s.ID, s.Type = id, typ
-	s.Parent, s.ParentID = parentPane, parentID
+	s.Parent, s.ParentID, s.Deliver = parentPane, parentID, false
 	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt}
 	return WriteAgentState(s)
 }

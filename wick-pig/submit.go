@@ -168,7 +168,7 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 	if st, ok, err := ReadAgentState(agentID); err != nil {
 		return "", err
 	} else if ok && st.Review != nil {
-		if err := mergeReviewerVerdict(st.Review.Tree, st.Review.Type, status, st.Review.At, s.Report); err != nil {
+		if err := mergeReviewerVerdict(st.Review.Tree, st.Review.Type, status, st.Review.At, st.Review.Head, s.Report); err != nil {
 			return "", err
 		}
 	}
