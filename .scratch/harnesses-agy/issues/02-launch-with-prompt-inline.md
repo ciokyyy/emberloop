@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `wick-pig exec <file>` execs the binary with exact argv and env, preserving newlines and quotes
-- [ ] Typed pane line is the single `wick-pig exec` line, working in fish, bash and zsh
-- [ ] Workers, scouts and reviewers on pig and claude start with the full prompt as their first user message
-- [ ] Launch files cleaned up with the session's other state files
-- [ ] Tests: `BuildCommand`/launch tests assert the typed line and launch file contents; an exec test with a fake binary asserts argv and env
+- [x] `wick-pig exec <file>` execs the binary with exact argv and env, preserving newlines and quotes
+- [x] Typed pane line is the single `wick-pig exec` line, working in fish, bash and zsh
+- [x] Workers, scouts and reviewers on pig and claude start with the full prompt as their first user message
+- [x] Launch files cleaned up with the session's other state files
+- [x] Tests: `BuildCommand`/launch tests assert the typed line and launch file contents; an exec test with a fake binary asserts argv and env
