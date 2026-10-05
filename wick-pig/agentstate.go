@@ -115,7 +115,6 @@ func claimNextSubmit(id string) (undo func() error, err error) {
 			return err
 		}
 		prevSubmit, hadSubmit, err = ReadAgentSubmit(id)
-		prevSubmit, hadSubmit, err = ReadAgentSubmit(id)
 		if err != nil || !hadSubmit || !(prevSubmit.ThisTurn || prevSubmit.Stopped) {
 			return err
 		}
