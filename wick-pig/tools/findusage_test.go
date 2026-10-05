@@ -118,6 +118,46 @@ func TestFindWithoutUsageStillLogsCallCounts(t *testing.T) {
 		if line["agent"] != "agent-bare" || line["kind"] != "find" {
 			t.Errorf("line = %v", line)
 		}
+		// The call count is the lines themselves; each line names how many
+		// decisions its call carried.
+		if q, _ := line["questions"].(float64); q < 1 {
+			t.Errorf("line questions = %v, want >= 1", line["questions"])
+		}
+		if line["find_call_id"] == nil || line["find_call_id"] == "" {
+			t.Errorf("line carries no find-call id: %v", line)
+		}
+	}
+}
+
+func TestFindCallIDGroupsOneSearchAndResetsOnReuse(t *testing.T) {
+	dir := project(t)
+	t.Setenv("WICK_SETTINGS", dir+"/none.json")
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	t.Setenv("WICK_DECISION_MODEL", "")
+	searcher := NewCascadeSearcher(usageJudge{}, systemone.JevModelPinned, 0.2, dir)
+	ctx := context.Background()
+
+	t.Setenv("WICK_AGENT_ID", "agent-reuse")
+	if _, err := searcher.Search(ctx, "how are tokens verified", []string{"VerifyToken"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_AGENT_ID", "agent-next")
+	if _, err := searcher.Search(ctx, "how are tokens verified", []string{"VerifyToken"}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	first := readFindLines(t, "agent-reuse")
+	second := readFindLines(t, "agent-next")
+	if len(first) == 0 || len(second) == 0 {
+		t.Fatalf("logged %d then %d lines, want both non-empty", len(first), len(second))
+	}
+	if first[0]["find_call_id"] == second[0]["find_call_id"] {
+		t.Errorf("both searches share find-call id %v", first[0]["find_call_id"])
+	}
+	for _, line := range second {
+		if line["agent"] != "agent-next" {
+			t.Errorf("reused searcher attributed to %v", line["agent"])
+		}
 	}
 }
 

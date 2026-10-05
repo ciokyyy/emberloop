@@ -16,9 +16,10 @@ import (
 // and stats read the files by polling; nothing is ever rewritten.
 //
 // Layout: <state>/usage/<agent-id>.jsonl. A line is either a find line
-// (kind "find", FindUsage below) or a harness request line (kind
-// "request", defined where ticket 03 lands). Readers tell them apart by
-// kind, and count lines for call counts when the endpoint returned no usage.
+// (kind "find", FindUsage below) or a harness request line from ticket 03's
+// tailer. Readers tell them apart by kind — ticket 03's format will need its
+// own kind value (the spec's request record has none yet) — and count lines
+// for call counts when the endpoint returned no usage.
 
 // stateDir is wick's state directory: the worker store's directory. Tests
 // point it at a temp dir through WICK_STATE_DIR, the way WICK_SETTINGS

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"example.com/wick/tools/systemone"
 )
@@ -80,6 +81,9 @@ func MergePassageRanges(ranges []PassageRange) []PassageRange {
 }
 
 // CascadeSearcher implements the 4-stage jegrep semantic code search cascade.
+// It is not safe for concurrent Search calls: per-search attribution lives in
+// these fields, and find builds a fresh searcher per call, so no caller shares
+// one across goroutines.
 type CascadeSearcher struct {
 	provider  systemone.Provider
 	model     string
@@ -353,11 +357,13 @@ func lexicalFileScoreForRanking(path string, terms []string, readContent bool) f
 }
 
 // newFindCallID names one find search in the usage log, grouping the decision
-// calls of its stages so per-search spend can be summed.
+// calls of its stages so per-search spend can be summed. The rand fallback
+// stays unique per call (pid plus nanotime), so even it never collapses two
+// searches onto one id.
 func newFindCallID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "find-unknown"
+		return fmt.Sprintf("find-unknown-%d-%d", os.Getpid(), time.Now().UnixNano())
 	}
 	return "find-" + hex.EncodeToString(b[:])
 }
