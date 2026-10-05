@@ -240,7 +240,7 @@ func CodeReview(run Exec, tree, only, note string) (string, error) {
 		return "", err
 	}
 	head := strings.TrimSpace(headOut)
-	base := baseFor(tree)
+	base := baseFor(run, tree)
 	// The base against the *working tree*: a worker reviews mid-branch, and
 	// only this form covers commits and uncommitted work in one diff.
 	full, err := git("diff", base)
@@ -454,11 +454,16 @@ func short(sha string) string {
 
 // baseFor is the commit a worktree branched from, as recorded when it was
 // spawned. Outside a worktree wick created there is no such record, and the
-// default branch name is the only fallback available; the diff it produces is
-// then measured from there rather than from the worker's real base.
-func baseFor(tree string) string {
+// default branch is the only fallback available, main or else master; the
+// diff is then measured from there rather than from a real base.
+func baseFor(run Exec, tree string) string {
 	if w := workerAt(tree); w != nil && w.Base != "" {
 		return w.Base
+	}
+	for _, b := range []string{"main", "master"} {
+		if res, err := run("git", []string{"rev-parse", "--verify", "--quiet", b}, ExecOpts{Cwd: tree, Timeout: 30 * time.Second}); err == nil && res.Code == 0 {
+			return b
+		}
 	}
 	return "main"
 }
