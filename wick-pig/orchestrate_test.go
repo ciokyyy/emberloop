@@ -362,3 +362,23 @@ func TestTellWorkerStillWorkingIsNotAnError(t *testing.T) {
 		t.Errorf("got %q", out)
 	}
 }
+
+// A settle wait that fails for any reason but a timeout is a failure, not
+// "still working".
+func TestTellWorkerReportsAFailedWait(t *testing.T) {
+	withWorker(t, "01-x")
+	rec := &recorder{reply: func(_ string, args []string) Result {
+		if args[0] == "agent" && args[1] == "wait" && !strings.Contains(strings.Join(args, " "), "working") {
+			return Result{Code: 1, Stdout: `{"error":{"code":"agent_not_found"}}`}
+		}
+		return Result{}
+	}}
+	old := tellExec
+	tellExec = rec.run
+	t.Cleanup(func() { tellExec = old })
+
+	args, _ := json.Marshal(map[string]any{"worker": "01-x", "text": "go on"})
+	if _, err := tellTool.Execute(context.Background(), "", args); err == nil || !strings.Contains(err.Error(), "agent_not_found") {
+		t.Errorf("want the wait failure reported, got %v", err)
+	}
+}

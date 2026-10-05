@@ -206,6 +206,7 @@ func tail(text string, n int) string {
 // reviewPacket is what one call hands its reviewers.
 type reviewPacket struct {
 	tree, head, base string
+	verdictAt        string // head, or head+"+uncommitted" when the tree is dirty
 	fullDiff         string // path of the full diff, base..working tree
 	checks           string
 	note             string
@@ -240,7 +241,14 @@ func CodeReview(run Exec, tree, only, note string) (string, error) {
 		return "", err
 	}
 	head := strings.TrimSpace(headOut)
-	base := baseFor(run, tree)
+	// A pass is tied to a commit, and uncommitted work is not in one: a pass
+	// on a dirty tree is recorded against no commit, so it never opens the
+	// merge gate.
+	verdictAt := head
+	if status, err := git("status", "--porcelain"); err == nil && strings.TrimSpace(status) != "" {
+		verdictAt = head + "+uncommitted"
+	}
+	base := diffBase(run, tree, w)
 	// The base against the *working tree*: a worker reviews mid-branch, and
 	// only this form covers commits and uncommitted work in one diff.
 	full, err := git("diff", base)
@@ -260,7 +268,7 @@ func CodeReview(run Exec, tree, only, note string) (string, error) {
 			if axis == only {
 				targets = append(targets, axis)
 			}
-		case !ok || r.Verdict != verdictPass || r.VerdictAt != head:
+		case !ok || r.Verdict != verdictPass || r.VerdictAt != verdictAt:
 			targets = append(targets, axis)
 		}
 	}
@@ -273,7 +281,7 @@ func CodeReview(run Exec, tree, only, note string) (string, error) {
 		return "", err
 	}
 	name := filepath.Base(tree)
-	p := reviewPacket{tree: tree, head: head, base: base, note: note, fullDiff: filepath.Join(dir, name+".diff")}
+	p := reviewPacket{tree: tree, head: head, verdictAt: verdictAt, base: base, note: note, fullDiff: filepath.Join(dir, name+".diff")}
 	if err := os.WriteFile(p.fullDiff, []byte(full), 0o644); err != nil {
 		return "", err
 	}
@@ -321,6 +329,9 @@ func CodeReview(run Exec, tree, only, note string) (string, error) {
 	if failed == len(results) {
 		return "", errors.New(strings.TrimSpace(b.String()))
 	}
+	if verdictAt != head {
+		b.WriteString("\nThis review covered uncommitted work, so no pass counts toward merging: commit, then call code_review again.\n")
+	}
 	b.WriteString("\nFix what you agree with and call code_review again; decline the rest with a reason in note.")
 	return strings.TrimSpace(b.String()), nil
 }
@@ -335,13 +346,19 @@ func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis str
 
 	if had && prev.agent().alive(run) {
 		agent = prev.agent()
-		inc, err := git("diff", prev.Reviewed)
-		if err != nil {
-			return reviewer{}, "", "", err
-		}
-		incPath := filepath.Join(dir, name+"."+axis+".since.diff")
-		if err := os.WriteFile(incPath, []byte(inc), 0o644); err != nil {
-			return reviewer{}, "", "", err
+		// A branch rebased since the reviewer last looked no longer holds
+		// the commit it saw, and a diff from it would show every other
+		// ticket merged meanwhile: the reviewer gets the full diff again.
+		incPath := p.fullDiff
+		if _, err := git("merge-base", "--is-ancestor", prev.Reviewed, "HEAD"); err == nil {
+			inc, err := git("diff", prev.Reviewed)
+			if err != nil {
+				return reviewer{}, "", "", err
+			}
+			incPath = filepath.Join(dir, name+"."+axis+".since.diff")
+			if err := os.WriteFile(incPath, []byte(inc), 0o644); err != nil {
+				return reviewer{}, "", "", err
+			}
 		}
 		promptPath := filepath.Join(dir, name+"."+axis+".followup")
 		if err := os.WriteFile(promptPath, []byte(followUpPrompt(axis, p, prev, incPath)), 0o644); err != nil {
@@ -366,6 +383,9 @@ func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis str
 		}
 		reply, err = agent.reply(run, 0)
 		if err != nil {
+			// Nothing remembers a reviewer that never answered, so its pane
+			// is closed here or it is never closed at all.
+			_, _ = run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
 			return reviewer{}, "", "", err
 		}
 	}
@@ -384,7 +404,7 @@ func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis str
 	}
 	r := reviewer{
 		Pane: agent.Pane, Harness: agent.Harness, SessionID: agent.Session.ID, Cwd: agent.Session.Cwd, Model: agent.Session.Model,
-		Reviewed: p.head, Verdict: verdict, VerdictAt: p.head, Findings: reply,
+		Reviewed: p.head, Verdict: verdict, VerdictAt: p.verdictAt, Findings: reply,
 	}
 	return r, reply, notice, nil
 }
@@ -430,8 +450,13 @@ func firstReviewPrompt(axis string, p reviewPacket) string {
 
 func followUpPrompt(axis string, p reviewPacket, prev reviewer, incPath string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Follow-up for the %s review. What changed since you last looked (%s) is the diff at %s; the full diff is still at %s.\n\n",
-		axis, short(prev.Reviewed), incPath, p.fullDiff)
+	if incPath == p.fullDiff {
+		fmt.Fprintf(&b, "Follow-up for the %s review. The branch was rebased since you last looked (%s), so read the full diff again, at %s.\n\n",
+			axis, short(prev.Reviewed), p.fullDiff)
+	} else {
+		fmt.Fprintf(&b, "Follow-up for the %s review. What changed since you last looked (%s) is the diff at %s; the full diff is still at %s.\n\n",
+			axis, short(prev.Reviewed), incPath, p.fullDiff)
+	}
 	if prev.Verdict == verdictPass {
 		fmt.Fprintf(&b, "You passed this work at %s. It changed since, likely for the other reviewer: check that the change did not break what you approved.\n\n", short(prev.VerdictAt))
 	} else {
@@ -452,16 +477,27 @@ func short(sha string) string {
 	return sha
 }
 
-// baseFor is the commit a worktree branched from, as recorded when it was
-// spawned. Outside a worktree wick created there is no such record, and the
-// default branch is the only fallback available, main or else master; the
-// diff is then measured from there rather than from a real base.
-func baseFor(run Exec, tree string) string {
-	if w := workerAt(tree); w != nil && w.Base != "" {
+// diffBase is where the worker's own change starts. For a worker with a
+// target it is the merge-base with that target: after the worker rebases onto
+// the integration tip, that is the tip, so other tickets merged meanwhile stay
+// out of its diff. Otherwise it is the commit recorded at spawn. Outside a
+// worktree wick created there is no record, and the default branch is the
+// only fallback, main or else master.
+func diffBase(run Exec, tree string, w *Worker) string {
+	git := func(args ...string) (string, bool) {
+		res, err := run("git", args, ExecOpts{Cwd: tree, Timeout: 30 * time.Second})
+		return strings.TrimSpace(res.Stdout), err == nil && res.Code == 0
+	}
+	if w != nil && w.Target != "" {
+		if mb, ok := git("merge-base", "HEAD", w.Target); ok && mb != "" {
+			return mb
+		}
+	}
+	if w != nil && w.Base != "" {
 		return w.Base
 	}
 	for _, b := range []string{"main", "master"} {
-		if res, err := run("git", []string{"rev-parse", "--verify", "--quiet", b}, ExecOpts{Cwd: tree, Timeout: 30 * time.Second}); err == nil && res.Code == 0 {
+		if _, ok := git("rev-parse", "--verify", "--quiet", b); ok {
 			return b
 		}
 	}

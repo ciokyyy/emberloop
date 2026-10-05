@@ -490,3 +490,58 @@ func passReviews(t *testing.T, tree, tip string) {
 		}
 	}
 }
+
+// A pass on uncommitted work is tied to no commit: it never opens the merge
+// gate, and finish refuses a dirty worktree whose work it would drop.
+func TestAPassOnUncommittedWorkDoesNotMerge(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "b.go"), "package a\n")
+	f := newFakeReviewers(answers("pass", "pass"))
+	out, err := CodeReview(f.run, tree, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "uncommitted work") {
+		t.Errorf("the reply must say the pass does not count: %s", out)
+	}
+	res, err := Finish(f.run, "07-x", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Merged || !strings.Contains(res.Detail, "uncommitted") {
+		t.Fatalf("a dirty worktree must not merge: %+v", res)
+	}
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "commit b")
+	if res, _ := Finish(f.run, "07-x", true); res.Merged || !strings.Contains(res.Detail, "not at the tip") {
+		t.Fatalf("the pass on the dirty tree must not count for the commit: %+v", res)
+	}
+}
+
+// After the worker rebases onto a target that moved, its diff starts at the
+// new tip, not at the spawn commit: other tickets' work stays out of it, and
+// the reviewer is told to read the full diff again.
+func TestReviewAfterARebaseShowsOnlyTheWorkersChange(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("changes", "changes"))
+	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "other.go"), "package other\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "another ticket merged")
+	gitOut(t, tree, "rebase", "-q", "main")
+	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	full, err := os.ReadFile(filepath.Join(filepath.Dir(statePath), "reviews", "07-x.diff"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(full), "other.go") || !strings.Contains(string(full), "func A") {
+		t.Errorf("the diff must hold the worker's change only:\n%s", full)
+	}
+	if p := f.paneOf(t, axisCode); !strings.Contains(p.prompts[1], "was rebased") {
+		t.Errorf("a rebased branch's follow-up must say so:\n%s", p.prompts[1])
+	}
+}

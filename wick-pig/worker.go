@@ -544,6 +544,14 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	merged := false
 
 	if merge {
+		// Uncommitted work is not on the branch, so merging would drop it
+		// with the worktree.
+		if res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: w.Worktree}); err != nil {
+			return nil, err
+		} else if strings.TrimSpace(res.Stdout) != "" {
+			return &FinishResult{ID: id, Kept: true,
+				Detail: "the worktree has uncommitted changes, which would be lost; have it commit them and call code_review again"}, nil
+		}
 		// Both reviewers must have passed the tip they judged; a worker that
 		// stopped before its review is sent back, not merged. The check is
 		// on the worker's own tip, before the rebase below rewrites it.

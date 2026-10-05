@@ -135,9 +135,17 @@ func Tell(run Exec, pane, text string, budget time.Duration) (settled bool, err 
 	ms := fmt.Sprint(budget.Milliseconds())
 	res, err := run(herdrBin(), []string{"agent", "wait", pane, "--timeout", ms}, ExecOpts{Timeout: budget + 10*time.Second})
 	if err != nil {
-		return false, nil
+		return false, err
 	}
-	return res.Code == 0, nil
+	if res.Code != 0 {
+		// Only herdr's own timeout means "delivered, still working";
+		// anything else is a wait that failed and is reported as such.
+		if strings.Contains(res.Stdout+res.Stderr, "timeout") {
+			return false, nil
+		}
+		return false, fmt.Errorf("herdr agent wait %s failed: %s", pane, firstLine(res.Stderr, res.Stdout))
+	}
+	return true, nil
 }
 
 // WaitReply polls the session transcript until the agent ends a turn, and
