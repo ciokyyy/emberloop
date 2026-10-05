@@ -567,27 +567,38 @@ func stopPane(run Exec, pane string) error {
 		return nil
 	}
 	// SIGTERM first, so an agent can clean up; SIGKILL for one that will not.
+	last := ""
 	for _, sig := range []string{"-TERM", "-KILL"} {
-		if err := signalPane(run, pane, sig, group); err != nil {
+		said, err := signalPane(run, pane, sig, group)
+		if err != nil {
 			return err
 		}
 		if waitPaneStop(run, pane, paneStopWait) {
 			return nil
 		}
+		last = sig
+		if said != "" {
+			last += ": " + said
+		}
 	}
-	return fmt.Errorf("the process in %s would not stop, so the launch line was not typed into it", pane)
+	return fmt.Errorf("the process in %s would not stop (kill %s), so the launch line was not typed into it", pane, last)
 }
 
 // signalPane sends sig to a pane's foreground process group. The group is
 // negative in the kill call so the agent and anything it spawned go together.
-// A kill that finds nothing to signal is not a failure -- the process being
-// gone is the point -- so only a kill that could not run at all is reported;
-// waitPaneStop decides whether the process actually went.
-func signalPane(run Exec, pane, sig string, group int) error {
-	if _, err := run("kill", []string{sig, "--", "-" + strconv.Itoa(group)}, ExecOpts{Timeout: 15 * time.Second}); err != nil {
-		return fmt.Errorf("could not signal the process in %s: %w", pane, err)
+// It returns what kill said, or "" when it said nothing. A kill that finds
+// nothing to signal is not a failure -- the process being gone is the point --
+// so a non-zero exit is reported rather than returned, and waitPaneStop decides
+// whether the process actually went.
+func signalPane(run Exec, pane, sig string, group int) (string, error) {
+	res, err := run("kill", []string{sig, "--", "-" + strconv.Itoa(group)}, ExecOpts{Timeout: 15 * time.Second})
+	if err != nil {
+		return "", fmt.Errorf("could not signal the process in %s: %w", pane, err)
 	}
-	return nil
+	if res.Code != 0 {
+		return firstLine(res.Stderr, fmt.Sprintf("%s exited %d", sig, res.Code)), nil
+	}
+	return "", nil
 }
 
 // waitPaneStop waits until herdr reports only the pane's shell left. It reads
