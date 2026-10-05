@@ -4,9 +4,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] History entry written for merged, discarded and kept outcomes
-- [ ] Reviewer verdicts captured before reviewers are forgotten
-- [ ] Exported read function lists a run's history
-- [ ] Test: spawn → review → finish through the existing fake herdr; history survives worker deletion
+- [x] History entry written for merged, discarded and kept outcomes
+- [x] Reviewer verdicts captured before reviewers are forgotten
+- [x] Exported read function lists a run's history
+- [x] Test: spawn → review → finish through the existing fake herdr; history survives worker deletion

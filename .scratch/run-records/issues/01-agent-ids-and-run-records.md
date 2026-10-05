@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `WICK_AGENT_ID` set for top-level, reviewer, scout and worker sessions (harness command tests)
-- [ ] Run record written at implement launch; re-running implement on the same spec updates it rather than duplicating
-- [ ] A small exported read function lists run records (used by the TUI later)
-- [ ] Tests with temporary state dir and fake `Exec`
+- [x] `WICK_AGENT_ID` set for top-level, reviewer, scout and worker sessions (harness command tests)
+- [x] Run record written at implement launch; re-running implement on the same spec updates it rather than duplicating
+- [x] A small exported read function lists run records (used by the TUI later)
+- [x] Tests with temporary state dir and fake `Exec`

@@ -4,9 +4,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Finds the harness as its parent process and walks descendants via `/proc`
-- [ ] One row per process per sample; processes that vanish mid-walk are skipped
-- [ ] Test: a fake `/proc` tree with known pids, parents, names and RSS gives the expected rows
-- [ ] Sampling overhead is a handful of file reads per tick
+- [x] Finds the harness as its parent process and walks descendants via `/proc`
+- [x] One row per process per sample; processes that vanish mid-walk are skipped
+- [x] Test: a fake `/proc` tree with known pids, parents, names and RSS gives the expected rows
+- [x] Sampling overhead is a handful of file reads per tick
