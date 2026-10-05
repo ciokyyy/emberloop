@@ -1,5 +1,12 @@
 // wick-mcp serves wick's tools over MCP stdio. The role (flag or WICK_ROLE)
 // picks the tool set, and the working directory is the workspace root.
+//
+// It is also the session's own wick process: at startup it snapshots the
+// session's system prompt, served tool definitions and harness flags into the
+// blob store, tails the harness transcript into the archive and the usage log
+// while it serves, samples its harness process tree's memory, and takes final
+// copies when the harness goes away, so the transcript outlives harness
+// cleanup.
 package main
 
 import (
@@ -32,6 +39,9 @@ func main() {
 	memCtx, stopMem := context.WithCancel(context.Background())
 	defer stopMem()
 	go wick.StartMemorySampler(memCtx, os.Getenv("WICK_AGENT_ID"), wick.MemoryRunSlug(), wick.MemorySampleInterval)
+	if err := wick.SnapshotFromEnv(served); err != nil {
+		fmt.Fprintln(os.Stderr, "wick-mcp: archive:", err)
+	}
 	// A harness session tails its own transcript into its agent's usage log
 	// while it serves; when stdin closes the harness has settled, so one
 	// last pass catches requests written after the final tick. The pass runs
@@ -43,12 +53,17 @@ func main() {
 		stopTail = func() { close(stop) }
 		go wick.RunUsageTail(tailCfg, stop)
 	}
+	stopArchive := wick.StartArchiveLoop()
 	serveErr := mcp.Serve(context.Background(), os.Stdin, os.Stdout, root, served)
 	stopTail()
 	if tailing {
 		if err := wick.TailUsageFile(tailCfg); err != nil {
 			fmt.Fprintln(os.Stderr, "wick-mcp: final usage pass:", err)
 		}
+	}
+	stopArchive()
+	if _, err := wick.CopyFromEnv(); err != nil {
+		fmt.Fprintln(os.Stderr, "wick-mcp: archive:", err)
 	}
 	if serveErr != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", serveErr)

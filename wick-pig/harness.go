@@ -157,9 +157,14 @@ func (c Command) Line() string {
 	return strings.Join(words, " ")
 }
 
-// roleEnv is what the session's wick-mcp needs to know: its role, the agent
-// type and id of a spawned agent, and for an implement session the spec, which
-// spawn hands to every worker.
+// roleEnv is what the session's wick process needs to know: its role, the
+// agent type and id of a spawned agent, for an implement session the spec
+// (which spawn hands to every worker), and the session id naming its harness
+// transcript. The session dir (pig only: claude takes none) and the launch
+// choice (harness, model, effort) come from the harness command beside it;
+// together they let the session's own wick process (the wick-mcp attached to
+// the harness) snapshot the session's blobs and tail its transcript into the
+// archive.
 func roleEnv(s Session) []string {
 	env := []string{"WICK_ROLE=" + s.Role}
 	if s.AgentType != "" {
@@ -170,6 +175,22 @@ func roleEnv(s Session) []string {
 	}
 	if s.Spec != "" {
 		env = append(env, "WICK_SPEC="+s.Spec)
+	}
+	if s.ID != "" {
+		env = append(env, "WICK_SESSION_ID="+s.ID)
+	}
+	return env
+}
+
+// harnessEnv is the launch choice the session's wick process records in its
+// flags blob: the harness, model and effort the session started with.
+func harnessEnv(harness string, s Session) []string {
+	env := []string{"WICK_HARNESS=" + harness}
+	if s.Model != "" {
+		env = append(env, "WICK_MODEL="+s.Model)
+	}
+	if s.Effort != "" {
+		env = append(env, "WICK_EFFORT="+s.Effort)
 	}
 	return env
 }
@@ -216,7 +237,7 @@ func (pigHarness) Command(s Session) (Command, error) {
 		args = append(args, "--thinking", s.Effort)
 	}
 	args = appendPrompt(args, s.Prompt)
-	env := roleEnv(s)
+	env := append(roleEnv(s), harnessEnv("pig", s)...)
 	if s.Label != "" {
 		env = append(env, "WICK_AGENT_LABEL="+s.Label)
 	}
@@ -305,9 +326,11 @@ func (claudeHarness) Command(s Session) (Command, error) {
 	// Claude starts wick-mcp from this config, not from its own environment:
 	// an MCP stdio server gets the default env merged with this map, so the
 	// session identity the tailer reads (like the WICK_AGENT_ID the tools
-	// already rely on) travels here. Pig's wick-mcp instead inherits its
-	// process env, which usageTailEnv on the pig command covers.
-	mcpEnv := append(roleEnv(s), usageTailEnv("claude", s.ID, "")...)
+	// already rely on) travels here, as does the launch choice the archiver
+	// stores in the flags blob. Pig's wick-mcp instead inherits its process
+	// env, which the pig command covers the same way.
+	mcpEnv := append(roleEnv(s), harnessEnv("claude", s)...)
+	mcpEnv = append(mcpEnv, usageTailEnv("claude", s.ID, "")...)
 	cfg, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"wick": map[string]any{
 		"command": "wick-mcp", "env": envMap(mcpEnv),
 	}}})
@@ -343,14 +366,13 @@ func (claudeHarness) Command(s Session) (Command, error) {
 	args = appendPrompt(args, s.Prompt)
 	// Claude's transcript is named by its session id; without one there is
 	// nothing for the session's wick-mcp to tail. Claude takes no session
-	// dir, so none is passed.
-	env := append(roleEnv(s),
+	// dir, so none is passed. The process env carries the same identity as
+	// the MCP config above, plus claude's own switches.
+	return Command{Bin: "claude", Args: args, Env: append(mcpEnv,
 		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
 		"CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0",
-		"DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1")
-	env = append(env, usageTailEnv("claude", s.ID, "")...)
-	return Command{Bin: "claude", Args: args, Env: env}, nil
+		"DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1")}, nil
 }
 
 // mcpConfigPath is where the MCP config of one claude session is written: under
