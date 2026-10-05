@@ -89,10 +89,17 @@ func logConcurrencyCall(args []string) {
 // file state and delegates everything else (git) to the real osExec. The
 // state update for each call happens under a cross-process lock, so the
 // fake itself never corrupts; the caller's own check-then-act race (two
-// spawns both seeing no tab and both creating one) still shows, which is
-// what the concurrency tests assert on.
 func concurrencyHerdrExec() Exec {
+	// WICK_CONCURRENCY_DELAY_MS slows every fake herdr call, so helpers that
+	// start together still overlap in the caller's check-then-act window: a
+	// fast helper would otherwise finish before a slow one arrives and no
+	// race would show.
+	delayMS, _ := strconv.Atoi(os.Getenv("WICK_CONCURRENCY_DELAY_MS"))
+	delay := time.Duration(delayMS) * time.Millisecond
 	return func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if delay > 0 && cmd == herdrBin() {
+			time.Sleep(delay)
+		}
 		if cmd != herdrBin() {
 			return osExec(cmd, args, opts)
 		}
@@ -273,6 +280,14 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 		_ = os.WriteFile(result, append(raw, '\n'), 0o644)
 	}
 
+	// The start barrier holds every helper until they have all arrived, so
+	// every helper overlaps every other one in the work below. Without it a
+	// fast helper finishes before a slow one starts and a check-then-act
+	// race never shows.
+	if os.Getenv("WICK_CONCURRENCY_BARRIER") != "" {
+		waitConcurrencyBarrier(t, id)
+	}
+
 	switch mode {
 	case "worker-spawn":
 		ticket := filepath.Join(repo, ".scratch", id+".md")
@@ -330,8 +345,50 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 			t.Fatalf("helper %s reviewer spawn: %v", id, err)
 		}
 		writeResult(nil, nil)
+	case "grid-place":
+		// One grid placement in the shared tab, the way a scout or reviewer
+		// launch places its pane. The result carries the slot the session
+		// took, so the parent can tell two sessions that took the same one.
+		tab := os.Getenv("WICK_CONCURRENCY_TAB")
+		overflow := os.Getenv("WICK_CONCURRENCY_OVERFLOW")
+		if overflow == "" {
+			overflow = "scouts"
+		}
+		placed, err := placeInGrid(run, tab, overflow, repo)
+		if err != nil {
+			writeResult(err, nil)
+			t.Fatalf("helper %s place: %v", id, err)
+		}
+		writeResult(nil, map[string]string{
+			"pane": placed.Pane,
+			"tab":  placed.Tab,
+			"slot": strconv.Itoa(placed.Slot),
+		})
 	default:
 		t.Fatalf("unknown helper mode %q", mode)
+	}
+}
+
+// waitConcurrencyBarrier signals this helper's arrival and waits until the
+// parent releases every helper at once.
+func waitConcurrencyBarrier(t *testing.T, id string) {
+	t.Helper()
+	dir := concurrencyHerdrDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("helper %s barrier: %v", id, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ready-"+id), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("helper %s ready: %v", id, err)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "start")); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("helper %s timed out waiting for the start barrier", id)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
@@ -373,6 +430,88 @@ func runConcurrencyHelpers(t *testing.T, mode string, ids []string, env map[stri
 	out := make([]map[string]string, len(ids))
 	for i, id := range ids {
 		result := filepath.Join(os.Getenv("WICK_CONCURRENCY_HERDR"), "result-"+id+".json")
+		raw, err := os.ReadFile(result)
+		if err != nil {
+			t.Fatalf("helper %s wrote no result: %v\n%s", id, err, outputs[i])
+		}
+		var m map[string]string
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("helper %s result is not JSON: %v", id, err)
+		}
+		if m["error"] != "" {
+			t.Fatalf("helper %s reported: %s", id, m["error"])
+		}
+		out[i] = m
+	}
+	return out
+}
+
+// runConcurrencyHelpersTogether starts n helper processes that all begin
+// their work at the same moment: each helper signals readiness and waits for
+// the parent to release the start barrier, so every helper overlaps every
+// other one in the mode's work. A staggered start would let a fast helper
+// finish before a slow one arrives and a check-then-act race would never
+// show. tabFor optionally overrides WICK_CONCURRENCY_TAB per helper, so one
+// run can place from several tabs at once.
+func runConcurrencyHelpersTogether(t *testing.T, mode string, ids []string, env map[string]string, tabFor map[string]string) []map[string]string {
+	t.Helper()
+	dir := os.Getenv("WICK_CONCURRENCY_HERDR")
+	_ = os.Remove(filepath.Join(dir, "start"))
+	for _, id := range ids {
+		_ = os.Remove(filepath.Join(dir, "ready-"+id))
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, len(ids))
+	outputs := make([]string, len(ids))
+	for i, id := range ids {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			result := filepath.Join(dir, "result-"+id+".json")
+			args := []string{"-test.run", "TestConcurrencyHelperProcess", "-test.count=1"}
+			cmd := exec.Command(os.Args[0], args...)
+			cmd.Env = append(os.Environ(),
+				"WICK_CONCURRENCY_MODE="+mode,
+				"WICK_CONCURRENCY_ID="+id,
+				"WICK_CONCURRENCY_RESULT="+result,
+				"WICK_CONCURRENCY_BARRIER=1",
+			)
+			for k, v := range env {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+			if tab, ok := tabFor[id]; ok {
+				cmd.Env = append(cmd.Env, "WICK_CONCURRENCY_TAB="+tab)
+			}
+			out, err := cmd.CombinedOutput()
+			outputs[i] = string(out)
+			errs[i] = err
+		}(i, id)
+	}
+	// Release the barrier once every helper is waiting at it.
+	deadline := time.Now().Add(60 * time.Second)
+	for _, id := range ids {
+		for {
+			if _, err := os.Stat(filepath.Join(dir, "ready-"+id)); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("helper %s never reached the barrier", id)
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "start"), []byte("go\n"), 0o644); err != nil {
+		t.Fatalf("release the start barrier: %v", err)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("helper %s (%s) failed: %v\n%s", ids[i], mode, err, outputs[i])
+		}
+	}
+	out := make([]map[string]string, len(ids))
+	for i, id := range ids {
+		result := filepath.Join(dir, "result-"+id+".json")
 		raw, err := os.ReadFile(result)
 		if err != nil {
 			t.Fatalf("helper %s wrote no result: %v\n%s", id, err, outputs[i])

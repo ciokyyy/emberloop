@@ -87,12 +87,16 @@ type readOnlyAgent struct {
 }
 
 // closeAgent closes an agent's pane under its tab's grid lock, so a close
-// never races a concurrent split of that tab.
+// never races a concurrent split of that tab, even across sessions. A lock
+// setup failure never holds the close hostage: the pane is closed unlocked
+// rather than leaked.
 func closeAgent(run Exec, agent readOnlyAgent) {
-	lock := gridLock(agent.Tab)
-	lock.Lock()
-	defer lock.Unlock()
-	_, _ = run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	if err := withGridLock(agent.Tab, func() error {
+		_, _ = run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
+		return nil
+	}); err != nil {
+		_, _ = run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	}
 }
 
 // readOnlyDir holds read-only agents' prompts and sessions.
