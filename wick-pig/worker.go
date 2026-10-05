@@ -15,8 +15,11 @@ import (
 type Worker struct {
 	ID     string `json:"id"`
 	Ticket string `json:"ticket"`
-	Repo   string `json:"repo"`
-	Base   string `json:"base"`
+	// Spec is the spec the ticket belongs to, when the worker was spawned by
+	// an implement session; the spec reviewer judges the diff against it.
+	Spec string `json:"spec,omitempty"`
+	Repo string `json:"repo"`
+	Base string `json:"base"`
 	// Target is the branch the worker merges into: the branch the repo was on
 	// when it spawned, or the one named as its base. Base stays the commit it
 	// branched from, for diffs; finish rebases onto Target's current tip.
@@ -220,6 +223,7 @@ func herdrName(id string) string {
 
 type SpawnInput struct {
 	Ticket  string
+	Spec    string
 	Repo    string
 	Base    string
 	Harness string
@@ -319,6 +323,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	w := &Worker{
 		ID:        id,
 		Ticket:    in.Ticket,
+		Spec:      in.Spec,
 		Repo:      repo,
 		Base:      base,
 		Target:    target,

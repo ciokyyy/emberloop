@@ -23,6 +23,22 @@ func TestPlanServesFileToolsAndScoutOnly(t *testing.T) {
 	}
 }
 
+// implement delegates and explores; it never edits, runs code or reviews.
+func TestImplementDelegatesAndScouts(t *testing.T) {
+	served, err := RoleTools("implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(served))
+	for i, tool := range served {
+		got[i] = tool.Name()
+	}
+	want := []string{"read", "find", "spawn_worker", "wait_workers", "finish_worker", "tell_worker", "scout"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("implement tools = %v, want %v", got, want)
+	}
+}
+
 // full stays reachable, but only by asking for it: it is every tool, including
 // the orchestration and review tools no planning session should hold.
 func TestFullServesEveryTool(t *testing.T) {

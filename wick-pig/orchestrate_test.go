@@ -315,6 +315,7 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	t.Setenv("HERDR_TAB_ID", "w1:t1")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("WICK_SPEC", "/repo/.scratch/p/spec.md")
 	args, _ := json.Marshal(map[string]any{"ticket": ticket})
 	if _, err := spawnTool.Execute(context.Background(), repo, args); err != nil {
 		t.Fatalf("spawn_worker: %v", err)
@@ -324,6 +325,14 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	}
 	if strings.Contains(launched, "WICK_READ_ALLOW") {
 		t.Errorf("worker launch must not carry a read exception; read opens any path:\n%s", launched)
+	}
+	// Spawned from an implement session, the worker records its spec.
+	w, err := recall("22-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Spec != "/repo/.scratch/p/spec.md" {
+		t.Errorf("worker spec = %q, want the session's WICK_SPEC", w.Spec)
 	}
 }
 

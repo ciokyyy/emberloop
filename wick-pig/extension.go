@@ -131,10 +131,13 @@ func shellArg(s string) string {
 }
 
 // writeBrief puts the worker's instructions on disk, beside the worker store.
-// It points at the skills by their wick:// addresses rather than restating
-// them, so an upstream rewrite lands without a code change here, and one brief
-// serves every harness.
-func writeBrief(id, ticket string) (string, error) {
+// It points at the ticket, its spec and the skills by path and wick:// address
+// rather than restating them, so an upstream rewrite lands without a code
+// change here, and one brief serves every harness. target is the branch the
+// worker merges into; it rebases onto it before its last review, so conflicts
+// are resolved while it still has its context, and the review covers what
+// will merge.
+func writeBrief(id, ticket, spec, target string) (string, error) {
 	dir := filepath.Join(filepath.Dir(statePath), "briefs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -142,12 +145,23 @@ func writeBrief(id, ticket string) (string, error) {
 	path := filepath.Join(dir, id+".md")
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Implement the ticket at %s.\n\n", ticket)
-	b.WriteString("Read and follow these skills, in this order:\n\n")
+	fmt.Fprintf(&b, "Implement the ticket at %s.\n", ticket)
+	if spec != "" {
+		fmt.Fprintf(&b, "It belongs to the spec at %s; read it for the decisions the ticket implements.\n", spec)
+	}
+	b.WriteString("\nRead and follow these skills, in this order:\n\n")
 	for i, s := range workerSkills {
 		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, skillAddress(s.name), s.when)
 	}
+	b.WriteString("\nWhere a skill says /code-review, call the code_review tool instead.\n")
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
+	if target != "" {
+		fmt.Fprintf(&b, "\nBefore your final code_review, bring the branch up to date: `git rebase %s`. "+
+			"Resolve any conflict keeping the intent of both sides, run the gate again, and commit. "+
+			"Other tickets merge into %s while you work, so do this last.\n", target, target)
+	}
+	b.WriteString("\nA review finding you cannot fix within this ticket (outside what it may touch, or against the spec) " +
+		"is declined, with the reason, in code_review's note. List every declined finding under \"Follow-ups\" in your final message.\n")
 	b.WriteString("\nServers, watchers and log tails go to the background tool, never bash: it blocks until timeout.\n")
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -212,31 +226,32 @@ func renderFinish(r *FinishResult) string {
 	case r.Merged:
 		return fmt.Sprintf("merged %s into the base as %s; its worktree is gone.", r.ID, r.SHA)
 	case r.Kept:
-		return fmt.Sprintf("%s did NOT merge and its worktree is still on disk: %s\n"+
-			"Report this rather than resolving it — a human decides.", r.ID, r.Detail)
+		return fmt.Sprintf("%s did NOT merge; its worktree and pane are still there: %s\n"+
+			"Send it back with tell_worker to fix this (rebase, resolve, gate, code_review), wait for it, then finish it again.", r.ID, r.Detail)
 	default:
 		return fmt.Sprintf("discarded %s and removed its worktree.", r.ID)
 	}
 }
 
-// implementPrompt is what `/implement <path>` injects into the merger.
-func implementPrompt(target string) string {
-	return fmt.Sprintf(`Run the wick implement loop over %s.
+// implementPrompt is what `wick-pig implement <spec>` injects. The skill does
+// the thinking; the adapter only maps its vocabulary onto wick's tools and
+// drops what wick already does (review per ticket, the integration branch).
+func implementPrompt(run SpecRun) string {
+	return fmt.Sprintf(`Implement the spec at %s. Its tickets are under %s.
 
-1. Read the tickets under %s and order them by their "Blocked by:" line.
-   Never start a ticket whose blockers have not merged.
-2. spawn_worker(ticket=<path>) for every ready ticket. Pass harness or model
-   only to override the default. Each worker is given its own worktree and the
-   skills it needs; you need none of them yourself.
-3. wait_workers(timeout_ms=%d) once — do not poll in a loop.
-4. finish_worker for each settled worker. Workers review their own work with
-   code_review before they settle; do not review them again. If finish_worker
-   returns kept:true it conflicted: stop, report it, do not resolve it yourself.
-5. Recompute what is ready and go again. Stop when nothing is ready.
+Read %s and follow it, with these wick adaptations:
 
-Servers, watchers and log tails go to the background tool, never bash, for any command you run yourself.
+- The integration branch is %s. It already exists and is checked out; never switch away from it.
+- An implementer subagent is spawn_worker(ticket=<path>). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else.
+- An exploration subagent is scout(question=...). Ask several at once when they are independent.
+- The merger subagent is finish_worker(worker=<id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
+- Skip the skill's final code-review step: every worker reviewed its own ticket before settling. Never review a worker yourself.
+- wait_workers(timeout_ms=%d) to see workers settle; one call, not a polling loop.
+- If finish_worker does not merge a worker, tell_worker it what failed (the reason finish_worker gave), wait for it, and finish it again. If the same worker fails again, leave it, report it, and carry on with every ticket it does not block.
+- You never edit files and never run code.
 
-Report the merged shas when the run is done.`, target, target, WaitCap/time.Millisecond)
+When nothing more is ready, report the integration branch, each merged ticket with its sha, every worker left unmerged and why, and the follow-ups workers listed.`,
+		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch, WaitCap/time.Millisecond)
 }
 
 func str(params map[string]any, key string) string {

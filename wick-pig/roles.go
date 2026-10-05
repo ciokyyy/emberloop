@@ -10,9 +10,9 @@ import (
 // roles name what a session may touch. The tool set is the enforcement: a
 // reviewer has no edit tool, so no prompt has to ask it not to edit.
 var roles = map[string][]string{
-	// implement delegates: it reads and spawns, it never edits, runs code or
-	// reviews. Each worker reviews its own work with code_review.
-	"implement": {"read", "find", "spawn_worker", "wait_workers", "finish_worker", "tell_worker"},
+	// implement delegates: it reads, explores with scouts, and spawns; it
+	// never edits, runs code or reviews. Each worker reviews its own work.
+	"implement": {"read", "find", "spawn_worker", "wait_workers", "finish_worker", "tell_worker", "scout"},
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},

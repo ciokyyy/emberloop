@@ -30,6 +30,7 @@ type Session struct {
 	ID       string // session id; names the transcript so the reply can be read back
 	Dir      string // where a harness that takes a session dir should keep it
 	Label    string // names the session so herdr can address it
+	Spec     string // the spec an implement session runs; its workers record it
 }
 
 // Command is a ready-to-exec invocation.
@@ -113,8 +114,14 @@ func (c Command) Line() string {
 	return strings.Join(words, " ")
 }
 
+// roleEnv is what the session's wick-mcp needs to know: its role, and for an
+// implement session the spec, which spawn_worker hands to every worker.
 func roleEnv(s Session) []string {
-	return []string{"WICK_ROLE=" + s.Role}
+	env := []string{"WICK_ROLE=" + s.Role}
+	if s.Spec != "" {
+		env = append(env, "WICK_SPEC="+s.Spec)
+	}
+	return env
 }
 
 // pigHarness: pig loads wick-mcp from its mcp.json, so the built-in tools are
@@ -306,7 +313,7 @@ func SkillPrompt(skill, args string, scout bool) string {
 	return skillPrompt(skill, args, scout)
 }
 
-func ImplementPrompt(target string) string { return implementPrompt(target) }
+func ImplementPrompt(run SpecRun) string { return implementPrompt(run) }
 
 // appendPrompt adds the first message; an empty one means an open session.
 func appendPrompt(args []string, prompt string) []string {

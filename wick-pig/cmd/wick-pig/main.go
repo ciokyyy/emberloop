@@ -3,7 +3,7 @@
 //	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig [--pig|--claude] [--role full] [--model M] [-p]   plan session
-//	wick-pig implement <path> [flags]                          restricted merger
+//	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
 package main
 
@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"example.com/wick"
@@ -78,9 +77,9 @@ func run(argv []string) error {
 		s.Role, s.Prompt = r, rest
 	case "implement":
 		if rest == "" {
-			return fmt.Errorf("usage: wick-pig implement <ticket-dir-or-file>")
+			return fmt.Errorf("usage: wick-pig implement <spec-file-or-dir>")
 		}
-		target, err := filepath.Abs(rest)
+		spec, err := wick.ResolveSpec(rest)
 		if err != nil {
 			return err
 		}
@@ -88,7 +87,16 @@ func run(argv []string) error {
 		if err != nil {
 			return err
 		}
-		s.Role, s.Prompt = r, wick.ImplementPrompt(target)
+		created, err := wick.EnterIntegrationBranch(wick.OSExec, cwd, spec.Branch)
+		if err != nil {
+			return err
+		}
+		verb := "resuming on"
+		if created {
+			verb = "created"
+		}
+		fmt.Fprintf(os.Stderr, "wick-pig: %s %s\n", verb, spec.Branch)
+		s.Role, s.Prompt, s.Spec = r, wick.ImplementPrompt(spec), spec.Spec
 	default:
 		found := false
 		for _, e := range wick.SkillEntries() {

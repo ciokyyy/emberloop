@@ -25,7 +25,7 @@ func TestShellArgQuotesOnlyWhenNeeded(t *testing.T) {
 func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,38 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	if strings.Contains(text, "/skills/matt-pocock") {
 		t.Errorf("brief must not name an absolute library path:\n%s", text)
 	}
-	if strings.Contains(text, "code-review") {
-		t.Errorf("a worker must not review itself; the reviewer does:\n%s", text)
-	}
 	if strings.Contains(text, "Commit your work to the current branch") {
 		t.Errorf("brief copied skill content instead of referencing it:\n%s", text)
+	}
+}
+
+// The brief carries what the worker needs beyond the skills: the spec its
+// ticket belongs to, the code_review tool in place of the code-review skill's
+// subagents, a rebase onto the target before the last review, and how to
+// decline a finding it cannot fix.
+func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
+	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := readFile(t, path)
+	for _, want := range []string{"/repo/.scratch/p/spec.md", "code_review tool", "git rebase spec/p", "Follow-ups", "note"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("brief must carry %q:\n%s", want, text)
+		}
+	}
+	rebase := strings.Index(text, "git rebase")
+	if rebase < 0 || !strings.Contains(text[:rebase], "final code_review") {
+		t.Errorf("the rebase must come before the final review:\n%s", text)
+	}
+
+	bare, err := writeBrief("02-probe", "/repo/t.md", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := readFile(t, bare); strings.Contains(text, "spec at") || strings.Contains(text, "git rebase") {
+		t.Errorf("no spec and no target means neither is mentioned:\n%s", text)
 	}
 }
 
@@ -60,7 +87,7 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 // no session loads the library itself.
 func TestBriefIsTheSameForEveryHarness(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +97,10 @@ func TestBriefIsTheSameForEveryHarness(t *testing.T) {
 	}
 }
 
-func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
+func TestBackgroundRuleReachesBrief(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,18 +111,44 @@ func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
 	if !strings.Contains(string(body), "background") {
 		t.Errorf("a worker brief must carry the background rule, it only lives in the system prompt:\n%s", body)
 	}
-
-	if got := implementPrompt("/repo/.scratch/p/issues"); !strings.Contains(got, "background") {
-		t.Errorf("the merger prompt must carry the background rule for anything it runs:\n%s", got)
-	}
 }
+
+var testRun = SpecRun{Spec: "/repo/.scratch/p/spec.md", Tickets: "/repo/.scratch/p/issues", Branch: "spec/p"}
 
 // The merger never reviews: each worker already ran code_review on its own
 // work, and a second review per worker only spends the merger's tokens.
 func TestImplementPromptDoesNotReview(t *testing.T) {
-	got := implementPrompt("/repo/.scratch/p/issues")
+	got := implementPrompt(testRun)
 	if strings.Contains(got, "review_worker") || strings.Contains(strings.ToLower(got), "verdict") {
 		t.Errorf("the merger prompt must not ask for a review:\n%s", got)
+	}
+	if !strings.Contains(got, "Skip the skill's final code-review step") {
+		t.Errorf("the prompt must drop implement-spec's final review:\n%s", got)
+	}
+}
+
+// The implement session runs the upstream skill, adapted: it is pointed at the
+// skill by address, and every subagent the skill names maps onto a wick tool.
+func TestImplementPromptAdaptsImplementSpec(t *testing.T) {
+	got := implementPrompt(testRun)
+	for _, want := range []string{
+		"wick://matt-pocock/implement-spec/SKILL.md",
+		"/repo/.scratch/p/spec.md", "/repo/.scratch/p/issues", "spec/p",
+		"spawn_worker", "scout", "finish_worker", "tell_worker", "wait_workers",
+		"carry on", "follow-ups",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("implement prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A worker that did not merge is sent back, not handed to a human: the
+// worker still has its context and its worktree.
+func TestRenderFinishSendsAKeptWorkerBack(t *testing.T) {
+	got := renderFinish(&FinishResult{ID: "01-x", Kept: true, Detail: "rebase onto spec/p conflicted in a.go"})
+	if !strings.Contains(got, "tell_worker") || !strings.Contains(got, "a.go") || strings.Contains(got, "human") {
+		t.Errorf("got %q", got)
 	}
 }
 

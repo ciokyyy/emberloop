@@ -93,7 +93,11 @@ var spawnTool = fnTool{
 		if in.Repo == "" {
 			in.Repo = root
 		}
-		brief, err := writeBrief(WorkerID(in.Ticket), in.Ticket)
+		// An implement session carries its spec in the environment; every
+		// worker it spawns records it, for its brief and its spec reviewer.
+		in.Spec = os.Getenv("WICK_SPEC")
+		target := targetBranch(spawnExec, in.Repo, in.Base)
+		brief, err := writeBrief(WorkerID(in.Ticket), in.Ticket, in.Spec, target)
 		if err != nil {
 			return "", err
 		}
