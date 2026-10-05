@@ -11,9 +11,10 @@ import (
 )
 
 // ToolBudget is the longest any tool may block. A harness cuts an MCP call at
-// about a minute; a tool that outlives that fails in the caller while the work
-// goes on behind it, and a retry then starts the work a second time.
-const ToolBudget = 50 * time.Second
+// its own timeout, and a tool that outlives it fails in the caller while the
+// work goes on behind it. pig's default is 60s; mcp.json raises it per server
+// with "timeout" (seconds), and wick's entry sets 600, so this stays well under.
+const ToolBudget = 4 * time.Minute
 
 // toolBudget is ToolBudget in use, a var only so a test can shrink it.
 var toolBudget = ToolBudget
