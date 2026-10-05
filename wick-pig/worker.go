@@ -223,6 +223,22 @@ type SpawnInput struct {
 
 func worktreePath(repo, id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
 
+// resolveRef turns a git ref into the full SHA it currently points at.
+func resolveRef(run Exec, repo, ref string) (string, error) {
+	res, err := run("git", []string{"rev-parse", ref}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+	if err != nil {
+		return "", err
+	}
+	if res.Code != 0 {
+		return "", fmt.Errorf("git rev-parse %s in %s failed: %s", ref, repo, firstLine(res.Stderr, "unknown ref"))
+	}
+	sha := strings.TrimSpace(res.Stdout)
+	if sha == "" {
+		return "", fmt.Errorf("git rev-parse %s in %s returned nothing", ref, repo)
+	}
+	return sha, nil
+}
+
 // Spawn creates a worktree, opens a pane on it, and starts the worker there.
 func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	id := WorkerID(in.Ticket)
@@ -237,6 +253,16 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	if base == "" {
 		base = "HEAD"
 	}
+
+	// Resolve the base to a commit *here*, in the source repo. "HEAD" means the
+	// worker's own tip once it is inside its worktree, which makes every later
+	// `git diff <base>` empty. A branch name resolves to whatever it points at
+	// now, so a worker's base stays put while the branch moves.
+	resolved, err := resolveRef(run, repo, base)
+	if err != nil {
+		return nil, err
+	}
+	base = resolved
 
 	storeMu.Lock()
 	defer storeMu.Unlock()

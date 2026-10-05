@@ -193,3 +193,174 @@ func TestHerdrNameIsLegalForHerdr(t *testing.T) {
 		t.Errorf("an already-legal name must be left alone, got %q", got)
 	}
 }
+
+// TestSpawnResolvesBaseToASha pins the behaviour that makes later diffs
+// meaningful: the base is a commit, not the ref "HEAD". Inside a worktree HEAD
+// is the worker's own branch, so a stored "HEAD" makes `git diff <base>` empty
+// the moment the worker commits.
+func TestSpawnResolvesBaseToASha(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+
+	// The SHA comes from the stubbed git, not from recomputing what the code
+	// under test does.
+	const sha = "9f2c1a4b7e6d5c8a9f0e1d2c3b4a5968778695a4"
+
+	type call struct {
+		cmd  string
+		args []string
+	}
+	var calls []call
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		calls = append(calls, call{cmd, args})
+		switch {
+		case cmd == "git":
+			return Result{Stdout: sha + "\n"}, nil
+		case len(args) > 0 && args[0] == "worktree":
+			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"%1"},"workspace":{"workspace_id":"%2"}}}`}, nil
+		default:
+			return Result{}, nil
+		}
+	}
+
+	worker, err := Spawn(run, SpawnInput{Ticket: "repo/.scratch/17-thing.md", Repo: repo})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+
+	if worker.Base != sha {
+		t.Errorf("worker.Base = %q, want the resolved sha %q", worker.Base, sha)
+	}
+
+	store, err := load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := store[worker.ID].Base; got != sha {
+		t.Errorf("stored base = %q, want the resolved sha %q", got, sha)
+	}
+
+	revIdx, wtIdx := -1, -1
+	for i, c := range calls {
+		if revIdx < 0 && c.cmd == "git" && len(c.args) > 1 && c.args[0] == "rev-parse" {
+			revIdx = i
+		}
+		if wtIdx < 0 && len(c.args) > 0 && c.args[0] == "worktree" {
+			wtIdx = i
+			if v, ok := flag(c.args, "--base"); !ok || v != sha {
+				t.Errorf("herdr worktree create --base = %q (ok=%v), want %q", v, ok, sha)
+			}
+		}
+	}
+	if revIdx < 0 {
+		t.Error("spawn never ran `git rev-parse` in the repo")
+	}
+	if wtIdx < 0 {
+		t.Fatal("spawn never ran `herdr worktree create`")
+	}
+	// The ref must be resolved before the worktree exists, or it would resolve
+	// to the worker's own tip.
+	if revIdx > wtIdx {
+		t.Errorf("git rev-parse ran at call %d, after worktree create at %d", revIdx, wtIdx)
+	}
+}
+
+// flag returns the value that follows name in args.
+func flag(args []string, name string) (string, bool) {
+	for i, a := range args {
+		if a == name && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// TestSpawnAcceptsABranchName keeps the existing caller contract: a branch name
+// is a legal base, and the stored value is still a commit. git is real here, so
+// the expected SHA comes from git itself.
+func TestSpawnAcceptsABranchName(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "wick@test.local")
+	gitOut(t, repo, "config", "user.name", "wick")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "base")
+	want := gitOut(t, repo, "rev-parse", "main")
+
+	// Real git, stubbed herdr: the SHA is git's, the workspace is not opened.
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		if len(args) > 0 && args[0] == "worktree" {
+			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"%1"},"workspace":{"workspace_id":"%2"}}}`}, nil
+		}
+		return Result{}, nil
+	}
+
+	worker, err := Spawn(run, SpawnInput{Ticket: "repo/.scratch/18-thing.md", Repo: repo, Base: "main"})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if worker.Base != want {
+		t.Errorf("base = %q, want main's sha %q", worker.Base, want)
+	}
+}
+
+// TestFinishRebasesOntoARefBase covers a store written before bases were
+// resolved: "main" is not a SHA, and finish still has to work with it.
+func TestFinishRebasesOntoARefBase(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "wick@test.local")
+	gitOut(t, repo, "config", "user.name", "wick")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "base")
+
+	worktree := filepath.Join(repo, ".wick-worktrees", "19-thing")
+	gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/19-thing", worktree, "main")
+	if err := os.WriteFile(filepath.Join(worktree, "feature.txt"), []byte("done\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, worktree, "add", ".")
+	gitOut(t, worktree, "commit", "-qm", "worker work")
+
+	if err := save(map[string]Worker{
+		"19-thing": {
+			ID: "19-thing", Ticket: "repo/.scratch/19-thing.md", Repo: repo,
+			Base: "main", Branch: "implement/19-thing", Worktree: worktree,
+			Pane: "%1", Workspace: "%2",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		if len(args) > 0 && args[0] == "worktree" {
+			return Result{Stdout: `{"result":{}}`}, nil
+		}
+		return Result{}, nil
+	}
+
+	res, err := Finish(run, "19-thing", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if !res.Merged {
+		t.Fatalf("merged = false, detail = %q; a stored ref base must still rebase", res.Detail)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "feature.txt")); err != nil {
+		t.Errorf("work not present on main: %v", err)
+	}
+}
