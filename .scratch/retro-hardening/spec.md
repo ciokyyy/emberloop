@@ -1,4 +1,4 @@
-# Spec: retro hardening, review integrity, and DOX for this repo
+# Spec: retro hardening, review integrity, install safety, and DOX for this repo
 
 Status: ready-for-agent
 
@@ -29,6 +29,11 @@ A third finding, reported by the user: **when two agents spawn at the same momen
 - The pause between launches, added because simultaneous first requests make the provider answer with empty bodies or a 503 (seen in three worker sessions), is kept per process, so simultaneous spawns from different sessions still collide.
 
 The exact symptom has not been reproduced; the first ticket reproduces it before any fix.
+
+A fourth finding came from the second retro, on the finished run-records run: **a pass is tied to content, so every rebase invalidates it, and the orchestrator ran a stale tool server.**
+
+- Worker 05 needed six reviewer rounds; four were follow-ups after a rebase onto other tickets' merges, on its own unchanged work. A clean rebase moves the content around the worker's change but leaves the change itself identical.
+- The orchestrator's wick MCP process is long-lived. After the gate was fixed and the binaries rebuilt, it kept the old gate and refused two workers twice each for a bug already fixed; both were merged from outside. Replacing a wick binary under a running harness is what causes this, and also changes tool behaviour mid-session for every other live agent.
 
 ## Delivered already (commit 81d72bd)
 
@@ -77,6 +82,13 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 35. As a worker, I want a second simultaneous spawn of the same reviewer type for my worktree to re-prompt the one already starting instead of starting another, so that there is one reviewer per type.
 36. As a user, I want launches from separate sessions spaced apart too, so that simultaneous first requests do not make the provider answer with empty bodies.
 37. As a maintainer, I want a concurrency test across real processes, so that this class of bug cannot return unseen.
+38. As a worker, I want my reviewers' pass to survive a clean rebase onto other merged tickets, so that I am not sent back to review unchanged work.
+39. As an orchestrator, I want a rebase that changes my worker's own change, or conflicts, to invalidate the pass, so that a real change is always reviewed.
+40. As a user, I want installing or updating wick's binaries to refuse while a harness run has live agents, so that no running session changes behaviour under itself.
+41. As a user, I want that refusal to name the live agents, so that I know what to wait for or stop.
+42. As a user, I want an explicit force option for the rare case, with a warning that live sessions keep the old binary until they restart, so that I can still choose.
+43. As a user, I want a wick process to say when it is older than the installed binary, so that a stale orchestrator is visible, not silent.
+44. As a user, I want a cap on how many workers run at once, so that a wide frontier does not overload the model provider.
 
 ## Implementation Decisions
 
@@ -97,6 +109,10 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - Concurrency: every piece of spawn state shared between sessions is guarded by a cross-process lock and written atomically, using the lock helper wick already has for agent state and reviewers. That covers grid placement and overflow-tab creation (per tab), the worker store, and the check-then-launch of a reviewer (per worktree and type). The grid's slot record is read under the same lock, from a file, not process memory.
 - The spacing between launches uses a shared timestamp under a lock, so it holds across sessions.
 - The first ticket is a reproduction: concurrent spawns across real processes against a fake herdr, asserting every requested agent exists, owns a distinct pane, and appears in the stores. The fixes follow its failures.
+- A pass is recorded against the patch identity of the worker's own change (its diff from its base, hashed so that it does not depend on where the branch sits), beside the content snapshot. After a clean rebase the identity is the same, so the pass holds; after a conflict, an edit or a different change it differs, so the pass is stale. The gate accepts a pass when either the content or the patch identity matches. This supersedes the rebase handling of follow-up diffs: when only the base moved, the follow-up is the worker's own change against the new base, never the other tickets' work.
+- Wick binaries are installed through one command. It refuses while any agent of a run is live (worker, reviewer or scout panes known to the stores and the terminal multiplexer), names them, and exits without changing anything. A force option installs anyway and prints that running sessions keep the old binary. Nothing replaces a binary any other way.
+- A wick MCP server records its own binary's identity at start and, on a call, notes in its reply when the installed binary has changed since. It does not restart itself: restarting mid-run would drop state, and the install gate is what prevents the situation.
+- A setting caps concurrent workers (default three). Further workers from one spawn call start as earlier ones finish, and the call reports which are queued.
 - The spawn wait for blocking agents keeps its current bound; the bound becomes a named setting, the "still running" reply states the wait in seconds, and the worker and orchestrator briefs mention it once.
 
 ## Testing Decisions
@@ -112,6 +128,10 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - Merge gate: a pass on a clean commit still opens the gate; a pass on a dirty snapshot still does not.
 - Spawn wait: a fake slow reviewer exceeds the bound and the reply names it and says results arrive as notices.
 - Concurrency: several helper processes spawn scouts, workers and reviewers at once against a fake herdr that records splits and closes; the test asserts no close of a pane another spawn owns, distinct slots, one overflow tab per label, a complete worker store, and one reviewer per worktree and type. It must fail on the current code. Prior art: the fake herdr in the grid and review tests, and the cross-process file lock tests.
+- Rebase: a pass survives a clean rebase onto an unrelated merged change and the gate accepts it; a conflicting or content-changing rebase makes it stale. Prior art: the existing rebase review test.
+- Install gate: with a live agent in the stores and the fake multiplexer, install exits non-zero, names the agent and replaces nothing; with none it installs; force installs and prints the warning.
+- Staleness: a server started before its binary changed says so in its next reply.
+- Worker cap: a spawn call for more workers than the cap starts the cap and reports the rest as queued, then starts them as slots free.
 
 ## Out of Scope
 
