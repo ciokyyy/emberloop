@@ -133,11 +133,14 @@ func briefPath(id string) string { return filepath.Join(filepath.Dir(statePath),
 // writeBrief puts the worker's instructions on disk, beside the worker store.
 // It points at the ticket, its spec and the skills by path and wick:// address
 // rather than restating them, so an upstream rewrite lands without a code
-// change here, and one brief serves every harness. target is the branch the
-// worker merges into; it rebases onto it before its last review, so conflicts
-// are resolved while it still has its context, and the review covers what
-// will merge.
-func writeBrief(id, ticket, spec, target string) (string, error) {
+// change here. target is the branch the worker merges into; it rebases onto
+// it before its last review, so conflicts are resolved while it still has
+// its context, and the review covers what will merge. harness decides
+// whether the brief opens with the root-doc line: the context probe
+// (ticket 15) found pig loads the root AGENTS.md as a context file while
+// the stripped claude harness loads neither context file, so only claude
+// workers are told to read the root AGENTS.md first.
+func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 	dir := filepath.Dir(briefPath(id))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -145,6 +148,9 @@ func writeBrief(id, ticket, spec, target string) (string, error) {
 	path := briefPath(id)
 
 	var b strings.Builder
+	if harness == "claude" {
+		b.WriteString("First, read the root AGENTS.md and follow it before anything else.\n\n")
+	}
 	fmt.Fprintf(&b, "Implement the ticket at %s.\n", ticket)
 	if spec != "" {
 		fmt.Fprintf(&b, "It belongs to the spec at %s; read it for the decisions the ticket implements.\n", spec)

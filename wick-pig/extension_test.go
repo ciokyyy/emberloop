@@ -25,7 +25,7 @@ func TestShellArgQuotesOnlyWhenNeeded(t *testing.T) {
 func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 // review, and how to decline a finding it cannot fix.
 func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 		t.Errorf("the rebase must come before the final review:\n%s", text)
 	}
 
-	bare, err := writeBrief("02-probe", "/repo/t.md", "", "")
+	bare, err := writeBrief("02-probe", "/repo/t.md", "", "", "pig")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,23 +84,59 @@ func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 }
 
 // Every harness reads skills through the read tool under one wick:// address:
-// no session loads the library itself.
+// no session loads the library itself. The skill references are the same for
+// every harness; only the root-doc line differs (ticket 15 probe).
 func TestBriefIsTheSameForEveryHarness(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "")
+	pig, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "pig")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := readFile(t, path)
-	if !strings.Contains(text, "wick://matt-pocock/implement/SKILL.md") {
-		t.Errorf("brief must name the implement skill by its wick:// address:\n%s", text)
+	claude, err := writeBrief("02-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{pig, claude} {
+		text := readFile(t, path)
+		if !strings.Contains(text, "wick://matt-pocock/implement/SKILL.md") {
+			t.Errorf("brief must name the implement skill by its wick:// address:\n%s", text)
+		}
+		if strings.Contains(text, "/skills/matt-pocock") {
+			t.Errorf("brief must not name an absolute library path:\n%s", text)
+		}
+	}
+}
+
+// Probe finding (ticket 15): the pig harness loads the root AGENTS.md as a
+// context file, so its workers need no extra instruction; the stripped
+// claude harness disables setting sources and CLAUDE.md loading, so its
+// workers must be told to read the root AGENTS.md first.
+func TestBriefCarriesRootDocLineOnlyWhereNeeded(t *testing.T) {
+	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	pig, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "pig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := readFile(t, pig); strings.Contains(text, "root AGENTS.md") {
+		t.Errorf("pig already loads the root AGENTS.md, its brief must not repeat it:\n%s", text)
+	}
+	claude, err := writeBrief("02-probe", "/repo/.scratch/p/issues/02-probe.md", "", "", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := readFile(t, claude)
+	if !strings.Contains(text, "root AGENTS.md") {
+		t.Errorf("claude loads neither context file, its brief must tell the worker to read the root AGENTS.md first:\n%s", text)
+	}
+	if first, second := strings.Index(text, "AGENTS.md"), strings.Index(text, "Implement the ticket"); first < 0 || second < 0 || !(first < second) {
+		t.Errorf("the root-doc line must come before the ticket instructions so it is read first:\n%s", text)
 	}
 }
 
 func TestBackgroundRuleReachesBrief(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "pig")
 	if err != nil {
 		t.Fatal(err)
 	}

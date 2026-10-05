@@ -458,7 +458,7 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	// An implement session carries its spec in the environment; every worker
 	// it spawns records it, for its brief and its spec reviewer.
 	in.Spec = os.Getenv("WICK_SPEC")
-	brief, err := writeBrief(id, in.Ticket, in.Spec, target)
+	brief, err := writeBrief(id, in.Ticket, in.Spec, target, choice.Harness)
 	if err != nil {
 		return nil, err
 	}
