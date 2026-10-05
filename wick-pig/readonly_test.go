@@ -203,6 +203,30 @@ func TestReadOnlyDoesNotWidenReadAccess(t *testing.T) {
 	}
 }
 
+// A read-only agent on a non-pig harness keeps the model it was given: a model
+// set for a read-only slot is meant for that harness, so the rule that dropped
+// it for a non-pig harness is gone.
+func TestReadOnlyKeepsTheModelOnANonPigHarness(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WICK_READONLY_HARNESS", "claude")
+
+	rec := &recorder{reply: claudeHerdr(home, "looks fine")}
+	if _, err := ReadOnly(rec.run, "/repo", "claude-sonnet", "look"); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "--model claude-sonnet") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a claude read-only agent must keep the model it was given; calls:\n%v", rec.calls)
+	}
+}
+
 // concExec is a fake herdr that records whether read-only launches overlap.
 // The split handler sleeps, so an unserialized split shows up as two at once.
 // Its pane list grows with each split, the way the grid expects to find the

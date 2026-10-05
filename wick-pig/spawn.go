@@ -385,25 +385,24 @@ func allSubmitted(agents []*spawnedAgent) bool {
 // launchScout starts one read-only agent in the caller's tab and leaves it
 // running, so a parent can send it a follow-up.
 func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAgent, error) {
-	harness := t.Harness
-	if harness == "" {
-		harness = os.Getenv("WICK_READONLY_HARNESS")
-	}
-	if harness == "" {
-		harness = "pig"
-	}
+	// A scout resolves the scout slot: WICK_READONLY_HARNESS is a flag layer,
+	// the type's frontmatter the typeOrSpawn layer, then the slot's settings,
+	// then pig.
+	choice := Resolve(slotScout, readonlyHarnessChoice(),
+		Choice{Harness: t.Harness, Model: t.Model, Effort: t.Effort})
 	id := newSessionID()
 	sess := Session{
 		ID:        id,
 		Role:      "agent",
 		Cwd:       root,
-		Model:     t.Model,
+		Model:     choice.Model,
+		Effort:    choice.Effort,
 		AgentType: t.Name,
 		AgentID:   id,
 		Dir:       filepath.Join(readOnlyDir(), "sessions"),
 	}
 	spaceSpawns()
-	agent, err := launchPlacedAgent(run, readOnlyPlace{Overflow: "scouts"}, harness, sess, renderPrompt(t, prompt))
+	agent, err := launchPlacedAgent(run, readOnlyPlace{Overflow: "scouts"}, choice.Harness, sess, renderPrompt(t, prompt))
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +419,7 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	}
 	// The implementer slot resolves per field: the spawn entry beats the
 	// type's frontmatter, which beats the settings file, which beats pig.
-	choice := Resolve("implementer",
+	choice := Resolve(slotImplementer,
 		Choice{Harness: r.Harness, Model: r.Model, Effort: r.Effort},
 		Choice{Harness: t.Harness, Model: t.Model, Effort: t.Effort})
 	if r.Ticket == "" {

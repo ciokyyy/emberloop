@@ -100,8 +100,8 @@ func readOnlyDir() string { return filepath.Join(filepath.Dir(statePath), "reado
 
 // readOnlySession is the session a read-only agent with this id writes, so a
 // reviewer that outlives one tool call can be found again by its id.
-func readOnlySession(id, cwd, model string) Session {
-	return Session{Role: "review", Cwd: cwd, Model: model, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
+func readOnlySession(id, cwd, model, effort string) Session {
+	return Session{Role: "review", Cwd: cwd, Model: model, Effort: effort, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
 }
 
 // startReadOnly launches a read-only reviewer on prompt in a pane placed by
@@ -111,22 +111,18 @@ func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (re
 	if harness == "" {
 		harness = "pig"
 	}
-	sess := readOnlySession(newSessionID(), cwd, model)
+	sess := readOnlySession(newSessionID(), cwd, model, "")
 	sess.Prompt = "Your last message is your answer."
 	return launchPlacedAgent(run, place, harness, sess, prompt)
 }
 
 // launchPlacedAgent writes prompt to a file, launches the session that reads it
 // in a pane placed by the grid, and leaves it running. The prompt goes through
-// a file: pane run types its argv as one line. A non-pig harness gets no model,
-// since worker models are pig model names. place names the tab and the overflow
-// label; an empty Tab is the caller's own tab. beforeRun, when given, runs once
-// the pane is placed but before it starts, so a reviewer can record its state
-// ahead of the submit that state exists to catch.
+// a file: pane run types its argv as one line. place names the tab and the
+// overflow label; an empty Tab is the caller's own tab. beforeRun, when given,
+// runs once the pane is placed but before it starts, so a reviewer can record
+// its state ahead of the submit that state exists to catch.
 func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Session, prompt string, beforeRun ...func(readOnlyAgent) error) (readOnlyAgent, error) {
-	if harness != "pig" {
-		sess.Model = ""
-	}
 	if err := os.MkdirAll(readOnlyDir(), 0o755); err != nil {
 		return readOnlyAgent{}, err
 	}

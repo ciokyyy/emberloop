@@ -37,6 +37,7 @@ type reviewer struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
 	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
 	// Reviewed is the commit the reviewer last saw the worktree at.
 	Reviewed string `json:"reviewed"`
 	// Verdict holds at VerdictAt only: a pass on an older commit is stale.
@@ -49,7 +50,7 @@ type reviewer struct {
 func (r reviewer) agent() readOnlyAgent {
 	return readOnlyAgent{
 		Pane: r.Pane, Tab: r.Tab, Slot: r.Slot, Harness: r.Harness,
-		Session: readOnlySession(r.SessionID, r.Cwd, r.Model),
+		Session: readOnlySession(r.SessionID, r.Cwd, r.Model, r.Effort),
 	}
 }
 
@@ -282,7 +283,6 @@ type reviewPacket struct {
 	checks           string
 	note             string
 	ticket, spec     string
-	model            string
 	// noChanges is set when the diff against the base is empty: there is
 	// nothing for a reviewer to judge, so the spawn reports that instead of
 	// starting one.
@@ -329,7 +329,7 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 		return nil, err
 	}
 	if w != nil {
-		p.ticket, p.spec, p.model = w.Ticket, w.Spec, w.Model
+		p.ticket, p.spec = w.Ticket, w.Spec
 	}
 	p.place = workerPlace(w)
 	// An empty diff starts no reviewer, so the repo check is not worth the
@@ -420,21 +420,14 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 // and its review target before the pane starts, so the agent's submit can find
 // them.
 func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replaced bool, parentPane, parentID string) (*spawnedAgent, error) {
-	harness := t.Harness
-	if harness == "" {
-		harness = os.Getenv("WICK_READONLY_HARNESS")
-	}
-	if harness == "" {
-		harness = "pig"
-	}
-	// The reviewer's type may name a model; otherwise it runs the worker's.
-	model := p.model
-	if t.Model != "" {
-		model = t.Model
-	}
+	// The reviewer resolves its own slot, not the worker's model:
+	// WICK_READONLY_HARNESS is a flag layer, the type's frontmatter the
+	// typeOrSpawn layer, then the slot's settings, then pig.
+	choice := Resolve(reviewSlot(t.Name), readonlyHarnessChoice(),
+		Choice{Harness: t.Harness, Model: t.Model, Effort: t.Effort})
 	id := newSessionID()
 	sess := Session{
-		Role: "agent", Cwd: p.tree, Model: model, ID: id,
+		Role: "agent", Cwd: p.tree, Model: choice.Model, Effort: choice.Effort, ID: id,
 		AgentType: t.Name, AgentID: id,
 		Dir: filepath.Join(readOnlyDir(), "sessions"),
 	}
@@ -448,11 +441,11 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 			t.Name)
 	}
 	spaceSpawns()
-	agent, err := launchPlacedAgent(run, place, harness, sess, renderPrompt(t, packetPrompt(p, t.Name, prev, replaced)),
+	agent, err := launchPlacedAgent(run, place, choice.Harness, sess, renderPrompt(t, packetPrompt(p, t.Name, prev, replaced)),
 		func(a readOnlyAgent) error {
 			if err := storeReviewerPane(p.tree, t.Name, reviewer{
-				Pane: a.Pane, Tab: a.Tab, Slot: a.Slot, Harness: harness,
-				SessionID: id, Cwd: p.tree, Model: model, Reviewed: p.head,
+				Pane: a.Pane, Tab: a.Tab, Slot: a.Slot, Harness: choice.Harness,
+				SessionID: id, Cwd: p.tree, Model: choice.Model, Effort: choice.Effort, Reviewed: p.head,
 			}); err != nil {
 				return err
 			}
@@ -462,6 +455,15 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 		return nil, err
 	}
 	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Notice: notice}, nil
+}
+
+// reviewSlot names the settings slot a reviewer type resolves through: the spec
+// reviewer has its own, every other reviewer type shares code-review.
+func reviewSlot(typ string) string {
+	if typ == reviewerSpec {
+		return slotSpecReview
+	}
+	return slotCodeReview
 }
 
 // writeReviewState records where a reviewer's submit belongs: the worktree, the

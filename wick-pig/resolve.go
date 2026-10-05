@@ -1,9 +1,22 @@
 package wick
 
-import "example.com/wick/tools"
+import (
+	"os"
+
+	"example.com/wick/tools"
+)
 
 // DefaultHarness is the harness a slot with nothing chosen launches with.
 const DefaultHarness = "pig"
+
+// The settings slots wick resolves at a launch site, named as tools.RoleSlots
+// spells them. The orchestrator slot is resolved in the launcher's own package.
+const (
+	slotImplementer = "implementer"
+	slotCodeReview  = "code-review"
+	slotSpecReview  = "spec-review"
+	slotScout       = "scout"
+)
 
 // Choice is a harness, model and effort at one precedence layer: the CLI flags,
 // an agent type's frontmatter or a spawn entry, or the settings file. An empty
@@ -35,4 +48,14 @@ func firstSet(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// readonlyHarnessChoice is WICK_READONLY_HARNESS as the resolver's flag layer.
+// It is kept as a high-precedence override for compatibility, so it wins over
+// whatever slot or agent type the launch would otherwise use.
+func readonlyHarnessChoice() Choice {
+	if h := os.Getenv("WICK_READONLY_HARNESS"); h != "" {
+		return Choice{Harness: h}
+	}
+	return Choice{}
 }

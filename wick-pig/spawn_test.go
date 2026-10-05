@@ -55,6 +55,28 @@ func envIn(line, key string) string {
 	return ""
 }
 
+// binIn is the program a pane-run line starts, after its leading env
+// assignments (KEY=value words).
+func binIn(line string) string {
+	for _, f := range strings.Fields(line) {
+		if !strings.Contains(f, "=") {
+			return strings.Trim(f, `"`)
+		}
+	}
+	return ""
+}
+
+// flagIn is the value that follows flag in a launch line, or "".
+func flagIn(line, flag string) string {
+	w := strings.Fields(line)
+	for i, f := range w {
+		if f == flag && i+1 < len(w) {
+			return strings.Trim(w[i+1], `"`)
+		}
+	}
+	return ""
+}
+
 // scoutExec launches scouts in a fake grid, and writes each one's submit once
 // every scout in the call has launched, so the reports can only come back after
 // all three are running.
@@ -169,6 +191,78 @@ func TestScoutRunsReadOnlyInTheCallersGrid(t *testing.T) {
 	}
 	if got := envIn(ex.lines[0], "WICK_ROLE"); got != "agent" {
 		t.Errorf("the scout launch must run the agent role, got %q", got)
+	}
+}
+
+// A scout resolves the scout slot: its harness, model and effort come from
+// settings, so fact-finding runs on the cheap fast model the user chose.
+func TestScoutResolvesTheScoutSlot(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	resolverSettings(t, `{"roles":{"scout":{"harness":"pig","model":"scout-model","effort":"low"}}}`)
+	ex := &scoutExec{g: g, writeOn: 1}
+	spawnExec = ex.run
+
+	spawn, _ := spawnToolForRole(t, "plan")
+	if _, err := spawn("/repo", map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "where is it?"},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if len(ex.lines) != 1 {
+		t.Fatalf("launched %d scouts, want 1", len(ex.lines))
+	}
+	if got := flagIn(ex.lines[0], "--model"); got != "scout-model" {
+		t.Errorf("scout model = %q, want scout-model", got)
+	}
+	if got := flagIn(ex.lines[0], "--thinking"); got != "low" {
+		t.Errorf("scout effort = %q, want low", got)
+	}
+}
+
+// An agent type that names its own harness, model or effort keeps it: the type
+// is the typeOrSpawn layer and beats the scout slot.
+func TestScoutTypeBeatsTheScoutSlot(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	resolverSettings(t, `{"roles":{"scout":{"harness":"pig","model":"slot-model","effort":"low"}}}`)
+	ex := &scoutExec{g: g, writeOn: 1}
+	spawnExec = ex.run
+
+	typesRoot := t.TempDir()
+	writeFile(t, filepath.Join(typesRoot, ".wick", "agents", "scout.md"), `---
+name: scout
+description: "a scout with its own model"
+tools: [read, find]
+checkout: none
+blocking: true
+statuses: [answered]
+model: type-model
+effort: high
+---
+answer {{prompt}}
+`)
+	types, err := LoadAgentTypes(typesRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := spawnToolFor(types, []string{"scout"})
+	raw, _ := json.Marshal(map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "where is it?"},
+	}})
+	if _, err := tool.Execute(context.Background(), "/repo", raw); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if len(ex.lines) != 1 {
+		t.Fatalf("launched %d scouts, want 1", len(ex.lines))
+	}
+	if got := flagIn(ex.lines[0], "--model"); got != "type-model" {
+		t.Errorf("scout model = %q, want the type's type-model", got)
+	}
+	if got := flagIn(ex.lines[0], "--thinking"); got != "high" {
+		t.Errorf("scout effort = %q, want the type's high", got)
 	}
 }
 

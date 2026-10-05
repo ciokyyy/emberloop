@@ -15,6 +15,9 @@ func resolverSettings(t *testing.T, body string) {
 	t.Setenv("WICK_SETTINGS", p)
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
+	// The read-only harness override is the resolver's flag layer and it wins
+	// over any slot: clear it, so a launch reads only what the test writes.
+	t.Setenv("WICK_READONLY_HARNESS", "")
 	if body != "" {
 		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 			t.Fatal(err)

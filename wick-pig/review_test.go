@@ -47,7 +47,11 @@ type fakePane struct {
 	launched        bool // a reviewer agent was run in it
 	tab             string
 	id              string
+	harness         string
 	prompts         []string
+	// line is the launch line pane run typed; the tests read the harness,
+	// model and effort it carries from it.
+	line string
 }
 
 func newFakeReviewers(answer func(string, int, string) (string, string)) *fakeReviewers {
@@ -161,6 +165,8 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		p := f.panes[args[2]]
 		p.launched = true
 		line := args[3]
+		p.line = line
+		p.harness = binIn(line)
 		p.id = envIn(line, "WICK_AGENT_ID")
 		p.typ = envIn(line, "WICK_AGENT_TYPE")
 		var dir, id, promptPath string
@@ -175,10 +181,21 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 				promptPath = w
 			}
 		}
-		raw, _ := os.ReadFile(promptPath)
+		// claude writes its transcript under ~/.claude/projects and takes no
+		// --session-dir; the fake reads HOME to land it where the harness
+		// looks, so a claude reviewer completes like a pig one.
+		if dir == "" && p.harness == "claude" {
+			home, _ := os.UserHomeDir()
+			dir = filepath.Join(home, ".claude", "projects", "wt")
+		}
 		_ = os.MkdirAll(filepath.Join(dir, "--x--"), 0o755)
 		p.transcript = filepath.Join(dir, "--x--", "t_"+id+".jsonl")
-		f.turn(p, string(raw))
+		// claude takes its first message after startup, so its turn is the
+		// late prompt, not the command line: a pig turn answers here.
+		if p.harness != "claude" {
+			raw, _ := os.ReadFile(promptPath)
+			f.turn(p, string(raw))
+		}
 	case "pane get":
 		if p := f.panes[args[2]]; p != nil && !p.closed {
 			return Result{Stdout: "{}"}, nil
@@ -216,7 +233,12 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 	case "tab close":
 		f.closeTab(args[2])
 	case "agent prompt":
-		// herdr does not prompt pig; Nudge falls back to typing.
+		// herdr prompts a named claude agent (its late first message);
+		// pig is only reported, so Nudge falls back to typing.
+		if p := f.panes[args[2]]; p != nil && p.harness == "claude" {
+			f.turn(p, args[3])
+			return Result{Stdout: "{}"}, nil
+		}
 		return Result{Code: 1}, nil
 	}
 	return Result{Stdout: "{}"}, nil
@@ -229,10 +251,18 @@ func (f *fakeReviewers) turn(p *fakePane, prompt string) {
 	p.turns++
 	p.prompts = append(p.prompts, prompt)
 	status, report := f.answer(p.typ, p.turns, prompt)
-	user, _ := json.Marshal(map[string]any{"type": "message", "message": map[string]any{
-		"role": "user", "content": []any{map[string]any{"type": "text", "text": prompt}}}})
-	asst, _ := json.Marshal(map[string]any{"type": "message", "message": map[string]any{
-		"role": "assistant", "stopReason": "stop", "content": []any{map[string]any{"type": "text", "text": report}}}})
+	var user, asst []byte
+	if p.harness == "claude" {
+		user, _ = json.Marshal(map[string]any{"type": "user", "message": map[string]any{
+			"role": "user", "content": []any{map[string]any{"type": "text", "text": prompt}}}})
+		asst, _ = json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{
+			"stop_reason": "end_turn", "content": []any{map[string]any{"type": "text", "text": report}}}})
+	} else {
+		user, _ = json.Marshal(map[string]any{"type": "message", "message": map[string]any{
+			"role": "user", "content": []any{map[string]any{"type": "text", "text": prompt}}}})
+		asst, _ = json.Marshal(map[string]any{"type": "message", "message": map[string]any{
+			"role": "assistant", "stopReason": "stop", "content": []any{map[string]any{"type": "text", "text": report}}}})
+	}
 	fh, _ := os.OpenFile(p.transcript, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	fmt.Fprintf(fh, "%s\n%s\n", user, asst)
 	fh.Close()
@@ -316,7 +346,9 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 	t.Cleanup(func() {
 		statePath, spawnGap, pollEvery = old, oldGap, oldPoll
 	})
-	t.Setenv("WICK_READONLY_HARNESS", "pig")
+	// Hermetic settings: a missing temp file and no read-only override, so
+	// the reviewers resolve the built-in pig default unless a test says more.
+	resolverSettings(t, "")
 	repo = t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
 	gitOut(t, repo, "config", "user.email", "wick@test.local")
@@ -337,6 +369,85 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 		t.Fatal(err)
 	}
 	return repo, tree
+}
+
+// A worker's reviewers resolve their own slots: the standards reviewer runs
+// code-review, the spec reviewer spec-review, each with its slot's harness,
+// model and effort rather than the worker's model. The reviewer records store
+// what was resolved.
+func TestReviewersResolveTheirOwnSlots(t *testing.T) {
+	_, tree := reviewRepo(t)
+	resolverSettings(t, `{"roles":{
+		"code-review":{"harness":"pig","model":"standards-model","effort":"high"},
+		"spec-review":{"harness":"pig","model":"spec-model","effort":"low"}}}`)
+	f := newFakeReviewers(answers(verdictPass, verdictPass))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	standards := f.paneOf(t, reviewerStandards)
+	if got := flagIn(standards.line, "--model"); got != "standards-model" {
+		t.Errorf("code reviewer model = %q, want standards-model", got)
+	}
+	if got := flagIn(standards.line, "--thinking"); got != "high" {
+		t.Errorf("code reviewer effort = %q, want high", got)
+	}
+	spec := f.paneOf(t, reviewerSpec)
+	if got := flagIn(spec.line, "--model"); got != "spec-model" {
+		t.Errorf("spec reviewer model = %q, want spec-model", got)
+	}
+	if got := flagIn(spec.line, "--thinking"); got != "low" {
+		t.Errorf("spec reviewer effort = %q, want low", got)
+	}
+	rec := reviewersOf(tree)
+	if got := rec[reviewerStandards]; got.Harness != "pig" || got.Model != "standards-model" || got.Effort != "high" {
+		t.Errorf("standards reviewer record = harness %q model %q effort %q, want pig/standards-model/high",
+			got.Harness, got.Model, got.Effort)
+	}
+	if got := rec[reviewerSpec]; got.Model != "spec-model" || got.Effort != "low" {
+		t.Errorf("spec reviewer record = model %q effort %q, want spec-model/low", got.Model, got.Effort)
+	}
+}
+
+// WICK_READONLY_HARNESS is a resolver flag layer: it overrides the slot's
+// harness, so a reviewer on a machine with the variable set still launches
+// with it.
+func TestReadonlyHarnessOverridesTheReviewerSlot(t *testing.T) {
+	_, tree := reviewRepo(t)
+	resolverSettings(t, `{"roles":{"code-review":{"harness":"claude","model":"slot-model"}}}`)
+	t.Setenv("WICK_READONLY_HARNESS", "pig")
+	f := newFakeReviewers(answers(verdictPass, verdictPass))
+	if _, err := reviewSpawn(t, f, tree, map[string]any{"type": reviewerStandards}); err != nil {
+		t.Fatal(err)
+	}
+	if got := binIn(f.paneOf(t, reviewerStandards).line); got != "pig" {
+		t.Errorf("reviewer harness = %q, want pig from WICK_READONLY_HARNESS", got)
+	}
+}
+
+// A claude reviewer receives the model and effort configured for its slot: the
+// rule that dropped the model for a non-pig harness is gone.
+func TestClaudeReviewerGetsTheConfiguredModel(t *testing.T) {
+	_, tree := reviewRepo(t)
+	t.Setenv("HOME", t.TempDir())
+	resolverSettings(t, `{"roles":{"code-review":{"harness":"claude","model":"claude-model","effort":"minimal"}}}`)
+	f := newFakeReviewers(answers(verdictPass, verdictPass))
+	if _, err := reviewSpawn(t, f, tree, map[string]any{"type": reviewerStandards}); err != nil {
+		t.Fatal(err)
+	}
+	line := f.paneOf(t, reviewerStandards).line
+	if got := binIn(line); got != "claude" {
+		t.Errorf("reviewer harness = %q, want claude", got)
+	}
+	if got := flagIn(line, "--model"); got != "claude-model" {
+		t.Errorf("claude reviewer model = %q, want claude-model", got)
+	}
+	if got := flagIn(line, "--effort"); got != "minimal" {
+		t.Errorf("claude reviewer effort = %q, want minimal", got)
+	}
+	if rec := reviewersOf(tree)[reviewerStandards]; rec.Harness != "claude" || rec.Model != "claude-model" || rec.Effort != "minimal" {
+		t.Errorf("reviewer record = harness %q model %q effort %q, want claude/claude-model/minimal",
+			rec.Harness, rec.Model, rec.Effort)
+	}
 }
 
 func writeFile(t *testing.T, path, body string) {
