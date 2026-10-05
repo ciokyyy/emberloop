@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,14 +82,26 @@ func TestToolsListMarksExactlyReadFindAndScoutReadOnly(t *testing.T) {
 	}
 }
 
-// slowTool answers after a delay, so the server's concurrency is observable.
-type slowTool struct{ delay time.Duration }
+// slowTool answers after a delay and records how many copies ran at once, so
+// the server's concurrency is observable without trusting wall-clock alone.
+type slowTool struct {
+	delay      time.Duration
+	live, peak *int32
+}
 
 func (s slowTool) Name() string           { return "slow" }
 func (s slowTool) Description() string    { return "waits" }
 func (s slowTool) Schema() map[string]any { return map[string]any{"type": "object"} }
 func (s slowTool) Execute(context.Context, string, json.RawMessage) (string, error) {
+	n := atomic.AddInt32(s.live, 1)
+	for {
+		p := atomic.LoadInt32(s.peak)
+		if n <= p || atomic.CompareAndSwapInt32(s.peak, p, n) {
+			break
+		}
+	}
 	time.Sleep(s.delay)
+	atomic.AddInt32(s.live, -1)
 	return "ok", nil
 }
 
@@ -96,14 +109,18 @@ func (s slowTool) Execute(context.Context, string, json.RawMessage) (string, err
 // its own goroutine so a second call does not queue behind it.
 func TestTwoSlowCallsFinishInAboutOneCallsTime(t *testing.T) {
 	const delay = 300 * time.Millisecond
+	var live, peak int32
 	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"slow"}}`
 	call2 := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow"}}`
 
 	start := time.Now()
-	serve(t, []tools.Tool{slowTool{delay}}, call, call2)
+	serve(t, []tools.Tool{slowTool{delay: delay, live: &live, peak: &peak}}, call, call2)
 	elapsed := time.Since(start)
 
-	if elapsed > 3*delay/2 {
+	if peak != 2 {
+		t.Errorf("peak concurrency was %d, want 2: the calls ran in series", peak)
+	}
+	if elapsed > 2*delay {
 		t.Errorf("two %s calls took %s: they ran in series", delay, elapsed)
 	}
 }
