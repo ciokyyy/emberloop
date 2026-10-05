@@ -26,7 +26,7 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("pig", "01-probe", "/repo/.scratch/p/issues/01-probe.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,11 +52,47 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	}
 }
 
+// A claude worker reads the library through the read tool; a pig worker loads
+// it itself and keeps the absolute path.
+func TestBriefAddressDependsOnHarness(t *testing.T) {
+	t.Setenv("WICK_SKILLS_DIR", "/skills")
+	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	read := func(harness string) string {
+		path, err := writeBrief(harness, "01-probe", "/repo/.scratch/p/issues/01-probe.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	claude := read("claude")
+	for _, want := range []string{"wick://matt-pocock/implement/SKILL.md", "wick://matt-pocock/tdd/SKILL.md"} {
+		if !strings.Contains(claude, want) {
+			t.Errorf("claude brief must name %s:\n%s", want, claude)
+		}
+	}
+	if strings.Contains(claude, "/skills/matt-pocock") {
+		t.Errorf("claude brief must not name an absolute library path:\n%s", claude)
+	}
+
+	pig := read("pig")
+	if !strings.Contains(pig, "/skills/matt-pocock/implement/SKILL.md") {
+		t.Errorf("pig brief must keep the absolute path:\n%s", pig)
+	}
+	if strings.Contains(pig, "wick://") {
+		t.Errorf("pig brief must not name a wick:// address:\n%s", pig)
+	}
+}
+
 func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("pig", "01-probe", "/repo/.scratch/p/issues/01-probe.md")
 	if err != nil {
 		t.Fatal(err)
 	}

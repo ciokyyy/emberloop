@@ -91,7 +91,7 @@ var spawnTool = fnTool{
 		if in.Repo == "" {
 			in.Repo = root
 		}
-		brief, err := writeBrief(WorkerID(in.Ticket), in.Ticket)
+		brief, err := writeBrief(in.Harness, WorkerID(in.Ticket), in.Ticket)
 		if err != nil {
 			return "", err
 		}

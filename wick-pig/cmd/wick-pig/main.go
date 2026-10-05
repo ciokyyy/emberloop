@@ -84,7 +84,7 @@ func run(argv []string) error {
 		found := false
 		for _, e := range wick.SkillEntries() {
 			if e.Name == sub {
-				s.Role, s.Prompt, s.Skills = "plan", wick.SkillPrompt(e.Skill, rest, e.Scout), wick.RouteSkills()
+				s.Role, s.Prompt, s.Skills = "plan", wick.SkillPrompt(*harness, e.Skill, rest, e.Scout), wick.RouteSkills()
 				found = true
 			}
 		}

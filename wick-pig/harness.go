@@ -12,10 +12,13 @@ import (
 
 // systemPrompt is the rule set every wick session carries. The tools are
 // wick's own; background exists because a blocking bash call on a dev server
-// never returns.
+// never returns. The skill sentence names the one address the read tool serves
+// the library under, so an open session can load a skill the user names.
 const systemPrompt = "Your file and shell tools are wick's: read, find, edit, write, bash, background. " +
 	"Never start a dev server, watcher or log tail with bash: it blocks until timeout. Use background(action=start) and read or stop it later. " +
-	"For facts about this repo, call scout(question) when you have it rather than reading broadly yourself. Scouts report facts only; decisions stay with you and the user."
+	"For facts about this repo, call scout(question) when you have it rather than reading broadly yourself. Scouts report facts only; decisions stay with you and the user. " +
+	"Skills are listed by reading wick://" + skillsNamespace + "; when the user asks for one by name " +
+	"(grill, research, wayfinder, tdd, to-spec), read the matching skill and follow it exactly."
 
 // Session is everything an adapter needs to start one agent.
 type Session struct {
@@ -306,8 +309,11 @@ func SkillEntries() []SkillEntry {
 }
 
 // SkillPrompt and ImplementPrompt expose the prompt builders.
-func SkillPrompt(skill, args string, scout bool) string { return skillPrompt(skill, args, scout) }
-func ImplementPrompt(target string) string              { return implementPrompt(target) }
+func SkillPrompt(harness, skill, args string, scout bool) string {
+	return skillPrompt(harness, skill, args, scout)
+}
+
+func ImplementPrompt(target string) string { return implementPrompt(target) }
 
 // RouteSkills names the skills a restricted session should know.
 func RouteSkills() []string {

@@ -155,13 +155,34 @@ func TestReadOnlyTilesTheTabItSplitInto(t *testing.T) {
 
 func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
-	got := skillPrompt("grilling", "the auth plan", true)
+	got := skillPrompt("pig", "grilling", "the auth plan", true)
 	for _, want := range []string{"/skills/matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout("} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Contains(skillPrompt("prototype", "", false), "Input:") {
+	if strings.Contains(skillPrompt("pig", "prototype", "", false), "Input:") {
 		t.Error("empty args must not add an Input line")
+	}
+}
+
+// A claude session has no --skill flag, so the only thing it can follow is the
+// read tool's address; a pig session loads the library itself and keeps the
+// absolute path it was launched with.
+func TestSkillCommandsAddressDependsOnHarness(t *testing.T) {
+	t.Setenv("WICK_SKILLS_DIR", "/skills")
+	claude := skillPrompt("claude", "grilling", "", true)
+	if !strings.Contains(claude, "wick://matt-pocock/grilling/SKILL.md") {
+		t.Errorf("claude must be pointed at the wick:// address, got:\n%s", claude)
+	}
+	if strings.Contains(claude, "/skills/matt-pocock") {
+		t.Errorf("claude must not be given an absolute library path:\n%s", claude)
+	}
+	pig := skillPrompt("pig", "grilling", "", true)
+	if !strings.Contains(pig, "/skills/matt-pocock/grilling/SKILL.md") {
+		t.Errorf("pig must keep the absolute path, got:\n%s", pig)
+	}
+	if strings.Contains(pig, "wick://") {
+		t.Errorf("pig must not be given a wick:// address it cannot resolve:\n%s", pig)
 	}
 }

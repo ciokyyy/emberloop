@@ -40,6 +40,22 @@ func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
 	}
 }
 
+// Every session, pig or claude, must be able to find the skills it is told
+// about: the one address the read tool serves the library under.
+func TestBothHarnessesCarryTheSkillLibraryAddress(t *testing.T) {
+	isolateState(t)
+	t.Setenv("WICK_SKILLS_DIR", "/skills")
+	for _, name := range HarnessNames() {
+		cmd, err := BuildCommand(name, Session{Role: "full"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(cmd.Line(), "wick://matt-pocock") {
+			t.Errorf("%s: the system prompt must name the skill library, got %q", name, cmd.Line())
+		}
+	}
+}
+
 func TestPigWorkerGetsRouteSkillsAndReporter(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	t.Setenv("WICK_HERDR_REPORT", "/exts/herdr-report")
