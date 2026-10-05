@@ -24,8 +24,6 @@ var pigEffortLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh
 
 // Models lists a harness's models through the Exec seam, so a test can feed it
 // captured CLI output.
-// Models lists a harness's models through the Exec seam, so a test can feed it
-// captured CLI output.
 func (pigHarness) Models(run Exec) ([]Model, error) {
 	res, err := run(pigBin(), []string{"--list-models"}, ExecOpts{Timeout: time.Minute})
 	if err != nil {

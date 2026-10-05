@@ -533,3 +533,22 @@ func TestSettingsChangingTheModelClearsAnEffortItDoesNotTake(t *testing.T) {
 		t.Errorf("a cleared effort needs a notice, got %q", out.String())
 	}
 }
+
+// An effort saved for a model the cache does not know costs one rebuild, not
+// two: the lookup already refreshed before the effort is judged.
+func TestSettingsRefreshesOnceForAnEffortOnAFreeTextModel(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"custom-1"}}}`)
+	calls := 0
+	src := func(harness string, refresh bool) ([]wick.Model, error) {
+		calls++
+		return []wick.Model{{ID: "opus", Efforts: []string{"low", "high"}}}, nil
+	}
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "effort", "high"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("the list was fetched %d times, want one cache read and one refresh", calls)
+	}
+}

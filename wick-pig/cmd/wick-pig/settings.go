@@ -243,9 +243,10 @@ func checkEffort(models modelSource, harness, model, effort string) (string, err
 		return fmt.Sprintf("%s: cannot list models; effort %q saved unchecked\n", harness, effort), nil
 	}
 	m, known := hasModel(list, model)
-	if !known || !contains(m.Efforts, effort) {
-		// The effort may be newer than the cache: rebuild once before rejecting,
-		// the same rule a missing model follows.
+	// The effort may be newer than the cache: rebuild once before rejecting. A
+	// model the cache does not know was already looked for with one rebuild, so
+	// only a known model missing the effort, or no model at all, rebuilds here.
+	if (known && !contains(m.Efforts, effort)) || (!known && model == "") {
 		if fresh, err := models(harness, true); err == nil && len(fresh) > 0 {
 			list = fresh
 			m, known = hasModel(list, model)
