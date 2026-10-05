@@ -204,17 +204,16 @@ func (claudeHarness) Command(s Session) (Command, error) {
 	if err != nil {
 		return Command{}, err
 	}
-	file, err := os.CreateTemp("", "wick-mcp-*.json")
-	if err != nil {
+	path := mcpConfigPath(s)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return Command{}, err
 	}
-	defer file.Close()
-	if _, err := file.Write(cfg); err != nil {
+	if err := os.WriteFile(path, cfg, 0o600); err != nil {
 		return Command{}, err
 	}
 	args := []string{
 		"--tools", "", "--setting-sources", "", "--strict-mcp-config",
-		"--mcp-config", file.Name(), "--system-prompt", systemPrompt,
+		"--mcp-config", path, "--system-prompt", systemPrompt,
 		// -p cannot prompt for permission; the served tool set is the policy.
 		"--allowedTools", "mcp__wick",
 		"--disable-slash-commands",
@@ -233,6 +232,26 @@ func (claudeHarness) Command(s Session) (Command, error) {
 		"CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 		"DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1")}, nil
 }
+
+// mcpConfigPath is where the MCP config of one claude session is written: under
+// wick's state dir, named for the session, so whoever owns the session's
+// lifetime can delete it. A temp file outlives every launch that makes one.
+func mcpConfigPath(s Session) string {
+	key := s.ID
+	if key == "" {
+		key = s.Label
+	}
+	if key == "" {
+		key = s.Role
+	}
+	return filepath.Join(filepath.Dir(statePath), "mcp", key+".json")
+}
+
+// CleanupSession removes the per-session files a harness launch left behind,
+// the MCP config claude reads at startup being the one. Call it when the
+// session ends; a file that is already gone is the wanted end state, not a
+// failure.
+func CleanupSession(s Session) { _ = os.Remove(mcpConfigPath(s)) }
 
 // Skill lookups for the launcher.
 

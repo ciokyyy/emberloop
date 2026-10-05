@@ -445,6 +445,9 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	}, 60*time.Second); err != nil {
 		return nil, err
 	}
+	// The worker's MCP config goes with it: nothing reads the file once the
+	// worktree is gone.
+	CleanupSession(Session{Label: id})
 	delete(store, id)
 	if err := save(store); err != nil {
 		return nil, err

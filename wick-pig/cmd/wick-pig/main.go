@@ -80,6 +80,9 @@ func run(argv []string) error {
 	if err != nil {
 		return err
 	}
+	// The agent reads its MCP config at startup, so the file is dead weight
+	// once it exits.
+	defer wick.CleanupSession(s)
 	c := exec.Command(cmd.Bin, cmd.Args...)
 	c.Env = append(os.Environ(), cmd.Env...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr

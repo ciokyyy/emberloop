@@ -49,6 +49,8 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The reviewer is done with the MCP config the moment it has launched.
+	defer CleanupSession(sess)
 
 	split, err := herdrJSON(run, []string{"pane", "split", "--current", "--direction", "down",
 		"--ratio", "0.3", "--cwd", cwd, "--no-focus"}, 15*time.Second)
