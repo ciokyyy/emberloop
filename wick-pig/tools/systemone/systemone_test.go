@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -14,13 +15,16 @@ import (
 const probeBody = `{"model":"typesafe/jev-1.13-20260917","answers":{"q1":{"type":"noul","noul":0.65}},"usage":{"input_tokens":278,"output_tokens":21,"cost":0.000011676},"id":"gen-dec-1791237092-NwAW4V0hD1GqPMkgL5J0","provider":"TypeSafe"}`
 
 func TestOpenRouterRequestsUsageAndReturnsIt(t *testing.T) {
+	var mu sync.Mutex
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
+		mu.Lock()
 		gotBody = body
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(probeBody))
 	}))
@@ -36,10 +40,12 @@ func TestOpenRouterRequestsUsageAndReturnsIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-
+	mu.Lock()
 	usage, _ := gotBody["usage"].(map[string]any)
+	sent := gotBody["usage"]
+	mu.Unlock()
 	if usage["include"] != true {
-		t.Errorf("request usage = %v, want {\"include\": true}", gotBody["usage"])
+		t.Errorf("request usage = %v, want {\"include\": true}", sent)
 	}
 	if resp.Answers["q1"].Noul == nil || *resp.Answers["q1"].Noul != 0.65 {
 		t.Errorf("answers = %+v, want q1 noul 0.65", resp.Answers)

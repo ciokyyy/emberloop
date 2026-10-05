@@ -74,11 +74,13 @@ type Request struct {
 
 // Usage is what the decision endpoint reports for one call: tokens in and
 // out, and what OpenRouter says the call cost. A nil Usage means the
-// endpoint returned none, and callers fall back to counting calls.
+// endpoint returned none, and callers fall back to counting calls. Cost has
+// no omitempty, so a reported zero stays visibly zero instead of merging
+// with "no cost reported".
 type Usage struct {
 	InputTokens  int     `json:"input_tokens"`
 	OutputTokens int     `json:"output_tokens"`
-	Cost         float64 `json:"cost,omitempty"`
+	Cost         float64 `json:"cost"`
 }
 
 type Response struct {
@@ -99,7 +101,6 @@ type Provider interface {
 	Evaluate(ctx context.Context, req Request) (Response, error)
 }
 
-// OpenRouter is the hosted Provider.
 // OpenRouter is the hosted Provider. endpoint is a field, not a constant, so
 // tests can point it at a fake server; production builds always use the
 // default below.
@@ -129,11 +130,7 @@ func (o *OpenRouter) Evaluate(ctx context.Context, req Request) (Response, error
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal systemone request: %w", err)
 	}
-	url := o.endpoint
-	if url == "" {
-		url = endpoint
-	}
-	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return Response{}, err
 	}
