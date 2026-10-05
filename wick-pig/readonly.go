@@ -99,9 +99,10 @@ func closeAgent(run Exec, agent readOnlyAgent) {
 func readOnlyDir() string { return filepath.Join(filepath.Dir(statePath), "readonly") }
 
 // readOnlySession is the session a read-only agent with this id writes, so a
-// reviewer that outlives one tool call can be found again by its id.
+// reviewer that outlives one tool call can be found again by its id. The agent
+// id is the session id, so every reviewer and scout carries one.
 func readOnlySession(id, cwd, model, effort string) Session {
-	return Session{Role: "review", Cwd: cwd, Model: model, Effort: effort, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
+	return Session{Role: "review", Cwd: cwd, Model: model, Effort: effort, ID: id, AgentID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
 }
 
 // startReadOnly launches a read-only reviewer on prompt in a pane placed by

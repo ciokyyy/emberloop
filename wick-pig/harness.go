@@ -107,12 +107,33 @@ func HarnessNames() []string {
 	return names
 }
 
+// withAgentID gives every session an agent id, so its wick-mcp knows who it
+// serves. An explicit id wins; otherwise the harness session id names it, then
+// the label (a worker's ticket id), then a fresh id for a bare session with
+// neither. It is applied in the session builder (BuildCommand/PrepareLaunch),
+// so top-level sessions get one too.
+func (s Session) withAgentID() Session {
+	if s.AgentID != "" {
+		return s
+	}
+	switch {
+	case s.ID != "":
+		s.AgentID = s.ID
+	case s.Label != "":
+		s.AgentID = s.Label
+	default:
+		s.AgentID = newSessionID()
+	}
+	return s
+}
+
 // BuildCommand renders a session for one harness.
 func BuildCommand(harness string, s Session) (Command, error) {
 	h, ok := registry[harness]
 	if !ok {
 		return Command{}, fmt.Errorf("unknown harness %q (have %v)", harness, HarnessNames())
 	}
+	s = s.withAgentID()
 	if s.Cwd != "" {
 		if err := h.Trust(s.Cwd); err != nil {
 			return Command{}, fmt.Errorf("trust %s for %s: %w", s.Cwd, harness, err)
@@ -463,6 +484,7 @@ func PrepareLaunch(harness string, s Session) (Launch, error) {
 	if !ok {
 		return Launch{}, fmt.Errorf("unknown harness %q (have %v)", harness, HarnessNames())
 	}
+	s = s.withAgentID()
 	var l Launch
 	if h.LatePrompt() {
 		l.Late, s.Prompt = s.Prompt, ""
