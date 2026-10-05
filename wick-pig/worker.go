@@ -36,16 +36,6 @@ type Worker struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
-// Status is a worker's live state. Everything the caller needs to decide what to
-// do next, in one value, so a single tool call answers it.
-type Status struct {
-	ID       string `json:"id"`
-	State    string `json:"state"`
-	Detail   string `json:"detail,omitempty"`
-	Branch   string `json:"branch"`
-	Worktree string `json:"worktree"`
-}
-
 type FinishResult struct {
 	ID     string `json:"id"`
 	Merged bool   `json:"merged"`
@@ -377,7 +367,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	}
 	if old, exists := store[id]; exists {
 		// A record whose worktree is gone is left over from a cleanup done
-		// outside finish_worker; it must not block the id for ever.
+		// outside finish; it must not block the id for ever.
 		if _, err := os.Stat(old.Worktree); err == nil {
 			return nil, fmt.Errorf("worker %q already exists", id)
 		}
@@ -646,100 +636,6 @@ var (
 	paneStopPoll = 200 * time.Millisecond
 )
 
-// ---------------------------------------------------------------------------
-// wait
-// ---------------------------------------------------------------------------
-
-// settled is the vocabulary herdr reports once a worker stops moving.
-var settled = []string{"idle", "done", "blocked", "failed"}
-
-// Wait reports status for every known worker, or for the named ones.
-//
-// timeout of zero returns immediately, which is why there is no separate
-// status tool: one call covers both "check" and "block until done". The polling
-// happens here, in the extension, so the model spends no tokens on it.
-func Wait(run Exec, ids []string, timeout time.Duration) ([]Status, []string, error) {
-	storeMu.Lock()
-	store, err := load()
-	storeMu.Unlock()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	chosen := make([]Worker, 0, len(store))
-	for _, id := range ids {
-		w, ok := store[id]
-		if !ok {
-			return nil, nil, fmt.Errorf("unknown worker %q", id)
-		}
-		chosen = append(chosen, w)
-	}
-	if len(ids) == 0 {
-		for _, w := range store {
-			chosen = append(chosen, w)
-		}
-	}
-
-	deadline := time.Now().Add(timeout)
-	for {
-		reply, err := herdrJSON(run, []string{"agent", "list"}, 30*time.Second)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// Match on pane, never on the name a worker reports: every pig worker
-		// reports the same name, so the name is ambiguous the moment there are two.
-		byPane := map[string]struct {
-			state string
-			title string
-			name  string
-		}{}
-		for _, a := range reply.Result.Agents {
-			byPane[a.PaneID] = struct {
-				state string
-				title string
-				name  string
-			}{a.Status, a.Title, a.Name}
-		}
-
-		out := make([]Status, 0, len(chosen))
-		var pending []string
-		for _, w := range chosen {
-			live, ok := byPane[w.Pane]
-			state := "unknown"
-			detail := ""
-			if ok {
-				state, detail = live.state, live.title
-			}
-			if ok && live.name == "" {
-				// The worker is registered but unnamed. Rename belongs here
-				// rather than at spawn: a worker takes seconds to boot before it
-				// first reports, so a rename issued at spawn finds nothing.
-				// Naming it makes `herdr agent get <id>` resolve.
-				_, _ = herdrJSON(run, []string{"agent", "rename", w.Pane, herdrName(w.ID)}, 30*time.Second)
-			}
-			if !ok && paneGone(run, w) {
-				state, detail = "failed", "pane is gone: the worker was closed or its herdr workspace died"
-			}
-			if contains(settled, state) && state != "failed" {
-				state, detail = checkTurn(run, w, state, detail)
-			}
-			out = append(out, Status{
-				ID: w.ID, State: state, Detail: detail,
-				Branch: w.Branch, Worktree: w.Worktree,
-			})
-			if !contains(settled, state) {
-				pending = append(pending, w.ID)
-			}
-		}
-
-		if len(pending) == 0 || !time.Now().Before(deadline) {
-			return out, pending, nil
-		}
-		time.Sleep(2 * time.Second)
-	}
-}
-
 func contains(haystack []string, needle string) bool {
 	for _, h := range haystack {
 		if h == needle {
@@ -879,76 +775,3 @@ func firstLine(text, fallback string) string {
 	}
 	return fallback
 }
-
-// retryTrack is where one worker stands in its provider-error retries.
-type retryTrack struct {
-	nudges int
-	next   time.Time // when the next nudge is due; zero when none is pending
-	settle time.Time // the error record is stale until the nudge lands
-}
-
-var (
-	retryMu     sync.Mutex
-	retryTracks = map[string]*retryTrack{}
-)
-
-// checkTurn corrects a settled pane state with what the transcript says. A
-// turn that died on a provider error looks idle to herdr, so without this
-// check the merger would take an unfinished worker as finished.
-func checkTurn(run Exec, w Worker, state, detail string) (string, string) {
-	h, ok := registry[w.Harness]
-	if !ok || w.SessionID == "" {
-		return state, detail
-	}
-	p := findSession(h.SessionRoot(Session{ID: w.SessionID, Cwd: w.Worktree, Model: w.Model}), w.SessionID)
-	if p == "" {
-		return state, detail
-	}
-	turn, why := h.TurnState(p)
-
-	retryMu.Lock()
-	defer retryMu.Unlock()
-	t := retryTracks[w.ID]
-	if t == nil {
-		t = &retryTrack{}
-		retryTracks[w.ID] = t
-	}
-	now := time.Now()
-	switch {
-	case turn == TurnRunning:
-		return "working", "turn in progress"
-	case turn != TurnFailed:
-		t.next = time.Time{}
-		return state, detail
-	case now.Before(t.settle):
-		return "retrying", why
-	case t.nudges >= len(retryBackoff):
-		return "failed", fmt.Sprintf("provider error after %d retries: %s", t.nudges, why)
-	case t.next.IsZero():
-		t.next = now.Add(retryBackoff[t.nudges])
-	case !now.Before(t.next):
-		t.nudges++
-		t.next = time.Time{}
-		t.settle = now.Add(nudgeSettle)
-		if err := Nudge(run, w.Pane, "continue"); err != nil {
-			return "failed", "could not retry: " + err.Error()
-		}
-	}
-	return "retrying", why
-}
-
-// paneGone reports a worker whose pane no longer exists. An unlisted pane is
-// normal for the first seconds after spawn, while the agent boots, so only a
-// worker older than spawnGrace counts, and only when herdr itself says the pane
-// is not found rather than failing for some other reason.
-func paneGone(run Exec, w Worker) bool {
-	started, err := time.Parse(time.RFC3339, w.Started)
-	if err != nil || time.Since(started) < spawnGrace {
-		return false
-	}
-	res, err := run(herdrBin(), []string{"pane", "get", w.Pane}, ExecOpts{Timeout: 15 * time.Second})
-	return err == nil && strings.Contains(res.Stdout+res.Stderr, "pane_not_found")
-}
-
-// spawnGrace is how long a worker may stay unlisted before its absence counts.
-var spawnGrace = 30 * time.Second

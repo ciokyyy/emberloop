@@ -70,7 +70,7 @@ func specSlug(spec string) string {
 // EnterIntegrationBranch checks the repo out on branch, creating it from the
 // current HEAD when it does not exist yet. A branch that exists is reused as it
 // stands, which is what lets an interrupted run resume where it stopped.
-// Workers spawned afterwards record it as their target, and finish_worker
+// Workers spawned afterwards record it as their target, and finish
 // fast-forwards it, which is why the repo has to stay on it for the run.
 func EnterIntegrationBranch(run Exec, repo, branch string) (created bool, err error) {
 	git := func(args ...string) (Result, error) {

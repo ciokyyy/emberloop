@@ -253,6 +253,7 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 		state := AgentState{
 			ID:       agent.ID,
 			Type:     t.Name,
+			Pane:     agent.Pane,
 			ParentID: parentID,
 			Parent:   parentPane,
 			Deliver:  !t.Blocking,
@@ -434,13 +435,16 @@ func renderPrompt(t AgentType, prompt string) string {
 }
 
 // renderSpawn is the spawn result: each non-blocking agent reported as started,
-// each blocking agent's report with it, and a closing line for the blocking
-// agents that were backgrounded. A backgrounded agent's result is not repeated
-// here: it arrives as a notice. It never tells the caller to call again.
+// each blocking agent's report with it, and a closing line for the callers who
+// must end their turn because a result is still to arrive. A backgrounded
+// agent's result is not repeated here: it arrives as a notice. It never tells
+// the caller to call again.
 func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 	var parts []string
+	startedNonBlocking := false
 	for _, a := range agents {
 		if !a.Type.Blocking {
+			startedNonBlocking = true
 			line := fmt.Sprintf("%s %s started.", a.Type.Name, a.ID)
 			if a.Tab != "" {
 				line = fmt.Sprintf("%s %s started in %s.", a.Type.Name, a.ID, a.Tab)
@@ -456,16 +460,14 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 				parts = append(parts, fmt.Sprintf("%s %s %s", a.Type.Name, a.ID, s.Report))
 				continue
 			}
-			body := s.Report
-			if body == "" {
-				body = s.Summary
-			}
-			parts = append(parts, fmt.Sprintf("%s %s submitted (%s):\n%s", a.Type.Name, a.ID, s.Status, body))
+			parts = append(parts, renderSubmit(s))
 		}
 	}
 	if len(backgrounded) > 0 {
 		parts = append(parts, fmt.Sprintf("still running: %s. Their results will arrive as system notices; end your turn.",
 			strings.Join(backgrounded, ", ")))
+	} else if startedNonBlocking {
+		parts = append(parts, "Their results will arrive as system notices; end your turn.")
 	}
 	return strings.Join(parts, "\n\n")
 }

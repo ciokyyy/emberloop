@@ -66,7 +66,7 @@ func TestNonBlockingSubmitPromptsTheParentPane(t *testing.T) {
 }
 
 // When herdr refuses `agent prompt`, the notice is typed as one flattened line
-// and Entered, the same fallback tell_worker uses for a pig pane.
+// and Entered, the same fallback the nudge path uses for a pig pane.
 func TestNoticeFallsBackToTypingOneLine(t *testing.T) {
 	deliverTestState(t)
 	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", Parent: "wP", Deliver: true}); err != nil {

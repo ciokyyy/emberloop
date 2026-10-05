@@ -83,6 +83,15 @@ func run(argv []string) error {
 		if rest == "" {
 			return fmt.Errorf("usage: wick-pig implement <spec-file-or-dir>")
 		}
+		// Workers' results reach their parent as notices delivered into its
+		// herdr pane, so an implement session without a pane could never hear
+		// them. Refuse before anything is created or spawned.
+		if os.Getenv("HERDR_PANE_ID") == "" {
+			return fmt.Errorf("implement must run in a herdr pane so its workers' results can reach it; run it inside herdr")
+		}
+		if *headless {
+			return fmt.Errorf("implement must run in a herdr pane; -p is not supported")
+		}
 		spec, err := wick.ResolveSpec(rest)
 		if err != nil {
 			return err

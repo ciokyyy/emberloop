@@ -120,34 +120,6 @@ func Nudge(run Exec, pane, text string) error {
 	return nil
 }
 
-// Tell delivers text to the agent in pane and waits, up to budget, for it to
-// take the turn and settle again. settled is false when the agent is still
-// working at the budget: the message landed, the caller checks back later.
-func Tell(run Exec, pane, text string, budget time.Duration) (settled bool, err error) {
-	if err := Nudge(run, pane, text); err != nil {
-		return false, err
-	}
-	// The agent has to pick the message up before "settled" means anything:
-	// an idle agent matches idle at once. A fast turn can already be over by
-	// the time this runs, so not seeing it work is no error.
-	_, _ = run(herdrBin(), []string{"agent", "wait", pane, "--until", "working", "--timeout", "15000"},
-		ExecOpts{Timeout: 20 * time.Second})
-	ms := fmt.Sprint(budget.Milliseconds())
-	res, err := run(herdrBin(), []string{"agent", "wait", pane, "--timeout", ms}, ExecOpts{Timeout: budget + 10*time.Second})
-	if err != nil {
-		return false, err
-	}
-	if res.Code != 0 {
-		// Only herdr's own timeout means "delivered, still working";
-		// anything else is a wait that failed and is reported as such.
-		if strings.Contains(res.Stdout+res.Stderr, "timeout") {
-			return false, nil
-		}
-		return false, fmt.Errorf("herdr agent wait %s failed: %s", pane, firstLine(res.Stderr, res.Stdout))
-	}
-	return true, nil
-}
-
 // WaitReply polls the session transcript until the agent ends a turn, and
 // returns that last message. It is the same text a human sees last in the pane.
 // after is the transcript's length when a follow-up was sent: the reply must

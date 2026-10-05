@@ -14,6 +14,8 @@ import (
 type AgentState struct {
 	ID   string `json:"id"`
 	Type string `json:"type,omitempty"`
+	// Pane is where the agent runs, so a tell can reach it.
+	Pane string `json:"pane,omitempty"`
 	// ParentID is the spawning agent's id, when there was one. The children an
 	// agent is still waiting on are the agent states that name it as ParentID,
 	// are set to Deliver, and have not submitted: the stop gate reads them.
@@ -22,7 +24,8 @@ type AgentState struct {
 	Parent string `json:"parent_pane,omitempty"`
 	// Deliver reports that this agent's submit goes to Parent as a notice
 	// rather than back to a waiting spawn. Non-blocking agents start this way;
-	// a blocking agent is switched over when its spawn auto-backgrounds it.
+	// a blocking agent is switched over when its spawn auto-backgrounds it, or
+	// back when a tell takes over its next submit.
 	Deliver bool `json:"deliver,omitempty"`
 }
 
@@ -73,6 +76,54 @@ func backgroundAgent(id string) (bool, error) {
 	backgrounded := false
 	err := withFileLock("state-"+id, func() error {
 		if _, ok, err := ReadAgentSubmit(id); err != nil || ok {
+			return err
+		}
+		s, _, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
+		s.ID = id
+		s.Deliver = true
+		backgrounded = true
+		return WriteAgentState(s)
+	})
+	return backgrounded, err
+}
+
+// claimNextSubmit takes a blocking child's next submit for a waiting tell: it
+// points the child's result at the caller rather than the notice path, and
+// clears the this-turn flag on its last submit so only a fresh turn's submit
+// answers the tell. Both writes happen under the child's own lock, so a submit
+// arriving at the same instant is either claimed here or delivered as a notice,
+// never both.
+func claimNextSubmit(id string) error {
+	return withFileLock("state-"+id, func() error {
+		if s, ok, err := ReadAgentState(id); err != nil {
+			return err
+		} else if ok {
+			s.Deliver = false
+			if err := WriteAgentState(s); err != nil {
+				return err
+			}
+		}
+		sub, ok, err := ReadAgentSubmit(id)
+		if err != nil || !ok || !sub.ThisTurn {
+			return err
+		}
+		sub.ThisTurn = false
+		return WriteAgentSubmit(sub)
+	})
+}
+
+// backgroundToldAgent switches a blocking agent that a tell waited on to the
+// notice path, unless a fresh turn's submit arrived at the deadline. It is the
+// tell-side counterpart to backgroundAgent: a told agent already has a submit
+// on disk, so it is the this-turn flag, not the file's existence, that says
+// whether there is a new result to own.
+func backgroundToldAgent(id string) (bool, error) {
+	backgrounded := false
+	err := withFileLock("state-"+id, func() error {
+		if s, ok, err := ReadAgentSubmit(id); err != nil || (ok && s.ThisTurn) {
 			return err
 		}
 		s, _, err := ReadAgentState(id)

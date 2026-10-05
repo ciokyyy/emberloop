@@ -134,7 +134,7 @@ func TestImplementPromptAdaptsImplementSpec(t *testing.T) {
 	for _, want := range []string{
 		"wick://matt-pocock/implement-spec/SKILL.md",
 		"/repo/.scratch/p/spec.md", "/repo/.scratch/p/issues", "spec/p",
-		"worker", "scout", "finish_worker", "tell_worker", "wait_workers",
+		"worker", "scout", "finish", "tell", "end your turn",
 		"carry on", "follow-ups",
 	} {
 		if !strings.Contains(got, want) {
@@ -147,22 +147,8 @@ func TestImplementPromptAdaptsImplementSpec(t *testing.T) {
 // worker still has its context and its worktree.
 func TestRenderFinishSendsAKeptWorkerBack(t *testing.T) {
 	got := renderFinish(&FinishResult{ID: "01-x", Kept: true, Detail: "rebase onto spec/p conflicted in a.go"})
-	if !strings.Contains(got, "tell_worker") || !strings.Contains(got, "a.go") || strings.Contains(got, "human") {
+	if !strings.Contains(got, "tell") || !strings.Contains(got, "a.go") || strings.Contains(got, "human") {
 		t.Errorf("got %q", got)
-	}
-}
-
-func TestRenderStatusIsProse(t *testing.T) {
-	if got := renderStatus(nil, nil, nil); !strings.Contains(got, "no workers") {
-		t.Errorf("empty status must say so plainly, got %q", got)
-	}
-	workers := []Status{{ID: "01-a", State: "idle", Detail: "done"}}
-	got := renderStatus(workers, nil, nil)
-	if !strings.Contains(got, "01-a") || !strings.Contains(got, "idle") || !strings.Contains(got, "finish_worker") {
-		t.Errorf("status must name the worker, its state and the next call, got %q", got)
-	}
-	if got := renderStatus([]Status{{ID: "01-a", State: "working"}}, []string{"01-a"}, nil); !strings.Contains(got, "still running") {
-		t.Errorf("pending workers must be reported as such, got %q", got)
 	}
 }
 
@@ -214,30 +200,6 @@ func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
 	above := mk(filepath.Join(root, "opt", "wick", "herdr-report"))
 	if got := reportExtension(exe, home); got != above {
 		t.Errorf("../herdr-report must be the first candidate, got %q", got)
-	}
-}
-
-func TestRenderStatusExplainsAllUnknownWorkers(t *testing.T) {
-	unknown := []Status{{ID: "01-a", State: "unknown"}, {ID: "01-b", State: "unknown"}}
-	candidates := []string{"/opt/wick/herdr-report", "/opt/wick/bin/herdr-report", "/home/u/.pig/agent/extensions/herdr-report"}
-	got := renderStatus(unknown, []string{"01-a", "01-b"}, candidates)
-	if !strings.Contains(got, "not registered with herdr") || !strings.Contains(got, "report extension") {
-		t.Errorf("workers herdr never heard of must be diagnosed, got %q", got)
-	}
-	for _, c := range candidates {
-		if !strings.Contains(got, c) {
-			t.Errorf("the diagnosis must name every place searched, missing %q in %q", c, got)
-		}
-	}
-
-	oneKnown := []Status{{ID: "01-a", State: "unknown"}, {ID: "01-b", State: "working"}}
-	if got := renderStatus(oneKnown, []string{"01-a", "01-b"}, candidates); strings.Contains(got, "not registered with herdr") {
-		t.Errorf("a worker herdr can see means the others are just slow, got %q", got)
-	}
-
-	settled := renderStatus([]Status{{ID: "01-a", State: "merged"}}, nil, candidates)
-	if strings.Contains(settled, "not registered with herdr") {
-		t.Errorf("nothing is pending, so nothing is unexplained, got %q", settled)
 	}
 }
 

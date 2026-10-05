@@ -598,7 +598,7 @@ func TestRunChecksPassAndTimeout(t *testing.T) {
 	}
 }
 
-// finish_worker merges only once both reviewers passed at the worker's tip,
+// finish merges only once both reviewers passed at the worker's tip,
 // names what is missing otherwise, and closes the reviewers when the ticket
 // ends either way.
 func TestFinishNeedsBothReviewersToPassAtTheTip(t *testing.T) {
@@ -685,7 +685,7 @@ func TestCodeReviewToolTakesReviewerAndNote(t *testing.T) {
 }
 
 // passReviews records both reviewers as passed at the branch tip, for tests
-// of finish_worker's git side that are not about the review gate.
+// of finish's git side that are not about the review gate.
 func passReviews(t *testing.T, tree, tip string) {
 	t.Helper()
 	for _, axis := range allAxes {

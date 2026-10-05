@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A bare launch is a planning session. full is reachable, but only by asking
 // for it with the role flag.
@@ -39,5 +42,26 @@ func TestRoleFlagIsRefusedBesideASubcommand(t *testing.T) {
 		if _, err := sessionRole(sub, "full"); err == nil {
 			t.Errorf("--role full beside %q must be refused", sub)
 		}
+	}
+}
+
+// implement must run in a herdr pane: its workers' results are delivered into
+// that pane as notices, so a session outside herdr could never hear them. The
+// refusal comes before anything is created or spawned.
+func TestImplementRequiresAHerdrPane(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	err := run([]string{"implement", "/nonexistent/spec.md"})
+	if err == nil || !strings.Contains(err.Error(), "herdr") {
+		t.Fatalf("implement outside herdr must fail naming herdr, got %v", err)
+	}
+}
+
+// The headless parent path is gone: an implement session refuses -p rather
+// than run one-shot where its workers' notices cannot reach it.
+func TestImplementRefusesHeadless(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	err := run([]string{"implement", "-p", "/nonexistent/spec.md"})
+	if err == nil || !strings.Contains(err.Error(), "-p") {
+		t.Fatalf("implement -p must be refused, got %v", err)
 	}
 }

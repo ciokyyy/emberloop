@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -54,7 +53,7 @@ func OrchestrationTools() []tools.Tool {
 // spawnable types.
 func orchestrationTools(types map[string]AgentType, spawnable []string) []tools.Tool {
 	return []tools.Tool{
-		spawnToolFor(types, spawnable), waitTool, finishTool, tellTool, codeReviewTool,
+		spawnToolFor(types, spawnable), finishTool, tellTool, codeReviewTool,
 	}
 }
 
@@ -63,8 +62,8 @@ func AllTools() []tools.Tool {
 	return append(tools.All(), OrchestrationTools()...)
 }
 
-// spawnExec is the exec the spawn tool drives. A var, like waitExec, so a test
-// can spawn against a fake herdr and git rather than a real one.
+// spawnExec is the exec the spawn tool drives. A var, like finishExec, so a
+// test can spawn against a fake herdr and git rather than a real one.
 var spawnExec Exec = osExec
 
 // spawnGap spaces launches: a run that opens every agent's first request at
@@ -86,66 +85,52 @@ func spaceSpawns() {
 	lastSpawn = time.Now()
 }
 
-// WaitCap is the longest wait_workers may block. A harness cuts a tool call at
-// its own MCP_TOOL_TIMEOUT, so a wait that outlives it fails while the wait
-// goroutine keeps running: the model sees an error and the worker is still
-// going. Staying under the cap means the wait always answers, and a caller that
-// wants longer calls again.
-const WaitCap = ToolBudget
+// finishExec is the exec the finish tool drives. A var, so a test can stand in
+// for herdr and git.
+var finishExec Exec = osExec
 
-// waitCap is WaitCap in use, a var only so a test can shrink it.
-var waitCap = WaitCap
-
-// waitExec is the exec wait_workers polls through. A var so the tool can be
-// driven by a fake exec rather than a real herdr.
-var waitExec Exec = osExec
-
-var waitTool = fnTool{
-	name: "wait_workers",
-	desc: fmt.Sprintf("Worker status. Omit workers for all; timeout_ms 0 returns immediately. "+
-		"timeout_ms is capped at %d ms: a longer request is clamped to that and the result says so.",
-		WaitCap/time.Millisecond),
-	schema: schema(map[string]any{
-		"workers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Worker ids. Omit for all."},
-		"timeout_ms": map[string]any{"type": "integer", "description": fmt.Sprintf("Block up to this long. 0 returns now. Capped at %d.", WaitCap/time.Millisecond)},
-	}),
-	run: func(_ string, params map[string]any) (string, error) {
-		timeout := time.Duration(num(params, "timeout_ms")) * time.Millisecond
-		clamped := timeout > waitCap
-		if clamped {
-			timeout = waitCap
-		}
-		workers, pending, err := Wait(waitExec, strs(params, "workers"), timeout)
-		if err != nil {
-			return "", err
-		}
-		out := renderStatus(workers, pending, reportCandidates(runningExe(), os.Getenv("HOME")))
-		if clamped {
-			out += fmt.Sprintf("\ntimeout_ms was clamped to the %d ms cap, so this wait ended early. Call wait_workers again for the rest.",
-				waitCap/time.Millisecond)
-		}
-		return out, nil
-	},
+// requireWorktreeAgent refuses finish for any agent whose type has no worktree
+// of its own: there is nothing to merge or discard.
+func requireWorktreeAgent(id string) error {
+	st, ok, err := ReadAgentState(id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("unknown agent %q", id)
+	}
+	t, ok := mustLoadAgentTypes(cwd())[st.Type]
+	if !ok {
+		return fmt.Errorf("agent %s has unknown type %q", id, st.Type)
+	}
+	if t.Checkout != "worktree" {
+		return fmt.Errorf("finish works only for a worktree agent; %s is a %s (checkout %q)", id, t.Name, t.Checkout)
+	}
+	return nil
 }
 
 var finishTool = fnTool{
-	name: "finish_worker",
-	desc: "Take a finished worker: rebase and fast-forward it into its target branch, then drop its worktree and close its reviewers. " +
-		"It merges only once both of the worker's reviewers passed at its tip; merge=false discards it regardless.",
+	name: "finish",
+	desc: "Take a finished worktree agent: rebase and fast-forward it into its target branch, then drop its worktree and close its reviewers. " +
+		"It merges only once both of the agent's reviewers passed at its tip; merge=false discards it regardless. " +
+		"Works only for a worktree agent.",
 	schema: schema(map[string]any{
-		"worker": map[string]any{"type": "string", "description": "Worker id."},
-		"merge":  map[string]any{"type": "boolean", "description": "False discards the branch. Defaults to true."},
-	}, "worker"),
+		"agent": map[string]any{"type": "string", "description": "Agent id."},
+		"merge": map[string]any{"type": "boolean", "description": "False discards the branch. Defaults to true."},
+	}, "agent"),
 	run: func(_ string, params map[string]any) (string, error) {
-		id := str(params, "worker")
+		id := str(params, "agent")
 		if id == "" {
-			return "", fmt.Errorf("worker is required")
+			return "", fmt.Errorf("agent is required")
 		}
 		merge := true
 		if b, ok := params["merge"].(bool); ok {
 			merge = b
 		}
-		result, err := Finish(osExec, id, merge)
+		if err := requireWorktreeAgent(id); err != nil {
+			return "", err
+		}
+		result, err := Finish(finishExec, id, merge)
 		if err != nil {
 			return "", err
 		}
@@ -153,40 +138,28 @@ var finishTool = fnTool{
 	},
 }
 
-// tellExec is the exec tell_worker drives. A var, like waitExec, so a test can
-// stand in for herdr.
-var tellExec Exec = osExec
-
-// tell_worker messages a running worker in its own input, so a steer reaches
-// the model instead of the shell.
+// tell messages a running agent in its own input, so a steer reaches the model
+// instead of the shell. It works for any agent id: a non-blocking agent's
+// result comes back later as a notice, a blocking agent's next submit is
+// returned.
 var tellTool = fnTool{
-	name: "tell_worker",
-	desc: "Send a message to a running worker. Use for a steer, or to answer a question it raised.",
+	name: "tell",
+	desc: "Send a message to a running agent. For a non-blocking agent it returns at once, and the agent's next result arrives as a system notice. " +
+		"For a blocking agent it waits for the agent's next submit and returns it; past the tool budget the agent is backgrounded and the result arrives as a notice.",
 	schema: schema(map[string]any{
-		"worker": map[string]any{"type": "string", "description": "Worker id."},
-		"text":   map[string]any{"type": "string", "description": "What to tell it."},
-	}, "worker", "text"),
+		"agent": map[string]any{"type": "string", "description": "Agent id."},
+		"text":  map[string]any{"type": "string", "description": "What to tell it."},
+	}, "agent", "text"),
 	run: func(_ string, params map[string]any) (string, error) {
-		id, text := str(params, "worker"), str(params, "text")
+		id, text := str(params, "agent"), str(params, "text")
 		if id == "" || text == "" {
-			return "", fmt.Errorf("worker and text are required")
+			return "", fmt.Errorf("agent and text are required")
 		}
-		worker, err := recall(id)
-		if err != nil {
-			return "", err
-		}
-		settled, err := Tell(tellExec, worker.Pane, text, toolBudget)
-		if err != nil {
-			return "", fmt.Errorf("could not deliver to %s: %w", id, err)
-		}
-		if !settled {
-			return fmt.Sprintf("delivered to %s; it is still working. Call wait_workers to see it settle.", id), nil
-		}
-		return fmt.Sprintf("delivered to %s and waited for it to settle", id), nil
+		return tellAgent(tellExec, id, text)
 	},
 }
 
-// reviewExec is the exec a self-review runs through. A var, like waitExec, so
+// reviewExec is the exec a self-review runs through. A var, like spawnExec, so
 // a test can drive the tool with a fake reviewer instead of a real agent.
 var reviewExec Exec = osExec
 

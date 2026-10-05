@@ -76,8 +76,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, root string, served
 		}
 		switch req.Method {
 		case "tools/call":
-			// A call can block for minutes (wait_workers); ping and list must
-			// still be answered meanwhile.
+			// A call can block for minutes (a blocking spawn, tell or
+			// code_review); ping and list must still be answered meanwhile.
 			calls.Add(1)
 			go func() {
 				defer calls.Done()

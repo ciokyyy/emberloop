@@ -12,7 +12,7 @@ import (
 var roles = map[string][]string{
 	// implement delegates: it reads, explores with scouts, and spawns; it
 	// never edits, runs code or reviews. Each worker reviews its own work.
-	"implement": {"read", "find", "spawn", "wait_workers", "finish_worker", "tell_worker"},
+	"implement": {"read", "find", "spawn", "finish", "tell"},
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},

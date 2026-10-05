@@ -121,6 +121,9 @@ func TestSpawnThreeScoutsReturnsTheirReportsInOrder(t *testing.T) {
 	if !(first < second && second < third) {
 		t.Errorf("reports must come back in list order, got:\n%s", out)
 	}
+	if strings.Contains(out, "end your turn") {
+		t.Errorf("a spawn of blocking scouts that all submitted must not say to end the turn, got:\n%s", out)
+	}
 }
 
 // A scout runs in the repo, with only the read-only tools its type names plus
@@ -457,6 +460,9 @@ func TestMixedSpawnReturnsScoutsAndStartsTheWorker(t *testing.T) {
 	}
 	if w, err := recall("20-x"); err != nil || w.Branch != "implement/20-x" {
 		t.Errorf("the worker entry must create its worktree and branch: %+v err=%v", w, err)
+	}
+	if !strings.Contains(out, "end your turn") {
+		t.Errorf("a mixed spawn that starts a non-blocking worker must say to end the turn, got:\n%s", out)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -79,9 +78,8 @@ func reportCandidates(exe, home string) []string {
 	}
 }
 
-// reportExtensionWarning warns that a pig worker will read unknown to herdr
-// and never settle, which leaves wait_workers blocking on a state that cannot
-// arrive. Empty for any other harness, and empty when the extension is found.
+// reportExtensionWarning warns that a pig worker will read unknown to herdr.
+// Empty for any other harness, and empty when the extension is found.
 func reportExtensionWarning(harness string) string {
 	if harness != "pig" {
 		return ""
@@ -90,8 +88,7 @@ func reportExtensionWarning(harness string) string {
 		return ""
 	}
 	return "\nwarning: the herdr-report extension was not found, so this worker will read " +
-		"unknown to herdr and never settle on its own. Judge it by its branch commits and " +
-		"an idle pane; install herdr-report beside wick or point WICK_HERDR_REPORT at its directory."
+		"unknown to herdr. Install herdr-report beside wick or point WICK_HERDR_REPORT at its directory."
 }
 
 // recall returns one worker's record from the store.
@@ -170,56 +167,9 @@ func writeBrief(id, ticket, spec, target string) (string, error) {
 	return path, nil
 }
 
-// renderStatus and renderFinish return prose rather than a Go value. A struct
-// or map crossing the extension boundary reaches the model as nothing at all,
-// and prose is also fewer tokens than the equivalent JSON.
-func renderStatus(workers []Status, pending []string, candidates []string) string {
-	if len(workers) == 0 {
-		return "no workers are running. Spawn one with spawn(agents=[{type: \"worker\", ticket: <path>}])."
-	}
-	var b strings.Builder
-	for _, w := range workers {
-		fmt.Fprintf(&b, "%-24s %-8s %s\n", w.ID, w.State, w.Detail)
-	}
-	if len(pending) == 0 {
-		b.WriteString("all settled. Next: finish_worker for each.")
-	} else {
-		fmt.Fprintf(&b, "still running: %s. Call wait_workers again, or do other work.", strings.Join(pending, ", "))
-		if allUnknown(workers, pending) {
-			b.WriteString("\n" + missingReportExtension(candidates))
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// missingReportExtension explains the all-unknown case and names every place
-// reportExtension looked, so the reader can fix the lookup instead of guessing
-// at it.
-func missingReportExtension(candidates []string) string {
-	return "They are not registered with herdr, which is why they never settle: " +
-		"the herdr-report extension was not found, so pig was launched without `-e herdr-report`. " +
-		"Looked in: " + strings.Join(candidates, ", ") + ". " +
-		"Install it in one of those, or set WICK_HERDR_REPORT to its directory."
-}
-
-// allUnknown reports whether every pending worker is unknown to herdr. One
-// worker herdr can see proves the extension is loaded, so the rest are just
-// working, and saying otherwise would send the reader chasing the wrong fault.
-func allUnknown(workers []Status, pending []string) bool {
-	if len(pending) == 0 {
-		return false
-	}
-	state := make(map[string]string, len(workers))
-	for _, w := range workers {
-		state[w.ID] = w.State
-	}
-	for _, id := range pending {
-		if state[id] != "unknown" {
-			return false
-		}
-	}
-	return true
-}
+// renderFinish returns prose rather than a Go value: a struct crossing the
+// extension boundary reaches the model as nothing at all, and prose is also
+// fewer tokens than the equivalent JSON.
 
 func renderFinish(r *FinishResult) string {
 	switch {
@@ -227,7 +177,7 @@ func renderFinish(r *FinishResult) string {
 		return fmt.Sprintf("merged %s into the base as %s; its worktree is gone.", r.ID, r.SHA)
 	case r.Kept:
 		return fmt.Sprintf("%s did NOT merge; its worktree and pane are still there: %s\n"+
-			"Send it back with tell_worker to fix this (rebase, resolve, gate, code_review), wait for it, then finish it again.", r.ID, r.Detail)
+			"Send it back with tell(agent=%s, text=...) to fix this (rebase, resolve, gate, code_review); its next submit arrives as a notice, then finish it again.", r.ID, r.Detail, r.ID)
 	default:
 		return fmt.Sprintf("discarded %s and removed its worktree.", r.ID)
 	}
@@ -242,40 +192,19 @@ func implementPrompt(run SpecRun) string {
 Read %s and follow it, with these wick adaptations:
 
 - The integration branch is %s. It already exists and is checked out; never switch away from it.
-- An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else.
-- An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Ask several at once when they are independent.
-- The merger subagent is finish_worker(worker=<id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
-- Skip the skill's final code-review step: every worker reviewed its own ticket before settling. Never review a worker yourself.
-- wait_workers(timeout_ms=%d) to see workers settle; one call, not a polling loop.
-- If finish_worker does not merge a worker, tell_worker it what failed (the reason finish_worker gave), wait for it, and finish it again. If the same worker fails again, leave it, report it, and carry on with every ticket it does not block.
+- An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else. Workers are non-blocking: spawn returns as soon as they start.
+- An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Scouts are blocking, so one spawn returns their reports together; ask several at once when they are independent.
+- After a spawn that starts non-blocking workers, end your turn: each worker's result arrives later as a system notice, and waiting for it only spends tokens.
+- The merger subagent is finish(agent=<worker id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
+- Skip the skill's final code-review step: every worker reviewed its own ticket before submitting. Never review a worker yourself.
+- If finish does not merge a worker, tell(agent=<id>, text=<the reason finish gave>) it what failed, and its next submit arrives as a notice. Once it submits, finish it again. If the same worker fails again, leave it, report it, and carry on with every ticket it does not block.
 - You never edit files and never run code.
 
 When nothing more is ready, report the integration branch, each merged ticket with its sha, every worker left unmerged and why, and the follow-ups workers listed.`,
-		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch, WaitCap/time.Millisecond)
+		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch)
 }
 
 func str(params map[string]any, key string) string {
 	v, _ := params[key].(string)
 	return v
-}
-
-func strs(params map[string]any, key string) []string {
-	raw, _ := params[key].([]any)
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if s, ok := item.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func num(params map[string]any, key string) int {
-	switch v := params[key].(type) {
-	case float64:
-		return int(v)
-	case int:
-		return v
-	}
-	return 0
 }

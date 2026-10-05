@@ -33,7 +33,7 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "find", "spawn", "wait_workers", "finish_worker", "tell_worker"}
+	want := []string{"read", "find", "spawn", "finish", "tell"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("implement tools = %v, want %v", got, want)
 	}
@@ -81,5 +81,38 @@ func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
 	t.Setenv("WICK_ROLE", "")
 	if got := RoleFromEnv(); got != "full" {
 		t.Errorf("a hand-started wick-mcp = %q, want full", got)
+	}
+}
+
+// No role serves a wait tool: the parent learns a result arrived instead of
+// blocking on it. tell and finish are what a delegating role gets instead.
+func TestNoRoleServesAWaitTool(t *testing.T) {
+	removed := []string{"wait_workers", "tell_worker", "finish_worker", "wait"}
+	for _, role := range []string{"implement", "plan", "work", "review", "scout", "full"} {
+		served, err := RoleTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := map[string]bool{}
+		for _, tool := range served {
+			names[tool.Name()] = true
+		}
+		for _, gone := range removed {
+			if names[gone] {
+				t.Errorf("%s role still serves %s", role, gone)
+			}
+		}
+	}
+	for _, role := range []string{"implement", "full"} {
+		served, _ := RoleTools(role)
+		names := map[string]bool{}
+		for _, tool := range served {
+			names[tool.Name()] = true
+		}
+		for _, want := range []string{"tell", "finish"} {
+			if !names[want] {
+				t.Errorf("%s role must serve %s", role, want)
+			}
+		}
 	}
 }

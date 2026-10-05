@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // ticketHerdr is a fake herdr whose one project workspace holds a tab per
@@ -227,9 +226,9 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 }
 
 // The whole worker life on a git worktree in the project workspace: spawn
-// makes the worktree with plain git and the ticket tab with herdr tabs, wait
-// reads the agent, and finish merges and drops both.
-func TestSpawnWaitFinish(t *testing.T) {
+// makes the worktree with plain git and the ticket tab with herdr tabs, and
+// finish merges and drops both.
+func TestSpawnFinishOnAWorktree(t *testing.T) {
 	// Isolated state so the test never touches a real worker store.
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
@@ -288,21 +287,6 @@ func TestSpawnWaitFinish(t *testing.T) {
 		t.Errorf("implementor launched in %q, want the ticket tab's root pane %q", got, worker.Pane)
 	}
 
-	// --- wait: the worker settles into idle ------------------------------
-	statuses, pending, err := Wait(h.run, nil, 30*time.Second)
-	if err != nil {
-		t.Fatalf("wait: %v", err)
-	}
-	if len(statuses) != 1 {
-		t.Fatalf("got %d statuses, want 1", len(statuses))
-	}
-	if !contains(settled, statuses[0].State) {
-		t.Errorf("state = %q, want a settled state; herdr must match the worker by pane, not by its reported name", statuses[0].State)
-	}
-	if len(pending) != 0 {
-		t.Errorf("pending = %v, want none", pending)
-	}
-
 	// --- finish: rebase, fast-forward, drop the worktree -----------------
 	if err := os.WriteFile(filepath.Join(worker.Worktree, "feature.txt"), []byte("done\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -331,9 +315,6 @@ func TestSpawnWaitFinish(t *testing.T) {
 		t.Error("the ticket tab is still open after finish")
 	}
 
-	if _, _, err := Wait(h.run, nil, 0); err != nil {
-		t.Errorf("store should be empty and readable: %v", err)
-	}
 }
 
 // After finish keeps the implement branch, the ticket can be picked up again:
