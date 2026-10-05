@@ -60,6 +60,9 @@ func TestFindLogsDecisionCallsAgainstTheCallingAgent(t *testing.T) {
 	t.Setenv("WICK_SETTINGS", dir+"/none.json")
 	t.Setenv("WICK_STATE_DIR", t.TempDir())
 	t.Setenv("WICK_AGENT_ID", "agent-find")
+	// The model assertion needs the default: an ambient override would log
+	// whatever the machine prefers instead of the pin.
+	t.Setenv("WICK_DECISION_MODEL", "")
 
 	out, err := run(t, findTool{provider: usageJudge{}}, dir, findArgs())
 	if err != nil || !strings.Contains(out, "auth.go") {
@@ -99,6 +102,7 @@ func TestFindWithoutUsageStillLogsCallCounts(t *testing.T) {
 	t.Setenv("WICK_SETTINGS", dir+"/none.json")
 	t.Setenv("WICK_STATE_DIR", t.TempDir())
 	t.Setenv("WICK_AGENT_ID", "agent-bare")
+	t.Setenv("WICK_DECISION_MODEL", "")
 
 	if _, err := run(t, findTool{provider: bareJudge{fixedJudge{0.85}}}, dir, findArgs()); err != nil {
 		t.Fatal(err)
@@ -122,6 +126,7 @@ func TestFindWithoutAgentLogsNothing(t *testing.T) {
 	t.Setenv("WICK_SETTINGS", state+"/none.json")
 	t.Setenv("WICK_STATE_DIR", state)
 	t.Setenv("WICK_AGENT_ID", "")
+	t.Setenv("WICK_DECISION_MODEL", "")
 
 	if _, err := run(t, findTool{provider: usageJudge{}}, project(t), findArgs()); err != nil {
 		t.Fatal(err)
