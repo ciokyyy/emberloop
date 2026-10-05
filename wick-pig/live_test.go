@@ -31,3 +31,21 @@ func mustAbs(t *testing.T, p string) string {
 	}
 	return a
 }
+
+// TestLiveModels lists a real harness's models through its CLI. WICK_LIVE=pig
+// or claude. It proves the listing is a real run that answers and exits --
+// claude's initialize spends no tokens, so this is safe to repeat.
+func TestLiveModels(t *testing.T) {
+	h := os.Getenv("WICK_LIVE")
+	if h == "" {
+		t.Skip("set WICK_LIVE=pig or claude")
+	}
+	isolateState(t)
+	list, err := CachedModels(h, osExec, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) == 0 {
+		t.Fatalf("%s listed no models", h)
+	}
+}

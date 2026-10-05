@@ -21,8 +21,8 @@ type ExecOpts struct {
 	Cwd     string
 	Timeout time.Duration
 	Env     []string // added to the parent environment
+	Stdin   string   // written to the process, which then reads EOF
 }
-
 type Result struct {
 	Stdout string
 	Stderr string
@@ -42,6 +42,9 @@ func osExec(cmd string, args []string, opts ExecOpts) (Result, error) {
 	c.Dir = opts.Cwd
 	if len(opts.Env) > 0 {
 		c.Env = append(os.Environ(), opts.Env...)
+	}
+	if opts.Stdin != "" {
+		c.Stdin = strings.NewReader(opts.Stdin)
 	}
 
 	var stdout, stderr strings.Builder

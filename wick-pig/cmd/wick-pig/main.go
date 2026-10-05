@@ -1,6 +1,7 @@
 // wick-pig starts an agent session: pig or claude, with wick's tools over MCP.
 //
-//	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
+//	wick-pig settings [decision-model <id>|threshold <n>]  read and save settings
+//	wick-pig settings models [--refresh] [--harness h]    list a harness's models
 //	wick-pig settings role <slot> harness|model|effort <value>   set a launch slot
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
@@ -42,7 +43,7 @@ func run(argv []string) error {
 		return wick.RunPigGate(argv[0], os.Stdout)
 	}
 	if sub == "settings" {
-		return runSettings(argv, os.Stdout, listModels)
+		return runSettings(argv, os.Stdout, cachedModels)
 	}
 	if sub == "retry" {
 		if len(argv) != 1 {

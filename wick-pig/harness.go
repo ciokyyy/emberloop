@@ -71,6 +71,10 @@ type Harness interface {
 	// after it starts, so an argument prompt runs with no tools and the model
 	// invents tool calls.
 	LatePrompt() bool
+	// Models lists the models this harness offers, and the effort levels each
+	// takes. It is the one source for pickers and for validation, and it runs
+	// through the given Exec so a test can feed it captured CLI output.
+	Models(run Exec) ([]Model, error)
 	// Gate is how this harness can hold an agent at a stop, so one decision
 	// serves every harness.
 	Gate() Gate

@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"example.com/wick"
 	"example.com/wick/tools"
 )
 
@@ -21,7 +23,19 @@ func settingsFile(t *testing.T) string {
 	return p
 }
 
-func noModels() ([]string, error) { return nil, nil }
+func noModels(string, bool) ([]wick.Model, error) { return nil, nil }
+
+// modelList answers a fixed list per harness; a harness with no entry cannot
+// be listed, which is what a machine without that CLI looks like.
+func modelList(byHarness map[string][]wick.Model) modelSource {
+	return func(harness string, refresh bool) ([]wick.Model, error) {
+		list, ok := byHarness[harness]
+		if !ok {
+			return nil, fmt.Errorf("cannot list %s models", harness)
+		}
+		return list, nil
+	}
+}
 
 func TestSettingsPrintsCurrentSettings(t *testing.T) {
 	p := settingsFile(t)
@@ -73,24 +87,77 @@ func TestSettingsRejectsBadThreshold(t *testing.T) {
 	}
 }
 
-func TestSettingsModelsListsFetchedIds(t *testing.T) {
+// `settings models` prints a harness's models and the efforts each takes.
+func TestSettingsModelsListsHarnessModels(t *testing.T) {
 	settingsFile(t)
-	called := false
 	var out bytes.Buffer
-	fetch := func() ([]string, error) {
-		called = true
-		return []string{"typesafe/jev-1.13", "openai/gpt-5"}, nil
-	}
-	if err := runSettings([]string{"models"}, &out, fetch); err != nil {
+	src := modelList(map[string][]wick.Model{
+		"pig":    {{ID: "deepseek-flash", Efforts: []string{"off", "high"}}},
+		"claude": {{ID: "opus", Label: "Opus 5.5", Efforts: []string{"low", "high"}}},
+	})
+	if err := runSettings([]string{"models"}, &out, src); err != nil {
 		t.Fatal(err)
 	}
-	if !called {
-		t.Fatal("models must ask for the id list")
-	}
-	for _, want := range []string{"typesafe/jev-1.13", "openai/gpt-5"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("models output %q does not list %q", out.String(), want)
+	got := out.String()
+	for _, want := range []string{"pig:", "deepseek-flash", "off high", "claude:", "opus", "Opus 5.5", "low high"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("models output %q does not mention %q", got, want)
 		}
+	}
+}
+
+// --harness lists one harness, and --refresh rebuilds instead of reading the
+// cache.
+func TestSettingsModelsFiltersAndRefreshes(t *testing.T) {
+	settingsFile(t)
+	refreshes := 0
+	src := func(harness string, refresh bool) ([]wick.Model, error) {
+		if refresh {
+			refreshes++
+		}
+		if harness != "claude" {
+			return nil, fmt.Errorf("cannot list %s models", harness)
+		}
+		return []wick.Model{{ID: "opus"}}, nil
+	}
+	var out bytes.Buffer
+	if err := runSettings([]string{"models", "--harness", "claude", "--refresh"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if refreshes != 1 {
+		t.Errorf("--refresh did not rebuild the list (refresh=%d)", refreshes)
+	}
+	if got := out.String(); !strings.Contains(got, "opus") || strings.Contains(got, "pig:") {
+		t.Errorf("--harness claude printed %q", got)
+	}
+}
+
+func TestSettingsModelsRejectsAnUnknownHarness(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	err := runSettings([]string{"models", "--harness", "gemini"}, &out, noModels)
+	if err == nil || !strings.Contains(err.Error(), "harness") {
+		t.Fatalf("an unknown harness should fail naming the harness, got %v", err)
+	}
+}
+
+// A harness whose CLI is missing is a line in the listing, not a failed
+// command: the other harnesses still print.
+func TestSettingsModelsReportsAHarnessItCannotList(t *testing.T) {
+	settingsFile(t)
+	src := func(harness string, refresh bool) ([]wick.Model, error) {
+		if harness == "claude" {
+			return nil, fmt.Errorf("claude not installed")
+		}
+		return []wick.Model{{ID: "deepseek-flash"}}, nil
+	}
+	var out bytes.Buffer
+	if err := runSettings([]string{"models"}, &out, src); err != nil {
+		t.Fatalf("an unlistable harness must not fail the command: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "claude not installed") || !strings.Contains(got, "deepseek-flash") {
+		t.Errorf("models output %q should report claude and still list pig", got)
 	}
 }
 
@@ -165,17 +232,127 @@ func TestSettingsSetsRoleFields(t *testing.T) {
 	}
 }
 
-// A model and effort chosen for one harness mean nothing to another, so a
-// harness change clears them.
-func TestSettingsChangingRoleHarnessClearsModelAndEffort(t *testing.T) {
+// A model and effort chosen for one harness are kept when the new harness
+// still offers them, and cleared with a notice when it does not.
+func TestSettingsChangingRoleHarnessClearsWhatTheNewHarnessLacks(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"m","effort":"high"}}}`)
+	src := modelList(map[string][]wick.Model{"claude": {{ID: "opus", Efforts: []string{"low", "high"}}}})
 	var out bytes.Buffer
-	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, noModels); err != nil {
+	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, src); err != nil {
 		t.Fatal(err)
 	}
 	if got := tools.LoadSettings().Roles["orchestrator"]; got != (tools.Role{Harness: "claude"}) {
 		t.Fatalf("harness change left %+v, want only the harness", got)
+	}
+	if !strings.Contains(out.String(), "cleared") {
+		t.Errorf("the cleared model and effort need a notice, got %q", out.String())
+	}
+}
+
+func TestSettingsChangingRoleHarnessKeepsWhatTheNewHarnessOffers(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"opus","effort":"high"}}}`)
+	src := modelList(map[string][]wick.Model{"claude": {{ID: "opus", Efforts: []string{"low", "high", "max"}}}})
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	want := tools.Role{Harness: "claude", Model: "opus", Effort: "high"}
+	if got := tools.LoadSettings().Roles["orchestrator"]; got != want {
+		t.Fatalf("harness change left %+v, want %+v", got, want)
+	}
+	if strings.Contains(out.String(), "cleared") {
+		t.Errorf("nothing should have been cleared, got %q", out.String())
+	}
+}
+
+// Saving a slot rejects a model the harness does not offer.
+func TestSettingsRejectsAModelTheHarnessDoesNotOffer(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude"}}}`)
+	src := modelList(map[string][]wick.Model{"claude": {{ID: "haiku"}, {ID: "opus"}}})
+	var out bytes.Buffer
+	err := runSettings([]string{"role", "orchestrator", "model", "gpt-9"}, &out, src)
+	if err == nil || !strings.Contains(err.Error(), "gpt-9") {
+		t.Fatalf("an unknown model must fail naming it, got %v", err)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"].Model; got != "" {
+		t.Fatalf("a rejected model was saved as %q", got)
+	}
+}
+
+// The cache is rebuilt once before a value it lacks is rejected, so a model
+// added since the last listing is accepted.
+func TestSettingsRefreshesOnceBeforeRejectingAModel(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude"}}}`)
+	calls := 0
+	src := func(harness string, refresh bool) ([]wick.Model, error) {
+		calls++
+		if refresh {
+			return []wick.Model{{ID: "opus"}}, nil
+		}
+		return []wick.Model{{ID: "haiku"}}, nil
+	}
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "model", "opus"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("the list was fetched %d times, want a cache read and one refresh", calls)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"].Model; got != "opus" {
+		t.Fatalf("saved model is %q, want opus", got)
+	}
+}
+
+// A harness whose list cannot be built lets a free-text model through, with a
+// warning rather than a rejection.
+func TestSettingsAllowsFreeTextWhenTheListCannotBeBuilt(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude"}}}`)
+	src := func(string, bool) ([]wick.Model, error) { return nil, fmt.Errorf("claude not installed") }
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "model", "mystery-model"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"].Model; got != "mystery-model" {
+		t.Fatalf("saved model is %q, want the free text", got)
+	}
+	if !strings.Contains(out.String(), "unchecked") {
+		t.Errorf("a free-text model needs a warning, got %q", out.String())
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("the free-text model was not saved: %v", err)
+	}
+}
+
+// An effort the chosen model does not take is rejected; one it does take is
+// saved.
+func TestSettingsChecksTheEffortAgainstTheModel(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"haiku"}}}`)
+	src := modelList(map[string][]wick.Model{"claude": {
+		{ID: "haiku"},
+		{ID: "opus", Efforts: []string{"low", "high", "max"}},
+	}})
+	var out bytes.Buffer
+	err := runSettings([]string{"role", "orchestrator", "effort", "high"}, &out, src)
+	if err == nil || !strings.Contains(err.Error(), "haiku") {
+		t.Fatalf("a model that takes no effort must reject it, got %v", err)
+	}
+	if err := runSettings([]string{"role", "orchestrator", "model", "opus"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSettings([]string{"role", "orchestrator", "effort", "high"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"]; got != (tools.Role{Harness: "claude", Model: "opus", Effort: "high"}) {
+		t.Fatalf("effort saved as %+v", got)
+	}
+	if err := runSettings([]string{"role", "orchestrator", "effort", "off"}, &out, src); err == nil {
+		t.Fatal("off is not a claude effort and must be rejected")
 	}
 }
 
@@ -254,5 +431,105 @@ func TestSettingsRolePrintsTheNewValue(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "spec-review: harness pig (default), model opus (file)") {
 		t.Fatalf("output %q does not confirm the new model with its source", out.String())
+	}
+}
+
+// With no model chosen the effort is checked against every model the harness
+// offers: one some model takes is saved, one none takes is rejected.
+func TestSettingsChecksAnEffortWithNoModelChosen(t *testing.T) {
+	settingsFile(t)
+	src := modelList(map[string][]wick.Model{"claude": {
+		{ID: "haiku"},
+		{ID: "opus", Efforts: []string{"low", "high"}},
+	}})
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "scout", "harness", "claude"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSettings([]string{"role", "scout", "effort", "high"}, &out, src); err != nil {
+		t.Fatalf("an effort some model takes should be accepted: %v", err)
+	}
+	if got := tools.LoadSettings().Roles["scout"].Effort; got != "high" {
+		t.Fatalf("saved effort is %q, want high", got)
+	}
+	if err := runSettings([]string{"role", "scout", "effort", "off"}, &out, src); err == nil {
+		t.Fatal("an effort no model of the harness takes should be rejected")
+	}
+}
+
+// A harness switch with no model chosen keeps an effort some model of the new
+// harness takes, and clears one none takes.
+func TestSettingsHarnessSwitchAndAnEffortWithNoModel(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"scout":{"harness":"pig","effort":"high"}}}`)
+	src := modelList(map[string][]wick.Model{"claude": {
+		{ID: "haiku"},
+		{ID: "opus", Efforts: []string{"low", "high"}},
+	}})
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "scout", "harness", "claude"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["scout"]; got != (tools.Role{Harness: "claude", Effort: "high"}) {
+		t.Fatalf("harness change left %+v, want the effort kept", got)
+	}
+	// off is a pig level no claude model takes.
+	if err := runSettings([]string{"role", "scout", "harness", "pig"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	write(t, p, `{"roles":{"scout":{"harness":"pig","effort":"off"}}}`)
+	if err := runSettings([]string{"role", "scout", "harness", "claude"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["scout"]; got != (tools.Role{Harness: "claude"}) {
+		t.Fatalf("harness change left %+v, want the effort cleared", got)
+	}
+	if !strings.Contains(out.String(), "cleared") {
+		t.Errorf("a cleared effort needs a notice, got %q", out.String())
+	}
+}
+
+// An effort added to the harness since the cache was written is accepted after
+// one refresh, not rejected.
+func TestSettingsRefreshesOnceBeforeRejectingAnEffort(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus"}}}`)
+	calls := 0
+	src := func(harness string, refresh bool) ([]wick.Model, error) {
+		calls++
+		if refresh {
+			return []wick.Model{{ID: "opus", Efforts: []string{"low", "high", "max"}}}, nil
+		}
+		return []wick.Model{{ID: "opus", Efforts: []string{"low", "high"}}}, nil
+	}
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "effort", "max"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("the list was fetched %d times, want a cache read and one refresh", calls)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"].Effort; got != "max" {
+		t.Fatalf("saved effort is %q, want max", got)
+	}
+}
+
+// A model change clears an effort the new model does not take, with a notice.
+func TestSettingsChangingTheModelClearsAnEffortItDoesNotTake(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"max"}}}`)
+	src := modelList(map[string][]wick.Model{"claude": {
+		{ID: "opus", Efforts: []string{"low", "high", "max"}},
+		{ID: "haiku"},
+	}})
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "orchestrator", "model", "haiku"}, &out, src); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["orchestrator"]; got != (tools.Role{Harness: "claude", Model: "haiku"}) {
+		t.Fatalf("model change left %+v, want the effort cleared", got)
+	}
+	if !strings.Contains(out.String(), "cleared") {
+		t.Errorf("a cleared effort needs a notice, got %q", out.String())
 	}
 }
