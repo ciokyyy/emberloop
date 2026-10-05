@@ -20,12 +20,25 @@ var workerSkills = []struct{ name, when string }{
 	{"tdd", "at the pre-agreed seams, while doing the work"},
 }
 
-func skillsDir() string {
+// skillsRoot is where wick keeps the skill libraries it installs. The env var
+// names the root itself, so WICK_SKILLS_DIR overrides the whole tree, not one
+// library inside it.
+func skillsRoot() string {
 	if dir := os.Getenv("WICK_SKILLS_DIR"); dir != "" {
 		return dir
 	}
-	return filepath.Join(os.Getenv("HOME"), ".agents", "skills")
+	return filepath.Join(os.Getenv("HOME"), ".wick-pig", "skills")
 }
+
+// skillsDir is the library wick-pig installs: the mattpocock skills, one
+// directory per skill, under the root.
+func skillsDir() string {
+	return filepath.Join(skillsRoot(), "matt-pocock")
+}
+
+// SkillLibraryDir is where wick-pig installs and reads the skill library, for
+// callers outside the package.
+func SkillLibraryDir() string { return skillsDir() }
 
 func skillPath(name string) string {
 	return filepath.Join(skillsDir(), name, "SKILL.md")

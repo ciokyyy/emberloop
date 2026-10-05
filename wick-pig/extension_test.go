@@ -36,11 +36,11 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	}
 	text := string(body)
 
-	if !strings.Contains(text, "/skills/implement/SKILL.md") {
+	if !strings.Contains(text, "/skills/matt-pocock/implement/SKILL.md") {
 		t.Errorf("brief must name the implement skill file:\n%s", text)
 	}
-	implement := strings.Index(text, "/skills/implement/SKILL.md")
-	tdd := strings.Index(text, "/skills/tdd/SKILL.md")
+	implement := strings.Index(text, "/skills/matt-pocock/implement/SKILL.md")
+	tdd := strings.Index(text, "/skills/matt-pocock/tdd/SKILL.md")
 	if !(implement < tdd) {
 		t.Errorf("order must be implement -> tdd, got %d/%d", implement, tdd)
 	}

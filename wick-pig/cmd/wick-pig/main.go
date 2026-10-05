@@ -1,6 +1,7 @@
 // wick-pig starts an agent session: pig or claude, with wick's tools over MCP.
 //
 //	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
+//	wick-pig skills install                                    fill the skill library
 //	wick-pig [--pig|--claude] [--model M] [-p]                 full session
 //	wick-pig implement <path> [flags]                          restricted merger
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
@@ -37,6 +38,16 @@ func run(argv []string) error {
 			return fmt.Errorf("usage: wick-pig retry <worker-id|pane-id>")
 		}
 		return wick.Retry(wick.OSExec, argv[0])
+	}
+	if sub == "skills" {
+		if len(argv) != 1 || argv[0] != "install" {
+			return fmt.Errorf("usage: wick-pig skills install")
+		}
+		if err := wick.InstallSkills(wick.OSExec); err != nil {
+			return err
+		}
+		fmt.Printf("installed %s into %s\n", "mattpocock/skills", wick.SkillLibraryDir())
+		return nil
 	}
 	fs := flag.NewFlagSet("wick-pig", flag.ContinueOnError)
 	harness := fs.String("harness", "pig", "pig or claude")

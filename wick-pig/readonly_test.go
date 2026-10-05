@@ -156,7 +156,7 @@ func TestReadOnlyTilesTheTabItSplitInto(t *testing.T) {
 func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	got := skillPrompt("grilling", "the auth plan", true)
-	for _, want := range []string{"/skills/grilling/SKILL.md", "Input: the auth plan", "scout("} {
+	for _, want := range []string{"/skills/matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout("} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}

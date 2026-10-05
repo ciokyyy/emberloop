@@ -45,7 +45,7 @@ func TestPigWorkerGetsRouteSkillsAndReporter(t *testing.T) {
 	t.Setenv("WICK_HERDR_REPORT", "/exts/herdr-report")
 	cmd, _ := BuildCommand("pig", workerSession())
 	line := cmd.Line()
-	for _, want := range []string{"--no-skills", "--skill /skills/implement", "--skill /skills/tdd",
+	for _, want := range []string{"--no-skills", "--skill /skills/matt-pocock/implement", "--skill /skills/matt-pocock/tdd",
 		"-e /exts/herdr-report", "--session-id 01-x", "WICK_AGENT_LABEL=01-x", "--no-builtin-tools"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("missing %q in %s", want, line)
