@@ -12,8 +12,16 @@ func workerSession() Session {
 	return Session{Role: "work", Label: "01-x", Skills: RouteSkills(), Prompt: "Read /state/briefs/01-x.md and follow it exactly."}
 }
 
+// isolateState keeps a build that writes harness files (claude's MCP config)
+// out of the real worker store.
+func isolateState(t *testing.T) {
+	t.Helper()
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+}
+
 func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
+	isolateState(t)
 	for _, name := range HarnessNames() {
 		cmd, err := BuildCommand(name, workerSession())
 		if err != nil {
@@ -46,6 +54,7 @@ func TestPigWorkerGetsRouteSkillsAndReporter(t *testing.T) {
 }
 
 func TestClaudeRunsStripped(t *testing.T) {
+	isolateState(t)
 	cmd, _ := BuildCommand("claude", Session{Role: "review", Model: "m", Prompt: "p"})
 	line := cmd.Line()
 	for _, want := range []string{`--tools ""`, `--setting-sources ""`, "--strict-mcp-config", "--model m",

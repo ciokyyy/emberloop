@@ -86,10 +86,11 @@ var spawnTool = fnTool{
 		if err != nil {
 			return "", err
 		}
-		launch, err := PrepareLaunch(in.Harness, Session{
+		sess := Session{
 			Role: "work", Cwd: worktreePath(in.Repo, WorkerID(in.Ticket)), Model: in.Model, Label: WorkerID(in.Ticket), Skills: RouteSkills(),
 			Prompt: fmt.Sprintf("Read %s and follow it exactly.", brief),
-		})
+		}
+		launch, err := PrepareLaunch(in.Harness, sess)
 		if err != nil {
 			return "", err
 		}
@@ -97,6 +98,8 @@ var spawnTool = fnTool{
 
 		worker, err := Spawn(osExec, in)
 		if err != nil {
+			// No worker means nothing ever reads the config it was given.
+			CleanupSession(sess)
 			return "", err
 		}
 		return fmt.Sprintf(
