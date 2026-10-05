@@ -145,3 +145,13 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 ## Further Notes
 
 Source of the findings: the retro run on the run-records implement session, this session's transcripts, and a second pass over the live worker sessions' spawn calls (durations, results and reviewer reports). The brief wording for the spawn tool (story 9) and the spec reviewer's holding pass are already delivered and need no work here. DOX comes from https://github.com/agent0ai/dox.
+
+## Hard limits for implementers
+
+This work is built by the tool it changes, so:
+
+- Edit only files under the main Go package directory and this spec's ticket files. Never touch the installed binaries directory, the home-directory configuration of pig, claude, agents or wick, or the live scripts directory.
+- Never install a binary or copy one anywhere. Build and test from the package directory with the build and test commands, skipping live tests.
+- Never run a live test. Never start wick-pig, pig or claude inside the work. Tests use a fake exec and temp directories, never the network or the real home.
+- Servers, watchers and tails go to the background tool, never bash.
+- Keep vet and the test suite green at every commit.
