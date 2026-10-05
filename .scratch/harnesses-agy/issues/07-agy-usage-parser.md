@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** wontfix (superseded: agy is a pig provider, see spec.md)
 
 - [ ] Parser turns probe fixtures into expected records
 - [ ] Thinking tokens map to `reasoning`, cache reads to `cacheRead`

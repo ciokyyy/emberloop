@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03
 
-**Status:** ready-for-agent
+**Status:** wontfix (superseded: agy is a pig provider, see spec.md)
 
 - [ ] `agy` in the harness registry; every-harness command tests pass for it
 - [ ] Stripped-agy test: agent definition path, no default components, only wick MCP, wick system prompt

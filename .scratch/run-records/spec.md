@@ -28,7 +28,7 @@ Nothing records that a spec is being implemented: the orchestrator session leave
 14. As a user, I want memory samples written even when the TUI is closed, so that history is complete.
 15. As a user, I want a command to prune archives by age or run, so that I can reclaim disk deliberately; nothing is deleted automatically.
 16. As the TUI, I want all of this readable as plain files, so that it can show live state by polling.
-17. As a user, I want usage parsed for pig, claude and agy alike, so that every harness is covered.
+17. As a user, I want usage parsed for pig and claude alike, so that every harness is covered.
 
 ## Implementation Decisions
 
@@ -36,7 +36,7 @@ Nothing records that a spec is being implemented: the orchestrator session leave
 - Run record written by `implement` at launch, updated at exit when possible; liveness is decided by readers from herdr pane presence, not trusted from the record.
 - `Finish` writes the ticket history entry before deleting the worker entry; reviewer verdicts are copied in before reviewers are forgotten.
 - Agent id assigned in the session builder for every role; passed through the existing role environment so `wick-mcp` sees it for top-level sessions too.
-- One usage-parser interface per harness: transcript line → zero or more normalized usage records `{agent, at, harness, provider, model, input, output, cacheRead, cacheWrite, reasoning, reportedCost?}`. pig and claude parsers live here; the agy parser comes from the harnesses spec in the same shape.
+- One usage-parser interface per harness: transcript line → zero or more normalized usage records `{agent, at, harness, provider, model, input, output, cacheRead, cacheWrite, reasoning, reportedCost?}`. pig and claude parsers live here.
 - Effort is recorded on every agent (run record, worker entry, reviewer and read-only agent records, ticket history), so that stats can group by model plus effort.
 - The `find` tool records each decision call against `WICK_AGENT_ID`; the decision client requests usage and stores what comes back. The first ticket probes whether the endpoint returns usage or cost.
 - The archive copier runs inside the session's own wick process (the `wick-mcp` attached to the harness), tailing the harness transcript with a byte offset; the same process samples memory every 5 s by walking its parent harness process tree in `/proc` (RSS per process: pid, name, rss). Settled sessions get a final copy.
@@ -64,4 +64,4 @@ Nothing records that a spec is being implemented: the orchestrator session leave
 
 ## Further Notes
 
-Spec 3 of 5. Blocks the TUI spec and the stats spec. The agy usage parser is delivered by the harnesses spec; this spec should not wait on it.
+Spec 3 of 5. Blocks the TUI spec and the stats spec.

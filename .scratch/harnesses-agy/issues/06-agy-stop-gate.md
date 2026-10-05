@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** wontfix (superseded: agy is a pig provider, see spec.md)
 
 - [ ] agy row in the stop-gate capability test
 - [ ] Gate wiring in the generated agent definition (or nudge path) covered by tests mirroring the claude stop-gate tests

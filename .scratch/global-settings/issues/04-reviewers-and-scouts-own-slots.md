@@ -8,6 +8,6 @@
 
 - [ ] Code and spec reviewers launch with their own slot's harness, model and effort (fake-herdr review tests)
 - [ ] Scouts launch with the scout slot unless the agent type sets its own
-- [ ] A claude or agy reviewer receives the configured model
+- [ ] A claude reviewer receives the configured model
 - [ ] `WICK_READONLY_HARNESS` overrides the slot harness
 - [ ] Reviewer records store harness, model and effort

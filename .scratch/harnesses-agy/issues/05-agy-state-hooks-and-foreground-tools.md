@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** wontfix (superseded: agy is a pig provider, see spec.md)
 
 - [ ] Hooks present in the generated agent definition and reporting through herdr
 - [ ] Every wick tool has background mode off

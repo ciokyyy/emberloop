@@ -25,25 +25,24 @@ Every launch site picks its own harness and model. The orchestrator takes `--har
 11. As a user with an existing settings file in the old location, I want it to keep working, so that upgrading loses nothing.
 12. As a user, I want `wick-pig settings` to show and set every slot, so that I can edit without the TUI.
 13. As a user, I want an unknown harness name rejected when I set it, so that a typo fails at once and not at the next spawn.
-14. As a user, I want the reviewers to keep the model I set even on a non-pig harness, so that a claude or agy reviewer gets my model instead of none.
+14. As a user, I want the reviewers to keep the model I set even on a non-pig harness, so that a claude reviewer gets my model instead of none.
 15. As the TUI, I want to load and save settings through the same functions as the CLI, so that both editors agree on the format.
 16. As a user, I want to set a reasoning effort per slot, so that I can run reviews on high effort and scouts on low.
 17. As a user, I want effort stored in the harness's own vocabulary (`xhigh` for claude and pig, `off`/`minimal` only for pig), so that nothing is lost in translation.
 18. As a user, I want an effort the model doesn't support rejected on save, so that a bad combination fails early.
 19. As the TUI, I want each harness to list its models with their supported effort levels, so that pickers only offer valid choices.
 20. As a user, I want the model list cached and refreshable, so that pickers open instantly but stay current.
-21. As a user, I want models listed without effort baked into their id (agy's `gemini-3.8-flash-high` shown as `gemini-3.8-flash` with effort `high`), so that model and effort are always chosen separately.
+21. As a user, I want models listed without effort baked into their id (an id like `some-model-high` shown as `some-model` with effort `high`), so that model and effort are always chosen separately.
 
 ## Implementation Decisions
 
 - The existing settings type grows a roles map keyed by slot name (`orchestrator`, `implementer`, `code-review`, `spec-review`, `scout`), each `{harness, model, effort}`; `decision_model` and `threshold` keep their keys. Unknown keys are preserved on save so the file can grow (later specs add more).
 - The settings path moves to `~/.wick-pig/settings.json`; the `WICK_SETTINGS` override stays. If the new file is absent, the old state-dir file is read; saving always writes the new file.
 - One resolver: `Resolve(slot, flags, typeOrSpawn) → {harness, model, effort}`, applied per field with precedence flag > type/spawn arg > settings > built-in. Every launch site calls it: top-level session, worker spawn, scout spawn, both reviewers. Agent-type frontmatter and spawn entries gain an `effort` field; the CLI gains `--effort`.
-- Effort is stored in the harness's own words; there is no cross-harness scale. Each harness turns it into its own flag: pig `--thinking <level>`, claude `--effort <level>`, agy `--effort <level>` or the effort-suffixed model id (see the harnesses spec).
+- Effort is stored in the harness's own words; there is no cross-harness scale. Each harness turns it into its own flag: pig `--thinking <level>`, claude `--effort <level>`.
 - The harness interface gains `Models() → [{id, label, efforts[]}]`, the single source for pickers and validation:
   - pig: parses `pig --list-models`; models with thinking get pig's levels (off, minimal, low, medium, high, xhigh, max), others none.
   - claude: sends the `initialize` control request over `claude -p --input-format stream-json --output-format stream-json` with no prompt (no tokens spent) and reads `models[]`: `value`, `displayName`, `supportedEffortLevels`. Verified against Claude Code 2.1.289.
-  - agy: comes with the agy harness (harnesses spec).
 - Model lists are cached per harness in the state directory with a timestamp; `wick-pig settings models [--refresh]` and the TUI's refresh key rebuild them. Validation on save uses the cache, refreshing once if a value is missing from it.
 - Reviewers stop copying the worker's model; they resolve their own slot. The rule that drops the model for a non-pig reviewer harness goes: a model set for that slot is meant for that harness.
 - The `WICK_READONLY_HARNESS` environment variable is kept as a high-precedence override for compatibility (treated like a flag).
@@ -62,7 +61,6 @@ Every launch site picks its own harness and model. The orchestrator takes `--har
 ## Out of Scope
 
 - The TUI settings tab (spec: wick TUI).
-- The agy harness itself (spec: harnesses).
 - A price table; prices are not computed in v1.
 - Web search tool: needs its own grill session before any spec.
 

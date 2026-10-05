@@ -34,7 +34,7 @@ The TUI module indexes wick's archive (transcripts, usage logs, prompt and tool-
 ## Implementation Decisions
 
 - SQLite via `modernc.org/sqlite` (pure Go), owned by the TUI module. The archive is the source of truth; the database is a disposable index with a schema version and a full rebuild command.
-- Indexer per harness transcript format (pig, claude, agy) turns lines into pieces `{agent, request, kind, tool?, chars, raw-ref}` and requests `{agent, at, model, input, output, cacheRead, cacheWrite, reasoning, reportedCost}`; reuses the run-records usage parsers for the request rows.
+- Indexer per harness transcript format (pig, claude) turns lines into pieces `{agent, request, kind, tool?, chars, raw-ref}` and requests `{agent, at, model, input, output, cacheRead, cacheWrite, reasoning, reportedCost}`; reuses the run-records usage parsers for the request rows.
 - Attribution: for consecutive requests in a session, new input = input(n) − input(n−1) (counting cache read plus cache write plus uncached input consistently per provider); that exact delta is split across pieces added since request n−1 by character share. The first request's input is split across system prompt and tool-definition blobs plus the first prompt. A negative delta marks a compaction or reset; attribution restarts from that request. All piece-level numbers carry an estimated flag.
 - Raw content is not copied into SQLite; rows reference the archive (file and offset or blob hash) and are read on open.
 - Memory samples indexed as `{agent, at, pid, name, rss}`; peak, average and p95 computed by query.
