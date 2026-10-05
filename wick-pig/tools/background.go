@@ -75,8 +75,8 @@ func (t backgroundTool) Execute(ctx context.Context, root string, args json.RawM
 		if strings.TrimSpace(p.Command) == "" {
 			return "", errors.New("command is required")
 		}
-		if os.Getenv("HERDR_PANE_ID") == "" {
-			return "", errors.New("not inside herdr, so there is no pane to split; run it with bash and a trailing & instead")
+		if os.Getenv("HERDR_PANE_ID") == "" && os.Getenv("HERDR_TAB_ID") == "" {
+			return "", errors.New("not inside herdr, so there is nowhere to place a pane; run it with bash and a trailing & instead")
 		}
 		if t.place == nil {
 			return "", errors.New("no pane grid is installed; run the command with bash and a trailing & instead")

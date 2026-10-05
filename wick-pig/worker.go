@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +133,15 @@ type herdrReply struct {
 			Workspace string `json:"workspace_id"`
 			Cwd       string `json:"cwd"`
 		} `json:"panes"`
+		ProcessInfo struct {
+			ShellPID int `json:"shell_pid"`
+			GroupID  int `json:"foreground_process_group_id"`
+			// Foreground is whatever runs on top of the shell: an agent, or a
+			// command pane run started.
+			Foreground []struct {
+				PID int `json:"pid"`
+			} `json:"foreground_processes"`
+		} `json:"process_info"`
 	} `json:"result"`
 	Error struct {
 		Message string `json:"message"`
@@ -517,20 +527,107 @@ func gridRoot(run Exec, tab string) (string, error) {
 	return "", fmt.Errorf("herdr reports no panes in tab %s", tab)
 }
 
-// stopPane stops whatever runs in a pane before a respawn types into it. The
-// pane belongs to a reused tab, so it may still hold the previous implementor
-// (or a reviewer placed in the root): ctrl+c ends the foreground agent and
-// leaves its shell, which is where pane run types the new launch line.
-func stopPane(run Exec, pane string) error {
-	res, err := run(herdrBin(), []string{"pane", "send-keys", pane, "ctrl+c"}, ExecOpts{Timeout: 15 * time.Second})
-	if err != nil {
-		return fmt.Errorf("could not stop the process in %s: %w", pane, err)
+// paneProcess is what herdr reports of a pane's processes: the shell that owns
+// the pane, the process group in the foreground, and the processes in it.
+type paneProcess struct {
+	ShellPID   int
+	Group      int
+	Foreground []int
+}
+
+// stopped says nothing runs in the pane but its shell, so a launch line typed
+// there reaches the shell.
+func (p paneProcess) stopped() bool {
+	for _, pid := range p.Foreground {
+		if pid != p.ShellPID {
+			return false
+		}
 	}
-	if res.Code != 0 {
-		return fmt.Errorf("could not stop the process in %s: %s", pane, firstLine(res.Stderr, "send-keys failed"))
+	return true
+}
+
+// stopPane ends whatever runs in a pane before a respawn types into it. A
+// reused tab's root pane may still hold the previous implementor, and pane run
+// writes its command to whatever is in the foreground, so that process is
+// ended and the pane waited on until herdr reports the shell back. herdr has no
+// stop verb; its process-info gives the group to kill.
+func stopPane(run Exec, pane string) error {
+	proc, err := paneProcesses(run, pane)
+	if err != nil {
+		return err
+	}
+	if proc.stopped() {
+		return nil
+	}
+	group := proc.Group
+	if group <= 0 && len(proc.Foreground) > 0 {
+		group = proc.Foreground[0]
+	}
+	if group <= 0 {
+		return nil
+	}
+	// SIGTERM first, so an agent can clean up; SIGKILL for one that will not.
+	for _, sig := range []string{"-TERM", "-KILL"} {
+		if err := signalPane(run, pane, sig, group); err != nil {
+			return err
+		}
+		if waitPaneStop(run, pane, paneStopWait) {
+			return nil
+		}
+	}
+	return fmt.Errorf("the process in %s would not stop, so the launch line was not typed into it", pane)
+}
+
+// signalPane sends sig to a pane's foreground process group. The group is
+// negative in the kill call so the agent and anything it spawned go together.
+// A kill that finds nothing to signal is not a failure -- the process being
+// gone is the point -- so only a kill that could not run at all is reported;
+// waitPaneStop decides whether the process actually went.
+func signalPane(run Exec, pane, sig string, group int) error {
+	if _, err := run("kill", []string{sig, "--", "-" + strconv.Itoa(group)}, ExecOpts{Timeout: 15 * time.Second}); err != nil {
+		return fmt.Errorf("could not signal the process in %s: %w", pane, err)
 	}
 	return nil
 }
+
+// waitPaneStop waits until herdr reports only the pane's shell left. It reads
+// process-info immediately, so a process that went at once costs no wait.
+func waitPaneStop(run Exec, pane string, within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for {
+		proc, err := paneProcesses(run, pane)
+		if err != nil {
+			return false
+		}
+		if proc.stopped() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(paneStopPoll)
+	}
+}
+
+// paneProcesses reads what runs in a pane.
+func paneProcesses(run Exec, pane string) (paneProcess, error) {
+	reply, err := herdrJSON(run, []string{"pane", "process-info", "--pane", pane}, 15*time.Second)
+	if err != nil {
+		return paneProcess{}, err
+	}
+	info := reply.Result.ProcessInfo
+	proc := paneProcess{ShellPID: info.ShellPID, Group: info.GroupID}
+	for _, fg := range info.Foreground {
+		proc.Foreground = append(proc.Foreground, fg.PID)
+	}
+	return proc, nil
+}
+
+var (
+	// paneStopWait is how long each signal gets to end the foreground process.
+	paneStopWait = 10 * time.Second
+	paneStopPoll = 200 * time.Millisecond
+)
 
 // ---------------------------------------------------------------------------
 // wait

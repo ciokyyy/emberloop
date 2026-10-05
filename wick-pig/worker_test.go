@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,11 @@ type ticketHerdr struct {
 	panes map[string][]string // tab id -> pane ids, in creation order
 	next  int
 	calls [][]string
+	// procs is the foreground process group of a pane that still runs
+	// something. A pane absent from it is at its shell, which is what a stop
+	// leaves behind. shell is the pid process-info reports for every pane.
+	procs map[string]int
+	shell int
 	// runErr makes pane run fail, for the undo path. noRootPane makes tab
 	// create answer with a tab id but no pane, so the undo must close it.
 	runErr     bool
@@ -29,7 +35,10 @@ type ticketHerdr struct {
 }
 
 func newTicketHerdr(base Exec) *ticketHerdr {
-	return &ticketHerdr{base: base, tabs: map[string]string{}, panes: map[string][]string{}}
+	return &ticketHerdr{
+		base: base, tabs: map[string]string{}, panes: map[string][]string{},
+		procs: map[string]int{}, shell: 4000,
+	}
 }
 
 // tab is the tab id the fake holds for a label, or "" when it has none.
@@ -64,7 +73,45 @@ func (h *ticketHerdr) called(words ...string) bool {
 	return false
 }
 
+// stopCall is the index of the kill that ended a pane's process, or -1.
+func (h *ticketHerdr) stopCall() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, c := range h.calls {
+		if len(c) > 0 && c[0] == "kill" {
+			return i
+		}
+	}
+	return -1
+}
+
+// launchCall is the index of the pane run that launched the implementor, or -1.
+func (h *ticketHerdr) launchCall() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, c := range h.calls {
+		if len(c) > 2 && c[0] == "pane" && c[1] == "run" {
+			return i
+		}
+	}
+	return -1
+}
+
 func (h *ticketHerdr) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == "kill" {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.calls = append(h.calls, append([]string{"kill"}, args...))
+		if len(args) >= 3 {
+			pgid := strings.TrimPrefix(args[2], "-")
+			for pane, group := range h.procs {
+				if strconv.Itoa(group) == pgid {
+					delete(h.procs, pane)
+				}
+			}
+		}
+		return Result{}, nil
+	}
 	if cmd != herdrBin() {
 		if h.base != nil {
 			return h.base(cmd, args, opts)
@@ -119,6 +166,19 @@ func (h *ticketHerdr) run(cmd string, args []string, opts ExecOpts) (Result, err
 			}
 		}
 		return reply(map[string]any{"panes": panes}), nil
+	case "pane process-info":
+		pane, _ := flag(args, "--pane")
+		group := h.procs[pane]
+		fg := []any{}
+		if group != 0 {
+			fg = append(fg, map[string]any{"pid": group})
+		}
+		return reply(map[string]any{"process_info": map[string]any{
+			"pane_id":                     pane,
+			"shell_pid":                   h.shell,
+			"foreground_process_group_id": group,
+			"foreground_processes":        fg,
+		}}), nil
 	case "pane run":
 		if h.runErr {
 			return Result{Code: 1, Stderr: `{"error":{"message":"launch failed"}}`}, nil
@@ -750,11 +810,13 @@ func TestSpawnRespawnsIntoTheTabsRootSlot(t *testing.T) {
 	}
 	h := newTicketHerdr(git)
 	// The tab's root is the implementor (slot 1); a reviewer replaced slot 2,
-	// and herdr happens to list the reviewer's pane first.
+	// and herdr happens to list the reviewer's pane first. Something is still
+	// running in the root: the old implementor's process group.
 	resetGrid()
 	recordGridSlot("w1:t9", 1, "w1:p9")
 	h.tabs["28-thing"] = "w1:t9"
 	h.panes["w1:t9"] = []string{"w1:p7", "w1:p9"}
+	h.procs["w1:p9"] = 4242
 
 	w, err := Spawn(h.run, SpawnInput{Ticket: "repo/.scratch/28-thing.md", Repo: repo})
 	if err != nil {
@@ -766,17 +828,12 @@ func TestSpawnRespawnsIntoTheTabsRootSlot(t *testing.T) {
 	if got := h.paneRun(); got != "w1:p9" {
 		t.Errorf("pane run in %q, want the slot-1 root pane w1:p9", got)
 	}
-	stop, launch := -1, -1
-	for i, c := range h.calls {
-		if len(c) > 2 && c[0] == "pane" && c[1] == "send-keys" && c[2] == "w1:p9" {
-			stop = i
-		}
-		if len(c) > 2 && c[0] == "pane" && c[1] == "run" && c[2] == "w1:p9" {
-			launch = i
-		}
+	if h.procs["w1:p9"] != 0 {
+		t.Error("the old implementor's process group was left running in the pane")
 	}
+	stop, launch := h.stopCall(), h.launchCall()
 	if stop < 0 {
-		t.Fatal("respawn never stopped whatever still runs in the pane")
+		t.Fatal("respawn launched without ending the process in the pane")
 	}
 	if launch < 0 {
 		t.Fatal("respawn never launched in the slot-1 pane")

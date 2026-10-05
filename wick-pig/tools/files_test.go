@@ -52,6 +52,7 @@ func TestToolsRoundTripThroughJSON(t *testing.T) {
 
 func TestBackgroundRefusesWithoutHerdrAndBadActions(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
 	if _, err := run(t, backgroundTool{}, t.TempDir(), map[string]any{"action": "start", "command": "sleep 1"}); err == nil || !strings.Contains(err.Error(), "not inside herdr") {
 		t.Fatalf("err = %v", err)
 	}
@@ -60,6 +61,15 @@ func TestBackgroundRefusesWithoutHerdrAndBadActions(t *testing.T) {
 	}
 	if _, err := run(t, backgroundTool{}, t.TempDir(), map[string]any{"action": "stop"}); err == nil {
 		t.Fatal("stop without a pane accepted")
+	}
+}
+
+// Inside herdr but with no grid installed, start refuses rather than splitting
+// the caller's own pane.
+func TestBackgroundRefusesWithoutAGrid(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	if _, err := run(t, backgroundTool{}, t.TempDir(), map[string]any{"action": "start", "command": "sleep 1"}); err == nil || !strings.Contains(err.Error(), "no pane grid") {
+		t.Fatalf("err = %v, want the missing grid named", err)
 	}
 }
 
