@@ -47,6 +47,9 @@ type Settings struct {
 	// back and the file can grow without a version bump. Never written from the
 	// struct itself; SaveSettings merges it in.
 	extra map[string]json.RawMessage
+	// roleExtra holds keys inside a role object that wick does not know yet,
+	// keyed by slot then field. SaveSettings merges it into Roles.
+	roleExtra map[string]map[string]json.RawMessage
 	// src names where a top-level value came from: "file", "env" or "default".
 	// Print uses it to show a value's origin.
 	src map[string]string
@@ -116,12 +119,46 @@ func decodeSettings(raw []byte) Settings {
 	for k, v := range fields {
 		switch k {
 		case "decision_model", "threshold", "roles":
-			s.src[k] = "file"
 		default:
 			s.extra[k] = v
 		}
 	}
+	// A value that failed to parse or is empty stays the default, and the
+	// source has to say so: the value and the name it prints must agree.
+	if s.DecisionModel != "" {
+		s.src["decision_model"] = "file"
+	}
+	if s.Threshold != 0 {
+		s.src["threshold"] = "file"
+	}
+	s.roleExtra = unknownRoleFields(fields["roles"])
 	return s
+}
+
+// unknownRoleFields collects, per slot, the keys inside a role object that are
+// not harness, model or effort, so a save writes them back.
+func unknownRoleFields(rawRoles json.RawMessage) map[string]map[string]json.RawMessage {
+	var perSlot map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(rawRoles, &perSlot); err != nil {
+		return nil
+	}
+	var out map[string]map[string]json.RawMessage
+	for slot, roleFields := range perSlot {
+		for k, v := range roleFields {
+			switch k {
+			case "harness", "model", "effort":
+			default:
+				if out == nil {
+					out = map[string]map[string]json.RawMessage{}
+				}
+				if out[slot] == nil {
+					out[slot] = map[string]json.RawMessage{}
+				}
+				out[slot][k] = v
+			}
+		}
+	}
+	return out
 }
 
 func (s *Settings) setSource(key, where string) {
@@ -132,7 +169,7 @@ func (s *Settings) setSource(key, where string) {
 }
 
 // SaveSettings writes the file, creating its directory. Keys wick does not
-// know survive the round trip.
+// know survive the round trip, at the top level and inside a role object.
 func SaveSettings(s Settings) error {
 	known, err := json.Marshal(s)
 	if err != nil {
@@ -147,6 +184,9 @@ func SaveSettings(s Settings) error {
 			fields[k] = v
 		}
 	}
+	if err := mergeRoleExtras(fields, s.roleExtra); err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(fields, "", "  ")
 	if err != nil {
 		return err
@@ -155,4 +195,34 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	return os.WriteFile(SettingsPath(), append(raw, '\n'), 0o644)
+}
+
+// mergeRoleExtras writes the unknown fields of each role back into the roles
+// object already in fields.
+func mergeRoleExtras(fields map[string]json.RawMessage, roleExtra map[string]map[string]json.RawMessage) error {
+	if len(roleExtra) == 0 {
+		return nil
+	}
+	roles := map[string]map[string]json.RawMessage{}
+	if raw, ok := fields["roles"]; ok {
+		if err := json.Unmarshal(raw, &roles); err != nil {
+			return err
+		}
+	}
+	for slot, extras := range roleExtra {
+		if roles[slot] == nil {
+			roles[slot] = map[string]json.RawMessage{}
+		}
+		for k, v := range extras {
+			if _, ok := roles[slot][k]; !ok {
+				roles[slot][k] = v
+			}
+		}
+	}
+	raw, err := json.Marshal(roles)
+	if err != nil {
+		return err
+	}
+	fields["roles"] = raw
+	return nil
 }

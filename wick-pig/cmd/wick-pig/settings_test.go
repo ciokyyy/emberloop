@@ -179,17 +179,24 @@ func TestSettingsChangingRoleHarnessClearsModelAndEffort(t *testing.T) {
 	}
 }
 
-// Setting the harness it already has is not a change, so it keeps model and
-// effort.
+// Setting the harness already in force is not a change, so model and effort
+// stay: for a stored harness, and for the built-in default of an unset slot.
 func TestSettingsSamenessKeepsModelAndEffort(t *testing.T) {
 	p := settingsFile(t)
-	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"high"}}}`)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"high"},"scout":{"model":"haiku","effort":"low"}}}`)
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, noModels); err != nil {
 		t.Fatal(err)
 	}
 	if got := tools.LoadSettings().Roles["orchestrator"]; got != (tools.Role{Harness: "claude", Model: "opus", Effort: "high"}) {
 		t.Fatalf("same-harness set changed %+v", got)
+	}
+	// scout stores no harness, so pig is already the harness in force.
+	if err := runSettings([]string{"role", "scout", "harness", "pig"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().Roles["scout"]; got != (tools.Role{Harness: "pig", Model: "haiku", Effort: "low"}) {
+		t.Fatalf("naming the default harness changed %+v", got)
 	}
 }
 
@@ -212,8 +219,22 @@ func TestSettingsRejectsAnUnknownHarness(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "harness") {
 		t.Fatalf("unknown harness must fail naming the harness, got %v", err)
 	}
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("a harness typo should carry the usage line, got %v", err)
+	}
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatal("a rejected harness must not be saved")
+	}
+}
+
+func TestSettingsRejectsARoleWithExtraArguments(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"role", "scout", "model", "haiku", "junk"}, &out, noModels); err == nil {
+		t.Fatal("extra role arguments should fail")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected role edit must not be saved")
 	}
 }
 

@@ -72,7 +72,7 @@ func runSettings(argv []string, out io.Writer, models func() ([]string, error)) 
 // change clears the model and effort: they were chosen for the old harness and
 // ticket 02 is what re-checks whether the new one supports them.
 func setRole(s *tools.Settings, argv []string) error {
-	if len(argv) < 3 {
+	if len(argv) != 3 {
 		return fmt.Errorf("role needs a slot, a field and a value\n%s", settingsUsage)
 	}
 	slot, field, value := argv[0], argv[1], argv[2]
@@ -86,9 +86,11 @@ func setRole(s *tools.Settings, argv []string) error {
 	switch field {
 	case "harness":
 		if wick.Registered(value) == nil {
-			return fmt.Errorf("unknown harness %q (have %s)", value, strings.Join(wick.HarnessNames(), ", "))
+			return fmt.Errorf("unknown harness %q (have %s)\n%s", value, strings.Join(wick.HarnessNames(), ", "), settingsUsage)
 		}
-		if value != role.Harness {
+		// Compare against the harness in force: an unset slot already means the
+		// built-in default, so naming that default is not a change.
+		if value != orDefault(role.Harness, defaultHarness) {
 			role.Model, role.Effort = "", ""
 		}
 		role.Harness = value

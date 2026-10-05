@@ -7,9 +7,28 @@ import (
 	"testing"
 )
 
+// settingsEnv points the store at path and clears the env overrides, so a test
+// reads only what it wrote and never the machine's own environment.
+func settingsEnv(t *testing.T, path string) {
+	t.Helper()
+	t.Setenv("WICK_SETTINGS", path)
+	t.Setenv("WICK_DECISION_MODEL", "")
+	t.Setenv("WICK_FIND_THRESHOLD", "")
+}
+
+// homeEnv makes the default path resolve under a temp home with the override
+// unset, which is what the old-file fallback tests need.
+func homeEnv(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("WICK_SETTINGS", "")
+	t.Setenv("HOME", home)
+	t.Setenv("WICK_DECISION_MODEL", "")
+	t.Setenv("WICK_FIND_THRESHOLD", "")
+}
+
 // The default store lives beside the user's skills, not in machine state.
 func TestSettingsPathDefaultsToWickPig(t *testing.T) {
-	t.Setenv("WICK_SETTINGS", "")
+	settingsEnv(t, "")
 	t.Setenv("HOME", "/home/example")
 	if got, want := SettingsPath(), filepath.Join("/home/example", ".wick-pig", "settings.json"); got != want {
 		t.Fatalf("SettingsPath() = %q, want %q", got, want)
@@ -17,7 +36,7 @@ func TestSettingsPathDefaultsToWickPig(t *testing.T) {
 }
 
 func TestSettingsPathKeepsTheOverride(t *testing.T) {
-	t.Setenv("WICK_SETTINGS", "/tmp/other.json")
+	settingsEnv(t, "/tmp/other.json")
 	if got, want := SettingsPath(), "/tmp/other.json"; got != want {
 		t.Fatalf("SettingsPath() = %q, want %q", got, want)
 	}
@@ -27,8 +46,7 @@ func TestSettingsPathKeepsTheOverride(t *testing.T) {
 // loses nothing.
 func TestSettingsReadsTheOldFileWhenTheNewOneIsAbsent(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("WICK_SETTINGS", "")
-	t.Setenv("HOME", home)
+	homeEnv(t, home)
 	old := filepath.Join(home, ".pig", "state", "wick", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
 		t.Fatal(err)
@@ -57,7 +75,7 @@ func TestSettingsOverrideDoesNotFallBackToTheOldFile(t *testing.T) {
 	if err := os.WriteFile(old, []byte(`{"decision_model":"old/model"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("WICK_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	settingsEnv(t, filepath.Join(t.TempDir(), "missing.json"))
 	if s := LoadSettings(); s.DecisionModel != "" {
 		t.Fatalf("override read the old file: %+v", s)
 	}
@@ -67,8 +85,7 @@ func TestSettingsOverrideDoesNotFallBackToTheOldFile(t *testing.T) {
 // file.
 func TestSettingsSaveWritesTheNewPathOverTheOldFile(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("WICK_SETTINGS", "")
-	t.Setenv("HOME", home)
+	homeEnv(t, home)
 	old := filepath.Join(home, ".pig", "state", "wick", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
 		t.Fatal(err)
@@ -96,7 +113,7 @@ func TestSettingsSaveWritesTheNewPathOverTheOldFile(t *testing.T) {
 // A key wick does not know yet survives a save, so the file can grow.
 func TestSettingsKeepsUnknownKeys(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
-	t.Setenv("WICK_SETTINGS", p)
+	settingsEnv(t, p)
 	if err := os.WriteFile(p, []byte(`{"decision_model":"m","future_thing":{"a":1}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +138,40 @@ func TestSettingsKeepsUnknownKeys(t *testing.T) {
 	}
 }
 
+// A key wick does not know inside a role object survives too, so a role can
+// grow without losing what a newer wick wrote there.
+func TestSettingsKeepsUnknownRoleFields(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	settingsEnv(t, p)
+	if err := os.WriteFile(p, []byte(`{"roles":{"scout":{"harness":"claude","future_field":"kept"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := LoadSettings()
+	s.Roles["scout"] = Role{Harness: "claude", Model: "haiku"}
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Roles map[string]map[string]json.RawMessage `json:"roles"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Roles["scout"]["future_field"]) != `"kept"` {
+		t.Fatalf("unknown role field dropped: %s", raw)
+	}
+	if string(got.Roles["scout"]["model"]) != `"haiku"` {
+		t.Fatalf("known role field lost: %s", raw)
+	}
+}
+
 func TestSettingsRoundTripsRoleSlots(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
-	t.Setenv("WICK_SETTINGS", p)
+	settingsEnv(t, p)
 	want := Role{Harness: "claude", Model: "opus", Effort: "high"}
 	if err := SaveSettings(Settings{Roles: map[string]Role{"orchestrator": want}}); err != nil {
 		t.Fatal(err)
@@ -150,8 +198,7 @@ func TestIsRoleSlotKnowsTheSlots(t *testing.T) {
 // CLI can print it.
 func TestSettingsSourceTracksFileEnvAndDefault(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
-	t.Setenv("WICK_SETTINGS", p)
-	t.Setenv("WICK_DECISION_MODEL", "")
+	settingsEnv(t, p)
 	if err := os.WriteFile(p, []byte(`{"threshold":0.3}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -165,5 +212,22 @@ func TestSettingsSourceTracksFileEnvAndDefault(t *testing.T) {
 	t.Setenv("WICK_DECISION_MODEL", "respan/span-01")
 	if got := LoadSettings().SourceOf("decision_model"); got != "env" {
 		t.Fatalf("env did not win the source: %q", got)
+	}
+}
+
+// A file value that cannot be parsed reads as the default, and the source says
+// default rather than claiming the file owns a value it does not.
+func TestSettingsSourceIsDefaultWhenTheFileValueDoesNotParse(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	settingsEnv(t, p)
+	if err := os.WriteFile(p, []byte(`{"threshold":"soon"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := LoadSettings()
+	if s.Threshold != 0 {
+		t.Fatalf("a bad threshold should read as unset, got %v", s.Threshold)
+	}
+	if got := s.SourceOf("threshold"); got != "default" {
+		t.Fatalf("threshold source = %q, want default", got)
 	}
 }
