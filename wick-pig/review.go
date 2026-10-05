@@ -178,8 +178,9 @@ func closeReviewers(run Exec, tree string) {
 }
 
 // reviewGate is why the worktree at tree, whose tip is head, may not merge
-// yet, or "" when every required reviewer type passed at head.
-func reviewGate(tree, head string, required []string) string {
+// yet, or "" when every required reviewer type passed at head. A type whose
+// pass holds (holds[type]) needs a pass at some commit, not at head.
+func reviewGate(tree, head string, required []string, holds map[string]bool) string {
 	have := reviewersOf(tree)
 	var missing []string
 	for _, typ := range required {
@@ -189,7 +190,7 @@ func reviewGate(tree, head string, required []string) string {
 			missing = append(missing, typ+": no review yet")
 		case r.Verdict != verdictPass:
 			missing = append(missing, fmt.Sprintf("%s: %s at %s", typ, r.Verdict, short(r.VerdictAt)))
-		case r.VerdictAt != head:
+		case r.VerdictAt != head && !holds[typ]:
 			missing = append(missing, fmt.Sprintf("%s: passed at %s, not at the tip %s", typ, short(r.VerdictAt), short(head)))
 		}
 	}
@@ -213,6 +214,19 @@ func requiredReviewers(w *Worker) []string {
 		return defaultReviewers
 	}
 	return t.RequiresReview
+}
+
+// passHolds is the reviewer types of repo whose pass holds across commits.
+func passHolds(repo string) map[string]bool {
+	out := map[string]bool{}
+	types, err := LoadAgentTypes(repo)
+	if err != nil {
+		return out
+	}
+	for name, t := range types {
+		out[name] = t.PassHolds
+	}
+	return out
 }
 
 func workerAt(tree string) *Worker {
@@ -363,6 +377,10 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 	have := reviewersOf(p.tree)
 	prev, had := have[t.Name]
 
+	// A pass that holds is never asked again, live reviewer or not.
+	if had && t.Persistent && t.PassHolds && prev.Verdict == verdictPass {
+		return nil, nil
+	}
 	if had && prev.agent().alive(run) {
 		if !t.Persistent {
 			closeAgent(run, prev.agent())

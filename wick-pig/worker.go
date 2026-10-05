@@ -697,7 +697,7 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		if why := reviewGate(w.Worktree, strings.TrimSpace(res.Stdout), requiredReviewers(&w)); why != "" {
+		if why := reviewGate(w.Worktree, strings.TrimSpace(res.Stdout), requiredReviewers(&w), passHolds(w.Repo)); why != "" {
 			return &FinishResult{ID: id, Kept: true,
 				Detail: "not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip"}, nil
 		}

@@ -1030,13 +1030,16 @@ func TestReviewSpawnAfterARebaseShowsOnlyTheWorkersChange(t *testing.T) {
 }
 
 // Both reviewers dead at once: each replacement finds a free slot, and the
-// review completes rather than failing on a source pane that is gone too.
+// review completes rather than failing on a source pane that is gone too. The
+// spec reviewer is only replaced when its verdict is not a pass, so its first
+// verdict is changes here.
 func TestReviewSpawnReplacesBothDeadReviewers(t *testing.T) {
 	_, tree := reviewRepo(t)
-	f := newFakeReviewers(answers("pass", "pass"))
+	f := newFakeReviewers(answers("pass", "changes"))
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
 		t.Fatal(err)
 	}
+	f.answer = answers("pass", "pass")
 	// A new commit makes both reviewers due for review again, so both are
 	// replaced rather than left alone as already-passed.
 	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "move the tip")
@@ -1052,5 +1055,54 @@ func TestReviewSpawnReplacesBothDeadReviewers(t *testing.T) {
 		if r.Verdict != verdictPass || r.Tab != reviewTab || !r.agent().alive(f.run) {
 			t.Errorf("%s reviewer after replacement = %+v", typ, r)
 		}
+	}
+}
+
+// A spec reviewer's pass holds across later commits: after it passed, a code
+// change that only answers the standards reviewer does not send the spec
+// reviewer back in. Only the standards reviewer is prompted again, and the
+// merge gate accepts the older spec pass.
+func TestSpecPassHoldsWhileOnlyStandardsIsReprompted(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("changes", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "fix the standards findings")
+	f.answer = answers("pass", "pass")
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, standards := f.paneOf(t, reviewerSpec), f.paneOf(t, reviewerStandards)
+	if spec.turns != 1 || standards.turns != 2 {
+		t.Errorf("turns: spec %d (want 1, its pass holds), standards %d (want 2)", spec.turns, standards.turns)
+	}
+	if strings.Contains(out, reviewerSpec) {
+		t.Errorf("the reply must not carry the spec reviewer: %s", out)
+	}
+	tip := gitOut(t, tree, "rev-parse", "HEAD")
+	if why := reviewGate(tree, tip, defaultReviewers, passHolds(repo)); why != "" {
+		t.Errorf("a held spec pass and a tip standards pass must open the gate, got %q", why)
+	}
+	if why := reviewGate(tree, tip, defaultReviewers, nil); !strings.Contains(why, reviewerSpec) {
+		t.Errorf("without a holding type the older spec pass is stale, got %q", why)
+	}
+}
+
+// A spec reviewer that asked for changes is re-prompted like any other.
+func TestSpecWithChangesIsStillReprompted(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "changes"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "address the spec findings")
+	f.answer = answers("pass", "pass")
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	if turns := f.paneOf(t, reviewerSpec).turns; turns != 2 {
+		t.Errorf("spec turns = %d, want 2", turns)
 	}
 }
