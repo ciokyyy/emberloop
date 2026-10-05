@@ -5,6 +5,7 @@
 //	wick-pig settings role <slot> harness|model|effort <value>   set a launch slot
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
+//	wick-pig exec <launch-file>                                run a launch file the pane typed
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
 //	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
@@ -32,6 +33,12 @@ func run(argv []string) error {
 	sub := ""
 	if len(argv) > 0 && !strings.HasPrefix(argv[0], "-") {
 		sub, argv = argv[0], argv[1:]
+	}
+	if sub == "exec" {
+		if len(argv) != 1 {
+			return fmt.Errorf("usage: wick-pig exec <launch-file>")
+		}
+		return wick.RunExecFile(argv[0])
 	}
 	if sub == "stop-gate" {
 		return wick.RunStopGate(os.Stdin, os.Stdout)

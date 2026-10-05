@@ -116,9 +116,11 @@ func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (re
 	return launchPlacedAgent(run, place, harness, sess, prompt)
 }
 
-// launchPlacedAgent writes prompt to a file, launches the session that reads it
-// in a pane placed by the grid, and leaves it running. The prompt goes through
-// a file: pane run types its argv as one line. place names the tab and the
+// launchPlacedAgent writes prompt to a file for the archive, launches the
+// session with the full prompt as its first message in a pane placed by the
+// grid, and leaves it running. The pane gets one shell-agnostic line,
+// `wick-pig exec <launch-file>`, which carries the prompt as a real argument
+// instead of a "read this file" indirection. place names the tab and the
 // overflow label; an empty Tab is the caller's own tab. beforeRun, when given,
 // runs once the pane is placed but before it starts, so a reviewer can record
 // its state ahead of the submit that state exists to catch.
@@ -130,13 +132,19 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
 		return readOnlyAgent{}, err
 	}
-	sess.Prompt = strings.TrimSpace(fmt.Sprintf("Read %s and follow it exactly. %s", promptPath, sess.Prompt))
+	if suffix := strings.TrimSpace(sess.Prompt); suffix != "" {
+		sess.Prompt = strings.TrimSpace(prompt) + "\n\n" + suffix
+	} else {
+		sess.Prompt = prompt
+	}
 	launch, err := PrepareLaunch(harness, sess)
 	if err != nil {
 		return readOnlyAgent{}, err
 	}
-	// The agent is done with the MCP config the moment it has launched.
-	defer CleanupSession(sess)
+	// The agent reads its MCP config at startup, so the file is dead weight
+	// once it is running. The launch file stays: `wick-pig exec` in the pane
+	// consumes it when the agent starts.
+	defer cleanupMCP(sess)
 	// A scout shares the caller's tab; a reviewer shares its ticket's tab, so
 	// it sits beside the implementor. Either way the grid serializes the
 	// splits in one tab and evens its sizes out, best effort; the agent then
@@ -160,14 +168,17 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 		placed, err = placeInGrid(run, tab, overflow, sess.Cwd)
 	}
 	if err != nil {
+		CleanupSession(sess)
 		return readOnlyAgent{}, err
 	}
 	pane := placed.Pane
 	if pane == "" {
+		CleanupSession(sess)
 		return readOnlyAgent{}, fmt.Errorf("herdr split returned no pane id")
 	}
 	agent := readOnlyAgent{Pane: pane, Tab: placed.Tab, Slot: placed.Slot, Harness: harness, Session: sess}
 	fail := func(err error) (readOnlyAgent, error) {
+		CleanupSession(sess)
 		closeAgent(run, agent)
 		return readOnlyAgent{}, err
 	}

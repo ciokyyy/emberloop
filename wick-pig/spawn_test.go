@@ -46,34 +46,44 @@ func spawnTestState(t *testing.T) {
 	resolverSettings(t, "")
 }
 
-// envIn reads an environment assignment (WICK_AGENT_ID=...) out of a launch
-// line.
+// launchCmd resolves a pane-run line to the command it runs: the typed line
+// is `wick-pig exec <launch-file>`, so the binary, args and env live in the
+// file, not the line.
+func launchCmd(line string) Command {
+	file, ok := execFileFromLine(line)
+	if !ok {
+		// A stub launch tests supply directly (e.g. "true"): no file.
+		return Command{}
+	}
+	cmd, err := readLaunch(file)
+	if err != nil {
+		return Command{}
+	}
+	return cmd
+}
+
+// envIn reads an environment assignment (WICK_AGENT_ID=...) out of a launch:
+// the typed line names the launch file, which holds the env.
 func envIn(line, key string) string {
-	for _, field := range strings.Fields(line) {
-		if v, ok := strings.CutPrefix(field, key+"="); ok {
-			return strings.Trim(v, `"`)
+	for _, e := range launchCmd(line).Env {
+		if v, ok := strings.CutPrefix(e, key+"="); ok {
+			return v
 		}
 	}
 	return ""
 }
 
-// binIn is the program a pane-run line starts, after its leading env
-// assignments (KEY=value words).
+// binIn is the program a launch runs: the binary in its launch file.
 func binIn(line string) string {
-	for _, f := range strings.Fields(line) {
-		if !strings.Contains(f, "=") {
-			return strings.Trim(f, `"`)
-		}
-	}
-	return ""
+	return launchCmd(line).Bin
 }
 
-// flagIn is the value that follows flag in a launch line, or "".
+// flagIn is the value that follows flag in a launch's args, or "".
 func flagIn(line, flag string) string {
-	w := strings.Fields(line)
-	for i, f := range w {
-		if f == flag && i+1 < len(w) {
-			return strings.Trim(w[i+1], `"`)
+	args := launchCmd(line).Args
+	for i, f := range args {
+		if f == flag && i+1 < len(args) {
+			return args[i+1]
 		}
 	}
 	return ""

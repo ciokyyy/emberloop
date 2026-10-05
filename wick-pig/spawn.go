@@ -366,6 +366,12 @@ func closeSpawned(run Exec, agents []*spawnedAgent) {
 			_, _ = Finish(run, a.ID, false)
 			continue
 		}
+		// The pane is closed before its shell may have run the exec line, so
+		// the launch file needs an owner here too: the pane close alone
+		// would leave it behind forever.
+		if a.Sess.ID != "" {
+			CleanupSession(a.Sess)
+		}
 		closeAgent(run, readOnlyAgent{Pane: a.Pane, Tab: a.Tab})
 	}
 }
@@ -451,6 +457,13 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	if err != nil {
 		return nil, err
 	}
+	// The brief file stays for the archive, but the worker's first message is
+	// the brief itself, not a "read this file" indirection: the launch file
+	// carries it as a real argument through `wick-pig exec`.
+	briefText, err := os.ReadFile(brief)
+	if err != nil {
+		return nil, err
+	}
 	sess := Session{
 		ID:        newSessionID(),
 		Role:      "agent",
@@ -461,9 +474,7 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 		Spec:      in.Spec,
 		AgentType: t.Name,
 		AgentID:   id,
-		// The brief sits beside the worker store, outside the worktree;
-		// read opens it by absolute path.
-		Prompt: fmt.Sprintf("Read %s and follow it exactly.", brief),
+		Prompt:    string(briefText),
 	}
 	launch, err := PrepareLaunch(choice.Harness, sess)
 	if err != nil {

@@ -23,8 +23,9 @@ func (r *recorder) run(cmd string, args []string, _ ExecOpts) (Result, error) {
 }
 
 // fakeHerdr answers the herdr calls ReadOnly makes. On pane run it plays the
-// agent: it writes a pig transcript, at the dir and id the command line names,
-// whose last message is the report.
+// agent: it reads the launch file the way `wick-pig exec` would and writes a
+// pig transcript, at the dir and id the launch names, whose last message is
+// the report.
 func fakeHerdr(cmd string, args []string, report string, git Result) Result {
 	if cmd == "git" {
 		return git
@@ -35,14 +36,14 @@ func fakeHerdr(cmd string, args []string, report string, git Result) Result {
 	case "split":
 		return Result{Stdout: `{"result":{"pane":{"pane_id":"p9"}}}`}
 	case "run":
-		w := strings.Fields(args[3])
+		cmd := launchCmd(args[3])
 		var dir, id string
-		for i, a := range w {
-			if a == "--session-dir" {
-				dir = w[i+1]
+		for i, a := range cmd.Args {
+			if a == "--session-dir" && i+1 < len(cmd.Args) {
+				dir = cmd.Args[i+1]
 			}
-			if a == "--session-id" {
-				id = w[i+1]
+			if a == "--session-id" && i+1 < len(cmd.Args) {
+				id = cmd.Args[i+1]
 			}
 		}
 		_ = os.MkdirAll(filepath.Join(dir, "--x--"), 0o755)
@@ -218,7 +219,11 @@ func TestReadOnlyKeepsTheModelOnANonPigHarness(t *testing.T) {
 	}
 	found := false
 	for _, c := range rec.calls {
-		if strings.Contains(strings.Join(c, " "), "--model claude-sonnet") {
+		joined := strings.Join(c, " ")
+		if !strings.Contains(joined, "wick-pig exec ") {
+			continue
+		}
+		if flagIn(joined[strings.Index(joined, "wick-pig exec "):], "--model") == "claude-sonnet" {
 			found = true
 		}
 	}
@@ -280,14 +285,14 @@ func (c *concExec) run(cmd string, args []string, _ ExecOpts) (Result, error) {
 		c.mu.Unlock()
 		return Result{Stdout: `{"result":{"pane":{"pane_id":"` + pane + `"}}}`}, nil
 	case "run":
-		w := strings.Fields(args[3])
+		cmd := launchCmd(args[3])
 		var dir, id string
-		for i, a := range w {
-			if a == "--session-dir" {
-				dir = w[i+1]
+		for i, a := range cmd.Args {
+			if a == "--session-dir" && i+1 < len(cmd.Args) {
+				dir = cmd.Args[i+1]
 			}
-			if a == "--session-id" {
-				id = w[i+1]
+			if a == "--session-id" && i+1 < len(cmd.Args) {
+				id = cmd.Args[i+1]
 			}
 		}
 		c.mu.Lock()

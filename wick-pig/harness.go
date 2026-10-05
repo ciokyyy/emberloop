@@ -326,11 +326,18 @@ func mcpConfigPath(s Session) string {
 	return filepath.Join(filepath.Dir(statePath), "mcp", key+".json")
 }
 
-// CleanupSession removes the per-session files a harness launch left behind,
-// the MCP config claude reads at startup being the one. Call it when the
-// session ends; a file that is already gone is the wanted end state, not a
-// failure.
-func CleanupSession(s Session) { _ = os.Remove(mcpConfigPath(s)) }
+// CleanupSession removes the per-session files a harness launch left behind:
+// the MCP config claude reads at startup and the launch file `wick-pig exec`
+// reads, both under wick's state dir. Call it when the session ends; a file
+// that is already gone is the wanted end state, not a failure. `wick-pig
+// exec` already consumes the launch file once it has read it, so this is the
+// backup for a launch that never started.
+func CleanupSession(s Session) { _ = os.Remove(mcpConfigPath(s)); _ = os.Remove(launchPath(s)) }
+
+// cleanupMCP removes only the MCP config, for launches whose launch file the
+// pane's `wick-pig exec` still has to consume: deleting it right after pane
+// run would race the agent's startup.
+func cleanupMCP(s Session) { _ = os.Remove(mcpConfigPath(s)) }
 
 // Skill lookups for the launcher.
 
@@ -444,8 +451,13 @@ type Launch struct {
 	Late string
 }
 
-// PrepareLaunch builds the pane command line for a session, holding the
-// prompt back when the harness needs it sent after startup.
+// PrepareLaunch writes the session's complete launch (binary, args including
+// the full prompt, env) to a launch file in wick's state dir and returns the
+// one shell-agnostic line the pane runs: `wick-pig exec <launch-file>`. The
+// prompt stays out of the typed line, so newlines and quoting survive and the
+// line is one line in fish, bash and zsh alike. A harness that takes its
+// first message after startup keeps it in Late: the launch file holds the
+// command without it, and the typed line is still the single exec line.
 func PrepareLaunch(harness string, s Session) (Launch, error) {
 	h, ok := registry[harness]
 	if !ok {
@@ -459,7 +471,12 @@ func PrepareLaunch(harness string, s Session) (Launch, error) {
 	if err != nil {
 		return Launch{}, err
 	}
-	l.Line = cmd.Line()
+	path, err := writeLaunch(s, cmd)
+	if err != nil {
+		cleanupMCP(s)
+		return Launch{}, err
+	}
+	l.Line = execLine(path)
 	return l, nil
 }
 

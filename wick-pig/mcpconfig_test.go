@@ -20,11 +20,20 @@ func claudeHerdr(home, report string) func(string, []string) Result {
 		case "split":
 			return Result{Stdout: `{"result":{"pane":{"pane_id":"p9"}}}`}
 		case "run":
-			w := strings.Fields(args[3])
+			// The pane runs `wick-pig exec <launch-file>`: read the launch the
+			// way exec would, to find the session it starts.
+			file, ok := execFileFromLine(args[3])
+			if !ok {
+				return Result{Stdout: "{}"}
+			}
+			cmd, err := readLaunch(file)
+			if err != nil {
+				return Result{Stdout: "{}"}
+			}
 			var id string
-			for i, a := range w {
-				if a == "--session-id" {
-					id = w[i+1]
+			for i, a := range cmd.Args {
+				if a == "--session-id" && i+1 < len(cmd.Args) {
+					id = cmd.Args[i+1]
 				}
 			}
 			dir := filepath.Join(home, ".claude", "projects", "wt")
@@ -36,15 +45,27 @@ func claudeHerdr(home, report string) func(string, []string) Result {
 	}
 }
 
-// mcpConfigArg is the path claude was told to read its MCP config from, found
-// in the launch line the caller typed into the pane.
+// mcpConfigArg is the path claude was told to read its MCP config from: the
+// --mcp-config in the launch file the pane's `wick-pig exec` line names.
 func mcpConfigArg(t *testing.T, calls [][]string) string {
 	t.Helper()
 	for _, c := range calls {
-		for _, field := range strings.Fields(strings.Join(c, " ")) {
-			if path := strings.Trim(field, `"`); strings.HasSuffix(path, ".json") &&
-				strings.Contains(path, string(os.PathSeparator)+"mcp"+string(os.PathSeparator)) {
-				return path
+		joined := strings.Join(c, " ")
+		idx := strings.Index(joined, "wick-pig exec ")
+		if idx < 0 {
+			continue
+		}
+		file, ok := execFileFromLine(strings.TrimSpace(joined[idx:]))
+		if !ok {
+			continue
+		}
+		cmd, err := readLaunch(file)
+		if err != nil {
+			continue
+		}
+		for i, a := range cmd.Args {
+			if a == "--mcp-config" && i+1 < len(cmd.Args) {
+				return cmd.Args[i+1]
 			}
 		}
 	}
@@ -75,24 +96,34 @@ func TestReadOnlyLeavesNoClaudeMCPConfigBehind(t *testing.T) {
 func TestFinishLeavesNoClaudeMCPConfigBehind(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	if err := save(map[string]Worker{"01-x": {
-		ID: "01-x", Repo: "/repo", Base: "main", Branch: "implement/01-x", Worktree: "/repo/wt",
+		ID: "01-x", Repo: "/repo", Base: "main", Branch: "implement/01-x", Worktree: "/repo/wt", SessionID: "sess-1",
 	}}); err != nil {
 		t.Fatal(err)
 	}
 
-	// The launch the spawn tool built for this worker.
-	launch, err := PrepareLaunch("claude", Session{Role: "work", Label: "01-x", Prompt: "do it"})
+	// The launch the spawn tool built for this worker: a real spawn always
+	// sets the session ID (spawn.go), so the config is keyed by it and Finish
+	// must remove the ID-keyed file, not just the label fallback.
+	launch, err := PrepareLaunch("claude", Session{ID: "sess-1", Role: "work", Label: "01-x", Prompt: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, ok := execFileFromLine(launch.Line)
+	if !ok {
+		t.Fatalf("no launch file in %s", launch.Line)
+	}
+	cmd, err := readLaunch(file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := ""
-	for i := 0; i+1 < len(strings.Fields(launch.Line)); i++ {
-		if strings.Fields(launch.Line)[i] == "--mcp-config" {
-			cfg = strings.Fields(launch.Line)[i+1]
+	for i, a := range cmd.Args {
+		if a == "--mcp-config" && i+1 < len(cmd.Args) {
+			cfg = cmd.Args[i+1]
 		}
 	}
 	if cfg == "" {
-		t.Fatalf("no --mcp-config in %s", launch.Line)
+		t.Fatalf("no --mcp-config in %+v", cmd.Args)
 	}
 	if _, err := os.Stat(cfg); err != nil {
 		t.Fatalf("worker launch did not write its config: %v", err)

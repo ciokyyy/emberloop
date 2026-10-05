@@ -454,7 +454,7 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 	if err != nil {
 		return nil, err
 	}
-	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Notice: notice}, nil
+	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Sess: agent.Session, Notice: notice}, nil
 }
 
 // reviewSlot names the settings slot a reviewer type resolves through: the spec

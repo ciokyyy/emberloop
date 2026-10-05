@@ -128,3 +128,20 @@ func indexOf(values []string, want string) int {
 	}
 	return -1
 }
+
+// `wick-pig exec` is the one line every pane types: it takes exactly one
+// launch file. The argv/env round trip itself is covered in the wick package;
+// here the dispatch and its usage error are pinned.
+func TestExecNeedsExactlyOneLaunchFile(t *testing.T) {
+	for _, argv := range [][]string{{"exec"}, {"exec", "a", "b"}} {
+		if err := run(argv); err == nil || !strings.Contains(err.Error(), "usage") {
+			t.Errorf("run(%q) must fail with usage, got %v", argv, err)
+		}
+	}
+}
+
+func TestExecFailsOnAMissingLaunchFile(t *testing.T) {
+	if err := run([]string{"exec", filepath.Join(t.TempDir(), "no-such-file.json")}); err == nil {
+		t.Error("exec of a missing launch file must fail")
+	}
+}

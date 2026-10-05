@@ -772,8 +772,11 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	} else if res.Code != 0 {
 		return nil, fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
 	}
-	// The worker's MCP config goes with it: nothing reads the file once the
-	// worktree is gone.
+	// The worker's per-session files go with it: the MCP config and the
+	// launch file `wick-pig exec` read at startup. Either is already gone when
+	// the agent consumed it; what remains is the backup for a launch that
+	// never started.
+	CleanupSession(Session{ID: w.SessionID, Label: id})
 	CleanupSession(Session{Label: id})
 	delete(store, id)
 	if err := save(store); err != nil {

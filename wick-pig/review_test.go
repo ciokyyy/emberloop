@@ -166,19 +166,25 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		p.launched = true
 		line := args[3]
 		p.line = line
-		p.harness = binIn(line)
-		p.id = envIn(line, "WICK_AGENT_ID")
-		p.typ = envIn(line, "WICK_AGENT_TYPE")
-		var dir, id, promptPath string
-		for i, w := range strings.Fields(line) {
-			w = strings.Trim(w, `"`)
+		cmd := launchCmd(line)
+		p.harness = cmd.Bin
+		for _, e := range cmd.Env {
+			if v, ok := strings.CutPrefix(e, "WICK_AGENT_ID="); ok {
+				p.id = v
+			}
+			if v, ok := strings.CutPrefix(e, "WICK_AGENT_TYPE="); ok {
+				p.typ = v
+			}
+		}
+		var dir, id, prompt string
+		for i, a := range cmd.Args {
 			switch {
-			case w == "--session-dir":
-				dir = strings.Trim(strings.Fields(line)[i+1], `"`)
-			case w == "--session-id":
-				id = strings.Trim(strings.Fields(line)[i+1], `"`)
-			case strings.HasSuffix(w, ".prompt"):
-				promptPath = w
+			case a == "--session-dir" && i+1 < len(cmd.Args):
+				dir = cmd.Args[i+1]
+			case a == "--session-id" && i+1 < len(cmd.Args):
+				id = cmd.Args[i+1]
+			case a == "--" && i+1 < len(cmd.Args):
+				prompt = cmd.Args[i+1]
 			}
 		}
 		// claude writes its transcript under ~/.claude/projects and takes no
@@ -191,10 +197,10 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		_ = os.MkdirAll(filepath.Join(dir, "--x--"), 0o755)
 		p.transcript = filepath.Join(dir, "--x--", "t_"+id+".jsonl")
 		// claude takes its first message after startup, so its turn is the
-		// late prompt, not the command line: a pig turn answers here.
+		// late prompt, not the command line: a pig turn answers here, with
+		// the full prompt the launch carries as a real argument.
 		if p.harness != "claude" {
-			raw, _ := os.ReadFile(promptPath)
-			f.turn(p, string(raw))
+			f.turn(p, prompt)
 		}
 	case "pane get":
 		if p := f.panes[args[2]]; p != nil && !p.closed {
