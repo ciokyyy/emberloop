@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -124,14 +125,14 @@ func implementPrompt(target string) string {
 2. spawn_worker(ticket=<path>) for every ready ticket. Pass harness or model
    only to override the default. Each worker is given its own worktree and the
    skills it needs; you need none of them yourself.
-3. wait_workers(timeout_ms=600000) once — do not poll in a loop.
+3. wait_workers(timeout_ms=%d) once — do not poll in a loop.
 4. review_worker(worker=<id>) for each settled worker, then finish_worker for
    it. A review never blocks the merge: keep every verdict and put it in your
    report. If finish_worker returns kept:true it conflicted: stop, report it,
    do not resolve it yourself.
 5. Recompute what is ready and go again. Stop when nothing is ready.
 
-Report the merged shas and each worker's review verdict when the run is done.`, target, target)
+Report the merged shas and each worker's review verdict when the run is done.`, target, target, WaitCap/time.Millisecond)
 }
 
 func str(params map[string]any, key string) string {
