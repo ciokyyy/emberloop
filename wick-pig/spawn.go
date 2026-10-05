@@ -86,6 +86,7 @@ type spawnRequest struct {
 	Target  string `json:"target,omitempty"`
 	Harness string `json:"harness,omitempty"`
 	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 }
 
 // spawnToolFor builds the spawn tool a caller is given. allowed names the types
@@ -119,7 +120,7 @@ func spawnDescription(types map[string]AgentType, allowed []string) string {
 	}
 	b.WriteString(". Blocking types return their reports together, in the order given, once all have submitted. " +
 		"A non-blocking type comes back as started at once and reports later as a system notice. " +
-		"A worktree entry also takes ticket, repo, base, target, harness and model.")
+		"A worktree entry also takes ticket, repo, base, target, harness, model and effort.")
 	return b.String()
 }
 
@@ -137,8 +138,9 @@ func spawnSchema() map[string]any {
 					"repo":    map[string]any{"type": "string", "description": "worktree type: repo root. Defaults to the session cwd."},
 					"base":    map[string]any{"type": "string", "description": "worktree type: base ref. Defaults to HEAD."},
 					"target":  map[string]any{"type": "string", "description": "worktree type: branch to merge into. Defaults to the base branch."},
-					"harness": map[string]any{"type": "string", "enum": []any{"pig", "claude"}, "description": "worktree type: agent to run. Defaults to the type's or pig."},
+					"harness": map[string]any{"type": "string", "enum": []any{"pig", "claude"}, "description": "worktree type: agent to run. Defaults to the type's or the implementer slot."},
 					"model":   map[string]any{"type": "string", "description": "worktree type: model passed through to the harness."},
+					"effort":  map[string]any{"type": "string", "description": "worktree type: reasoning effort for the harness."},
 				},
 				"required": []any{"type"},
 			},
@@ -188,6 +190,7 @@ func spawnRequests(params map[string]any) ([]spawnRequest, error) {
 			Target:  str(m, "target"),
 			Harness: str(m, "harness"),
 			Model:   str(m, "model"),
+			Effort:  str(m, "effort"),
 		}
 		if r.Type == "" {
 			return nil, fmt.Errorf("agents[%d].type is required", i)
@@ -415,17 +418,11 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	if repo == "" {
 		repo = root
 	}
-	harness := r.Harness
-	if harness == "" {
-		harness = t.Harness
-	}
-	if harness == "" {
-		harness = "pig"
-	}
-	model := r.Model
-	if model == "" {
-		model = t.Model
-	}
+	// The implementer slot resolves per field: the spawn entry beats the
+	// type's frontmatter, which beats the settings file, which beats pig.
+	choice := Resolve("implementer",
+		Choice{Harness: r.Harness, Model: r.Model, Effort: r.Effort},
+		Choice{Harness: t.Harness, Model: t.Model, Effort: t.Effort})
 	if r.Ticket == "" {
 		return nil, fmt.Errorf("a %s entry needs ticket", t.Name)
 	}
@@ -443,8 +440,9 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 		Repo:      repo,
 		Base:      r.Base,
 		Target:    target,
-		Harness:   harness,
-		Model:     model,
+		Harness:   choice.Harness,
+		Model:     choice.Model,
+		Effort:    choice.Effort,
 		AgentType: t.Name,
 	}
 	// An implement session carries its spec in the environment; every worker
@@ -458,7 +456,8 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 		ID:        newSessionID(),
 		Role:      "agent",
 		Cwd:       worktreePath(repo, id),
-		Model:     model,
+		Model:     choice.Model,
+		Effort:    choice.Effort,
 		Label:     id,
 		Spec:      in.Spec,
 		AgentType: t.Name,
@@ -467,7 +466,7 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 		// read opens it by absolute path.
 		Prompt: fmt.Sprintf("Read %s and follow it exactly.", brief),
 	}
-	launch, err := PrepareLaunch(harness, sess)
+	launch, err := PrepareLaunch(choice.Harness, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +482,7 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	}
 	return &spawnedAgent{
 		ID: worker.ID, Type: t, Pane: worker.Pane, Tab: worker.Tab, Sess: sess,
-		Worktree: true, Warning: reportExtensionWarning(harness),
+		Worktree: true, Warning: reportExtensionWarning(choice.Harness),
 	}, nil
 }
 

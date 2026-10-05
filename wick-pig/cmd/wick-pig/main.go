@@ -5,7 +5,7 @@
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
 //	wick-pig skills install                                    fill the skill library
-//	wick-pig [--pig|--claude] [--role full] [--model M] [-p]   plan session
+//	wick-pig [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
 //	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
 package main
@@ -61,10 +61,11 @@ func run(argv []string) error {
 		return nil
 	}
 	fs := flag.NewFlagSet("wick-pig", flag.ContinueOnError)
-	harness := fs.String("harness", "pig", "pig or claude")
+	harness := fs.String("harness", "", "pig or claude (default: the orchestrator slot)")
 	pig := fs.Bool("pig", false, "use pig")
 	claude := fs.Bool("claude", false, "use claude")
 	model := fs.String("model", "", "model override")
+	effort := fs.String("effort", "", "reasoning effort for the harness")
 	role := fs.String("role", "", "session role; default plan (use full for every tool)")
 	headless := fs.Bool("p", false, "print one answer and exit")
 	if err := fs.Parse(argv); err != nil {
@@ -79,7 +80,7 @@ func run(argv []string) error {
 	rest := strings.Join(fs.Args(), " ")
 
 	cwd, _ := os.Getwd()
-	s := wick.Session{ID: wick.NewSessionID(), Model: *model, Headless: *headless, Cwd: cwd}
+	s := wick.Session{ID: wick.NewSessionID(), Headless: *headless, Cwd: cwd}
 	switch sub {
 	case "":
 		r, err := sessionRole(sub, *role)
@@ -134,12 +135,13 @@ func run(argv []string) error {
 			return fmt.Errorf("unknown command %q", sub)
 		}
 	}
-
-	launch, err := wick.PrepareLaunch(*harness, s)
+	choice := topLevelChoice(wick.Choice{Harness: *harness, Model: *model, Effort: *effort})
+	s.Model, s.Effort = choice.Model, choice.Effort
+	launch, err := wick.PrepareLaunch(choice.Harness, s)
 	if err != nil {
 		return err
 	}
-	cmd, err := wick.BuildCommand(*harness, withoutPrompt(s, launch))
+	cmd, err := wick.BuildCommand(choice.Harness, withoutPrompt(s, launch))
 	if err != nil {
 		return err
 	}
@@ -152,7 +154,7 @@ func run(argv []string) error {
 	if launch.Late != "" {
 		pane := os.Getenv("HERDR_PANE_ID")
 		if pane == "" {
-			return fmt.Errorf("%s needs herdr to deliver its first message; run inside herdr", *harness)
+			return fmt.Errorf("%s needs herdr to deliver its first message; run inside herdr", choice.Harness)
 		}
 		go func() {
 			if err := wick.DeliverLate(wick.OSExec, pane, launch.Late); err != nil {
@@ -163,7 +165,7 @@ func run(argv []string) error {
 	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" && !*headless {
 		stop := make(chan struct{})
 		defer close(stop)
-		if h := wick.Registered(*harness); h != nil {
+		if h := wick.Registered(choice.Harness); h != nil {
 			go wick.Supervise(wick.OSExec, h, s, pane, stop)
 		}
 	}
@@ -198,4 +200,11 @@ func sessionRole(sub, flagValue string) (string, error) {
 		return "implement", nil
 	}
 	return "plan", nil
+}
+
+// topLevelChoice resolves a top-level session's harness, model and effort
+// through the orchestrator slot: the flags win, then the slot, then the
+// built-in default.
+func topLevelChoice(flags wick.Choice) wick.Choice {
+	return wick.Resolve("orchestrator", flags, wick.Choice{})
 }

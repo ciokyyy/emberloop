@@ -141,6 +141,33 @@ Find it.
 	}
 }
 
+// A type may name its own harness, model and effort; these are the type layer
+// the resolver falls back to when a spawn entry says nothing.
+func TestRepoTypeCarriesHarnessModelAndEffort(t *testing.T) {
+	root := t.TempDir()
+	writeAgentFile(t, root, "tuned.md", `---
+name: tuned
+description: A tuned implementer.
+tools: [read, edit]
+checkout: worktree
+blocking: false
+statuses: [done]
+harness: claude
+model: opus
+effort: high
+---
+Do the work.
+`)
+	types, err := LoadAgentTypes(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := types["tuned"]
+	if got.Harness != "claude" || got.Model != "opus" || got.Effort != "high" {
+		t.Errorf("frontmatter = harness %q model %q effort %q, want claude/opus/high", got.Harness, got.Model, got.Effort)
+	}
+}
+
 // A repo file named like a built-in overrides it by name, fields and body.
 func TestRepoFileOverridesABuiltin(t *testing.T) {
 	root := t.TempDir()

@@ -19,8 +19,9 @@ const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <
 // defaultThreshold is find's passage cutoff when nothing is stored.
 const defaultThreshold = 0.20
 
-// defaultHarness is the harness a slot with nothing stored launches with.
-const defaultHarness = "pig"
+// defaultHarness is the harness a slot with nothing stored launches with; the
+// resolver's built-in default is the single source for it.
+const defaultHarness = wick.DefaultHarness
 
 // runSettings serves the settings subcommand. argv is empty to print what is in
 // force; models is a function value so a test lists ids without a network call.

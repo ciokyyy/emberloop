@@ -32,6 +32,9 @@ type Worker struct {
 	Workspace string `json:"workspace"`
 	Harness   string `json:"harness"`
 	Model     string `json:"model,omitempty"`
+	// Effort is the reasoning effort the agent was launched with, in the
+	// harness's own vocabulary.
+	Effort    string `json:"effort,omitempty"`
 	Started   string `json:"started"`
 	SessionID string `json:"session_id,omitempty"`
 	// AgentType is the type this worker was spawned as, whose requires_review
@@ -245,6 +248,7 @@ type SpawnInput struct {
 	Target  string
 	Harness string
 	Model   string
+	Effort  string
 	// Launch is the exact command pane run receives. The extension derives it
 	// from Harness and Model; tests supply a stub agent instead.
 	Launch []string
@@ -393,6 +397,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		Workspace: workspace,
 		Harness:   in.Harness,
 		Model:     in.Model,
+		Effort:    in.Effort,
 		SessionID: in.SessionID,
 		AgentType: in.AgentType,
 		Started:   time.Now().UTC().Format(time.RFC3339),

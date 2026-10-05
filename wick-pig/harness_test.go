@@ -133,3 +133,33 @@ func TestClaudeTrustWritesOnlyTheFlagAndKeepsTheRest(t *testing.T) {
 		t.Errorf("config = %s", b)
 	}
 }
+
+// Effort is the harness's own word and becomes its own flag: pig's --thinking
+// and claude's --effort. No effort means no flag.
+func TestBuildCommandTurnsEffortIntoTheHarnessFlag(t *testing.T) {
+	isolateState(t)
+	pig, err := BuildCommand("pig", Session{Role: "work", Effort: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argValue(pig.Args, "--thinking"); got != "high" {
+		t.Errorf("pig effort must be --thinking high, got %q", got)
+	}
+	if strings.Contains(pig.Line(), "--effort") {
+		t.Errorf("claude's flag must not leak into pig: %s", pig.Line())
+	}
+	cl, err := BuildCommand("claude", Session{Role: "review", Effort: "minimal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := argValue(cl.Args, "--effort"); got != "minimal" {
+		t.Errorf("claude effort must be --effort minimal, got %q", got)
+	}
+	if strings.Contains(cl.Line(), "--thinking") {
+		t.Errorf("pig's flag must not leak into claude: %s", cl.Line())
+	}
+	none, _ := BuildCommand("pig", Session{Role: "work"})
+	if strings.Contains(none.Line(), "--thinking") {
+		t.Errorf("no effort must add no flag: %s", none.Line())
+	}
+}

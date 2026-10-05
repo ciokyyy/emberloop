@@ -1058,3 +1058,64 @@ statuses: [done, blocked]
 		t.Errorf("the reused worker must keep its record: %v", err)
 	}
 }
+
+// A worker spawn resolves the implementer slot: its harness, model and effort
+// come from settings unless the entry or the type says otherwise, and the
+// worker record stores what was resolved.
+func TestWorkerSpawnResolvesTheImplementerSlot(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	resolverSettings(t, `{"roles":{"implementer":{"harness":"claude","model":"opus","effort":"high"}}}`)
+	spawnExec = (&mixedExec{g: g}).run
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "30-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spawn, _ := spawnToolForRole(t, "implement")
+	if _, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": ticket},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	w, err := recall("30-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Harness != "claude" || w.Model != "opus" || w.Effort != "high" {
+		t.Errorf("worker record = harness %q model %q effort %q, want claude/opus/high", w.Harness, w.Model, w.Effort)
+	}
+}
+
+// A spawn entry's harness, model and effort beat the implementer slot, since
+// the entry is the type/spawn argument layer of the resolver.
+func TestWorkerSpawnEntryBeatsTheImplementerSlot(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	resolverSettings(t, `{"roles":{"implementer":{"harness":"claude","model":"opus","effort":"high"}}}`)
+	spawnExec = (&mixedExec{g: g}).run
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "31-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spawn, _ := spawnToolForRole(t, "implement")
+	if _, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": ticket, "harness": "pig", "model": "entry-model", "effort": "xhigh"},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	w, err := recall("31-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Harness != "pig" || w.Model != "entry-model" || w.Effort != "xhigh" {
+		t.Errorf("worker record = harness %q model %q effort %q, want pig/entry-model/xhigh", w.Harness, w.Model, w.Effort)
+	}
+}

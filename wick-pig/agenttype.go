@@ -42,6 +42,7 @@ type AgentType struct {
 	RequiresReview []string
 	Harness        string
 	Model          string
+	Effort         string
 	// Body is the brief or prompt template the agent is launched with.
 	Body string
 	// file is where the definition came from, for error messages.
@@ -238,6 +239,9 @@ func parseAgentType(src, file string) (AgentType, error) {
 	}
 	if v, ok := fields.scalar("model"); ok {
 		t.Model = v
+	}
+	if v, ok := fields.scalar("effort"); ok {
+		t.Effort = v
 	}
 	return t, nil
 }

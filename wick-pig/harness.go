@@ -23,8 +23,11 @@ const systemPrompt = "Your file and shell tools are wick's: read, find, edit, wr
 
 // Session is everything an adapter needs to start one agent.
 type Session struct {
-	Role     string // picks the tool set served by wick-mcp
-	Model    string
+	Role  string // picks the tool set served by wick-mcp
+	Model string
+	// Effort is the reasoning effort in the harness's own vocabulary; empty
+	// means the harness's default.
+	Effort   string
 	Cwd      string // the directory it runs in; trusted before launch when set
 	Prompt   string // first message
 	Headless bool   // print one answer and exit
@@ -178,6 +181,9 @@ func (pigHarness) Command(s Session) (Command, error) {
 	if s.Model != "" {
 		args = append(args, "--model", s.Model)
 	}
+	if s.Effort != "" {
+		args = append(args, "--thinking", s.Effort)
+	}
 	args = appendPrompt(args, s.Prompt)
 	env := roleEnv(s)
 	if s.Label != "" {
@@ -290,6 +296,9 @@ func (claudeHarness) Command(s Session) (Command, error) {
 	}
 	if s.Model != "" {
 		args = append(args, "--model", s.Model)
+	}
+	if s.Effort != "" {
+		args = append(args, "--effort", s.Effort)
 	}
 	args = appendPrompt(args, s.Prompt)
 	return Command{Bin: "claude", Args: args, Env: append(roleEnv(s),
