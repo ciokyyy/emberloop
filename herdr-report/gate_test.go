@@ -125,18 +125,46 @@ func TestBeforeSettleContinuesWithTheReminderThenSettlesOnGiveUp(t *testing.T) {
 }
 
 // A new turn starts the attempt count over, so its first settle is fresh again.
-func TestAfterAnAgentStartTheNextSettleIsFresh(t *testing.T) {
+func TestAfterANewTurnTheNextSettleIsFresh(t *testing.T) {
 	fake := &fakeGate{}
 	g := newGate(fake.run)
 	if _, err := g.beforeSettle(sdk.Context{}, settleData("completed", "one")); err != nil {
 		t.Fatal(err)
 	}
-	g.started()
+	if _, err := g.turnStarted(sdk.Context{}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := g.beforeSettle(sdk.Context{}, settleData("completed", "two")); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.events) != 2 || !fake.events[0].Fresh || !fake.events[1].Fresh {
-		t.Errorf("a settle after agent_start must be fresh, got %#v", fake.events)
+		t.Errorf("a settle after a new turn must be fresh, got %#v", fake.events)
+	}
+}
+
+// registrar records the events an extension handler is registered for.
+type registrar struct{ events []string }
+
+func (r *registrar) OnEvent(event string, _ sdk.EventFunc) func() {
+	r.events = append(r.events, event)
+	return func() {}
+}
+
+// The reset signal is before_agent_start, never agent_start: pig emits
+// agent_start again for the low-level run that continues a blocked settle, so a
+// reset there would start the count over every attempt — reminder 1 forever —
+// and drop the pin before the request it belongs to.
+func TestGateResetsOnTheSignalAContinuationNeverEmits(t *testing.T) {
+	r := &registrar{}
+	newGate((&fakeGate{}).run).register(r)
+	want := []string{sdk.EventBeforeAgentStart, sdk.EventAgentBeforeSettle, sdk.EventBeforeProviderRequest}
+	if !reflect.DeepEqual(r.events, want) {
+		t.Errorf("the gate must register %v, got %v", want, r.events)
+	}
+	for _, event := range r.events {
+		if event == sdk.EventAgentStart {
+			t.Error("agent_start fires again for the run that continues a blocked settle; it must not reset the gate")
+		}
 	}
 }
 
@@ -228,11 +256,12 @@ func TestBeforeProviderRequestPinsSubmitOnThePinnedRequestOnly(t *testing.T) {
 }
 
 // The pin names the submit tool in each provider's own shape, because the wire
-// body of every provider spells tool_choice differently.
+// body of every provider spells its tool choice differently.
 func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 	cases := []struct {
 		name    string
 		payload map[string]any
+		key     string
 		want    any
 	}{
 		{
@@ -241,6 +270,7 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 				"messages": []any{},
 				"tools":    []any{map[string]any{"name": "mcp__wick__submit", "input_schema": map[string]any{}}},
 			},
+			key:  "tool_choice",
 			want: map[string]any{"type": "tool", "name": "mcp__wick__submit"},
 		},
 		{
@@ -252,6 +282,7 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 					"function": map[string]any{"name": "mcp__wick__submit"},
 				}},
 			},
+			key:  "tool_choice",
 			want: map[string]any{"type": "function", "function": map[string]any{"name": "mcp__wick__submit"}},
 		},
 		{
@@ -260,22 +291,38 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 				"input": []any{},
 				"tools": []any{map[string]any{"type": "function", "name": "mcp__wick__submit"}},
 			},
+			key:  "tool_choice",
 			want: map[string]any{"type": "function", "name": "mcp__wick__submit"},
 		},
 		{
-			name: "mistral and pi-messages",
+			name: "gemini",
+			payload: map[string]any{
+				"contents":   []any{},
+				"toolConfig": map[string]any{},
+				"tools": []any{map[string]any{"functionDeclarations": []any{
+					map[string]any{"name": "mcp__wick__submit"},
+				}}},
+			},
+			key: "toolConfig",
+			want: map[string]any{"functionCallingConfig": map[string]any{
+				"mode":                 "ANY",
+				"allowedFunctionNames": []any{"mcp__wick__submit"},
+			}},
+		},
+		{
+			name: "mistral",
 			payload: map[string]any{
 				"messages":   []any{},
 				"toolChoice": "auto",
 				"tools":      []any{map[string]any{"function": map[string]any{"name": "mcp__wick__submit"}}},
 			},
+			key:  "toolChoice",
 			want: map[string]any{"type": "function", "function": map[string]any{"name": "mcp__wick__submit"}},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fake := &fakeGate{answers: []string{`{"outcome":"pin","reminder":"reminder 3 of 3"}`}}
-			g := newGate(fake.run)
+			g := newGate((&fakeGate{answers: []string{`{"outcome":"pin","reminder":"reminder 3 of 3"}`}}).run)
 			if _, err := g.beforeSettle(sdk.Context{}, settleData("completed", "stuck")); err != nil {
 				t.Fatal(err)
 			}
@@ -283,15 +330,12 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 			if err != nil {
 				t.Fatalf("beforeRequest: %v", err)
 			}
-			pinned, _ := result.(map[string]any)
-			var got any
-			if c.payload["toolChoice"] != nil {
-				got = pinned["toolChoice"]
-			} else {
-				got = pinned["tool_choice"]
+			pinned, ok := result.(map[string]any)
+			if !ok {
+				t.Fatalf("the pinned request must replace the payload, got %#v", result)
 			}
-			if !reflect.DeepEqual(got, c.want) {
-				t.Errorf("tool choice = %#v, want %#v", got, c.want)
+			if got := pinned[c.key]; !reflect.DeepEqual(got, c.want) {
+				t.Errorf("%s = %#v, want %#v", c.key, got, c.want)
 			}
 		})
 	}

@@ -43,6 +43,13 @@ type gateDecision struct {
 	Reminder string `json:"reminder,omitempty"`
 }
 
+// eventRegistrar is the part of an extension the gate registers on. It is an
+// interface so a test can read the events the gate takes: the reset signal is
+// the one thing about the gate that cannot be seen from its handlers.
+type eventRegistrar interface {
+	OnEvent(event string, handler sdk.EventFunc) func()
+}
+
 // gateRunner asks wick's decision for one settle attempt. It is a type, not a
 // call, so a test answers for it instead of running wick-pig.
 type gateRunner func(ctx sdk.Context, event string) (string, error)
@@ -53,7 +60,7 @@ type gateRunner func(ctx sdk.Context, event string) (string, error)
 type gate struct {
 	run gateRunner
 	// fresh reports that a new turn began since the last attempt, so the next
-	// settle starts the attempt count over. A new turn arrives as agent_start.
+	// settle starts the attempt count over.
 	fresh atomic.Bool
 	// pin reports that the decision pinned this attempt: the next provider
 	// request forces submit, and only that one does.
@@ -68,11 +75,22 @@ func newGate(run gateRunner) *gate {
 	return g
 }
 
-// started marks a new turn, which starts the attempt count over and drops a
-// pin the request for it never came for.
-func (g *gate) started() {
+// register wires the gate's three events. A new turn is before_agent_start and
+// deliberately not agent_start: pig emits agent_start again for the low-level
+// run that continues a blocked settle, so a reset there would replay reminder 1
+// forever and drop the pin before its request.
+func (g *gate) register(r eventRegistrar) {
+	r.OnEvent(sdk.EventBeforeAgentStart, g.turnStarted)
+	r.OnEvent(sdk.EventAgentBeforeSettle, g.beforeSettle)
+	r.OnEvent(sdk.EventBeforeProviderRequest, g.beforeRequest)
+}
+
+// turnStarted is the before_agent_start handler: a new turn starts the attempt
+// count over and drops a pin the request for it never came for.
+func (g *gate) turnStarted(sdk.Context, map[string]any) (any, error) {
 	g.pin.Store(false)
 	g.fresh.Store(true)
+	return nil, nil
 }
 
 // beforeSettle is the agent_before_settle handler. It asks the decision; a
@@ -254,10 +272,15 @@ func forEachToolName(payload map[string]any, visit func(string)) {
 
 // pinToolChoice forces name as the provider's only tool choice, in the shape
 // that provider's wire body uses. The body says which shape it wants: gemini
-// carries toolConfig, the openai responses API carries input, mistral and
-// pi-messages carry toolChoice, an anthropic body lists tools with
-// input_schema, and every other openai-compatible body takes an openai chat
-// choice.
+// carries toolConfig, the openai responses API carries input, mistral carries
+// toolChoice, an anthropic body lists tools with input_schema, and every other
+// openai-compatible body takes an openai chat choice.
+//
+// A pin needs the tool's name, and only a body that lists its tools carries
+// one. A pi-messages body is {model, context:{messages}, options}: its tools
+// ride inside the transcript's system message and its choice field is
+// provider-neutral, so there is no name to read and no shape to write. Such an
+// agent is blocked and reminded like any other and only skips the pin.
 func pinToolChoice(payload map[string]any, name string) map[string]any {
 	if name == "" {
 		return payload
