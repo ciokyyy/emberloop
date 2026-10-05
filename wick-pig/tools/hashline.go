@@ -202,7 +202,7 @@ func patchLineCounts(ops []patchOp) (deleted, added int) {
 func deletionWarning(ops []patchOp) string {
 	deleted, added := patchLineCounts(ops)
 	if deleted > added && deleted-added >= editDeletionWarnNet {
-		return fmt.Sprintf("warning: this patch deleted %d lines but added only %d; if the range was wider than intended, re-read the file and fix it\n", deleted, added)
+		return fmt.Sprintf("warning: this patch deleted %d lines but added only %d; if a range was wider than intended, re-read the file and fix it\n", deleted, added)
 	}
 	return ""
 }

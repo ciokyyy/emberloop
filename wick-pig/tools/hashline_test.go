@@ -118,6 +118,28 @@ func TestEditReplyFlagsABlockDeletion(t *testing.T) {
 	}
 }
 
+// Far-apart changes in one patch read as separate windows, so the middle of
+// the file is not dumped into the reply between them.
+func TestEditReplyShowsSeparateWindowsForFarApartChanges(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 20; i++ {
+		fmt.Fprintf(&b, "l%02d\n", i)
+	}
+	dir, _, tag := seed(t, b.String())
+	got, err := applyHashline(dir, "[a.txt#"+tag+"]\nPUT 2.=2:\n+TWO\nPUT 18.=18:\n+EIGHTEEN")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, want := range []string{"TWO", "EIGHTEEN", "l01", "l19", "  ..."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("each change must show with its own context, missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "l10") {
+		t.Errorf("lines between far-apart changes must be omitted, got:\n%s", got)
+	}
+}
+
 func TestHashlineTagChangesAfterEdit(t *testing.T) {
 	dir, path, tag := seed(t, five)
 	if _, err := applyHashline(dir, "[a.txt#"+tag+"]\nCUT 2"); err != nil {
