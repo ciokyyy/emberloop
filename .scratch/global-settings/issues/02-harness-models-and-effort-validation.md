@@ -4,11 +4,11 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `Models()` on the harness interface; pig and claude implemented through the `Exec` seam
-- [ ] claude listing spends no tokens (no user message sent) and the process exits
-- [ ] Per-harness cache with timestamp; `--refresh` rebuilds
-- [ ] Save rejects an unknown model or unsupported effort; free-text models allowed when the cache can't be built (warn, don't block)
-- [ ] Harness switch keeps or clears model and effort as described
-- [ ] Tests: captured `--list-models` output and a captured `initialize` response fed through a fake `Exec`
+- [x] `Models()` on the harness interface; pig and claude implemented through the `Exec` seam
+- [x] claude listing spends no tokens (no user message sent) and the process exits
+- [x] Per-harness cache with timestamp; `--refresh` rebuilds
+- [x] Save rejects an unknown model or unsupported effort; free-text models allowed when the cache can't be built (warn, don't block)
+- [x] Harness switch keeps or clears model and effort as described
+- [x] Tests: captured `--list-models` output and a captured `initialize` response fed through a fake `Exec`

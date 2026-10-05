@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] New default path `~/.wick-pig/settings.json`; `WICK_SETTINGS` still overrides
-- [ ] Old file read as a fallback when the new one is absent; save writes the new path
-- [ ] Unknown keys preserved across load/save
-- [ ] `wick-pig settings role <slot> harness|model|effort <value>` works; unknown slot or harness rejected
-- [ ] Print shows all slots, decision model and threshold with their source
-- [ ] Existing `decision-model`, `threshold`, `models` subcommands keep working
-- [ ] Tests against a temporary `WICK_SETTINGS`, following the existing settings command tests
+- [x] New default path `~/.wick-pig/settings.json`; `WICK_SETTINGS` still overrides
+- [x] Old file read as a fallback when the new one is absent; save writes the new path
+- [x] Unknown keys preserved across load/save
+- [x] `wick-pig settings role <slot> harness|model|effort <value>` works; unknown slot or harness rejected
+- [x] Print shows all slots, decision model and threshold with their source
+- [x] Existing `decision-model`, `threshold`, `models` subcommands keep working
+- [x] Tests against a temporary `WICK_SETTINGS`, following the existing settings command tests

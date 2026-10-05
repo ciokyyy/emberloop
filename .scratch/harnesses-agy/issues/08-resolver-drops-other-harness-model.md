@@ -6,9 +6,9 @@ Rule: model and effort come only from layers whose harness matches the resolved 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Resolver table test: harness override from flag, env (`WICK_READONLY_HARNESS`), and type/spawn layer each drop a lower layer's model and effort for a different harness
-- [ ] A flag that sets only model (no harness) still combines with the slot's harness
-- [ ] Same harness at both layers keeps the lower layer's model/effort when the higher one sets none
-- [ ] Launch tests: `--claude` with a pig orchestrator slot launches claude with no `--model`/`--effort`
+- [x] Resolver table test: harness override from flag, env (`WICK_READONLY_HARNESS`), and type/spawn layer each drop a lower layer's model and effort for a different harness
+- [x] A flag that sets only model (no harness) still combines with the slot's harness
+- [x] Same harness at both layers keeps the lower layer's model/effort when the higher one sets none
+- [x] Launch tests: `--claude` with a pig orchestrator slot launches claude with no `--model`/`--effort`

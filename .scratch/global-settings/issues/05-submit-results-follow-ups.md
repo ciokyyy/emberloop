@@ -8,9 +8,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A repo type with `persistent: false` gets a fresh agent on re-spawn; a persistent one is re-prompted (test through `spawn` with fake herdr)
-- [ ] No script references `spawn_worker`, `wait_workers`, `tell_worker` or `finish_worker`; kept scripts run against the current tools
-- [ ] No production comment names a removed tool
-- [ ] Existing tests still pass
+- [x] A repo type with `persistent: false` gets a fresh agent on re-spawn; a persistent one is re-prompted (test through `spawn` with fake herdr)
+- [x] No script references `spawn_worker`, `wait_workers`, `tell_worker` or `finish_worker`; kept scripts run against the current tools
+- [x] No production comment names a removed tool
+- [x] Existing tests still pass

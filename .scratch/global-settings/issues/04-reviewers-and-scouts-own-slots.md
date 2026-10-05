@@ -4,10 +4,10 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Code and spec reviewers launch with their own slot's harness, model and effort (fake-herdr review tests)
-- [ ] Scouts launch with the scout slot unless the agent type sets its own
-- [ ] A claude reviewer receives the configured model
-- [ ] `WICK_READONLY_HARNESS` overrides the slot harness
-- [ ] Reviewer records store harness, model and effort
+- [x] Code and spec reviewers launch with their own slot's harness, model and effort (fake-herdr review tests)
+- [x] Scouts launch with the scout slot unless the agent type sets its own
+- [x] A claude reviewer receives the configured model
+- [x] `WICK_READONLY_HARNESS` overrides the slot harness
+- [x] Reviewer records store harness, model and effort

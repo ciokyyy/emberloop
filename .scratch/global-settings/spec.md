@@ -1,6 +1,6 @@
 # Spec: one global settings file with a harness and model per role
 
-Status: ready-for-agent
+Status: done (merged to master)
 
 ## Problem Statement
 

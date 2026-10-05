@@ -72,7 +72,7 @@ Probed 2026-10-05 with `agy` 1.2.17 (live service; 503s came and went — every 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Every question answered with evidence (command, output) in this ticket
 - [x] Fixtures saved: `agy models` output, a transcript sample, a stream-json result, hook stdin payloads

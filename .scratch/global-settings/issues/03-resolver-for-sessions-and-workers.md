@@ -4,11 +4,11 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Resolver table test covering every precedence layer for each field, empty and missing file
-- [ ] `wick-pig implement` with no flags uses the orchestrator slot
-- [ ] Worker spawn uses the implementer slot unless type or spawn args say otherwise
-- [ ] `effort` accepted in frontmatter and spawn entries; `--effort` on the CLI
-- [ ] pig command gets `--thinking <level>`, claude gets `--effort <level>` (asserted via `BuildCommand` tests)
-- [ ] Worker record stores the effort
+- [x] Resolver table test covering every precedence layer for each field, empty and missing file
+- [x] `wick-pig implement` with no flags uses the orchestrator slot
+- [x] Worker spawn uses the implementer slot unless type or spawn args say otherwise
+- [x] `effort` accepted in frontmatter and spawn entries; `--effort` on the CLI
+- [x] pig command gets `--thinking <level>`, claude gets `--effort <level>` (asserted via `BuildCommand` tests)
+- [x] Worker record stores the effort

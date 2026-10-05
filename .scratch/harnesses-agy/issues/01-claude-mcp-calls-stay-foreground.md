@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Both variables in the claude command environment (stripped-claude test)
-- [ ] Opt-in live test: a claude session calls a wick tool that runs longer than 120 s; the result arrives in the same turn, not as a background task
-- [ ] Opt-in live test: a notice delivered while a tool call runs does not detach the call; the notice is seen after the call returns
-- [ ] If either live test shows backgrounding still happens, record what Claude Code version and setting is involved in this ticket
+- [x] Both variables in the claude command environment (stripped-claude test)
+- [x] Opt-in live test: a claude session calls a wick tool that runs longer than 120 s; the result arrives in the same turn, not as a background task
+- [x] Opt-in live test: a notice delivered while a tool call runs does not detach the call; the notice is seen after the call returns
+- [x] If either live test shows backgrounding still happens, record what Claude Code version and setting is involved in this ticket
