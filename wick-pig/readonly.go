@@ -107,7 +107,7 @@ func callerTab(run Exec) string {
 // agent's last message, read from its session transcript. The pane closes
 // with the answer.
 func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
-	agent, err := startReadOnly(run, cwd, model, prompt)
+	agent, err := startReadOnly(run, readOnlyPlace{Overflow: "scouts"}, cwd, model, prompt)
 	if err != nil {
 		return "", err
 	}
@@ -115,11 +115,22 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	return agent.reply(run, 0)
 }
 
+// readOnlyPlace is where a read-only agent opens. An empty Tab is the caller's
+// own tab, which is where a scout goes. A Slot of 2 or more takes the slot a
+// dead pane left instead of appending, so a replaced reviewer keeps the grid's
+// shape; Overflow names the first tab a full grid spills into.
+type readOnlyPlace struct {
+	Tab      string
+	Overflow string
+	Slot     int
+}
+
 // readOnlyAgent is a launched read-only agent: the pane it runs in and the
 // session its transcript is written under.
 type readOnlyAgent struct {
 	Pane    string
 	Tab     string
+	Slot    int
 	Harness string
 	Session Session
 }
@@ -142,12 +153,13 @@ func readOnlySession(id, cwd, model string) Session {
 	return Session{Role: "review", Cwd: cwd, Model: model, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
 }
 
-// startReadOnly launches a read-only agent on prompt in a pane of the caller's
-// tab, placed by the grid, and leaves it running: the caller decides when the
-// pane closes. The prompt goes through a file: pane run types its argv as one
-// line. WICK_READONLY_HARNESS picks the harness (default pig); a model goes
-// only to pig, since worker models are pig model names.
-func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
+// startReadOnly launches a read-only agent on prompt in a pane placed by the
+// grid, and leaves it running: the caller decides when the pane closes. place
+// names the tab and the overflow label; an empty Tab is the caller's own tab.
+// The prompt goes through a file: pane run types its argv as one line.
+// WICK_READONLY_HARNESS picks the harness (default pig); a model goes only to
+// pig, since worker models are pig model names.
+func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (readOnlyAgent, error) {
 	harness := os.Getenv("WICK_READONLY_HARNESS")
 	if harness == "" {
 		harness = "pig"
@@ -170,11 +182,24 @@ func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	}
 	// The agent is done with the MCP config the moment it has launched.
 	defer CleanupSession(sess)
-	// Read-only agents share the caller's tab, side by side in the grid; the
-	// ninth caller overflow opens a `scouts` tab. The grid serializes the
+	// A scout shares the caller's tab; a reviewer shares its ticket's tab, so
+	// it sits beside the implementor. Either way the grid serializes the
 	// splits in one tab and evens its sizes out, best effort; the agent then
 	// runs and is waited on concurrently.
-	placed, err := placeInGrid(run, callerTab(run), "scouts", cwd)
+	tab := place.Tab
+	if tab == "" {
+		tab = callerTab(run)
+	}
+	overflow := place.Overflow
+	if overflow == "" {
+		overflow = "scouts"
+	}
+	var placed gridPane
+	if place.Slot >= 2 {
+		placed, err = replaceInGrid(run, tab, place.Slot, cwd)
+	} else {
+		placed, err = placeInGrid(run, tab, overflow, cwd)
+	}
 	if err != nil {
 		return readOnlyAgent{}, err
 	}
@@ -182,7 +207,7 @@ func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	if pane == "" {
 		return readOnlyAgent{}, fmt.Errorf("herdr split returned no pane id")
 	}
-	agent := readOnlyAgent{Pane: pane, Tab: placed.Tab, Harness: harness, Session: sess}
+	agent := readOnlyAgent{Pane: pane, Tab: placed.Tab, Slot: placed.Slot, Harness: harness, Session: sess}
 	fail := func(err error) (readOnlyAgent, error) {
 		closeAgent(run, agent)
 		return readOnlyAgent{}, err

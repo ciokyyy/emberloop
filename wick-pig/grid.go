@@ -3,6 +3,7 @@ package wick
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -231,28 +232,51 @@ func nextSlot(slots map[int]string) int {
 }
 
 // overflowTab is the tab labelled label in tab's workspace that still has room
-// for a pane, creating one when none does. fresh says it was just created, so
-// its root pane is the pane the agent takes.
+// for a pane, creating one when none does. A full overflow tab moves on to the
+// next label in its family: `scouts` then `scouts (2)`, `<ticket> (2)` then
+// `<ticket> (3)`. fresh says the tab was just created, so its root pane is the
+// pane the agent takes.
 func overflowTab(run Exec, tab, label, cwd string) (id string, slots map[int]string, fresh bool, err error) {
 	ws := workspaceOf(tab)
 	reply, err := herdrJSON(run, []string{"tab", "list", "--workspace", ws}, 15*time.Second)
 	if err != nil {
 		return "", nil, false, err
 	}
+	byLabel := map[string]string{}
 	for _, t := range reply.Result.Tabs {
-		if t.Label != label {
-			continue
+		byLabel[t.Label] = t.TabID
+	}
+	for lbl := label; ; lbl = nextOverflow(lbl) {
+		tid, ok := byLabel[lbl]
+		if !ok {
+			return createOverflowTab(run, ws, lbl, cwd)
 		}
-		panes, err := gridSlots(run, t.TabID)
+		panes, err := gridSlots(run, tid)
 		if err != nil {
 			return "", nil, false, err
 		}
 		if nextSlot(panes) <= gridMax {
-			return t.TabID, panes, false, nil
+			return tid, panes, false, nil
 		}
 	}
-	reply, err = herdrJSON(run, []string{"tab", "create",
-		"--workspace", ws,
+}
+
+// nextOverflow is the label after one in an overflow family: a trailing " (n)"
+// counts up, otherwise the label takes a " (2)".
+func nextOverflow(label string) string {
+	if i := strings.LastIndex(label, " ("); i >= 0 && strings.HasSuffix(label, ")") {
+		if n, err := strconv.Atoi(label[i+2 : len(label)-1]); err == nil {
+			return fmt.Sprintf("%s (%d)", label[:i], n+1)
+		}
+	}
+	return label + " (2)"
+}
+
+// createOverflowTab opens a fresh tab labelled label in workspace, with cwd as
+// its root pane's directory.
+func createOverflowTab(run Exec, workspace, label, cwd string) (id string, slots map[int]string, fresh bool, err error) {
+	reply, err := herdrJSON(run, []string{"tab", "create",
+		"--workspace", workspace,
 		"--cwd", cwd,
 		"--label", label,
 		"--no-focus",
@@ -278,4 +302,29 @@ func workspaceOf(tab string) string {
 		return tab[:i]
 	}
 	return os.Getenv("HERDR_WORKSPACE_ID")
+}
+
+// closeOverflowTabs closes the overflow tabs that belong to the tab labelled
+// base: base (2), base (3), .... The base tab is the caller's to close. A tab
+// already gone is not an error: wick owns its tabs, but a human may have
+// closed one.
+func closeOverflowTabs(run Exec, tab, base string) {
+	if tab == "" || base == "" {
+		return
+	}
+	reply, err := herdrJSON(run, []string{"tab", "list", "--workspace", workspaceOf(tab)}, 30*time.Second)
+	if err != nil {
+		return
+	}
+	present := map[string]string{}
+	for _, t := range reply.Result.Tabs {
+		present[t.Label] = t.TabID
+	}
+	for lbl := base + " (2)"; ; lbl = nextOverflow(lbl) {
+		tid, ok := present[lbl]
+		if !ok {
+			return
+		}
+		_, _ = herdrJSON(run, []string{"tab", "close", tid}, 30*time.Second)
+	}
 }

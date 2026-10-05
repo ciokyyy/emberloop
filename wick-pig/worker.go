@@ -659,11 +659,14 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	// Only reached when the worker merged or was discarded. A refusal returns
 	// above with the worktree, tab and reviewers left for the worker to use.
 	closeReviewers(run, w.Worktree)
-	// The ticket's tab holds the implementor and its reviewers, so closing it
-	// closes them all. Best-effort: a tab already gone must not block dropping
-	// the worktree. Records without a tab predate the ticket tab; skip them.
+	// The ticket's tab holds the implementor and its reviewers; the overflow
+	// tabs hold the reviewers that did not fit. Closing both closes every
+	// agent of the ticket. Best-effort: a tab already gone must not block
+	// dropping the worktree. Records without a tab predate the ticket tab;
+	// skip them.
 	if w.Tab != "" {
 		_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
+		closeOverflowTabs(run, w.Tab, w.ID)
 	}
 	// herdr never owned the worktree: plain git made it, plain git drops it.
 	if res, err := run("git", []string{"worktree", "remove", "--force", w.Worktree},

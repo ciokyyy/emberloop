@@ -526,3 +526,42 @@ func TestGridPlacesAfterAnOverflowRootDies(t *testing.T) {
 		t.Errorf("the pane landed in %s, want the overflow tab %s", spot.Tab, root.Tab)
 	}
 }
+
+// nextOverflow counts up a numbered label and numbers a bare one, so a
+// ticket's second overflow is `<ticket> (3)` and a scout's is `scouts (2)`.
+func TestNextOverflowLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		"scouts":   "scouts (2)",
+		"07-x (2)": "07-x (3)",
+		"07-x (9)": "07-x (10)",
+	} {
+		if got := nextOverflow(in); got != want {
+			t.Errorf("nextOverflow(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A full overflow tab moves on to the next label in its family, so a ticket's
+// second overflow is `<ticket> (3)`.
+func TestGridOverflowsIntoTheNextTabOfItsFamily(t *testing.T) {
+	g := newFakeGrid()
+	tab := g.tabs[0]
+	// Fill the caller's tab, then its first overflow.
+	for i := 0; i < 8; i++ {
+		if _, err := placeInGrid(g.run, tab.tab, "07-x (2)", "/repo"); err != nil {
+			t.Fatalf("placement in the caller's tab: %v", err)
+		}
+	}
+	for i := 0; i < 9; i++ {
+		if _, err := placeInGrid(g.run, tab.tab, "07-x (2)", "/repo"); err != nil {
+			t.Fatalf("placement in the first overflow: %v", err)
+		}
+	}
+	next, err := placeInGrid(g.run, tab.tab, "07-x (2)", "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.label[next.Tab] != "07-x (3)" {
+		t.Errorf("overflow label = %q, want 07-x (3)", g.label[next.Tab])
+	}
+}

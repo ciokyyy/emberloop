@@ -27,9 +27,13 @@ const (
 	verdictChanges = "changes"
 )
 
-// reviewer is what wick remembers of one persistent reviewer between calls.
+// reviewer is what wick remembers of one persistent reviewer between calls. Tab
+// and Slot are where it lives: the ticket's tab and its slot in the grid, so a
+// dead reviewer is replaced in the same place.
 type reviewer struct {
 	Pane      string `json:"pane"`
+	Tab       string `json:"tab,omitempty"`
+	Slot      int    `json:"slot,omitempty"`
 	Harness   string `json:"harness"`
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
@@ -44,7 +48,10 @@ type reviewer struct {
 }
 
 func (r reviewer) agent() readOnlyAgent {
-	return readOnlyAgent{Pane: r.Pane, Harness: r.Harness, Session: readOnlySession(r.SessionID, r.Cwd, r.Model)}
+	return readOnlyAgent{
+		Pane: r.Pane, Tab: r.Tab, Slot: r.Slot, Harness: r.Harness,
+		Session: readOnlySession(r.SessionID, r.Cwd, r.Model),
+	}
 }
 
 // reviewersPath keeps the reviewers of every worktree, keyed by its path.
@@ -167,6 +174,17 @@ func workerAt(tree string) *Worker {
 	return nil
 }
 
+// workerPlace is where a worker's reviewers open: in the ticket's tab, beside
+// the implementor, with the ticket's first overflow tab labelled <ticket> (2).
+// A worker with no tab predates the ticket tab, or was not spawned by wick;
+// its reviewers fall back to the caller's tab, the way a scout does.
+func workerPlace(w *Worker) readOnlyPlace {
+	if w == nil || w.Tab == "" {
+		return readOnlyPlace{Overflow: "scouts"}
+	}
+	return readOnlyPlace{Tab: w.Tab, Overflow: w.ID + " (2)"}
+}
+
 // checkTimeout bounds the repo's check command, inside the tool budget.
 var checkTimeout = 3 * time.Minute
 
@@ -212,6 +230,9 @@ type reviewPacket struct {
 	note             string
 	ticket, spec     string
 	model            string
+	// place is where the reviewers open: the worker's ticket tab, or the
+	// caller's tab when there is no ticket (a tree wick did not spawn).
+	place readOnlyPlace
 }
 
 // CodeReview has the worktree at tree reviewed. The first call starts a code
@@ -288,6 +309,7 @@ func CodeReview(run Exec, tree, only, note string) (string, error) {
 	if w != nil {
 		p.ticket, p.spec, p.model = w.Ticket, w.Spec, w.Model
 	}
+	p.place = workerPlace(w)
 	p.checks = runChecks(run, tree)
 
 	type outcome struct {
@@ -370,14 +392,20 @@ func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis str
 		}
 	} else {
 		prompt := firstReviewPrompt(axis, p)
+		place := p.place
 		if had {
 			// The reviewer this one replaces is gone; it inherits the
 			// findings, so a fix is checked against them and not lost.
 			prompt += fmt.Sprintf("\n\nYou replace a %s reviewer whose pane closed. Its last reply, at %s, was:\n\n%s\n\nCheck whether each of its findings still holds.",
 				axis, short(prev.Reviewed), prev.Findings)
 			notice = fmt.Sprintf("(the previous %s reviewer's pane was gone: a new reviewer took over, briefed with its findings)", axis)
+			// The replacement takes the dead reviewer's slot in its tab, so
+			// the rest of the grid keeps its positions.
+			if prev.Tab != "" {
+				place.Tab, place.Slot = prev.Tab, prev.Slot
+			}
 		}
-		agent, err = startReadOnly(run, p.tree, p.model, prompt)
+		agent, err = startReadOnly(run, place, p.tree, p.model, prompt)
 		if err != nil {
 			return reviewer{}, "", "", err
 		}
@@ -403,7 +431,8 @@ func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis str
 		}
 	}
 	r := reviewer{
-		Pane: agent.Pane, Harness: agent.Harness, SessionID: agent.Session.ID, Cwd: agent.Session.Cwd, Model: agent.Session.Model,
+		Pane: agent.Pane, Tab: agent.Tab, Slot: agent.Slot, Harness: agent.Harness,
+		SessionID: agent.Session.ID, Cwd: agent.Session.Cwd, Model: agent.Session.Model,
 		Reviewed: p.head, Verdict: verdict, VerdictAt: p.verdictAt, Findings: reply,
 	}
 	return r, reply, notice, nil

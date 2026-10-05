@@ -6,34 +6,111 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// fakeReviewers is a herdr whose panes run reviewer agents. Each pane is a
-// persistent agent: launched by pane run, it answers its prompt; a message
-// typed into it later is a follow-up it answers in the same transcript. git
-// and sh are real, in a temp repo.
+// Reviewer tabs are named here so a test can tell the worker's ticket tab from
+// the orchestrator's tab. `reviewTab` is the ticket tab, labelled
+// `reviewTicket`; `reviewCaller` is where the caller (orchestrator) runs.
+const (
+	reviewTab    = "w1:impl"
+	reviewTicket = "07-x"
+	reviewCaller = "w1:caller"
+)
+
+// fakeReviewers is a herdr whose panes run reviewer agents, laid out over tabs
+// the way herdr reports them. Each pane is a persistent agent: launched by pane
+// run, it answers its prompt; a message typed into it later is a follow-up it
+// answers in the same transcript. git and sh are real, in a temp repo.
 type fakeReviewers struct {
-	mu     sync.Mutex
-	next   int
-	panes  map[string]*fakePane
-	calls  [][]string
-	answer func(axis string, turn int, prompt string) string
+	mu      sync.Mutex
+	next    int
+	panes   map[string]*fakePane
+	paneIDs []string
+	tabs    map[string]string // tab id -> label
+	tabIDs  []string
+	calls   [][]string
+	answer  func(axis string, turn int, prompt string) string
 }
 
 type fakePane struct {
 	axis, transcript string
 	turns            int
 	closed           bool
+	launched         bool // a reviewer agent was run in it
+	tab              string
 	prompts          []string
 }
 
 func newFakeReviewers(answer func(axis string, turn int, prompt string) string) *fakeReviewers {
 	resetGrid()
-	return &fakeReviewers{panes: map[string]*fakePane{}, answer: answer}
+	f := &fakeReviewers{panes: map[string]*fakePane{}, tabs: map[string]string{}, answer: answer}
+	f.addTab(reviewTab, reviewTicket)
+	f.addPane("root", reviewTab)
+	f.addTab(reviewCaller, "orchestrator")
+	f.addPane("caller", reviewCaller)
+	return f
+}
+
+func (f *fakeReviewers) addTab(id, label string) {
+	f.tabs[id] = label
+	f.tabIDs = append(f.tabIDs, id)
+}
+
+func (f *fakeReviewers) addPane(id, tab string) {
+	f.panes[id] = &fakePane{tab: tab}
+	f.paneIDs = append(f.paneIDs, id)
+}
+
+func (f *fakeReviewers) paneID() string {
+	f.next++
+	return fmt.Sprintf("rv%d", f.next)
+}
+
+// panesIn is the panes of one tab, in creation order.
+func (f *fakeReviewers) panesIn(tab string) []string {
+	var out []string
+	for _, id := range f.paneIDs {
+		if p := f.panes[id]; p != nil && p.tab == tab {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// fill opens n extra panes in tab, to model a tab that is already full.
+func (f *fakeReviewers) fill(tab string, n int) {
+	for i := 0; i < n; i++ {
+		f.addPane(f.paneID(), tab)
+	}
+}
+
+// tabWithLabel is the id of the tab labelled label, or "".
+func (f *fakeReviewers) tabWithLabel(label string) string {
+	for _, id := range f.tabIDs {
+		if f.tabs[id] == label {
+			return id
+		}
+	}
+	return ""
+}
+
+func (f *fakeReviewers) closeTab(id string) {
+	if _, ok := f.tabs[id]; !ok {
+		return
+	}
+	delete(f.tabs, id)
+	for i, t := range f.tabIDs {
+		if t == id {
+			f.tabIDs = append(f.tabIDs[:i], f.tabIDs[i+1:]...)
+			break
+		}
+	}
+	for _, pid := range f.panesIn(id) {
+		f.panes[pid].closed = true
+	}
 }
 
 func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, error) {
@@ -48,22 +125,21 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 	}
 	switch args[0] + " " + args[1] {
 	case "pane list":
-		ids := []string{"root"}
-		for id := range f.panes {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids[1:])
-		tab := os.Getenv("HERDR_TAB_ID")
 		panes := []any{}
-		for _, id := range ids {
-			panes = append(panes, map[string]any{"pane_id": id, "tab_id": tab})
+		for _, tab := range f.tabIDs {
+			for _, id := range f.panesIn(tab) {
+				panes = append(panes, map[string]any{"pane_id": id, "tab_id": tab})
+			}
 		}
 		return jsonReply(map[string]any{"panes": panes}), nil
 	case "pane split":
-		f.next++
-		id := fmt.Sprintf("rv%d", f.next)
-		f.panes[id] = &fakePane{}
-		return Result{Stdout: `{"result":{"pane":{"pane_id":"` + id + `"}}}`}, nil
+		tab := reviewTab
+		if p := f.panes[argValue(args, "--pane")]; p != nil {
+			tab = p.tab
+		}
+		id := f.paneID()
+		f.addPane(id, tab)
+		return Result{Stdout: `{"result":{"pane":{"pane_id":"` + id + `","tab_id":"` + tab + `"}}}`}, nil
 	case "pane run":
 		p := f.panes[args[2]]
 		var dir, id, promptPath string
@@ -98,6 +174,7 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		}
 	case "pane send-text":
 		p := f.panes[args[2]]
+		p.launched = true
 		prompt := args[3]
 		// A follow-up names a file to read; the agent reads it.
 		for _, w := range strings.Fields(prompt) {
@@ -106,6 +183,23 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 			}
 		}
 		f.turn(p, prompt)
+	case "tab list":
+		tabs := []any{}
+		for _, id := range f.tabIDs {
+			tabs = append(tabs, map[string]any{"tab_id": id, "label": f.tabs[id], "pane_count": len(f.panesIn(id))})
+		}
+		return jsonReply(map[string]any{"tabs": tabs}), nil
+	case "tab create":
+		id := fmt.Sprintf("w1:t%d", len(f.tabIDs)+1)
+		f.addTab(id, argValue(args, "--label"))
+		root := f.paneID()
+		f.addPane(root, id)
+		return jsonReply(map[string]any{
+			"tab":       map[string]any{"tab_id": id},
+			"root_pane": map[string]any{"pane_id": root, "tab_id": id},
+		}), nil
+	case "tab close":
+		f.closeTab(args[2])
 	case "agent prompt":
 		// herdr does not prompt pig; Nudge falls back to typing.
 		return Result{Code: 1}, nil
@@ -171,7 +265,7 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 	gitOut(t, tree, "commit", "-qam", "work")
 	if err := save(map[string]Worker{"07-x": {
 		ID: "07-x", Ticket: "/t/07-x.md", Spec: "/t/spec.md", Repo: repo, Base: base, Target: "main",
-		Branch: "implement/07-x", Worktree: tree, Pane: "%1", Workspace: "%2",
+		Branch: "implement/07-x", Worktree: tree, Pane: "root", Tab: reviewTab, Workspace: "w1",
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,9 +317,9 @@ func TestCodeReviewStartsTwoReviewers(t *testing.T) {
 		t.Errorf("stored reviewers = %+v", have)
 	}
 	// Reviewers stay alive for follow-ups.
-	for _, p := range f.panes {
-		if p.closed {
-			t.Error("a reviewer pane was closed after its first reply")
+	for id, p := range f.panes {
+		if p.launched && p.closed {
+			t.Errorf("reviewer pane %s was closed after its first reply", id)
 		}
 	}
 }
@@ -355,6 +449,7 @@ func TestCodeReviewReplacesADeadReviewer(t *testing.T) {
 	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
 		t.Fatal(err)
 	}
+	before := reviewersOf(tree)[axisSpec]
 	f.paneOf(t, axisSpec).closed = true
 	out, err := CodeReview(f.run, tree, "", "")
 	if err != nil {
@@ -369,6 +464,96 @@ func TestCodeReviewReplacesADeadReviewer(t *testing.T) {
 	}
 	if !strings.Contains(out, "a new reviewer took over") {
 		t.Errorf("the worker must be told: %s", out)
+	}
+	after := reviewersOf(tree)[axisSpec]
+	if after.Tab != before.Tab || after.Slot != before.Slot {
+		t.Errorf("the replacement went to %s slot %d, want the dead reviewer's %s slot %d",
+			after.Tab, after.Slot, before.Tab, before.Slot)
+	}
+}
+
+// A code review opens its reviewers in the worker's ticket tab, beside the
+// implementor, and never splits the caller's pane.
+func TestCodeReviewSplitsTheTicketTabNotTheCallers(t *testing.T) {
+	_, tree := reviewRepo(t)
+	t.Setenv("HERDR_TAB_ID", reviewCaller)
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	var targets []string
+	for _, c := range f.calls {
+		if len(c) > 2 && c[1] == "pane" && c[2] == "split" {
+			targets = append(targets, argValue(c, "--pane"))
+			if argValue(c, "--pane") == "caller" {
+				t.Errorf("a reviewer split the caller's pane: %v", c)
+			}
+			if argValue(c, "--direction") != "right" {
+				t.Errorf("the first row grows to the right: %v", c)
+			}
+		}
+	}
+	if len(targets) != 2 || !contains(targets, "root") {
+		t.Errorf("splits target %v, want two with the implementor pane root", targets)
+	}
+	have := reviewersOf(tree)
+	slots := map[int]bool{}
+	for _, axis := range allAxes {
+		r, ok := have[axis]
+		if !ok || r.Tab != reviewTab {
+			t.Errorf("%s reviewer = %+v, want it in the ticket tab %s", axis, r, reviewTab)
+			continue
+		}
+		slots[r.Slot] = true
+	}
+	if !slots[2] || !slots[3] {
+		t.Errorf("reviewer slots = %v, want 2 and 3", slots)
+	}
+}
+
+// A full ticket tab sends the next reviewers to the ticket's overflow tab,
+// `<ticket-id> (2)`, still in the project workspace.
+func TestCodeReviewOverflowsIntoTheTicketSecondTab(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	f.fill(reviewTab, gridMax-len(f.panesIn(reviewTab)))
+	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	over := f.tabWithLabel(reviewTicket + " (2)")
+	if over == "" {
+		t.Fatalf("no overflow tab %q; tabs = %v", reviewTicket+" (2)", f.tabs)
+	}
+	for _, axis := range allAxes {
+		if r := reviewersOf(tree)[axis]; r.Tab != over {
+			t.Errorf("%s reviewer is in %s, want the overflow tab %s", axis, r.Tab, over)
+		}
+	}
+	if got := len(f.panesIn(reviewTab)); got != gridMax {
+		t.Errorf("the ticket tab holds %d panes, want it left full at %d", got, gridMax)
+	}
+}
+
+// Discard closes the ticket tab and its overflow tabs, and forgets the
+// reviewers.
+func TestDiscardClosesTheTicketAndItsOverflowTabs(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	f.fill(reviewTab, gridMax-len(f.panesIn(reviewTab)))
+	if _, err := CodeReview(f.run, tree, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.tabWithLabel(reviewTicket+" (2)") == "" {
+		t.Fatal("no overflow tab to close")
+	}
+	if _, err := Finish(f.run, "07-x", false); err != nil {
+		t.Fatal(err)
+	}
+	if f.tabWithLabel(reviewTicket) != "" || f.tabWithLabel(reviewTicket+" (2)") != "" {
+		t.Errorf("the ticket tabs are still open: %v", f.tabs)
+	}
+	if len(reviewersOf(tree)) != 0 {
+		t.Error("the reviewer records were not forgotten")
 	}
 }
 
@@ -452,7 +637,7 @@ func TestFinishNeedsBothReviewersToPassAtTheTip(t *testing.T) {
 		t.Error("main was not fast-forwarded to the worker")
 	}
 	for id, p := range f.panes {
-		if !p.closed {
+		if p.launched && !p.closed {
 			t.Errorf("reviewer pane %s still open after the merge", id)
 		}
 	}
@@ -472,7 +657,7 @@ func TestDiscardNeedsNoReviewAndClosesReviewers(t *testing.T) {
 		t.Fatalf("discard: %+v %v", res, err)
 	}
 	for id, p := range f.panes {
-		if !p.closed {
+		if p.launched && !p.closed {
 			t.Errorf("reviewer pane %s still open after the discard", id)
 		}
 	}
