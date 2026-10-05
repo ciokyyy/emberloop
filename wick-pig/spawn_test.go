@@ -994,3 +994,67 @@ statuses: [done, blocked]
 		}
 	}
 }
+
+// The same rollback rule for a worktree agent: a failed sibling must not Finish
+// the reused worker, which would drop its worktree and its branch.
+func TestFailedSpawnLeavesAReusedWorktreeAgentAlone(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
+	ex := &worktreeExec{g: g}
+	spawnExec = ex.run
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "20-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeAgentFile(t, root, "hand.md", `---
+name: hand
+description: A worker that stays on its ticket.
+tools: [read]
+checkout: worktree
+blocking: false
+persistent: true
+statuses: [done, blocked]
+---
+{{prompt}}
+`)
+	types, err := LoadAgentTypes(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := spawnToolFor(types, []string{"hand"})
+	call := func(agents []any) (string, error) {
+		raw, _ := json.Marshal(map[string]any{"agents": agents})
+		return tool.Execute(context.Background(), repo, raw)
+	}
+
+	if _, err := call([]any{map[string]any{"type": "hand", "ticket": ticket, "repo": repo}}); err != nil {
+		t.Fatalf("first spawn: %v", err)
+	}
+	created := len(ex.gitCalls)
+
+	// The worker is re-prompted, then the second entry's ticket is missing.
+	if _, err := call([]any{
+		map[string]any{"type": "hand", "ticket": ticket, "repo": repo},
+		map[string]any{"type": "hand", "ticket": "/nope/01-y.md", "repo": repo},
+	}); err == nil {
+		t.Fatal("a missing ticket must fail the spawn")
+	}
+	if len(ex.nudged) != 1 {
+		t.Errorf("the worker must have been re-prompted, nudged %v", ex.nudged)
+	}
+	for _, c := range ex.gitCalls[created:] {
+		if strings.Contains(c, "worktree remove") {
+			t.Errorf("a failed spawn must not drop the reused worker's worktree: %s", c)
+		}
+	}
+	if _, err := recall("20-x"); err != nil {
+		t.Errorf("the reused worker must keep its record: %v", err)
+	}
+}
