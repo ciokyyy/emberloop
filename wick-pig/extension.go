@@ -91,9 +91,11 @@ func reportExtensionWarning(harness string) string {
 		"unknown to herdr. Install herdr-report beside wick or point WICK_HERDR_REPORT at its directory."
 }
 
-// recall returns one worker's record from the store.
+// recall returns one worker's record from the store, under the cross-process
+// lock, so a concurrent spawn or finish cannot leave it reading a store
+// mid-update.
 func recall(id string) (Worker, error) {
-	store, err := load()
+	store, err := loadWorkersLocked()
 	if err != nil {
 		return Worker{}, err
 	}
