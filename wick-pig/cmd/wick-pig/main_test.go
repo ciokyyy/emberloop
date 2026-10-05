@@ -89,7 +89,7 @@ func TestTopLevelSessionResolvesTheOrchestratorSlot(t *testing.T) {
 func TestClaudeFlagDropsThePigOrchestratorSlotModel(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"pig-model","effort":"high"}}}`)
-	if got := topLevelChoice(wick.Choice{Harness: "claude"}); got != (wick.Choice{Harness: "claude"}) {
+	if got := topLevelChoice(wick.Choice{Harness: "claude"}); got != (wick.Choice{Harness: "claude", Model: "sonnet"}) {
 		t.Errorf("orchestrator slot with --claude = %+v, want {claude}", got)
 	}
 }
