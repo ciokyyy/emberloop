@@ -273,23 +273,22 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 	}
 
 	// Whatever blocking agent is still out became backgrounded: from now on
-	// its submit is delivered to the parent as a notice, and the parent's state
-	// lists it until that notice arrives.
+	// its submit is delivered to the parent as a notice. backgroundAgent takes
+	// the child's lock and re-checks its submit, so an agent that submitted in
+	// the meantime is returned here instead of being reported twice.
 	var backgrounded []string
 	for _, a := range agents {
 		if !a.Type.Blocking {
 			continue
 		}
-		if _, ok, _ := ReadAgentSubmit(a.ID); ok {
-			continue
-		}
-		if err := MarkDeliver(a.ID); err != nil {
+		bg, err := backgroundAgent(a.ID)
+		if err != nil {
+			closeSpawned(run, agents)
 			return "", err
 		}
-		backgrounded = append(backgrounded, a.ID)
-	}
-	if err := AddPending(parentID, backgrounded); err != nil {
-		return "", err
+		if bg {
+			backgrounded = append(backgrounded, a.ID)
+		}
 	}
 	return renderSpawn(agents, backgrounded), nil
 }
@@ -436,22 +435,20 @@ func renderPrompt(t AgentType, prompt string) string {
 
 // renderSpawn is the spawn result: each non-blocking agent reported as started,
 // each blocking agent's report with it, and a closing line for the blocking
-// agents that were backgrounded. It never tells the caller to call again.
+// agents that were backgrounded. A backgrounded agent's result is not repeated
+// here: it arrives as a notice. It never tells the caller to call again.
 func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
-	var b strings.Builder
-	for i, a := range agents {
-		if i > 0 {
-			b.WriteString("\n\n")
-		}
+	var parts []string
+	for _, a := range agents {
 		if !a.Type.Blocking {
+			line := fmt.Sprintf("%s %s started.", a.Type.Name, a.ID)
 			if a.Tab != "" {
-				fmt.Fprintf(&b, "%s %s started in %s.", a.Type.Name, a.ID, a.Tab)
-			} else {
-				fmt.Fprintf(&b, "%s %s started.", a.Type.Name, a.ID)
+				line = fmt.Sprintf("%s %s started in %s.", a.Type.Name, a.ID, a.Tab)
 			}
-			if a.Warning != "" {
-				b.WriteString(a.Warning)
-			}
+			parts = append(parts, line+a.Warning)
+			continue
+		}
+		if contains(backgrounded, a.ID) {
 			continue
 		}
 		if s, ok, _ := ReadAgentSubmit(a.ID); ok {
@@ -459,15 +456,12 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 			if s.Report == "" {
 				body = s.Summary
 			}
-			fmt.Fprintf(&b, "%s %s submitted (%s):\n%s", a.Type.Name, a.ID, s.Status, body)
+			parts = append(parts, fmt.Sprintf("%s %s submitted (%s):\n%s", a.Type.Name, a.ID, s.Status, body))
 		}
 	}
 	if len(backgrounded) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("\n\n")
-		}
-		fmt.Fprintf(&b, "still running: %s. Their results will arrive as system notices; end your turn.",
-			strings.Join(backgrounded, ", "))
+		parts = append(parts, fmt.Sprintf("still running: %s. Their results will arrive as system notices; end your turn.",
+			strings.Join(backgrounded, ", ")))
 	}
-	return b.String()
+	return strings.Join(parts, "\n\n")
 }

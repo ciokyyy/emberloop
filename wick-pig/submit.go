@@ -154,16 +154,15 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 	if err := WriteAgentSubmit(s); err != nil {
 		return "", err
 	}
-	// An agent whose submit goes to the parent as a notice delivers it now and
-	// clears itself from the parent's pending list. A blocking agent still
-	// inside its spawn's budget has no delivery: the waiting spawn returns it.
-	if st, ok, err := ReadAgentState(agentID); err != nil {
+	// An agent whose submit goes to the parent as a notice delivers it now. The
+	// decision is made under the child's own lock, so a spawn that
+	// auto-backgrounds it at the same moment leaves exactly one of them owning
+	// the result. A blocking agent still inside its spawn's budget has no
+	// delivery: the waiting spawn returns it.
+	if st, deliver, err := submitDelivers(agentID); err != nil {
 		return "", err
-	} else if ok && st.Deliver {
+	} else if deliver {
 		if err := deliverSubmit(s, st); err != nil {
-			return "", err
-		}
-		if err := RemovePending(st.ParentID, agentID); err != nil {
 			return "", err
 		}
 	}

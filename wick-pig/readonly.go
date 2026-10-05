@@ -2,7 +2,6 @@ package wick
 
 import (
 	"fmt"
-	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,12 +53,6 @@ func once(key string, fn func() (string, error)) (string, error) {
 	case <-time.After(toolBudget):
 		return fmt.Sprintf("still running: %s. Call the same tool again with the same arguments to get its answer; do not start anything else.", key), nil
 	}
-}
-
-func keyOf(kind, text string) string {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(text))
-	return fmt.Sprintf("%s-%08x", kind, h.Sum32())
 }
 
 // readOnlyTimeout bounds one reviewer or scout run.

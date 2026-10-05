@@ -4,18 +4,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // AgentState is a spawned agent's own small record, kept beside the submit
 // store and found by the agent id. It is what lets an agent's submit find its
-// way home: the parent pane recorded at spawn, whether this submit goes to the
-// parent as a notice, and, on the parent's own record, the children that were
-// auto-backgrounded and still owe a result.
+// way home: the parent pane recorded at spawn, and whether this submit goes to
+// the parent as a notice rather than back to a waiting spawn.
 type AgentState struct {
 	ID   string `json:"id"`
 	Type string `json:"type,omitempty"`
-	// ParentID is the spawning agent's id, when there was one: a notice that
-	// arrives clears the child from that agent's Pending list.
+	// ParentID is the spawning agent's id, when there was one. The children an
+	// agent is still waiting on are the agent states that name it as ParentID,
+	// are set to Deliver, and have not submitted: the stop gate reads them.
 	ParentID string `json:"parent_id,omitempty"`
 	// Parent is the spawning session's herdr pane, where a notice is typed.
 	Parent string `json:"parent_pane,omitempty"`
@@ -23,9 +24,6 @@ type AgentState struct {
 	// rather than back to a waiting spawn. Non-blocking agents start this way;
 	// a blocking agent is switched over when its spawn auto-backgrounds it.
 	Deliver bool `json:"deliver,omitempty"`
-	// Pending lists children this agent auto-backgrounded whose results have
-	// not arrived yet. The stop gate reads it to allow a parent to wait.
-	Pending []string `json:"pending,omitempty"`
 }
 
 // agentStateDir holds one file per spawned agent.
@@ -66,71 +64,71 @@ func ReadAgentState(id string) (AgentState, bool, error) {
 	return s, true, nil
 }
 
-// MarkDeliver switches an agent's submits to the notice path. A blocking agent
-// whose spawn ran out of budget is switched this way, so its eventual submit
-// reaches the parent without anyone polling.
-func MarkDeliver(id string) error {
-	s, ok, err := ReadAgentState(id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		s = AgentState{ID: id}
-	}
-	s.Deliver = true
-	return WriteAgentState(s)
-}
-
-// AddPending records children on their parent's state as still owing a result.
-// A parent with no state of its own (a top-level session) has no stop gate to
-// satisfy, so there is nothing to record and no error.
-func AddPending(parentID string, children []string) error {
-	if parentID == "" || len(children) == 0 {
-		return nil
-	}
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	s, _, err := ReadAgentState(parentID)
-	if err != nil {
-		return err
-	}
-	s.ID = parentID
-	for _, c := range children {
-		if !contains(s.Pending, c) {
-			s.Pending = append(s.Pending, c)
+// backgroundAgent switches a child to the notice path, unless it submitted in
+// the meantime. The submit file is written before the child reads its state, so
+// reading the submit and setting Deliver are done together here, under the
+// child's own lock, to leave the child exactly one owner of its result:
+// backgrounded reports true, and a submit that arrived first leaves it false.
+func backgroundAgent(id string) (bool, error) {
+	backgrounded := false
+	err := withFileLock("state-"+id, func() error {
+		if _, ok, err := ReadAgentSubmit(id); err != nil || ok {
+			return err
 		}
-	}
-	return WriteAgentState(s)
+		s, _, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
+		s.ID = id
+		s.Deliver = true
+		backgrounded = true
+		return WriteAgentState(s)
+	})
+	return backgrounded, err
 }
 
-// RemovePending clears one child from its parent's pending list, once its
-// notice has been delivered.
-func RemovePending(parentID, childID string) error {
+// submitDelivers reports whether an agent's submit is to be delivered as a
+// notice, decided under the child's lock against backgroundAgent. It returns
+// the state the notice is sent to.
+func submitDelivers(id string) (AgentState, bool, error) {
+	var st AgentState
+	deliver := false
+	err := withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil || !ok {
+			return err
+		}
+		st, deliver = s, s.Deliver
+		return nil
+	})
+	return st, deliver, err
+}
+
+// PendingChildren is the children an agent is still waiting on: those that name
+// it as their parent, have been set to deliver as notices, and have not
+// submitted yet. A submit clears the child from the list by existing, so no
+// cross-process bookkeeping can leave a delivered child behind.
+func PendingChildren(parentID string) []string {
 	if parentID == "" {
 		return nil
 	}
-	storeMu.Lock()
-	defer storeMu.Unlock()
-	s, ok, err := ReadAgentState(parentID)
-	if err != nil || !ok {
-		return err
-	}
-	kept := s.Pending[:0]
-	for _, c := range s.Pending {
-		if c != childID {
-			kept = append(kept, c)
-		}
-	}
-	s.Pending = kept
-	return WriteAgentState(s)
-}
-
-// PendingChildren is the children an agent has auto-backgrounded and is still
-// waiting on.
-func PendingChildren(parentID string) []string {
-	s, ok, err := ReadAgentState(parentID)
-	if err != nil || !ok {
+	entries, err := os.ReadDir(agentStateDir())
+	if err != nil {
 		return nil
 	}
-	return s.Pending
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		s, ok, err := ReadAgentState(strings.TrimSuffix(e.Name(), ".json"))
+		if err != nil || !ok || s.ParentID != parentID || !s.Deliver {
+			continue
+		}
+		if _, submitted, _ := ReadAgentSubmit(s.ID); submitted {
+			continue
+		}
+		out = append(out, s.ID)
+	}
+	return out
 }

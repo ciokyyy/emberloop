@@ -82,15 +82,20 @@ func paneNotFound(res Result) bool {
 }
 
 // withPaneLock runs fn while holding a lock for one parent pane, so two agents
-// submitting at the same moment never type over each other. The lock is a file
-// lock, so it holds across the separate wick-mcp processes the agents run in,
-// not just within one.
+// submitting at the same moment never type over each other.
 func withPaneLock(pane string, fn func() error) error {
-	dir := filepath.Join(filepath.Dir(statePath), "pane-locks")
+	return withFileLock("pane-"+pane, fn)
+}
+
+// withFileLock runs fn while holding a file lock named key. wick's agents run
+// in separate wick-mcp processes, so an in-process mutex cannot serialize what
+// they do to a shared file; a file lock holds across all of them.
+func withFileLock(key string, fn func() error) error {
+	dir := filepath.Join(filepath.Dir(statePath), "locks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, lockName(pane)+".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, lockName(key)+".lock"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
@@ -102,10 +107,10 @@ func withPaneLock(pane string, fn func() error) error {
 	return fn()
 }
 
-// lockName turns a pane id into a file name safe on any filesystem.
-func lockName(pane string) string {
+// lockName turns a key into a file name safe on any filesystem.
+func lockName(key string) string {
 	var b strings.Builder
-	for _, r := range pane {
+	for _, r := range key {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
 			b.WriteRune(r)
@@ -114,7 +119,7 @@ func lockName(pane string) string {
 		}
 	}
 	if b.Len() == 0 {
-		return "pane"
+		return "lock"
 	}
 	return b.String()
 }

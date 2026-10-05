@@ -51,6 +51,7 @@ func TestNonBlockingSubmitPromptsTheParentPane(t *testing.T) {
 	}
 	call := strings.Join(rec.calls[0], " ")
 	if !strings.HasPrefix(call, herdrBin()+" agent prompt wP ") {
+		t.Fatalf("the notice must be prompted into the parent pane, got %q", call)
 	}
 	for _, want := range []string{
 		"<system-notice> worker w1 submitted (done).",
@@ -208,5 +209,41 @@ func TestSubmitsToAPaneSerialize(t *testing.T) {
 	wg.Wait()
 	if got := atomic.LoadInt32(&c2.max); got < 2 {
 		t.Errorf("deliveries to different panes must overlap: max concurrent = %d, want 2", got)
+	}
+}
+
+// backgroundAgent and a submit are serialized by the child's lock: one of them
+// owns the result. A child that already submitted is left alone; one that has
+// not is switched to the notice path.
+func TestBackgroundAgentLeavesASubmittedChildAlone(t *testing.T) {
+	deliverTestState(t)
+	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", ParentID: "p", Parent: "wP"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: "a1", Type: "scout", Status: "answered", Report: "facts"}); err != nil {
+		t.Fatal(err)
+	}
+	bg, err := backgroundAgent("a1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bg {
+		t.Error("an agent that already submitted must not be backgrounded")
+	}
+	if st, ok, _ := ReadAgentState("a1"); ok && st.Deliver {
+		t.Error("a submitted agent must not be switched to the notice path")
+	}
+	if err := WriteAgentState(AgentState{ID: "a2", Type: "scout", ParentID: "p", Parent: "wP"}); err != nil {
+		t.Fatal(err)
+	}
+	bg, err = backgroundAgent("a2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bg {
+		t.Error("an agent with no submit must be backgrounded")
+	}
+	if st, ok, _ := ReadAgentState("a2"); !ok || !st.Deliver {
+		t.Errorf("a backgrounded agent must have Deliver set: %+v ok=%v", st, ok)
 	}
 }

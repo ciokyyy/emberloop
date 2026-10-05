@@ -569,3 +569,71 @@ func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
 		}
 	}
 }
+
+// noneScoutExec launches scouts and never submits them, so every one is
+// backgrounded.
+type noneScoutExec struct {
+	g   *fakeGrid
+	mu  sync.Mutex
+	ids []string
+}
+
+func (s *noneScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == herdrBin() && len(args) > 3 && args[0] == "pane" && args[1] == "run" {
+		s.mu.Lock()
+		s.ids = append(s.ids, envIn(args[3], "WICK_AGENT_ID"))
+		s.mu.Unlock()
+		return Result{Stdout: "{}"}, nil
+	}
+	return s.g.run(cmd, args, opts)
+}
+
+// Two backgrounded children clear from the parent's pending list one at a
+// time, as each submits: the state is derived from the children, so a notice
+// landing in its own wick-mcp process can never leave a delivered child behind.
+func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
+	spawnTestState(t)
+	oldBudget, oldDeliver := toolBudget, deliverExec
+	toolBudget = 30 * time.Millisecond
+	t.Cleanup(func() { toolBudget, deliverExec = oldBudget, oldDeliver })
+
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_PANE_ID", "wP")
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	ex := &noneScoutExec{g: g}
+	spawnExec = ex.run
+
+	spawn, _ := spawnToolForRole(t, "implement")
+	if _, err := spawn("/repo", map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "first"},
+		map[string]any{"type": "scout", "prompt": "second"},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	ex.mu.Lock()
+	ids := append([]string{}, ex.ids...)
+	ex.mu.Unlock()
+	if len(ids) != 2 {
+		t.Fatalf("launched %d scouts, want 2", len(ids))
+	}
+	if got := PendingChildren("parent1"); len(got) != 2 {
+		t.Fatalf("both children must be pending, got %v", got)
+	}
+
+	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
+	deliverExec = rec.run
+	scout := AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}
+	if _, err := submitOnce(t, scout, ids[0], "answered", "report", "one"); err != nil {
+		t.Fatal(err)
+	}
+	if got := PendingChildren("parent1"); len(got) != 1 || got[0] != ids[1] {
+		t.Fatalf("one submit must clear only its own child, got %v", got)
+	}
+	if _, err := submitOnce(t, scout, ids[1], "answered", "report", "two"); err != nil {
+		t.Fatal(err)
+	}
+	if got := PendingChildren("parent1"); len(got) != 0 {
+		t.Errorf("all submitted children must clear, got %v", got)
+	}
+}
