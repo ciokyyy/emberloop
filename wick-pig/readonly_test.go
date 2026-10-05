@@ -2,10 +2,13 @@ package wick
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // recorder is an Exec that captures calls and answers from a script.
@@ -201,5 +204,117 @@ func TestReadOnlyDoesNotWidenReadAccess(t *testing.T) {
 		if strings.Contains(strings.Join(call, " "), "WICK_READ_ALLOW") {
 			t.Fatalf("reviewer launch still sets WICK_READ_ALLOW: %v", call)
 		}
+	}
+}
+
+// concExec is a fake herdr that records whether read-only launches overlap.
+// The split handler sleeps, so an unserialized split shows up as two at once.
+type concExec struct {
+	mu           sync.Mutex
+	splitActive  int
+	maxSplit     int
+	inFlight     int
+	maxInFlight  int
+	launches     int
+	pending      [][2]string
+	bothLaunched chan struct{}
+}
+
+func (c *concExec) run(cmd string, args []string, _ ExecOpts) (Result, error) {
+	if cmd != herdrBin() {
+		return Result{}, nil
+	}
+	switch args[1] {
+	case "split":
+		c.mu.Lock()
+		c.splitActive++
+		if c.splitActive > c.maxSplit {
+			c.maxSplit = c.splitActive
+		}
+		c.mu.Unlock()
+		time.Sleep(30 * time.Millisecond)
+		c.mu.Lock()
+		c.splitActive--
+		c.inFlight++
+		if c.inFlight > c.maxInFlight {
+			c.maxInFlight = c.inFlight
+		}
+		pane := fmt.Sprintf("p%d", c.inFlight)
+		c.mu.Unlock()
+		return Result{Stdout: `{"result":{"pane":{"pane_id":"` + pane + `"}}}`}, nil
+	case "run":
+		w := strings.Fields(args[3])
+		var dir, id string
+		for i, a := range w {
+			if a == "--session-dir" {
+				dir = w[i+1]
+			}
+			if a == "--session-id" {
+				id = w[i+1]
+			}
+		}
+		c.mu.Lock()
+		c.pending = append(c.pending, [2]string{dir, id})
+		c.launches++
+		if c.launches == 2 {
+			close(c.bothLaunched)
+		}
+		c.mu.Unlock()
+	case "close":
+		c.mu.Lock()
+		c.inFlight--
+		c.mu.Unlock()
+	}
+	return Result{Stdout: "{}"}, nil
+}
+
+// replyAll writes each launched session's final transcript, the event both
+// waits are blocked on.
+func (c *concExec) replyAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.pending {
+		_ = os.MkdirAll(filepath.Join(p[0], "--x--"), 0o755)
+		rec, _ := json.Marshal(map[string]any{"type": "message", "message": map[string]any{
+			"role": "assistant", "stopReason": "stop", "content": []any{map[string]any{"type": "text", "text": "fact"}}}})
+		_ = os.WriteFile(filepath.Join(p[0], "--x--", "t_"+p[1]+".jsonl"), append(rec, '\n'), 0o644)
+	}
+}
+
+// Two read-only launches at once must not race on the herdr layout: the split
+// is serialized. Everything after it, the pane run and the wait for the reply,
+// stays concurrent, so both scouts get going before either answers.
+func TestConcurrentReadOnlyLaunchesSerializeOnlyTheSplit(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	oldPoll, oldTimeout := pollEvery, readOnlyTimeout
+	pollEvery, readOnlyTimeout = 5*time.Millisecond, 5*time.Second
+	t.Cleanup(func() { pollEvery, readOnlyTimeout = oldPoll, oldTimeout })
+
+	ex := &concExec{bothLaunched: make(chan struct{})}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := ReadOnly(ex.run, t.TempDir(), "", "q"); err != nil {
+				t.Errorf("read-only launch: %v", err)
+			}
+		}()
+	}
+
+	select {
+	case <-ex.bothLaunched:
+	case <-time.After(3 * time.Second):
+		t.Fatal("two launches never reached their wait together: the lock covers more than the split")
+	}
+	// Both are waiting now; the replies release them.
+	ex.replyAll()
+	wg.Wait()
+
+	if ex.maxSplit != 1 {
+		t.Errorf("split calls overlapped (%d at once): the layout can race", ex.maxSplit)
+	}
+	if ex.maxInFlight < 2 {
+		t.Errorf("only %d launch(es) in flight at once: the waits did not overlap", ex.maxInFlight)
 	}
 }

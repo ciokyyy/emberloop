@@ -17,12 +17,14 @@ import (
 type fnTool struct {
 	name, desc string
 	schema     map[string]any
+	readOnly   bool
 	run        func(root string, params map[string]any) (string, error)
 }
 
 func (t fnTool) Name() string           { return t.name }
 func (t fnTool) Description() string    { return t.desc }
 func (t fnTool) Schema() map[string]any { return t.schema }
+func (t fnTool) ReadOnly() bool         { return t.readOnly }
 func (t fnTool) Execute(_ context.Context, root string, args json.RawMessage) (string, error) {
 	params := map[string]any{}
 	if len(args) > 0 {
@@ -239,6 +241,7 @@ var scoutTool = fnTool{
 	schema: schema(map[string]any{
 		"question": map[string]any{"type": "string", "description": "One specific question."},
 	}, "question"),
+	readOnly: true,
 	run: func(root string, params map[string]any) (string, error) {
 		q := str(params, "question")
 		if q == "" {

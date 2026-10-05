@@ -17,3 +17,8 @@ type Tool interface {
 	Schema() map[string]any
 	Execute(ctx context.Context, root string, args json.RawMessage) (string, error)
 }
+
+// ReadOnly marks a tool that only observes: it changes no file, no process and
+// no store. A harness may run such a call in parallel with others, which the
+// MCP server advertises as readOnlyHint.
+type ReadOnly interface{ ReadOnly() bool }

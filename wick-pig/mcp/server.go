@@ -110,9 +110,15 @@ func (s *server) handle(req request) {
 	case "tools/list":
 		listed := make([]map[string]any, 0, len(s.order))
 		for _, t := range s.order {
-			listed = append(listed, map[string]any{
+			entry := map[string]any{
 				"name": t.Name(), "description": t.Description(), "inputSchema": t.Schema(),
-			})
+			}
+			// readOnlyHint is what lets a harness batch a call with others, so
+			// it goes on exactly the tools that only look.
+			if ro, ok := t.(tools.ReadOnly); ok && ro.ReadOnly() {
+				entry["annotations"] = map[string]any{"readOnlyHint": true}
+			}
+			listed = append(listed, entry)
 		}
 		s.reply(req.ID, map[string]any{"tools": listed}, nil)
 	default:

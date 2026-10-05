@@ -24,7 +24,8 @@ func obj(props map[string]any, required ...string) map[string]any {
 
 type readTool struct{}
 
-func (readTool) Name() string { return "read" }
+func (readTool) Name() string   { return "read" }
+func (readTool) ReadOnly() bool { return true }
 func (readTool) Description() string {
 	return "Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it."
 }

@@ -67,6 +67,11 @@ var readOnlyTimeout = 10 * time.Minute
 
 var pollEvery = time.Second
 
+// splitMu serializes the herdr pane split across concurrent read-only
+// launches. It covers the split alone: the run, the wait and the reply read
+// stay concurrent.
+var splitMu sync.Mutex
+
 func pigBin() string {
 	if p := os.Getenv("WICK_PIG"); p != "" {
 		return p
@@ -108,8 +113,14 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	// pane gets: measured on a scratch pane, a 229-column split at 0.3 left
 	// the original 69 columns and gave the new pane 160. So the reviewer gets
 	// 0.7 here, and tilePanes below evens the tab back out.
+	// Two read-only launches at once must not race on the layout: herdr
+	// splits the pane the caller is in, and a second split against a
+	// half-made layout lands wrong. Only the split is serialized; the agent
+	// then runs and is waited on concurrently.
+	splitMu.Lock()
 	split, err := herdrJSON(run, []string{"pane", "split", "--current", "--direction", "down",
 		"--ratio", "0.3", "--cwd", cwd, "--no-focus"}, 15*time.Second)
+	splitMu.Unlock()
 	if err != nil {
 		return "", err
 	}

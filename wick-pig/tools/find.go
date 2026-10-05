@@ -21,7 +21,8 @@ type findTool struct {
 	lexicalOnly bool
 }
 
-func (findTool) Name() string { return "find" }
+func (findTool) Name() string   { return "find" }
+func (findTool) ReadOnly() bool { return true }
 func (findTool) Description() string {
 	return "Semantic grep: locate files and line ranges that implement a concept or behavior. Ranked by a decisions model; falls back to keyword ranking when none is available."
 }
