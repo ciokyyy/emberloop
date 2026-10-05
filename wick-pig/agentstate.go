@@ -95,24 +95,49 @@ func backgroundAgent(id string) (bool, error) {
 // clears the this-turn flag on its last submit so only a fresh turn's submit
 // answers the tell. Both writes happen under the child's own lock, so a submit
 // arriving at the same instant is either claimed here or delivered as a notice,
-// never both.
-func claimNextSubmit(id string) error {
-	return withFileLock("state-"+id, func() error {
-		if s, ok, err := ReadAgentState(id); err != nil {
+// never both. It returns an undo, so a tell whose delivery then fails puts the
+// child back on the notice path rather than leaving its result owned by nobody.
+func claimNextSubmit(id string) (undo func() error, err error) {
+	var (
+		prevState  AgentState
+		hadState   bool
+		prevSubmit AgentSubmit
+		hadSubmit  bool
+	)
+	err = withFileLock("state-"+id, func() error {
+		prevState, hadState, err = ReadAgentState(id)
+		if err != nil || !hadState {
 			return err
-		} else if ok {
-			s.Deliver = false
-			if err := WriteAgentState(s); err != nil {
-				return err
-			}
 		}
-		sub, ok, err := ReadAgentSubmit(id)
-		if err != nil || !ok || !sub.ThisTurn {
+		s := prevState
+		s.Deliver = false
+		if err := WriteAgentState(s); err != nil {
 			return err
 		}
+		prevSubmit, hadSubmit, err = ReadAgentSubmit(id)
+		if err != nil || !hadSubmit || !prevSubmit.ThisTurn {
+			return err
+		}
+		sub := prevSubmit
 		sub.ThisTurn = false
 		return WriteAgentSubmit(sub)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return func() error {
+		return withFileLock("state-"+id, func() error {
+			if hadState {
+				if err := WriteAgentState(prevState); err != nil {
+					return err
+				}
+			}
+			if hadSubmit {
+				return WriteAgentSubmit(prevSubmit)
+			}
+			return nil
+		})
+	}, nil
 }
 
 // backgroundToldAgent switches a blocking agent that a tell waited on to the

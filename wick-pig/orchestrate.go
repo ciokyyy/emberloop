@@ -99,14 +99,18 @@ func requireWorktreeAgent(id string) error {
 	if !ok {
 		return fmt.Errorf("unknown agent %q", id)
 	}
-	t, ok := mustLoadAgentTypes(cwd())[st.Type]
-	if !ok {
-		return fmt.Errorf("agent %s has unknown type %q", id, st.Type)
-	}
-	if t.Checkout != "worktree" {
+	if t, ok := mustLoadAgentTypes(cwd())[st.Type]; ok {
+		if t.Checkout == "worktree" {
+			return nil
+		}
 		return fmt.Errorf("finish works only for a worktree agent; %s is a %s (checkout %q)", id, t.Name, t.Checkout)
 	}
-	return nil
+	// Its type definition is gone from this repo, but a worktree agent still
+	// holds a worktree record: finish that rather than strand it.
+	if w, err := recall(id); err == nil && w.Worktree != "" {
+		return nil
+	}
+	return fmt.Errorf("agent %s has unknown type %q", id, st.Type)
 }
 
 var finishTool = fnTool{

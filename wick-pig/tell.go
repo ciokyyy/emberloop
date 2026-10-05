@@ -49,11 +49,15 @@ func tellAgent(run Exec, id, text string) (string, error) {
 	}
 
 	// A blocking agent's next submit is the answer to this message: claim it,
-	// so it is returned here rather than delivered as a notice.
-	if err := claimNextSubmit(id); err != nil {
+	// so it is returned here rather than delivered as a notice. If the message
+	// does not reach the agent, put the child back so its result still lands
+	// somewhere.
+	undo, err := claimNextSubmit(id)
+	if err != nil {
 		return "", err
 	}
 	if err := Nudge(run, st.Pane, text); err != nil {
+		_ = undo()
 		return "", fmt.Errorf("could not deliver to %s: %w", id, err)
 	}
 

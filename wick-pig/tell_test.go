@@ -191,3 +191,33 @@ func TestFinishMergesAWorktreeAgent(t *testing.T) {
 		t.Errorf("finish must merge once the reviewers passed, got %q", out)
 	}
 }
+
+// A tell whose delivery fails puts the child back on the notice path, so a
+// result the tell never got to wait for is still delivered rather than lost.
+func TestTellRestoresTheChildWhenDeliveryFails(t *testing.T) {
+	tellTestState(t)
+	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", Pane: "p2", Parent: "wP", ParentID: "p", Deliver: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: "a1", Type: "scout", Status: "answered", Report: "facts", ThisTurn: true}); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{reply: func(_ string, args []string) Result {
+		if args[0] == "pane" {
+			return Result{Code: 1, Stderr: "pane is gone"}
+		}
+		return Result{Code: 1} // herdr refuses `agent prompt` for a pig pane
+	}}
+	tellExec = rec.run
+
+	tell := toolForRole(t, "implement", "tell")
+	if _, err := tell("/repo", map[string]any{"agent": "a1", "text": "again"}); err == nil {
+		t.Fatal("a failed delivery must be reported")
+	}
+	if st, _, _ := ReadAgentState("a1"); !st.Deliver {
+		t.Error("a failed tell must leave the child on the notice path")
+	}
+	if sub, _, _ := ReadAgentSubmit("a1"); !sub.ThisTurn {
+		t.Error("a failed tell must leave the child's submit as this turn's")
+	}
+}
