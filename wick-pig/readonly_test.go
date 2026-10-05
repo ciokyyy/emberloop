@@ -186,3 +186,20 @@ func TestSkillCommandsAddressDependsOnHarness(t *testing.T) {
 		t.Errorf("pig must not be given a wick:// address it cannot resolve:\n%s", pig)
 	}
 }
+
+// read opens the prompt and diff by absolute path on its own, so a reviewer
+// launch must not widen read's access any further.
+func TestReadOnlyDoesNotWidenReadAccess(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	rec := &recorder{reply: func(cmd string, args []string) Result {
+		return fakeHerdr(cmd, args, "no defects found", Result{})
+	}}
+	if _, err := ReadOnly(rec.run, t.TempDir(), "", "look"); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range rec.calls {
+		if strings.Contains(strings.Join(call, " "), "WICK_READ_ALLOW") {
+			t.Fatalf("reviewer launch still sets WICK_READ_ALLOW: %v", call)
+		}
+	}
+}

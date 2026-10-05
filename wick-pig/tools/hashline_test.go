@@ -145,14 +145,18 @@ func TestReadPlainCarriesTagAndNumbers(t *testing.T) {
 	}
 }
 
-func TestReadPlainAcceptsAbsolutePathsInsideWorkspace(t *testing.T) {
+func TestReadPlainOpensAbsolutePathsAnywhere(t *testing.T) {
 	dir, path, _ := seed(t, five)
 	// A model routinely hands back the absolute path it was just given.
 	if _, err := readPlain(dir, path, 0, 0); err != nil {
 		t.Fatalf("an absolute path inside the workspace must be served: %v", err)
 	}
-	if _, err := readPlain(dir, filepath.Join(dir, "..", "elsewhere.txt"), 0, 0); err == nil {
-		t.Error("a path outside the workspace must be refused")
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere.txt")
+	if err := os.WriteFile(elsewhere, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPlain(dir, elsewhere, 0, 0); err != nil {
+		t.Fatalf("an absolute path outside the workspace must be served: %v", err)
 	}
 }
 

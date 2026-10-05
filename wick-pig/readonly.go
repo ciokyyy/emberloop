@@ -92,8 +92,7 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	sess := Session{Role: "review", Cwd: cwd, Model: model, ID: newSessionID(), Dir: filepath.Join(dir, "sessions"),
-		ReadAllow: []string{filepath.Dir(statePath)}}
+	sess := Session{Role: "review", Cwd: cwd, Model: model, ID: newSessionID(), Dir: filepath.Join(dir, "sessions")}
 	promptPath := filepath.Join(dir, sess.ID+".prompt")
 	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
 		return "", err

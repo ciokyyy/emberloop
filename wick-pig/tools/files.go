@@ -52,15 +52,9 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	if strings.HasPrefix(p.Path, wickScheme) {
 		return readWick(p.Path, p.Offset, p.Limit)
 	}
-	// WICK_READ_ALLOW lists extra directories read may open by absolute path,
-	// so a reviewer can read the diff and prompt a launcher wrote for it.
-	if filepath.IsAbs(p.Path) {
-		for _, dir := range filepath.SplitList(os.Getenv("WICK_READ_ALLOW")) {
-			if rel, err := filepath.Rel(dir, p.Path); err == nil && !strings.HasPrefix(rel, "..") {
-				return readPlain(dir, p.Path, p.Offset, p.Limit)
-			}
-		}
-	}
+	// read opens any absolute path, so a session can reach its brief, state,
+	// logs and transcripts outside the workspace. A relative path stays under
+	// root; readPlain refuses the credential deny list in either case.
 	return readPlain(root, p.Path, p.Offset, p.Limit)
 }
 
@@ -108,6 +102,9 @@ func readWick(addr string, offset, limit int) (string, error) {
 	}
 	if info.IsDir() {
 		return wickIndex(addr, full)
+	}
+	if err := refuseCredential(addr, full); err != nil {
+		return "", err
 	}
 	return renderFile(addr, full, offset, limit)
 }

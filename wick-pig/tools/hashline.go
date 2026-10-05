@@ -345,17 +345,37 @@ func parseHashlineOps(text string) ([]patchOp, error) {
 // readPlain renders a source file with line numbers and its snapshot tag. The
 // error names why a target is not rendered here.
 //
+// read opens any path: an absolute target is taken as given, a relative one is
+// resolved under baseDir. The credential deny list is checked first, so a
+// secret never reaches the model even though the path is otherwise readable.
+//
 // Nothing is delegated to pig. ctx.ExecuteTool("read") resolves back to THIS
 // tool rather than to the host builtin — a read of a binary file returns the
 // re-entrancy error rather than pig's rendering — so once this tool shadows
 // read there is no route to its PDF/notebook/archive handling. Verified
 // against pig 0.4.0; see scripts/read-precedence.sh.
 func readPlain(baseDir, target string, offset, limit int) (string, error) {
-	full, err := resolveInside(baseDir, target)
+	full, err := readTarget(baseDir, target)
 	if err != nil {
 		return "", err
 	}
+	if err := refuseCredential(target, full); err != nil {
+		return "", err
+	}
 	return renderFile(target, full, offset, limit)
+}
+
+// readTarget resolves a read target to the path on disk. An absolute target is
+// taken as given — read opens any path — while a relative one is joined under
+// baseDir and refused if it escapes it.
+func readTarget(baseDir, target string) (string, error) {
+	if target == "" {
+		return "", fmt.Errorf("no path given")
+	}
+	if filepath.IsAbs(target) {
+		return filepath.Clean(target), nil
+	}
+	return resolveInside(baseDir, target)
 }
 
 // renderFile renders the regular text file at full, labelling it display in the

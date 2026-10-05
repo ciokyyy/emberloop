@@ -22,16 +22,15 @@ const systemPrompt = "Your file and shell tools are wick's: read, find, edit, wr
 
 // Session is everything an adapter needs to start one agent.
 type Session struct {
-	Role      string // picks the tool set served by wick-mcp
-	Model     string
-	Cwd       string // the directory it runs in; trusted before launch when set
-	Prompt    string // first message
-	Headless  bool   // print one answer and exit
-	ID        string // session id; names the transcript so the reply can be read back
-	Dir       string // where a harness that takes a session dir should keep it
-	Label     string // names the session so herdr can address it
-	Skills    []string
-	ReadAllow []string // extra dirs the read tool may open by absolute path
+	Role     string // picks the tool set served by wick-mcp
+	Model    string
+	Cwd      string // the directory it runs in; trusted before launch when set
+	Prompt   string // first message
+	Headless bool   // print one answer and exit
+	ID       string // session id; names the transcript so the reply can be read back
+	Dir      string // where a harness that takes a session dir should keep it
+	Label    string // names the session so herdr can address it
+	Skills   []string
 }
 
 // Command is a ready-to-exec invocation.
@@ -116,11 +115,7 @@ func (c Command) Line() string {
 }
 
 func roleEnv(s Session) []string {
-	env := []string{"WICK_ROLE=" + s.Role}
-	if len(s.ReadAllow) > 0 {
-		env = append(env, "WICK_READ_ALLOW="+strings.Join(s.ReadAllow, string(os.PathListSeparator)))
-	}
-	return env
+	return []string{"WICK_ROLE=" + s.Role}
 }
 
 // pigHarness: pig loads wick-mcp from its mcp.json, so the built-in tools are

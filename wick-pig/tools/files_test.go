@@ -165,20 +165,96 @@ func TestReadWickIndexHandlesSkillWithNoDescription(t *testing.T) {
 	}
 }
 
-func TestReadAllowStillServesAbsolutePaths(t *testing.T) {
+func TestReadOpensAnAbsolutePathOutsideTheWorkspace(t *testing.T) {
 	root := t.TempDir()
-	allowed := t.TempDir()
-	path := filepath.Join(allowed, "diff.patch")
-	if err := os.WriteFile(path, []byte("--- a\n+++ b\n"), 0o644); err != nil {
+	outside := filepath.Join(t.TempDir(), "brief.md")
+	if err := os.WriteFile(outside, []byte("the brief\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run(t, readTool{}, root, map[string]any{"path": path}); err == nil {
-		t.Fatal("an absolute path outside the workspace must be refused without WICK_READ_ALLOW")
+	out, err := run(t, readTool{}, root, map[string]any{"path": outside})
+	if err != nil {
+		t.Fatalf("read of an absolute path outside the workspace failed: %v", err)
 	}
-	t.Setenv("WICK_READ_ALLOW", allowed)
-	out, err := run(t, readTool{}, root, map[string]any{"path": path})
-	if err != nil || !strings.Contains(out, "+++ b") {
-		t.Fatalf("WICK_READ_ALLOW read = %q, %v", out, err)
+	if !strings.Contains(out, "the brief") {
+		t.Fatalf("read = %q", out)
+	}
+}
+
+func TestReadRefusesCredentialPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	secret := "SUPER-SECRET-VALUE"
+	paths := []string{
+		filepath.Join(home, ".ssh", "id_rsa"),
+		filepath.Join(home, ".pig", "agent", "auth.json"),
+		filepath.Join(home, ".pig", "agent", "mcp-auth.json"),
+		filepath.Join(home, ".claude.json"),
+		filepath.Join(home, ".claude", ".credentials.json"),
+		filepath.Join(home, "project", ".env"),
+		filepath.Join(home, "project", ".env.local"),
+	}
+	for _, p := range paths {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(secret), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The whole ~/.ssh directory is a credential path, not only the files in it.
+	paths = append(paths, filepath.Join(home, ".ssh"))
+
+	root := t.TempDir()
+	for _, p := range paths {
+		out, err := run(t, readTool{}, root, map[string]any{"path": p})
+		if err == nil {
+			t.Errorf("read served credential path %s: %q", p, out)
+			continue
+		}
+		if !strings.Contains(err.Error(), "credential path") {
+			t.Errorf("read %s = %q, must name it a credential path", p, err)
+		}
+		if strings.Contains(out, secret) {
+			t.Errorf("read leaked the secret at %s", p)
+		}
+	}
+	// A neighbour is still readable, so the deny list is narrow.
+	ok := filepath.Join(home, "notes.md")
+	if err := os.WriteFile(ok, []byte("plain note\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(t, readTool{}, root, map[string]any{"path": ok}); err != nil || !strings.Contains(out, "plain note") {
+		t.Errorf("a non-credential file under HOME must be readable: %q, %v", out, err)
+	}
+}
+
+func TestReadRefusesEnvFileInsideTheWorkspace(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TOKEN=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(t, readTool{}, root, map[string]any{"path": ".env"}); err == nil || !strings.Contains(err.Error(), "credential path") {
+		t.Fatalf("relative .env read = %v", err)
+	}
+}
+
+func TestReadRefusesASymlinkIntoACredentialPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "id_rsa"), []byte("PRIVATE KEY\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	link := filepath.Join(root, "innocent.txt")
+	if err := os.Symlink(filepath.Join(home, ".ssh", "id_rsa"), link); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(t, readTool{}, root, map[string]any{"path": link}); err == nil {
+		t.Fatalf("a symlink into ~/.ssh must be refused, served %q", out)
 	}
 }
 
@@ -241,5 +317,20 @@ func TestReadWickIndexReadsBlockScalarDescription(t *testing.T) {
 	}
 	if strings.Contains(out, "should be ignored") {
 		t.Fatalf("a nested description was read as the skill's:\n%s", out)
+	}
+}
+
+// The credential deny list is a property of read, not of one address scheme:
+// a .env sitting inside a skill namespace is refused the same as one on disk.
+func TestReadWickRefusesCredentialPaths(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{"grilling": "---\ndescription: x\n---\n"})
+	env := filepath.Join(root, "matt-pocock", "grilling", ".env")
+	if err := os.WriteFile(env, []byte("TOKEN=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock/grilling/.env"}); err == nil {
+		t.Fatalf("a .env under a namespace must be refused, served %q", out)
 	}
 }
