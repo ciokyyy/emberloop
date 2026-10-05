@@ -408,6 +408,9 @@ func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAge
 		AgentType: t.Name,
 		AgentID:   id,
 		Dir:       filepath.Join(readOnlyDir(), "sessions"),
+		// A scout inside a run archives under it: the spawning session
+		// carries its spec in the environment, the way workers record it.
+		Spec: os.Getenv("WICK_SPEC"),
 	}
 	spaceSpawns()
 	agent, err := launchPlacedAgent(run, readOnlyPlace{Overflow: "scouts"}, choice.Harness, sess, renderPrompt(t, prompt))

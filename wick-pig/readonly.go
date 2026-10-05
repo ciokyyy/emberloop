@@ -102,7 +102,10 @@ func readOnlyDir() string { return filepath.Join(filepath.Dir(statePath), "reado
 // reviewer that outlives one tool call can be found again by its id. The agent
 // id is the session id, so every reviewer and scout carries one.
 func readOnlySession(id, cwd, model, effort string) Session {
-	return Session{Role: "review", Cwd: cwd, Model: model, Effort: effort, ID: id, AgentID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
+	return Session{Role: "review", Cwd: cwd, Model: model, Effort: effort, ID: id, AgentID: id, Dir: filepath.Join(readOnlyDir(), "sessions"),
+		// A read-only agent inside a run archives under it: the calling
+		// session carries its spec in the environment.
+		Spec: os.Getenv("WICK_SPEC")}
 }
 
 // startReadOnly launches a read-only reviewer on prompt in a pane placed by

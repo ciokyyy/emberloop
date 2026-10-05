@@ -503,6 +503,9 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 		Role: "agent", Cwd: p.tree, Model: choice.Model, Effort: choice.Effort, ID: id,
 		AgentType: t.Name, AgentID: id,
 		Dir: filepath.Join(readOnlyDir(), "sessions"),
+		// A reviewer inside a run archives under it: the spawning worker
+		// carries its spec in the environment, the way workers record it.
+		Spec: os.Getenv("WICK_SPEC"),
 	}
 	place := p.place
 	notice := ""
