@@ -1,4 +1,4 @@
-package wick
+package tools
 
 import (
 	"os"

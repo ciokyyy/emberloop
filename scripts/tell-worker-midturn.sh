@@ -5,7 +5,7 @@
 # mid-turn.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-WICK=/home/cioky/Projects/wick-simple/wick
+WICK=/home/cioky/Projects/wick-simple/wick-pig
 REPORT=/home/cioky/Projects/wick-simple/herdr-report
 DIR=/tmp/wick-tell2
 

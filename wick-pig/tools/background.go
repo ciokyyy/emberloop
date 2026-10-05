@@ -1,0 +1,110 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// backgroundTool runs a long-lived command (a dev server, a watcher) in a
+// herdr pane split beside the session, so the model can read its output and
+// close it, and the human can watch it. bash would block until its timeout and
+// then kill the process.
+//
+// ponytail: panes are not tracked. start returns the pane id and the model
+// carries it; a pane the model forgets is closed by the human with the pane.
+type backgroundTool struct{}
+
+func (backgroundTool) Name() string { return "background" }
+func (backgroundTool) Description() string {
+	return `Run a command that does not exit (dev server, watcher, tail) in its own pane beside this session. Never start one with bash.
+
+Actions:
+- start: command. Returns the pane id.
+- read: pane, optional lines (default 40). Returns recent pane output.
+- stop: pane. Closes the pane and ends the process.`
+}
+func (backgroundTool) Schema() map[string]any {
+	return obj(map[string]any{
+		"action":  map[string]any{"type": "string", "enum": []any{"start", "read", "stop"}},
+		"command": map[string]any{"type": "string", "description": "start: the command to run."},
+		"pane":    map[string]any{"type": "string", "description": "read, stop: the pane id start returned."},
+		"lines":   map[string]any{"type": "integer", "description": "read: how many recent lines. Default 40."},
+	}, "action")
+}
+
+func herdr(ctx context.Context, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "herdr", args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("herdr %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func (backgroundTool) Execute(ctx context.Context, root string, args json.RawMessage) (string, error) {
+	var p struct {
+		Action, Command, Pane string
+		Lines                 int
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid background parameters: %w", err)
+	}
+	switch p.Action {
+	case "start":
+		if strings.TrimSpace(p.Command) == "" {
+			return "", errors.New("command is required")
+		}
+		if os.Getenv("HERDR_PANE_ID") == "" {
+			return "", errors.New("not inside herdr, so there is no pane to split; run it with bash and a trailing & instead")
+		}
+		out, err := herdr(ctx, "pane", "split", "--current", "--direction", "down", "--ratio", "0.3", "--cwd", root, "--no-focus")
+		if err != nil {
+			return "", err
+		}
+		var reply struct {
+			Result struct {
+				Pane struct {
+					ID string `json:"pane_id"`
+				} `json:"pane"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(out), &reply); err != nil || reply.Result.Pane.ID == "" {
+			return "", fmt.Errorf("herdr split returned no pane id: %.200s", out)
+		}
+		pane := reply.Result.Pane.ID
+		if _, err := herdr(ctx, "pane", "run", pane, p.Command); err != nil {
+			_, _ = herdr(ctx, "pane", "close", pane)
+			return "", err
+		}
+		return fmt.Sprintf("started in pane %s. Next: background(action=\"read\", pane=\"%s\") to check it, background(action=\"stop\", pane=\"%s\") when done.", pane, pane, pane), nil
+	case "read":
+		if p.Pane == "" {
+			return "", errors.New("pane is required")
+		}
+		n := p.Lines
+		if n <= 0 {
+			n = 40
+		}
+		out, err := herdr(ctx, "pane", "read", p.Pane, "--lines", fmt.Sprint(n))
+		if err != nil {
+			return "", err
+		}
+		return sanitize(out), nil
+	case "stop":
+		if p.Pane == "" {
+			return "", errors.New("pane is required")
+		}
+		if _, err := herdr(ctx, "pane", "close", p.Pane); err != nil {
+			return "", err
+		}
+		return "closed " + p.Pane, nil
+	}
+	return "", fmt.Errorf("unknown action %q: use start, read or stop", p.Action)
+}

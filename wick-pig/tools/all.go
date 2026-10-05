@@ -1,0 +1,23 @@
+package tools
+
+// All is every file tool this package serves, in loadout order.
+func All() []Tool {
+	return []Tool{readTool{}, editTool{}, writeTool{}, bashTool{}, findTool{}, backgroundTool{}}
+}
+
+// Named returns the tools called names, in the order given. Unknown names are
+// skipped: a role that lists a tool another host serves (spawn_worker) is not
+// an error here.
+func Named(names ...string) []Tool {
+	byName := map[string]Tool{}
+	for _, t := range All() {
+		byName[t.Name()] = t
+	}
+	var out []Tool
+	for _, n := range names {
+		if t, ok := byName[n]; ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}

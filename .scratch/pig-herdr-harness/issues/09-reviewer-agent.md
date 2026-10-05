@@ -81,7 +81,7 @@ from the merger side.
 
 ```bash
 export PATH="$HOME/go/bin:$PATH"
-cd wick && gofmt -w . && go vet ./... && go test ./... -count=1
+cd wick-pig && gofmt -w . && go vet ./... && go test ./... -count=1
 pig install $PWD --validate-only --json    # must print valid: true
 ```
 

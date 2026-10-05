@@ -3,11 +3,10 @@ package wick
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
-
-	sdk "github.com/MichaelKinsy/PiG/extensions/sdk"
 )
 
 // Exec is the seam every operation in this package runs through.
@@ -21,6 +20,7 @@ type Exec func(cmd string, args []string, opts ExecOpts) (Result, error)
 type ExecOpts struct {
 	Cwd     string
 	Timeout time.Duration
+	Env     []string // added to the parent environment
 }
 
 type Result struct {
@@ -40,6 +40,9 @@ func osExec(cmd string, args []string, opts ExecOpts) (Result, error) {
 
 	c := exec.CommandContext(ctx, cmd, args...)
 	c.Dir = opts.Cwd
+	if len(opts.Env) > 0 {
+		c.Env = append(os.Environ(), opts.Env...)
+	}
 
 	var stdout, stderr strings.Builder
 	c.Stdout = &stdout
@@ -61,16 +64,5 @@ func osExec(cmd string, args []string, opts ExecOpts) (Result, error) {
 	return res, nil
 }
 
-// sdkExec adapts the SDK's host-backed executor onto the same seam.
-func sdkExec(ctx sdk.Context) Exec {
-	return func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		res, err := ctx.ExecWithOptions(cmd, args, sdk.ExecOptions{
-			Cwd:     opts.Cwd,
-			Timeout: float64(opts.Timeout) / float64(time.Millisecond),
-		})
-		if err != nil {
-			return Result{}, err
-		}
-		return Result{Stdout: res.Stdout, Stderr: res.Stderr, Code: res.ExitCode}, nil
-	}
-}
+// OSExec is the real Exec, for callers outside the package.
+var OSExec Exec = osExec

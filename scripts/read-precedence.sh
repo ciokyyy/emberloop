@@ -4,7 +4,7 @@
 # what came back. The read outputs differ in shape, so the diff names the winner.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-WICK=/home/cioky/Projects/wick-simple/wick
+WICK=/home/cioky/Projects/wick-simple/wick-pig
 DIR=/tmp/wick-verify
 FILE=$DIR/app.txt
 

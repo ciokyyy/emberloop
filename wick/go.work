@@ -1,5 +1,0 @@
-go 1.27.1
-
-use .
-
-replace github.com/MichaelKinsy/PiG/extensions/sdk => /home/cioky/.pig/state/pigsdk/sdk

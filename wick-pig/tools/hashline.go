@@ -1,4 +1,4 @@
-package wick
+package tools
 
 import (
 	"bytes"
@@ -11,23 +11,20 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	sdk "github.com/MichaelKinsy/PiG/extensions/sdk"
 )
 
 // Hashline: line-anchored file edits.
 //
 // The grammar, the applier and the tag are ported from wick's
-// apps/backend/tools/edit.go. Two things differ on purpose:
+// apps/backend/tools/edit.go. One thing differs on purpose: read serves plain
+// text only. Binary, oversized text, PDFs, notebooks, images and archives are
+// refused with a reason, because ctx.ExecuteTool("read") resolves back to the
+// pig-side tool and there is no route to pig's handling of those. See readPlain.
 //
-//   - The snapshot tag is optional. wick refuses a patch without a [path#TAG]
-//     header outright. Here a header is verified when present and tolerated when
-//     absent, so a model that never reads the file first still gets
-//     line-anchored edits instead of a hard refusal.
-//   - read replaces pig's builtin for plain text. Everything else — binary,
-//     oversized text, PDFs, notebooks, images, archives — is refused with a
-//     reason instead, because ctx.ExecuteTool("read") resolves back to this
-//     tool and there is no route to pig's handling of those. See readPlain.
+// ponytail: headerRegex requires [path#TAG], so a patch without a tag is
+// refused with "no [path#TAG] header". The "tag optional" wording in earlier
+// notes was never true of the code. Relax the regex if models keep skipping
+// the read.
 
 // maxServedFile bounds what read renders itself. Anything larger is refused
 // rather than dumped into a prompt.
@@ -421,43 +418,4 @@ func resolveInside(baseDir, target string) (string, error) {
 		return "", fmt.Errorf("%q is outside the workspace", target)
 	}
 	return full, nil
-}
-
-// ---------------------------------------------------------------------------
-// registration
-// ---------------------------------------------------------------------------
-
-// registerHashline installs the read/edit pair. edit replaces pig's builtin
-// edit; read replaces pig's builtin read but hands anything it will not render
-// straight back to the host.
-func registerHashline(e *sdk.Extension) {
-	e.Tool("edit", editDescription,
-		sdk.Schema{"type": "object", "properties": map[string]any{
-			"input": map[string]any{
-				"type":        "string",
-				"description": `Hashline patch: a [path#TAG] header then line-anchored operations (PUT N.=M:, PUT <N:, PUT >N:, PUT >$:, CUT N.=M). One call may carry many operations; they apply against the file as you last read it.`,
-			},
-		}, "required": []string{"input"}},
-		func(ctx sdk.Context, params map[string]any) (any, error) {
-			input := str(params, "input")
-			if input == "" {
-				return nil, fmt.Errorf("input is required")
-			}
-			return applyHashline(ctx.Cwd(), input)
-		})
-
-	e.Tool("read",
-		"Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it.",
-		sdk.Schema{"type": "object", "properties": map[string]any{
-			"path":   map[string]any{"type": "string", "description": "File to read."},
-			"offset": map[string]any{"type": "integer", "description": "First line, 1-based."},
-			"limit":  map[string]any{"type": "integer", "description": "Maximum lines."},
-		}, "required": []string{"path"}},
-		func(ctx sdk.Context, params map[string]any) (any, error) {
-			target := str(params, "path")
-			if target == "" {
-				return nil, fmt.Errorf("path is required")
-			}
-			return readPlain(ctx.Cwd(), target, num(params, "offset"), num(params, "limit"))
-		})
 }

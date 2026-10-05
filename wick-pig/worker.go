@@ -89,6 +89,9 @@ func save(store map[string]Worker) error {
 
 type herdrReply struct {
 	Result struct {
+		Pane struct {
+			PaneID string `json:"pane_id"`
+		} `json:"pane"`
 		RootPane struct {
 			PaneID string `json:"pane_id"`
 		} `json:"root_pane"`
@@ -214,7 +217,11 @@ type SpawnInput struct {
 	// Launch is the exact command pane run receives. The extension derives it
 	// from Harness and Model; tests supply a stub agent instead.
 	Launch []string
+	// Late is a first message sent once the agent is ready; see Harness.LatePrompt.
+	Late string
 }
+
+func worktreePath(repo, id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
 
 // Spawn creates a worktree, opens a pane on it, and starts the worker there.
 func Spawn(run Exec, in SpawnInput) (*Worker, error) {
@@ -248,7 +255,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		Repo:     repo,
 		Base:     base,
 		Branch:   "implement/" + id,
-		Worktree: filepath.Join(repo, ".wick-worktrees", id),
+		Worktree: worktreePath(repo, id),
 		Harness:  in.Harness,
 		Model:    in.Model,
 		Started:  time.Now().UTC().Format(time.RFC3339),
@@ -280,6 +287,10 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		return nil, err
 	} else if res.Code != 0 {
 		return nil, fmt.Errorf("could not launch worker in %s: %.200s", w.Pane, res.Stderr)
+	}
+
+	if err := DeliverLate(run, w.Pane, in.Late); err != nil {
+		return nil, err
 	}
 
 	store[id] = *w
