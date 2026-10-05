@@ -150,11 +150,17 @@ func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
 			t.Errorf("%s role must serve code_review", role)
 		}
 	}
-	// review and scout may only look; implement delegates and lets the merger
-	// review through review_worker.
+	// review and scout may only look; implement delegates and never reviews:
+	// each worker reviews its own work.
 	for _, role := range []string{"review", "scout", "implement"} {
 		if serves(role) {
 			t.Errorf("%s role must not serve code_review", role)
+		}
+	}
+	implement, _ := RoleTools("implement")
+	for _, tl := range implement {
+		if tl.Name() == "review_worker" {
+			t.Errorf("implement role must not serve review_worker")
 		}
 	}
 	for _, role := range []string{"review", "scout"} {

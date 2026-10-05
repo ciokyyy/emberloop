@@ -109,6 +109,15 @@ func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
 	}
 }
 
+// The merger never reviews: each worker already ran code_review on its own
+// work, and a second review per worker only spends the merger's tokens.
+func TestImplementPromptDoesNotReview(t *testing.T) {
+	got := implementPrompt("/repo/.scratch/p/issues")
+	if strings.Contains(got, "review_worker") || strings.Contains(strings.ToLower(got), "verdict") {
+		t.Errorf("the merger prompt must not ask for a review:\n%s", got)
+	}
+}
+
 func TestRenderStatusIsProse(t *testing.T) {
 	if got := renderStatus(nil, nil, nil); !strings.Contains(got, "no workers") {
 		t.Errorf("empty status must say so plainly, got %q", got)
