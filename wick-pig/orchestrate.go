@@ -53,9 +53,13 @@ func AllTools() []tools.Tool {
 	return append(tools.All(), OrchestrationTools()...)
 }
 
+// spawnExec is the exec spawn_worker drives. A var, like waitExec, so a test
+// can spawn against a fake herdr and git rather than a real one.
+var spawnExec Exec = osExec
+
 var spawnTool = fnTool{
 	name: "spawn_worker",
-	desc: "Start an implementer on a ticket in its own git worktree and pane.",
+	desc: "Start an implementer on a ticket in its own git worktree, as a pane of the run's tab.",
 	schema: schema(map[string]any{
 		"ticket":  map[string]any{"type": "string", "description": "Path to the ticket file."},
 		"repo":    map[string]any{"type": "string", "description": "Repo root. Defaults to the session cwd."},
@@ -70,6 +74,10 @@ var spawnTool = fnTool{
 			Base:    str(params, "base"),
 			Harness: str(params, "harness"),
 			Model:   str(params, "model"),
+			// The workers of one run share the tab the caller is in, so every
+			// spawn splits it and the run's workers tile together there.
+			RunTab: os.Getenv("HERDR_TAB_ID"),
+			Anchor: os.Getenv("HERDR_PANE_ID"),
 		}
 		if in.Ticket == "" {
 			return "", fmt.Errorf("ticket is required")
@@ -100,16 +108,23 @@ var spawnTool = fnTool{
 
 		in.SessionID = sess.ID
 		spaceSpawns()
-		worker, err := Spawn(osExec, in)
+		worker, err := Spawn(spawnExec, in)
 		if err != nil {
 			// No worker means nothing ever reads the config it was given.
 			CleanupSession(sess)
 			return "", err
 		}
+		// Tiling is cosmetic: an uneven tab is still a working tab, so a
+		// failure is reported and the spawn stands. A missing report extension
+		// is a bigger fault and is warned about up front.
+		warning := reportExtensionWarning(in.Harness)
+		if err := tilePanes(spawnExec, worker.Tab); err != nil {
+			warning += fmt.Sprintf("\nwarning: could not even out the panes in %s: %v", worker.Tab, err)
+		}
 		return fmt.Sprintf(
-			"spawned worker %s\n  pane:      %s\n  workspace: %s\n  branch:    %s\n  worktree:  %s\n  brief:     %s\n\nNext: wait_workers(workers=[\"%s\"]), then finish_worker(worker=\"%s\").",
+			"spawned worker %s\n  pane:      %s\n  workspace: %s\n  branch:    %s\n  worktree:  %s\n  brief:     %s\n\nNext: wait_workers(workers=[\"%s\"]), then finish_worker(worker=\"%s\").%s",
 			worker.ID, worker.Pane, worker.Workspace, worker.Branch, worker.Worktree, brief,
-			worker.ID, worker.ID), nil
+			worker.ID, worker.ID, warning), nil
 	},
 }
 
@@ -165,7 +180,7 @@ var waitTool = fnTool{
 		if err != nil {
 			return "", err
 		}
-		out := renderStatus(workers, pending)
+		out := renderStatus(workers, pending, reportCandidates(runningExe(), os.Getenv("HOME")))
 		if clamped {
 			out += fmt.Sprintf("\ntimeout_ms was clamped to the %d ms cap, so this wait ended early. Call wait_workers again for the rest.",
 				waitCap/time.Millisecond)

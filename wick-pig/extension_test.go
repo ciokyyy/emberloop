@@ -74,15 +74,15 @@ func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
 }
 
 func TestRenderStatusIsProse(t *testing.T) {
-	if got := renderStatus(nil, nil); !strings.Contains(got, "no workers") {
+	if got := renderStatus(nil, nil, nil); !strings.Contains(got, "no workers") {
 		t.Errorf("empty status must say so plainly, got %q", got)
 	}
 	workers := []Status{{ID: "01-a", State: "idle", Detail: "done"}}
-	got := renderStatus(workers, nil)
+	got := renderStatus(workers, nil, nil)
 	if !strings.Contains(got, "01-a") || !strings.Contains(got, "idle") || !strings.Contains(got, "finish_worker") {
 		t.Errorf("status must name the worker, its state and the next call, got %q", got)
 	}
-	if got := renderStatus([]Status{{ID: "01-a", State: "working"}}, []string{"01-a"}); !strings.Contains(got, "still running") {
+	if got := renderStatus([]Status{{ID: "01-a", State: "working"}}, []string{"01-a"}, nil); !strings.Contains(got, "still running") {
 		t.Errorf("pending workers must be reported as such, got %q", got)
 	}
 }
@@ -140,18 +140,48 @@ func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
 
 func TestRenderStatusExplainsAllUnknownWorkers(t *testing.T) {
 	unknown := []Status{{ID: "01-a", State: "unknown"}, {ID: "01-b", State: "unknown"}}
-	got := renderStatus(unknown, []string{"01-a", "01-b"})
+	candidates := []string{"/opt/wick/herdr-report", "/opt/wick/bin/herdr-report", "/home/u/.pig/agent/extensions/herdr-report"}
+	got := renderStatus(unknown, []string{"01-a", "01-b"}, candidates)
 	if !strings.Contains(got, "not registered with herdr") || !strings.Contains(got, "report extension") {
 		t.Errorf("workers herdr never heard of must be diagnosed, got %q", got)
 	}
+	for _, c := range candidates {
+		if !strings.Contains(got, c) {
+			t.Errorf("the diagnosis must name every place searched, missing %q in %q", c, got)
+		}
+	}
 
 	oneKnown := []Status{{ID: "01-a", State: "unknown"}, {ID: "01-b", State: "working"}}
-	if got := renderStatus(oneKnown, []string{"01-a", "01-b"}); strings.Contains(got, "not registered with herdr") {
+	if got := renderStatus(oneKnown, []string{"01-a", "01-b"}, candidates); strings.Contains(got, "not registered with herdr") {
 		t.Errorf("a worker herdr can see means the others are just slow, got %q", got)
 	}
 
-	settled := renderStatus([]Status{{ID: "01-a", State: "merged"}}, nil)
+	settled := renderStatus([]Status{{ID: "01-a", State: "merged"}}, nil, candidates)
 	if strings.Contains(settled, "not registered with herdr") {
 		t.Errorf("nothing is pending, so nothing is unexplained, got %q", settled)
+	}
+}
+
+// reportExtensionWarning is the spawn-side counterpart to reportExtension: it
+// must warn only for the harness that needs the extension, and only when the
+// lookup really comes up empty.
+func TestReportExtensionWarning(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WICK_HERDR_REPORT", "")
+
+	if got := reportExtensionWarning("pig"); !strings.Contains(got, "unknown") {
+		t.Errorf("a pig spawn with no extension must warn, got %q", got)
+	}
+	if got := reportExtensionWarning("claude"); got != "" {
+		t.Errorf("only pig registers through the extension, got %q", got)
+	}
+
+	ext := filepath.Join(home, ".pig", "agent", "extensions", "herdr-report")
+	if err := os.MkdirAll(ext, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := reportExtensionWarning("pig"); got != "" {
+		t.Errorf("a found extension must not warn, got %q", got)
 	}
 }
