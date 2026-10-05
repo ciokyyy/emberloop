@@ -3,6 +3,7 @@ package wick
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -91,5 +92,77 @@ func TestWaitToolDescriptionStatesTheCap(t *testing.T) {
 	}
 	if !strings.Contains(waitTool.desc, "300000") {
 		t.Errorf("the description must state the cap the tool enforces, got %q", waitTool.desc)
+	}
+}
+
+// A worker has no tool that can review its own work, so the implement skill
+// ends in a step it cannot take. code_review is that tool: it judges this
+// worktree's diff, committed and uncommitted, and hands back the review.
+func TestCodeReviewReturnsTheReviewersVerdict(t *testing.T) {
+	old := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = old })
+	// Base is a SHA, resolved at spawn (see resolveRef): it names the exact
+	// commit the worktree started from and cannot drift while the branch moves.
+	const base = "a1b2c3d"
+	if err := save(map[string]Worker{"15-x": {
+		ID: "15-x", Base: base, Branch: "implement/15-x", Worktree: "/repo/wt",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recorder{reply: func(cmd string, args []string) Result {
+		return fakeHerdr(cmd, args, "f:1 major: bug\n", Result{Stdout: "diff --git a/f b/f\n+bug\n"})
+	}}
+	oldExec := reviewExec
+	reviewExec = rec.run
+	t.Cleanup(func() { reviewExec = oldExec })
+
+	out, err := codeReviewTool.Execute(context.Background(), "/repo/wt", nil)
+	if err != nil {
+		t.Fatalf("code_review: %v", err)
+	}
+	if !strings.Contains(out, "f:1 major: bug") {
+		t.Errorf("the reviewer's reply must be the result, got %q", out)
+	}
+	// Diffing the base against the working tree, not against HEAD: a worker
+	// reviews mid-branch, and only this covers commits *and* uncommitted work.
+	if strings.Join(rec.calls[0], " ") != "git diff "+base {
+		t.Errorf("diff call = %v", rec.calls[0])
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(statePath), "reviews", "wt.diff")); err != nil {
+		t.Errorf("diff file not written: %v", err)
+	}
+}
+
+func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
+	serves := func(role string) bool {
+		served, _ := RoleTools(role)
+		for _, tl := range served {
+			if tl.Name() == "code_review" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, role := range []string{"work", "plan", "full"} {
+		if !serves(role) {
+			t.Errorf("%s role must serve code_review", role)
+		}
+	}
+	// review and scout may only look; implement delegates and lets the merger
+	// review through review_worker.
+	for _, role := range []string{"review", "scout", "implement"} {
+		if serves(role) {
+			t.Errorf("%s role must not serve code_review", role)
+		}
+	}
+	for _, role := range []string{"review", "scout"} {
+		served, _ := RoleTools(role)
+		for _, tl := range served {
+			if n := tl.Name(); n != "read" && n != "find" {
+				t.Errorf("%s role serves %s", role, n)
+			}
+		}
 	}
 }

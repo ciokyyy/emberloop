@@ -73,37 +73,79 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 }
 
 // Review has a fresh agent with no edit tools judge a worker's diff.
-//
-// The reviewer cannot run git, so the diff is written to a file for it to read.
-// It gets the diff, not the ticket or the worker's own summary: reviewing the
-// summary would review what the worker believes it did.
 func Review(run Exec, id string) (string, error) {
 	w, err := recall(id)
 	if err != nil {
 		return "", err
 	}
+	return diffReview(run, diffRequest{
+		runDir: w.Repo, tree: w.Worktree, model: w.Model, name: id,
+		args: []string{"diff", w.Base + "..." + w.Branch},
+	})
+}
 
-	res, err := run("git", []string{"diff", w.Base + "..." + w.Branch}, ExecOpts{Cwd: w.Repo})
+// SelfReview judges the work in the tree the caller is standing in, so a
+// worker can review its own before it hands the branch back. It takes no
+// arguments: the tree is wherever the tool runs, and the base is the commit
+// that tree was created from.
+func SelfReview(run Exec, tree string) (string, error) {
+	return diffReview(run, diffRequest{
+		runDir: tree, tree: tree, name: filepath.Base(tree),
+		// A ref against the *working tree*, not a three-dot ref against a
+		// branch: a worker reviews mid-branch, and only this form covers
+		// commits and uncommitted work in one diff. The base is a SHA
+		// (resolveRef), so it still means "since the worktree branched".
+		args: []string{"diff", baseFor(tree)},
+	})
+}
+
+// baseFor is the commit a worktree branched from, as recorded when it was
+// spawned. Outside a worktree wick created there is no such record, and the
+// default branch name is the only fallback available; the diff it produces is
+// then measured from there rather than from the worker's real base.
+func baseFor(tree string) string {
+	if store, err := load(); err == nil {
+		for _, w := range store {
+			if w.Base != "" && filepath.Clean(w.Worktree) == filepath.Clean(tree) {
+				return w.Base
+			}
+		}
+	}
+	return "main"
+}
+
+// diffReview is the one path both reviewers take: run git, write the diff
+// somewhere the reviewer can read it, hand it to ReadOnly. The reviewer
+// cannot run git itself, and it gets the diff rather than the worker's own
+// account of the work: reviewing that would review what the worker believes
+// it did.
+type diffRequest struct {
+	runDir, tree, model, name string
+	args                     []string
+}
+
+func diffReview(run Exec, in diffRequest) (string, error) {
+	res, err := run("git", in.args, ExecOpts{Cwd: in.runDir})
 	if err != nil {
 		return "", err
 	}
 	if res.Code != 0 {
-		return "", fmt.Errorf("git diff for %s failed: %s", id, firstLine(res.Stderr, "unknown error"))
+		return "", fmt.Errorf("git diff for %s failed: %s", in.name, firstLine(res.Stderr, "unknown error"))
 	}
 	if strings.TrimSpace(res.Stdout) == "" {
-		return "no changes: the branch has no commits beyond its base. Nothing to review.", nil
+		return "no changes: nothing differs from the base. Nothing to review.", nil
 	}
 
 	dir := filepath.Join(filepath.Dir(statePath), "reviews")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	diffPath := filepath.Join(dir, id+".diff")
+	diffPath := filepath.Join(dir, in.name+".diff")
 	if err := os.WriteFile(diffPath, []byte(res.Stdout), 0o644); err != nil {
 		return "", err
 	}
 
-	return ReadOnly(run, w.Worktree, w.Model, reviewPrompt(diffPath, w.Worktree))
+	return ReadOnly(run, in.tree, in.model, reviewPrompt(diffPath, in.tree))
 }
 
 func reviewPrompt(diffPath, tree string) string {

@@ -43,7 +43,7 @@ func schema(properties map[string]any, required ...string) map[string]any {
 // OrchestrationTools are the delegation tools: workers, reviews, scouts.
 func OrchestrationTools() []tools.Tool {
 	return []tools.Tool{
-		spawnTool, waitTool, finishTool, reviewTool, scoutTool, tellTool,
+		spawnTool, waitTool, finishTool, reviewTool, scoutTool, tellTool, codeReviewTool,
 	}
 }
 
@@ -240,5 +240,20 @@ var tellTool = fnTool{
 			return "", fmt.Errorf("herdr could not deliver to %s: %s", id, firstLine(res.Stderr, res.Stdout))
 		}
 		return fmt.Sprintf("delivered to %s and waited for it to settle", id), nil
+	},
+}
+
+// reviewExec is the exec a self-review runs through. A var, like waitExec, so
+// a test can drive the tool with a fake reviewer instead of a real agent.
+var reviewExec Exec = osExec
+
+var codeReviewTool = fnTool{
+	name: "code_review",
+	desc: "Have a read-only reviewer judge this worktree's diff against the base it was branched from, " +
+		"covering committed and uncommitted work alike. Call it once, after committing, and fix the real " +
+		"findings before you finish. It returns the reviewer's reply.",
+	schema: schema(map[string]any{}),
+	run: func(root string, _ map[string]any) (string, error) {
+		return SelfReview(reviewExec, root)
 	},
 }

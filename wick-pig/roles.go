@@ -15,10 +15,11 @@ var roles = map[string][]string{
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},
-	// work is an implementer: every file tool, no delegation.
-	"work": {"read", "edit", "write", "bash", "find", "background"},
+	// work is an implementer: every file tool, plus a review of its own work.
+	// No delegation: review_worker belongs to the merger.
+	"work": {"read", "edit", "write", "bash", "find", "background", "code_review"},
 	// plan is a wayfinder, grill or research session: file tools plus scouts.
-	"plan": {"read", "edit", "write", "bash", "find", "background", "scout"},
+	"plan": {"read", "edit", "write", "bash", "find", "background", "scout", "code_review"},
 	// full is everything.
 	"full": nil,
 }
