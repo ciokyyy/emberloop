@@ -225,11 +225,13 @@ func TestPigGateStartsTheCountOnAFreshTurn(t *testing.T) {
 	}
 }
 
-// The extension loads into a top-level pig session too, which has no agent id
-// and no submit tool: the gate has nothing to hold.
+// The extension loads into a top-level pig session too, which has no agent
+// type and no submit tool: the gate has nothing to hold. Every session now
+// carries an agent id, so the test sets one the way main.go does.
 func TestPigGateIgnoresANonAgentSession(t *testing.T) {
 	deliverTestState(t)
-	t.Setenv("WICK_AGENT_ID", "")
+	t.Setenv("WICK_AGENT_ID", "top-1")
+	t.Setenv("WICK_AGENT_TYPE", "")
 	if got := askPigGate(t, `{"fresh":true}`); got.Outcome != pigGateAllow {
 		t.Errorf("a top-level session must be left alone, got %q", got.Outcome)
 	}
@@ -430,10 +432,13 @@ func TestStopGateStartsTheCountOnAFreshTurn(t *testing.T) {
 	}
 }
 
-// A real claude session has no agent id: the gate has nothing to hold.
+// A top-level claude session has no agent type and no submit tool: the gate
+// has nothing to hold. Every session now carries an agent id, so the test
+// sets one the way main.go does.
 func TestStopGateIgnoresANonAgentSession(t *testing.T) {
 	deliverTestState(t)
-	t.Setenv("WICK_AGENT_ID", "")
+	t.Setenv("WICK_AGENT_ID", "top-1")
+	t.Setenv("WICK_AGENT_TYPE", "")
 	if out := gate(t, `{"stop_hook_active":false}`); strings.TrimSpace(out) != "" {
 		t.Errorf("a top-level session must be left alone, got %q", out)
 	}

@@ -88,7 +88,9 @@ func run(argv []string) error {
 	rest := strings.Join(fs.Args(), " ")
 
 	cwd, _ := os.Getwd()
-	s := wick.Session{ID: wick.NewSessionID(), Headless: *headless, Cwd: cwd}
+	id := wick.NewSessionID()
+	s := wick.Session{ID: id, AgentID: id, Headless: *headless, Cwd: cwd}
+	var implSpec *wick.SpecRun
 	switch sub {
 	case "":
 		r, err := sessionRole(sub, *role)
@@ -127,6 +129,7 @@ func run(argv []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "wick-pig: %s %s\n", verb, spec.Branch)
 		s.Role, s.Prompt, s.Spec = r, wick.ImplementPrompt(spec), spec.Spec
+		implSpec = &spec
 	default:
 		found := false
 		for _, e := range wick.SkillEntries() {
@@ -145,6 +148,16 @@ func run(argv []string) error {
 	}
 	choice := topLevelChoice(wick.Choice{Harness: *harness, Model: *model, Effort: *effort})
 	s.Model, s.Effort = choice.Model, choice.Effort
+	// An implement run leaves a trace: one record per spec slug, updated on
+	// re-run and stamped at exit. Readers decide "running" from the pane.
+	runSlug := ""
+	if implSpec != nil {
+		rec, err := wick.RecordRun(wick.OSExec, *implSpec, cwd, s.AgentID, choice.Harness, choice.Model, choice.Effort)
+		if err != nil {
+			return err
+		}
+		runSlug = rec.Slug
+	}
 	launch, err := wick.PrepareLaunch(choice.Harness, s)
 	if err != nil {
 		return err
@@ -177,7 +190,11 @@ func run(argv []string) error {
 			go wick.Supervise(wick.OSExec, h, s, pane, stop)
 		}
 	}
-	return c.Run()
+	err = c.Run()
+	if runSlug != "" {
+		_ = wick.FinishRun(runSlug)
+	}
+	return err
 }
 
 // withoutPrompt drops the prompt from s when the harness takes it late.

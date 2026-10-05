@@ -584,8 +584,9 @@ func liveAgentFor(run Exec, t AgentType, parentID, parentPane string, r spawnReq
 }
 
 // liveFor reports whether an agent's state is the live agent of this type for
-// this parent. A top-level session has no agent id, so its own pane is what
-// names it: two sessions sharing a state dir keep their agents apart.
+// this parent. A session with an agent id names its children by it; a
+// hand-started wick-mcp with no id falls back to its pane, so two sessions
+// sharing a state dir keep their agents apart.
 func liveFor(s AgentState, typ, parentID, parentPane string, run Exec) bool {
 	if s.Type != typ || s.Pane == "" {
 		return false

@@ -126,7 +126,12 @@ func RunStopGate(in io.Reader, out io.Writer) error {
 	if err := json.NewDecoder(in).Decode(&hook); err != nil && err != io.EOF {
 		return fmt.Errorf("stop-gate: %w", err)
 	}
-	// A top-level session has no id and no submit tool: nothing to gate.
+	// Only a spawned agent has a submit tool to gate: a top-level or one-shot
+	// read-only session has no agent type, so nothing to gate. Every session
+	// now carries an agent id, so the id alone no longer marks one.
+	if os.Getenv("WICK_AGENT_TYPE") == "" {
+		return nil
+	}
 	id := os.Getenv("WICK_AGENT_ID")
 	if id == "" {
 		return nil
@@ -186,7 +191,12 @@ func RunPigGate(event string, out io.Writer) error {
 	if err := json.Unmarshal([]byte(event), &in); err != nil {
 		return fmt.Errorf("pig-gate: %w", err)
 	}
-	// A top-level session has no id and no submit tool: nothing to gate.
+	// Only a spawned agent has a submit tool to gate: a top-level or one-shot
+	// read-only session has no agent type, so nothing to gate. Every session
+	// now carries an agent id, so the id alone no longer marks one.
+	if os.Getenv("WICK_AGENT_TYPE") == "" {
+		return json.NewEncoder(out).Encode(PigGateDecision{Outcome: pigGateAllow})
+	}
 	id := os.Getenv("WICK_AGENT_ID")
 	if id == "" {
 		return json.NewEncoder(out).Encode(PigGateDecision{Outcome: pigGateAllow})
