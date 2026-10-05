@@ -161,7 +161,10 @@ func TestLiveClaudeNoticeDuringToolCallStaysForeground(t *testing.T) {
 	cwd := t.TempDir()
 	sess := Session{Role: "work", Cwd: cwd, ID: newSessionID(), Prompt: "Your last message is your answer."}
 	agent, err := launchPlacedAgent(osExec, readOnlyPlace{Overflow: "scouts"}, "claude", sess,
-		`Use the bash tool with command "sleep 30; echo CALL-DONE" and timeout 120. When the tool returns, reply with the tool output plus any notice text you received while it ran. Include the line NOTICE-SEEN:<the notice verbatim>. Do nothing else.`)
+		// The echo spells CALL-DONE without containing it literally ($'-'
+		// expands to -), so the done marker is absent from the tool-use
+		// record and the prompt and only appears once the tool returns.
+		`Use the bash tool with command "sleep 30; echo CALL$'-'DONE" and timeout 120. When the tool returns, reply with the tool output plus any notice text you received while it ran. Include the line NOTICE-SEEN:<the notice verbatim>. Do nothing else.`)
 	if err != nil {
 		t.Fatal(err)
 	}
