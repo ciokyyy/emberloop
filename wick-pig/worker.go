@@ -109,6 +109,16 @@ type herdrReply struct {
 		Workspace struct {
 			WorkspaceID string `json:"workspace_id"`
 		} `json:"workspace"`
+		Tab struct {
+			TabID       string `json:"tab_id"`
+			Label       string `json:"label"`
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"tab"`
+		Tabs []struct {
+			TabID       string `json:"tab_id"`
+			Label       string `json:"label"`
+			WorkspaceID string `json:"workspace_id"`
+		} `json:"tabs"`
 		Layout paneLayout `json:"layout"`
 		Agents []struct {
 			PaneID string `json:"pane_id"`
@@ -235,11 +245,6 @@ type SpawnInput struct {
 	Late string
 	// SessionID names the harness session so Wait can find its transcript.
 	SessionID string
-	// RunTab and Anchor point at the tab a run's workers share: the pane is
-	// split in RunTab next to Anchor so the worker joins it. Empty means no
-	// shared tab, and the worker stays in the pane its worktree opened.
-	RunTab string
-	Anchor string
 }
 
 func worktreePath(repo, id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
@@ -278,8 +283,16 @@ func targetBranch(run Exec, repo, base string) string {
 	return strings.TrimSpace(res.Stdout)
 }
 
-// Spawn creates a worktree, opens a pane on it, and starts the worker there.
+// Spawn creates a git worktree on branch implement/<id>, opens the ticket's tab
+// in the project workspace, and starts the worker in that tab's root pane.
 func Spawn(run Exec, in SpawnInput) (*Worker, error) {
+	// Workers live in the workspace the orchestrator runs in. Without it there
+	// is nowhere to put the ticket's tab, so nothing is created first.
+	workspace := os.Getenv("HERDR_WORKSPACE_ID")
+	if workspace == "" {
+		return nil, fmt.Errorf("HERDR_WORKSPACE_ID is not set: wick spawns workers into the herdr workspace it runs in")
+	}
+
 	id := WorkerID(in.Ticket)
 	repo := in.Repo
 	if repo == "" {
@@ -329,77 +342,45 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		Target:    target,
 		Branch:    "implement/" + id,
 		Worktree:  worktreePath(repo, id),
+		Workspace: workspace,
 		Harness:   in.Harness,
 		Model:     in.Model,
 		SessionID: in.SessionID,
 		Started:   time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// pane run rather than `agent start --kind`: herdr's kinds are compiled into
-	// its binary and include no entry for pig. Workers self-report instead.
-	reply, err := herdrJSON(run, []string{
-		"worktree", "create",
-		"--cwd", repo,
-		"--branch", w.Branch,
-		"--base", base,
-		"--path", w.Worktree,
-		"--label", id,
-		"--no-focus",
-		"--trust-repository",
-	}, 60*time.Second)
+	// Plain git owns the worktree now, at today's path and branch: herdr is
+	// only tabs and panes, never worktrees.
+	if res, err := run("git", []string{"worktree", "add", "-b", w.Branch, w.Worktree, base},
+		ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
+		return nil, err
+	} else if res.Code != 0 {
+		return nil, fmt.Errorf("git worktree add %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
+	}
+
+	// Anything that fails from here on has to undo the worktree and its branch,
+	// or the ticket can never be spawned again. The tab is closed only when
+	// this spawn created it: an existing one may hold a previous implementor.
+	tabCreated := false
+	undo := func() {
+		if tabCreated && w.Tab != "" {
+			_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
+		}
+		_, _ = run("git", []string{"worktree", "remove", "--force", w.Worktree}, ExecOpts{Cwd: repo, Timeout: 60 * time.Second})
+		_, _ = run("git", []string{"branch", "-D", w.Branch}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+	}
+
+	// Finds the tab labelled with the ticket id in the project workspace, or
+	// creates it with the worktree as cwd. A respawn reuses the tab and replaces
+	// the implementor in its root pane rather than opening a second one.
+	w.Tab, w.Pane, tabCreated, err = ticketTab(run, workspace, id, w.Worktree)
 	if err != nil {
+		undo()
 		return nil, err
 	}
 
-	w.Pane = reply.Result.RootPane.PaneID
-	w.Tab = reply.Result.RootPane.TabID
-	w.Workspace = reply.Result.Workspace.WorkspaceID
-	if w.Pane == "" || w.Workspace == "" {
-		return nil, fmt.Errorf("herdr worktree create returned no pane or workspace for %q; raw: %.600s", id, reply.raw)
-	}
-
-	// Anything that fails after the worktree exists has to undo it, or the
-	// branch, the checkout and the workspace are left behind and the ticket can
-	// never be spawned again. The worktree's own pane goes with its workspace;
-	// a pane split into the run's tab has to be closed by hand.
-	undo := func() {
-		if w.Pane != "" && w.Pane != reply.Result.RootPane.PaneID {
-			_, _ = run(herdrBin(), []string{"pane", "close", w.Pane}, ExecOpts{Timeout: 15 * time.Second})
-		}
-		_, _ = herdrJSON(run, []string{
-			"worktree", "remove", "--workspace", w.Workspace, "--force", "--trust-repository",
-		}, 60*time.Second)
-	}
-
-	// A worktree opens in a tab of its own, so tiling that tab would have
-	// nothing to even out. When the caller names the run's tab, split it here:
-	// every worker of the run lands as a pane of that one tab. The worktree's
-	// own pane is left in place, because it is what keeps the worktree
-	// workspace open for finish to remove.
-	if in.RunTab != "" && in.Anchor != "" && in.RunTab != w.Tab {
-		split, err := herdrJSON(run, []string{"pane", "split",
-			"--pane", in.Anchor,
-			"--direction", "down",
-			"--ratio", "0.5",
-			"--cwd", w.Worktree,
-			"--no-focus",
-		}, 15*time.Second)
-		if err != nil {
-			undo()
-			return nil, err
-		}
-		pane := split.Result.Pane.PaneID
-		if pane == "" {
-			undo()
-			return nil, fmt.Errorf("herdr split returned no pane id for %q", id)
-		}
-		w.Pane = pane
-		w.Tab = split.Result.Pane.TabID
-		if w.Tab == "" {
-			w.Tab = in.RunTab
-		}
-	}
-
+	// pane run rather than `agent start --kind`: herdr's kinds are compiled into
+	// its binary and include no entry for pig. Workers self-report instead.
 	if res, err := run(herdrBin(), append([]string{"pane", "run", w.Pane}, in.Launch...), ExecOpts{}); err != nil {
 		undo()
 		return nil, err
@@ -415,6 +396,61 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 
 	store[id] = *w
 	return w, save(store)
+}
+
+// ticketTab finds the tab labelled id in workspace, or creates it there with
+// cwd, and returns its root pane. created is false when the tab already
+// existed, so a failed spawn knows not to close a tab it did not make.
+func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created bool, err error) {
+	tabs, err := herdrJSON(run, []string{"tab", "list", "--workspace", workspace}, 30*time.Second)
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, t := range tabs.Result.Tabs {
+		if t.Label != id {
+			continue
+		}
+		pane, err := rootPane(run, workspace, t.TabID)
+		if err != nil {
+			return "", "", false, err
+		}
+		return t.TabID, pane, false, nil
+	}
+
+	reply, err := herdrJSON(run, []string{
+		"tab", "create",
+		"--workspace", workspace,
+		"--cwd", cwd,
+		"--label", id,
+		"--no-focus",
+	}, 30*time.Second)
+	if err != nil {
+		return "", "", false, err
+	}
+	tab = reply.Result.RootPane.TabID
+	if tab == "" {
+		tab = reply.Result.Tab.TabID
+	}
+	pane = reply.Result.RootPane.PaneID
+	if tab == "" || pane == "" {
+		return "", "", false, fmt.Errorf("herdr tab create returned no tab or pane for %q; raw: %.600s", id, reply.raw)
+	}
+	return tab, pane, true, nil
+}
+
+// rootPane is the first pane herdr reports in tab: the pane the tab was opened
+// with, which is the implementor's pane.
+func rootPane(run Exec, workspace, tab string) (string, error) {
+	reply, err := herdrJSON(run, []string{"pane", "list", "--workspace", workspace}, 30*time.Second)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range reply.Result.Panes {
+		if p.TabID == tab {
+			return p.PaneID, nil
+		}
+	}
+	return "", fmt.Errorf("herdr reports no panes in tab %s", tab)
 }
 
 // ---------------------------------------------------------------------------
@@ -616,17 +652,22 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	}
 
 	// Only reached when the worker merged or was discarded. A refusal returns
-	// above with the worktree, pane and reviewers left for the worker to use.
+	// above with the worktree, tab and reviewers left for the worker to use.
 	closeReviewers(run, w.Worktree)
-	if _, err := herdrJSON(run, []string{
-		"worktree", "remove", "--workspace", w.Workspace, "--force", "--trust-repository",
-	}, 60*time.Second); err != nil {
-		return nil, err
+	// The ticket's tab holds the implementor and its reviewers, so closing it
+	// closes them all. Records without a tab predate the ticket tab; skip them.
+	if w.Tab != "" {
+		if _, err := herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second); err != nil {
+			return nil, err
+		}
 	}
-	// The worker's pane belongs to the run's tab, not the worktree workspace,
-	// so removing the worktree leaves it behind. Close it, and shrug at a pane
-	// that is already gone (the worktree's own pane, when there was no run tab).
-	_, _ = run(herdrBin(), []string{"pane", "close", w.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	// herdr never owned the worktree: plain git made it, plain git drops it.
+	if res, err := run("git", []string{"worktree", "remove", "--force", w.Worktree},
+		ExecOpts{Cwd: w.Repo, Timeout: 60 * time.Second}); err != nil {
+		return nil, err
+	} else if res.Code != 0 {
+		return nil, fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
+	}
 	// The worker's MCP config goes with it: nothing reads the file once the
 	// worktree is gone.
 	CleanupSession(Session{Label: id})

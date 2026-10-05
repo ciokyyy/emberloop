@@ -134,35 +134,31 @@ func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
 	}
 }
 
-// spawnToolFake answers the git and herdr calls spawn_worker makes, with the
-// given layout for the tiling that follows.
-func spawnToolFake(layout string) Exec {
+// spawnToolFake answers the git and herdr calls spawn_worker makes for a fresh
+// ticket tab: git resolves the base and makes the worktree, tab list is empty,
+// tab create opens w1:t1 with root pane w1:p1, and pane run starts the agent.
+func spawnToolFake() Exec {
 	return func(cmd string, args []string, _ ExecOpts) (Result, error) {
 		if cmd == "git" {
 			return Result{Stdout: "abc123def\n"}, nil
 		}
 		switch {
-		case len(args) > 0 && args[0] == "worktree":
-			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"w9:p1","tab_id":"w9:t1"},"workspace":{"workspace_id":"w9"}}}`}, nil
-		case len(args) > 1 && args[0] == "pane" && args[1] == "split":
-			return Result{Stdout: `{"result":{"pane":{"pane_id":"w1:p2","tab_id":"w1:t1"}}}`}, nil
-		case len(args) > 1 && args[0] == "pane" && args[1] == "list":
-			return Result{Stdout: `{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"},{"pane_id":"w1:p2","tab_id":"w1:t1"}]}}`}, nil
-		case len(args) > 1 && args[0] == "pane" && args[1] == "layout":
-			return Result{Stdout: layout}, nil
+		case len(args) > 1 && args[0] == "tab" && args[1] == "list":
+			return Result{Stdout: `{"result":{"tabs":[]}}`}, nil
+		case len(args) > 1 && args[0] == "tab" && args[1] == "create":
+			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"w1:p1","tab_id":"w1:t1"}}}`}, nil
 		}
 		return Result{}, nil
 	}
 }
 
-// runSpawnTool drives the spawn_worker tool against a fake herdr with the
-// given run-tab layout.
-func runSpawnTool(t *testing.T, layout string) (string, error) {
+// runSpawnTool drives the spawn_worker tool against a fake herdr.
+func runSpawnTool(t *testing.T) (string, error) {
 	t.Helper()
 	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	spawnGap = 0
-	spawnExec = spawnToolFake(layout)
+	spawnExec = spawnToolFake()
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
 
 	repo := t.TempDir()
@@ -170,47 +166,26 @@ func runSpawnTool(t *testing.T, layout string) (string, error) {
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HERDR_TAB_ID", "w1:t1")
-	t.Setenv("HERDR_PANE_ID", "w1:p1")
-	// Keep these tiling tests about tiling: a report warning here would make
-	// "must not warn" fail for a reason unrelated to the tab.
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	// Keep this test about the spawn: a report warning here would make "must
+	// not warn" fail for a reason unrelated to the tab.
 	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
 	args, _ := json.Marshal(map[string]any{"ticket": ticket})
 	return spawnTool.Execute(context.Background(), repo, args)
 }
 
-// Two panes of different sizes and no divider between them: the tab is uneven
-// and nothing can move it. The spawn stands and the result carries a short
-// warning instead of failing.
-const unevenNoSplit = `{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":100},"tab_id":"w1:t1",` +
-	`"panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":100}},{"pane_id":"w1:p2","rect":{"x":80,"y":0,"width":20,"height":100}}],"splits":[]}}}`
-
-// The run tab after the worker joins it: the orchestrator and the worker each
-// half. Tiling has nothing to fix, so the result is a plain success.
-const evenSplit = `{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":100},"tab_id":"w1:t1",` +
-	`"panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":50,"height":100}},{"pane_id":"w1:p2","rect":{"x":50,"y":0,"width":50,"height":100}}],` +
-	`"splits":[{"id":"s","direction":"right","ratio":0.5,"rect":{"x":0,"y":0,"width":100,"height":100}}]}}}`
-
-func TestSpawnWorkerWarnsWhenTilingFails(t *testing.T) {
-	out, err := runSpawnTool(t, unevenNoSplit)
+// A spawn opens the worker in its ticket's tab and reports it without a
+// warning when the report extension is present.
+func TestSpawnWorkerOpensTheTicketTab(t *testing.T) {
+	out, err := runSpawnTool(t)
 	if err != nil {
 		t.Fatalf("spawn_worker: %v", err)
 	}
-	if !strings.Contains(out, "spawned worker") {
-		t.Errorf("the spawn must still succeed, got %q", out)
-	}
-	if !strings.Contains(out, "warning") {
-		t.Errorf("a failed tile must be reported as a warning, got %q", out)
-	}
-}
-
-func TestSpawnWorkerTilesTheRunTab(t *testing.T) {
-	out, err := runSpawnTool(t, evenSplit)
-	if err != nil {
-		t.Fatalf("spawn_worker: %v", err)
+	if !strings.Contains(out, "spawned worker") || !strings.Contains(out, "w1:t1") {
+		t.Errorf("the result must name the ticket tab, got %q", out)
 	}
 	if strings.Contains(out, "warning") {
-		t.Errorf("an even tab must not warn, got %q", out)
+		t.Errorf("a healthy spawn must not warn, got %q", out)
 	}
 }
 
@@ -222,15 +197,14 @@ func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
 	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	spawnGap = 0
-	spawnExec = spawnToolFake(evenSplit)
+	spawnExec = spawnToolFake()
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
 
 	// No env var and a fresh HOME: the lookup has nowhere to find the
 	// extension, which is the case ticket 19 hit.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("WICK_HERDR_REPORT", "")
-	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "21-x.md")
@@ -258,7 +232,7 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	spawnGap = 0
 	var launched string
-	base := spawnToolFake(evenSplit)
+	base := spawnToolFake()
 	spawnExec = func(cmd string, args []string, o ExecOpts) (Result, error) {
 		if len(args) > 1 && args[0] == "pane" && args[1] == "run" {
 			launched = strings.Join(args, " ")
@@ -272,8 +246,7 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HERDR_TAB_ID", "w1:t1")
-	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
 	t.Setenv("WICK_SPEC", "/repo/.scratch/p/spec.md")
 	args, _ := json.Marshal(map[string]any{"ticket": ticket})

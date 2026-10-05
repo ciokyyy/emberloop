@@ -61,7 +61,7 @@ var spawnExec Exec = osExec
 
 var spawnTool = fnTool{
 	name: "spawn_worker",
-	desc: "Start an implementer on a ticket in its own git worktree, as a pane of the run's tab.",
+	desc: "Start an implementer on a ticket in its own git worktree and its ticket's tab in the project workspace.",
 	schema: schema(map[string]any{
 		"ticket":  map[string]any{"type": "string", "description": "Path to the ticket file."},
 		"repo":    map[string]any{"type": "string", "description": "Repo root. Defaults to the session cwd."},
@@ -76,10 +76,6 @@ var spawnTool = fnTool{
 			Base:    str(params, "base"),
 			Harness: str(params, "harness"),
 			Model:   str(params, "model"),
-			// The workers of one run share the tab the caller is in, so every
-			// spawn splits it and the run's workers tile together there.
-			RunTab: os.Getenv("HERDR_TAB_ID"),
-			Anchor: os.Getenv("HERDR_PANE_ID"),
 		}
 		if in.Ticket == "" {
 			return "", fmt.Errorf("ticket is required")
@@ -122,16 +118,13 @@ var spawnTool = fnTool{
 			CleanupSession(sess)
 			return "", err
 		}
-		// Tiling is cosmetic: an uneven tab is still a working tab, so a
-		// failure is reported and the spawn stands. A missing report extension
-		// is a bigger fault and is warned about up front.
+		// The worker's tab was created for it; tiling is the grid's job when
+		// reviewers join. A missing report extension is a bigger fault and is
+		// warned about up front.
 		warning := reportExtensionWarning(in.Harness)
-		if err := tilePanes(spawnExec, worker.Tab); err != nil {
-			warning += fmt.Sprintf("\nwarning: could not even out the panes in %s: %v", worker.Tab, err)
-		}
 		return fmt.Sprintf(
-			"spawned worker %s\n  pane:      %s\n  workspace: %s\n  branch:    %s\n  worktree:  %s\n  brief:     %s\n\nNext: wait_workers(workers=[\"%s\"]), then finish_worker(worker=\"%s\").%s",
-			worker.ID, worker.Pane, worker.Workspace, worker.Branch, worker.Worktree, brief,
+			"spawned worker %s\n  pane:      %s\n  tab:       %s\n  workspace: %s\n  branch:    %s\n  worktree:  %s\n  brief:     %s\n\nNext: wait_workers(workers=[\"%s\"]), then finish_worker(worker=\"%s\").%s",
+			worker.ID, worker.Pane, worker.Tab, worker.Workspace, worker.Branch, worker.Worktree, brief,
 			worker.ID, worker.ID, warning), nil
 	},
 }
