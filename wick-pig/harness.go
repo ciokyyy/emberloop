@@ -180,6 +180,15 @@ type pigHarness struct{}
 
 func (pigHarness) Name() string { return "pig" }
 
+// pigSessionFileID is the id pig names the transcript file after: the
+// session id, else the ticket label, mirroring --session-id above.
+func pigSessionFileID(s Session) string {
+	if s.ID != "" {
+		return s.ID
+	}
+	return s.Label
+}
+
 func (pigHarness) Command(s Session) (Command, error) {
 	// --no-skills keeps the harness from loading the user's global library:
 	// a session reaches skills only by the wick:// addresses its prompt names.
@@ -192,10 +201,7 @@ func (pigHarness) Command(s Session) (Command, error) {
 	} else {
 		// A named session is what makes the pane addressable by herdr, and a
 		// known id and dir are what let the reply be read back.
-		id := s.ID
-		if id == "" {
-			id = s.Label
-		}
+		id := pigSessionFileID(s)
 		if id != "" {
 			args = append(args, "--session-id", id)
 		}
@@ -214,6 +220,9 @@ func (pigHarness) Command(s Session) (Command, error) {
 	if s.Label != "" {
 		env = append(env, "WICK_AGENT_LABEL="+s.Label)
 	}
+	// The session's wick-mcp tails this transcript for the usage log; the
+	// id is what the transcript file carries, the dir where it looks.
+	env = append(env, usageTailEnv("pig", pigSessionFileID(s), s.Dir)...)
 	return Command{Bin: pigBin(), Args: args, Env: env}, nil
 }
 
@@ -293,8 +302,14 @@ type claudeHarness struct{}
 func (claudeHarness) Name() string { return "claude" }
 
 func (claudeHarness) Command(s Session) (Command, error) {
+	// Claude starts wick-mcp from this config, not from its own environment:
+	// an MCP stdio server gets the default env merged with this map, so the
+	// session identity the tailer reads (like the WICK_AGENT_ID the tools
+	// already rely on) travels here. Pig's wick-mcp instead inherits its
+	// process env, which usageTailEnv on the pig command covers.
+	mcpEnv := append(roleEnv(s), usageTailEnv("claude", s.ID, "")...)
 	cfg, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"wick": map[string]any{
-		"command": "wick-mcp", "env": envMap(roleEnv(s)),
+		"command": "wick-mcp", "env": envMap(mcpEnv),
 	}}})
 	if err != nil {
 		return Command{}, err
@@ -326,11 +341,16 @@ func (claudeHarness) Command(s Session) (Command, error) {
 		args = append(args, "--effort", s.Effort)
 	}
 	args = appendPrompt(args, s.Prompt)
-	return Command{Bin: "claude", Args: args, Env: append(roleEnv(s),
+	// Claude's transcript is named by its session id; without one there is
+	// nothing for the session's wick-mcp to tail. Claude takes no session
+	// dir, so none is passed.
+	env := append(roleEnv(s),
 		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
 		"CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0",
-		"DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1")}, nil
+		"DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1")
+	env = append(env, usageTailEnv("claude", s.ID, "")...)
+	return Command{Bin: "claude", Args: args, Env: env}, nil
 }
 
 // mcpConfigPath is where the MCP config of one claude session is written: under

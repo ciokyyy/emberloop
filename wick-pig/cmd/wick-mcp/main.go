@@ -32,8 +32,26 @@ func main() {
 	memCtx, stopMem := context.WithCancel(context.Background())
 	defer stopMem()
 	go wick.StartMemorySampler(memCtx, os.Getenv("WICK_AGENT_ID"), wick.MemoryRunSlug(), wick.MemorySampleInterval)
-	if err := mcp.Serve(context.Background(), os.Stdin, os.Stdout, root, served); err != nil {
-		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
+	// A harness session tails its own transcript into its agent's usage log
+	// while it serves; when stdin closes the harness has settled, so one
+	// last pass catches requests written after the final tick. The pass runs
+	// however Serve ends: a broken transport still settles the session.
+	tailCfg, tailing := wick.UsageTailFromEnv()
+	stopTail := func() {}
+	if tailing {
+		stop := make(chan struct{})
+		stopTail = func() { close(stop) }
+		go wick.RunUsageTail(tailCfg, stop)
+	}
+	serveErr := mcp.Serve(context.Background(), os.Stdin, os.Stdout, root, served)
+	stopTail()
+	if tailing {
+		if err := wick.TailUsageFile(tailCfg); err != nil {
+			fmt.Fprintln(os.Stderr, "wick-mcp: final usage pass:", err)
+		}
+	}
+	if serveErr != nil {
+		fmt.Fprintln(os.Stderr, "wick-mcp:", serveErr)
 		os.Exit(1)
 	}
 }
