@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Role is the default harness, model and effort for one launch slot. An empty
@@ -117,8 +118,13 @@ func decodeSettings(raw []byte) Settings {
 	s.src = map[string]string{}
 	s.extra = map[string]json.RawMessage{}
 	for k, v := range fields {
-		switch k {
-		case "decision_model", "threshold", "roles":
+		// encoding/json matches known fields case-insensitively, so this
+		// comparison is case-insensitive too: a case variant of a known key is
+		// the known key, not an unknown one kept alongside it.
+		switch strings.ToLower(k) {
+		case "roles":
+			s.roleExtra = unknownRoleFields(v)
+		case "decision_model", "threshold":
 		default:
 			s.extra[k] = v
 		}
@@ -131,7 +137,6 @@ func decodeSettings(raw []byte) Settings {
 	if s.Threshold != 0 {
 		s.src["threshold"] = "file"
 	}
-	s.roleExtra = unknownRoleFields(fields["roles"])
 	return s
 }
 
@@ -145,7 +150,7 @@ func unknownRoleFields(rawRoles json.RawMessage) map[string]map[string]json.RawM
 	var out map[string]map[string]json.RawMessage
 	for slot, roleFields := range perSlot {
 		for k, v := range roleFields {
-			switch k {
+			switch strings.ToLower(k) {
 			case "harness", "model", "effort":
 			default:
 				if out == nil {

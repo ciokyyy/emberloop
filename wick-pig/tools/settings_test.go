@@ -231,3 +231,49 @@ func TestSettingsSourceIsDefaultWhenTheFileValueDoesNotParse(t *testing.T) {
 		t.Fatalf("threshold source = %q, want default", got)
 	}
 }
+
+// A case variant of a known key is the known key: encoding/json reads it into
+// the field, and the save must not also keep it as an unknown copy.
+func TestSettingsNormalisesCaseVariantKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	settingsEnv(t, p)
+	if err := os.WriteFile(p, []byte(`{"Decision_Model":"m","Roles":{"scout":{"Harness":"claude","future":"kept"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := LoadSettings()
+	if s.DecisionModel != "m" || s.Roles["scout"].Harness != "claude" {
+		t.Fatalf("case-variant keys not read: %+v", s)
+	}
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["Decision_Model"]; ok {
+		t.Fatalf("a case variant of a known key was kept as an unknown: %s", raw)
+	}
+	if string(got["decision_model"]) != `"m"` {
+		t.Fatalf("known key lost: %s", raw)
+	}
+	var roles struct {
+		Roles map[string]map[string]json.RawMessage `json:"roles"`
+	}
+	if err := json.Unmarshal(raw, &roles); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := roles.Roles["scout"]["Harness"]; ok {
+		t.Fatalf("a case variant of a known role key was kept: %s", raw)
+	}
+	if string(roles.Roles["scout"]["harness"]) != `"claude"` {
+		t.Fatalf("role key lost: %s", raw)
+	}
+	if string(roles.Roles["scout"]["future"]) != `"kept"` {
+		t.Fatalf("unknown role field dropped under a case-variant roles key: %s", raw)
+	}
+}
