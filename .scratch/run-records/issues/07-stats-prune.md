@@ -4,9 +4,9 @@
 
 **Blocked by:** 05, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Dry run by default or via `--dry-run` (pick one, document it), listing runs and size
-- [ ] Removes transcripts, usage logs, memory logs, history for the selection; orphaned blobs removed
-- [ ] Never touches a running run
-- [ ] Tests on a fixture archive
+- [x] Dry run by default or via `--dry-run` (pick one, document it), listing runs and size
+- [x] Removes transcripts, usage logs, memory logs, history for the selection; orphaned blobs removed
+- [x] Never touches a running run
+- [x] Tests on a fixture archive

@@ -1,6 +1,6 @@
 # Spec: run records, ticket history, token and memory capture, transcript archive
 
-Status: ready-for-agent
+Status: done (merged to master)
 
 ## Problem Statement
 
