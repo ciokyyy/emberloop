@@ -6,7 +6,7 @@ import (
 )
 
 // plan is a planning session: file tools plus spawn, so it can start scouts. It
-// must not carry code_review or anything that spawns, merges or reports
+// must not carry the review tools or anything that spawns, merges or reports
 // workers, so the same tool set that plans cannot run an implementation loop.
 func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 	served, err := RoleTools("plan")
@@ -40,7 +40,7 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 }
 
 // full stays reachable, but only by asking for it: it is every tool, including
-// the orchestration and review tools no planning session should hold.
+// the orchestration tools no planning session should hold.
 func TestFullServesEveryTool(t *testing.T) {
 	served, err := RoleTools("full")
 	if err != nil {
@@ -53,12 +53,12 @@ func TestFullServesEveryTool(t *testing.T) {
 	for _, tool := range served {
 		names[tool.Name()] = true
 	}
-	for _, want := range []string{"spawn", "code_review"} {
+	for _, want := range []string{"spawn"} {
 		if !names[want] {
 			t.Errorf("full must still reach %q", want)
 		}
 	}
-	for _, gone := range []string{"spawn_worker", "scout"} {
+	for _, gone := range []string{"spawn_worker", "scout", "code_review"} {
 		if names[gone] {
 			t.Errorf("the %s tool is gone and must not be served", gone)
 		}

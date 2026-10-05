@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -17,43 +16,6 @@ const ToolBudget = 4 * time.Minute
 
 // toolBudget is ToolBudget in use, a var only so a test can shrink it.
 var toolBudget = ToolBudget
-
-type jobResult struct {
-	text string
-	err  error
-}
-
-var (
-	jobsMu sync.Mutex
-	jobs   = map[string]chan jobResult{}
-)
-
-// once runs fn at most once per key. A caller waits up to toolBudget; if fn is
-// still going it gets "still running" and fn carries on, and the next call
-// with the same key rejoins it.
-func once(key string, fn func() (string, error)) (string, error) {
-	jobsMu.Lock()
-	ch, running := jobs[key]
-	if !running {
-		ch = make(chan jobResult, 1)
-		jobs[key] = ch
-		go func() {
-			text, err := fn()
-			ch <- jobResult{text, err}
-		}()
-	}
-	jobsMu.Unlock()
-
-	select {
-	case r := <-ch:
-		jobsMu.Lock()
-		delete(jobs, key)
-		jobsMu.Unlock()
-		return r.text, r.err
-	case <-time.After(toolBudget):
-		return fmt.Sprintf("still running: %s. Call the same tool again with the same arguments to get its answer; do not start anything else.", key), nil
-	}
-}
 
 // readOnlyTimeout bounds one reviewer or scout run.
 var readOnlyTimeout = 10 * time.Minute
@@ -158,8 +120,10 @@ func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (re
 // in a pane placed by the grid, and leaves it running. The prompt goes through
 // a file: pane run types its argv as one line. A non-pig harness gets no model,
 // since worker models are pig model names. place names the tab and the overflow
-// label; an empty Tab is the caller's own tab.
-func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Session, prompt string) (readOnlyAgent, error) {
+// label; an empty Tab is the caller's own tab. beforeRun, when given, runs once
+// the pane is placed but before it starts, so a reviewer can record its state
+// ahead of the submit that state exists to catch.
+func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Session, prompt string, beforeRun ...func(readOnlyAgent) error) (readOnlyAgent, error) {
 	if harness != "pig" {
 		sess.Model = ""
 	}
@@ -210,6 +174,11 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 	fail := func(err error) (readOnlyAgent, error) {
 		closeAgent(run, agent)
 		return readOnlyAgent{}, err
+	}
+	if len(beforeRun) > 0 && beforeRun[0] != nil {
+		if err := beforeRun[0](agent); err != nil {
+			return fail(err)
+		}
 	}
 
 	if res, err := run(herdrBin(), []string{"pane", "run", pane, launch.Line}, ExecOpts{Timeout: 15 * time.Second}); err != nil || res.Code != 0 {

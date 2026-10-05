@@ -16,9 +16,9 @@ var roles = map[string][]string{
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},
-	// work is an implementer: every file tool, plus code_review, which runs
-	// its two persistent reviewers. No delegation.
-	"work": {"read", "edit", "write", "bash", "find", "background", "code_review"},
+	// work is an implementer: every file tool. Its review is a spawn of the
+	// reviewer types its agent type allows, not a tool of its own.
+	"work": {"read", "edit", "write", "bash", "find", "background"},
 	// plan is a wayfinder, grill, research or to-spec session: file tools plus
 	// spawn, so it can start scouts. No review: review belongs where code is
 	// written, in the workers.

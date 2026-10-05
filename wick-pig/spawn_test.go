@@ -551,8 +551,8 @@ func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 }
 
 // A worker agent serves its type's host tools plus submit, so it can edit, run
-// the gate, and report done or blocked. It does not spawn until ticket 05 gives
-// the worker type its reviewer types.
+// A worker agent serves every file tool, submit, and the spawn it uses to run
+// its reviewer types. It never serves the review tool itself.
 func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
 	t.Setenv("WICK_AGENT_TYPE", "worker")
 	t.Setenv("WICK_AGENT_ID", "w1")
@@ -564,15 +564,13 @@ func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
 	for _, tool := range served {
 		got[tool.Name()] = true
 	}
-	for _, want := range []string{"read", "edit", "write", "bash", "find", "background", "submit"} {
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "background", "submit", "spawn"} {
 		if !got[want] {
 			t.Errorf("a worker agent must serve %q, got %v", want, got)
 		}
 	}
-	for _, unwanted := range []string{"spawn", "code_review"} {
-		if got[unwanted] {
-			t.Errorf("a worker agent must not serve %q yet", unwanted)
-		}
+	if got["code_review"] {
+		t.Errorf("a worker agent must not serve code_review")
 	}
 }
 

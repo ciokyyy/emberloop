@@ -54,9 +54,9 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 }
 
 // The brief carries what the worker needs beyond the skills: the spec its
-// ticket belongs to, the code_review tool in place of the code-review skill's
-// subagents, a rebase onto the target before the last review, and how to
-// decline a finding it cannot fix.
+// ticket belongs to, a spawn of both reviewer types in place of the
+// code-review skill's subagents, a rebase onto the target before the last
+// review, and how to decline a finding it cannot fix.
 func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p")
@@ -64,13 +64,13 @@ func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := readFile(t, path)
-	for _, want := range []string{"/repo/.scratch/p/spec.md", "code_review tool", "git rebase spec/p", "Follow-ups", "note"} {
+	for _, want := range []string{"/repo/.scratch/p/spec.md", "reviewer-standards", "reviewer-spec", "spawn(agents=", "git rebase spec/p", "Follow-ups"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("brief must carry %q:\n%s", want, text)
 		}
 	}
 	rebase := strings.Index(text, "git rebase")
-	if rebase < 0 || !strings.Contains(text[:rebase], "final code_review") {
+	if rebase < 0 || !strings.Contains(text[:rebase], "final review") {
 		t.Errorf("the rebase must come before the final review:\n%s", text)
 	}
 

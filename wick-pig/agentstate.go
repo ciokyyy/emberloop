@@ -27,6 +27,20 @@ type AgentState struct {
 	// a blocking agent is switched over when its spawn auto-backgrounds it, or
 	// back when a tell takes over its next submit.
 	Deliver bool `json:"deliver,omitempty"`
+	// Review, on a reviewer agent, is where its submit belongs: the worktree,
+	// the reviewer type, and the commit the review is tied to. A non-reviewer
+	// has none, and its submit is just recorded.
+	Review *ReviewTarget `json:"review,omitempty"`
+}
+
+// ReviewTarget is what a reviewer's submit is folded into: the worktree whose
+// reviewers it updates, the reviewer type it is keyed by, and the commit the
+// verdict is tied to.
+type ReviewTarget struct {
+	Tree string `json:"tree"`
+	Type string `json:"type"`
+	Head string `json:"head"`
+	At   string `json:"at"`
 }
 
 // agentStateDir holds one file per spawned agent.

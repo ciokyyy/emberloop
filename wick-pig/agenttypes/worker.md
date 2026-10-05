@@ -5,5 +5,7 @@ tools: [read, edit, write, bash, find, background]
 checkout: worktree
 blocking: false
 statuses: [done, blocked]
+spawns: [reviewer-standards, reviewer-spec]
+requires_review: [reviewer-standards, reviewer-spec]
 ---
 {{prompt}}

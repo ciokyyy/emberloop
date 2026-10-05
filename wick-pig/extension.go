@@ -150,15 +150,16 @@ func writeBrief(id, ticket, spec, target string) (string, error) {
 	for i, s := range workerSkills {
 		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, skillAddress(s.name), s.when)
 	}
-	b.WriteString("\nWhere a skill says /code-review, call the code_review tool instead.\n")
+	b.WriteString("\nWhere a skill says /code-review, spawn both of your reviewer types in one spawn call: " +
+		"spawn(agents=[{type: \"reviewer-standards\"}, {type: \"reviewer-spec\"}]). They review this worktree and report pass or changes.\n")
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
 	if target != "" {
-		fmt.Fprintf(&b, "\nBefore your final code_review, bring the branch up to date: `git rebase %s`. "+
-			"Resolve any conflict keeping the intent of both sides, run the gate again, and commit. "+
+		fmt.Fprintf(&b, "\nBefore your final review, bring the branch up to date: `git rebase %s`. "+
+			"Resolve any conflict keeping the intent of both sides, spawn the reviewers again, and commit. "+
 			"Other tickets merge into %s while you work, so do this last.\n", target, target)
 	}
 	b.WriteString("\nA review finding you cannot fix within this ticket (outside what it may touch, or against the spec) " +
-		"is declined, with the reason, in code_review's note. List every declined finding under \"Follow-ups\" in your final message.\n")
+		"is declined, with the reason, in the prompt of the next review spawn. List every declined finding under \"Follow-ups\" in your final message.\n")
 	b.WriteString("\nServers, watchers and log tails go to the background tool, never bash: it blocks until timeout.\n")
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -177,7 +178,7 @@ func renderFinish(r *FinishResult) string {
 		return fmt.Sprintf("merged %s into the base as %s; its worktree is gone.", r.ID, r.SHA)
 	case r.Kept:
 		return fmt.Sprintf("%s did NOT merge; its worktree and pane are still there: %s\n"+
-			"Send it back with tell(agent=%s, text=...) to fix this (rebase, resolve, gate, code_review); its next submit arrives as a notice, then finish it again.", r.ID, r.Detail, r.ID)
+			"Send it back with tell(agent=%s, text=...) to fix this (rebase, resolve, gate, review); its next submit arrives as a notice, then finish it again.", r.ID, r.Detail, r.ID)
 	default:
 		return fmt.Sprintf("discarded %s and removed its worktree.", r.ID)
 	}

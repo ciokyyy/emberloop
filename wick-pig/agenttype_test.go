@@ -69,6 +69,52 @@ func TestBuiltinWorkerTypeLoads(t *testing.T) {
 	}
 }
 
+// The built-in worker names the reviewer types it spawns and the ones whose
+// pass opens its finish gate.
+func TestBuiltinWorkerNamesItsReviewers(t *testing.T) {
+	types, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := types["worker"]
+	if got := strings.Join(worker.Spawns, ","); got != "reviewer-standards,reviewer-spec" {
+		t.Errorf("worker spawns = %q, want both reviewer types", got)
+	}
+	if got := strings.Join(worker.RequiresReview, ","); got != "reviewer-standards,reviewer-spec" {
+		t.Errorf("worker requires_review = %q, want both reviewer types", got)
+	}
+}
+
+// Both built-in reviewer types ship in wick: parent checkout, blocking,
+// persistent, read-only, with pass and changes statuses.
+func TestBuiltinReviewerTypesLoad(t *testing.T) {
+	types, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{reviewerStandards, reviewerSpec} {
+		r, ok := types[name]
+		if !ok {
+			t.Fatalf("the built-in %s did not load", name)
+		}
+		if r.Checkout != "parent" || !r.Blocking || !r.Persistent {
+			t.Errorf("%s checkout=%q blocking=%v persistent=%v, want parent/blocking/persistent",
+				name, r.Checkout, r.Blocking, r.Persistent)
+		}
+		if got := strings.Join(r.Statuses, ","); got != "pass,changes" {
+			t.Errorf("%s statuses = %q, want pass,changes", name, got)
+		}
+		for _, tool := range r.Tools {
+			if tool != "read" && tool != "find" {
+				t.Errorf("%s is read-only, so it may only read and find, has %q", name, tool)
+			}
+		}
+		if r.Description == "" || r.Body == "" {
+			t.Errorf("%s must carry a description and a body", name)
+		}
+	}
+}
+
 // A repo file adds a type the built-ins do not have.
 func TestRepoAddsAnAgentType(t *testing.T) {
 	root := t.TempDir()

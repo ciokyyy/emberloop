@@ -53,7 +53,7 @@ func OrchestrationTools() []tools.Tool {
 // spawnable types.
 func orchestrationTools(types map[string]AgentType, spawnable []string) []tools.Tool {
 	return []tools.Tool{
-		spawnToolFor(types, spawnable), finishTool, tellTool, codeReviewTool,
+		spawnToolFor(types, spawnable), finishTool, tellTool,
 	}
 }
 
@@ -116,7 +116,7 @@ func requireWorktreeAgent(id string) error {
 var finishTool = fnTool{
 	name: "finish",
 	desc: "Take a finished worktree agent: rebase and fast-forward it into its target branch, then drop its worktree and close its reviewers. " +
-		"It merges only once both of the agent's reviewers passed at its tip; merge=false discards it regardless. " +
+		"It merges only once every reviewer type the agent's type requires passed at the agent's tip; merge=false discards it regardless. " +
 		"Works only for a worktree agent.",
 	schema: schema(map[string]any{
 		"agent": map[string]any{"type": "string", "description": "Agent id."},
@@ -160,26 +160,5 @@ var tellTool = fnTool{
 			return "", fmt.Errorf("agent and text are required")
 		}
 		return tellAgent(tellExec, id, text)
-	},
-}
-
-// reviewExec is the exec a self-review runs through. A var, like spawnExec, so
-// a test can drive the tool with a fake reviewer instead of a real agent.
-var reviewExec Exec = osExec
-
-var codeReviewTool = fnTool{
-	name: "code_review",
-	desc: "Have this worktree reviewed by two read-only reviewers: code (correctness and standards) and spec (does it do the ticket, and only the ticket). " +
-		"They stay open for the whole ticket: call again after fixing, and they review what changed. " +
-		"By default a call goes to every reviewer still asking for changes. It covers committed and uncommitted work; commit first. " +
-		"If it answers \"still running\", call it again with the same arguments.",
-	schema: schema(map[string]any{
-		"reviewer": map[string]any{"type": "string", "enum": []any{axisCode, axisSpec}, "description": "Only this reviewer. Default: every reviewer with open findings."},
-		"note":     map[string]any{"type": "string", "description": "Your answer to the findings: what you fixed, and what you decline and why."},
-	}),
-	run: func(root string, params map[string]any) (string, error) {
-		return once("code_review "+root, func() (string, error) {
-			return CodeReview(reviewExec, root, str(params, "reviewer"), str(params, "note"))
-		})
 	},
 }

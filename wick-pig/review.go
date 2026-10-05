@@ -6,22 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
-// A worktree is reviewed on two axes, by two reviewers that stay alive for the
-// whole ticket: code (standards and correctness) and spec (does the diff do
-// what the ticket asks, and nothing outside it).
+// The reviewer types wick ships. A worker's reviewers are the types its
+// requires_review names; these are the defaults when a record names none.
 const (
-	axisCode = "code"
-	axisSpec = "spec"
+	reviewerStandards = "reviewer-standards"
+	reviewerSpec      = "reviewer-spec"
 )
 
-var allAxes = []string{axisCode, axisSpec}
+var defaultReviewers = []string{reviewerStandards, reviewerSpec}
 
+// verdictPass and verdictChanges are the built-in reviewers' statuses, and the
+// values the merge gate reads.
 const (
 	verdictPass    = "pass"
 	verdictChanges = "changes"
@@ -99,7 +99,10 @@ func reviewersOf(tree string) map[string]reviewer {
 	return map[string]reviewer{}
 }
 
-func storeReviewer(tree, axis string, r reviewer) error {
+// storeReviewerPane records where a reviewer runs, keeping any verdict already
+// on file: a replacement is set up before its pane starts, so its submit can
+// fold the new verdict in without losing the slot it took.
+func storeReviewerPane(tree, typ string, r reviewer) error {
 	reviewersMu.Lock()
 	defer reviewersMu.Unlock()
 	all, err := loadReviewers()
@@ -110,7 +113,50 @@ func storeReviewer(tree, axis string, r reviewer) error {
 	if all[key] == nil {
 		all[key] = map[string]reviewer{}
 	}
-	all[key][axis] = r
+	prev := all[key][typ]
+	if prev.Verdict != "" {
+		r.Verdict, r.VerdictAt, r.Findings = prev.Verdict, prev.VerdictAt, prev.Findings
+	}
+	all[key][typ] = r
+	return saveReviewers(all)
+}
+
+// mergeReviewerVerdict folds a reviewer's submit into the record for its
+// worktree: its status is the verdict, and its report the findings kept for
+// follow-ups and for briefing a replacement.
+func mergeReviewerVerdict(tree, typ, verdict, at, findings string) error {
+	reviewersMu.Lock()
+	defer reviewersMu.Unlock()
+	all, err := loadReviewers()
+	if err != nil {
+		return err
+	}
+	key := filepath.Clean(tree)
+	if all[key] == nil {
+		all[key] = map[string]reviewer{}
+	}
+	r := all[key][typ]
+	r.Verdict, r.VerdictAt, r.Findings = verdict, at, findings
+	all[key][typ] = r
+	return saveReviewers(all)
+}
+
+// mergeReviewerReviewed records the commit a re-prompted reviewer will judge,
+// so its next follow-up diffs from there.
+func mergeReviewerReviewed(tree, typ, head string) error {
+	reviewersMu.Lock()
+	defer reviewersMu.Unlock()
+	all, err := loadReviewers()
+	if err != nil {
+		return err
+	}
+	key := filepath.Clean(tree)
+	if all[key] == nil {
+		all[key] = map[string]reviewer{}
+	}
+	r := all[key][typ]
+	r.Reviewed = head
+	all[key][typ] = r
 	return saveReviewers(all)
 }
 
@@ -134,31 +180,41 @@ func closeReviewers(run Exec, tree string) {
 }
 
 // reviewGate is why the worktree at tree, whose tip is head, may not merge
-// yet, or "" when every reviewer it needs passed at head.
-func reviewGate(tree, head string, axes []string) string {
+// yet, or "" when every required reviewer type passed at head.
+func reviewGate(tree, head string, required []string) string {
 	have := reviewersOf(tree)
 	var missing []string
-	for _, axis := range axes {
-		r, ok := have[axis]
+	for _, typ := range required {
+		r, ok := have[typ]
 		switch {
 		case !ok || r.Verdict == "":
-			missing = append(missing, axis+" reviewer: no review yet")
+			missing = append(missing, typ+": no review yet")
 		case r.Verdict != verdictPass:
-			missing = append(missing, fmt.Sprintf("%s reviewer: %s at %s", axis, r.Verdict, short(r.VerdictAt)))
+			missing = append(missing, fmt.Sprintf("%s: %s at %s", typ, r.Verdict, short(r.VerdictAt)))
 		case r.VerdictAt != head:
-			missing = append(missing, fmt.Sprintf("%s reviewer: passed at %s, not at the tip %s", axis, short(r.VerdictAt), short(head)))
+			missing = append(missing, fmt.Sprintf("%s: passed at %s, not at the tip %s", typ, short(r.VerdictAt), short(head)))
 		}
 	}
 	return strings.Join(missing, "; ")
 }
 
-// axesFor is the reviewers a worktree needs: spec review needs a ticket to
-// judge against, so a tree wick did not spawn gets the code reviewer only.
-func axesFor(w *Worker) []string {
-	if w == nil || w.Ticket == "" {
-		return []string{axisCode}
+// requiredReviewers is the reviewer types a worker's finish needs: its type's
+// requires_review. A record without a type falls back to the two built-in
+// reviewers, so a worker spawned before types recorded their name still gates
+// on review.
+func requiredReviewers(w *Worker) []string {
+	if w == nil || w.AgentType == "" {
+		return defaultReviewers
 	}
-	return allAxes
+	types, err := LoadAgentTypes(w.Repo)
+	if err != nil {
+		return defaultReviewers
+	}
+	t, ok := types[w.AgentType]
+	if !ok {
+		return defaultReviewers
+	}
+	return t.RequiresReview
 }
 
 func workerAt(tree string) *Worker {
@@ -235,256 +291,212 @@ type reviewPacket struct {
 	place readOnlyPlace
 }
 
-// CodeReview has the worktree at tree reviewed. The first call starts a code
-// and a spec reviewer; they stay alive, and a later call sends them a
-// follow-up with what changed since they last looked, rather than a fresh
-// reviewer re-reading everything. Without only, a call goes to every reviewer
-// still asking for changes, plus any whose pass is older than HEAD; only
-// names one reviewer instead. note is the worker's answer to the findings.
-func CodeReview(run Exec, tree, only, note string) (string, error) {
+// prepareReview builds the packet every reviewer of a worktree judges: the
+// head, the diff from the worker's base, and the repo checks. It runs once per
+// reviewer spawn, so two reviewers launched together share one check run and
+// one diff. note is the worker's answer to earlier findings.
+func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 	w := workerAt(tree)
-	axes := axesFor(w)
-	if only != "" && !contains(axes, only) {
-		return "", fmt.Errorf("reviewer must be one of %s", strings.Join(axes, ", "))
-	}
-	git := func(args ...string) (string, error) {
-		res, err := run("git", args, ExecOpts{Cwd: tree, Timeout: time.Minute})
-		if err != nil {
-			return "", err
-		}
-		if res.Code != 0 {
-			return "", fmt.Errorf("git %s failed: %s", args[0], firstLine(res.Stderr, "unknown error"))
-		}
-		return res.Stdout, nil
-	}
-	headOut, err := git("rev-parse", "HEAD")
+	head, err := gitIn(run, tree, "rev-parse", "HEAD")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	head := strings.TrimSpace(headOut)
-	// A pass is tied to a commit, and uncommitted work is not in one: a pass
-	// on a dirty tree is recorded against no commit, so it never opens the
+	head = strings.TrimSpace(head)
+	// A pass is tied to a commit, and uncommitted work is not in one: a review
+	// of a dirty tree is recorded against no commit, so it never opens the
 	// merge gate.
 	verdictAt := head
-	if status, err := git("status", "--porcelain"); err == nil && strings.TrimSpace(status) != "" {
+	if status, err := gitIn(run, tree, "status", "--porcelain"); err == nil && strings.TrimSpace(status) != "" {
 		verdictAt = head + "+uncommitted"
 	}
 	base := diffBase(run, tree, w)
-	// The base against the *working tree*: a worker reviews mid-branch, and
-	// only this form covers commits and uncommitted work in one diff.
-	full, err := git("diff", base)
+	full, err := gitIn(run, tree, "diff", base)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if strings.TrimSpace(full) == "" {
-		return "no changes: nothing differs from the base. Nothing to review.", nil
-	}
-
-	have := reviewersOf(tree)
-	var targets []string
-	for _, axis := range axes {
-		r, ok := have[axis]
-		switch {
-		case only != "":
-			if axis == only {
-				targets = append(targets, axis)
-			}
-		case !ok || r.Verdict != verdictPass || r.VerdictAt != verdictAt:
-			targets = append(targets, axis)
-		}
-	}
-	if len(targets) == 0 {
-		return fmt.Sprintf("every reviewer passed at %s; nothing to review.", short(head)), nil
-	}
-
 	dir := filepath.Join(filepath.Dir(statePath), "reviews")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return nil, err
 	}
 	name := filepath.Base(tree)
-	p := reviewPacket{tree: tree, head: head, verdictAt: verdictAt, base: base, note: note, fullDiff: filepath.Join(dir, name+".diff")}
+	p := &reviewPacket{
+		tree: tree, head: head, verdictAt: verdictAt, base: base, note: note,
+		fullDiff: filepath.Join(dir, name+".diff"),
+	}
 	if err := os.WriteFile(p.fullDiff, []byte(full), 0o644); err != nil {
-		return "", err
+		return nil, err
 	}
 	if w != nil {
 		p.ticket, p.spec, p.model = w.Ticket, w.Spec, w.Model
 	}
 	p.place = workerPlace(w)
 	p.checks = runChecks(run, tree)
-
-	type outcome struct {
-		axis, reply, verdict, notice string
-		err                          error
-	}
-	results := make([]outcome, len(targets))
-	var wg sync.WaitGroup
-	for i, axis := range targets {
-		wg.Add(1)
-		go func(i int, axis string) {
-			defer wg.Done()
-			prev, had := have[axis]
-			r, reply, notice, err := reviewOn(run, git, dir, name, axis, p, prev, had)
-			results[i] = outcome{axis: axis, reply: reply, verdict: r.Verdict, notice: notice, err: err}
-			if err == nil {
-				err = storeReviewer(tree, axis, r)
-				results[i].err = err
-			}
-		}(i, axis)
-	}
-	wg.Wait()
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "Review at %s. Checks: %s\n", short(head), firstLine(p.checks, p.checks))
-	failed := 0
-	for _, o := range results {
-		if o.err != nil {
-			failed++
-			fmt.Fprintf(&b, "\n## %s reviewer: failed\n%v\n", o.axis, o.err)
-			continue
-		}
-		fmt.Fprintf(&b, "\n## %s reviewer: %s at %s\n", o.axis, o.verdict, short(head))
-		if o.notice != "" {
-			b.WriteString(o.notice + "\n")
-		}
-		b.WriteString(o.reply + "\n")
-	}
-	if failed == len(results) {
-		return "", errors.New(strings.TrimSpace(b.String()))
-	}
-	if verdictAt != head {
-		b.WriteString("\nThis review covered uncommitted work, so no pass counts toward merging: commit, then call code_review again.\n")
-	}
-	b.WriteString("\nFix what you agree with and call code_review again; decline the rest with a reason in note.")
-	return strings.TrimSpace(b.String()), nil
+	return p, nil
 }
 
-// reviewOn runs one reviewer for one call: a follow-up to the live reviewer it
-// had, or a fresh one when it had none or its pane is gone.
-func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis string, p reviewPacket,
-	prev reviewer, had bool) (reviewer, string, string, error) {
-	var agent readOnlyAgent
-	var reply, notice string
-	var err error
+// gitIn runs one git command in tree and returns its stdout.
+func gitIn(run Exec, tree string, args ...string) (string, error) {
+	res, err := run("git", args, ExecOpts{Cwd: tree, Timeout: time.Minute})
+	if err != nil {
+		return "", err
+	}
+	if res.Code != 0 {
+		return "", fmt.Errorf("git %s failed: %s", args[0], firstLine(res.Stderr, "unknown error"))
+	}
+	return res.Stdout, nil
+}
+
+// launchReviewer starts or re-prompts one reviewer type for the packet. A live
+// reviewer that already passed at this packet's commit is left alone and nil
+// is returned: a re-spawn only nudges reviewers that still have something to
+// look at. A dead reviewer is replaced in its slot, briefed with its findings.
+func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID string) (*spawnedAgent, error) {
+	p.note = note
+	have := reviewersOf(p.tree)
+	prev, had := have[t.Name]
 
 	if had && prev.agent().alive(run) {
-		agent = prev.agent()
-		// A branch rebased since the reviewer last looked no longer holds
-		// the commit it saw, and a diff from it would show every other
-		// ticket merged meanwhile: the reviewer gets the full diff again.
-		incPath := p.fullDiff
-		if _, err := git("merge-base", "--is-ancestor", prev.Reviewed, "HEAD"); err == nil {
-			inc, err := git("diff", prev.Reviewed)
-			if err != nil {
-				return reviewer{}, "", "", err
-			}
-			incPath = filepath.Join(dir, name+"."+axis+".since.diff")
-			if err := os.WriteFile(incPath, []byte(inc), 0o644); err != nil {
-				return reviewer{}, "", "", err
-			}
+		if prev.Verdict == verdictPass && prev.VerdictAt == p.verdictAt {
+			return nil, nil
 		}
-		promptPath := filepath.Join(dir, name+"."+axis+".followup")
-		if err := os.WriteFile(promptPath, []byte(followUpPrompt(axis, p, prev, incPath)), 0o644); err != nil {
-			return reviewer{}, "", "", err
-		}
-		reply, err = agent.tell(run, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath))
-		if err != nil {
-			return reviewer{}, "", "", err
-		}
-	} else {
-		prompt := firstReviewPrompt(axis, p)
-		place := p.place
-		if had {
-			// The reviewer this one replaces is gone; it inherits the
-			// findings, so a fix is checked against them and not lost.
-			prompt += fmt.Sprintf("\n\nYou replace a %s reviewer whose pane closed. Its last reply, at %s, was:\n\n%s\n\nCheck whether each of its findings still holds.",
-				axis, short(prev.Reviewed), prev.Findings)
-			notice = fmt.Sprintf("(the previous %s reviewer's pane was gone: a new reviewer took over, briefed with its findings)", axis)
-			// The replacement takes the dead reviewer's slot in its tab, so
-			// the rest of the grid keeps its positions.
-			if prev.Tab != "" {
-				place.Tab, place.Slot = prev.Tab, prev.Slot
-			}
-		}
-		agent, err = startReadOnly(run, place, p.tree, p.model, prompt)
-		if err != nil {
-			return reviewer{}, "", "", err
-		}
-		reply, err = agent.reply(run, 0)
-		if err != nil {
-			// Nothing remembers a reviewer that never answered, so its pane
-			// is closed here or it is never closed at all.
-			closeAgent(run, agent)
-			return reviewer{}, "", "", err
-		}
+		return followUpReviewer(run, p, t, prev, parentPane, parentID)
 	}
-
-	verdict := parseVerdict(reply)
-	if verdict == "" {
-		more, err := agent.tell(run, "End your reply with exactly one line: VERDICT: pass or VERDICT: changes.")
-		if err == nil {
-			reply = strings.TrimSpace(reply + "\n" + more)
-			verdict = parseVerdict(more)
-		}
-		if verdict == "" {
-			verdict = verdictChanges
-			reply += "\n(no VERDICT line after a nudge: counted as changes)"
-		}
-	}
-	r := reviewer{
-		Pane: agent.Pane, Tab: agent.Tab, Slot: agent.Slot, Harness: agent.Harness,
-		SessionID: agent.Session.ID, Cwd: agent.Session.Cwd, Model: agent.Session.Model,
-		Reviewed: p.head, Verdict: verdict, VerdictAt: p.verdictAt, Findings: reply,
-	}
-	return r, reply, notice, nil
+	return freshReviewer(run, p, t, prev, had, parentPane, parentID)
 }
 
-var verdictLine = regexp.MustCompile(`(?im)^\s*\**\s*VERDICT:\s*\**\s*(pass|changes)\b`)
-
-// parseVerdict is the verdict on the reply's last VERDICT line, or "".
-func parseVerdict(reply string) string {
-	m := verdictLine.FindAllStringSubmatch(reply, -1)
-	if len(m) == 0 {
-		return ""
+// followUpReviewer re-prompts the live reviewer with only what changed since it
+// last looked: the diff since its commit, the new checks and the worker's note.
+// Its submit for the new turn is what the caller waits on, so the previous one
+// is dropped first.
+func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, parentPane, parentID string) (*spawnedAgent, error) {
+	agent := prev.agent()
+	dir := filepath.Join(filepath.Dir(statePath), "reviews")
+	name := filepath.Base(p.tree)
+	// A branch rebased since the reviewer last looked no longer holds the
+	// commit it saw, and a diff from it would show every other ticket merged
+	// meanwhile: the reviewer gets the full diff again.
+	incPath := p.fullDiff
+	if _, err := gitIn(run, p.tree, "merge-base", "--is-ancestor", prev.Reviewed, "HEAD"); err == nil {
+		inc, err := gitIn(run, p.tree, "diff", prev.Reviewed)
+		if err != nil {
+			return nil, err
+		}
+		incPath = filepath.Join(dir, name+"."+t.Name+".since.diff")
+		if err := os.WriteFile(incPath, []byte(inc), 0o644); err != nil {
+			return nil, err
+		}
 	}
-	return strings.ToLower(m[len(m)-1][1])
+	promptPath := filepath.Join(dir, name+"."+t.Name+".followup")
+	if err := os.WriteFile(promptPath, []byte(followUpPrompt(p, prev, incPath)), 0o644); err != nil {
+		return nil, err
+	}
+	// The previous turn's submit must not satisfy the wait for this one.
+	clearAgentSubmit(prev.SessionID)
+	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID); err != nil {
+		return nil, err
+	}
+	if err := Nudge(run, agent.Pane, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath)); err != nil {
+		return nil, err
+	}
+	if err := mergeReviewerReviewed(p.tree, t.Name, p.head); err != nil {
+		return nil, err
+	}
+	return &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab}, nil
 }
 
-const findingRules = `One line per finding: file:line severity: problem. Severity is blocker, major or minor. Skip style and praise.
-The ticket's hard limits bind the worker: never ask for an edit they forbid. The worker may decline a finding with a reason; accept a reasoned decline of anything outside the ticket's scope or against the spec, and say so.
-You can only read and find. You stay open after this reply: later messages bring follow-ups with what changed, and you re-judge your open findings against them.
-End with exactly one line: VERDICT: pass (no blocker or major left) or VERDICT: changes.`
+// freshReviewer launches a reviewer agent of type t in the worker's tab, or in
+// the dead reviewer's slot when one is being replaced. It records the reviewer
+// and its review target before the pane starts, so the agent's submit can find
+// them.
+func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replaced bool, parentPane, parentID string) (*spawnedAgent, error) {
+	harness := t.Harness
+	if harness == "" {
+		harness = os.Getenv("WICK_READONLY_HARNESS")
+	}
+	if harness == "" {
+		harness = "pig"
+	}
+	id := newSessionID()
+	sess := Session{
+		Role: "agent", Cwd: p.tree, Model: p.model, ID: id,
+		AgentType: t.Name, AgentID: id,
+		Dir: filepath.Join(readOnlyDir(), "sessions"),
+	}
+	place := p.place
+	notice := ""
+	if replaced {
+		if prev.Tab != "" {
+			place.Tab, place.Slot = prev.Tab, prev.Slot
+		}
+		notice = fmt.Sprintf("(the previous %s reviewer's pane was gone: a new reviewer took over, briefed with its findings)",
+			t.Name)
+	}
+	spaceSpawns()
+	agent, err := launchPlacedAgent(run, place, harness, sess, renderPrompt(t, packetPrompt(p, t.Name, prev, replaced)),
+		func(a readOnlyAgent) error {
+			if err := storeReviewerPane(p.tree, t.Name, reviewer{
+				Pane: a.Pane, Tab: a.Tab, Slot: a.Slot, Harness: harness,
+				SessionID: id, Cwd: p.tree, Model: p.model, Reviewed: p.head,
+			}); err != nil {
+				return err
+			}
+			return writeReviewState(id, t.Name, p, parentPane, parentID)
+		})
+	if err != nil {
+		return nil, err
+	}
+	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Notice: notice}, nil
+}
 
-func firstReviewPrompt(axis string, p reviewPacket) string {
+// writeReviewState records where a reviewer's submit belongs: the worktree, the
+// reviewer type, and the commit the review is tied to, plus the worker's pane
+// and id so an auto-backgrounded reviewer's submit still reaches it. The
+// reviewer process reads it back when it submits, so the verdict lands on the
+// right record even when the spawn auto-backgrounds it.
+func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID string) error {
+	s, _, err := ReadAgentState(id)
+	if err != nil {
+		return err
+	}
+	s.ID, s.Type = id, typ
+	s.Parent, s.ParentID = parentPane, parentID
+	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt}
+	return WriteAgentState(s)
+}
+
+// packetPrompt is the reviewer's brief: where it runs, the ticket and spec for
+// the spec reviewer, the diff to read, the checks wick ran, and the worker's
+// note. It is appended to the type's own standing instructions.
+func packetPrompt(p *reviewPacket, typ string, prev reviewer, replaced bool) string {
 	var b strings.Builder
-	switch axis {
-	case axisSpec:
-		fmt.Fprintf(&b, "You are the spec reviewer for the worktree %s.\n\n", p.tree)
-		fmt.Fprintf(&b, "The ticket is %s.", p.ticket)
+	fmt.Fprintf(&b, "The worktree is %s.\n", p.tree)
+	if typ == reviewerSpec && p.ticket != "" {
+		fmt.Fprintf(&b, "\nThe ticket is %s.", p.ticket)
 		if p.spec != "" {
 			fmt.Fprintf(&b, " It belongs to the spec at %s.", p.spec)
 		}
-		b.WriteString(" Judge whether the diff does what the ticket asks, every acceptance criterion, and stays inside the ticket and consistent with the spec's decisions. Work the ticket does not ask for is a finding. Code quality is the code reviewer's, not yours.\n\n")
-	default:
-		fmt.Fprintf(&b, "You are the code reviewer for the worktree %s.\n\n", p.tree)
-		b.WriteString("Judge the diff for correctness and this repo's standards (read its AGENTS.md, CLAUDE.md or CONTRIBUTING if present): bugs, missed edge cases, callers the change broke, new logic with no test. Whether it matches the ticket is the spec reviewer's, not yours.\n\n")
+		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "The change is the git diff at %s, from %s to the working tree; read files in the worktree for context.\n\n", p.fullDiff, short(p.base))
-	fmt.Fprintf(&b, "Checks run by wick on this tree: %s\n\n", p.checks)
+	fmt.Fprintf(&b, "\nThe change is the git diff at %s, from %s to the working tree; read files in the worktree for context.\n", p.fullDiff, short(p.base))
+	fmt.Fprintf(&b, "\nChecks run by wick on this tree: %s\n", p.checks)
 	if p.note != "" {
-		fmt.Fprintf(&b, "The worker says: %s\n\n", p.note)
+		fmt.Fprintf(&b, "\nThe worker says: %s\n", p.note)
 	}
-	b.WriteString(findingRules)
+	if replaced {
+		fmt.Fprintf(&b, "\nYou replace a reviewer whose pane closed. Its last findings, at %s, were:\n\n%s\n\nCheck whether each of them still holds.\n",
+			short(prev.Reviewed), prev.Findings)
+	}
 	return b.String()
 }
 
-func followUpPrompt(axis string, p reviewPacket, prev reviewer, incPath string) string {
+func followUpPrompt(p *reviewPacket, prev reviewer, incPath string) string {
 	var b strings.Builder
 	if incPath == p.fullDiff {
-		fmt.Fprintf(&b, "Follow-up for the %s review. The branch was rebased since you last looked (%s), so read the full diff again, at %s.\n\n",
-			axis, short(prev.Reviewed), p.fullDiff)
+		fmt.Fprintf(&b, "Follow-up review. The branch was rebased since you last looked (%s), so read the full diff again, at %s.\n\n",
+			short(prev.Reviewed), p.fullDiff)
 	} else {
-		fmt.Fprintf(&b, "Follow-up for the %s review. What changed since you last looked (%s) is the diff at %s; the full diff is still at %s.\n\n",
-			axis, short(prev.Reviewed), incPath, p.fullDiff)
+		fmt.Fprintf(&b, "Follow-up review. What changed since you last looked (%s) is the diff at %s; the full diff is still at %s.\n\n",
+			short(prev.Reviewed), incPath, p.fullDiff)
 	}
 	if prev.Verdict == verdictPass {
 		fmt.Fprintf(&b, "You passed this work at %s. It changed since, likely for the other reviewer: check that the change did not break what you approved.\n\n", short(prev.VerdictAt))
@@ -495,7 +507,7 @@ func followUpPrompt(axis string, p reviewPacket, prev reviewer, incPath string) 
 	if p.note != "" {
 		fmt.Fprintf(&b, "The worker says: %s\n\n", p.note)
 	}
-	b.WriteString(findingRules)
+	b.WriteString("When the review is done, call the submit tool with status \"pass\" or \"changes\" and put your findings in its report.")
 	return b.String()
 }
 

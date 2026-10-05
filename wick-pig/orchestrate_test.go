@@ -7,41 +7,40 @@ import (
 	"testing"
 )
 
-func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
-	serves := func(role string) bool {
-		served, _ := RoleTools(role)
+// No role serves code_review any more: a worker reviews itself by spawning its
+// reviewer types, and the tool is gone for every session.
+func TestNoRoleServesCodeReview(t *testing.T) {
+	for _, role := range []string{"work", "full", "review", "scout", "implement", "plan"} {
+		served, err := RoleTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, tl := range served {
 			if tl.Name() == "code_review" {
-				return true
+				t.Errorf("%s role must not serve code_review", role)
 			}
 		}
-		return false
 	}
-	for _, role := range []string{"work", "full"} {
-		if !serves(role) {
-			t.Errorf("%s role must serve code_review", role)
+}
+
+// The review roles still reach only read and find, and implement still does not
+// hold the old review_worker tool.
+func TestReviewRolesServeNothingThatWrites(t *testing.T) {
+	for _, role := range []string{"review", "scout"} {
+		served, err := RoleTools(role)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	// review and scout may only look; implement delegates and never reviews:
-	// each worker reviews its own work; plan reviews nothing, review belongs
-	// where code is written.
-	for _, role := range []string{"review", "scout", "implement", "plan"} {
-		if serves(role) {
-			t.Errorf("%s role must not serve code_review", role)
+		for _, tl := range served {
+			if n := tl.Name(); n != "read" && n != "find" {
+				t.Errorf("%s role serves %s", role, n)
+			}
 		}
 	}
 	implement, _ := RoleTools("implement")
 	for _, tl := range implement {
 		if tl.Name() == "review_worker" {
 			t.Errorf("implement role must not serve review_worker")
-		}
-	}
-	for _, role := range []string{"review", "scout"} {
-		served, _ := RoleTools(role)
-		for _, tl := range served {
-			if n := tl.Name(); n != "read" && n != "find" {
-				t.Errorf("%s role serves %s", role, n)
-			}
 		}
 	}
 }

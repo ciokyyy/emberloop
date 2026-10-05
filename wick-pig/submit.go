@@ -84,6 +84,12 @@ func ClearAgentSubmitThisTurn(agentID string) error {
 	return WriteAgentSubmit(s)
 }
 
+// clearAgentSubmit forgets an agent's last submit, so a re-prompted reviewer's
+// caller waits on the new one rather than reading the previous turn's.
+func clearAgentSubmit(agentID string) {
+	_ = os.Remove(submitPath(agentID))
+}
+
 // submitToolFor builds the submit tool of one spawned agent. A blocking type
 // submits a free-text report; a non-blocking type submits a one-line summary.
 func submitToolFor(t AgentType, agentID string) tools.Tool {
@@ -156,6 +162,15 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 	}
 	if err := WriteAgentSubmit(s); err != nil {
 		return "", err
+	}
+	// A reviewer's submit is its verdict: fold it into the record for the
+	// worktree it judged, so finish's gate sees the pass at that commit.
+	if st, ok, err := ReadAgentState(agentID); err != nil {
+		return "", err
+	} else if ok && st.Review != nil {
+		if err := mergeReviewerVerdict(st.Review.Tree, st.Review.Type, status, st.Review.At, s.Report); err != nil {
+			return "", err
+		}
 	}
 	// An agent whose submit goes to the parent as a notice delivers it now. The
 	// decision is made under the child's own lock, so a spawn that

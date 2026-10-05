@@ -34,6 +34,10 @@ type Worker struct {
 	Model     string `json:"model,omitempty"`
 	Started   string `json:"started"`
 	SessionID string `json:"session_id,omitempty"`
+	// AgentType is the type this worker was spawned as, whose requires_review
+	// decides which reviewers gate its finish. Empty on records made before
+	// types recorded their name, which fall back to the two built-in ones.
+	AgentType string `json:"agent_type,omitempty"`
 }
 
 type FinishResult struct {
@@ -248,6 +252,9 @@ type SpawnInput struct {
 	Late string
 	// SessionID names the harness session so Wait can find its transcript.
 	SessionID string
+	// AgentType is the type this worker is spawned as; finish reads its
+	// requires_review to know which reviewers the merge gate needs.
+	AgentType string
 }
 
 func worktreePath(repo, id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
@@ -387,6 +394,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		Harness:   in.Harness,
 		Model:     in.Model,
 		SessionID: in.SessionID,
+		AgentType: in.AgentType,
 		Started:   time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -675,7 +683,7 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 			return nil, err
 		} else if strings.TrimSpace(res.Stdout) != "" {
 			return &FinishResult{ID: id, Kept: true,
-				Detail: "the worktree has uncommitted changes, which would be lost; have it commit them and call code_review again"}, nil
+				Detail: "the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again"}, nil
 		}
 		// Both reviewers must have passed the tip they judged; a worker that
 		// stopped before its review is sent back, not merged. The check is
@@ -684,9 +692,9 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		if why := reviewGate(w.Worktree, strings.TrimSpace(res.Stdout), axesFor(&w)); why != "" {
+		if why := reviewGate(w.Worktree, strings.TrimSpace(res.Stdout), requiredReviewers(&w)); why != "" {
 			return &FinishResult{ID: id, Kept: true,
-				Detail: "not reviewed to a pass: " + why + ". Have it call code_review until both reviewers pass at its tip"}, nil
+				Detail: "not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip"}, nil
 		}
 
 		// Rebase onto where the target is *now*: another worker may have moved

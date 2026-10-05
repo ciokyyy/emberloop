@@ -159,7 +159,9 @@ func runSpawn(root string, types map[string]AgentType, allowed []string, params 
 		if !ok {
 			return "", fmt.Errorf("unknown agent type %q", r.Type)
 		}
-		if t.Checkout != "worktree" && strings.TrimSpace(r.Prompt) == "" {
+		// A reviewer (parent checkout) runs in the caller's own worktree; its
+		// prompt is an optional note for a follow-up, so it is not required.
+		if t.Checkout == "none" && strings.TrimSpace(r.Prompt) == "" {
 			return "", fmt.Errorf("agents[%d].prompt is required", i)
 		}
 	}
@@ -208,6 +210,9 @@ type spawnedAgent struct {
 	// Warning is a launch-time caution, such as a pig worker with no report
 	// extension; it is appended to the spawn result.
 	Warning string
+	// Notice is a line the spawn result carries beside the agent's report,
+	// such as a dead reviewer having been replaced.
+	Notice string
 }
 
 // spawnAgents starts every entry, launches spaced as always, then waits at most
@@ -222,17 +227,41 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 	for _, r := range reqs {
 		t := types[r.Type]
 		switch t.Checkout {
-		case "none", "worktree":
+		case "none", "worktree", "parent":
 		default:
 			return "", fmt.Errorf("cannot spawn %q: checkout %q is not supported yet", r.Type, t.Checkout)
 		}
 	}
-
 	parentPane := os.Getenv("HERDR_PANE_ID")
 	parentID := os.Getenv("WICK_AGENT_ID")
 	agents := make([]*spawnedAgent, 0, len(reqs))
+	// A reviewer spawn shares one packet and one check run across every
+	// reviewer type in the call; it is prepared once, on the first reviewer.
+	var review *reviewPacket
 	for _, r := range reqs {
 		t := types[r.Type]
+		if t.Checkout == "parent" {
+			if review == nil {
+				p, err := prepareReview(run, root, r.Prompt)
+				if err != nil {
+					closeSpawned(run, agents)
+					return "", err
+				}
+				review = p
+			}
+			// A reviewer that already passed at the tip is left alone, so a
+			// re-spawn only reaches the reviewers that still have something
+			// to look at.
+			agent, err := launchReviewer(run, review, t, r.Prompt, parentPane, parentID)
+			if err != nil {
+				closeSpawned(run, agents)
+				return "", err
+			}
+			if agent != nil {
+				agents = append(agents, agent)
+			}
+			continue
+		}
 		var (
 			agent *spawnedAgent
 			err   error
@@ -266,6 +295,11 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 	}
 
 	deadline := time.Now().Add(toolBudget)
+	// Every reviewer already passed at the tip: nothing to review, and no
+	// agent was started.
+	if review != nil && len(agents) == 0 {
+		return fmt.Sprintf("every reviewer passed at %s; nothing to review.", short(review.head)), nil
+	}
 	for {
 		if allSubmitted(agents) || !time.Now().Before(deadline) {
 			break
@@ -375,12 +409,13 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 		target = targetBranch(run, repo, r.Base)
 	}
 	in := SpawnInput{
-		Ticket:  r.Ticket,
-		Repo:    repo,
-		Base:    r.Base,
-		Target:  target,
-		Harness: harness,
-		Model:   model,
+		Ticket:    r.Ticket,
+		Repo:      repo,
+		Base:      r.Base,
+		Target:    target,
+		Harness:   harness,
+		Model:     model,
+		AgentType: t.Name,
 	}
 	// An implement session carries its spec in the environment; every worker
 	// it spawns records it, for its brief and its spec reviewer.
@@ -456,7 +491,11 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 			continue
 		}
 		if s, ok, _ := ReadAgentSubmit(a.ID); ok {
-			parts = append(parts, renderSubmit(s))
+			line := renderSubmit(s)
+			if a.Notice != "" {
+				line = a.Notice + "\n" + line
+			}
+			parts = append(parts, line)
 		}
 	}
 	if len(backgrounded) > 0 {

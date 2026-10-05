@@ -18,6 +18,12 @@ var builtinScout string
 //go:embed agenttypes/worker.md
 var builtinWorker string
 
+//go:embed agenttypes/reviewer-standards.md
+var builtinReviewerStandards string
+
+//go:embed agenttypes/reviewer-spec.md
+var builtinReviewerSpec string
+
 // AgentType is one kind of spawned agent, defined by a markdown file with
 // frontmatter rather than by code. A type says what the agent may do (tools),
 // where it runs (checkout), whether spawning it blocks, what it may report
@@ -44,7 +50,12 @@ type AgentType struct {
 
 // builtinAgentSources are the types wick embeds. A repo file with the same
 // name overrides one.
-var builtinAgentSources = map[string]string{"scout": builtinScout, "worker": builtinWorker}
+var builtinAgentSources = map[string]string{
+	"scout":              builtinScout,
+	"worker":             builtinWorker,
+	"reviewer-standards": builtinReviewerStandards,
+	"reviewer-spec":      builtinReviewerSpec,
+}
 
 // hostToolNames are the MCP tools a type's `tools` field may name. `submit` is
 // added to every spawned agent by the runtime, so it is not listed here.
