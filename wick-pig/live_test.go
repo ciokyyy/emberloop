@@ -101,9 +101,11 @@ func assertForeground(t *testing.T, transcript, version string) {
 	}
 }
 
-// waitForToolStart polls until the transcript shows the slow tool is in
-// flight (the command text or a tool-use record), so a mid-call notice lands
-// mid-call rather than before the call or after it returned. It also fails
+// waitForToolStart polls until the transcript shows the slow bash tool is in
+// flight, so a mid-call notice lands mid-call rather than before the call or
+// after it returned. It matches the bash tool-use record specifically: the
+// agent first reads its prompt file, so a bare command-text or tool_use match
+// fires on the read and returns before the bash call exists. It also fails
 // when the call already finished, for the same reason.
 func waitForToolStart(t *testing.T, sess Session, command, doneMarker string) {
 	t.Helper()
@@ -113,7 +115,12 @@ func waitForToolStart(t *testing.T, sess Session, command, doneMarker string) {
 		if strings.Contains(tr, doneMarker) {
 			t.Fatalf("slow tool finished before the mid-call notice was delivered; transcript:\n%s", tr)
 		}
-		if strings.Contains(tr, command) || strings.Contains(strings.ToLower(tr), "tool_use") {
+		// mcp__wick__bash is the tool-use name; "bash" in quotes covers a
+		// bare bash name. Either with the sleep command proves the slow
+		// call started, not the prompt-file read that precedes it.
+		bashUse := strings.Contains(tr, "mcp__wick__bash") ||
+			(strings.Contains(strings.ToLower(tr), "tool_use") && strings.Contains(tr, `"bash"`))
+		if bashUse && strings.Contains(tr, command) {
 			return
 		}
 		time.Sleep(time.Second)
