@@ -145,3 +145,13 @@ func TestExecFailsOnAMissingLaunchFile(t *testing.T) {
 		t.Error("exec of a missing launch file must fail")
 	}
 }
+
+// `wick-pig install` is the one command that replaces the installed binaries.
+// Here its dispatch and its usage error are pinned; the gate itself is
+// covered in the wick package. The unknown flag fails before any exec, so
+// this runs no herdr and no builder.
+func TestInstallRefusesUnknownFlags(t *testing.T) {
+	if err := run([]string{"install", "--bogus"}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("run(install --bogus) must fail with usage, got %v", err)
+	}
+}
