@@ -34,11 +34,15 @@ type AgentType struct {
 	Tools       []string
 	// Checkout is worktree (its own git worktree), none (runs in the repo,
 	// read-only tools only) or parent (runs in the spawning agent's worktree).
-	Checkout       string
-	Blocking       bool
-	Statuses       []string
-	Spawns         []string
-	Persistent     bool
+	Checkout   string
+	Blocking   bool
+	Statuses   []string
+	Spawns     []string
+	Persistent bool
+	// PassHolds makes a pass outlive later commits: the reviewer is only
+	// re-prompted while its last verdict is not a pass. A type whose pass is
+	// about the ticket, not the code's shape, sets it.
+	PassHolds      bool
 	RequiresReview []string
 	Harness        string
 	Model          string
@@ -230,6 +234,13 @@ func parseAgentType(src, file string) (AgentType, error) {
 			return AgentType{}, fmt.Errorf("%s: persistent %v", file, err)
 		}
 		t.Persistent = p
+	}
+	if v, ok := fields.scalar("pass_holds"); ok {
+		p, err := parseBool(v)
+		if err != nil {
+			return AgentType{}, fmt.Errorf("%s: pass_holds %v", file, err)
+		}
+		t.PassHolds = p
 	}
 	if v, ok := fields.list("requires_review"); ok {
 		t.RequiresReview = v

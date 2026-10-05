@@ -23,7 +23,8 @@ func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 	}
 }
 
-// implement delegates and explores; it never edits, runs code or reviews.
+// implement delegates and explores; it never runs code or reviews, and its
+// edit and write are limited to the project's listed paths.
 func TestImplementDelegatesAndSpawns(t *testing.T) {
 	served, err := RoleTools("implement")
 	if err != nil {
@@ -33,7 +34,7 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "find", "spawn", "finish", "tell"}
+	want := []string{"read", "edit", "write", "find", "spawn", "finish", "tell"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("implement tools = %v, want %v", got, want)
 	}

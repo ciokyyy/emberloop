@@ -11,8 +11,10 @@ import (
 // reviewer has no edit tool, so no prompt has to ask it not to edit.
 var roles = map[string][]string{
 	// implement delegates: it reads, explores with scouts, and spawns; it
-	// never edits, runs code or reviews. Each worker reviews its own work.
-	"implement": {"read", "find", "spawn", "finish", "tell"},
+	// never runs code or reviews. Each worker reviews its own work. It can
+	// edit and write only the paths its project's settings list (see
+	// tools.Guard), enough to keep tickets and specs current.
+	"implement": {"read", "edit", "write", "find", "spawn", "finish", "tell"},
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},
@@ -53,6 +55,9 @@ func RoleTools(role string) ([]tools.Tool, error) {
 	out := make([]tools.Tool, 0, len(names))
 	for _, n := range names {
 		if t, ok := byName[n]; ok {
+			if role == "implement" && (n == "edit" || n == "write") {
+				t = tools.Guard(t, tools.ProjectWritePaths)
+			}
 			out = append(out, t)
 		}
 	}
