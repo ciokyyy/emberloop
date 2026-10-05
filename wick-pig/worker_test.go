@@ -993,3 +993,147 @@ func TestSpawnRefusesABranchAheadOfTheBase(t *testing.T) {
 		t.Error("spawn left a worktree behind after refusing the branch")
 	}
 }
+// A dirty file in the integration checkout that the incoming change also
+// touches blocks the merge up front: finish names it, says to commit or stash
+// it, and never starts the merge.
+func TestFinishRefusesWhenIntegrationCheckoutDirtyOverlap(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	// The worker changes a.go; the integration checkout dirties the same file.
+	writeFile(t, filepath.Join(repo, "a.go"), "package a\n\n// orchestrator dirt\n")
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	var merged bool
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			if len(args) > 0 && args[0] == "merge" {
+				merged = true
+			}
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if res.Merged || !res.Kept {
+		t.Fatalf("overlapping dirt must keep the worker: %+v", res)
+	}
+	if !strings.Contains(res.Detail, "a.go") {
+		t.Errorf("detail must name the overlapping file, got %q", res.Detail)
+	}
+	if !strings.Contains(strings.ToLower(res.Detail), "commit") || !strings.Contains(strings.ToLower(res.Detail), "stash") {
+		t.Errorf("detail must say to commit or stash, got %q", res.Detail)
+	}
+	if merged {
+		t.Error("finish ran the merge after refusing: it must refuse before it starts")
+	}
+	if _, err := os.Stat(tree); err != nil {
+		t.Errorf("refused merge dropped the worktree: %v", err)
+	}
+	store, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store["07-x"]; !ok {
+		t.Error("refused merge dropped the worker entry")
+	}
+}
+
+// A dirty file that the incoming change does not touch leaves the merge alone:
+// the orchestrator's notes and ticket edits never block work.
+func TestFinishMergesWhenIntegrationCheckoutDirtyElsewhere(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	// Untracked note the worker never touched.
+	writeFile(t, filepath.Join(repo, "notes.md"), "orchestrator note\n")
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if !res.Merged {
+		t.Fatalf("non-overlapping dirt must not block the merge: %+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "notes.md")); err != nil {
+		t.Errorf("non-overlapping dirt was lost by the merge: %v", err)
+	}
+	if got := gitOut(t, repo, "show", "HEAD:a.go"); !strings.Contains(got, "func A()") {
+		t.Errorf("worker change missing on main after merge: %q", got)
+	}
+}
+
+// Whatever git reports is passed through whole: a multi-line failure keeps
+// every line in the reply, never just the first.
+func TestFinishPassesThroughFullGitError(t *testing.T) {
+	_, tree := reviewRepo(t)
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	const failure = "error: line one\nline two\nline three"
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" && len(args) > 0 && args[0] == "merge" {
+			return Result{Code: 1, Stderr: failure + "\n"}, nil
+		}
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if res.Merged || !res.Kept {
+		t.Fatalf("a failed merge must keep the worker: %+v", res)
+	}
+	for _, line := range []string{"line one", "line two", "line three"} {
+		if !strings.Contains(res.Detail, line) {
+			t.Errorf("detail missing %q, got %q: git text must pass through whole", line, res.Detail)
+		}
+	}
+}
+// An untracked file inside a wholly-untracked directory still blocks when the
+// incoming change adds the same path: status collapses the directory, so the
+// check must list untracked files individually to see the overlap.
+func TestFinishRefusesWhenUntrackedDirOverlapsIncomingFile(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	// The worker adds newdir/file.txt; the checkout holds an untracked file at
+	// the same path.
+	if err := os.MkdirAll(filepath.Join(tree, "newdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(tree, "newdir", "file.txt"), "worker\n")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "add newdir/file.txt")
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	if err := os.MkdirAll(filepath.Join(repo, "newdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "newdir", "file.txt"), "orchestrator dirt\n")
+	var merged bool
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			if len(args) > 0 && args[0] == "merge" {
+				merged = true
+			}
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if res.Merged || !res.Kept {
+		t.Fatalf("overlapping untracked dirt must keep the worker: %+v", res)
+	}
+	if !strings.Contains(res.Detail, filepath.Join("newdir", "file.txt")) {
+		t.Errorf("detail must name the overlapping file, got %q", res.Detail)
+	}
+	if merged {
+		t.Error("finish ran the merge after refusing: it must refuse before it starts")
+	}
+}
