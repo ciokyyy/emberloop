@@ -221,3 +221,24 @@ func TestTellRestoresTheChildWhenDeliveryFails(t *testing.T) {
 		t.Error("a failed tell must leave the child's submit as this turn's")
 	}
 }
+
+// An agent whose type definition is gone from the repo is still finished from
+// its worktree record, rather than stranded.
+func TestFinishFallsBackToTheWorktreeRecordForAnUnknownType(t *testing.T) {
+	reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	old := finishExec
+	finishExec = f.run
+	t.Cleanup(func() { finishExec = old })
+	if err := WriteAgentState(AgentState{ID: "07-x", Type: "custom", Pane: "root"}); err != nil {
+		t.Fatal(err)
+	}
+	finish := toolForRole(t, "implement", "finish")
+	out, err := finish("/repo", map[string]any{"agent": "07-x", "merge": false})
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if !strings.Contains(out, "discarded") {
+		t.Errorf("finish must discard a worktree agent whose type is unknown, got %q", out)
+	}
+}
