@@ -30,6 +30,10 @@ A third finding, reported by the user: **when two agents spawn at the same momen
 
 The exact symptom has not been reproduced; the first ticket reproduces it before any fix.
 
+## Delivered already (commit 81d72bd)
+
+The review-integrity fixes below shipped early because they blocked the run: 6 of 9 `finish` calls failed on "passed at X, not at the tip Y". The cause was ordering. The worker brief tells a worker to commit after its review passes, a pass on uncommitted work was recorded as "commit plus uncommitted", and the gate wants a pass at the committed tip, so every worker that committed after review was refused and had to review again. Now reviewers judge a snapshot of the working state (a git tree id: tracked, modified and new files), the diff is taken against it, a pass stays valid when exactly that content is committed, "nothing to review" compares content, and follow-up diffs are tree to tree when the branch was not rebased. Stories 24, 26, 27 and 28 are done; what remains of that section is the file-count notice (25) and the wait bound (29, 30).
+
 ## Solution
 
 Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox): a hierarchy of `AGENTS.md` files in which the root holds project-wide rules and an index, each durable folder holds its own contract, an agent reads the chain from the root to its target before editing, and updates the owning docs after meaningful changes. The DOX tree replaces the pointer file the retro proposed.
