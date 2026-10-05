@@ -247,7 +247,7 @@ func overflowTab(run Exec, tab, label, cwd string) (id string, slots map[int]str
 		if err != nil {
 			return "", nil, false, err
 		}
-		if len(panes) < gridMax {
+		if nextSlot(panes) <= gridMax {
 			return t.TabID, panes, false, nil
 		}
 	}
