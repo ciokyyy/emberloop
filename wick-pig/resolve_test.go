@@ -124,6 +124,7 @@ func TestResolvePrecedencePerField(t *testing.T) {
 		})
 	}
 }
+
 // WICK_READONLY_HARNESS is the resolver's flag layer: it drops the slot's
 // model and effort for another harness, the post-finish case of a pig slot
 // with a claude override resolving to a pig model on claude.
