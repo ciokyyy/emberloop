@@ -268,7 +268,7 @@ func samePassState(prev reviewer, p *reviewPacket) bool {
 }
 
 func workerAt(tree string) *Worker {
-	store, err := load()
+	store, err := loadWorkersLocked()
 	if err != nil {
 		return nil
 	}

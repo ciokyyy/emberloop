@@ -79,6 +79,9 @@ func load() (map[string]Worker, error) {
 	return out, nil
 }
 
+// save writes the store through a temp file and a rename, so a concurrent
+// reader never sees a half-written file. Callers hold the workers
+// cross-process lock across their read-modify-write, so no entry is lost.
 func save(store map[string]Worker) error {
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return err
@@ -87,7 +90,26 @@ func save(store map[string]Worker) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(statePath, append(raw, '\n'), 0o644)
+	tmp := statePath + ".tmp"
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, statePath)
+}
+
+// loadWorkersLocked is load under the workers cross-process lock, for readers
+// that must not see a store mid-update.
+func loadWorkersLocked() (map[string]Worker, error) {
+	var out map[string]Worker
+	err := withFileLock("workers", func() error {
+		store, err := load()
+		if err != nil {
+			return err
+		}
+		out = store
+		return nil
+	})
+	return out, err
 }
 
 // ---------------------------------------------------------------------------
@@ -372,104 +394,119 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 
-	store, err := load()
-	if err != nil {
-		return nil, err
-	}
-	if old, exists := store[id]; exists {
-		// A record whose worktree is gone is left over from a cleanup done
-		// outside finish; it must not block the id for ever.
-		if _, err := os.Stat(old.Worktree); err == nil {
-			return nil, fmt.Errorf("worker %q already exists", id)
+	// The store is shared between sessions, which are separate processes: the
+	// cross-process lock holds across the whole spawn, from the duplicate
+	// check to the final save, so two simultaneous spawns never load the same
+	// map and drop each other's entry.
+	var out *Worker
+	if err := withFileLock("workers", func() error {
+		store, err := load()
+		if err != nil {
+			return err
 		}
-		delete(store, id)
-	}
-
-	w := &Worker{
-		ID:        id,
-		Ticket:    in.Ticket,
-		Spec:      in.Spec,
-		Repo:      repo,
-		Base:      base,
-		Target:    target,
-		Branch:    branch,
-		Worktree:  worktreePath(repo, id),
-		Workspace: workspace,
-		Harness:   in.Harness,
-		Model:     in.Model,
-		Effort:    in.Effort,
-		SessionID: in.SessionID,
-		AgentType: in.AgentType,
-		Started:   time.Now().UTC().Format(time.RFC3339),
-	}
-
-	// Plain git owns the worktree now, at today's path and branch: herdr is
-	// only tabs and panes, never worktrees. An existing branch is reused with
-	// no -b; -b would fail on a name that is already there.
-	add := []string{"worktree", "add"}
-	if reuse {
-		add = append(add, w.Worktree, w.Branch)
-	} else {
-		add = append(add, "-b", w.Branch, w.Worktree, base)
-	}
-	if res, err := run("git", add, ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
-		return nil, err
-	} else if res.Code != 0 {
-		return nil, fmt.Errorf("git worktree add %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
-	}
-
-	// Anything that fails from here on has to undo the worktree, and the
-	// branch only when this spawn made it, or the ticket can never be spawned
-	// again. A branch finish kept is left for the next respawn. The tab is
-	// closed only when this spawn created it: an existing one may hold a
-	// previous implementor.
-	tabCreated := false
-	undo := func() {
-		if tabCreated && w.Tab != "" {
-			_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
+		if old, exists := store[id]; exists {
+			// A record whose worktree is gone is left over from a cleanup done
+			// outside finish; it must not block the id for ever.
+			if _, err := os.Stat(old.Worktree); err == nil {
+				return fmt.Errorf("worker %q already exists", id)
+			}
+			delete(store, id)
 		}
-		_, _ = run("git", []string{"worktree", "remove", "--force", w.Worktree}, ExecOpts{Cwd: repo, Timeout: 60 * time.Second})
-		if !reuse {
-			_, _ = run("git", []string{"branch", "-D", w.Branch}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+
+		w := &Worker{
+			ID:        id,
+			Ticket:    in.Ticket,
+			Spec:      in.Spec,
+			Repo:      repo,
+			Base:      base,
+			Target:    target,
+			Branch:    branch,
+			Worktree:  worktreePath(repo, id),
+			Workspace: workspace,
+			Harness:   in.Harness,
+			Model:     in.Model,
+			Effort:    in.Effort,
+			SessionID: in.SessionID,
+			AgentType: in.AgentType,
+			Started:   time.Now().UTC().Format(time.RFC3339),
 		}
-	}
 
-	// Finds the tab labelled with the ticket id in the project workspace, or
-	// creates it with the worktree as cwd. A respawn reuses the tab and replaces
-	// the implementor in its root pane rather than opening a second one.
-	w.Tab, w.Pane, tabCreated, err = ticketTab(run, workspace, id, w.Worktree)
-	if err != nil {
-		undo()
-		return nil, err
-	}
+		// Plain git owns the worktree now, at today's path and branch: herdr is
+		// only tabs and panes, never worktrees. An existing branch is reused with
+		// no -b; -b would fail on a name that is already there.
+		add := []string{"worktree", "add"}
+		if reuse {
+			add = append(add, w.Worktree, w.Branch)
+		} else {
+			add = append(add, "-b", w.Branch, w.Worktree, base)
+		}
+		if res, err := run("git", add, ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
+			return err
+		} else if res.Code != 0 {
+			return fmt.Errorf("git worktree add %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
+		}
 
-	// A respawn reuses the tab; its root pane may still hold the previous
-	// implementor, so whatever runs there is stopped first. The launch line
-	// must never be typed into a live agent.
-	if !tabCreated {
-		if err := stopPane(run, w.Pane); err != nil {
+		// Anything that fails from here on has to undo the worktree, and the
+		// branch only when this spawn made it, or the ticket can never be spawned
+		// again. A branch finish kept is left for the next respawn. The tab is
+		// closed only when this spawn created it: an existing one may hold a
+		// previous implementor.
+		tabCreated := false
+		undo := func() {
+			if tabCreated && w.Tab != "" {
+				_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
+			}
+			_, _ = run("git", []string{"worktree", "remove", "--force", w.Worktree}, ExecOpts{Cwd: repo, Timeout: 60 * time.Second})
+			if !reuse {
+				_, _ = run("git", []string{"branch", "-D", w.Branch}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+			}
+		}
+
+		// Finds the tab labelled with the ticket id in the project workspace, or
+		// creates it with the worktree as cwd. A respawn reuses the tab and replaces
+		// the implementor in its root pane rather than opening a second one.
+		w.Tab, w.Pane, tabCreated, err = ticketTab(run, workspace, id, w.Worktree)
+		if err != nil {
 			undo()
-			return nil, err
+			return err
 		}
-	}
 
-	// pane run rather than `agent start --kind`: herdr's kinds are compiled into
-	// its binary and include no entry for pig. Workers self-report instead.
-	if res, err := run(herdrBin(), append([]string{"pane", "run", w.Pane}, in.Launch...), ExecOpts{}); err != nil {
-		undo()
+		// A respawn reuses the tab; its root pane may still hold the previous
+		// implementor, so whatever runs there is stopped first. The launch line
+		// must never be typed into a live agent.
+		if !tabCreated {
+			if err := stopPane(run, w.Pane); err != nil {
+				undo()
+				return err
+			}
+		}
+
+		// pane run rather than `agent start --kind`: herdr's kinds are compiled into
+		// its binary and include no entry for pig. Workers self-report instead.
+		if res, err := run(herdrBin(), append([]string{"pane", "run", w.Pane}, in.Launch...), ExecOpts{}); err != nil {
+			undo()
+			return err
+		} else if res.Code != 0 {
+			undo()
+			return fmt.Errorf("could not launch worker in %s: %.200s", w.Pane, res.Stderr)
+		}
+
+		if err := DeliverLate(run, w.Pane, in.Late); err != nil {
+			undo()
+			return err
+		}
+
+		store[id] = *w
+		if err := save(store); err != nil {
+			undo()
+			return err
+		}
+		out = w
+		return nil
+	}); err != nil {
 		return nil, err
-	} else if res.Code != 0 {
-		undo()
-		return nil, fmt.Errorf("could not launch worker in %s: %.200s", w.Pane, res.Stderr)
 	}
-
-	if err := DeliverLate(run, w.Pane, in.Late); err != nil {
-		undo()
-		return nil, err
-	}
-
-	store[id] = *w
-	return w, save(store)
+	return out, nil
 }
 
 // ticketTab finds the tab labelled id in workspace, or creates it there with
@@ -679,145 +716,166 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 	storeMu.Lock()
 	defer storeMu.Unlock()
 
-	store, err := load()
-	if err != nil {
-		return nil, err
-	}
-	w, ok := store[id]
-	if !ok {
-		return nil, fmt.Errorf("unknown worker %q", id)
-	}
-
-	var sha, detail string
-	merged := false
-
-	// kept records a refused merge before sending the worker back: the verdicts
-	// as they stand, and why it was kept. The worker stays, so a later finish
-	// records again.
-	kept := func(detail string) (*FinishResult, error) {
-		if record {
-			if err := recordFinish(&w, outcomeKept, "", detail); err != nil {
-				return nil, err
-			}
-		}
-		return &FinishResult{ID: id, Kept: true, Detail: detail}, nil
-	}
-
-	if merge {
-		// Uncommitted work is not on the branch, so merging would drop it
-		// with the worktree.
-		if res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: w.Worktree}); err != nil {
-			return nil, err
-		} else if strings.TrimSpace(res.Stdout) != "" {
-			return kept("the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again")
-		}
-		// Both reviewers must have passed the tip they judged; a worker that
-		// stopped before its review is sent back, not merged. The check is
-		// on the worker's own tip, before the rebase below rewrites it.
-		res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo})
+	// The store is shared between sessions, which are separate processes: the
+	// cross-process lock holds across the whole finish, from load to the final
+	// delete, so two simultaneous finishes never load the same map and resurrect
+	// each other's entry.
+	var out *FinishResult
+	if err := withFileLock("workers", func() error {
+		store, err := load()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		tip := strings.TrimSpace(res.Stdout)
-		tipTree := ""
-		if t, err := run("git", []string{"rev-parse", tip + "^{tree}"}, ExecOpts{Cwd: w.Repo}); err == nil && t.Code == 0 {
-			tipTree = strings.TrimSpace(t.Stdout)
-		}
-		if why := reviewGate(w.Worktree, tip, tipTree, requiredReviewers(&w), passHolds(w.Repo)); why != "" {
-			return kept("not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip")
+		w, ok := store[id]
+		if !ok {
+			return fmt.Errorf("unknown worker %q", id)
 		}
 
-		// Rebase onto where the target is *now*: another worker may have moved
-		// it since this one spawned. Old records without a target fall back to
-		// the base they recorded.
-		onto := w.Target
-		if onto == "" {
-			onto = w.Base
+		var sha, detail string
+		merged := false
+
+		// kept records a refused merge before sending the worker back: the verdicts
+		// as they stand, and why it was kept. The worker stays, so a later finish
+		// records again.
+		kept := func(detail string) (*FinishResult, error) {
+			if record {
+				if err := recordFinish(&w, outcomeKept, "", detail); err != nil {
+					return nil, err
+				}
+			}
+			return &FinishResult{ID: id, Kept: true, Detail: detail}, nil
 		}
-		if res, err := run("git", []string{"rebase", onto}, ExecOpts{Cwd: w.Worktree}); err != nil {
-			return nil, err
+
+		if merge {
+			// Uncommitted work is not on the branch, so merging would drop it
+			// with the worktree.
+			if res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: w.Worktree}); err != nil {
+				return err
+			} else if strings.TrimSpace(res.Stdout) != "" {
+				r, err := kept("the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again")
+				out = r
+				return err
+			}
+			// Both reviewers must have passed the tip they judged; a worker that
+			// stopped before its review is sent back, not merged. The check is
+			// on the worker's own tip, before the rebase below rewrites it.
+			res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo})
+			if err != nil {
+				return err
+			}
+			tip := strings.TrimSpace(res.Stdout)
+			tipTree := ""
+			if t, err := run("git", []string{"rev-parse", tip + "^{tree}"}, ExecOpts{Cwd: w.Repo}); err == nil && t.Code == 0 {
+				tipTree = strings.TrimSpace(t.Stdout)
+			}
+			if why := reviewGate(w.Worktree, tip, tipTree, requiredReviewers(&w), passHolds(w.Repo)); why != "" {
+				r, err := kept("not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip")
+				out = r
+				return err
+			}
+
+			// Rebase onto where the target is *now*: another worker may have moved
+			// it since this one spawned. Old records without a target fall back to
+			// the base they recorded.
+			onto := w.Target
+			if onto == "" {
+				onto = w.Base
+			}
+			if res, err := run("git", []string{"rebase", onto}, ExecOpts{Cwd: w.Worktree}); err != nil {
+				return err
+			} else if res.Code != 0 {
+				// Name the conflicts, then abort: the worker that is sent back to
+				// resolve them starts from its own clean branch, not a half rebase.
+				files := ""
+				if u, err := run("git", []string{"diff", "--name-only", "--diff-filter=U"}, ExecOpts{Cwd: w.Worktree}); err == nil {
+					files = strings.Join(strings.Fields(u.Stdout), ", ")
+				}
+				_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: w.Worktree})
+				detail := "rebase onto " + onto + " conflicted"
+				if files != "" {
+					detail += " in " + files
+				} else {
+					detail += ": " + firstLine(res.Stderr, "rebase failed")
+				}
+				r, err := kept(detail + "; the rebase was aborted, the branch is unchanged")
+				out = r
+				return err
+			}
+
+			// The fast-forward lands on whatever the repo has checked out, so that
+			// must be the worker's target.
+			if w.Target != "" {
+				if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: w.Repo}); err != nil {
+					return err
+				} else if on := strings.TrimSpace(res.Stdout); on != w.Target {
+					r, err := kept(fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, w.Target))
+					out = r
+					return err
+				}
+			}
+
+			if res, err := run("git", []string{"merge", "--ff-only", w.Branch}, ExecOpts{Cwd: w.Repo}); err != nil {
+				return err
+			} else if res.Code != 0 {
+				r, err := kept(firstLine(res.Stderr, "merge failed"))
+				out = r
+				return err
+			}
+
+			if res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo}); err == nil {
+				sha = strings.TrimSpace(res.Stdout)
+			}
+			merged, detail = true, "merged"
+		} else {
+			detail = "discarded"
+		}
+
+		// Only reached when the worker merged or was discarded. A refusal returns
+		// above with the worktree, tab and reviewers left for the worker to use.
+		// The history entry goes first, while the reviewers are still on record; a
+		// failed record keeps the worker, so nothing is lost with it.
+		if record {
+			outcome := outcomeDiscarded
+			if merged {
+				outcome = outcomeMerged
+			}
+			if err := recordFinish(&w, outcome, sha, detail); err != nil {
+				return err
+			}
+		}
+		closeReviewers(run, w.Worktree)
+		// The ticket's tab holds the implementor and its reviewers; the overflow
+		// tabs hold the reviewers that did not fit. Closing both closes every
+		// agent of the ticket. Best-effort: a tab already gone must not block
+		// dropping the worktree. Records without a tab predate the ticket tab;
+		// skip them.
+		if w.Tab != "" {
+			_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
+			closeOverflowTabs(run, w.Tab, w.ID)
+		}
+		// herdr never owned the worktree: plain git made it, plain git drops it.
+		if res, err := run("git", []string{"worktree", "remove", "--force", w.Worktree},
+			ExecOpts{Cwd: w.Repo, Timeout: 60 * time.Second}); err != nil {
+			return err
 		} else if res.Code != 0 {
-			// Name the conflicts, then abort: the worker that is sent back to
-			// resolve them starts from its own clean branch, not a half rebase.
-			files := ""
-			if u, err := run("git", []string{"diff", "--name-only", "--diff-filter=U"}, ExecOpts{Cwd: w.Worktree}); err == nil {
-				files = strings.Join(strings.Fields(u.Stdout), ", ")
-			}
-			_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: w.Worktree})
-			detail := "rebase onto " + onto + " conflicted"
-			if files != "" {
-				detail += " in " + files
-			} else {
-				detail += ": " + firstLine(res.Stderr, "rebase failed")
-			}
-			return kept(detail + "; the rebase was aborted, the branch is unchanged")
+			return fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
 		}
-
-		// The fast-forward lands on whatever the repo has checked out, so that
-		// must be the worker's target.
-		if w.Target != "" {
-			if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: w.Repo}); err != nil {
-				return nil, err
-			} else if on := strings.TrimSpace(res.Stdout); on != w.Target {
-				return kept(fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, w.Target))
-			}
+		// The worker's per-session files go with it: the MCP config and the
+		// launch file `wick-pig exec` read at startup. Either is already gone when
+		// the agent consumed it; what remains is the backup for a launch that
+		// never started.
+		CleanupSession(Session{ID: w.SessionID, Label: id})
+		CleanupSession(Session{Label: id})
+		delete(store, id)
+		if err := save(store); err != nil {
+			return err
 		}
-
-		if res, err := run("git", []string{"merge", "--ff-only", w.Branch}, ExecOpts{Cwd: w.Repo}); err != nil {
-			return nil, err
-		} else if res.Code != 0 {
-			return kept(firstLine(res.Stderr, "merge failed"))
-		}
-
-		if res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo}); err == nil {
-			sha = strings.TrimSpace(res.Stdout)
-		}
-		merged, detail = true, "merged"
-	} else {
-		detail = "discarded"
-	}
-
-	// Only reached when the worker merged or was discarded. A refusal returns
-	// above with the worktree, tab and reviewers left for the worker to use.
-	// The history entry goes first, while the reviewers are still on record; a
-	// failed record keeps the worker, so nothing is lost with it.
-	if record {
-		outcome := outcomeDiscarded
-		if merged {
-			outcome = outcomeMerged
-		}
-		if err := recordFinish(&w, outcome, sha, detail); err != nil {
-			return nil, err
-		}
-	}
-	closeReviewers(run, w.Worktree)
-	// The ticket's tab holds the implementor and its reviewers; the overflow
-	// tabs hold the reviewers that did not fit. Closing both closes every
-	// agent of the ticket. Best-effort: a tab already gone must not block
-	// dropping the worktree. Records without a tab predate the ticket tab;
-	// skip them.
-	if w.Tab != "" {
-		_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
-		closeOverflowTabs(run, w.Tab, w.ID)
-	}
-	// herdr never owned the worktree: plain git made it, plain git drops it.
-	if res, err := run("git", []string{"worktree", "remove", "--force", w.Worktree},
-		ExecOpts{Cwd: w.Repo, Timeout: 60 * time.Second}); err != nil {
-		return nil, err
-	} else if res.Code != 0 {
-		return nil, fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
-	}
-	// The worker's per-session files go with it: the MCP config and the
-	// launch file `wick-pig exec` read at startup. Either is already gone when
-	// the agent consumed it; what remains is the backup for a launch that
-	// never started.
-	CleanupSession(Session{ID: w.SessionID, Label: id})
-	CleanupSession(Session{Label: id})
-	delete(store, id)
-	if err := save(store); err != nil {
+		out = &FinishResult{ID: id, Merged: merged, SHA: sha, Detail: detail}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	return &FinishResult{ID: id, Merged: merged, SHA: sha, Detail: detail}, nil
+	return out, nil
 }
 
 func firstLine(text, fallback string) string {
