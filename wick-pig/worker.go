@@ -664,8 +664,18 @@ func contains(haystack []string, needle string) bool {
 
 // Finish takes a finished worker: merge it into the base when it will merge
 // cleanly, then drop its worktree. A conflicting worktree is deliberately left
-// on disk, because a human still has to look at it.
+// on disk, because a human still has to look at it. Every finish call — merged,
+// discarded, or kept — leaves a ticket history entry under its run first, with
+// the reviewer verdicts as they stand.
 func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
+	return finishWorker(run, id, merge, true)
+}
+
+// finishWorker is Finish, with record naming whether the call leaves a ticket
+// history entry. Spawn's rollback of a failed spawn tears a worker down through
+// here, and a ticket that never ran is not a finished ticket, so it records
+// nothing.
+func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
 
@@ -681,14 +691,25 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	var sha, detail string
 	merged := false
 
+	// kept records a refused merge before sending the worker back: the verdicts
+	// as they stand, and why it was kept. The worker stays, so a later finish
+	// records again.
+	kept := func(detail string) (*FinishResult, error) {
+		if record {
+			if err := recordFinish(&w, outcomeKept, "", detail); err != nil {
+				return nil, err
+			}
+		}
+		return &FinishResult{ID: id, Kept: true, Detail: detail}, nil
+	}
+
 	if merge {
 		// Uncommitted work is not on the branch, so merging would drop it
 		// with the worktree.
 		if res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: w.Worktree}); err != nil {
 			return nil, err
 		} else if strings.TrimSpace(res.Stdout) != "" {
-			return &FinishResult{ID: id, Kept: true,
-				Detail: "the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again"}, nil
+			return kept("the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again")
 		}
 		// Both reviewers must have passed the tip they judged; a worker that
 		// stopped before its review is sent back, not merged. The check is
@@ -698,8 +719,7 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 			return nil, err
 		}
 		if why := reviewGate(w.Worktree, strings.TrimSpace(res.Stdout), requiredReviewers(&w), passHolds(w.Repo)); why != "" {
-			return &FinishResult{ID: id, Kept: true,
-				Detail: "not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip"}, nil
+			return kept("not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip")
 		}
 
 		// Rebase onto where the target is *now*: another worker may have moved
@@ -725,7 +745,7 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 			} else {
 				detail += ": " + firstLine(res.Stderr, "rebase failed")
 			}
-			return &FinishResult{ID: id, Detail: detail + "; the rebase was aborted, the branch is unchanged", Kept: true}, nil
+			return kept(detail + "; the rebase was aborted, the branch is unchanged")
 		}
 
 		// The fast-forward lands on whatever the repo has checked out, so that
@@ -734,15 +754,14 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 			if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: w.Repo}); err != nil {
 				return nil, err
 			} else if on := strings.TrimSpace(res.Stdout); on != w.Target {
-				return &FinishResult{ID: id, Kept: true,
-					Detail: fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, w.Target)}, nil
+				return kept(fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, w.Target))
 			}
 		}
 
 		if res, err := run("git", []string{"merge", "--ff-only", w.Branch}, ExecOpts{Cwd: w.Repo}); err != nil {
 			return nil, err
 		} else if res.Code != 0 {
-			return &FinishResult{ID: id, Detail: firstLine(res.Stderr, "merge failed"), Kept: true}, nil
+			return kept(firstLine(res.Stderr, "merge failed"))
 		}
 
 		if res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo}); err == nil {
@@ -755,6 +774,17 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 
 	// Only reached when the worker merged or was discarded. A refusal returns
 	// above with the worktree, tab and reviewers left for the worker to use.
+	// The history entry goes first, while the reviewers are still on record; a
+	// failed record keeps the worker, so nothing is lost with it.
+	if record {
+		outcome := outcomeDiscarded
+		if merged {
+			outcome = outcomeMerged
+		}
+		if err := recordFinish(&w, outcome, sha, detail); err != nil {
+			return nil, err
+		}
+	}
 	closeReviewers(run, w.Worktree)
 	// The ticket's tab holds the implementor and its reviewers; the overflow
 	// tabs hold the reviewers that did not fit. Closing both closes every

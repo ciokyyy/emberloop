@@ -357,13 +357,15 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 // closeSpawned rolls back the agents a failed call launched, so a parent that
 // never learns their ids is not left with panes it cannot reach. A reused agent
 // was not launched here and its parent already knows it, so it is left running.
+// A rolled-back worktree records no ticket history: its ticket never ran, so
+// there is no finished ticket to keep.
 func closeSpawned(run Exec, agents []*spawnedAgent) {
 	for _, a := range agents {
 		if a.Reused {
 			continue
 		}
 		if a.Worktree {
-			_, _ = Finish(run, a.ID, false)
+			_, _ = finishWorker(run, a.ID, false, false)
 			continue
 		}
 		// The pane is closed before its shell may have run the exec line, so
