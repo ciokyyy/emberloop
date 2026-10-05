@@ -123,6 +123,36 @@ func TestReadOnlySurfacesFailure(t *testing.T) {
 	}
 }
 
+// ReadOnly tiles the tab it split into, which it only knows from the tab id
+// herdr puts in the split reply.
+func TestReadOnlyTilesTheTabItSplitInto(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	tab := newFakeTab("down", []float64{0.3})
+	rec := &recorder{reply: func(cmd string, args []string) Result {
+		if cmd == herdrBin() {
+			switch args[1] {
+			case "split":
+				return Result{Stdout: `{"result":{"pane":{"pane_id":"p1","tab_id":"` + tab.tab + `"}}}`}
+			case "list", "layout", "resize":
+				res, _ := tab.run(cmd, args, ExecOpts{})
+				return res
+			}
+		}
+		return fakeHerdr(cmd, args, "no defects found", Result{})
+	}}
+
+	got, err := ReadOnly(rec.run, t.TempDir(), "", "look at this")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "no defects found" {
+		t.Errorf("verdict = %q", got)
+	}
+	if strings.Join(tab.calls, ", ") != "p0 down 0.2000" {
+		t.Errorf("resize calls = %v, want the tab evened out", tab.calls)
+	}
+}
+
 func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	got := skillPrompt("grilling", "the auth plan", true)

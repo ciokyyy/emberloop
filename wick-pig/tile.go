@@ -153,8 +153,8 @@ func inTab(lay paneLayout, ids []string) []paneBox {
 	return out
 }
 
-// widestMove picks the split furthest from the share its two sides deserve, so
-// one round of the loop fixes the worst of them.
+// widestMove picks the split with the most cells to move, so each round of the
+// loop lands the biggest correction there is to make.
 func widestMove(lay paneLayout, boxes []paneBox) (tileMove, bool) {
 	var best tileMove
 	found := false
@@ -178,10 +178,9 @@ func moveFor(s paneSplit, boxes []paneBox) (tileMove, bool) {
 		return tileMove{}, false
 	}
 	down := s.Direction == "down"
-	dim := s.Rect.Width
-	start := s.Rect.X
+	dim, origin := s.Rect.Width, s.Rect.X
 	if down {
-		dim, start = s.Rect.Height, s.Rect.Y
+		dim, origin = s.Rect.Height, s.Rect.Y
 	}
 
 	first, second, divider := sidesOf(s, boxes, down)
@@ -190,7 +189,7 @@ func moveFor(s paneSplit, boxes []paneBox) (tileMove, bool) {
 	}
 
 	want := float64(len(first)) / float64(len(first)+len(second))
-	ideal := start + int(math.Round(want*float64(dim)))
+	ideal := origin + int(math.Round(want*float64(dim)))
 	m := tileMove{cells: ideal - divider}
 	if m.cells == 0 {
 		return tileMove{}, false
@@ -219,37 +218,45 @@ func moveFor(s paneSplit, boxes []paneBox) (tileMove, bool) {
 
 // sidesOf splits the panes inside a split's region by which side of its divider
 // they lie on. A pane lies wholly on one side, so the edges against the divider
-// give the divider's real position.
+// give the divider's real position: herdr rounds the ratio into cells as it
+// lays panes out, and that rounding is one cell of drift either way.
 func sidesOf(s paneSplit, boxes []paneBox, down bool) (first, second []paneBox, divider int) {
+	divider = s.Rect.X + int(math.Round(s.Ratio*float64(s.Rect.Width)))
 	if down {
 		divider = s.Rect.Y + int(math.Round(s.Ratio*float64(s.Rect.Height)))
-	} else {
-		divider = s.Rect.X + int(math.Round(s.Ratio*float64(s.Rect.Width)))
 	}
 	for _, b := range boxes {
 		if !inside(s.Rect, b.Rect) {
 			continue
 		}
-		far := b.Rect.X + b.Rect.Width
-		if down {
-			far = b.Rect.Y + b.Rect.Height
-		}
-		if far <= divider {
+		if start(b, down)+extent(b, down)/2 < divider {
 			first = append(first, b)
 		} else {
 			second = append(second, b)
 		}
 	}
 	for _, b := range first {
-		far := b.Rect.X + b.Rect.Width
-		if down {
-			far = b.Rect.Y + b.Rect.Height
-		}
-		if far > divider {
+		if far := start(b, down) + extent(b, down); far > divider {
 			divider = far
 		}
 	}
 	return first, second, divider
+}
+
+// start and extent give a pane's near edge and length along an axis: the rows
+// it spans for a split that runs down, its columns for one that runs right.
+func start(b paneBox, down bool) int {
+	if down {
+		return b.Rect.Y
+	}
+	return b.Rect.X
+}
+
+func extent(b paneBox, down bool) int {
+	if down {
+		return b.Rect.Height
+	}
+	return b.Rect.Width
 }
 
 // touching names the pane on one side of a divider that rests against it: the
@@ -258,14 +265,9 @@ func touching(side []paneBox, down, first bool) string {
 	name := ""
 	best := 0
 	for _, b := range side {
-		edge := b.Rect.X
-		switch {
-		case first && down:
-			edge = b.Rect.Y + b.Rect.Height
-		case first:
-			edge = b.Rect.X + b.Rect.Width
-		case down:
-			edge = b.Rect.Y
+		edge := start(b, down)
+		if first {
+			edge += extent(b, down)
 		}
 		if name == "" || (first && edge > best) || (!first && edge < best) {
 			name, best = b.PaneID, edge
