@@ -74,7 +74,7 @@ func cwd() string {
 }
 
 // spawnRequest is one entry of a spawn call. A worktree type's entry carries
-// the worker fields spawn_worker took: the ticket, and how to run it.
+// the worker fields a worktree entry carries: the ticket, and how to run it.
 type spawnRequest struct {
 	Type   string `json:"type"`
 	Prompt string `json:"prompt"`
@@ -82,7 +82,7 @@ type spawnRequest struct {
 	Repo   string `json:"repo,omitempty"`
 	Base   string `json:"base,omitempty"`
 	// Target names the branch a worker merges back into; empty derives it from
-	// the repo, as spawn_worker did.
+	// the repo, the way Spawn derives it.
 	Target  string `json:"target,omitempty"`
 	Harness string `json:"harness,omitempty"`
 	Model   string `json:"model,omitempty"`
@@ -265,6 +265,19 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 			}
 			continue
 		}
+		// A persistent type keeps one agent per parent: a re-spawn re-prompts
+		// the live agent rather than starting a second one.
+		if t.Persistent {
+			if prev, ok := liveAgentFor(run, t, parentID, r); ok {
+				agent, err := repromptAgent(run, t, prev, r)
+				if err != nil {
+					closeSpawned(run, agents)
+					return "", err
+				}
+				agents = append(agents, agent)
+				continue
+			}
+		}
 		var (
 			agent *spawnedAgent
 			err   error
@@ -385,7 +398,8 @@ func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAge
 }
 
 // launchWorktree starts one worktree agent: it gets its own git worktree,
-// branch and ticket tab exactly as spawn_worker did, and runs the type's brief.
+// branch and ticket tab, the way Spawn gives a worker one, and runs the type's
+// brief.
 func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawnedAgent, error) {
 	repo := r.Repo
 	if repo == "" {
@@ -511,4 +525,75 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 		parts = append(parts, "Their results will arrive as system notices; end your turn.")
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// liveAgentFor finds the live agent a persistent type is re-prompted as rather
+// than replaced: the agent of that type this parent already has running. A
+// worktree type is looked up by the id its ticket derives, so only a re-spawn
+// of the same ticket finds the agent working it; a read-only type keeps one
+// agent per parent.
+func liveAgentFor(run Exec, t AgentType, parentID string, r spawnRequest) (AgentState, bool) {
+	if t.Checkout == "worktree" {
+		if r.Ticket == "" {
+			return AgentState{}, false
+		}
+		s, ok, err := ReadAgentState(WorkerID(r.Ticket))
+		if err != nil || !ok || !liveFor(s, t.Name, parentID, run) {
+			return AgentState{}, false
+		}
+		return s, true
+	}
+	entries, err := os.ReadDir(agentStateDir())
+	if err != nil {
+		return AgentState{}, false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		s, ok, err := ReadAgentState(strings.TrimSuffix(e.Name(), ".json"))
+		if err != nil || !ok || !liveFor(s, t.Name, parentID, run) {
+			continue
+		}
+		return s, true
+	}
+	return AgentState{}, false
+}
+
+// liveFor reports whether an agent's state is the live agent of this type for
+// this parent.
+func liveFor(s AgentState, typ, parentID string, run Exec) bool {
+	if s.Type != typ || s.ParentID != parentID || s.Pane == "" {
+		return false
+	}
+	return readOnlyAgent{Pane: s.Pane}.alive(run)
+}
+
+// repromptAgent reuses a live agent of a persistent type instead of starting a
+// new one: it hands the agent the prompt the launch would have given it,
+// forgets the previous turn's submit and points the agent's next result back at
+// the waiting spawn, so the caller waits on the new turn exactly as it would on
+// a fresh launch.
+func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest) (*spawnedAgent, error) {
+	promptPath := filepath.Join(readOnlyDir(), s.ID+".prompt")
+	if t.Checkout == "worktree" {
+		// A worktree agent's brief is already on disk, beside the worker store.
+		promptPath = briefPath(s.ID)
+	} else {
+		if err := os.MkdirAll(readOnlyDir(), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(promptPath, []byte(renderPrompt(t, r.Prompt)), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	clearAgentSubmit(s.ID)
+	s.Deliver = !t.Blocking
+	if err := WriteAgentState(s); err != nil {
+		return nil, err
+	}
+	if err := Nudge(run, s.Pane, fmt.Sprintf("Read %s and follow it exactly.", promptPath)); err != nil {
+		return nil, err
+	}
+	return &spawnedAgent{ID: s.ID, Type: t, Pane: s.Pane, Worktree: t.Checkout == "worktree"}, nil
 }

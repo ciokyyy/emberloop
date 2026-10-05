@@ -352,16 +352,22 @@ func gitIn(run Exec, tree string, args ...string) (string, error) {
 	return res.Stdout, nil
 }
 
-// launchReviewer starts or re-prompts one reviewer type for the packet. A live
-// reviewer that already passed at this packet's commit is left alone and nil
-// is returned: a re-spawn only nudges reviewers that still have something to
-// look at. A dead reviewer is replaced in its slot, briefed with its findings.
+// launchReviewer starts or re-prompts one reviewer type for the packet. A
+// persistent type keeps its live reviewer: one that already passed at this
+// packet's commit is left alone and nil is returned, so a re-spawn only nudges
+// reviewers that still have something to look at. A type that is not persistent
+// is not kept between spawns: its live reviewer is closed and a fresh one takes
+// its place. A dead reviewer is replaced in its slot, briefed with its findings.
 func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID string) (*spawnedAgent, error) {
 	p.note = note
 	have := reviewersOf(p.tree)
 	prev, had := have[t.Name]
 
 	if had && prev.agent().alive(run) {
+		if !t.Persistent {
+			closeAgent(run, prev.agent())
+			return freshReviewer(run, p, t, prev, false, parentPane, parentID)
+		}
 		if prev.Verdict == verdictPass && prev.VerdictAt == p.verdictAt {
 			return nil, nil
 		}

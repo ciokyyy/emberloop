@@ -641,3 +641,287 @@ func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 		t.Errorf("all submitted children must clear, got %v", got)
 	}
 }
+
+// persistentExec is a herdr whose read-only panes answer their prompt and submit
+// through the real submit tool, the way a live scout does. A nudge is that
+// agent's next turn: it submits again, so a spawn that reuses the agent can
+// return the new report. It counts launches and nudges, so a test can tell a
+// re-prompt from a relaunch.
+type persistentExec struct {
+	g        *fakeGrid
+	mu       sync.Mutex
+	launched int
+	nudged   int
+	byPane   map[string]string
+	turns    int
+}
+
+func newPersistentExec(g *fakeGrid) *persistentExec {
+	return &persistentExec{g: g, byPane: map[string]string{}}
+}
+
+func (p *persistentExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" {
+		switch args[1] {
+		case "run":
+			p.mu.Lock()
+			id := envIn(args[3], "WICK_AGENT_ID")
+			p.byPane[args[2]] = id
+			p.launched++
+			p.mu.Unlock()
+			return Result{Stdout: "{}"}, p.answer(id)
+		case "send-text":
+			p.mu.Lock()
+			id := p.byPane[args[2]]
+			p.nudged++
+			p.mu.Unlock()
+			return Result{Stdout: "{}"}, p.answer(id)
+		}
+	}
+	if cmd == herdrBin() && len(args) > 1 && args[0] == "agent" && args[1] == "prompt" {
+		// herdr does not prompt pig; Nudge falls back to typing.
+		return Result{Code: 1}, nil
+	}
+	return p.g.run(cmd, args, opts)
+}
+
+// answer records the agent's next submit, numbered in turn order.
+func (p *persistentExec) answer(id string) error {
+	if id == "" {
+		return nil
+	}
+	p.mu.Lock()
+	p.turns++
+	n := p.turns
+	p.mu.Unlock()
+	tool := submitToolFor(AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}, id)
+	raw, _ := json.Marshal(map[string]any{"status": "answered", "report": fmt.Sprintf("report-%d", n)})
+	_, err := tool.Execute(context.Background(), "", raw)
+	return err
+}
+
+// scoutTypeFile is a repo type file named scout.md: read-only, blocking, with
+// the persistence the test names.
+func scoutTypeFile(t *testing.T, root, persistent string) map[string]AgentType {
+	t.Helper()
+	writeAgentFile(t, root, "scout.md", `---
+name: scout
+description: A scout that may stay put.
+tools: [read]
+checkout: none
+blocking: true
+persistent: `+persistent+`
+statuses: [answered]
+---
+Answer: {{prompt}}
+`)
+	types, err := LoadAgentTypes(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return types
+}
+
+// A persistent type keeps one agent per parent: re-spawning it re-prompts the
+// live agent with the new prompt instead of launching a second one, and the
+// spawn returns that agent's new report.
+func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	ex := newPersistentExec(g)
+	spawnExec = ex.run
+
+	root := t.TempDir()
+	tool := spawnToolFor(scoutTypeFile(t, root, "true"), []string{"scout"})
+	spawn := func(params map[string]any) (string, error) {
+		raw, _ := json.Marshal(params)
+		return tool.Execute(context.Background(), root, raw)
+	}
+
+	first, err := spawn(map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "first question"},
+	}})
+	if err != nil {
+		t.Fatalf("first spawn: %v", err)
+	}
+	if !strings.Contains(first, "report-1") {
+		t.Fatalf("the first spawn must return the scout's report, got:\n%s", first)
+	}
+
+	second, err := spawn(map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "second question"},
+	}})
+	if err != nil {
+		t.Fatalf("second spawn: %v", err)
+	}
+	if ex.launched != 1 {
+		t.Errorf("a persistent type must reuse its agent, launched %d", ex.launched)
+	}
+	if ex.nudged != 1 {
+		t.Errorf("a persistent type must be re-prompted, nudged %d", ex.nudged)
+	}
+	if !strings.Contains(second, "report-2") {
+		t.Errorf("the second spawn must return the re-prompted agent's new report, got:\n%s", second)
+	}
+}
+
+// A type that is not persistent starts a fresh agent on every spawn: the live
+// agent of the first spawn is left alone and the second spawn launches its own.
+func TestNonPersistentTypeIsRelaunched(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	ex := newPersistentExec(g)
+	spawnExec = ex.run
+
+	root := t.TempDir()
+	tool := spawnToolFor(scoutTypeFile(t, root, "false"), []string{"scout"})
+	spawn := func(params map[string]any) (string, error) {
+		raw, _ := json.Marshal(params)
+		return tool.Execute(context.Background(), root, raw)
+	}
+
+	if _, err := spawn(map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "first question"},
+	}}); err != nil {
+		t.Fatalf("first spawn: %v", err)
+	}
+	second, err := spawn(map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "second question"},
+	}})
+	if err != nil {
+		t.Fatalf("second spawn: %v", err)
+	}
+	if ex.launched != 2 {
+		t.Errorf("a non-persistent type must launch a fresh agent, launched %d", ex.launched)
+	}
+	if ex.nudged != 0 {
+		t.Errorf("a non-persistent type must not be re-prompted, nudged %d", ex.nudged)
+	}
+	if !strings.Contains(second, "report-2") {
+		t.Errorf("the fresh agent's report must come back, got:\n%s", second)
+	}
+}
+
+// worktreeExec runs a worktree spawn against a fake grid and a fake git, so a
+// test can re-spawn one ticket without a real repository.
+type worktreeExec struct {
+	g        *fakeGrid
+	mu       sync.Mutex
+	launched int
+	nudged   []string
+	gitCalls []string
+}
+
+func (w *worktreeExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == "git" {
+		w.mu.Lock()
+		w.gitCalls = append(w.gitCalls, strings.Join(args, " "))
+		w.mu.Unlock()
+		return Result{Stdout: "abc123def\n"}, nil
+	}
+	if cmd == herdrBin() && len(args) > 1 {
+		switch args[0] + " " + args[1] {
+		case "pane run":
+			w.mu.Lock()
+			w.launched++
+			w.mu.Unlock()
+		case "agent prompt":
+			w.mu.Lock()
+			w.nudged = append(w.nudged, args[2])
+			w.mu.Unlock()
+			return Result{Stdout: "{}"}, nil
+		}
+	}
+	return w.g.run(cmd, args, opts)
+}
+
+// A persistent worktree type is keyed by the ticket's own id: re-spawning the
+// same ticket reuses the worker already on it rather than creating a second
+// worktree for it.
+func TestPersistentWorktreeTypeIsRepromptedNotRelaunched(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
+	ex := &worktreeExec{g: g}
+	spawnExec = ex.run
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "20-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeAgentFile(t, root, "hand.md", `---
+name: hand
+description: A worker that stays on its ticket.
+tools: [read]
+checkout: worktree
+blocking: false
+persistent: true
+statuses: [done, blocked]
+---
+{{prompt}}
+`)
+	types, err := LoadAgentTypes(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := spawnToolFor(types, []string{"hand"})
+	spawn := func() (string, error) {
+		raw, _ := json.Marshal(map[string]any{"agents": []any{
+			map[string]any{"type": "hand", "ticket": ticket, "repo": repo},
+		}})
+		return tool.Execute(context.Background(), repo, raw)
+	}
+
+	first, err := spawn()
+	if err != nil {
+		t.Fatalf("first spawn: %v", err)
+	}
+	if !strings.Contains(first, "hand 20-x started") {
+		t.Fatalf("the first spawn must start the worktree agent, got:\n%s", first)
+	}
+	if _, err := recall("20-x"); err != nil {
+		t.Fatalf("the first spawn must record the worker: %v", err)
+	}
+	if !containsCall(ex.gitCalls, "worktree add") {
+		t.Fatalf("the first spawn must create the ticket's worktree: %v", ex.gitCalls)
+	}
+	created := len(ex.gitCalls)
+
+	second, err := spawn()
+	if err != nil {
+		t.Fatalf("a re-spawn of the ticket must reuse its agent, got: %v", err)
+	}
+	if ex.launched != 1 {
+		t.Errorf("a persistent worktree type must reuse its agent, launched %d", ex.launched)
+	}
+	if len(ex.nudged) != 1 {
+		t.Fatalf("the worker must be re-prompted in its own pane, nudged %v", ex.nudged)
+	}
+	if !strings.Contains(second, "hand 20-x started") {
+		t.Errorf("the re-spawn must report the agent as started, got:\n%s", second)
+	}
+	for _, call := range ex.gitCalls[created:] {
+		if strings.Contains(call, "worktree add") {
+			t.Errorf("a re-spawn must not create a second worktree: %s", call)
+		}
+	}
+}
+
+// containsCall reports whether any recorded command contains want.
+func containsCall(calls []string, want string) bool {
+	for _, c := range calls {
+		if strings.Contains(c, want) {
+			return true
+		}
+	}
+	return false
+}

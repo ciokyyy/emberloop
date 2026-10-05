@@ -127,6 +127,9 @@ func shellArg(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
+// briefPath is where a worktree agent's brief lives, beside the worker store.
+func briefPath(id string) string { return filepath.Join(filepath.Dir(statePath), "briefs", id+".md") }
+
 // writeBrief puts the worker's instructions on disk, beside the worker store.
 // It points at the ticket, its spec and the skills by path and wick:// address
 // rather than restating them, so an upstream rewrite lands without a code
@@ -135,11 +138,11 @@ func shellArg(s string) string {
 // are resolved while it still has its context, and the review covers what
 // will merge.
 func writeBrief(id, ticket, spec, target string) (string, error) {
-	dir := filepath.Join(filepath.Dir(statePath), "briefs")
+	dir := filepath.Dir(briefPath(id))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, id+".md")
+	path := briefPath(id)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement the ticket at %s.\n", ticket)

@@ -115,8 +115,8 @@ func TestBackgroundRuleReachesBrief(t *testing.T) {
 
 var testRun = SpecRun{Spec: "/repo/.scratch/p/spec.md", Tickets: "/repo/.scratch/p/issues", Branch: "spec/p"}
 
-// The merger never reviews: each worker already ran code_review on its own
-// work, and a second review per worker only spends the merger's tokens.
+// The merger never reviews: each worker already spawned its own reviewers on
+// its work, and a second review per worker only spends the merger's tokens.
 func TestImplementPromptDoesNotReview(t *testing.T) {
 	got := implementPrompt(testRun)
 	if strings.Contains(got, "review_worker") || strings.Contains(strings.ToLower(got), "verdict") {

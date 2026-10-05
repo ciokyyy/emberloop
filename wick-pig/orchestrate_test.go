@@ -45,7 +45,7 @@ func TestReviewRolesServeNothingThatWrites(t *testing.T) {
 	}
 }
 
-// spawnToolFake answers the git and herdr calls spawn_worker makes for a fresh
+// spawnToolFake answers the git and herdr calls a worktree spawn makes for a
 // ticket tab: git resolves the base and makes the worktree, tab list is empty,
 // tab create opens w1:t1 with root pane w1:p1, and pane run starts the agent.
 func spawnToolFake() Exec {

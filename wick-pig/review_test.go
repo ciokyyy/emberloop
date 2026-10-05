@@ -267,13 +267,21 @@ func (f *fakeReviewers) paneOf(t *testing.T, typ string) *fakePane {
 }
 
 // reviewSpawn drives the reviewer spawn a worker gets: the spawn tool with both
-// reviewer types allowed, its herdr the fake, its cwd the worker's worktree.
+// reviewer types allowed, its herdr the fake, its cwd the worker's worktree, and
+// the built-in types.
 func reviewSpawn(t *testing.T, f *fakeReviewers, tree string, entries ...map[string]any) (string, error) {
+	t.Helper()
+	return reviewSpawnWith(t, f, t.TempDir(), tree, entries...)
+}
+
+// reviewSpawnWith is reviewSpawn with the types loaded from typesRoot, so a test
+// can spawn a repo's own reviewer type.
+func reviewSpawnWith(t *testing.T, f *fakeReviewers, typesRoot, tree string, entries ...map[string]any) (string, error) {
 	t.Helper()
 	oldExec := spawnExec
 	spawnExec = f.run
 	t.Cleanup(func() { spawnExec = oldExec })
-	types, err := LoadAgentTypes(t.TempDir())
+	types, err := LoadAgentTypes(typesRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,6 +471,56 @@ func TestReviewSpawnFollowUpGoesToOpenFindingsOnly(t *testing.T) {
 	}
 	if got := reviewersOf(tree)[reviewerSpec].Verdict; got != verdictPass {
 		t.Errorf("spec verdict = %q", got)
+	}
+}
+
+// A reviewer type that is not persistent is not kept between spawns: the live
+// reviewer is closed and a fresh one takes its place, while a persistent type
+// in the same spawn is re-prompted as usual.
+func TestNonPersistentReviewerIsReplacedNotReprompted(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	writeAgentFile(t, repo, "reviewer-standards.md", `---
+name: reviewer-standards
+description: "Review a worker's worktree, fresh each time."
+tools: [read, find]
+checkout: parent
+blocking: true
+persistent: false
+statuses: [pass, changes]
+---
+Short-lived reviewer.
+`)
+	f := newFakeReviewers(answers("pass", "changes"))
+	if _, err := reviewSpawnWith(t, f, repo, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	old := f.paneOf(t, reviewerStandards)
+
+	// The standards reviewer passed; a persistent one would be left alone, but
+	// this type is not kept.
+	f.answer = answers("pass", "pass")
+	out, err := reviewSpawnWith(t, f, repo, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.splits() != 3 {
+		t.Errorf("a non-persistent reviewer must be relaunched, got %d splits", f.splits())
+	}
+	if !old.closed {
+		t.Error("the live non-persistent reviewer must be closed, not left behind")
+	}
+	fresh := f.paneOf(t, reviewerStandards)
+	if fresh == old || fresh.turns != 1 {
+		t.Errorf("want a fresh standards reviewer on its first turn, got %+v", fresh)
+	}
+	if strings.Contains(fresh.prompts[0], "You replace") {
+		t.Errorf("a fresh non-persistent reviewer must not inherit its predecessor's findings:\n%s", fresh.prompts[0])
+	}
+	if spec := f.paneOf(t, reviewerSpec); spec.turns != 2 {
+		t.Errorf("the persistent spec reviewer must be re-prompted, turns = %d", spec.turns)
+	}
+	if !strings.Contains(out, reviewerStandards) {
+		t.Errorf("the fresh reviewer's report must come back, got:\n%s", out)
 	}
 }
 

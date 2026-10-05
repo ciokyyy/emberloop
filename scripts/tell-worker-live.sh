@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Proves tell_worker reaches a live worker: the worker must abandon its ticket
-# and do what it was told instead. Checked by looking for the marker commit on
-# the worker's branch, not by trusting the merger's report.
+# Proves tell reaches a live worker: the worker must abandon its ticket and do
+# what it was told instead. Checked by looking for the marker commit on the
+# worker's branch, not by trusting the parent's report.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
 WICK=/home/cioky/Projects/wick-simple/wick-pig
@@ -20,11 +20,12 @@ git -C "$DIR" -c user.email=w@x -c user.name=wick commit -qm base
 cd "$DIR" && timeout 420 env WICK_HERDR_REPORT="$REPORT" \
   pig --no-skills -e "$WICK" -p '
 Do these in order, no other tool calls:
-1. spawn_worker with ticket="/tmp/wick-tell/.scratch/tell/issues/01-tell.md" and repo="/tmp/wick-tell".
-2. wait_workers with timeout_ms=60000.
-3. tell_worker with worker set to the id spawn_worker returned, and message:
+1. spawn with agents=[{"type": "worker", "ticket": "/tmp/wick-tell/.scratch/tell/issues/01-tell.md", "repo": "/tmp/wick-tell"}].
+2. bash with command "sleep 20", so the worker is well into its turn.
+3. tell with agent set to the id the spawn returned, and text:
    "Stop working on the ticket. Instead create a file named TELLMARKER.txt containing exactly the text marker-received and nothing else, commit it, then stop."
-4. wait_workers with timeout_ms=180000.
+   A tell to a worker returns at once: the worker result arrives in this pane
+   as a system notice, so end your turn and report that notice when it lands.
 Report each tool result verbatim.' 2>&1 | tail -18
 
 echo "=== ground truth: does the branch contain the marker? ==="

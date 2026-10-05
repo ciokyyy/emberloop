@@ -6,7 +6,7 @@ func All() []Tool {
 }
 
 // Named returns the tools called names, in the order given. Unknown names are
-// skipped: a role that lists a tool another host serves (spawn_worker) is not
+// skipped: a type that lists a tool the wick host serves (spawn, submit) is not
 // an error here.
 func Named(names ...string) []Tool {
 	byName := map[string]Tool{}
