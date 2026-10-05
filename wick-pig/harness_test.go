@@ -79,7 +79,8 @@ func TestClaudeRunsStripped(t *testing.T) {
 	cmd, _ := BuildCommand("claude", Session{Role: "review", Model: "m", Prompt: "p"})
 	line := cmd.Line()
 	for _, want := range []string{`--tools ""`, `--setting-sources ""`, "--strict-mcp-config", "--model m",
-		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1"} {
+		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
+		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("missing %q in %s", want, line)
 		}
