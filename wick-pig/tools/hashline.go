@@ -355,26 +355,32 @@ func readPlain(baseDir, target string, offset, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return renderFile(target, full, offset, limit)
+}
+
+// renderFile renders the regular text file at full, labelling it display in the
+// tag. The caller has already decided the path is one this tool may serve.
+func renderFile(display, full string, offset, limit int) (string, error) {
 	info, err := os.Stat(full)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", target, err)
+		return "", fmt.Errorf("%s: %w", display, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file", target)
+		return "", fmt.Errorf("%s is not a regular file", display)
 	}
 	// ponytail: whole-file ceiling. offset/limit do not bypass it, because edit
 	// anchors on a tag over the whole file and a windowed tag would never
 	// match. If multi-MB text ever has to be readable here, stream the window
 	// and drop the tag for that path.
 	if info.Size() > maxServedFile {
-		return "", fmt.Errorf("%s is %d bytes, over the %d byte read limit; pull the part you need with bash", target, info.Size(), maxServedFile)
+		return "", fmt.Errorf("%s is %d bytes, over the %d byte read limit; pull the part you need with bash", display, info.Size(), maxServedFile)
 	}
 	data, err := os.ReadFile(full)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", target, err)
+		return "", fmt.Errorf("%s: %w", display, err)
 	}
 	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
-		return "", fmt.Errorf("%s is binary; read it with bash rather than with read", target)
+		return "", fmt.Errorf("%s is binary; read it with bash rather than with read", display)
 	}
 
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
@@ -390,7 +396,7 @@ func readPlain(baseDir, target string, offset, limit int) (string, error) {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "[%s#%s] %d lines\n", target, contentTag(data), len(lines))
+	fmt.Fprintf(&b, "[%s#%s] %d lines\n", display, contentTag(data), len(lines))
 	for i := offset - 1; i < end; i++ {
 		fmt.Fprintf(&b, "%6d→%s\n", i+1, lines[i])
 	}

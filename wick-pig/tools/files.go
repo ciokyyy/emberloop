@@ -46,6 +46,12 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	if p.Path == "" {
 		return "", errors.New("path is required")
 	}
+	// wick:// addresses reach a namespace under the skills root: the library a
+	// session loads a skill from. It is served here rather than in the wick
+	// package because the tools package serves both hosts and cannot import it.
+	if strings.HasPrefix(p.Path, wickScheme) {
+		return readWick(p.Path, p.Offset, p.Limit)
+	}
 	// WICK_READ_ALLOW lists extra directories read may open by absolute path,
 	// so a reviewer can read the diff and prompt a launcher wrote for it.
 	if filepath.IsAbs(p.Path) {
@@ -56,6 +62,175 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 		}
 	}
 	return readPlain(root, p.Path, p.Offset, p.Limit)
+}
+
+// wickScheme is the virtual address read serves the skills library under.
+const wickScheme = "wick://"
+
+// wickSkillsRoot is where the namespaces live. It mirrors wick.skillsRoot, read
+// from the environment rather than imported, so the tools package stays free of
+// the wick package.
+func wickSkillsRoot() string {
+	if dir := os.Getenv("WICK_SKILLS_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.Getenv("HOME"), ".wick-pig", "skills")
+}
+
+// readWick serves wick://<namespace>/<path>. The namespace names a directory
+// under the skills root; a path that resolves outside that directory, by ".."
+// or by symlink, is refused. A directory returns an index of what it holds;
+// a file reads as usual.
+func readWick(addr string, offset, limit int) (string, error) {
+	namespace, rest := splitWick(addr)
+	root := wickSkillsRoot()
+	namespaces := wickNamespaces(root)
+	nsDir := ""
+	for _, name := range namespaces {
+		if name == namespace {
+			nsDir = filepath.Join(root, name)
+			break
+		}
+	}
+	if nsDir == "" {
+		if len(namespaces) == 0 {
+			return "", fmt.Errorf("unknown wick namespace %q: no namespaces are installed under %s", namespace, root)
+		}
+		return "", fmt.Errorf("unknown wick namespace %q; have %s", namespace, strings.Join(namespaces, ", "))
+	}
+	full, err := wickInside(nsDir, rest)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", addr, err)
+	}
+	if info.IsDir() {
+		return wickIndex(addr, full)
+	}
+	return renderFile(addr, full, offset, limit)
+}
+
+// splitWick breaks the address after the scheme into namespace and the rest of
+// the path. The namespace is the first segment; the rest may be empty.
+func splitWick(addr string) (namespace, rest string) {
+	body := strings.TrimPrefix(addr, wickScheme)
+	namespace, rest, _ = strings.Cut(body, "/")
+	return namespace, rest
+}
+
+// wickNamespaces lists the directories directly under the skills root. A
+// symlink to a directory is not one: only a real directory is a namespace.
+func wickNamespaces(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
+
+// wickInside resolves rel under dir, following symlinks, and refuses a result
+// that leaves dir. A missing leaf is returned as given — the caller reports it
+// as a missing file, and there is nothing outside dir to read.
+func wickInside(dir, rel string) (string, error) {
+	rel = filepath.Clean(strings.TrimSpace(rel))
+	if rel == "." {
+		rel = ""
+	}
+	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q is outside the wick namespace", rel)
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	full := filepath.Join(realDir, rel)
+	resolved, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return full, nil
+	}
+	inside, err := filepath.Rel(realDir, resolved)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q resolves outside the wick namespace", rel)
+	}
+	return full, nil
+}
+
+// wickIndex lists one entry per line. A directory that holds a SKILL.md gets
+// the description from its frontmatter after its name; anything else is just
+// its name, so the reader can see what is there.
+func wickIndex(addr, dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[%s]\n", addr)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if desc := skillDescription(filepath.Join(dir, entry.Name())); desc != "" {
+				fmt.Fprintf(&b, "%s: %s\n", entry.Name(), desc)
+				continue
+			}
+		}
+		fmt.Fprintf(&b, "%s\n", entry.Name())
+	}
+	return b.String(), nil
+}
+
+// skillDescription reads the description field of a skill's SKILL.md. It is
+// empty when the file or the field is missing.
+func skillDescription(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		return ""
+	}
+	return frontmatterDescription(string(data))
+}
+
+// frontmatterDescription pulls description from a leading --- block. It handles
+// a plain value, one wrapped in quotes, and the folded/literal block scalars
+// the skills CLI writes.
+func frontmatterDescription(markdown string) string {
+	markdown = strings.ReplaceAll(markdown, "\r\n", "\n")
+	block, ok := strings.CutPrefix(markdown, "---\n")
+	if !ok {
+		return ""
+	}
+	end := strings.Index(block, "\n---")
+	if end < 0 {
+		return ""
+	}
+	lines := strings.Split(block[:end], "\n")
+	for i, line := range lines {
+		key, value, found := strings.Cut(line, ":")
+		if !found || strings.TrimSpace(key) != "description" {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "|" || value == ">" || value == "|-" || value == ">-" {
+			var parts []string
+			for _, cont := range lines[i+1:] {
+				if strings.TrimSpace(cont) == "" {
+					continue
+				}
+				if !strings.HasPrefix(cont, " ") && !strings.HasPrefix(cont, "\t") {
+					break
+				}
+				parts = append(parts, strings.TrimSpace(cont))
+			}
+			return strings.Join(parts, " ")
+		}
+		return strings.Trim(value, `"'`)
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
