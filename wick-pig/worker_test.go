@@ -22,8 +22,10 @@ type ticketHerdr struct {
 	panes map[string][]string // tab id -> pane ids, in creation order
 	next  int
 	calls [][]string
-	// runErr makes pane run fail, for the undo path.
-	runErr bool
+	// runErr makes pane run fail, for the undo path. noRootPane makes tab
+	// create answer with a tab id but no pane, so the undo must close it.
+	runErr     bool
+	noRootPane bool
 }
 
 func newTicketHerdr(base Exec) *ticketHerdr {
@@ -93,9 +95,13 @@ func (h *ticketHerdr) run(cmd string, args []string, opts ExecOpts) (Result, err
 		pane := fmt.Sprintf("w1:p%d", h.next)
 		h.tabs[label] = id
 		h.panes[id] = []string{pane}
+		root := map[string]any{"pane_id": pane, "tab_id": id}
+		if h.noRootPane {
+			delete(root, "pane_id")
+		}
 		return reply(map[string]any{
 			"tab":       map[string]any{"tab_id": id, "label": label, "workspace_id": "w1"},
-			"root_pane": map[string]any{"pane_id": pane, "tab_id": id},
+			"root_pane": root,
 		}), nil
 	case "tab close":
 		for label, id := range h.tabs {
@@ -735,5 +741,28 @@ func TestSpawnKeepsATabItDidNotCreate(t *testing.T) {
 	}
 	if h.tab("21-thing") != "w1:t9" {
 		t.Error("the undo closed a tab this spawn did not create")
+	}
+}
+
+// A tab create that answers with a tab but no root pane has still created the
+// tab, so the undo closes it rather than leaking a pane-less tab.
+func TestSpawnClosesATabItCreatedWithoutAPane(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	repo := t.TempDir()
+	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		if args[0] == "rev-parse" {
+			return Result{Stdout: "abc123\n"}, nil
+		}
+		return Result{}, nil
+	}
+	h := newTicketHerdr(git)
+	h.noRootPane = true
+
+	if _, err := Spawn(h.run, SpawnInput{Ticket: "repo/.scratch/25-thing.md", Repo: repo}); err == nil {
+		t.Fatal("spawn returned nil when tab create gave no pane")
+	}
+	if !h.called("tab", "close") {
+		t.Error("spawn left open the pane-less tab it had just created")
 	}
 }

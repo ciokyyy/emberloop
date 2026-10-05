@@ -410,7 +410,7 @@ func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created b
 		if t.Label != id {
 			continue
 		}
-		pane, err := rootPane(run, workspace, t.TabID)
+		pane, err := rootPane(run, t.TabID)
 		if err != nil {
 			return "", "", false, err
 		}
@@ -432,16 +432,21 @@ func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created b
 		tab = reply.Result.Tab.TabID
 	}
 	pane = reply.Result.RootPane.PaneID
-	if tab == "" || pane == "" {
-		return "", "", false, fmt.Errorf("herdr tab create returned no tab or pane for %q; raw: %.600s", id, reply.raw)
+	if tab == "" {
+		return "", "", false, fmt.Errorf("herdr tab create returned no tab for %q; raw: %.600s", id, reply.raw)
+	}
+	if pane == "" {
+		// The tab exists now, so report it as created: the caller's undo
+		// closes it rather than leaking a pane-less tab.
+		return tab, "", true, fmt.Errorf("herdr tab create returned no pane for %q; raw: %.600s", id, reply.raw)
 	}
 	return tab, pane, true, nil
 }
 
 // rootPane is the first pane herdr reports in tab: the pane the tab was opened
 // with, which is the implementor's pane.
-func rootPane(run Exec, workspace, tab string) (string, error) {
-	reply, err := herdrJSON(run, []string{"pane", "list", "--workspace", workspace}, 30*time.Second)
+func rootPane(run Exec, tab string) (string, error) {
+	reply, err := herdrJSON(run, []string{"pane", "list"}, 30*time.Second)
 	if err != nil {
 		return "", err
 	}
@@ -655,11 +660,10 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	// above with the worktree, tab and reviewers left for the worker to use.
 	closeReviewers(run, w.Worktree)
 	// The ticket's tab holds the implementor and its reviewers, so closing it
-	// closes them all. Records without a tab predate the ticket tab; skip them.
+	// closes them all. Best-effort: a tab already gone must not block dropping
+	// the worktree. Records without a tab predate the ticket tab; skip them.
 	if w.Tab != "" {
-		if _, err := herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second); err != nil {
-			return nil, err
-		}
+		_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
 	}
 	// herdr never owned the worktree: plain git made it, plain git drops it.
 	if res, err := run("git", []string{"worktree", "remove", "--force", w.Worktree},

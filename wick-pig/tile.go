@@ -73,8 +73,8 @@ type tileMove struct {
 // tilePanes gives every pane in tab the same share of it.
 //
 // It is best effort by design: a tab that cannot be evened out is still a
-// working tab, so spawn_worker reports its error as a warning rather than
-// failing a spawn over an uneven pane, and the reviewer split ignores it.
+// working tab, so the caller reports its error rather than failing a launch
+// over an uneven pane. The reviewer split ignores it for the same reason.
 func tilePanes(run Exec, tab string) error {
 	if tab == "" {
 		return nil
@@ -84,8 +84,7 @@ func tilePanes(run Exec, tab string) error {
 		return err
 	}
 	if len(ids) < 2 {
-		// Nothing to share with. The common case for spawn_worker, whose
-		// worktree opens in a workspace of its own.
+		// Nothing to share with.
 		return nil
 	}
 
