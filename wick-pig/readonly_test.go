@@ -30,6 +30,8 @@ func fakeHerdr(cmd string, args []string, report string, git Result) Result {
 		return git
 	}
 	switch args[1] {
+	case "list":
+		return Result{Stdout: `{"result":{"panes":[{"pane_id":"p1","tab_id":"` + os.Getenv("HERDR_TAB_ID") + `"}]}}`}
 	case "split":
 		return Result{Stdout: `{"result":{"pane":{"pane_id":"p9"}}}`}
 	case "run":
@@ -84,33 +86,46 @@ func TestReadOnlySurfacesFailure(t *testing.T) {
 	}
 }
 
-// ReadOnly tiles the tab it split into, which it only knows from the tab id
-// herdr puts in the split reply.
-func TestReadOnlyTilesTheTabItSplitInto(t *testing.T) {
+// A read-only agent opens beside the caller, through the grid: pane 2 of the
+// caller's tab, split right, not a --current split downward.
+func TestReadOnlyPlacesTheAgentInTheCallersTabGrid(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
-	tab := newFakeTab("down", []float64{0.3})
+	g := newFakeGrid()
+	tab := g.tabs[0]
+	t.Setenv("HERDR_TAB_ID", tab.tab)
 	rec := &recorder{reply: func(cmd string, args []string) Result {
-		if cmd == herdrBin() {
-			switch args[1] {
-			case "split":
-				return Result{Stdout: `{"result":{"pane":{"pane_id":"p1","tab_id":"` + tab.tab + `"}}}`}
-			case "list", "layout", "resize":
-				res, _ := tab.run(cmd, args, ExecOpts{})
-				return res
-			}
+		if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "run" {
+			return fakeHerdr(cmd, args, "no defects found", Result{})
 		}
-		return fakeHerdr(cmd, args, "no defects found", Result{})
+		res, _ := g.run(cmd, args, ExecOpts{})
+		return res
 	}}
 
-	got, err := ReadOnly(rec.run, t.TempDir(), "", "look at this")
+	got, err := ReadOnly(rec.run, "/repo", "", "look at this")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "no defects found" {
 		t.Errorf("verdict = %q", got)
 	}
-	if strings.Join(tab.calls, ", ") != "p0 down 0.2000" {
-		t.Errorf("resize calls = %v, want the tab evened out", tab.calls)
+	split := ""
+	for _, c := range g.calls {
+		if strings.Contains(c, "pane split") {
+			split = c
+			break
+		}
+	}
+	if split == "" {
+		t.Fatal("the launch issued no pane split")
+	}
+	if !strings.Contains(split, "--pane "+tab.order[0]) {
+		t.Errorf("the split must target the caller's pane: %s", split)
+	}
+	if !strings.Contains(split, "--direction right") {
+		t.Errorf("a read-only agent must sit beside the caller, not below: %s", split)
+	}
+	if strings.Contains(split, "--current") {
+		t.Errorf("read-only launches no longer split --current: %s", split)
 	}
 }
 
@@ -158,8 +173,12 @@ func TestReadOnlyDoesNotWidenReadAccess(t *testing.T) {
 
 // concExec is a fake herdr that records whether read-only launches overlap.
 // The split handler sleeps, so an unserialized split shows up as two at once.
+// Its pane list grows with each split, the way the grid expects to find the
+// panes it has already placed.
 type concExec struct {
 	mu           sync.Mutex
+	panes        []string
+	next         int
 	splitActive  int
 	maxSplit     int
 	inFlight     int
@@ -170,10 +189,21 @@ type concExec struct {
 }
 
 func (c *concExec) run(cmd string, args []string, _ ExecOpts) (Result, error) {
-	if cmd != herdrBin() {
+	if cmd != herdrBin() || len(args) < 2 {
 		return Result{}, nil
 	}
 	switch args[1] {
+	case "list":
+		tab := os.Getenv("HERDR_TAB_ID")
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		panes := []any{}
+		for _, id := range c.panes {
+			panes = append(panes, map[string]any{"pane_id": id, "tab_id": tab})
+		}
+		return jsonReply(map[string]any{"panes": panes}), nil
+	case "layout":
+		return Result{Stdout: `{"result":{"layout":{"area":{"width":100,"height":100},"panes":[],"splits":[]}}}`}, nil
 	case "split":
 		c.mu.Lock()
 		c.splitActive++
@@ -188,7 +218,9 @@ func (c *concExec) run(cmd string, args []string, _ ExecOpts) (Result, error) {
 		if c.inFlight > c.maxInFlight {
 			c.maxInFlight = c.inFlight
 		}
-		pane := fmt.Sprintf("p%d", c.inFlight)
+		c.next++
+		pane := fmt.Sprintf("p%d", c.next)
+		c.panes = append(c.panes, pane)
 		c.mu.Unlock()
 		return Result{Stdout: `{"result":{"pane":{"pane_id":"` + pane + `"}}}`}, nil
 	case "run":
@@ -239,7 +271,7 @@ func TestConcurrentReadOnlyLaunchesSerializeOnlyTheSplit(t *testing.T) {
 	pollEvery, readOnlyTimeout = 5*time.Millisecond, 5*time.Second
 	t.Cleanup(func() { pollEvery, readOnlyTimeout = oldPoll, oldTimeout })
 
-	ex := &concExec{bothLaunched: make(chan struct{})}
+	ex := &concExec{panes: []string{"p1"}, next: 1, bothLaunched: make(chan struct{})}
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
 		wg.Add(1)

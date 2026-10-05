@@ -15,6 +15,8 @@ func claudeHerdr(home, report string) func(string, []string) Result {
 			return Result{Stdout: "{}"}
 		}
 		switch args[1] {
+		case "list":
+			return Result{Stdout: `{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"` + os.Getenv("HERDR_TAB_ID") + `"}]}}`}
 		case "split":
 			return Result{Stdout: `{"result":{"pane":{"pane_id":"p9"}}}`}
 		case "run":

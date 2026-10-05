@@ -71,11 +71,6 @@ var readOnlyTimeout = 10 * time.Minute
 
 var pollEvery = time.Second
 
-// splitMu serializes the herdr pane split across concurrent read-only
-// launches. It covers the split alone: the run, the wait and the reply read
-// stay concurrent.
-var splitMu sync.Mutex
-
 func pigBin() string {
 	if p := os.Getenv("WICK_PIG"); p != "" {
 		return p
@@ -113,11 +108,11 @@ func readOnlySession(id, cwd, model string) Session {
 	return Session{Role: "review", Cwd: cwd, Model: model, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
 }
 
-// startReadOnly launches a read-only agent on prompt in a pane split from the
-// caller's, and leaves it running: the caller decides when the pane closes.
-// The prompt goes through a file: pane run types its argv as one line.
-// WICK_READONLY_HARNESS picks the harness (default pig); a model goes only to
-// pig, since worker models are pig model names.
+// startReadOnly launches a read-only agent on prompt in a pane of the caller's
+// tab, placed by the grid, and leaves it running: the caller decides when the
+// pane closes. The prompt goes through a file: pane run types its argv as one
+// line. WICK_READONLY_HARNESS picks the harness (default pig); a model goes
+// only to pig, since worker models are pig model names.
 func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	harness := os.Getenv("WICK_READONLY_HARNESS")
 	if harness == "" {
@@ -141,22 +136,15 @@ func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	}
 	// The agent is done with the MCP config the moment it has launched.
 	defer CleanupSession(sess)
-	// --ratio is the share the pane being split keeps, not the share the new
-	// pane gets: measured on a scratch pane, a 229-column split at 0.3 left
-	// the original 69 columns and gave the new pane 160. So the agent gets
-	// 0.7 here, and tilePanes below evens the tab back out.
-	// Two read-only launches at once must not race on the layout: herdr
-	// splits the pane the caller is in, and a second split against a
-	// half-made layout lands wrong. Only the split is serialized; the agent
-	// then runs and is waited on concurrently.
-	splitMu.Lock()
-	split, err := herdrJSON(run, []string{"pane", "split", "--current", "--direction", "down",
-		"--ratio", "0.3", "--cwd", cwd, "--no-focus"}, 15*time.Second)
-	splitMu.Unlock()
+	// Read-only agents share the caller's tab, side by side in the grid; the
+	// ninth caller overflow opens a `scouts` tab. The grid serializes the
+	// splits in one tab and evens its sizes out, best effort; the agent then
+	// runs and is waited on concurrently.
+	placed, err := placeInGrid(run, os.Getenv("HERDR_TAB_ID"), "scouts", cwd)
 	if err != nil {
 		return readOnlyAgent{}, err
 	}
-	pane := split.Result.Pane.PaneID
+	pane := placed.Pane
 	if pane == "" {
 		return readOnlyAgent{}, fmt.Errorf("herdr split returned no pane id")
 	}
@@ -165,10 +153,6 @@ func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 		_, _ = run(herdrBin(), []string{"pane", "close", pane}, ExecOpts{Timeout: 15 * time.Second})
 		return readOnlyAgent{}, err
 	}
-
-	// Every launch splits the caller's pane, so a few of them leave the tab at
-	// 1/2, 1/4, 1/8. Tiling is cosmetic: never fail a launch over an uneven tab.
-	_ = tilePanes(run, split.Result.Pane.TabID)
 
 	if res, err := run(herdrBin(), []string{"pane", "run", pane, launch.Line}, ExecOpts{Timeout: 15 * time.Second}); err != nil || res.Code != 0 {
 		return fail(fmt.Errorf("herdr pane run failed: %v %s", err, firstLine(res.Stderr, res.Stdout)))

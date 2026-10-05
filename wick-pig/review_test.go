@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -45,6 +46,18 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		return Result{Stdout: "{}"}, nil
 	}
 	switch args[0] + " " + args[1] {
+	case "pane list":
+		ids := []string{"root"}
+		for id := range f.panes {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids[1:])
+		tab := os.Getenv("HERDR_TAB_ID")
+		panes := []any{}
+		for _, id := range ids {
+			panes = append(panes, map[string]any{"pane_id": id, "tab_id": tab})
+		}
+		return jsonReply(map[string]any{"panes": panes}), nil
 	case "pane split":
 		f.next++
 		id := fmt.Sprintf("rv%d", f.next)

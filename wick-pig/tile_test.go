@@ -29,6 +29,12 @@ type fakeTab struct {
 	area  paneRect
 	root  *fakeNode
 	calls []string
+	// order is the panes in the order herdr created them, which is the order
+	// pane list reports and the grid fills. next is the counter new panes are
+	// named from, and name overrides it when a workspace hands out the ids.
+	order []string
+	next  int
+	name  func() string
 }
 
 type fakeNode struct {
@@ -51,7 +57,88 @@ func newFakeTab(axis string, ratios []float64) *fakeTab {
 	for i := len(ratios) - 1; i >= 0; i-- {
 		root = &fakeNode{dir: axis, ratio: ratios[i], first: leaf(fmt.Sprintf("p%d", i)), second: root}
 	}
-	return &fakeTab{tab: "w1:t1", area: paneRect{Width: 100, Height: 100}, root: root}
+	f := &fakeTab{tab: "w1:t1", area: paneRect{Width: 100, Height: 100}, root: root}
+	for i := 0; i <= len(ratios); i++ {
+		f.order = append(f.order, fmt.Sprintf("p%d", i))
+	}
+	f.next = len(ratios) + 1
+	return f
+}
+
+// hydrate fills order from the tree, for a hand-built fake whose panes were
+// never created by a split.
+func (f *fakeTab) hydrate() {
+	if f.order != nil {
+		return
+	}
+	for _, b := range f.boxes() {
+		f.order = append(f.order, b.PaneID)
+	}
+	f.next = len(f.order)
+}
+
+// split replaces pane with a split of it: the pane keeps the first side of
+// dir and a new pane takes the second, exactly as herdr splits one pane. The
+// new pane's id is one the fake has not handed out.
+func (f *fakeTab) split(pane, dir string, ratio float64) (string, error) {
+	f.hydrate()
+	id := fmt.Sprintf("p%d", f.next)
+	if f.name != nil {
+		id = f.name()
+	} else {
+		f.next++
+	}
+	repl := &fakeNode{dir: dir, ratio: ratio, first: leaf(pane), second: leaf(id)}
+	if f.root.isLeaf() && f.root.pane == pane {
+		f.root = repl
+	} else if !replaceLeaf(f.root, pane, repl) {
+		return "", fmt.Errorf("no pane %s in %s", pane, f.tab)
+	}
+	f.order = append(f.order, id)
+	return id, nil
+}
+
+// replaceLeaf swaps the leaf named pane for repl somewhere under n.
+func replaceLeaf(n *fakeNode, pane string, repl *fakeNode) bool {
+	if n.isLeaf() {
+		return false
+	}
+	if n.first.isLeaf() && n.first.pane == pane {
+		n.first = repl
+		return true
+	}
+	if n.second.isLeaf() && n.second.pane == pane {
+		n.second = repl
+		return true
+	}
+	return replaceLeaf(n.first, pane, repl) || replaceLeaf(n.second, pane, repl)
+}
+
+// close removes a pane the way herdr does: its split collapses and the other
+// side keeps the whole region.
+func (f *fakeTab) close(pane string) {
+	f.root = collapse(f.root, pane)
+	for i, id := range f.order {
+		if id == pane {
+			f.order = append(f.order[:i], f.order[i+1:]...)
+			break
+		}
+	}
+}
+
+func collapse(n *fakeNode, pane string) *fakeNode {
+	if n == nil || n.isLeaf() {
+		return n
+	}
+	if n.first.isLeaf() && n.first.pane == pane {
+		return n.second
+	}
+	if n.second.isLeaf() && n.second.pane == pane {
+		return n.first
+	}
+	n.first = collapse(n.first, pane)
+	n.second = collapse(n.second, pane)
+	return n
 }
 
 // newFakeTree wraps a hand-built node, for a layout that is not one axis.
@@ -191,11 +278,33 @@ func forward(direction string) bool { return direction == "down" || direction ==
 func (f *fakeTab) run(_ string, args []string, _ ExecOpts) (Result, error) {
 	switch args[1] {
 	case "list":
+		f.hydrate()
 		panes := []any{}
-		for _, b := range f.boxes() {
-			panes = append(panes, map[string]any{"pane_id": b.PaneID, "tab_id": f.tab, "workspace_id": "w1"})
+		for _, id := range f.order {
+			panes = append(panes, map[string]any{"pane_id": id, "tab_id": f.tab, "workspace_id": "w1"})
 		}
 		return jsonReply(map[string]any{"panes": panes}), nil
+	case "split":
+		var pane, direction string
+		var ratio float64
+		for i := 2; i+1 < len(args); i += 2 {
+			switch args[i] {
+			case "--pane":
+				pane = args[i+1]
+			case "--direction":
+				direction = args[i+1]
+			case "--ratio":
+				_, _ = fmt.Sscanf(args[i+1], "%g", &ratio)
+			}
+		}
+		id, err := f.split(pane, direction, ratio)
+		if err != nil {
+			return Result{Code: 1, Stderr: err.Error()}, nil
+		}
+		return jsonReply(map[string]any{"pane": map[string]any{"pane_id": id, "tab_id": f.tab}}), nil
+	case "close":
+		f.close(args[2])
+		return Result{Stdout: `{"result":{}}`}, nil
 	case "layout":
 		return jsonReply(map[string]any{"layout": f.layout()}), nil
 	case "resize":
