@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -151,5 +153,131 @@ func TestToolsListHasSpawnAndNoScout(t *testing.T) {
 	}
 	if !strings.Contains(spawnDesc, "scout") {
 		t.Errorf("implement may spawn scout; the description must list it:\n%s", spawnDesc)
+	}
+}
+
+// echoTool returns a fixed literal, so a test can tell exactly what the
+// server added around the tool's own output.
+type echoTool struct{ text string }
+
+func (e echoTool) Name() string           { return "echo" }
+func (e echoTool) Description() string    { return "returns its literal" }
+func (e echoTool) Schema() map[string]any { return map[string]any{"type": "object"} }
+func (e echoTool) Execute(context.Context, string, json.RawMessage) (string, error) {
+	return e.text, nil
+}
+
+// callText digs the tool result text out of a tools/call reply.
+func callText(t *testing.T, reply map[string]any) string {
+	t.Helper()
+	result, _ := reply["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("tools/call reply has no content: %v", reply)
+	}
+	entry, _ := content[0].(map[string]any)
+	text, _ := entry["text"].(string)
+	return text
+}
+
+// A server whose binary did not change leaves the tool's text alone.
+func TestUnchangedBinaryLeavesReplyAlone(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "wick-mcp")
+	if err := os.WriteFile(bin, []byte("binary-v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_BINARY_PATH", bin)
+
+	replies := serve(t, []tools.Tool{echoTool{text: "hello"}},
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`)
+	if len(replies) != 1 {
+		t.Fatalf("want one reply, got %d", len(replies))
+	}
+	if got := callText(t, replies[0]); got != "hello" {
+		t.Errorf("an unchanged server must leave the reply alone, got %q", got)
+	}
+}
+
+// A server that could not read its binary's identity at start never marks a
+// reply stale: without both identities there is nothing to compare, so an
+// odd launch environment can never produce a false notice.
+func TestUnknownBinaryLeavesReplyAlone(t *testing.T) {
+	t.Setenv("WICK_BINARY_PATH", filepath.Join(t.TempDir(), "no-such-binary"))
+
+	replies := serve(t, []tools.Tool{echoTool{text: "hello"}},
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`)
+	if len(replies) != 1 {
+		t.Fatalf("want one reply, got %d", len(replies))
+	}
+	if got := callText(t, replies[0]); got != "hello" {
+		t.Errorf("a server with unknown identity must leave the reply alone, got %q", got)
+	}
+}
+
+// gateTool blocks inside Execute so the test can replace the binary
+// mid-call: the entered signal proves the server snapshotted its identity at
+// start before the replacement lands.
+type gateTool struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g gateTool) Name() string           { return "gated" }
+func (g gateTool) Description() string    { return "blocks until released" }
+func (g gateTool) Schema() map[string]any { return map[string]any{"type": "object"} }
+func (g gateTool) Execute(context.Context, string, json.RawMessage) (string, error) {
+	close(g.entered)
+	<-g.release
+	return "hello", nil
+}
+
+// A server started before its binary changed says so in its next reply,
+// keeping the tool's own output and adding the stale line.
+func TestStaleBinaryAddsNoticeToNextReply(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "wick-mcp")
+	if err := os.WriteFile(bin, []byte("binary-v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_BINARY_PATH", bin)
+
+	tool := gateTool{entered: make(chan struct{}), release: make(chan struct{})}
+	in, out := io.Pipe()
+	var buf bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- mcp.Serve(context.Background(), in, &buf, t.TempDir(), []tools.Tool{tool}) }()
+	if _, err := io.WriteString(out, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"gated\"}}\n"); err != nil {
+		t.Fatal(err)
+	}
+	<-tool.entered
+	if err := os.WriteFile(bin, []byte("binary-v2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	close(tool.release)
+	out.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var replies []map[string]any
+	sc := bufio.NewScanner(&buf)
+	for sc.Scan() {
+		var m map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			t.Fatalf("reply is not JSON: %s", sc.Bytes())
+		}
+		replies = append(replies, m)
+	}
+	if len(replies) != 1 {
+		t.Fatalf("want one reply, got %d", len(replies))
+	}
+	got := callText(t, replies[0])
+	if !strings.Contains(got, "hello") {
+		t.Errorf("the stale reply must keep the tool's output, got %q", got)
+	}
+	if !strings.Contains(strings.ToLower(got), "stale") || !strings.Contains(got, "binary") {
+		t.Errorf("the stale reply must say the binary changed since start, got %q", got)
+	}
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if len(lines) < 2 || lines[0] != "hello" {
+		t.Errorf("the stale line must be added after the tool's output, got %q", got)
 	}
 }
