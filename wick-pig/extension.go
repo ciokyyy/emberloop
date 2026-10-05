@@ -32,8 +32,25 @@ func skillPath(name string) string {
 }
 
 // reportExtension locates the herdr-report extension, which is what makes a
-// worker visible to herdr as an agent rather than just a pane.
-func reportExtension() string { return os.Getenv("WICK_HERDR_REPORT") }
+// worker visible to herdr as an agent rather than just a pane. The env var
+// wins; otherwise the first candidate directory that exists wins. exe and home
+// are parameters so a test can point them at temp dirs.
+func reportExtension(exe, home string) string {
+	if ext := os.Getenv("WICK_HERDR_REPORT"); ext != "" {
+		return ext
+	}
+	dir := filepath.Dir(exe)
+	for _, candidate := range []string{
+		filepath.Join(dir, "..", "herdr-report"),
+		filepath.Join(dir, "herdr-report"),
+		filepath.Join(home, ".pig", "agent", "extensions", "herdr-report"),
+	} {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return filepath.Clean(candidate)
+		}
+	}
+	return ""
+}
 
 // recall returns one worker's record from the store.
 func recall(id string) (Worker, error) {
@@ -46,6 +63,16 @@ func recall(id string) (Worker, error) {
 		return Worker{}, fmt.Errorf("unknown worker %q", id)
 	}
 	return worker, nil
+}
+
+// runningExe is the path of this executable. An error means no lookup is
+// possible, and an empty exe only costs us the two candidates beside it.
+func runningExe() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 // shellArg quotes one argument for the pane's shell. pane run joins its
@@ -101,8 +128,32 @@ func renderStatus(workers []Status, pending []string) string {
 		b.WriteString("all settled. Next: finish_worker for each.")
 	} else {
 		fmt.Fprintf(&b, "still running: %s. Call wait_workers again, or do other work.", strings.Join(pending, ", "))
+		if allUnknown(workers, pending) {
+			b.WriteString("\nThey are not registered with herdr, which is why they never settle: " +
+				"the herdr-report extension is missing, so pig was launched without `-e herdr-report`. " +
+				"Install it beside wick, or point WICK_HERDR_REPORT at its directory.")
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// allUnknown reports whether every pending worker is unknown to herdr. One
+// worker herdr can see proves the extension is loaded, so the rest are just
+// working, and saying otherwise would send the reader chasing the wrong fault.
+func allUnknown(workers []Status, pending []string) bool {
+	if len(pending) == 0 {
+		return false
+	}
+	state := make(map[string]string, len(workers))
+	for _, w := range workers {
+		state[w.ID] = w.State
+	}
+	for _, id := range pending {
+		if state[id] != "unknown" {
+			return false
+		}
+	}
+	return true
 }
 
 func renderFinish(r *FinishResult) string {

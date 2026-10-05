@@ -96,3 +96,62 @@ func TestRenderFinishIsProse(t *testing.T) {
 		t.Errorf("a conflict must be reported and escalated, got %q", kept)
 	}
 }
+
+func TestReportExtensionPrefersTheEnvVar(t *testing.T) {
+	t.Setenv("WICK_HERDR_REPORT", "/exts/from-env")
+	if got := reportExtension("/opt/wick/bin/pig", "/home/cioky"); got != "/exts/from-env" {
+		t.Errorf("a set env var must win over any directory on disk, got %q", got)
+	}
+}
+
+func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	bin := filepath.Join(root, "opt", "wick", "bin")
+	mk := func(p string) string {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Setenv("WICK_HERDR_REPORT", "")
+	exe := filepath.Join(bin, "pig")
+
+	if got := reportExtension(exe, home); got != "" {
+		t.Errorf("with nothing on disk the lookup must return empty, got %q", got)
+	}
+
+	homeExt := mk(filepath.Join(home, ".pig", "agent", "extensions", "herdr-report"))
+	if got := reportExtension(exe, home); got != homeExt {
+		t.Errorf("with only the home extension present, got %q want %q", got, homeExt)
+	}
+
+	beside := mk(filepath.Join(bin, "herdr-report"))
+	if got := reportExtension(exe, home); got != beside {
+		t.Errorf("the extension beside the executable must beat the home one, got %q", got)
+	}
+
+	above := mk(filepath.Join(root, "opt", "wick", "herdr-report"))
+	if got := reportExtension(exe, home); got != above {
+		t.Errorf("../herdr-report must be the first candidate, got %q", got)
+	}
+}
+
+func TestRenderStatusExplainsAllUnknownWorkers(t *testing.T) {
+	unknown := []Status{{ID: "01-a", State: "unknown"}, {ID: "01-b", State: "unknown"}}
+	got := renderStatus(unknown, []string{"01-a", "01-b"})
+	if !strings.Contains(got, "not registered with herdr") || !strings.Contains(got, "report extension") {
+		t.Errorf("workers herdr never heard of must be diagnosed, got %q", got)
+	}
+
+	oneKnown := []Status{{ID: "01-a", State: "unknown"}, {ID: "01-b", State: "working"}}
+	if got := renderStatus(oneKnown, []string{"01-a", "01-b"}); strings.Contains(got, "not registered with herdr") {
+		t.Errorf("a worker herdr can see means the others are just slow, got %q", got)
+	}
+
+	settled := renderStatus([]Status{{ID: "01-a", State: "merged"}}, nil)
+	if strings.Contains(settled, "not registered with herdr") {
+		t.Errorf("nothing is pending, so nothing is unexplained, got %q", settled)
+	}
+}

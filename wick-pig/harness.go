@@ -128,7 +128,7 @@ func (pigHarness) Command(s Session) (Command, error) {
 	for _, name := range s.Skills {
 		args = append(args, "--skill", filepath.Dir(skillPath(name)))
 	}
-	if ext := reportExtension(); ext != "" && !s.Headless {
+	if ext := reportExtension(runningExe(), os.Getenv("HOME")); ext != "" && !s.Headless {
 		args = append(args, "-e", ext)
 	}
 	if s.Headless {
