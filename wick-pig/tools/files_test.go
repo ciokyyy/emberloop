@@ -181,3 +181,65 @@ func TestReadAllowStillServesAbsolutePaths(t *testing.T) {
 		t.Fatalf("WICK_READ_ALLOW read = %q, %v", out, err)
 	}
 }
+
+func TestReadWickIndexSkipsSymlinkedSkillFile(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{
+		"ok": "---\ndescription: Fine.\n---\n",
+	})
+	secret := filepath.Join(t.TempDir(), "SECRET.md")
+	if err := os.WriteFile(secret, []byte("---\ndescription: leaked secret.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evil := filepath.Join(root, "matt-pocock", "evil")
+	if err := os.MkdirAll(evil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(evil, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "leaked secret") {
+		t.Fatalf("index read a SKILL.md through a symlink out of the namespace:\n%s", out)
+	}
+	if !strings.Contains(out, "evil") {
+		t.Fatalf("the skill must still be listed by name, got:\n%s", out)
+	}
+}
+
+// A symlinked intermediate directory is the other half of the escape: the leaf
+// is an ordinary file but the path to it leaves the namespace.
+func TestReadWickRefusesSymlinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{"ok": "---\ndescription: x\n---\n"})
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("top secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "matt-pocock", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock/escape/secret.txt"}); err == nil {
+		t.Fatalf("served %q through a symlinked directory", out)
+	}
+}
+
+func TestReadWickIndexReadsBlockScalarDescription(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{
+		"folded": "---\nname: folded\ndescription: >\n  A long description\n  wrapped over lines.\nmetadata:\n  description: should be ignored\n---\n",
+	})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "folded: A long description wrapped over lines.") {
+		t.Fatalf("block scalar description not read, got:\n%s", out)
+	}
+	if strings.Contains(out, "should be ignored") {
+		t.Fatalf("a nested description was read as the skill's:\n%s", out)
+	}
+}

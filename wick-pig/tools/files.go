@@ -175,9 +175,14 @@ func wickIndex(addr, dir string) (string, error) {
 	fmt.Fprintf(&b, "[%s]\n", addr)
 	for _, entry := range entries {
 		if entry.IsDir() {
-			if desc := skillDescription(filepath.Join(dir, entry.Name())); desc != "" {
-				fmt.Fprintf(&b, "%s: %s\n", entry.Name(), desc)
-				continue
+			// The SKILL.md is resolved the same way a read of it would be, so
+			// a symlink pointing out of the namespace is skipped rather than
+			// read for its description.
+			if skill, err := wickInside(dir, filepath.Join(entry.Name(), "SKILL.md")); err == nil {
+				if desc := skillDescription(skill); desc != "" {
+					fmt.Fprintf(&b, "%s: %s\n", entry.Name(), desc)
+					continue
+				}
 			}
 		}
 		fmt.Fprintf(&b, "%s\n", entry.Name())
@@ -185,10 +190,10 @@ func wickIndex(addr, dir string) (string, error) {
 	return b.String(), nil
 }
 
-// skillDescription reads the description field of a skill's SKILL.md. It is
-// empty when the file or the field is missing.
-func skillDescription(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+// skillDescription reads the description field of a SKILL.md. It is empty when
+// the file or the field is missing.
+func skillDescription(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
@@ -210,6 +215,11 @@ func frontmatterDescription(markdown string) string {
 	}
 	lines := strings.Split(block[:end], "\n")
 	for i, line := range lines {
+		// Only a top-level key counts: an indented description belongs to some
+		// nested block, not to the skill.
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
 		key, value, found := strings.Cut(line, ":")
 		if !found || strings.TrimSpace(key) != "description" {
 			continue
