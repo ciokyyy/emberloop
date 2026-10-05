@@ -39,17 +39,39 @@ func reportExtension(exe, home string) string {
 	if ext := os.Getenv("WICK_HERDR_REPORT"); ext != "" {
 		return ext
 	}
-	dir := filepath.Dir(exe)
-	for _, candidate := range []string{
-		filepath.Join(dir, "..", "herdr-report"),
-		filepath.Join(dir, "herdr-report"),
-		filepath.Join(home, ".pig", "agent", "extensions", "herdr-report"),
-	} {
+	for _, candidate := range reportCandidates(exe, home) {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return filepath.Clean(candidate)
 		}
 	}
 	return ""
+}
+
+// reportCandidates is every place reportExtension looks, in order. The env var
+// is checked before these and is deliberately not one of them, so a caller can
+// name the directories that were actually searched.
+func reportCandidates(exe, home string) []string {
+	dir := filepath.Dir(exe)
+	return []string{
+		filepath.Join(dir, "..", "herdr-report"),
+		filepath.Join(dir, "herdr-report"),
+		filepath.Join(home, ".pig", "agent", "extensions", "herdr-report"),
+	}
+}
+
+// reportExtensionWarning warns that a pig worker will read unknown to herdr
+// and never settle, which leaves wait_workers blocking on a state that cannot
+// arrive. Empty for any other harness, and empty when the extension is found.
+func reportExtensionWarning(harness string) string {
+	if harness != "pig" {
+		return ""
+	}
+	if reportExtension(runningExe(), os.Getenv("HOME")) != "" {
+		return ""
+	}
+	return "\nwarning: the herdr-report extension was not found, so this worker will read " +
+		"unknown to herdr and never settle on its own. Judge it by its branch commits and " +
+		"an idle pane; install herdr-report beside wick or point WICK_HERDR_REPORT at its directory."
 }
 
 // recall returns one worker's record from the store.
@@ -116,7 +138,7 @@ func writeBrief(id, ticket string) (string, error) {
 // renderStatus and renderFinish return prose rather than a Go value. A struct
 // or map crossing the extension boundary reaches the model as nothing at all,
 // and prose is also fewer tokens than the equivalent JSON.
-func renderStatus(workers []Status, pending []string) string {
+func renderStatus(workers []Status, pending []string, candidates []string) string {
 	if len(workers) == 0 {
 		return "no workers are running. Spawn one with spawn_worker(ticket=<path>)."
 	}
@@ -129,12 +151,20 @@ func renderStatus(workers []Status, pending []string) string {
 	} else {
 		fmt.Fprintf(&b, "still running: %s. Call wait_workers again, or do other work.", strings.Join(pending, ", "))
 		if allUnknown(workers, pending) {
-			b.WriteString("\nThey are not registered with herdr, which is why they never settle: " +
-				"the herdr-report extension is missing, so pig was launched without `-e herdr-report`. " +
-				"Install it beside wick, or point WICK_HERDR_REPORT at its directory.")
+			b.WriteString("\n" + missingReportExtension(candidates))
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// missingReportExtension explains the all-unknown case and names every place
+// reportExtension looked, so the reader can fix the lookup instead of guessing
+// at it.
+func missingReportExtension(candidates []string) string {
+	return "They are not registered with herdr, which is why they never settle: " +
+		"the herdr-report extension was not found, so pig was launched without `-e herdr-report`. " +
+		"Looked in: " + strings.Join(candidates, ", ") + ". " +
+		"Install it in one of those, or set WICK_HERDR_REPORT to its directory."
 }
 
 // allUnknown reports whether every pending worker is unknown to herdr. One

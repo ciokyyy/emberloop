@@ -115,10 +115,11 @@ var spawnTool = fnTool{
 			return "", err
 		}
 		// Tiling is cosmetic: an uneven tab is still a working tab, so a
-		// failure is reported and the spawn stands.
-		warning := ""
+		// failure is reported and the spawn stands. A missing report extension
+		// is a bigger fault and is warned about up front.
+		warning := reportExtensionWarning(in.Harness)
 		if err := tilePanes(spawnExec, worker.Tab); err != nil {
-			warning = fmt.Sprintf("\nwarning: could not even out the panes in %s: %v", worker.Tab, err)
+			warning += fmt.Sprintf("\nwarning: could not even out the panes in %s: %v", worker.Tab, err)
 		}
 		return fmt.Sprintf(
 			"spawned worker %s\n  pane:      %s\n  workspace: %s\n  branch:    %s\n  worktree:  %s\n  brief:     %s\n\nNext: wait_workers(workers=[\"%s\"]), then finish_worker(worker=\"%s\").%s",
@@ -179,7 +180,7 @@ var waitTool = fnTool{
 		if err != nil {
 			return "", err
 		}
-		out := renderStatus(workers, pending)
+		out := renderStatus(workers, pending, reportCandidates(runningExe(), os.Getenv("HOME")))
 		if clamped {
 			out += fmt.Sprintf("\ntimeout_ms was clamped to the %d ms cap, so this wait ended early. Call wait_workers again for the rest.",
 				waitCap/time.Millisecond)

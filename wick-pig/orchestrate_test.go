@@ -205,6 +205,9 @@ func runSpawnTool(t *testing.T, layout string) (string, error) {
 	}
 	t.Setenv("HERDR_TAB_ID", "w1:t1")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	// Keep these tiling tests about tiling: a report warning here would make
+	// "must not warn" fail for a reason unrelated to the tab.
+	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
 	args, _ := json.Marshal(map[string]any{"ticket": ticket})
 	return spawnTool.Execute(context.Background(), repo, args)
 }
@@ -241,5 +244,41 @@ func TestSpawnWorkerTilesTheRunTab(t *testing.T) {
 	}
 	if strings.Contains(out, "warning") {
 		t.Errorf("an even tab must not warn, got %q", out)
+	}
+}
+
+// A pig worker without the report extension never registers with herdr, so
+// wait_workers can only ever report it as unknown. The spawn must say so up
+// front, and name how to fix it, rather than leave the merger waiting on a
+// state that cannot arrive.
+func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
+	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	spawnGap = 0
+	spawnExec = spawnToolFake(evenSplit)
+	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
+
+	// No env var and a fresh HOME: the lookup has nowhere to find the
+	// extension, which is the case ticket 19 hit.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("WICK_HERDR_REPORT", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("HERDR_PANE_ID", "")
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "21-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]any{"ticket": ticket})
+	out, err := spawnTool.Execute(context.Background(), repo, args)
+	if err != nil {
+		t.Fatalf("spawn_worker: %v", err)
+	}
+	if !strings.Contains(out, "spawned worker") {
+		t.Errorf("the spawn must still succeed, got %q", out)
+	}
+	if !strings.Contains(out, "warning") || !strings.Contains(out, "unknown") {
+		t.Errorf("a missing report extension must be warned about, got %q", out)
 	}
 }
