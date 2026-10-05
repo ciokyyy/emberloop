@@ -41,6 +41,8 @@ parse structure, not absolute paths.
   `artifactDirectoryPath` (`brain/<id>`, no `logs/` suffix).
   `PreToolUse`/`PostToolUse` add `toolCall` + `stepIdx` (`PostToolUse`
   adds `error`, never the tool output). `Stop` adds `executionNum`
+  (0, then 1 after a `continue`), `terminationReason` (`NO_TOOL_CALL`
+  here, not `model_stop`) and `fullyIdle`.
 - `agent/` — the WORKING live shapes, laid out as
   `dot-agents/` mirrors a workspace `.agents/` (`dot-` so checkout
   tooling never mistakes fixtures for config; live absolute paths are
