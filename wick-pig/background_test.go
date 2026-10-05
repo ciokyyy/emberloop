@@ -13,12 +13,12 @@ import (
 // The background tool lives in the tools package, but wick wires its grid, so
 // its placement is tested here, beside the grid fake.
 
-// gridBackground is the background tool wick serves, driven by g: AllTools
-// installs the grid placer, and backgroundPane places through OSExec, which the
-// test points at the fake herdr. Both seams go back when the test ends.
+// gridBackground is the background tool wick serves, driven by g: wick installs
+// its grid at startup, and the test points that grid and the tool's herdr at
+// the fake. Both seams go back when the test ends.
 func gridBackground(t *testing.T, g *fakeGrid) tools.Tool {
 	t.Helper()
-	oldRun, oldExec := tools.HerdrRun, OSExec
+	oldRun, oldGrid := tools.HerdrRun, tools.Grid
 	tools.HerdrRun = func(_ context.Context, args ...string) (string, error) {
 		res, err := g.run(herdrBin(), args, ExecOpts{})
 		if err != nil {
@@ -29,8 +29,8 @@ func gridBackground(t *testing.T, g *fakeGrid) tools.Tool {
 		}
 		return res.Stdout, nil
 	}
-	OSExec = g.run
-	t.Cleanup(func() { tools.HerdrRun, OSExec = oldRun, oldExec })
+	tools.Grid = backgroundPaneWith(g.run)
+	t.Cleanup(func() { tools.HerdrRun, tools.Grid = oldRun, oldGrid })
 
 	for _, tool := range AllTools() {
 		if tool.Name() == "background" {

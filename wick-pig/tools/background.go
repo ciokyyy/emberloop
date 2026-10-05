@@ -11,13 +11,12 @@ import (
 	"time"
 )
 
-// Background is the background tool with a pane placer. wick supplies its
-// shared grid, so a server or watcher sits in the caller's tab beside the
-// agents instead of splitting the caller's own pane. A nil placer is a host
-// with no grid, and start refuses rather than stacking panes.
-func Background(place func(cwd string) (string, error)) Tool {
-	return backgroundTool{place: place}
-}
+// Grid places the pane a background command runs in through the shared agent
+// grid and returns its pane id. wick installs its grid here at startup, so a
+// server or watcher sits in the caller's tab beside the agents instead of
+// splitting the caller's own pane. A host with no grid leaves it nil, and start
+// refuses rather than stacking panes.
+var Grid func(cwd string) (string, error)
 
 // HerdrRun runs one herdr command for start's pane run and for read and stop.
 // It is a var so a wick test can watch the pane through the same fake grid.
@@ -30,9 +29,7 @@ var HerdrRun = herdr
 //
 // ponytail: panes are not tracked. start returns the pane id and the model
 // carries it; a pane the model forgets is closed by the human with the pane.
-type backgroundTool struct {
-	place func(cwd string) (string, error)
-}
+type backgroundTool struct{}
 
 func (backgroundTool) Name() string { return "background" }
 func (backgroundTool) Description() string {
@@ -78,15 +75,12 @@ func (t backgroundTool) Execute(ctx context.Context, root string, args json.RawM
 		if os.Getenv("HERDR_PANE_ID") == "" && os.Getenv("HERDR_TAB_ID") == "" {
 			return "", errors.New("not inside herdr, so there is nowhere to place a pane; run it with bash and a trailing & instead")
 		}
-		if t.place == nil {
+		if Grid == nil {
 			return "", errors.New("no pane grid is installed; run the command with bash and a trailing & instead")
 		}
-		pane, err := t.place(root)
+		pane, err := Grid(root)
 		if err != nil {
 			return "", err
-		}
-		if pane == "" {
-			return "", errors.New("the grid returned no pane id")
 		}
 		if _, err := HerdrRun(ctx, "pane", "run", pane, p.Command); err != nil {
 			_, _ = HerdrRun(ctx, "pane", "close", pane)

@@ -2,7 +2,7 @@ package tools
 
 // All is every file tool this package serves, in loadout order.
 func All() []Tool {
-	return []Tool{readTool{}, editTool{}, writeTool{}, bashTool{}, findTool{}, Background(nil)}
+	return []Tool{readTool{}, editTool{}, writeTool{}, bashTool{}, findTool{}, backgroundTool{}}
 }
 
 // Named returns the tools called names, in the order given. Unknown names are

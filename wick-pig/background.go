@@ -1,6 +1,18 @@
 package wick
 
-import "fmt"
+import (
+	"fmt"
+
+	"example.com/wick/tools"
+)
+
+// The background tool is served by the tools package, which imports nothing
+// from wick, so wick installs its grid there once, at startup. Every site that
+// builds a tool set -- RoleTools, a spawned agent's tools, AllTools -- then gets
+// the same placer without having to remember it.
+func init() {
+	tools.Grid = backgroundPane
+}
 
 // backgroundPane places a background command's pane through the grid: the tab
 // this session runs in, overflowing into `scouts` when the grid is full.
