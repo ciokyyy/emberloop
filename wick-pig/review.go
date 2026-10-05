@@ -410,7 +410,9 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	if err := Nudge(run, agent.Pane, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath)); err != nil {
 		return nil, err
 	}
-	return &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab}, nil
+	// Reused: the reviewer was already running, so a failed spawn call has
+	// nothing to roll back here.
+	return &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab, Reused: true}, nil
 }
 
 // freshReviewer launches a reviewer agent of type t in the worker's tab, or in

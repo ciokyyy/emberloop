@@ -724,12 +724,14 @@ Answer: {{prompt}}
 
 // A persistent type keeps one agent per parent: re-spawning it re-prompts the
 // live agent with the new prompt instead of launching a second one, and the
-// spawn returns that agent's new report.
+// spawn returns that agent's new report. A top-level session has no agent id,
+// so its own pane is what names the parent.
 func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("WICK_AGENT_ID", "parent1")
+	t.Setenv("WICK_AGENT_ID", "")
+	t.Setenv("HERDR_PANE_ID", "parentPane")
 	ex := newPersistentExec(g)
 	spawnExec = ex.run
 
@@ -764,6 +766,22 @@ func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	}
 	if !strings.Contains(second, "report-2") {
 		t.Errorf("the second spawn must return the re-prompted agent's new report, got:\n%s", second)
+	}
+
+	// Another session shares the state dir but not the parent: it gets its own
+	// agent rather than a message to this session's.
+	t.Setenv("HERDR_PANE_ID", "otherPane")
+	third, err := spawn(map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "third question"},
+	}})
+	if err != nil {
+		t.Fatalf("third spawn: %v", err)
+	}
+	if ex.launched != 2 {
+		t.Errorf("another parent must launch its own agent, launched %d", ex.launched)
+	}
+	if !strings.Contains(third, "report-3") {
+		t.Errorf("the other session must get the fresh agent's report, got:\n%s", third)
 	}
 }
 
@@ -924,4 +942,55 @@ func containsCall(calls []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// A re-prompted agent predates the spawn call that reached it: when a later
+// entry fails, the rollback must leave the agent the parent already owns
+// running, not close its pane.
+func TestFailedSpawnLeavesAReusedAgentRunning(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	ex := newPersistentExec(g)
+	spawnExec = ex.run
+
+	root := t.TempDir()
+	scoutTypeFile(t, root, "true")
+	writeAgentFile(t, root, "hand.md", `---
+name: hand
+description: A worker for a ticket that is not there.
+tools: [read]
+checkout: worktree
+blocking: false
+statuses: [done, blocked]
+---
+{{prompt}}
+`)
+	types, err := LoadAgentTypes(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := spawnToolFor(types, []string{"scout", "hand"})
+	call := func(agents []any) (string, error) {
+		raw, _ := json.Marshal(map[string]any{"agents": agents})
+		return tool.Execute(context.Background(), root, raw)
+	}
+
+	if _, err := call([]any{map[string]any{"type": "scout", "prompt": "first question"}}); err != nil {
+		t.Fatalf("first spawn: %v", err)
+	}
+
+	// The scout is re-prompted, then the second entry fails to launch.
+	if _, err := call([]any{
+		map[string]any{"type": "scout", "prompt": "second question"},
+		map[string]any{"type": "hand", "ticket": "/nope/01-x.md", "repo": root},
+	}); err == nil {
+		t.Fatal("a missing ticket must fail the spawn")
+	}
+	for _, c := range g.calls {
+		if strings.Contains(c, "pane close") {
+			t.Errorf("a failed spawn must not close the re-prompted agent's pane: %s", c)
+		}
+	}
 }

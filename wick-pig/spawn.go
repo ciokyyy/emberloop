@@ -213,6 +213,10 @@ type spawnedAgent struct {
 	// Notice is a line the spawn result carries beside the agent's report,
 	// such as a dead reviewer having been replaced.
 	Notice string
+	// Reused marks an agent that was already running for this parent: the
+	// spawn re-prompted it rather than starting it, so a failed call has
+	// nothing to roll back.
+	Reused bool
 }
 
 // spawnAgents starts every entry, launches spaced as always, then waits at most
@@ -268,7 +272,7 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 		// A persistent type keeps one agent per parent: a re-spawn re-prompts
 		// the live agent rather than starting a second one.
 		if t.Persistent {
-			if prev, ok := liveAgentFor(run, t, parentID, r); ok {
+			if prev, ok := liveAgentFor(run, t, parentID, parentPane, r); ok {
 				agent, err := repromptAgent(run, t, prev, r)
 				if err != nil {
 					closeSpawned(run, agents)
@@ -347,8 +351,14 @@ func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawn
 	return renderSpawn(agents, backgrounded), nil
 }
 
+// closeSpawned rolls back the agents a failed call launched, so a parent that
+// never learns their ids is not left with panes it cannot reach. A reused agent
+// was not launched here and its parent already knows it, so it is left running.
 func closeSpawned(run Exec, agents []*spawnedAgent) {
 	for _, a := range agents {
+		if a.Reused {
+			continue
+		}
 		if a.Worktree {
 			_, _ = Finish(run, a.ID, false)
 			continue
@@ -528,17 +538,19 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 }
 
 // liveAgentFor finds the live agent a persistent type is re-prompted as rather
+// than replaced: the agent of that type this parent already has running.
+// liveAgentFor finds the live agent a persistent type is re-prompted as rather
 // than replaced: the agent of that type this parent already has running. A
 // worktree type is looked up by the id its ticket derives, so only a re-spawn
 // of the same ticket finds the agent working it; a read-only type keeps one
 // agent per parent.
-func liveAgentFor(run Exec, t AgentType, parentID string, r spawnRequest) (AgentState, bool) {
+func liveAgentFor(run Exec, t AgentType, parentID, parentPane string, r spawnRequest) (AgentState, bool) {
 	if t.Checkout == "worktree" {
 		if r.Ticket == "" {
 			return AgentState{}, false
 		}
 		s, ok, err := ReadAgentState(WorkerID(r.Ticket))
-		if err != nil || !ok || !liveFor(s, t.Name, parentID, run) {
+		if err != nil || !ok || !liveFor(s, t.Name, parentID, parentPane, run) {
 			return AgentState{}, false
 		}
 		return s, true
@@ -552,7 +564,7 @@ func liveAgentFor(run Exec, t AgentType, parentID string, r spawnRequest) (Agent
 			continue
 		}
 		s, ok, err := ReadAgentState(strings.TrimSuffix(e.Name(), ".json"))
-		if err != nil || !ok || !liveFor(s, t.Name, parentID, run) {
+		if err != nil || !ok || !liveFor(s, t.Name, parentID, parentPane, run) {
 			continue
 		}
 		return s, true
@@ -561,9 +573,17 @@ func liveAgentFor(run Exec, t AgentType, parentID string, r spawnRequest) (Agent
 }
 
 // liveFor reports whether an agent's state is the live agent of this type for
-// this parent.
-func liveFor(s AgentState, typ, parentID string, run Exec) bool {
-	if s.Type != typ || s.ParentID != parentID || s.Pane == "" {
+// this parent. A top-level session has no agent id, so its own pane is what
+// names it: two sessions sharing a state dir keep their agents apart.
+func liveFor(s AgentState, typ, parentID, parentPane string, run Exec) bool {
+	if s.Type != typ || s.Pane == "" {
+		return false
+	}
+	if parentID != "" {
+		if s.ParentID != parentID {
+			return false
+		}
+	} else if s.Parent != parentPane {
 		return false
 	}
 	return readOnlyAgent{Pane: s.Pane}.alive(run)
@@ -595,5 +615,5 @@ func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest) (*spawne
 	if err := Nudge(run, s.Pane, fmt.Sprintf("Read %s and follow it exactly.", promptPath)); err != nil {
 		return nil, err
 	}
-	return &spawnedAgent{ID: s.ID, Type: t, Pane: s.Pane, Worktree: t.Checkout == "worktree"}, nil
+	return &spawnedAgent{ID: s.ID, Type: t, Pane: s.Pane, Worktree: t.Checkout == "worktree", Reused: true}, nil
 }
