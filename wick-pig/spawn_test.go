@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -152,15 +151,49 @@ func TestScoutRunsReadOnlyInTheCallersGrid(t *testing.T) {
 	if !splitSeen {
 		t.Error("the scout launch issued no pane split")
 	}
-	// The launch carries the role, agent type and id its MCP server needs.
+	// The launch carries the role, agent type and id its MCP server needs, and
+	// no read exception: read opens any absolute path on its own, the prompt
+	// file included.
 	if len(ex.ids) != 1 || ex.ids[0] == "" {
 		t.Fatalf("the scout launch carried no agent id: %v", ex.ids)
+	}
+	if strings.Contains(ex.lines[0], "WICK_READ_ALLOW") {
+		t.Errorf("a scout launch must not carry a read exception:\n%s", ex.lines[0])
 	}
 	if got := envIn(ex.lines[0], "WICK_AGENT_TYPE"); got != "scout" {
 		t.Errorf("the scout launch must name its type, got %q", got)
 	}
 	if got := envIn(ex.lines[0], "WICK_ROLE"); got != "agent" {
 		t.Errorf("the scout launch must run the agent role, got %q", got)
+	}
+}
+
+// Without HERDR_TAB_ID, the caller's own pane names the tab, so a spawn still
+// places the scout beside the caller rather than in the focused pane.
+func TestSpawnFindsTheCallersTabFromItsPane(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	caller := g.tabs[0].order[0]
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("HERDR_PANE_ID", caller)
+	ex := &scoutExec{g: g, writeOn: 1}
+	spawnExec = ex.run
+
+	spawn, _ := spawnToolForRole(t, "plan")
+	if _, err := spawn("/repo", map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "where is it?"},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	split := ""
+	for _, call := range g.calls {
+		if strings.Contains(call, "pane split") {
+			split = call
+			break
+		}
+	}
+	if !strings.Contains(split, "--pane "+caller) {
+		t.Errorf("the split must target the caller's pane named by HERDR_PANE_ID: %s", split)
 	}
 }
 
@@ -297,9 +330,10 @@ func TestSubmitRejectsBadInput(t *testing.T) {
 	}
 }
 
-// A repo type that a caller's list does not cover is not offered, and a repo
-// type overriding scout changes what the agent's MCP server serves.
-func TestRepoTypeOverrideReachesTheAgentTools(t *testing.T) {
+// A repo override of a built-in reaches the tools a spawned agent of that type
+// is given: a tuned scout accepts its own status, not the built-in's.
+func TestRepoOverrideReachesTheAgentTools(t *testing.T) {
+	spawnTestState(t)
 	root := t.TempDir()
 	writeAgentFile(t, root, "scout.md", `---
 name: scout
@@ -315,10 +349,34 @@ Tuned.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := types["scout"].Statuses; len(got) != 1 || got[0] != "found" {
-		t.Errorf("the override did not reach the type: %v", got)
+	tool := submitToolFor(types["scout"], "a1")
+	answered, _ := json.Marshal(map[string]any{"status": "answered", "report": "x"})
+	if _, err := tool.Execute(context.Background(), "", answered); err == nil {
+		t.Error("the tuned scout must not accept the built-in status answered")
 	}
-	if err := os.Remove(filepath.Join(root, agentTypeDir, "scout.md")); err != nil {
+	found, _ := json.Marshal(map[string]any{"status": "found", "report": "facts"})
+	if _, err := tool.Execute(context.Background(), "", found); err != nil {
+		t.Fatalf("the tuned scout must accept its own status: %v", err)
+	}
+}
+
+// A submit is recorded as submitted this turn; the stop gate clears it when a
+// new turn starts, so a later turn does not read the previous submit as this
+// turn's.
+func TestSubmitThisTurnCanBeCleared(t *testing.T) {
+	spawnTestState(t)
+	s := AgentSubmit{AgentID: "a1", Type: "scout", Status: "answered", Report: "x", ThisTurn: true}
+	if err := WriteAgentSubmit(s); err != nil {
 		t.Fatal(err)
+	}
+	if err := ClearAgentSubmitThisTurn("a1"); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, _ := ReadAgentSubmit("a1")
+	if !ok || got.ThisTurn {
+		t.Errorf("after a new turn the submit must not count as this turn: %+v", got)
+	}
+	if got.Report != "x" || got.Status != "answered" {
+		t.Errorf("clearing this turn must keep the last submit: %+v", got)
 	}
 }

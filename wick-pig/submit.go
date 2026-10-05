@@ -69,6 +69,18 @@ func ReadAgentSubmit(agentID string) (AgentSubmit, bool, error) {
 	return s, true, nil
 }
 
+// ClearAgentSubmitThisTurn marks an agent's last submit as belonging to an
+// earlier turn, keeping its status and report. The stop gate calls it when a
+// new turn starts, so "submitted this turn" means what it says.
+func ClearAgentSubmitThisTurn(agentID string) error {
+	s, ok, err := ReadAgentSubmit(agentID)
+	if err != nil || !ok || !s.ThisTurn {
+		return err
+	}
+	s.ThisTurn = false
+	return WriteAgentSubmit(s)
+}
+
 // submitToolFor builds the submit tool of one spawned agent. A blocking type
 // submits a free-text report; a non-blocking type submits a one-line summary.
 func submitToolFor(t AgentType, agentID string) tools.Tool {

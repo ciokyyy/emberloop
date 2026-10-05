@@ -190,14 +190,16 @@ type spawnedAgent struct {
 // spawnAgents starts every entry, launches spaced as always, then waits for the
 // blocking ones to submit and returns their reports in list order.
 func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawnRequest) (string, error) {
-	agents := make([]*spawnedAgent, 0, len(reqs))
+	// Reject the whole call before launching anything: a spawn that fails part
+	// way leaves panes a parent never learned the ids of.
 	for _, r := range reqs {
-		t := types[r.Type]
-		if t.Checkout != "none" {
-			closeSpawned(run, agents)
+		if t := types[r.Type]; t.Checkout != "none" {
 			return "", fmt.Errorf("cannot spawn %q: checkout %q is not supported yet", r.Type, t.Checkout)
 		}
-		agent, err := launchScout(run, root, t, r.Prompt)
+	}
+	agents := make([]*spawnedAgent, 0, len(reqs))
+	for _, r := range reqs {
+		agent, err := launchScout(run, root, types[r.Type], r.Prompt)
 		if err != nil {
 			// The call failed, so the parent never learns these ids: close
 			// the panes already started rather than leave them orphaned.
@@ -282,7 +284,7 @@ func renderSpawn(agents []*spawnedAgent) string {
 			b.WriteString("\n\n")
 		}
 		if !a.Type.Blocking {
-			fmt.Fprintf(&b, "%s %s started; its result will arrive as a message.", a.Type.Name, a.ID)
+			fmt.Fprintf(&b, "%s %s started.", a.Type.Name, a.ID)
 			continue
 		}
 		if s, ok, _ := ReadAgentSubmit(a.ID); ok {
