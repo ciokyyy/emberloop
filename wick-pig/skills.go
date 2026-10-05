@@ -33,8 +33,10 @@ func InstallSkills(run Exec) error {
 	}
 	defer os.RemoveAll(stage)
 
-	if _, err := run("git", []string{"init"}, ExecOpts{Cwd: stage}); err != nil {
+	if init, err := run("git", []string{"init"}, ExecOpts{Cwd: stage}); err != nil {
 		return err
+	} else if init.Code != 0 {
+		return fmt.Errorf("git init failed:\n%s", combined(init))
 	}
 
 	res, err := run("bunx", []string{
@@ -55,11 +57,10 @@ func InstallSkills(run Exec) error {
 	if info, err := os.Stat(staged); err != nil || !info.IsDir() {
 		return fmt.Errorf("the skills CLI wrote no .agents/skills under %s", stage)
 	}
-	// Replace the whole library: a skill dropped upstream must not linger.
-	if err := os.RemoveAll(skillsDir()); err != nil {
-		return err
-	}
-	if err := os.Rename(staged, skillsDir()); err != nil {
+	// Replace the whole library: a skill dropped upstream must not linger. The
+	// old tree is kept until the new one is in place, so a failed move leaves
+	// the previous library rather than none.
+	if err := swapIn(staged, skillsDir()); err != nil {
 		return err
 	}
 	return keepLock(stage)
@@ -83,4 +84,21 @@ func keepLock(stage string) error {
 // combined is a command's two streams as one message for the reader, trimmed.
 func combined(res Result) string {
 	return strings.TrimSpace(res.Stdout + res.Stderr)
+}
+
+// swapIn puts staged in dest, keeping the old tree until the new one arrives.
+// If the second move fails the old tree is restored and the error returned.
+func swapIn(staged, dest string) error {
+	old := dest + ".old"
+	if err := os.RemoveAll(old); err != nil {
+		return err
+	}
+	if err := os.Rename(dest, old); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(staged, dest); err != nil {
+		_ = os.Rename(old, dest)
+		return err
+	}
+	return os.RemoveAll(old)
 }

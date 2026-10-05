@@ -8,11 +8,13 @@ import (
 	"testing"
 )
 
-// fakeSkills answers the two commands an install runs. git init succeeds; bunx
-// writes the tree the real skills CLI would have written into the staging dir.
+// fakeSkills answers the two commands an install runs. git init returns git;
+// bunx writes the tree the real skills CLI would have written into the staging
+// dir, unless fail decides otherwise.
 type fakeSkills struct {
 	skills map[string]string // skill name -> SKILL.md body
 	lock   string
+	git    Result
 	args   []string
 	stage  string
 	fail   func() (Result, error)
@@ -20,7 +22,7 @@ type fakeSkills struct {
 
 func (f *fakeSkills) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == "git" {
-		return Result{}, nil
+		return f.git, nil
 	}
 	if cmd != "bunx" {
 		return Result{}, nil
@@ -125,6 +127,22 @@ func TestInstallSkillsReportsMissingBunx(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "install bun") {
 		t.Errorf("a missing bunx must say to install bun, got %v", err)
+	}
+}
+
+func TestInstallSkillsReportsFailedGitInit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WICK_SKILLS_DIR", root)
+	fake := &fakeSkills{
+		skills: map[string]string{"one": "# one"},
+		git:    Result{Stderr: "not a git repository", Code: 128},
+	}
+	err := InstallSkills(fake.run)
+	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("a failed git init must return its output, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "matt-pocock")); !os.IsNotExist(err) {
+		t.Errorf("a failed git init must install nothing, stat err = %v", err)
 	}
 }
 
