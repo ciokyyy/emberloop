@@ -878,10 +878,12 @@ func TestFinishNeedsBothReviewerTypesToPassAtTheTip(t *testing.T) {
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
 		t.Fatal(err)
 	}
-	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "after the review")
+	writeFile(t, filepath.Join(tree, "after.go"), "package a\n")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "after the review")
 	res, _ = Finish(f.run, "07-x", true)
 	if res.Merged || !strings.Contains(res.Detail, "not at the tip") {
-		t.Fatalf("a pass older than the tip must block the merge: %+v", res)
+		t.Fatalf("a pass older than the tip, on different content, must block the merge: %+v", res)
 	}
 
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
@@ -927,7 +929,7 @@ requires_review: [reviewer-spec]
 {{prompt}}
 `)
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
-	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, tip, tip, ""); err != nil {
+	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, tip, tip, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Finish(osExec, "07-x", true)
@@ -937,7 +939,7 @@ requires_review: [reviewer-spec]
 	if res.Merged {
 		t.Fatalf("the standards reviewer passed but the worker type requires only the spec reviewer, so it must wait: %+v", res)
 	}
-	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, tip, tip, ""); err != nil {
+	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, tip, tip, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	res, err = Finish(osExec, "07-x", true)
@@ -972,14 +974,15 @@ func passReviews(t *testing.T, tree, tip string) {
 	t.Helper()
 	w := workerAt(tree)
 	for _, typ := range requiredReviewers(w) {
-		if err := mergeReviewerVerdict(tree, typ, verdictPass, tip, tip, ""); err != nil {
+		if err := mergeReviewerVerdict(tree, typ, verdictPass, tip, tip, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-// A pass on uncommitted work is tied to no commit: it never opens the merge
-// gate, and finish refuses a dirty worktree whose work it would drop.
+// A pass on uncommitted work is tied to the content it judged: finish refuses
+// a dirty worktree whose work it would drop, and once that exact content is
+// committed the pass counts for the commit. Different content does not.
 func TestAPassOnUncommittedWorkDoesNotMerge(t *testing.T) {
 	_, tree := reviewRepo(t)
 	writeFile(t, filepath.Join(tree, "b.go"), "package a\n")
@@ -996,8 +999,60 @@ func TestAPassOnUncommittedWorkDoesNotMerge(t *testing.T) {
 	}
 	gitOut(t, tree, "add", ".")
 	gitOut(t, tree, "commit", "-qm", "commit b")
+	res, err = Finish(f.run, "07-x", true)
+	if err != nil || !res.Merged {
+		t.Fatalf("committing exactly the reviewed content keeps the pass: %+v %v", res, err)
+	}
+}
+
+// Committing different content than the reviewers judged does not carry the
+// pass over.
+func TestAPassDoesNotCoverContentChangedAfterTheReview(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "b.go"), "package a\n")
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(tree, "b.go"), "package a\n\nvar changed = 1\n")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "commit b, changed")
 	if res, _ := Finish(f.run, "07-x", true); res.Merged || !strings.Contains(res.Detail, "not at the tip") {
-		t.Fatalf("the pass on the dirty tree must not count for the commit: %+v", res)
+		t.Fatalf("a pass must not cover content changed after the review: %+v", res)
+	}
+}
+
+// A new, untracked file is part of what the reviewers are shown, and a second
+// spawn after changing that file is not "nothing to review".
+func TestReviewDiffIncludesNewFilesAndChangedWorkIsReviewedAgain(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "newfile.go"), "package a\n\nfunc New() {}\n")
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	diff, err := os.ReadFile(filepath.Join(filepath.Dir(statePath), "reviews", "07-x.diff"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(diff), "newfile.go") || !strings.Contains(string(diff), "func New") {
+		t.Errorf("the review diff must hold the untracked file:\n%s", diff)
+	}
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "nothing to review") {
+		t.Errorf("unchanged content is already reviewed: %s", out)
+	}
+	writeFile(t, filepath.Join(tree, "newfile.go"), "package a\n\nfunc New() { println(1) }\n")
+	f.answer = answers("pass", "pass")
+	out, err = reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "nothing to review") {
+		t.Errorf("changed content must be reviewed again: %s", out)
 	}
 }
 
@@ -1082,10 +1137,10 @@ func TestSpecPassHoldsWhileOnlyStandardsIsReprompted(t *testing.T) {
 		t.Errorf("the reply must not carry the spec reviewer: %s", out)
 	}
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
-	if why := reviewGate(tree, tip, defaultReviewers, passHolds(repo)); why != "" {
+	if why := reviewGate(tree, tip, "", defaultReviewers, passHolds(repo)); why != "" {
 		t.Errorf("a held spec pass and a tip standards pass must open the gate, got %q", why)
 	}
-	if why := reviewGate(tree, tip, defaultReviewers, nil); !strings.Contains(why, reviewerSpec) {
+	if why := reviewGate(tree, tip, "", defaultReviewers, nil); !strings.Contains(why, reviewerSpec) {
 		t.Errorf("without a holding type the older spec pass is stale, got %q", why)
 	}
 }
