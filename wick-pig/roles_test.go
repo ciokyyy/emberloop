@@ -2,6 +2,7 @@ package wick
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -72,17 +73,41 @@ func TestUnknownRoleIsAnError(t *testing.T) {
 	}
 }
 
-// wick-pig names every role it launches, so RoleFromEnv is the launcher's
-// channel. An unset env means wick-mcp was started by hand and keeps full.
+// RoleFromEnv is the launcher's channel: wick-pig and the harnesses always
+// set WICK_ROLE, so an empty value means a wick-mcp started by hand with no
+// role. That is refused at startup: there is no silent fallback.
 func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
 	t.Setenv("WICK_ROLE", "plan")
 	if got := RoleFromEnv(); got != "plan" {
 		t.Errorf("RoleFromEnv() = %q, want the env role plan", got)
 	}
 	t.Setenv("WICK_ROLE", "")
-	if got := RoleFromEnv(); got != "full" {
-		t.Errorf("a hand-started wick-mcp = %q, want full", got)
+	if got := RoleFromEnv(); got != "" {
+		t.Errorf("a hand-started wick-mcp = %q, want empty (refused at startup)", got)
 	}
+}
+
+// A server started with no role refuses with a message naming every valid
+// role, so a hand-started server can never silently serve spawn, finish or
+// tell. An explicit full role still serves everything.
+func TestMissingRoleNamesEveryRole(t *testing.T) {
+	for _, err := range []error{MissingRoleError(), mustRoleErr(t, "")} {
+		msg := err.Error()
+		for _, role := range RoleNames() {
+			if !strings.Contains(msg, role) {
+				t.Errorf("missing-role error %q must name role %q", msg, role)
+			}
+		}
+	}
+}
+
+func mustRoleErr(t *testing.T, role string) error {
+	t.Helper()
+	_, err := RoleTools(role)
+	if err == nil {
+		t.Fatalf("RoleTools(%q) must fail", role)
+	}
+	return err
 }
 
 // No role serves a wait tool: the parent learns a result arrived instead of

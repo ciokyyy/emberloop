@@ -1,6 +1,8 @@
 // wick-mcp serves wick's tools over MCP stdio. The role (flag or WICK_ROLE)
-// picks the tool set, and the working directory is the workspace root.
-//
+// picks the tool set, and the working directory is the workspace root. There
+// is no default role: started with none, the server refuses with a message
+// naming the roles. Ask for the full tool set explicitly, with --role full or
+// WICK_ROLE=full.
 // It is also the session's own wick process: at startup it snapshots the
 // session's system prompt, served tool definitions and harness flags into the
 // blob store, tails the harness transcript into the archive and the usage log
@@ -23,6 +25,10 @@ func main() {
 	role := flag.String("role", wick.RoleFromEnv(), "implement, review, scout, work, plan, agent or full")
 	flag.Parse()
 
+	if *role == "" {
+		fmt.Fprintln(os.Stderr, "wick-mcp:", wick.MissingRoleError())
+		os.Exit(2)
+	}
 	served, err := wick.RoleTools(*role)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
