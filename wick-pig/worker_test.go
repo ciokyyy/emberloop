@@ -993,6 +993,7 @@ func TestSpawnRefusesABranchAheadOfTheBase(t *testing.T) {
 		t.Error("spawn left a worktree behind after refusing the branch")
 	}
 }
+
 // A dirty file in the integration checkout that the incoming change also
 // touches blocks the merge up front: finish names it, says to commit or stash
 // it, and never starts the merge.
@@ -1095,6 +1096,7 @@ func TestFinishPassesThroughFullGitError(t *testing.T) {
 		}
 	}
 }
+
 // An untracked file inside a wholly-untracked directory still blocks when the
 // incoming change adds the same path: status collapses the directory, so the
 // check must list untracked files individually to see the overlap.
