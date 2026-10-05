@@ -426,3 +426,66 @@ func TestSpawnSplitsTheRunTabForTheWorker(t *testing.T) {
 		t.Errorf("split --cwd = %q, want the worker's worktree", v)
 	}
 }
+
+// herdr's split reply may carry only the pane id. The run tab is then the one
+// the caller named, not an empty string that tiles nothing.
+func TestSpawnDefaultsWorkerTabToTheRunTab(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+	run := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return Result{Stdout: "9f2c1a4b7e6d5c8a9f0e1d2c3b4a5968778695a4\n"}, nil
+		}
+		switch {
+		case len(args) > 0 && args[0] == "worktree":
+			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"w9:p1","tab_id":"w9:t1"},"workspace":{"workspace_id":"w9"}}}`}, nil
+		case len(args) > 1 && args[0] == "pane" && args[1] == "split":
+			return Result{Stdout: `{"result":{"pane":{"pane_id":"w1:p3"}}}`}, nil
+		}
+		return Result{}, nil
+	}
+
+	w, err := Spawn(run, SpawnInput{
+		Ticket: "repo/.scratch/20-thing.md", Repo: repo,
+		RunTab: "w1:t1", Anchor: "w1:p1",
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if w.Tab != "w1:t1" {
+		t.Errorf("tab = %q, want the named run tab when herdr omits one", w.Tab)
+	}
+}
+
+// A split that fails after the worktree was made must not leave the branch and
+// checkout behind, or the ticket can never be spawned again.
+func TestSpawnRemovesTheWorktreeWhenTheSplitFails(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	repo := t.TempDir()
+	var worktreeRemoved bool
+	run := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return Result{Stdout: "9f2c1a4b7e6d5c8a9f0e1d2c3b4a5968778695a4\n"}, nil
+		}
+		switch {
+		case len(args) > 0 && args[0] == "worktree" && args[1] == "create":
+			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"w9:p1","tab_id":"w9:t1"},"workspace":{"workspace_id":"w9"}}}`}, nil
+		case len(args) > 0 && args[0] == "worktree" && args[1] == "remove":
+			worktreeRemoved = true
+			return Result{Stdout: `{"result":{}}`}, nil
+		case len(args) > 1 && args[0] == "pane" && args[1] == "split":
+			return Result{Code: 1, Stderr: `{"error":{"message":"split_not_allowed"}}`}, nil
+		}
+		return Result{}, nil
+	}
+
+	if _, err := Spawn(run, SpawnInput{
+		Ticket: "repo/.scratch/20-thing.md", Repo: repo,
+		RunTab: "w1:t1", Anchor: "w1:p1",
+	}); err == nil {
+		t.Fatal("spawn returned nil after a failed split")
+	}
+	if !worktreeRemoved {
+		t.Error("the worktree was left behind after a failed split")
+	}
+}

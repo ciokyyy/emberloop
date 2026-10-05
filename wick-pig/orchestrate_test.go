@@ -167,21 +167,10 @@ func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
 	}
 }
 
-// A tab that cannot be evened out is still a working tab, so the spawn stands
-// and the result carries a short warning instead of failing.
-func TestSpawnWorkerWarnsWhenTilingFails(t *testing.T) {
-	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
-	statePath = filepath.Join(t.TempDir(), "workers.json")
-	spawnGap = 0
-	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
-	repo := t.TempDir()
-	ticket := filepath.Join(repo, "20-x.md")
-	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HERDR_TAB_ID", "w1:t1")
-	t.Setenv("HERDR_PANE_ID", "w1:p1")
-	spawnExec = func(cmd string, args []string, _ ExecOpts) (Result, error) {
+// spawnToolFake answers the git and herdr calls spawn_worker makes, with the
+// given layout for the tiling that follows.
+func spawnToolFake(layout string) Exec {
+	return func(cmd string, args []string, _ ExecOpts) (Result, error) {
 		if cmd == "git" {
 			return Result{Stdout: "abc123def\n"}, nil
 		}
@@ -193,15 +182,47 @@ func TestSpawnWorkerWarnsWhenTilingFails(t *testing.T) {
 		case len(args) > 1 && args[0] == "pane" && args[1] == "list":
 			return Result{Stdout: `{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"},{"pane_id":"w1:p2","tab_id":"w1:t1"}]}}`}, nil
 		case len(args) > 1 && args[0] == "pane" && args[1] == "layout":
-			// Two panes of different sizes and no divider between them: the
-			// tab is uneven and nothing can move it.
-			return Result{Stdout: `{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":100},"tab_id":"w1:t1",` +
-				`"panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":100}},{"pane_id":"w1:p2","rect":{"x":80,"y":0,"width":20,"height":100}}],"splits":[]}}}`}, nil
+			return Result{Stdout: layout}, nil
 		}
 		return Result{}, nil
 	}
+}
+
+// runSpawnTool drives the spawn_worker tool against a fake herdr with the
+// given run-tab layout.
+func runSpawnTool(t *testing.T, layout string) (string, error) {
+	t.Helper()
+	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	spawnGap = 0
+	spawnExec = spawnToolFake(layout)
+	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "20-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_TAB_ID", "w1:t1")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	args, _ := json.Marshal(map[string]any{"ticket": ticket})
-	out, err := spawnTool.Execute(context.Background(), repo, args)
+	return spawnTool.Execute(context.Background(), repo, args)
+}
+
+// Two panes of different sizes and no divider between them: the tab is uneven
+// and nothing can move it. The spawn stands and the result carries a short
+// warning instead of failing.
+const unevenNoSplit = `{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":100},"tab_id":"w1:t1",` +
+	`"panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":100}},{"pane_id":"w1:p2","rect":{"x":80,"y":0,"width":20,"height":100}}],"splits":[]}}}`
+
+// The run tab after the worker joins it: the orchestrator and the worker each
+// half. Tiling has nothing to fix, so the result is a plain success.
+const evenSplit = `{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":100},"tab_id":"w1:t1",` +
+	`"panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":50,"height":100}},{"pane_id":"w1:p2","rect":{"x":50,"y":0,"width":50,"height":100}}],` +
+	`"splits":[{"id":"s","direction":"right","ratio":0.5,"rect":{"x":0,"y":0,"width":100,"height":100}}]}}}`
+
+func TestSpawnWorkerWarnsWhenTilingFails(t *testing.T) {
+	out, err := runSpawnTool(t, unevenNoSplit)
 	if err != nil {
 		t.Fatalf("spawn_worker: %v", err)
 	}
@@ -210,5 +231,15 @@ func TestSpawnWorkerWarnsWhenTilingFails(t *testing.T) {
 	}
 	if !strings.Contains(out, "warning") {
 		t.Errorf("a failed tile must be reported as a warning, got %q", out)
+	}
+}
+
+func TestSpawnWorkerTilesTheRunTab(t *testing.T) {
+	out, err := runSpawnTool(t, evenSplit)
+	if err != nil {
+		t.Fatalf("spawn_worker: %v", err)
+	}
+	if strings.Contains(out, "warning") {
+		t.Errorf("an even tab must not warn, got %q", out)
 	}
 }

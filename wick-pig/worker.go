@@ -329,6 +329,19 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		return nil, fmt.Errorf("herdr worktree create returned no pane or workspace for %q; raw: %.600s", id, reply.raw)
 	}
 
+	// Anything that fails after the worktree exists has to undo it, or the
+	// branch, the checkout and the workspace are left behind and the ticket can
+	// never be spawned again. The worktree's own pane goes with its workspace;
+	// a pane split into the run's tab has to be closed by hand.
+	undo := func() {
+		if w.Pane != "" && w.Pane != reply.Result.RootPane.PaneID {
+			_, _ = run(herdrBin(), []string{"pane", "close", w.Pane}, ExecOpts{Timeout: 15 * time.Second})
+		}
+		_, _ = herdrJSON(run, []string{
+			"worktree", "remove", "--workspace", w.Workspace, "--force", "--trust-repository",
+		}, 60*time.Second)
+	}
+
 	// A worktree opens in a tab of its own, so tiling that tab would have
 	// nothing to even out. When the caller names the run's tab, split it here:
 	// every worker of the run lands as a pane of that one tab. The worktree's
@@ -343,10 +356,12 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 			"--no-focus",
 		}, 15*time.Second)
 		if err != nil {
+			undo()
 			return nil, err
 		}
 		pane := split.Result.Pane.PaneID
 		if pane == "" {
+			undo()
 			return nil, fmt.Errorf("herdr split returned no pane id for %q", id)
 		}
 		w.Pane = pane
@@ -357,12 +372,15 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	}
 
 	if res, err := run(herdrBin(), append([]string{"pane", "run", w.Pane}, in.Launch...), ExecOpts{}); err != nil {
+		undo()
 		return nil, err
 	} else if res.Code != 0 {
+		undo()
 		return nil, fmt.Errorf("could not launch worker in %s: %.200s", w.Pane, res.Stderr)
 	}
 
 	if err := DeliverLate(run, w.Pane, in.Late); err != nil {
+		undo()
 		return nil, err
 	}
 
