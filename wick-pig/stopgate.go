@@ -151,6 +151,69 @@ func RunStopGate(in io.Reader, out io.Writer) error {
 	}
 }
 
+// PigGateInput is one settle attempt as the pig extension reports it: whether a
+// new turn began since the last attempt, whether the turn ended in a provider
+// error, and the last message of the turn, which a give-up quotes.
+type PigGateInput struct {
+	Fresh       bool   `json:"fresh"`
+	Failed      bool   `json:"failed"`
+	LastMessage string `json:"last_message"`
+}
+
+// PigGateDecision is the decision as the pig extension enforces it: what to do,
+// and for a block or a pin the reminder to continue the agent with.
+type PigGateDecision struct {
+	Outcome  string `json:"outcome"`
+	Reminder string `json:"reminder,omitempty"`
+}
+
+// The outcomes the pig extension knows. A pin also blocks: the reminder and
+// the forced submit tool are one attempt.
+const (
+	pigGateAllow  = "allow"
+	pigGateBlock  = "block"
+	pigGatePin    = "pin"
+	pigGateGiveUp = "giveup"
+)
+
+// RunPigGate serves `wick-pig pig-gate <event>`: the pig extension's half of
+// the shared stop gate. The event is one attempted settle as JSON; the answer
+// comes back as JSON for the extension to enforce, because only the extension
+// can hold a pig agent at its settle. A give-up is delivered from here, the
+// same way the claude hook delivers it.
+func RunPigGate(event string, out io.Writer) error {
+	var in PigGateInput
+	if err := json.Unmarshal([]byte(event), &in); err != nil {
+		return fmt.Errorf("pig-gate: %w", err)
+	}
+	// A top-level session has no id and no submit tool: nothing to gate.
+	id := os.Getenv("WICK_AGENT_ID")
+	if id == "" {
+		return json.NewEncoder(out).Encode(PigGateDecision{Outcome: pigGateAllow})
+	}
+	d, err := GateStop(id, in.Fresh, in.Failed, (pigHarness{}).Gate().CanPin(),
+		func() string { return excerpt(in.LastMessage, nil) })
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(pigDecision(d))
+}
+
+// pigDecision names the decision for the extension. A pin keeps its reminder:
+// the extension continues the agent and forces the submit tool at once.
+func pigDecision(d GateDecision) PigGateDecision {
+	switch d.Outcome {
+	case GateBlock:
+		return PigGateDecision{Outcome: pigGateBlock, Reminder: d.Reminder}
+	case GatePin:
+		return PigGateDecision{Outcome: pigGatePin, Reminder: d.Reminder}
+	case GateGiveUp:
+		return PigGateDecision{Outcome: pigGateGiveUp}
+	default:
+		return PigGateDecision{Outcome: pigGateAllow}
+	}
+}
+
 // GateStop asks the shared decision for one agent at one attempted stop and
 // applies the shared bookkeeping: a fresh turn starts the count over, the
 // attempt count is stored, and a give-up is recorded and, for a non-blocking
@@ -201,11 +264,20 @@ func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) 
 // the "stopped without submitting" notice. The hook field is preferred; a hook
 // that omits it falls back to the transcript.
 func stopExcerpt(hook StopHook) string {
-	text := strings.TrimSpace(hook.LastAssistantMessage)
-	if text == "" && hook.TranscriptPath != "" {
-		if t, ok := (claudeHarness{}).LastReply(hook.TranscriptPath); ok {
-			text = t
+	return excerpt(hook.LastAssistantMessage, func() string {
+		if hook.TranscriptPath == "" {
+			return ""
 		}
+		text, _ := (claudeHarness{}).LastReply(hook.TranscriptPath)
+		return text
+	})
+}
+
+// excerpt flattens one last message to a single bounded line. fallback is read
+// only when the message itself is empty, and may be nil.
+func excerpt(text string, fallback func() string) string {
+	if strings.TrimSpace(text) == "" && fallback != nil {
+		text = fallback()
 	}
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {

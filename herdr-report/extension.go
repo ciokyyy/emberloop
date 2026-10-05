@@ -88,6 +88,17 @@ func Extension() *sdk.Extension {
 		return nil, nil
 	})
 
+	// The stop gate: the same decision claude asks through its Stop hook,
+	// enforced here the way only a pig extension can — by continuing the agent
+	// with the reminder, and by pinning the submit tool on the pinned attempt.
+	gate := newGate(execGate)
+	e.OnEvent(sdk.EventAgentStart, func(_ sdk.Context, _ map[string]any) (any, error) {
+		gate.started()
+		return nil, nil
+	})
+	e.OnEvent(sdk.EventAgentBeforeSettle, gate.beforeSettle)
+	e.OnEvent(sdk.EventBeforeProviderRequest, gate.beforeRequest)
+
 	// Hand authority back so herdr does not keep treating this pane as an agent
 	// after the session ends, instead of leaving a stale entry behind.
 	e.OnSessionShutdown(func(ctx sdk.Context, _ map[string]any) (any, error) {

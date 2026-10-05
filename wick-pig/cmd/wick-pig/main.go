@@ -2,6 +2,7 @@
 //
 //	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
 //	wick-pig stop-gate                                         claude Stop hook gate
+//	wick-pig pig-gate <event-json>                             pig extension stop gate
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig [--pig|--claude] [--role full] [--model M] [-p]   plan session
 //	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
@@ -32,6 +33,12 @@ func run(argv []string) error {
 	}
 	if sub == "stop-gate" {
 		return wick.RunStopGate(os.Stdin, os.Stdout)
+	}
+	if sub == "pig-gate" {
+		if len(argv) != 1 {
+			return fmt.Errorf("usage: wick-pig pig-gate <event-json>")
+		}
+		return wick.RunPigGate(argv[0], os.Stdout)
 	}
 	if sub == "settings" {
 		return runSettings(argv, os.Stdout, listModels)

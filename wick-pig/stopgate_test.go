@@ -136,6 +136,105 @@ func decodeBlock(t *testing.T, out string) gateBlock {
 	return b
 }
 
+// askPigGate runs the pig-gate subcommand over one settle event and returns the
+// decision the extension would enforce.
+func askPigGate(t *testing.T, event string) PigGateDecision {
+	t.Helper()
+	var out bytes.Buffer
+	if err := RunPigGate(event, &out); err != nil {
+		t.Fatalf("pig gate: %v", err)
+	}
+	var d PigGateDecision
+	if err := json.Unmarshal(out.Bytes(), &d); err != nil {
+		t.Fatalf("pig gate output %q is not JSON: %v", out.String(), err)
+	}
+	return d
+}
+
+// The pig gate is the same decision over one JSON event per settle: four
+// settles without a submit block with reminders 1, 2 and 3 — the third pinning
+// submit, which pig can do — and the fourth lets the agent settle and delivers
+// the "stopped without submitting" notice.
+func TestPigGateRemindsPinsThenGivesUpWithANotice(t *testing.T) {
+	rec := spawnAgent(t, true)
+	for n, fresh := range []bool{true, false, false} {
+		event := fmt.Sprintf(`{"fresh":%v,"last_message":"I am stuck on the flaky test"}`, fresh)
+		got := askPigGate(t, event)
+		want := pigGateBlock
+		if n == 2 {
+			want = pigGatePin
+		}
+		if got.Outcome != want {
+			t.Fatalf("settle %d: outcome %q, want %q", n+1, got.Outcome, want)
+		}
+		if say := fmt.Sprintf("reminder %d of 3", n+1); !strings.Contains(got.Reminder, say) {
+			t.Errorf("settle %d: reminder must say %q, got %q", n+1, say, got.Reminder)
+		}
+		if n == 2 && !strings.Contains(got.Reminder, "pinned") {
+			t.Errorf("pig can pin submit, so the 3rd reminder must say so: %q", got.Reminder)
+		}
+		if len(rec.calls) != 0 {
+			t.Fatalf("a blocked settle must not deliver anything, got %v", rec.calls)
+		}
+	}
+
+	got := askPigGate(t, `{"fresh":false,"last_message":"I am stuck on the flaky test"}`)
+	if got.Outcome != pigGateGiveUp {
+		t.Fatalf("the 4th settle: outcome %q, want %q", got.Outcome, pigGateGiveUp)
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("the give-up must deliver one notice, got %v", rec.calls)
+	}
+	call := strings.Join(rec.calls[0], " ")
+	for _, want := range []string{"<system-notice> worker w1 stopped without submitting:", "I am stuck on the flaky test", "</system-notice>"} {
+		if !strings.Contains(call, want) {
+			t.Errorf("notice missing %q:\n%s", want, call)
+		}
+	}
+}
+
+// The gate is asked once per settle attempt, and a submit recorded this turn
+// or a turn that ended in a provider error settles at once, with nothing
+// delivered.
+func TestPigGateLetsASubmitAndAProviderErrorThrough(t *testing.T) {
+	rec := spawnAgent(t, true)
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: "w1", Type: "worker", Status: "done", Summary: "shipped", ThisTurn: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := askPigGate(t, `{"fresh":true}`); got.Outcome != pigGateAllow {
+		t.Errorf("a submit this turn must allow the settle, got %q", got.Outcome)
+	}
+	if got := askPigGate(t, `{"fresh":true,"failed":true}`); got.Outcome != pigGateAllow {
+		t.Errorf("a provider error must allow the settle, got %q", got.Outcome)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("an allowed settle must deliver nothing, got %v", rec.calls)
+	}
+}
+
+// A fresh turn starts the attempt count over: a settle after one is reminder 1
+// again, the way a tell follow-up or a delivered notice restarts the ladder.
+func TestPigGateStartsTheCountOnAFreshTurn(t *testing.T) {
+	spawnAgent(t, true)
+	askPigGate(t, `{"fresh":true}`)
+	if got := askPigGate(t, `{"fresh":false}`); !strings.Contains(got.Reminder, "reminder 2 of 3") {
+		t.Fatalf("want reminder 2, got %q", got.Reminder)
+	}
+	if got := askPigGate(t, `{"fresh":true}`); !strings.Contains(got.Reminder, "reminder 1 of 3") {
+		t.Errorf("a fresh turn must start the count over, got %q", got.Reminder)
+	}
+}
+
+// The extension loads into a top-level pig session too, which has no agent id
+// and no submit tool: the gate has nothing to hold.
+func TestPigGateIgnoresANonAgentSession(t *testing.T) {
+	deliverTestState(t)
+	t.Setenv("WICK_AGENT_ID", "")
+	if got := askPigGate(t, `{"fresh":true}`); got.Outcome != pigGateAllow {
+		t.Errorf("a top-level session must be left alone, got %q", got.Outcome)
+	}
+}
+
 // Four stops without a submit block with reminders 1, 2 and 3, then give up:
 // the 4th writes nothing and delivers the "stopped without submitting" notice
 // to the parent, quoting the agent's last message.
