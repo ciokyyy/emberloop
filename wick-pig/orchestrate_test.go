@@ -152,7 +152,7 @@ func spawnToolFake() Exec {
 	}
 }
 
-// runSpawnTool drives the spawn_worker tool against a fake herdr.
+// runSpawnTool drives a worker entry of the spawn tool against a fake herdr.
 func runSpawnTool(t *testing.T) (string, error) {
 	t.Helper()
 	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
@@ -170,19 +170,23 @@ func runSpawnTool(t *testing.T) (string, error) {
 	// Keep this test about the spawn: a report warning here would make "must
 	// not warn" fail for a reason unrelated to the tab.
 	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
-	args, _ := json.Marshal(map[string]any{"ticket": ticket})
-	return spawnTool.Execute(context.Background(), repo, args)
+	spawn, _ := spawnToolForRole(t, "implement")
+	return spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": ticket},
+	}})
 }
 
+// A spawn opens the worker in its ticket's tab and reports it without a
+// warning when the report extension is present.
 // A spawn opens the worker in its ticket's tab and reports it without a
 // warning when the report extension is present.
 func TestSpawnWorkerOpensTheTicketTab(t *testing.T) {
 	out, err := runSpawnTool(t)
 	if err != nil {
-		t.Fatalf("spawn_worker: %v", err)
+		t.Fatalf("spawn: %v", err)
 	}
-	if !strings.Contains(out, "spawned worker") || !strings.Contains(out, "w1:t1") {
-		t.Errorf("the result must name the ticket tab, got %q", out)
+	if !strings.Contains(out, "worker 20-x started") || !strings.Contains(out, "w1:t1") {
+		t.Errorf("the result must name the worker and its ticket tab, got %q", out)
 	}
 	if strings.Contains(out, "warning") {
 		t.Errorf("a healthy spawn must not warn, got %q", out)
@@ -211,12 +215,14 @@ func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args, _ := json.Marshal(map[string]any{"ticket": ticket})
-	out, err := spawnTool.Execute(context.Background(), repo, args)
+	spawn, _ := spawnToolForRole(t, "implement")
+	out, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": ticket},
+	}})
 	if err != nil {
-		t.Fatalf("spawn_worker: %v", err)
+		t.Fatalf("spawn: %v", err)
 	}
-	if !strings.Contains(out, "spawned worker") {
+	if !strings.Contains(out, "worker 21-x started") {
 		t.Errorf("the spawn must still succeed, got %q", out)
 	}
 	if !strings.Contains(out, "warning") || !strings.Contains(out, "unknown") {
@@ -246,12 +252,14 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("WICK_SPEC", "/repo/.scratch/p/spec.md")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
-	t.Setenv("WICK_SPEC", "/repo/.scratch/p/spec.md")
-	args, _ := json.Marshal(map[string]any{"ticket": ticket})
-	if _, err := spawnTool.Execute(context.Background(), repo, args); err != nil {
-		t.Fatalf("spawn_worker: %v", err)
+	spawn, _ := spawnToolForRole(t, "implement")
+	if _, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": ticket},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
 	}
 	if launched == "" {
 		t.Fatal("the worker was never launched")

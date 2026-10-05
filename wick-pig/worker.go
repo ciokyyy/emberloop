@@ -242,10 +242,13 @@ func herdrName(id string) string {
 // ---------------------------------------------------------------------------
 
 type SpawnInput struct {
-	Ticket  string
-	Spec    string
-	Repo    string
-	Base    string
+	Ticket string
+	Spec   string
+	Repo   string
+	Base   string
+	// Target overrides the branch the worker merges back into. Empty derives
+	// it from Base, the way spawn always did.
+	Target  string
 	Harness string
 	Model   string
 	// Launch is the exact command pane run receives. The extension derives it
@@ -351,7 +354,10 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		return nil, err
 	}
 	base = resolved
-	target := targetBranch(run, repo, in.Base)
+	target := in.Target
+	if target == "" {
+		target = targetBranch(run, repo, in.Base)
+	}
 
 	// finish keeps the implement branch, so a respawn after finish finds it
 	// already there. Reuse it when the base still contains it; refuse when it

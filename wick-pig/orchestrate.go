@@ -54,7 +54,7 @@ func OrchestrationTools() []tools.Tool {
 // spawnable types.
 func orchestrationTools(types map[string]AgentType, spawnable []string) []tools.Tool {
 	return []tools.Tool{
-		spawnToolFor(types, spawnable), spawnTool, waitTool, finishTool, tellTool, codeReviewTool,
+		spawnToolFor(types, spawnable), waitTool, finishTool, tellTool, codeReviewTool,
 	}
 }
 
@@ -63,79 +63,9 @@ func AllTools() []tools.Tool {
 	return append(tools.All(), OrchestrationTools()...)
 }
 
-// spawnExec is the exec spawn_worker drives. A var, like waitExec, so a test
+// spawnExec is the exec the spawn tool drives. A var, like waitExec, so a test
 // can spawn against a fake herdr and git rather than a real one.
 var spawnExec Exec = osExec
-
-var spawnTool = fnTool{
-	name: "spawn_worker",
-	desc: "Start an implementer on a ticket in its own git worktree and its ticket's tab in the project workspace.",
-	schema: schema(map[string]any{
-		"ticket":  map[string]any{"type": "string", "description": "Path to the ticket file."},
-		"repo":    map[string]any{"type": "string", "description": "Repo root. Defaults to the session cwd."},
-		"base":    map[string]any{"type": "string", "description": "Base ref. Defaults to HEAD."},
-		"harness": map[string]any{"type": "string", "enum": []any{"pig", "claude"}, "description": "Agent to run. Defaults to pig."},
-		"model":   map[string]any{"type": "string", "description": "Model passed through to the harness."},
-	}, "ticket"),
-	run: func(root string, params map[string]any) (string, error) {
-		in := SpawnInput{
-			Ticket:  str(params, "ticket"),
-			Repo:    str(params, "repo"),
-			Base:    str(params, "base"),
-			Harness: str(params, "harness"),
-			Model:   str(params, "model"),
-		}
-		if in.Ticket == "" {
-			return "", fmt.Errorf("ticket is required")
-		}
-		if in.Harness == "" {
-			in.Harness = "pig"
-		}
-		if _, err := os.Stat(in.Ticket); err != nil {
-			return "", fmt.Errorf("cannot read ticket %s: %w", in.Ticket, err)
-		}
-		if in.Repo == "" {
-			in.Repo = root
-		}
-		// An implement session carries its spec in the environment; every
-		// worker it spawns records it, for its brief and its spec reviewer.
-		in.Spec = os.Getenv("WICK_SPEC")
-		target := targetBranch(spawnExec, in.Repo, in.Base)
-		brief, err := writeBrief(WorkerID(in.Ticket), in.Ticket, in.Spec, target)
-		if err != nil {
-			return "", err
-		}
-		sess := Session{
-			ID:   newSessionID(),
-			Role: "work", Cwd: worktreePath(in.Repo, WorkerID(in.Ticket)), Model: in.Model, Label: WorkerID(in.Ticket),
-			// The brief sits beside the worker store, outside the worktree;
-			// read opens it by absolute path.
-			Prompt: fmt.Sprintf("Read %s and follow it exactly.", brief),
-		}
-		launch, err := PrepareLaunch(in.Harness, sess)
-		if err != nil {
-			return "", err
-		}
-		in.Launch, in.Late = []string{launch.Line}, launch.Late
-
-		in.SessionID = sess.ID
-		spaceSpawns()
-		worker, err := Spawn(spawnExec, in)
-		if err != nil {
-			// No worker means nothing ever reads the config it was given.
-			CleanupSession(sess)
-			return "", err
-		}
-		// The worker's tab was created for it; tiling is the grid's job when
-		// reviewers join. A missing report extension is a bigger fault and is
-		// warned about up front.
-		warning := reportExtensionWarning(in.Harness)
-		return fmt.Sprintf(
-			"spawned worker %s\n  pane:      %s\n  tab:       %s\n  workspace: %s\n  branch:    %s\n  worktree:  %s\n  brief:     %s\n\nNext: wait_workers(workers=[\"%s\"]), then finish_worker(worker=\"%s\").%s",
-			worker.ID, worker.Pane, worker.Tab, worker.Workspace, worker.Branch, worker.Worktree, brief,
-			worker.ID, worker.ID, warning), nil
-	},
-}
 
 // spawnGap spaces launches: a run that opens every agent's first request at
 // the same instant is what the provider answers with empty bodies. A var so

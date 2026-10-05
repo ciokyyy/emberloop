@@ -154,6 +154,19 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 	if err := WriteAgentSubmit(s); err != nil {
 		return "", err
 	}
+	// An agent whose submit goes to the parent as a notice delivers it now and
+	// clears itself from the parent's pending list. A blocking agent still
+	// inside its spawn's budget has no delivery: the waiting spawn returns it.
+	if st, ok, err := ReadAgentState(agentID); err != nil {
+		return "", err
+	} else if ok && st.Deliver {
+		if err := deliverSubmit(s, st); err != nil {
+			return "", err
+		}
+		if err := RemovePending(st.ParentID, agentID); err != nil {
+			return "", err
+		}
+	}
 	return fmt.Sprintf("submitted %s; stay available for a follow-up.", status), nil
 }
 

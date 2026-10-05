@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -222,20 +223,20 @@ func TestScoutAgentServesReadOnlyToolsAndSubmit(t *testing.T) {
 	}
 }
 
-// spawn's description lists only the types the caller may spawn, and the scout
-// tool is gone.
+// spawn's description lists only the types the caller may spawn, the scout
+// tool is gone, and so is spawn_worker.
 func TestSpawnDescriptionListsTheCallersTypes(t *testing.T) {
 	_, desc := spawnToolForRole(t, "implement")
-	if !strings.Contains(desc, "scout") {
-		t.Errorf("implement may spawn scout; the description must say so:\n%s", desc)
-	}
-	if strings.Contains(desc, "worker") {
-		t.Errorf("implement may not spawn worker; the description must not offer it:\n%s", desc)
+	for _, want := range []string{"scout", "worker"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("implement may spawn %s; the description must say so:\n%s", want, desc)
+		}
 	}
 	served, _ := RoleTools("implement")
 	for _, tool := range served {
-		if tool.Name() == "scout" {
-			t.Fatal("the scout tool must be gone")
+		switch tool.Name() {
+		case "scout", "spawn_worker":
+			t.Fatalf("the %s tool must be gone", tool.Name())
 		}
 	}
 }
@@ -378,5 +379,193 @@ func TestSubmitThisTurnCanBeCleared(t *testing.T) {
 	}
 	if got.Report != "x" || got.Status != "answered" {
 		t.Errorf("clearing this turn must keep the last submit: %+v", got)
+	}
+}
+
+// mixedExec launches scouts and a worker through one spawn. Both scouts are
+// submitted once the second is running; the worker never submits, so only a
+// call that starts non-blocking agents and waits on the blocking ones returns.
+type mixedExec struct {
+	g        *fakeGrid
+	mu       sync.Mutex
+	scouts   []string
+	launched int
+}
+
+func (m *mixedExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == herdrBin() && len(args) > 3 && args[0] == "pane" && args[1] == "run" {
+		line := args[3]
+		if envIn(line, "WICK_AGENT_TYPE") == "scout" {
+			m.mu.Lock()
+			m.scouts = append(m.scouts, envIn(line, "WICK_AGENT_ID"))
+			m.launched++
+			ready := m.launched == 2
+			ids := append([]string{}, m.scouts...)
+			m.mu.Unlock()
+			if ready {
+				for i, aid := range ids {
+					tool := submitToolFor(AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}, aid)
+					raw, _ := json.Marshal(map[string]any{"status": "answered", "report": fmt.Sprintf("report-%d", i+1)})
+					if _, err := tool.Execute(context.Background(), "", raw); err != nil {
+						return Result{}, err
+					}
+				}
+			}
+		}
+		return Result{Stdout: "{}"}, nil
+	}
+	if cmd == "git" {
+		return Result{Stdout: "abc123def\n"}, nil
+	}
+	return m.g.run(cmd, args, opts)
+}
+
+// A mixed spawn returns once both scouts have submitted, with the worker
+// reported as started rather than waited on.
+func TestMixedSpawnReturnsScoutsAndStartsTheWorker(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
+	ex := &mixedExec{g: g}
+	spawnExec = ex.run
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "20-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spawn, _ := spawnToolForRole(t, "implement")
+	out, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "first"},
+		map[string]any{"type": "scout", "prompt": "second"},
+		map[string]any{"type": "worker", "ticket": ticket},
+	}})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if ex.launched != 2 {
+		t.Fatalf("launched %d scouts, want 2", ex.launched)
+	}
+	first, second := strings.Index(out, "report-1"), strings.Index(out, "report-2")
+	if first < 0 || second < 0 || first > second {
+		t.Errorf("the scouts' reports must come back in list order, got:\n%s", out)
+	}
+	if !strings.Contains(out, "worker 20-x started") {
+		t.Errorf("the worker must be reported as started, got:\n%s", out)
+	}
+	if w, err := recall("20-x"); err != nil || w.Branch != "implement/20-x" {
+		t.Errorf("the worker entry must create its worktree and branch: %+v err=%v", w, err)
+	}
+}
+
+// firstScoutExec launches scouts and submits only the first, so the second
+// outlasts the tool budget and is auto-backgrounded.
+type firstScoutExec struct {
+	g   *fakeGrid
+	mu  sync.Mutex
+	ids []string
+}
+
+func (s *firstScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
+	if cmd == herdrBin() && len(args) > 3 && args[0] == "pane" && args[1] == "run" {
+		s.mu.Lock()
+		s.ids = append(s.ids, envIn(args[3], "WICK_AGENT_ID"))
+		n, first := len(s.ids), s.ids[0]
+		s.mu.Unlock()
+		if n == 1 {
+			tool := submitToolFor(AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}, first)
+			raw, _ := json.Marshal(map[string]any{"status": "answered", "report": "report-1"})
+			if _, err := tool.Execute(context.Background(), "", raw); err != nil {
+				return Result{}, err
+			}
+		}
+		return Result{Stdout: "{}"}, nil
+	}
+	return s.g.run(cmd, args, opts)
+}
+
+// With a budget too short for the second scout, the spawn returns the report
+// already in and a line saying the rest arrive as notices and the caller
+// should end its turn. The late submit is then delivered as a notice, and the
+// parent's pending list clears.
+func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
+	spawnTestState(t)
+	oldBudget, oldDeliver := toolBudget, deliverExec
+	toolBudget = 60 * time.Millisecond
+	t.Cleanup(func() { toolBudget, deliverExec = oldBudget, oldDeliver })
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_PANE_ID", "wP")
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	ex := &firstScoutExec{g: g}
+	spawnExec = ex.run
+
+	spawn, _ := spawnToolForRole(t, "implement")
+	out, err := spawn("/repo", map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "first"},
+		map[string]any{"type": "scout", "prompt": "second"},
+	}})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if !strings.Contains(out, "report-1") {
+		t.Errorf("the spawn must return the report already in, got:\n%s", out)
+	}
+	if !strings.Contains(out, "still running") || !strings.Contains(out, "end your turn") {
+		t.Errorf("the spawn must say the rest arrive as notices and to end the turn, got:\n%s", out)
+	}
+	if strings.Contains(out, "call") {
+		t.Errorf("no response may say to call again, got:\n%s", out)
+	}
+
+	ex.mu.Lock()
+	ids := append([]string{}, ex.ids...)
+	ex.mu.Unlock()
+	if len(ids) != 2 {
+		t.Fatalf("launched %d scouts, want 2", len(ids))
+	}
+	if got := PendingChildren("parent1"); !contains(got, ids[1]) {
+		t.Errorf("the parent's state must list the backgrounded child: %v", got)
+	}
+
+	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
+	deliverExec = rec.run
+	if _, err := submitOnce(t, AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}},
+		ids[1], "answered", "report", "late facts"); err != nil {
+		t.Fatalf("late submit: %v", err)
+	}
+	if len(rec.calls) != 1 || !strings.Contains(strings.Join(rec.calls[0], " "), "agent prompt wP ") {
+		t.Errorf("a backgrounded submit must be delivered as a notice, got %v", rec.calls)
+	}
+	if got := PendingChildren("parent1"); len(got) != 0 {
+		t.Errorf("the pending list must clear once the notice arrives, got %v", got)
+	}
+}
+
+// A worker agent serves its type's host tools plus submit, so it can edit, run
+// the gate, and report done or blocked. It does not spawn until ticket 05 gives
+// the worker type its reviewer types.
+func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
+	t.Setenv("WICK_AGENT_TYPE", "worker")
+	t.Setenv("WICK_AGENT_ID", "w1")
+	served, err := RoleTools("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, tool := range served {
+		got[tool.Name()] = true
+	}
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "background", "submit"} {
+		if !got[want] {
+			t.Errorf("a worker agent must serve %q, got %v", want, got)
+		}
+	}
+	for _, unwanted := range []string{"spawn", "code_review"} {
+		if got[unwanted] {
+			t.Errorf("a worker agent must not serve %q yet", unwanted)
+		}
 	}
 }

@@ -33,7 +33,7 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "find", "spawn", "spawn_worker", "wait_workers", "finish_worker", "tell_worker"}
+	want := []string{"read", "find", "spawn", "wait_workers", "finish_worker", "tell_worker"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("implement tools = %v, want %v", got, want)
 	}
@@ -53,9 +53,14 @@ func TestFullServesEveryTool(t *testing.T) {
 	for _, tool := range served {
 		names[tool.Name()] = true
 	}
-	for _, want := range []string{"spawn_worker", "code_review"} {
+	for _, want := range []string{"spawn", "code_review"} {
 		if !names[want] {
 			t.Errorf("full must still reach %q", want)
+		}
+	}
+	for _, gone := range []string{"spawn_worker", "scout"} {
+		if names[gone] {
+			t.Errorf("the %s tool is gone and must not be served", gone)
 		}
 	}
 }

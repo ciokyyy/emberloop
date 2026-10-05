@@ -175,7 +175,7 @@ func writeBrief(id, ticket, spec, target string) (string, error) {
 // and prose is also fewer tokens than the equivalent JSON.
 func renderStatus(workers []Status, pending []string, candidates []string) string {
 	if len(workers) == 0 {
-		return "no workers are running. Spawn one with spawn_worker(ticket=<path>)."
+		return "no workers are running. Spawn one with spawn(agents=[{type: \"worker\", ticket: <path>}])."
 	}
 	var b strings.Builder
 	for _, w := range workers {
@@ -242,7 +242,7 @@ func implementPrompt(run SpecRun) string {
 Read %s and follow it, with these wick adaptations:
 
 - The integration branch is %s. It already exists and is checked out; never switch away from it.
-- An implementer subagent is spawn_worker(ticket=<path>). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else.
+- An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else.
 - An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Ask several at once when they are independent.
 - The merger subagent is finish_worker(worker=<id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
 - Skip the skill's final code-review step: every worker reviewed its own ticket before settling. Never review a worker yourself.

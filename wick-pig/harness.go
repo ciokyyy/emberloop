@@ -120,7 +120,7 @@ func (c Command) Line() string {
 
 // roleEnv is what the session's wick-mcp needs to know: its role, the agent
 // type and id of a spawned agent, and for an implement session the spec, which
-// spawn_worker hands to every worker.
+// spawn hands to every worker.
 func roleEnv(s Session) []string {
 	env := []string{"WICK_ROLE=" + s.Role}
 	if s.AgentType != "" {

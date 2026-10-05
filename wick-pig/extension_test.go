@@ -134,7 +134,7 @@ func TestImplementPromptAdaptsImplementSpec(t *testing.T) {
 	for _, want := range []string{
 		"wick://matt-pocock/implement-spec/SKILL.md",
 		"/repo/.scratch/p/spec.md", "/repo/.scratch/p/issues", "spec/p",
-		"spawn_worker", "scout", "finish_worker", "tell_worker", "wait_workers",
+		"worker", "scout", "finish_worker", "tell_worker", "wait_workers",
 		"carry on", "follow-ups",
 	} {
 		if !strings.Contains(got, want) {

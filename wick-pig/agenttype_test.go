@@ -45,6 +45,30 @@ func TestBuiltinScoutTypeLoads(t *testing.T) {
 	}
 }
 
+// The built-in worker ships in wick: a worktree, non-blocking type that
+// reports done or blocked and can edit and run code.
+func TestBuiltinWorkerTypeLoads(t *testing.T) {
+	types, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, ok := types["worker"]
+	if !ok {
+		t.Fatal("the built-in worker did not load")
+	}
+	if worker.Checkout != "worktree" || worker.Blocking {
+		t.Errorf("worker checkout=%q blocking=%v, want worktree and non-blocking", worker.Checkout, worker.Blocking)
+	}
+	if got := strings.Join(worker.Statuses, ","); got != "done,blocked" {
+		t.Errorf("worker statuses = %q, want done,blocked", got)
+	}
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "background"} {
+		if !contains(worker.Tools, want) {
+			t.Errorf("a worker must be able to %s, tools = %v", want, worker.Tools)
+		}
+	}
+}
+
 // A repo file adds a type the built-ins do not have.
 func TestRepoAddsAnAgentType(t *testing.T) {
 	root := t.TempDir()
