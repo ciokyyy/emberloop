@@ -67,6 +67,16 @@ type Harness interface {
 	// after it starts, so an argument prompt runs with no tools and the model
 	// invents tool calls.
 	LatePrompt() bool
+	// Gate is how this harness can hold an agent at a stop, so one decision
+	// serves every harness.
+	Gate() Gate
+}
+
+// Gate is a harness's stop-gate capability: the part of the decision the
+// harness can enforce. Only a harness that can pin the submit tool gets the
+// 3rd-attempt pin; claude cannot, so its 3rd block is its last.
+type Gate interface {
+	CanPin() bool
 }
 
 var registry = map[string]Harness{}
@@ -240,8 +250,12 @@ func (claudeHarness) LastReply(path string) (string, bool) {
 	})
 }
 
-// claudeHarness runs claude stripped: no built-in tools, memory, settings or
-// other MCP servers. Only wick-mcp, whose role is the enforcement.
+// claudeStopGate is the settings claude is launched with: a `Stop` hook that
+// runs wick's shared gate, so a claude agent cannot end a turn without
+// submitting. It is passed inline with --settings, which still applies under
+// --setting-sources "".
+const claudeStopGate = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}]}}`
+
 type claudeHarness struct{}
 
 func (claudeHarness) Name() string { return "claude" }
@@ -261,7 +275,8 @@ func (claudeHarness) Command(s Session) (Command, error) {
 		return Command{}, err
 	}
 	args := []string{
-		"--tools", "", "--setting-sources", "", "--strict-mcp-config",
+		"--tools", "", "--setting-sources", "", "--settings", claudeStopGate,
+		"--strict-mcp-config",
 		"--mcp-config", path, "--system-prompt", systemPrompt,
 		// -p cannot prompt for permission; the served tool set is the policy.
 		"--allowedTools", "mcp__wick",
@@ -394,6 +409,18 @@ func (claudeHarness) Trust(dir string) error {
 
 func (pigHarness) LatePrompt() bool    { return false }
 func (claudeHarness) LatePrompt() bool { return true }
+
+// pig can pin tool_choice at the API level, so its 3rd block forces submit.
+func (pigHarness) Gate() Gate { return pigGate{} }
+
+// claude cannot pin a tool, so its gate blocks and reminds only.
+func (claudeHarness) Gate() Gate { return claudeGate{} }
+
+type pigGate struct{}
+type claudeGate struct{}
+
+func (pigGate) CanPin() bool    { return true }
+func (claudeGate) CanPin() bool { return false }
 
 // Launch is a session ready to type into a pane: the command line, and the
 // first message when the harness wants it delivered after startup.

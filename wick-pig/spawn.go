@@ -452,8 +452,12 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 			continue
 		}
 		if s, ok, _ := ReadAgentSubmit(a.ID); ok {
+			if s.Stopped {
+				parts = append(parts, fmt.Sprintf("%s %s %s", a.Type.Name, a.ID, s.Report))
+				continue
+			}
 			body := s.Report
-			if s.Report == "" {
+			if body == "" {
 				body = s.Summary
 			}
 			parts = append(parts, fmt.Sprintf("%s %s submitted (%s):\n%s", a.Type.Name, a.ID, s.Status, body))

@@ -30,11 +30,18 @@ func noticeText(s AgentSubmit) string {
 // when the agent has no parent pane, so a session started outside herdr never
 // fails a submit.
 func deliverSubmit(s AgentSubmit, st AgentState) error {
+	return deliverToParent(st, noticeText(s))
+}
+
+// deliverToParent types one notice into the parent pane, serialized with every
+// other delivery to that pane. It does nothing when the agent has no parent
+// pane, so a session started outside herdr never fails on delivery.
+func deliverToParent(st AgentState, text string) error {
 	if st.Parent == "" {
 		return nil
 	}
 	return withPaneLock(st.Parent, func() error {
-		return deliverNotice(deliverExec, st.Parent, noticeText(s))
+		return deliverNotice(deliverExec, st.Parent, text)
 	})
 }
 

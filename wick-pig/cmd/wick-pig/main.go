@@ -1,6 +1,7 @@
 // wick-pig starts an agent session: pig or claude, with wick's tools over MCP.
 //
 //	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
+//	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig [--pig|--claude] [--role full] [--model M] [-p]   plan session
 //	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
@@ -28,6 +29,9 @@ func run(argv []string) error {
 	sub := ""
 	if len(argv) > 0 && !strings.HasPrefix(argv[0], "-") {
 		sub, argv = argv[0], argv[1:]
+	}
+	if sub == "stop-gate" {
+		return wick.RunStopGate(os.Stdin, os.Stdout)
 	}
 	if sub == "settings" {
 		return runSettings(argv, os.Stdout, listModels)

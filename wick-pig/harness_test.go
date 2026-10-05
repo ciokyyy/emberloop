@@ -89,6 +89,27 @@ func TestClaudeRunsStripped(t *testing.T) {
 			t.Errorf("pig-only flag %q leaked: %s", leak, line)
 		}
 	}
+	// The Stop hook is passed inline, and it still applies under
+	// --setting-sources "": a stop without a submit runs wick's gate.
+	settings := argValue(cmd.Args, "--settings")
+	var cfg struct {
+		Hooks struct {
+			Stop []struct {
+				Hooks []struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+				} `json:"hooks"`
+			} `json:"Stop"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(settings), &cfg); err != nil {
+		t.Fatalf("--settings %q is not JSON: %v", settings, err)
+	}
+	if settings == "" || len(cfg.Hooks.Stop) == 0 || len(cfg.Hooks.Stop[0].Hooks) == 0 ||
+		cfg.Hooks.Stop[0].Hooks[0].Type != "command" ||
+		!strings.Contains(cfg.Hooks.Stop[0].Hooks[0].Command, "stop-gate") {
+		t.Errorf("--settings must carry a Stop hook that runs the stop-gate: %s", settings)
+	}
 }
 
 func TestUnknownHarnessIsAnError(t *testing.T) {

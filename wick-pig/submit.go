@@ -16,11 +16,14 @@ import (
 // gate reads. It is the agent's own state, kept beside the worker store and
 // found by the agent id.
 type AgentSubmit struct {
-	AgentID  string `json:"agent_id"`
-	Type     string `json:"type"`
-	Status   string `json:"status"`
-	Report   string `json:"report,omitempty"`
-	Summary  string `json:"summary,omitempty"`
+	AgentID string `json:"agent_id"`
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Report  string `json:"report,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	// Stopped marks a submit the stop gate wrote when it gave up on an agent
+	// that never called submit: the agent's result is the give-up notice.
+	Stopped  bool   `json:"stopped,omitempty"`
 	At       string `json:"at"`
 	ThisTurn bool   `json:"this_turn"`
 }
