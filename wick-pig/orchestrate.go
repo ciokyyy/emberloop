@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"example.com/wick/tools"
@@ -87,6 +88,7 @@ var spawnTool = fnTool{
 			return "", err
 		}
 		sess := Session{
+			ID:   newSessionID(),
 			Role: "work", Cwd: worktreePath(in.Repo, WorkerID(in.Ticket)), Model: in.Model, Label: WorkerID(in.Ticket), Skills: RouteSkills(),
 			Prompt: fmt.Sprintf("Read %s and follow it exactly.", brief),
 		}
@@ -96,6 +98,8 @@ var spawnTool = fnTool{
 		}
 		in.Launch, in.Late = []string{launch.Line}, launch.Late
 
+		in.SessionID = sess.ID
+		spaceSpawns()
 		worker, err := Spawn(osExec, in)
 		if err != nil {
 			// No worker means nothing ever reads the config it was given.
@@ -109,12 +113,31 @@ var spawnTool = fnTool{
 	},
 }
 
+// spawnGap spaces launches: a run that opens every agent's first request at
+// the same instant is what the provider answers with empty bodies. A var so
+// tests can zero it.
+var spawnGap = 3 * time.Second
+
+var (
+	spawnGate sync.Mutex
+	lastSpawn time.Time
+)
+
+func spaceSpawns() {
+	spawnGate.Lock()
+	defer spawnGate.Unlock()
+	if wait := spawnGap - time.Since(lastSpawn); wait > 0 {
+		time.Sleep(wait)
+	}
+	lastSpawn = time.Now()
+}
+
 // WaitCap is the longest wait_workers may block. A harness cuts a tool call at
 // its own MCP_TOOL_TIMEOUT, so a wait that outlives it fails while the wait
 // goroutine keeps running: the model sees an error and the worker is still
 // going. Staying under the cap means the wait always answers, and a caller that
 // wants longer calls again.
-const WaitCap = 5 * time.Minute
+const WaitCap = ToolBudget
 
 // waitCap is WaitCap in use, a var only so a test can shrink it.
 var waitCap = WaitCap
@@ -177,7 +200,8 @@ var finishTool = fnTool{
 
 var reviewTool = fnTool{
 	name: "review_worker",
-	desc: "Have a read-only reviewer judge a settled worker's diff. Call before finish_worker.",
+	desc: "Have a read-only reviewer judge a settled worker's diff. Call before finish_worker. " +
+		"A review can outlast one call: if it answers \"still running\", call review_worker again with the same worker, never start another.",
 	schema: schema(map[string]any{
 		"worker": map[string]any{"type": "string", "description": "Worker id."},
 	}, "worker"),
@@ -205,7 +229,7 @@ var scoutTool = fnTool{
 		if q == "" {
 			return "", fmt.Errorf("question is required")
 		}
-		return ReadOnly(osExec, root, "", scoutPrompt(q))
+		return readOnlyOnce(osExec, keyOf("scout", q), root, "", scoutPrompt(q))
 	},
 }
 

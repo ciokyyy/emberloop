@@ -2,11 +2,64 @@ package wick
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// ToolBudget is the longest any tool may block. A harness cuts an MCP call at
+// about a minute; a tool that outlives that fails in the caller while the work
+// goes on behind it, and a retry then starts the work a second time.
+const ToolBudget = 50 * time.Second
+
+// toolBudget is ToolBudget in use, a var only so a test can shrink it.
+var toolBudget = ToolBudget
+
+type jobResult struct {
+	text string
+	err  error
+}
+
+var (
+	jobsMu sync.Mutex
+	jobs   = map[string]chan jobResult{}
+)
+
+// readOnlyOnce runs ReadOnly at most once per key. A caller waits up to
+// toolBudget; if the reviewer is still going it gets "still running" and the
+// reviewer carries on, and the next call with the same key rejoins it.
+func readOnlyOnce(run Exec, key, cwd, model, prompt string) (string, error) {
+	jobsMu.Lock()
+	ch, running := jobs[key]
+	if !running {
+		ch = make(chan jobResult, 1)
+		jobs[key] = ch
+		go func() {
+			text, err := ReadOnly(run, cwd, model, prompt)
+			ch <- jobResult{text, err}
+		}()
+	}
+	jobsMu.Unlock()
+
+	select {
+	case r := <-ch:
+		jobsMu.Lock()
+		delete(jobs, key)
+		jobsMu.Unlock()
+		return r.text, r.err
+	case <-time.After(toolBudget):
+		return fmt.Sprintf("still running: %s. Call the same tool again with the same arguments to get its answer; do not start anything else.", key), nil
+	}
+}
+
+func keyOf(kind, text string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(text))
+	return fmt.Sprintf("%s-%08x", kind, h.Sum32())
+}
 
 // readOnlyTimeout bounds one reviewer or scout run.
 var readOnlyTimeout = 10 * time.Minute
@@ -69,7 +122,7 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	if err := DeliverLate(run, pane, launch.Late); err != nil {
 		return "", err
 	}
-	return WaitReply(registry[harness], sess, readOnlyTimeout)
+	return WaitReply(registry[harness], sess, readOnlyTimeout, func() error { return Nudge(run, pane, "continue") })
 }
 
 // Review has a fresh agent with no edit tools judge a worker's diff.
@@ -79,7 +132,7 @@ func Review(run Exec, id string) (string, error) {
 		return "", err
 	}
 	return diffReview(run, diffRequest{
-		runDir: w.Repo, tree: w.Worktree, model: w.Model, name: id,
+		runDir: w.Repo, tree: w.Worktree, model: w.Model, name: id, key: "review " + id,
 		args: []string{"diff", w.Base + "..." + w.Branch},
 	})
 }
@@ -90,7 +143,7 @@ func Review(run Exec, id string) (string, error) {
 // that tree was created from.
 func SelfReview(run Exec, tree string) (string, error) {
 	return diffReview(run, diffRequest{
-		runDir: tree, tree: tree, name: filepath.Base(tree),
+		runDir: tree, tree: tree, name: filepath.Base(tree), key: "code_review " + filepath.Base(tree),
 		// A ref against the *working tree*, not a three-dot ref against a
 		// branch: a worker reviews mid-branch, and only this form covers
 		// commits and uncommitted work in one diff. The base is a SHA
@@ -120,8 +173,8 @@ func baseFor(tree string) string {
 // account of the work: reviewing that would review what the worker believes
 // it did.
 type diffRequest struct {
-	runDir, tree, model, name string
-	args                     []string
+	runDir, tree, model, name, key string
+	args                           []string
 }
 
 func diffReview(run Exec, in diffRequest) (string, error) {
@@ -145,7 +198,7 @@ func diffReview(run Exec, in diffRequest) (string, error) {
 		return "", err
 	}
 
-	return ReadOnly(run, in.tree, in.model, reviewPrompt(diffPath, in.tree))
+	return readOnlyOnce(run, in.key, in.tree, in.model, reviewPrompt(diffPath, in.tree))
 }
 
 func reviewPrompt(diffPath, tree string) string {

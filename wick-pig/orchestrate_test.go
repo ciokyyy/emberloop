@@ -84,13 +84,13 @@ func TestWaitToolUnderTheCapIsNotClamped(t *testing.T) {
 }
 
 func TestWaitToolDescriptionStatesTheCap(t *testing.T) {
-	if WaitCap != 5*time.Minute {
-		t.Errorf("WaitCap = %s, want 5m", WaitCap)
+	if WaitCap != 50*time.Second {
+		t.Errorf("WaitCap = %s, want 50s", WaitCap)
 	}
 	if waitCap != WaitCap {
 		t.Errorf("waitCap = %s, want the default %s", waitCap, WaitCap)
 	}
-	if !strings.Contains(waitTool.desc, "300000") {
+	if !strings.Contains(waitTool.desc, "50000") {
 		t.Errorf("the description must state the cap the tool enforces, got %q", waitTool.desc)
 	}
 }

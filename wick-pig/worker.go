@@ -24,6 +24,7 @@ type Worker struct {
 	Harness   string `json:"harness"`
 	Model     string `json:"model,omitempty"`
 	Started   string `json:"started"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // Status is a worker's live state. Everything the caller needs to decide what to
@@ -219,6 +220,8 @@ type SpawnInput struct {
 	Launch []string
 	// Late is a first message sent once the agent is ready; see Harness.LatePrompt.
 	Late string
+	// SessionID names the harness session so Wait can find its transcript.
+	SessionID string
 }
 
 func worktreePath(repo, id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
@@ -271,20 +274,26 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, exists := store[id]; exists {
-		return nil, fmt.Errorf("worker %q already exists", id)
+	if old, exists := store[id]; exists {
+		// A record whose worktree is gone is left over from a cleanup done
+		// outside finish_worker; it must not block the id for ever.
+		if _, err := os.Stat(old.Worktree); err == nil {
+			return nil, fmt.Errorf("worker %q already exists", id)
+		}
+		delete(store, id)
 	}
 
 	w := &Worker{
-		ID:       id,
-		Ticket:   in.Ticket,
-		Repo:     repo,
-		Base:     base,
-		Branch:   "implement/" + id,
-		Worktree: worktreePath(repo, id),
-		Harness:  in.Harness,
-		Model:    in.Model,
-		Started:  time.Now().UTC().Format(time.RFC3339),
+		ID:        id,
+		Ticket:    in.Ticket,
+		Repo:      repo,
+		Base:      base,
+		Branch:    "implement/" + id,
+		Worktree:  worktreePath(repo, id),
+		Harness:   in.Harness,
+		Model:     in.Model,
+		SessionID: in.SessionID,
+		Started:   time.Now().UTC().Format(time.RFC3339),
 	}
 
 	// pane run rather than `agent start --kind`: herdr's kinds are compiled into
@@ -328,7 +337,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 // ---------------------------------------------------------------------------
 
 // settled is the vocabulary herdr reports once a worker stops moving.
-var settled = []string{"idle", "done", "blocked"}
+var settled = []string{"idle", "done", "blocked", "failed"}
 
 // Wait reports status for every known worker, or for the named ones.
 //
@@ -394,6 +403,9 @@ func Wait(run Exec, ids []string, timeout time.Duration) ([]Status, []string, er
 				// first reports, so a rename issued at spawn finds nothing.
 				// Naming it makes `herdr agent get <id>` resolve.
 				_, _ = herdrJSON(run, []string{"agent", "rename", w.Pane, herdrName(w.ID)}, 30*time.Second)
+			}
+			if contains(settled, state) {
+				state, detail = checkTurn(run, w, state, detail)
 			}
 			out = append(out, Status{
 				ID: w.ID, State: state, Detail: detail,
@@ -486,4 +498,61 @@ func firstLine(text, fallback string) string {
 		return strings.SplitN(trimmed, "\n", 2)[0]
 	}
 	return fallback
+}
+
+// retryTrack is where one worker stands in its provider-error retries.
+type retryTrack struct {
+	nudges int
+	next   time.Time // when the next nudge is due; zero when none is pending
+	settle time.Time // the error record is stale until the nudge lands
+}
+
+var (
+	retryMu     sync.Mutex
+	retryTracks = map[string]*retryTrack{}
+)
+
+// checkTurn corrects a settled pane state with what the transcript says. A
+// turn that died on a provider error looks idle to herdr, so without this
+// check the merger would take an unfinished worker as finished.
+func checkTurn(run Exec, w Worker, state, detail string) (string, string) {
+	h, ok := registry[w.Harness]
+	if !ok || w.SessionID == "" {
+		return state, detail
+	}
+	p := findSession(h.SessionRoot(Session{ID: w.SessionID, Cwd: w.Worktree, Model: w.Model}), w.SessionID)
+	if p == "" {
+		return state, detail
+	}
+	turn, why := h.TurnState(p)
+
+	retryMu.Lock()
+	defer retryMu.Unlock()
+	t := retryTracks[w.ID]
+	if t == nil {
+		t = &retryTrack{}
+		retryTracks[w.ID] = t
+	}
+	now := time.Now()
+	switch {
+	case turn == TurnRunning:
+		return "working", "turn in progress"
+	case turn != TurnFailed:
+		t.next = time.Time{}
+		return state, detail
+	case now.Before(t.settle):
+		return "retrying", why
+	case t.nudges >= len(retryBackoff):
+		return "failed", fmt.Sprintf("provider error after %d retries: %s", t.nudges, why)
+	case t.next.IsZero():
+		t.next = now.Add(retryBackoff[t.nudges])
+	case !now.Before(t.next):
+		t.nudges++
+		t.next = time.Time{}
+		t.settle = now.Add(nudgeSettle)
+		if err := Nudge(run, w.Pane, "continue"); err != nil {
+			return "failed", "could not retry: " + err.Error()
+		}
+	}
+	return "retrying", why
 }

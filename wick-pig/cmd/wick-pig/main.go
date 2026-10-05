@@ -32,6 +32,12 @@ func run(argv []string) error {
 	if sub == "settings" {
 		return runSettings(argv, os.Stdout, listModels)
 	}
+	if sub == "retry" {
+		if len(argv) != 1 {
+			return fmt.Errorf("usage: wick-pig retry <worker-id|pane-id>")
+		}
+		return wick.Retry(wick.OSExec, argv[0])
+	}
 	fs := flag.NewFlagSet("wick-pig", flag.ContinueOnError)
 	harness := fs.String("harness", "pig", "pig or claude")
 	pig := fs.Bool("pig", false, "use pig")
@@ -50,7 +56,7 @@ func run(argv []string) error {
 	rest := strings.Join(fs.Args(), " ")
 
 	cwd, _ := os.Getwd()
-	s := wick.Session{Model: *model, Headless: *headless, Cwd: cwd}
+	s := wick.Session{ID: wick.NewSessionID(), Model: *model, Headless: *headless, Cwd: cwd}
 	switch sub {
 	case "":
 		s.Role, s.Prompt, s.Skills = "full", rest, nil
@@ -100,6 +106,13 @@ func run(argv []string) error {
 				fmt.Fprintln(os.Stderr, "wick-pig:", err)
 			}
 		}()
+	}
+	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" && !*headless {
+		stop := make(chan struct{})
+		defer close(stop)
+		if h := wick.Registered(*harness); h != nil {
+			go wick.Supervise(wick.OSExec, h, s, pane, stop)
+		}
 	}
 	return c.Run()
 }

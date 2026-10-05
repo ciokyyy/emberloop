@@ -50,6 +50,9 @@ type Harness interface {
 	// LastReply is the text of the final assistant message of a finished
 	// turn, and false while the agent is still mid-turn.
 	LastReply(transcriptPath string) (string, bool)
+	// TurnState is TurnDone, TurnFailed (with the error text) or
+	// TurnRunning, from the last record that says which.
+	TurnState(transcriptPath string) (state, detail string)
 	// Trust marks dir as trusted so an interactive session starts without a
 	// folder-trust prompt that would sit unanswered in a pane.
 	Trust(dir string) error
@@ -173,6 +176,38 @@ func (pigHarness) LastReply(path string) (string, bool) {
 			return "", false
 		}
 		return textOf(m["content"]), true
+	})
+}
+
+func (pigHarness) TurnState(path string) (string, string) {
+	return lastTurn(path, func(rec map[string]any) (string, string, bool) {
+		m, _ := rec["message"].(map[string]any)
+		if rec["type"] != "message" {
+			return "", "", false
+		}
+		switch {
+		case m["role"] == "assistant" && m["stopReason"] == "error":
+			detail, _ := m["errorMessage"].(string)
+			return TurnFailed, detail, true
+		case m["role"] == "assistant" && m["stopReason"] == "stop":
+			return TurnDone, "", true
+		}
+		return TurnRunning, "", true
+	})
+}
+
+func (claudeHarness) TurnState(path string) (string, string) {
+	return lastTurn(path, func(rec map[string]any) (string, string, bool) {
+		m, _ := rec["message"].(map[string]any)
+		switch {
+		case rec["type"] == "assistant" && rec["isApiErrorMessage"] == true:
+			return TurnFailed, textOf(m["content"]), true
+		case rec["type"] == "assistant" && m["stop_reason"] == "end_turn":
+			return TurnDone, "", true
+		case rec["type"] == "assistant" || rec["type"] == "user":
+			return TurnRunning, "", true
+		}
+		return "", "", false
 	})
 }
 
@@ -399,3 +434,6 @@ func DeliverLate(run Exec, pane, text string) error {
 	_, err := herdrJSON(run, []string{"agent", "prompt", pane, text}, 30*time.Second)
 	return err
 }
+
+// Registered is the harness registered under name, or nil.
+func Registered(name string) Harness { return registry[name] }
