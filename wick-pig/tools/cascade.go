@@ -3,6 +3,8 @@ package tools
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -83,6 +85,11 @@ type CascadeSearcher struct {
 	model     string
 	threshold float64
 	workDir   string
+	// agentID and findCallID attribute decision calls in the agent's usage
+	// log (ticket 04). They are set per Search from WICK_AGENT_ID and a
+	// fresh id; empty means this search logs nothing.
+	agentID    string
+	findCallID string
 }
 
 // NewCascadeSearcher creates an initialized CascadeSearcher.
@@ -345,8 +352,42 @@ func lexicalFileScoreForRanking(path string, terms []string, readContent bool) f
 	return lexicalFileScoreFromDisk(path, terms)
 }
 
+// newFindCallID names one find search in the usage log, grouping the decision
+// calls of its stages so per-search spend can be summed.
+func newFindCallID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "find-unknown"
+	}
+	return "find-" + hex.EncodeToString(b[:])
+}
+
+// logFindCall records one decision call against the calling agent. It never
+// fails the search: attribution is telemetry, and a missing agent id or an
+// unwritable log must not break find.
+func (c *CascadeSearcher) logFindCall(req systemone.Request, resp systemone.Response) {
+	if c.agentID == "" || c.findCallID == "" {
+		return
+	}
+	_ = LogFindCall(FindUsage{
+		Agent:      c.agentID,
+		Model:      c.model,
+		FindCallID: c.findCallID,
+		Questions:  len(req.Questions),
+		Generation: resp.Generation,
+		Provider:   resp.Provider,
+		Usage:      resp.Usage,
+	})
+}
+
 // Search executes the 4-stage cascade over candidate files.
 func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []string, targetDir string) ([]SearchHit, error) {
+	// One find-call id per search groups the decision calls of its stages
+	// in the calling agent's usage log. Outside a session there is no agent
+	// to attribute to, and the search logs nothing.
+	if agent := os.Getenv("WICK_AGENT_ID"); agent != "" {
+		c.agentID, c.findCallID = agent, newFindCallID()
+	}
 	searchRoot := c.workDir
 	if targetDir != "" {
 		// Confined like read and write: a path a model chose is untrusted.
@@ -586,6 +627,7 @@ func (c *CascadeSearcher) stage2FilenameRanking(ctx context.Context, files []str
 			}
 			continue
 		}
+		c.logFindCall(req, resp)
 
 		for _, f := range batch {
 			rel, relErr := filepath.Rel(c.workDir, f)
@@ -715,6 +757,7 @@ func (c *CascadeSearcher) processFilePassages(ctx context.Context, filePath, sea
 			// searched, with a ranking nobody verified. That is a silent loss of
 			// quality unless it is named, so it is named.
 		} else {
+			c.logFindCall(req, resp)
 			var verifiedRanges []PassageRange
 			for _, r := range rawRanges {
 				qID := fmt.Sprintf("%s:%d-%d", relFile, r.StartLine, r.EndLine)

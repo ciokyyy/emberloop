@@ -58,14 +58,39 @@ type Answer struct {
 	Noul *float64     `json:"noul,omitempty"`
 }
 
+type UsageRequest struct {
+	Include bool `json:"include"`
+}
+
 type Request struct {
 	Model     string              `json:"model"`
 	State     any                 `json:"state"`
 	Questions map[string]Question `json:"questions"`
+	// Usage asks the endpoint to return token usage and cost. The endpoint
+	// returns it by default today (probe 2026-10-05, ticket 04); the flag is
+	// set anyway, so usage keeps arriving if the default ever changes.
+	Usage *UsageRequest `json:"usage,omitempty"`
+}
+
+// Usage is what the decision endpoint reports for one call: tokens in and
+// out, and what OpenRouter says the call cost. A nil Usage means the
+// endpoint returned none, and callers fall back to counting calls.
+type Usage struct {
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	Cost         float64 `json:"cost,omitempty"`
 }
 
 type Response struct {
 	Answers map[string]Answer `json:"answers"`
+	Usage   *Usage            `json:"usage,omitempty"`
+	// Generation is the endpoint's id for the call, for cost lookups.
+	Generation string `json:"id,omitempty"`
+	// Provider is who served the call (e.g. TypeSafe).
+	Provider string `json:"provider,omitempty"`
+	// Model is the resolved model that answered, which may pin the
+	// requested selector to a dated release.
+	Model string `json:"model,omitempty"`
 }
 
 // Provider answers a Request. The find cascade takes this, so a test can
@@ -75,15 +100,19 @@ type Provider interface {
 }
 
 // OpenRouter is the hosted Provider.
+// OpenRouter is the hosted Provider. endpoint is a field, not a constant, so
+// tests can point it at a fake server; production builds always use the
+// default below.
 type OpenRouter struct {
-	APIKey string
-	client http.Client
-	sem    chan struct{}
+	APIKey   string
+	endpoint string
+	client   http.Client
+	sem      chan struct{}
 }
 
 // NewOpenRouter builds a provider that runs at most 16 requests at once.
 func NewOpenRouter(apiKey string) *OpenRouter {
-	return &OpenRouter{APIKey: apiKey, client: http.Client{Timeout: 30 * time.Second}, sem: make(chan struct{}, 16)}
+	return &OpenRouter{APIKey: apiKey, endpoint: endpoint, client: http.Client{Timeout: 30 * time.Second}, sem: make(chan struct{}, 16)}
 }
 
 func (o *OpenRouter) Evaluate(ctx context.Context, req Request) (Response, error) {
@@ -93,11 +122,18 @@ func (o *OpenRouter) Evaluate(ctx context.Context, req Request) (Response, error
 	case <-ctx.Done():
 		return Response{}, ctx.Err()
 	}
+	if req.Usage == nil {
+		req.Usage = &UsageRequest{Include: true}
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal systemone request: %w", err)
 	}
-	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	url := o.endpoint
+	if url == "" {
+		url = endpoint
+	}
+	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return Response{}, err
 	}
