@@ -212,7 +212,11 @@ func sessionRole(sub, flagValue string) (string, error) {
 
 // topLevelChoice resolves a top-level session's harness, model and effort
 // through the orchestrator slot: the flags win, then the slot, then the
-// built-in default.
+// built-in default. A claude session with no model of its own runs sonnet.
 func topLevelChoice(flags wick.Choice) wick.Choice {
-	return wick.Resolve("orchestrator", flags, wick.Choice{})
+	c := wick.Resolve("orchestrator", flags, wick.Choice{})
+	if c.Harness == "claude" && c.Model == "" {
+		c.Model = "sonnet"
+	}
+	return c
 }
