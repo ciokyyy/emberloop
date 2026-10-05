@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	role := flag.String("role", wick.RoleFromEnv(), "implement, review, scout, work, plan or full")
+	role := flag.String("role", wick.RoleFromEnv(), "implement, review, scout, work, plan, agent or full")
 	flag.Parse()
 
 	served, err := wick.RoleTools(*role)

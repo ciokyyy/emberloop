@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// plan is a planning session: file tools plus scout. It must not carry
-// code_review or anything that spawns, merges or reports workers, so the same
-// tool set that plans cannot run an implementation loop.
-func TestPlanServesFileToolsAndScoutOnly(t *testing.T) {
+// plan is a planning session: file tools plus spawn, so it can start scouts. It
+// must not carry code_review or anything that spawns, merges or reports
+// workers, so the same tool set that plans cannot run an implementation loop.
+func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 	served, err := RoleTools("plan")
 	if err != nil {
 		t.Fatal(err)
@@ -17,14 +17,14 @@ func TestPlanServesFileToolsAndScoutOnly(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "edit", "write", "bash", "find", "background", "scout"}
+	want := []string{"read", "edit", "write", "bash", "find", "background", "spawn"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("plan tools = %v, want %v", got, want)
 	}
 }
 
 // implement delegates and explores; it never edits, runs code or reviews.
-func TestImplementDelegatesAndScouts(t *testing.T) {
+func TestImplementDelegatesAndSpawns(t *testing.T) {
 	served, err := RoleTools("implement")
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestImplementDelegatesAndScouts(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "find", "spawn_worker", "wait_workers", "finish_worker", "tell_worker", "scout"}
+	want := []string{"read", "find", "spawn", "spawn_worker", "wait_workers", "finish_worker", "tell_worker"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("implement tools = %v, want %v", got, want)
 	}

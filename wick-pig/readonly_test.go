@@ -163,7 +163,7 @@ func TestReadOnlyFindsTheCallersTabFromItsPane(t *testing.T) {
 
 func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	got := skillPrompt("grilling", "the auth plan", true)
-	for _, want := range []string{"wick://matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout("} {
+	for _, want := range []string{"wick://matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout", "spawn"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}

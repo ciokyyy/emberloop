@@ -43,10 +43,18 @@ func schema(properties map[string]any, required ...string) map[string]any {
 	return s
 }
 
-// OrchestrationTools are the delegation tools: workers, reviews, scouts.
+// OrchestrationTools are the delegation tools, with spawn bound to every type.
+// A role gets its own spawn, listing the types it may spawn, through RoleTools.
 func OrchestrationTools() []tools.Tool {
+	types := mustLoadAgentTypes(cwd())
+	return orchestrationTools(types, allTypeNames(types))
+}
+
+// orchestrationTools builds the delegation tools with spawn bound to the given
+// spawnable types.
+func orchestrationTools(types map[string]AgentType, spawnable []string) []tools.Tool {
 	return []tools.Tool{
-		spawnTool, waitTool, finishTool, scoutTool, tellTool, codeReviewTool,
+		spawnToolFor(types, spawnable), spawnTool, waitTool, finishTool, tellTool, codeReviewTool,
 	}
 }
 
@@ -212,22 +220,6 @@ var finishTool = fnTool{
 			return "", err
 		}
 		return renderFinish(result), nil
-	},
-}
-
-var scoutTool = fnTool{
-	name: "scout",
-	desc: "Ask a read-only scout a factual question about this repo. It reports facts with file:line; it does not decide.",
-	schema: schema(map[string]any{
-		"question": map[string]any{"type": "string", "description": "One specific question."},
-	}, "question"),
-	readOnly: true,
-	run: func(root string, params map[string]any) (string, error) {
-		q := str(params, "question")
-		if q == "" {
-			return "", fmt.Errorf("question is required")
-		}
-		return readOnlyOnce(osExec, keyOf("scout", q), root, "", scoutPrompt(q))
 	},
 }
 

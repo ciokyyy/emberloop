@@ -12,7 +12,7 @@ import (
 var roles = map[string][]string{
 	// implement delegates: it reads, explores with scouts, and spawns; it
 	// never edits, runs code or reviews. Each worker reviews its own work.
-	"implement": {"read", "find", "spawn_worker", "wait_workers", "finish_worker", "tell_worker", "scout"},
+	"implement": {"read", "find", "spawn", "spawn_worker", "wait_workers", "finish_worker", "tell_worker"},
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},
@@ -20,19 +20,29 @@ var roles = map[string][]string{
 	// its two persistent reviewers. No delegation.
 	"work": {"read", "edit", "write", "bash", "find", "background", "code_review"},
 	// plan is a wayfinder, grill, research or to-spec session: file tools plus
-	// scouts. No review: review belongs where code is written, in the workers.
-	"plan": {"read", "edit", "write", "bash", "find", "background", "scout"},
+	// spawn, so it can start scouts. No review: review belongs where code is
+	// written, in the workers.
+	"plan": {"read", "edit", "write", "bash", "find", "background", "spawn"},
 	// full is everything.
 	"full": nil,
 }
 
-// RoleTools returns the tools a role serves, in the role's order.
+// RoleTools returns the tools a role serves, in the role's order. The role
+// "agent" is a spawned agent: its tool set comes from the agent type in the
+// environment, not from the role table.
 func RoleTools(role string) ([]tools.Tool, error) {
+	if role == "agent" {
+		return agentTools()
+	}
 	names, ok := roles[role]
 	if !ok {
 		return nil, fmt.Errorf("unknown role %q", role)
 	}
-	all := AllTools()
+	types, err := LoadAgentTypes(cwd())
+	if err != nil {
+		return nil, err
+	}
+	all := append(tools.All(), orchestrationTools(types, spawnableNames(role, types))...)
 	if names == nil {
 		return all, nil
 	}
@@ -42,7 +52,9 @@ func RoleTools(role string) ([]tools.Tool, error) {
 	}
 	out := make([]tools.Tool, 0, len(names))
 	for _, n := range names {
-		out = append(out, byName[n])
+		if t, ok := byName[n]; ok {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }

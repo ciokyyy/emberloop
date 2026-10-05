@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,11 +28,6 @@ var (
 	jobsMu sync.Mutex
 	jobs   = map[string]chan jobResult{}
 )
-
-// readOnlyOnce runs ReadOnly at most once per key; see once.
-func readOnlyOnce(run Exec, key, cwd, model, prompt string) (string, error) {
-	return once(key, func() (string, error) { return ReadOnly(run, cwd, model, prompt) })
-}
 
 // once runs fn at most once per key. A caller waits up to toolBudget; if fn is
 // still going it gets "still running" and fn carries on, and the next call
@@ -153,29 +149,35 @@ func readOnlySession(id, cwd, model string) Session {
 	return Session{Role: "review", Cwd: cwd, Model: model, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
 }
 
-// startReadOnly launches a read-only agent on prompt in a pane placed by the
-// grid, and leaves it running: the caller decides when the pane closes. place
-// names the tab and the overflow label; an empty Tab is the caller's own tab.
-// The prompt goes through a file: pane run types its argv as one line.
-// WICK_READONLY_HARNESS picks the harness (default pig); a model goes only to
-// pig, since worker models are pig model names.
+// startReadOnly launches a read-only reviewer on prompt in a pane placed by
+// the grid, and leaves it running: the caller decides when the pane closes.
 func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (readOnlyAgent, error) {
 	harness := os.Getenv("WICK_READONLY_HARNESS")
 	if harness == "" {
 		harness = "pig"
 	}
+	sess := readOnlySession(newSessionID(), cwd, model)
+	sess.Prompt = "Your last message is your answer."
+	return launchPlacedAgent(run, place, harness, sess, prompt)
+}
+
+// launchPlacedAgent writes prompt to a file, launches the session that reads it
+// in a pane placed by the grid, and leaves it running. The prompt goes through
+// a file: pane run types its argv as one line. A non-pig harness gets no model,
+// since worker models are pig model names. place names the tab and the overflow
+// label; an empty Tab is the caller's own tab.
+func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Session, prompt string) (readOnlyAgent, error) {
 	if harness != "pig" {
-		model = ""
+		sess.Model = ""
 	}
 	if err := os.MkdirAll(readOnlyDir(), 0o755); err != nil {
 		return readOnlyAgent{}, err
 	}
-	sess := readOnlySession(newSessionID(), cwd, model)
 	promptPath := filepath.Join(readOnlyDir(), sess.ID+".prompt")
 	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
 		return readOnlyAgent{}, err
 	}
-	sess.Prompt = fmt.Sprintf("Read %s and follow it exactly. Your last message is your answer.", promptPath)
+	sess.Prompt = strings.TrimSpace(fmt.Sprintf("Read %s and follow it exactly. %s", promptPath, sess.Prompt))
 	launch, err := PrepareLaunch(harness, sess)
 	if err != nil {
 		return readOnlyAgent{}, err
@@ -196,13 +198,13 @@ func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (re
 	}
 	var placed gridPane
 	if place.Slot >= 2 {
-		placed, err = replaceInGrid(run, tab, place.Slot, cwd)
+		placed, err = replaceInGrid(run, tab, place.Slot, sess.Cwd)
 	}
 	if place.Slot < 2 || err != nil {
 		// The dead pane's slot needs a pane before it or a row above it to
 		// split. When that is gone too, a replacement appends to the grid
 		// instead of failing the launch.
-		placed, err = placeInGrid(run, tab, overflow, cwd)
+		placed, err = placeInGrid(run, tab, overflow, sess.Cwd)
 	}
 	if err != nil {
 		return readOnlyAgent{}, err
@@ -263,10 +265,4 @@ func (a readOnlyAgent) alive(run Exec) bool {
 	}
 	res, err := run(herdrBin(), []string{"pane", "get", a.Pane}, ExecOpts{Timeout: 15 * time.Second})
 	return err == nil && res.Code == 0
-}
-
-func scoutPrompt(question string) string {
-	return fmt.Sprintf(`Answer from this repository only: %s
-
-You can only read and find. Cite file:line for every claim. If you cannot find it, say "not found" rather than guess. Report facts; do not recommend or decide.`, question)
 }

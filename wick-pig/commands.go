@@ -28,7 +28,7 @@ func skillPrompt(skill, args string, scout bool) string {
 		fmt.Fprintf(&b, "\n\nInput: %s", args)
 	}
 	if scout {
-		b.WriteString("\n\nFor facts about this repo, call scout(question) rather than reading broadly yourself. Scouts report facts only; decisions stay with you and the user.")
+		b.WriteString("\n\nFor facts about this repo, spawn a scout rather than reading broadly yourself: spawn(agents=[{type: \"scout\", prompt: \"...\"}]). Scouts report facts only; decisions stay with you and the user.")
 	}
 	return b.String()
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func toolsOf(t *testing.T, reply map[string]any) []map[string]any {
 
 // The harness batches read-only calls only when the server says they are safe
 // to batch, and it must never be told a call that writes or spawns is.
-func TestToolsListMarksExactlyReadFindAndScoutReadOnly(t *testing.T) {
+func TestToolsListMarksExactlyReadFindReadOnly(t *testing.T) {
 	replies := serve(t, wick.AllTools(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	if len(replies) != 1 {
 		t.Fatalf("want one reply, got %d", len(replies))
@@ -71,9 +72,9 @@ func TestToolsListMarksExactlyReadFindAndScoutReadOnly(t *testing.T) {
 			marked[name] = true
 		}
 	}
-	want := map[string]bool{"read": true, "find": true, "scout": true}
+	want := map[string]bool{"read": true, "find": true}
 	if len(marked) != len(want) {
-		t.Fatalf("readOnlyHint on %v, want exactly read, find, scout", marked)
+		t.Fatalf("readOnlyHint on %v, want exactly read and find", marked)
 	}
 	for name := range want {
 		if !marked[name] {
@@ -122,5 +123,33 @@ func TestTwoSlowCallsFinishInAboutOneCallsTime(t *testing.T) {
 	}
 	if elapsed > 2*delay {
 		t.Errorf("two %s calls took %s: they ran in series", delay, elapsed)
+	}
+}
+
+// tools/list offers one spawn tool, described with only the caller's spawnable
+// types, and the scout tool is gone.
+func TestToolsListHasSpawnAndNoScout(t *testing.T) {
+	served, err := wick.RoleTools("implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replies := serve(t, served, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	var spawnDesc string
+	found := false
+	for _, tl := range toolsOf(t, replies[0]) {
+		name, _ := tl["name"].(string)
+		if name == "scout" {
+			t.Fatal("tools/list still serves the removed scout tool")
+		}
+		if name == "spawn" {
+			found = true
+			spawnDesc, _ = tl["description"].(string)
+		}
+	}
+	if !found {
+		t.Fatal("tools/list does not serve spawn")
+	}
+	if !strings.Contains(spawnDesc, "scout") {
+		t.Errorf("implement may spawn scout; the description must list it:\n%s", spawnDesc)
 	}
 }

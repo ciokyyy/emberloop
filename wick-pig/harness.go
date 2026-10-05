@@ -16,7 +16,7 @@ import (
 // the library under, so an open session can load a skill the user names.
 const systemPrompt = "Your file and shell tools are wick's: read, find, edit, write, bash, background. " +
 	"Never start a dev server, watcher or log tail with bash: it blocks until timeout. Use background(action=start) and read or stop it later. " +
-	"For facts about this repo, call scout(question) when you have it rather than reading broadly yourself. Scouts report facts only; decisions stay with you and the user. " +
+	"For facts about this repo, spawn a scout when you have one: spawn(agents=[{type: \"scout\", prompt: \"...\"}]). Scouts report facts only; decisions stay with you and the user. " +
 	"Skills are listed by reading wick://" + skillsNamespace + "; when the user asks for one by name " +
 	"(grill, research, wayfinder, tdd, to-spec), read the matching skill and follow it exactly."
 
@@ -31,6 +31,10 @@ type Session struct {
 	Dir      string // where a harness that takes a session dir should keep it
 	Label    string // names the session so herdr can address it
 	Spec     string // the spec an implement session runs; its workers record it
+	// AgentType and AgentID are set for a spawned agent: its type's tools and
+	// its submit state are keyed by them.
+	AgentType string
+	AgentID   string
 }
 
 // Command is a ready-to-exec invocation.
@@ -114,10 +118,17 @@ func (c Command) Line() string {
 	return strings.Join(words, " ")
 }
 
-// roleEnv is what the session's wick-mcp needs to know: its role, and for an
-// implement session the spec, which spawn_worker hands to every worker.
+// roleEnv is what the session's wick-mcp needs to know: its role, the agent
+// type and id of a spawned agent, and for an implement session the spec, which
+// spawn_worker hands to every worker.
 func roleEnv(s Session) []string {
 	env := []string{"WICK_ROLE=" + s.Role}
+	if s.AgentType != "" {
+		env = append(env, "WICK_AGENT_TYPE="+s.AgentType)
+	}
+	if s.AgentID != "" {
+		env = append(env, "WICK_AGENT_ID="+s.AgentID)
+	}
 	if s.Spec != "" {
 		env = append(env, "WICK_SPEC="+s.Spec)
 	}
