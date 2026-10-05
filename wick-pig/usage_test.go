@@ -503,3 +503,22 @@ func TestUsageTailLoopFollowsATranscript(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestTailUsageHonoursWickStateDir(t *testing.T) {
+	isolateState(t)
+	dir := t.TempDir()
+	t.Setenv("WICK_STATE_DIR", dir)
+	transcript := filepath.Join(t.TempDir(), "sess.jsonl")
+	writeLines(t, transcript, pigLine("m1", 5))
+	if n, err := TailUsage(transcript, "w1", "pig"); n != 1 || err != nil {
+		t.Fatalf("tail = %d, %v; want 1, nil", n, err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "usage", "w1.jsonl"))
+	if err != nil {
+		t.Fatalf("log must land under WICK_STATE_DIR: %v", err)
+	}
+	var rec UsageRecord
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &rec); err != nil || rec.Input != 5 {
+		t.Errorf("log line = %q, want the tailed request", raw)
+	}
+}

@@ -4,10 +4,38 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Parser interface with pig and claude implementations
-- [ ] Fixture tests from real pig and claude transcript lines, including claude's cost-state record
-- [ ] Tailing resumes from a stored offset, never double-counts
-- [ ] A final pass when the session settles
-- [ ] No wick-side price calculation
+- [x] Parser interface with pig and claude implementations
+- [x] Fixture tests from real pig and claude transcript lines, including claude's cost-state record
+- [x] Tailing resumes from a stored offset, never double-counts
+- [x] A final pass when the session settles
+- [x] No wick-side price calculation
+
+## Transcript shapes (read off live local transcripts, Oct 2026)
+
+- pig assistant message: `usage{input, output, cacheRead, cacheWrite,
+  reasoning?, totalTokens, cost{input, output, cacheRead, cacheWrite,
+  total}}` plus `provider` and `model` per message; one message is one
+  request (message id is the dedupe key). Errored turns log their zeros.
+- claude assistant block: `message.usage{input_tokens,
+  cache_creation_input_tokens, cache_read_input_tokens, output_tokens,
+  output_tokens_details.thinking_tokens?}`; one request streams as several
+  blocks sharing `message.id` with identical usage (message id, else
+  requestId, else uuid is the key). Per-message usage carries no cost.
+- claude `cost-state`: no timestamp, only cumulative `modelUsage{model:
+  {inputTokens, outputTokens, thinkingTokens, cacheReadInputTokens,
+  cacheCreationInputTokens, costUSD}}`; empty usage logs nothing.
+
+## Log layout (for the stats indexer)
+
+One line per request in `<state>/usage/<agent-id>.jsonl`, sharing the file
+with ticket 04's find lines: `{agent, at, harness, provider, model, input,
+output, cacheRead, cacheWrite, reasoning, reportedCost?, kind}` with
+`kind:"request"` per request and `kind:"cost"` per claude cost-state
+snapshot (cumulative totals, not per-request — sum only `request` rows for
+tokens). pig rows report `usage.cost.total`; claude request rows report no
+cost; claude cost rows report the model's `costUSD`. No wick-side prices.
+`provider` is the transcript's for pig, `"anthropic"` for claude (its
+transcript names none). Tail state lives beside the log in
+`<agent-id>.tail` (`{offset, seen}`); `WICK_STATE_DIR` redirects both.

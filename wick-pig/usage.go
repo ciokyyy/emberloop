@@ -233,8 +233,15 @@ func stamp(ts string) string {
 // ---------------------------------------------------------------------------
 
 // usageDir holds the per-agent usage logs, beside the worker store, so the
-// TUI and stats can read them as plain files.
-func usageDir() string { return filepath.Join(filepath.Dir(statePath), "usage") }
+// TUI and stats can read them as plain files. WICK_STATE_DIR redirects it
+// the way it redirects the rest of the state dir: ticket 04's find lines
+// share these files, and must land in the same directory under that seam.
+func usageDir() string {
+	if dir := os.Getenv("WICK_STATE_DIR"); dir != "" {
+		return filepath.Join(dir, "usage")
+	}
+	return filepath.Join(filepath.Dir(statePath), "usage")
+}
 
 // UsageLogPath is the agent's append-only usage log: one JSON record per
 // line, one line per request (or per find call, or per cost snapshot).
