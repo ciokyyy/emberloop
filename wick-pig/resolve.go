@@ -27,17 +27,34 @@ type Choice struct {
 	Effort  string
 }
 
-// Resolve gives the harness, model and effort for a launch slot, per field,
-// with precedence flags > typeOrSpawn > the settings file > the built-in
-// default. A slot with nothing stored falls back to the default, so an empty
-// or missing settings file still launches.
+// Resolve gives the harness, model and effort for a launch slot. The harness
+// resolves first, with precedence flags > typeOrSpawn > the settings file >
+// the built-in default. Model and effort then come only from layers whose
+// harness matches the resolved one; a layer with no harness inherits it and
+// still counts. So a layer that changes the harness drops a lower layer's
+// model and effort for another harness, and the harness's own defaults apply.
+// A slot with nothing stored falls back to the default, so an empty or
+// missing settings file still launches.
 func Resolve(slot string, flags, typeOrSpawn Choice) Choice {
 	role := tools.LoadSettings().Roles[slot]
-	return Choice{
-		Harness: firstSet(flags.Harness, typeOrSpawn.Harness, role.Harness, DefaultHarness),
-		Model:   firstSet(flags.Model, typeOrSpawn.Model, role.Model),
-		Effort:  firstSet(flags.Effort, typeOrSpawn.Effort, role.Effort),
+	file := Choice{Harness: role.Harness, Model: role.Model, Effort: role.Effort}
+	harness := firstSet(flags.Harness, typeOrSpawn.Harness, file.Harness, DefaultHarness)
+	var model, effort string
+	for _, layer := range []Choice{flags, typeOrSpawn, file} {
+		if layer.Harness != "" && layer.Harness != harness {
+			continue
+		}
+		if model == "" {
+			model = layer.Model
+		}
+		if effort == "" {
+			effort = layer.Effort
+		}
+		if model != "" && effort != "" {
+			break
+		}
 	}
+	return Choice{Harness: harness, Model: model, Effort: effort}
 }
 
 // firstSet is the first non-empty value, or "" when every layer is empty.

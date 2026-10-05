@@ -163,3 +163,25 @@ func TestBuildCommandTurnsEffortIntoTheHarnessFlag(t *testing.T) {
 		t.Errorf("no effort must add no flag: %s", none.Line())
 	}
 }
+
+// --claude against a pig orchestrator slot launches claude with no --model or
+// --effort: the resolver drops the pig slot's model and effort, so claude
+// starts on its own defaults instead of a pig model it cannot run.
+func TestClaudeFlagDropsThePigSlotModelAtLaunch(t *testing.T) {
+	isolateState(t)
+	resolverSettings(t, `{"roles":{"orchestrator":{"harness":"pig","model":"pig-model","effort":"high"}}}`)
+	got := Resolve("orchestrator", Choice{Harness: "claude"}, Choice{})
+	if got != (Choice{Harness: "claude"}) {
+		t.Fatalf("Resolve = %+v, want {claude}", got)
+	}
+	cmd, err := BuildCommand(got.Harness, Session{Role: "plan", Model: got.Model, Effort: got.Effort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := argValue(cmd.Args, "--model"); v != "" {
+		t.Errorf("claude launch must carry no --model, got %q in %q", v, cmd.Args)
+	}
+	if v := argValue(cmd.Args, "--effort"); v != "" {
+		t.Errorf("claude launch must carry no --effort, got %q in %q", v, cmd.Args)
+	}
+}

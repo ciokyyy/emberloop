@@ -84,6 +84,16 @@ func TestTopLevelSessionResolvesTheOrchestratorSlot(t *testing.T) {
 	}
 }
 
+// --claude against a pig orchestrator slot drops the slot's model and effort:
+// a pig model and an effort claude does not have must not leak onto claude.
+func TestClaudeFlagDropsThePigOrchestratorSlotModel(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"pig-model","effort":"high"}}}`)
+	if got := topLevelChoice(wick.Choice{Harness: "claude"}); got != (wick.Choice{Harness: "claude"}) {
+		t.Errorf("orchestrator slot with --claude = %+v, want {claude}", got)
+	}
+}
+
 // --effort is a launcher flag, and the harness turns it into its own: a pig
 // session launches with --thinking <level>.
 func TestEffortFlagReachesTheHarness(t *testing.T) {
