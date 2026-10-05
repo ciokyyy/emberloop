@@ -79,41 +79,39 @@ func liveInstallAgents(run Exec) ([]string, error) {
 		seen[pane] = true
 		names = append(names, name)
 	}
-	if store, err := load(); err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-	} else {
-		ids := make([]string, 0, len(store))
-		for id := range store {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		for _, id := range ids {
-			w := store[id]
-			attach(w.Pane, fmt.Sprintf("worker %s (pane %s)", w.ID, w.Pane))
-		}
+	// A missing store is no agents, not an error: load reports one.
+	store, err := load()
+	if err != nil {
+		return nil, err
 	}
-	if all, err := loadReviewers(); err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
+	ids := make([]string, 0, len(store))
+	for id := range store {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		w := store[id]
+		attach(w.Pane, fmt.Sprintf("worker %s (pane %s)", w.ID, w.Pane))
+	}
+	// Same for the reviewers: a missing file reads as none.
+	all, err := loadReviewers()
+	if err != nil {
+		return nil, err
+	}
+	var trees []string
+	for tree := range all {
+		trees = append(trees, tree)
+	}
+	sort.Strings(trees)
+	for _, tree := range trees {
+		var types []string
+		for typ := range all[tree] {
+			types = append(types, typ)
 		}
-	} else {
-		var trees []string
-		for tree := range all {
-			trees = append(trees, tree)
-		}
-		sort.Strings(trees)
-		for _, tree := range trees {
-			var types []string
-			for typ := range all[tree] {
-				types = append(types, typ)
-			}
-			sort.Strings(types)
-			for _, typ := range types {
-				r := all[tree][typ]
-				attach(r.Pane, fmt.Sprintf("%s for %s (pane %s)", typ, tree, r.Pane))
-			}
+		sort.Strings(types)
+		for _, typ := range types {
+			r := all[tree][typ]
+			attach(r.Pane, fmt.Sprintf("%s for %s (pane %s)", typ, tree, r.Pane))
 		}
 	}
 	// Agent states hold the scouts, which have no other store. Workers and
@@ -123,14 +121,14 @@ func liveInstallAgents(run Exec) ([]string, error) {
 			return nil, err
 		}
 	} else {
-		var ids []string
+		var stateIDs []string
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-				ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+				stateIDs = append(stateIDs, strings.TrimSuffix(e.Name(), ".json"))
 			}
 		}
-		sort.Strings(ids)
-		for _, id := range ids {
+		sort.Strings(stateIDs)
+		for _, id := range stateIDs {
 			s, ok, err := ReadAgentState(id)
 			if err != nil || !ok {
 				continue
@@ -147,32 +145,44 @@ func liveInstallAgents(run Exec) ([]string, error) {
 }
 
 // installTargets are the binaries one install replaces, each built from its
-// package in the source checkout. Both go, or neither does: every target is
-// built to a temp file first and renamed into place only when all built, so
-// a failed build replaces nothing.
+// package in the source checkout. Every target is built to a temp file
+// first, and the installed pair is swapped only when all built, so a failed
+// build replaces nothing.
 var installTargets = []struct{ name, pkg string }{
 	{"wick-pig", "./cmd/wick-pig"},
 	{"wick-mcp", "./cmd/wick-mcp"},
 }
 
+// refuseInstall is why the binaries stay put: unknown liveness, or the live
+// agents named.
+func refuseInstall(live []string, checkErr error) error {
+	if checkErr != nil {
+		return fmt.Errorf("cannot check which agents are live: %v; refusing the install (or rerun with --force)", checkErr)
+	}
+	return fmt.Errorf("refusing to install: %d live %s: %s; stop them or rerun with --force",
+		len(live), plural(len(live), "agent", "agents"), strings.Join(live, ", "))
+}
+
+// staged is one built binary waiting to replace its destination: the temp
+// file holding the new build, and the installed path it renames over.
+type staged struct{ tmp, dst string }
+
 // InstallBinaries rebuilds wick-pig and wick-mcp from the source checkout
 // and installs them into installDir. While any agent of a run is live it
 // refuses instead, naming the agents, and changes nothing: the live check
-// runs before any build, so a refused install never even builds.
+// runs before any build, so a refused install never even builds. Liveness
+// is checked again after the build and before anything is replaced, because
+// a build takes minutes and an agent spawned meanwhile must not be
+// installed over either.
 func InstallBinaries(run Exec, opts InstallOptions) (InstallResult, error) {
 	live, checkErr := liveInstallAgents(run)
-	if checkErr != nil && !opts.Force {
-		return InstallResult{}, fmt.Errorf("cannot check which agents are live: %v; refusing the install (or rerun with --force)", checkErr)
-	}
-	if len(live) > 0 && !opts.Force {
-		return InstallResult{}, fmt.Errorf("refusing to install: %d live %s: %s; stop them or rerun with --force",
-			len(live), plural(len(live), "agent", "agents"), strings.Join(live, ", "))
+	if !opts.Force && (checkErr != nil || len(live) > 0) {
+		return InstallResult{}, refuseInstall(live, checkErr)
 	}
 	dir, src := installDir(), installSourceDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return InstallResult{}, err
 	}
-	type staged struct{ tmp, dst string }
 	var done []staged
 	discard := func() {
 		for _, s := range done {
@@ -202,21 +212,87 @@ func InstallBinaries(run Exec, opts InstallOptions) (InstallResult, error) {
 		}
 		done = append(done, staged{tmp: tmp, dst: filepath.Join(dir, target.name)})
 	}
-	for _, s := range done {
-		if err := os.Chmod(s.tmp, 0o755); err != nil {
-			discard()
-			return InstallResult{}, err
-		}
-		if err := os.Rename(s.tmp, s.dst); err != nil {
-			discard()
-			return InstallResult{}, err
-		}
+	relive, recheckErr := liveInstallAgents(run)
+	if !opts.Force && (recheckErr != nil || len(relive) > 0) {
+		discard()
+		return InstallResult{}, refuseInstall(relive, recheckErr)
+	}
+	if err := swapInstalled(done); err != nil {
+		return InstallResult{}, err
 	}
 	res := InstallResult{Dir: dir}
-	if len(live) > 0 || checkErr != nil {
+	if len(live) > 0 || len(relive) > 0 || checkErr != nil || recheckErr != nil {
 		res.Warning = "warning: running sessions keep the old binary until they restart"
 	}
 	return res, nil
+}
+
+// placedBinary is a destination the swap already replaced, with the backup
+// of what was there ("" when the destination is new).
+type placedBinary struct {
+	dst  string
+	prev string
+}
+
+// swapInstalled renames every staged build over its destination. Each
+// destination the swap already replaced is restored when a later rename
+// fails, so a half-installed pair is never left: both binaries go, or the
+// old ones stay. Only regular files are backed up; anything else at a
+// destination fails the rename loudly instead of being clobbered.
+func swapInstalled(done []staged) error {
+	var placed []placedBinary
+	restore := func() {
+		for i := len(placed) - 1; i >= 0; i-- {
+			p := placed[i]
+			if p.prev == "" {
+				_ = os.Remove(p.dst)
+			} else {
+				_ = os.Rename(p.prev, p.dst)
+			}
+		}
+	}
+	discard := func() {
+		for _, s := range done {
+			_ = os.Remove(s.tmp)
+		}
+	}
+	fail := func(err error) error {
+		restore()
+		discard()
+		return err
+	}
+	for _, s := range done {
+		if err := os.Chmod(s.tmp, 0o755); err != nil {
+			return fail(err)
+		}
+		prev := ""
+		if info, err := os.Stat(s.dst); err == nil && info.Mode().IsRegular() {
+			prev = s.tmp + ".prev"
+			if err := os.Rename(s.dst, prev); err != nil {
+				return fail(err)
+			}
+		}
+		if err := os.Rename(s.tmp, s.dst); err != nil {
+			if prev != "" {
+				_ = os.Rename(prev, s.dst)
+			}
+			return fail(err)
+		}
+		placed = append(placed, placedBinary{dst: s.dst, prev: prev})
+	}
+	for _, p := range placed {
+		if p.prev != "" {
+			_ = os.Remove(p.prev)
+		}
+	}
+	return nil
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // installUsage documents the one command that replaces the installed wick
@@ -255,11 +331,4 @@ func RunInstall(argv []string, out io.Writer) error {
 		fmt.Fprintln(out, res.Warning)
 	}
 	return nil
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
 }

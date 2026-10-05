@@ -14,7 +14,9 @@ import (
 
 func installTestState(t *testing.T) string {
 	t.Helper()
+	old := statePath
 	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = old })
 	dir := t.TempDir()
 	t.Setenv("WICK_INSTALL_DIR", dir)
 	t.Setenv("WICK_SOURCE_DIR", t.TempDir())
@@ -382,5 +384,81 @@ func TestInstallFailedBuildReplacesNothingAndLeavesNoTemps(t *testing.T) {
 	}
 	if got := readInstallFile(t, dir, "wick-mcp"); got != "old-mcp" {
 		t.Errorf("a failed install must replace nothing, wick-mcp = %q", got)
+	}
+}
+
+// Seam (ticket 13): install recheck — an agent whose pane appears while the
+// build runs is refused before anything is replaced.
+func TestInstallRechecksLivenessAfterTheBuild(t *testing.T) {
+	dir := installTestState(t)
+	src := os.Getenv("WICK_SOURCE_DIR")
+	if err := save(map[string]Worker{
+		"07-late": {ID: "07-late", Pane: "w1:p7"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	writeInstallSentinel(t, dir, "wick-pig", "old-pig")
+	writeInstallSentinel(t, dir, "wick-mcp", "old-mcp")
+	// The first pane list is empty; every later one shows the pane, the way
+	// a pane started mid-build reads.
+	lists := 0
+	build := installBuildExec(t, src)
+	exec := func(cmd string, args []string, o ExecOpts) (Result, error) {
+		if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
+			lists++
+			if lists > 1 {
+				return Result{Code: 0, Stdout: `{"result":{"panes":[{"pane_id":"w1:p7"}]}}`}, nil
+			}
+		}
+		return build(cmd, args, o)
+	}
+
+	_, err := InstallBinaries(exec, InstallOptions{})
+	if err == nil {
+		t.Fatal("an agent live after the build must refuse the install")
+	}
+	if !strings.Contains(err.Error(), "07-late") {
+		t.Errorf("the refusal must name the late agent, got: %v", err)
+	}
+	if got := readInstallFile(t, dir, "wick-pig"); got != "old-pig" {
+		t.Errorf("a refused install must replace nothing, wick-pig = %q", got)
+	}
+	if got := readInstallFile(t, dir, "wick-mcp"); got != "old-mcp" {
+		t.Errorf("a refused install must replace nothing, wick-mcp = %q", got)
+	}
+}
+
+// Seam (ticket 13): install rollback — when a later rename fails, destinations
+// already replaced are restored, so a half-installed pair is never left. A
+// directory at a destination fails its rename loudly instead of being
+// clobbered.
+func TestInstallFailedRenameRestoresWhatItReplaced(t *testing.T) {
+	dir := installTestState(t)
+	src := os.Getenv("WICK_SOURCE_DIR")
+	writeInstallSentinel(t, dir, "wick-pig", "old-pig")
+	if err := os.MkdirAll(filepath.Join(dir, "wick-mcp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := InstallBinaries(installBuildExec(t, src), InstallOptions{})
+	if err == nil {
+		t.Fatal("a rename onto a directory must fail the install")
+	}
+	if got := readInstallFile(t, dir, "wick-pig"); got != "old-pig" {
+		t.Errorf("a failed swap must restore wick-pig, got %q", got)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "wick-mcp")); err != nil || !info.IsDir() {
+		t.Errorf("a failed swap must not clobber the directory at wick-mcp: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		names := []string{}
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("a failed swap must leave no temps or backups, dir holds %v", names)
 	}
 }
