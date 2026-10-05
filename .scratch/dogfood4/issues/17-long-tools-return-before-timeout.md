@@ -13,7 +13,8 @@ Pig (and claude) abort an MCP tool call at 60s. `wait_workers`, `review_worker` 
 - One package constant `ToolBudget` = 50 seconds. `wait_workers` clamps to it (replace the 5 minute `WaitCap`), and its result says it was clamped and to call again.
 - `review_worker` and `scout` start the reviewer at most once per key (worker id, or a hash of the scout question), keep it in a process-level map, and wait at most `ToolBudget`. If it is not done they return "still reviewing <key>, call review_worker again" and leave the reviewer running. A later call with the same key joins the running reviewer and returns its reply when done. The entry is removed once the reply is returned.
 - Tool descriptions and `implementPrompt` tell the caller to expect "still reviewing" and to call again, not to restart.
-- Tests with a fake exec: a call that outlives the budget returns the still-running text; the second call does not start a second reviewer and returns the reply; the clamp.
+- Tests with a fake exec: a call that outlives the budget returns the still-running text; the second call does not start a second reviewer and returns the reply; the clamp.- Amendment: `spawn_worker` must not refuse because of a stale store record. If `workers.json` holds a record for the id but its worktree path no longer exists on disk, drop the record and spawn. If the worktree still exists, keep refusing. Test both with a fake exec and a temp dir.
+
 ## Hard limits (this ticket is built by the tool it changes)
 
 - Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
