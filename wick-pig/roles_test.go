@@ -89,11 +89,17 @@ func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
 
 // A server started with no role refuses with a message naming every valid
 // role, so a hand-started server can never silently serve spawn, finish or
-// tell. An explicit full role still serves everything.
+// tell. An explicit full role still serves everything. The want list is a
+// literal, not RoleNames(), so the test can catch a role missing from either
+// side.
 func TestMissingRoleNamesEveryRole(t *testing.T) {
+	want := []string{"agent", "full", "implement", "plan", "review", "scout", "work"}
+	if got := RoleNames(); !reflect.DeepEqual(got, want) {
+		t.Errorf("RoleNames() = %v, want %v", got, want)
+	}
 	for _, err := range []error{MissingRoleError(), mustRoleErr(t, "")} {
 		msg := err.Error()
-		for _, role := range RoleNames() {
+		for _, role := range want {
 			if !strings.Contains(msg, role) {
 				t.Errorf("missing-role error %q must name role %q", msg, role)
 			}
