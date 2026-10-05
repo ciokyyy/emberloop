@@ -283,6 +283,32 @@ func targetBranch(run Exec, repo, base string) string {
 	return strings.TrimSpace(res.Stdout)
 }
 
+// reusableBranch reports whether a spawn may reuse an implement branch finish
+// kept. The branch is reusable when it is at or behind base, so `git worktree
+// add <path> <branch>` checks it out with no -b. A branch carrying commits
+// base does not have is refused by name: reusing it would drop that work, and
+// re-creating it would silently start the branch over from base.
+func reusableBranch(run Exec, repo, branch, base string) (bool, error) {
+	res, err := run("git", []string{"show-ref", "--verify", "--quiet", "refs/heads/" + branch},
+		ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+	if err != nil {
+		return false, err
+	}
+	if res.Code != 0 {
+		return false, nil
+	}
+	res, err = run("git", []string{"merge-base", "--is-ancestor", branch, base},
+		ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+	if err != nil {
+		return false, err
+	}
+	if res.Code != 0 {
+		return false, fmt.Errorf("branch %s has commits %s does not have; finish or delete it before spawning it again",
+			branch, base)
+	}
+	return true, nil
+}
+
 // Spawn creates a git worktree on branch implement/<id>, opens the ticket's tab
 // in the project workspace, and starts the worker in that tab's root pane.
 func Spawn(run Exec, in SpawnInput) (*Worker, error) {
@@ -317,6 +343,15 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	base = resolved
 	target := targetBranch(run, repo, in.Base)
 
+	// finish keeps the implement branch, so a respawn after finish finds it
+	// already there. Reuse it when the base still contains it; refuse when it
+	// carries work the base does not, before anything is created.
+	branch := "implement/" + id
+	reuse, err := reusableBranch(run, repo, branch, base)
+	if err != nil {
+		return nil, err
+	}
+
 	storeMu.Lock()
 	defer storeMu.Unlock()
 
@@ -340,7 +375,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		Repo:      repo,
 		Base:      base,
 		Target:    target,
-		Branch:    "implement/" + id,
+		Branch:    branch,
 		Worktree:  worktreePath(repo, id),
 		Workspace: workspace,
 		Harness:   in.Harness,
@@ -350,24 +385,34 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	}
 
 	// Plain git owns the worktree now, at today's path and branch: herdr is
-	// only tabs and panes, never worktrees.
-	if res, err := run("git", []string{"worktree", "add", "-b", w.Branch, w.Worktree, base},
-		ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
+	// only tabs and panes, never worktrees. An existing branch is reused with
+	// no -b; -b would fail on a name that is already there.
+	add := []string{"worktree", "add"}
+	if reuse {
+		add = append(add, w.Worktree, w.Branch)
+	} else {
+		add = append(add, "-b", w.Branch, w.Worktree, base)
+	}
+	if res, err := run("git", add, ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
 		return nil, err
 	} else if res.Code != 0 {
 		return nil, fmt.Errorf("git worktree add %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
 	}
 
-	// Anything that fails from here on has to undo the worktree and its branch,
-	// or the ticket can never be spawned again. The tab is closed only when
-	// this spawn created it: an existing one may hold a previous implementor.
+	// Anything that fails from here on has to undo the worktree, and the
+	// branch only when this spawn made it, or the ticket can never be spawned
+	// again. A branch finish kept is left for the next respawn. The tab is
+	// closed only when this spawn created it: an existing one may hold a
+	// previous implementor.
 	tabCreated := false
 	undo := func() {
 		if tabCreated && w.Tab != "" {
 			_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
 		}
 		_, _ = run("git", []string{"worktree", "remove", "--force", w.Worktree}, ExecOpts{Cwd: repo, Timeout: 60 * time.Second})
-		_, _ = run("git", []string{"branch", "-D", w.Branch}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+		if !reuse {
+			_, _ = run("git", []string{"branch", "-D", w.Branch}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+		}
 	}
 
 	// Finds the tab labelled with the ticket id in the project workspace, or
@@ -377,6 +422,16 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	if err != nil {
 		undo()
 		return nil, err
+	}
+
+	// A respawn reuses the tab; its root pane may still hold the previous
+	// implementor, so whatever runs there is stopped first. The launch line
+	// must never be typed into a live agent.
+	if !tabCreated {
+		if err := stopPane(run, w.Pane); err != nil {
+			undo()
+			return nil, err
+		}
 	}
 
 	// pane run rather than `agent start --kind`: herdr's kinds are compiled into
@@ -399,7 +454,9 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 }
 
 // ticketTab finds the tab labelled id in workspace, or creates it there with
-// cwd, and returns its root pane. created is false when the tab already
+// cwd, and returns its root pane: the pane in the tab's first grid slot. A new
+// tab's root pane is recorded as slot 1, so a later respawn finds it even when
+// herdr lists another pane first. created is false when the tab already
 // existed, so a failed spawn knows not to close a tab it did not make.
 func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created bool, err error) {
 	tabs, err := herdrJSON(run, []string{"tab", "list", "--workspace", workspace}, 30*time.Second)
@@ -410,7 +467,7 @@ func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created b
 		if t.Label != id {
 			continue
 		}
-		pane, err := rootPane(run, t.TabID)
+		pane, err := gridRoot(run, t.TabID)
 		if err != nil {
 			return "", "", false, err
 		}
@@ -440,22 +497,39 @@ func ticketTab(run Exec, workspace, id, cwd string) (tab, pane string, created b
 		// closes it rather than leaking a pane-less tab.
 		return tab, "", true, fmt.Errorf("herdr tab create returned no pane for %q; raw: %.600s", id, reply.raw)
 	}
+	recordGridSlot(tab, 1, pane)
 	return tab, pane, true, nil
 }
 
-// rootPane is the first pane herdr reports in tab: the pane the tab was opened
-// with, which is the implementor's pane.
-func rootPane(run Exec, tab string) (string, error) {
-	reply, err := herdrJSON(run, []string{"pane", "list"}, 30*time.Second)
+// gridRoot is the pane in a tab's first grid slot, slot 1: the tab's root and
+// the implementor's pane. herdr cannot say which pane that is -- it lists
+// panes in creation order, which a replacement disturbs -- so the grid's own
+// record is the authority, falling back to the first pane herdr reports for a
+// tab the grid never placed.
+func gridRoot(run Exec, tab string) (string, error) {
+	slots, err := gridSlots(run, tab)
 	if err != nil {
 		return "", err
 	}
-	for _, p := range reply.Result.Panes {
-		if p.TabID == tab {
-			return p.PaneID, nil
-		}
+	if pane := slots[1]; pane != "" {
+		return pane, nil
 	}
 	return "", fmt.Errorf("herdr reports no panes in tab %s", tab)
+}
+
+// stopPane stops whatever runs in a pane before a respawn types into it. The
+// pane belongs to a reused tab, so it may still hold the previous implementor
+// (or a reviewer placed in the root): ctrl+c ends the foreground agent and
+// leaves its shell, which is where pane run types the new launch line.
+func stopPane(run Exec, pane string) error {
+	res, err := run(herdrBin(), []string{"pane", "send-keys", pane, "ctrl+c"}, ExecOpts{Timeout: 15 * time.Second})
+	if err != nil {
+		return fmt.Errorf("could not stop the process in %s: %w", pane, err)
+	}
+	if res.Code != 0 {
+		return fmt.Errorf("could not stop the process in %s: %s", pane, firstLine(res.Stderr, "send-keys failed"))
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

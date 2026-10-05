@@ -276,6 +276,51 @@ func TestSpawnWaitFinish(t *testing.T) {
 	}
 }
 
+// After finish keeps the implement branch, the ticket can be picked up again:
+// spawn reuses the kept branch instead of failing on `git worktree add -b`.
+func TestSpawnAfterFinishReusesTheKeptBranch(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "wick@test.local")
+	gitOut(t, repo, "config", "user.name", "wick")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "base")
+	ticket := filepath.Join(repo, "29-thing.md")
+	if err := os.WriteFile(ticket, []byte("# Thing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Real git, stubbed herdr.
+	h := newTicketHerdr(osExec)
+	first, err := Spawn(h.run, SpawnInput{Ticket: ticket, Repo: repo, Base: "main", Launch: []string{"true"}})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	// Discard keeps the branch, the way finish does.
+	if _, err := Finish(h.run, first.ID, false); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if got := gitOut(t, repo, "branch", "--list", first.Branch); got == "" {
+		t.Fatalf("finish dropped the branch %s, so there is nothing to reuse", first.Branch)
+	}
+
+	second, err := Spawn(h.run, SpawnInput{Ticket: ticket, Repo: repo, Base: "main", Launch: []string{"true"}})
+	if err != nil {
+		t.Fatalf("respawn after finish: %v", err)
+	}
+	if second.Branch != first.Branch {
+		t.Errorf("respawn branch = %q, want the kept %q", second.Branch, first.Branch)
+	}
+	if got := gitOut(t, second.Worktree, "rev-parse", "--abbrev-ref", "HEAD"); got != first.Branch {
+		t.Errorf("respawn worktree HEAD = %q, want the kept branch %q", got, first.Branch)
+	}
+}
+
 func TestHerdrNameIsLegalForHerdr(t *testing.T) {
 	// herdr rejects a name that does not start with a lowercase letter, and
 	// to-tickets numbers its tickets, so 01-probe is not a legal name.
@@ -322,6 +367,10 @@ func TestSpawnResolvesBaseToASha(t *testing.T) {
 	var gitCalls [][]string
 	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
 		if cmd == "git" {
+			if args[0] == "show-ref" {
+				// The stub resolves refs; it holds no implement branch.
+				return Result{Code: 1}, nil
+			}
 			gitCalls = append(gitCalls, args)
 			return Result{Stdout: sha + "\n"}, nil
 		}
@@ -606,8 +655,11 @@ func TestSpawnOpensTheTicketTabInTheProjectWorkspace(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
-		if cmd == "git" && args[0] == "rev-parse" {
+		switch {
+		case cmd == "git" && args[0] == "rev-parse":
 			return Result{Stdout: "abc123\n"}, nil
+		case cmd == "git" && args[0] == "show-ref":
+			return Result{Code: 1}, nil // no implement branch yet
 		}
 		return Result{}, nil
 	}
@@ -650,8 +702,11 @@ func TestSpawnReusesTheTicketTab(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
-		if cmd == "git" && args[0] == "rev-parse" {
+		switch {
+		case cmd == "git" && args[0] == "rev-parse":
 			return Result{Stdout: "abc123\n"}, nil
+		case cmd == "git" && args[0] == "show-ref":
+			return Result{Code: 1}, nil // no implement branch yet
 		}
 		return Result{}, nil
 	}
@@ -676,6 +731,61 @@ func TestSpawnReusesTheTicketTab(t *testing.T) {
 	}
 }
 
+// A respawn finds the implementor's pane by its grid slot, not by whichever
+// pane herdr lists first: a reviewer that replaced a pane is listed before the
+// tab's root. Whatever still runs in that pane is stopped before the launch, so
+// the launch line is never typed into a live agent.
+func TestSpawnRespawnsIntoTheTabsRootSlot(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	repo := t.TempDir()
+	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		switch {
+		case cmd == "git" && args[0] == "rev-parse":
+			return Result{Stdout: "abc123\n"}, nil
+		case cmd == "git" && args[0] == "show-ref":
+			return Result{Code: 1}, nil // no implement branch yet
+		}
+		return Result{}, nil
+	}
+	h := newTicketHerdr(git)
+	// The tab's root is the implementor (slot 1); a reviewer replaced slot 2,
+	// and herdr happens to list the reviewer's pane first.
+	resetGrid()
+	recordGridSlot("w1:t9", 1, "w1:p9")
+	h.tabs["28-thing"] = "w1:t9"
+	h.panes["w1:t9"] = []string{"w1:p7", "w1:p9"}
+
+	w, err := Spawn(h.run, SpawnInput{Ticket: "repo/.scratch/28-thing.md", Repo: repo})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if w.Pane != "w1:p9" {
+		t.Errorf("pane = %q, want the slot-1 root pane w1:p9, not the first pane herdr lists", w.Pane)
+	}
+	if got := h.paneRun(); got != "w1:p9" {
+		t.Errorf("pane run in %q, want the slot-1 root pane w1:p9", got)
+	}
+	stop, launch := -1, -1
+	for i, c := range h.calls {
+		if len(c) > 2 && c[0] == "pane" && c[1] == "send-keys" && c[2] == "w1:p9" {
+			stop = i
+		}
+		if len(c) > 2 && c[0] == "pane" && c[1] == "run" && c[2] == "w1:p9" {
+			launch = i
+		}
+	}
+	if stop < 0 {
+		t.Fatal("respawn never stopped whatever still runs in the pane")
+	}
+	if launch < 0 {
+		t.Fatal("respawn never launched in the slot-1 pane")
+	}
+	if stop > launch {
+		t.Errorf("the stop at call %d came after the launch at call %d", stop, launch)
+	}
+}
+
 // A failure after the worktree exists must not leave the branch and checkout
 // behind, or the ticket can never be spawned again. The tab this spawn created
 // is closed with it.
@@ -688,6 +798,8 @@ func TestSpawnUndoesTheWorktreeWhenTheLaunchFails(t *testing.T) {
 		switch {
 		case args[0] == "rev-parse":
 			return Result{Stdout: "abc123\n"}, nil
+		case args[0] == "show-ref":
+			return Result{Code: 1}, nil // no implement branch yet
 		case args[0] == "worktree" && len(args) > 1 && args[1] == "remove":
 			removed = true
 		case args[0] == "branch" && len(args) > 1 && args[1] == "-D":
@@ -726,8 +838,11 @@ func TestSpawnKeepsATabItDidNotCreate(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
-		if args[0] == "rev-parse" {
+		switch {
+		case args[0] == "rev-parse":
 			return Result{Stdout: "abc123\n"}, nil
+		case args[0] == "show-ref":
+			return Result{Code: 1}, nil // no implement branch yet
 		}
 		return Result{}, nil
 	}
@@ -751,8 +866,11 @@ func TestSpawnClosesATabItCreatedWithoutAPane(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
-		if args[0] == "rev-parse" {
+		switch {
+		case args[0] == "rev-parse":
 			return Result{Stdout: "abc123\n"}, nil
+		case args[0] == "show-ref":
+			return Result{Code: 1}, nil // no implement branch yet
 		}
 		return Result{}, nil
 	}
@@ -764,5 +882,76 @@ func TestSpawnClosesATabItCreatedWithoutAPane(t *testing.T) {
 	}
 	if !h.called("tab", "close") {
 		t.Error("spawn left open the pane-less tab it had just created")
+	}
+}
+
+// A respawn after finish reuses the branch finish kept: git worktree add
+// checks the existing branch out with no -b, because -b fails on a name that
+// already exists.
+func TestSpawnReusesABranchAtOrBehindTheBase(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	repo := t.TempDir()
+	var add []string
+	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		switch {
+		case args[0] == "rev-parse":
+			return Result{Stdout: "abc123\n"}, nil
+		case args[0] == "show-ref":
+			return Result{}, nil // the branch exists
+		case args[0] == "merge-base":
+			return Result{}, nil // the base still contains it
+		case args[0] == "worktree" && len(args) > 1 && args[1] == "add":
+			add = args
+		}
+		return Result{}, nil
+	}
+	h := newTicketHerdr(git)
+
+	if _, err := Spawn(h.run, SpawnInput{Ticket: "repo/.scratch/26-thing.md", Repo: repo}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	want := []string{"worktree", "add", worktreePath(repo, "26-thing"), "implement/26-thing"}
+	if strings.Join(add, " ") != strings.Join(want, " ") {
+		t.Errorf("git worktree add = %v, want %v: an existing branch is reused, never re-created", add, want)
+	}
+}
+
+// A branch finish kept that carries commits the base does not have is refused
+// by name before spawn creates anything: reusing it would drop the work, and
+// re-creating it would silently start from the base instead.
+func TestSpawnRefusesABranchAheadOfTheBase(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	repo := t.TempDir()
+	var created []string
+	git := func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		switch {
+		case args[0] == "rev-parse":
+			return Result{Stdout: "abc123\n"}, nil
+		case args[0] == "show-ref":
+			return Result{}, nil // the branch exists
+		case args[0] == "merge-base":
+			return Result{Code: 1}, nil // it is not an ancestor of the base
+		}
+		created = append(created, strings.Join(append([]string{cmd}, args...), " "))
+		return Result{}, nil
+	}
+	h := newTicketHerdr(git)
+
+	_, err := Spawn(h.run, SpawnInput{Ticket: "repo/.scratch/27-thing.md", Repo: repo})
+	if err == nil || !strings.Contains(err.Error(), "implement/27-thing") {
+		t.Fatalf("err = %v, want an error naming the branch", err)
+	}
+	for _, c := range created {
+		if strings.HasPrefix(c, "git worktree add") || strings.HasPrefix(c, "git branch") {
+			t.Errorf("spawn created something after refusing the branch: %s", c)
+		}
+	}
+	if h.tab("27-thing") != "" {
+		t.Error("spawn opened a tab for a ticket whose branch it refused")
+	}
+	if _, err := os.Stat(worktreePath(repo, "27-thing")); !os.IsNotExist(err) {
+		t.Error("spawn left a worktree behind after refusing the branch")
 	}
 }

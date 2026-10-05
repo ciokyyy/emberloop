@@ -58,9 +58,17 @@ func orchestrationTools(types map[string]AgentType, spawnable []string) []tools.
 	}
 }
 
-// AllTools is every tool wick serves, file tools first.
+// AllTools is every tool wick serves, file tools first. The background tool is
+// rebuilt here with wick's grid, which is what keeps a dev server beside the
+// agents instead of in the caller's own pane.
 func AllTools() []tools.Tool {
-	return append(tools.All(), OrchestrationTools()...)
+	all := tools.All()
+	for i, t := range all {
+		if t.Name() == "background" {
+			all[i] = tools.Background(backgroundPane)
+		}
+	}
+	return append(all, OrchestrationTools()...)
 }
 
 // spawnExec is the exec spawn_worker drives. A var, like waitExec, so a test

@@ -11,14 +11,28 @@ import (
 	"time"
 )
 
+// Background is the background tool with a pane placer. wick supplies its
+// shared grid, so a server or watcher sits in the caller's tab beside the
+// agents instead of splitting the caller's own pane. A nil placer is a host
+// with no grid, and start refuses rather than stacking panes.
+func Background(place func(cwd string) (string, error)) Tool {
+	return backgroundTool{place: place}
+}
+
+// HerdrRun runs one herdr command for start's pane run and for read and stop.
+// It is a var so a wick test can watch the pane through the same fake grid.
+var HerdrRun = herdr
+
 // backgroundTool runs a long-lived command (a dev server, a watcher) in a
-// herdr pane split beside the session, so the model can read its output and
-// close it, and the human can watch it. bash would block until its timeout and
-// then kill the process.
+// herdr pane placed by the grid, so the model can read its output and close it,
+// and the human can watch it. bash would block until its timeout and then kill
+// the process.
 //
 // ponytail: panes are not tracked. start returns the pane id and the model
 // carries it; a pane the model forgets is closed by the human with the pane.
-type backgroundTool struct{}
+type backgroundTool struct {
+	place func(cwd string) (string, error)
+}
 
 func (backgroundTool) Name() string { return "background" }
 func (backgroundTool) Description() string {
@@ -48,7 +62,7 @@ func herdr(ctx context.Context, args ...string) (string, error) {
 	return string(out), nil
 }
 
-func (backgroundTool) Execute(ctx context.Context, root string, args json.RawMessage) (string, error) {
+func (t backgroundTool) Execute(ctx context.Context, root string, args json.RawMessage) (string, error) {
 	var p struct {
 		Action, Command, Pane string
 		Lines                 int
@@ -64,23 +78,18 @@ func (backgroundTool) Execute(ctx context.Context, root string, args json.RawMes
 		if os.Getenv("HERDR_PANE_ID") == "" {
 			return "", errors.New("not inside herdr, so there is no pane to split; run it with bash and a trailing & instead")
 		}
-		out, err := herdr(ctx, "pane", "split", "--current", "--direction", "down", "--ratio", "0.3", "--cwd", root, "--no-focus")
+		if t.place == nil {
+			return "", errors.New("no pane grid is installed; run the command with bash and a trailing & instead")
+		}
+		pane, err := t.place(root)
 		if err != nil {
 			return "", err
 		}
-		var reply struct {
-			Result struct {
-				Pane struct {
-					ID string `json:"pane_id"`
-				} `json:"pane"`
-			} `json:"result"`
+		if pane == "" {
+			return "", errors.New("the grid returned no pane id")
 		}
-		if err := json.Unmarshal([]byte(out), &reply); err != nil || reply.Result.Pane.ID == "" {
-			return "", fmt.Errorf("herdr split returned no pane id: %.200s", out)
-		}
-		pane := reply.Result.Pane.ID
-		if _, err := herdr(ctx, "pane", "run", pane, p.Command); err != nil {
-			_, _ = herdr(ctx, "pane", "close", pane)
+		if _, err := HerdrRun(ctx, "pane", "run", pane, p.Command); err != nil {
+			_, _ = HerdrRun(ctx, "pane", "close", pane)
 			return "", err
 		}
 		return fmt.Sprintf("started in pane %s. Next: background(action=\"read\", pane=\"%s\") to check it, background(action=\"stop\", pane=\"%s\") when done.", pane, pane, pane), nil
@@ -92,7 +101,7 @@ func (backgroundTool) Execute(ctx context.Context, root string, args json.RawMes
 		if n <= 0 {
 			n = 40
 		}
-		out, err := herdr(ctx, "pane", "read", p.Pane, "--lines", fmt.Sprint(n))
+		out, err := HerdrRun(ctx, "pane", "read", p.Pane, "--lines", fmt.Sprint(n))
 		if err != nil {
 			return "", err
 		}
@@ -101,7 +110,7 @@ func (backgroundTool) Execute(ctx context.Context, root string, args json.RawMes
 		if p.Pane == "" {
 			return "", errors.New("pane is required")
 		}
-		if _, err := herdr(ctx, "pane", "close", p.Pane); err != nil {
+		if _, err := HerdrRun(ctx, "pane", "close", p.Pane); err != nil {
 			return "", err
 		}
 		return "closed " + p.Pane, nil
