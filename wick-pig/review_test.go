@@ -370,7 +370,7 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 	if err := save(map[string]Worker{"07-x": {
 		ID: "07-x", Ticket: "/t/07-x.md", Spec: "/t/spec.md", Repo: repo, Base: base, Target: "main",
 		Branch: "implement/07-x", Worktree: tree, Pane: "root", Tab: reviewTab, Workspace: "w1",
-		AgentType: "worker",
+		AgentType: "worker", Started: "2026-10-05T00:00:00Z",
 	}}); err != nil {
 		t.Fatal(err)
 	}
