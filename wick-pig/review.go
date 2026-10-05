@@ -332,7 +332,11 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 		p.ticket, p.spec, p.model = w.Ticket, w.Spec, w.Model
 	}
 	p.place = workerPlace(w)
-	p.checks = runChecks(run, tree)
+	// An empty diff starts no reviewer, so the repo check is not worth the
+	// wait: the spawn reports nothing to review before any check runs.
+	if !p.noChanges {
+		p.checks = runChecks(run, tree)
+	}
 	return p, nil
 }
 
