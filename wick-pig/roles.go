@@ -19,8 +19,9 @@ var roles = map[string][]string{
 	// work is an implementer: every file tool, plus a review of its own work.
 	// No delegation: review_worker belongs to the merger.
 	"work": {"read", "edit", "write", "bash", "find", "background", "code_review"},
-	// plan is a wayfinder, grill or research session: file tools plus scouts.
-	"plan": {"read", "edit", "write", "bash", "find", "background", "scout", "code_review"},
+	// plan is a wayfinder, grill, research or to-spec session: file tools plus
+	// scouts. No review: review belongs where code is written, in the workers.
+	"plan": {"read", "edit", "write", "bash", "find", "background", "scout"},
 	// full is everything.
 	"full": nil,
 }
@@ -46,7 +47,10 @@ func RoleTools(role string) ([]tools.Tool, error) {
 	return out, nil
 }
 
-// RoleFromEnv is the role a launcher chose for this process.
+// RoleFromEnv is the role a launcher chose for this process. wick-pig always
+// sets WICK_ROLE, so a bare session arrives here as plan. An unset role is a
+// wick-mcp started by hand -- the live scripts and debugging do this -- and
+// that keeps the full tool set.
 func RoleFromEnv() string {
 	if r := os.Getenv("WICK_ROLE"); r != "" {
 		return r

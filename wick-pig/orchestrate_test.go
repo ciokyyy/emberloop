@@ -145,14 +145,15 @@ func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
 		}
 		return false
 	}
-	for _, role := range []string{"work", "plan", "full"} {
+	for _, role := range []string{"work", "full"} {
 		if !serves(role) {
 			t.Errorf("%s role must serve code_review", role)
 		}
 	}
 	// review and scout may only look; implement delegates and never reviews:
-	// each worker reviews its own work.
-	for _, role := range []string{"review", "scout", "implement"} {
+	// each worker reviews its own work; plan reviews nothing, review belongs
+	// where code is written.
+	for _, role := range []string{"review", "scout", "implement", "plan"} {
 		if serves(role) {
 			t.Errorf("%s role must not serve code_review", role)
 		}
@@ -286,5 +287,42 @@ func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
 	}
 	if !strings.Contains(out, "warning") || !strings.Contains(out, "unknown") {
 		t.Errorf("a missing report extension must be warned about, got %q", out)
+	}
+}
+
+// The worker reaches its brief, and through it the wick:// skill addresses,
+// with read. The brief lives beside the worker store, outside the worktree;
+// read opens any absolute path, so the launch needs no read exception.
+func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
+	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	spawnGap = 0
+	var launched string
+	base := spawnToolFake(evenSplit)
+	spawnExec = func(cmd string, args []string, o ExecOpts) (Result, error) {
+		if len(args) > 1 && args[0] == "pane" && args[1] == "run" {
+			launched = strings.Join(args, " ")
+		}
+		return base(cmd, args, o)
+	}
+	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "22-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_TAB_ID", "w1:t1")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
+	args, _ := json.Marshal(map[string]any{"ticket": ticket})
+	if _, err := spawnTool.Execute(context.Background(), repo, args); err != nil {
+		t.Fatalf("spawn_worker: %v", err)
+	}
+	if launched == "" {
+		t.Fatal("the worker was never launched")
+	}
+	if strings.Contains(launched, "WICK_READ_ALLOW") {
+		t.Errorf("worker launch must not carry a read exception; read opens any path:\n%s", launched)
 	}
 }

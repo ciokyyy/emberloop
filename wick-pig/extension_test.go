@@ -23,10 +23,9 @@ func TestShellArgQuotesOnlyWhenNeeded(t *testing.T) {
 }
 
 func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
-	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("pig", "01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,13 +35,18 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	}
 	text := string(body)
 
-	if !strings.Contains(text, "/skills/matt-pocock/implement/SKILL.md") {
-		t.Errorf("brief must name the implement skill file:\n%s", text)
+	for _, want := range []string{"wick://matt-pocock/implement/SKILL.md", "wick://matt-pocock/tdd/SKILL.md"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("brief must name %s:\n%s", want, text)
+		}
 	}
-	implement := strings.Index(text, "/skills/matt-pocock/implement/SKILL.md")
-	tdd := strings.Index(text, "/skills/matt-pocock/tdd/SKILL.md")
+	implement := strings.Index(text, "wick://matt-pocock/implement/SKILL.md")
+	tdd := strings.Index(text, "wick://matt-pocock/tdd/SKILL.md")
 	if !(implement < tdd) {
 		t.Errorf("order must be implement -> tdd, got %d/%d", implement, tdd)
+	}
+	if strings.Contains(text, "/skills/matt-pocock") {
+		t.Errorf("brief must not name an absolute library path:\n%s", text)
 	}
 	if strings.Contains(text, "code-review") {
 		t.Errorf("a worker must not review itself; the reviewer does:\n%s", text)
@@ -52,47 +56,24 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	}
 }
 
-// A claude worker reads the library through the read tool; a pig worker loads
-// it itself and keeps the absolute path.
-func TestBriefAddressDependsOnHarness(t *testing.T) {
-	t.Setenv("WICK_SKILLS_DIR", "/skills")
+// Every harness reads skills through the read tool under one wick:// address:
+// no session loads the library itself.
+func TestBriefIsTheSameForEveryHarness(t *testing.T) {
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
-	read := func(harness string) string {
-		path, err := writeBrief(harness, "01-probe", "/repo/.scratch/p/issues/01-probe.md")
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(body)
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	claude := read("claude")
-	for _, want := range []string{"wick://matt-pocock/implement/SKILL.md", "wick://matt-pocock/tdd/SKILL.md"} {
-		if !strings.Contains(claude, want) {
-			t.Errorf("claude brief must name %s:\n%s", want, claude)
-		}
-	}
-	if strings.Contains(claude, "/skills/matt-pocock") {
-		t.Errorf("claude brief must not name an absolute library path:\n%s", claude)
-	}
-
-	pig := read("pig")
-	if !strings.Contains(pig, "/skills/matt-pocock/implement/SKILL.md") {
-		t.Errorf("pig brief must keep the absolute path:\n%s", pig)
-	}
-	if strings.Contains(pig, "wick://") {
-		t.Errorf("pig brief must not name a wick:// address:\n%s", pig)
+	text := readFile(t, path)
+	if !strings.Contains(text, "wick://matt-pocock/implement/SKILL.md") {
+		t.Errorf("brief must name the implement skill by its wick:// address:\n%s", text)
 	}
 }
 
 func TestBackgroundRuleReachesBriefAndMerger(t *testing.T) {
-	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
-	path, err := writeBrief("pig", "01-probe", "/repo/.scratch/p/issues/01-probe.md")
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md")
 	if err != nil {
 		t.Fatal(err)
 	}

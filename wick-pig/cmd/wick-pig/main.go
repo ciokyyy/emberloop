@@ -2,7 +2,7 @@
 //
 //	wick-pig settings [decision-model <id>|threshold <n>|models]  read and save settings
 //	wick-pig skills install                                    fill the skill library
-//	wick-pig [--pig|--claude] [--model M] [-p]                 full session
+//	wick-pig [--pig|--claude] [--role full] [--model M] [-p]   plan session
 //	wick-pig implement <path> [flags]                          restricted merger
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
 package main
@@ -54,6 +54,7 @@ func run(argv []string) error {
 	pig := fs.Bool("pig", false, "use pig")
 	claude := fs.Bool("claude", false, "use claude")
 	model := fs.String("model", "", "model override")
+	role := fs.String("role", "", "session role; default plan (use full for every tool)")
 	headless := fs.Bool("p", false, "print one answer and exit")
 	if err := fs.Parse(argv); err != nil {
 		return err
@@ -70,7 +71,11 @@ func run(argv []string) error {
 	s := wick.Session{ID: wick.NewSessionID(), Model: *model, Headless: *headless, Cwd: cwd}
 	switch sub {
 	case "":
-		s.Role, s.Prompt, s.Skills = "full", rest, nil
+		r, err := sessionRole(sub, *role)
+		if err != nil {
+			return err
+		}
+		s.Role, s.Prompt = r, rest
 	case "implement":
 		if rest == "" {
 			return fmt.Errorf("usage: wick-pig implement <ticket-dir-or-file>")
@@ -79,12 +84,20 @@ func run(argv []string) error {
 		if err != nil {
 			return err
 		}
-		s.Role, s.Prompt, s.Skills = "implement", wick.ImplementPrompt(target), wick.RouteSkills()
+		r, err := sessionRole(sub, *role)
+		if err != nil {
+			return err
+		}
+		s.Role, s.Prompt = r, wick.ImplementPrompt(target)
 	default:
 		found := false
 		for _, e := range wick.SkillEntries() {
 			if e.Name == sub {
-				s.Role, s.Prompt, s.Skills = "plan", wick.SkillPrompt(*harness, e.Skill, rest, e.Scout), wick.RouteSkills()
+				r, err := sessionRole(sub, *role)
+				if err != nil {
+					return err
+				}
+				s.Role, s.Prompt = r, wick.SkillPrompt(e.Skill, rest, e.Scout)
 				found = true
 			}
 		}
@@ -134,4 +147,26 @@ func withoutPrompt(s wick.Session, l wick.Launch) wick.Session {
 		s.Prompt = ""
 	}
 	return s
+}
+
+// sessionRole is the role a launch gets. A bare session plans; the implement
+// launcher starts an implement session; a route subcommand plans too. The role
+// flag picks the bare session's role, which is how `full` -- every tool --
+// stays reachable. A flag beside a subcommand is refused: the subcommand's
+// prompt is written for its own role, and a role that cannot run the prompt
+// only yields a broken session.
+func sessionRole(sub, flagValue string) (string, error) {
+	if flagValue != "" {
+		if sub != "" {
+			return "", fmt.Errorf("--role applies to a bare session; %q already picks its role", sub)
+		}
+		if _, err := wick.RoleTools(flagValue); err != nil {
+			return "", err
+		}
+		return flagValue, nil
+	}
+	if sub == "implement" {
+		return "implement", nil
+	}
+	return "plan", nil
 }

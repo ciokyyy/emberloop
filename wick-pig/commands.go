@@ -21,9 +21,9 @@ var skillCommands = []struct {
 	{"to-tickets", "to-tickets", "Break a spec into a ticket graph with Blocked-by edges.", false},
 }
 
-func skillPrompt(harness, skill, args string, scout bool) string {
+func skillPrompt(skill, args string, scout bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Read %s and follow it exactly.", skillRef(harness, skill))
+	fmt.Fprintf(&b, "Read %s and follow it exactly.", skillAddress(skill))
 	if args != "" {
 		fmt.Fprintf(&b, "\n\nInput: %s", args)
 	}

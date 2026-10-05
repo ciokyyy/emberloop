@@ -30,7 +30,6 @@ type Session struct {
 	ID       string // session id; names the transcript so the reply can be read back
 	Dir      string // where a harness that takes a session dir should keep it
 	Label    string // names the session so herdr can address it
-	Skills   []string
 }
 
 // Command is a ready-to-exec invocation.
@@ -125,10 +124,9 @@ type pigHarness struct{}
 func (pigHarness) Name() string { return "pig" }
 
 func (pigHarness) Command(s Session) (Command, error) {
+	// --no-skills keeps the harness from loading the user's global library:
+	// a session reaches skills only by the wick:// addresses its prompt names.
 	args := []string{"--no-builtin-tools", "--no-skills", "--append-system-prompt", systemPrompt}
-	for _, name := range s.Skills {
-		args = append(args, "--skill", filepath.Dir(skillPath(name)))
-	}
 	if ext := reportExtension(runningExe(), os.Getenv("HOME")); ext != "" && !s.Headless {
 		args = append(args, "-e", ext)
 	}
@@ -304,20 +302,11 @@ func SkillEntries() []SkillEntry {
 }
 
 // SkillPrompt and ImplementPrompt expose the prompt builders.
-func SkillPrompt(harness, skill, args string, scout bool) string {
-	return skillPrompt(harness, skill, args, scout)
+func SkillPrompt(skill, args string, scout bool) string {
+	return skillPrompt(skill, args, scout)
 }
 
 func ImplementPrompt(target string) string { return implementPrompt(target) }
-
-// RouteSkills names the skills a restricted session should know.
-func RouteSkills() []string {
-	names := make([]string, len(workerSkills))
-	for i, s := range workerSkills {
-		names[i] = s.name
-	}
-	return names
-}
 
 // appendPrompt adds the first message; an empty one means an open session.
 func appendPrompt(args []string, prompt string) []string {

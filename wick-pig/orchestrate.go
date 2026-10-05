@@ -93,13 +93,15 @@ var spawnTool = fnTool{
 		if in.Repo == "" {
 			in.Repo = root
 		}
-		brief, err := writeBrief(in.Harness, WorkerID(in.Ticket), in.Ticket)
+		brief, err := writeBrief(WorkerID(in.Ticket), in.Ticket)
 		if err != nil {
 			return "", err
 		}
 		sess := Session{
 			ID:   newSessionID(),
-			Role: "work", Cwd: worktreePath(in.Repo, WorkerID(in.Ticket)), Model: in.Model, Label: WorkerID(in.Ticket), Skills: RouteSkills(),
+			Role: "work", Cwd: worktreePath(in.Repo, WorkerID(in.Ticket)), Model: in.Model, Label: WorkerID(in.Ticket),
+			// The brief sits beside the worker store, outside the worktree;
+			// read opens it by absolute path.
 			Prompt: fmt.Sprintf("Read %s and follow it exactly.", brief),
 		}
 		launch, err := PrepareLaunch(in.Harness, sess)

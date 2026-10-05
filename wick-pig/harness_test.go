@@ -9,7 +9,7 @@ import (
 )
 
 func workerSession() Session {
-	return Session{Role: "work", Label: "01-x", Skills: RouteSkills(), Prompt: "Read /state/briefs/01-x.md and follow it exactly."}
+	return Session{Role: "work", Label: "01-x", Prompt: "Read /state/briefs/01-x.md and follow it exactly."}
 }
 
 // isolateState keeps a build that writes harness files (claude's MCP config)
@@ -56,16 +56,21 @@ func TestBothHarnessesCarryTheSkillLibraryAddress(t *testing.T) {
 	}
 }
 
-func TestPigWorkerGetsRouteSkillsAndReporter(t *testing.T) {
+// No harness loads global skills: pig keeps --no-skills and loads nothing from
+// the library, so a session sees only what its prompt points it at.
+func TestPigWorkerGetsNoSkillsAndTheReporter(t *testing.T) {
 	t.Setenv("WICK_SKILLS_DIR", "/skills")
 	t.Setenv("WICK_HERDR_REPORT", "/exts/herdr-report")
 	cmd, _ := BuildCommand("pig", workerSession())
 	line := cmd.Line()
-	for _, want := range []string{"--no-skills", "--skill /skills/matt-pocock/implement", "--skill /skills/matt-pocock/tdd",
-		"-e /exts/herdr-report", "--session-id 01-x", "WICK_AGENT_LABEL=01-x", "--no-builtin-tools"} {
+	for _, want := range []string{"--no-skills", "-e /exts/herdr-report", "--session-id 01-x",
+		"WICK_AGENT_LABEL=01-x", "--no-builtin-tools"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("missing %q in %s", want, line)
 		}
+	}
+	if strings.Contains(line, "--skill") {
+		t.Errorf("pig must load no skills of its own: %s", line)
 	}
 }
 

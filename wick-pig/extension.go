@@ -51,19 +51,6 @@ func skillAddress(name string) string {
 // callers outside the package.
 func SkillLibraryDir() string { return skillsDir() }
 
-func skillPath(name string) string {
-	return filepath.Join(skillsDir(), name, "SKILL.md")
-}
-
-// skillRef is how one session is told to open a skill. claude has no --skill
-// flag, so the read tool's wick:// address is the only thing it can follow; pig
-// loads the library itself through --skill, so it keeps the absolute path.
-func skillRef(harness, name string) string {
-	if harness == "claude" {
-		return skillAddress(name)
-	}
-	return skillPath(name)
-}
 
 // reportExtension locates the herdr-report extension, which is what makes a
 // worker visible to herdr as an agent rather than just a pane. The env var
@@ -145,9 +132,10 @@ func shellArg(s string) string {
 }
 
 // writeBrief puts the worker's instructions on disk, beside the worker store.
-// It points at the skills rather than restating them, so an upstream rewrite
-// lands without a code change here.
-func writeBrief(harness, id, ticket string) (string, error) {
+// It points at the skills by their wick:// addresses rather than restating
+// them, so an upstream rewrite lands without a code change here, and one brief
+// serves every harness.
+func writeBrief(id, ticket string) (string, error) {
 	dir := filepath.Join(filepath.Dir(statePath), "briefs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -158,7 +146,7 @@ func writeBrief(harness, id, ticket string) (string, error) {
 	fmt.Fprintf(&b, "Implement the ticket at %s.\n\n", ticket)
 	b.WriteString("Read and follow these skills, in this order:\n\n")
 	for i, s := range workerSkills {
-		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, skillRef(harness, s.name), s.when)
+		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, skillAddress(s.name), s.when)
 	}
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
 	b.WriteString("\nServers, watchers and log tails go to the background tool, never bash: it blocks until timeout.\n")
