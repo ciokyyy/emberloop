@@ -33,8 +33,9 @@ func spawnToolForRole(t *testing.T, role string) (func(string, map[string]any) (
 	return nil, ""
 }
 
-// spawnTestState points the submit store at a temp dir and silences the launch
-// spacing, restoring both after.
+// spawnTestState points the submit store and the settings file at temp paths
+// and silences the launch spacing, restoring all after. An empty settings file
+// and no read-only override keep a launch off the developer's own config.
 func spawnTestState(t *testing.T) {
 	t.Helper()
 	oldState, oldGap, oldExec, oldPoll := statePath, spawnGap, spawnExec, pollEvery
@@ -42,6 +43,7 @@ func spawnTestState(t *testing.T) {
 	spawnGap = 0
 	pollEvery = 5 * time.Millisecond
 	t.Cleanup(func() { statePath, spawnGap, spawnExec, pollEvery = oldState, oldGap, oldExec, oldPoll })
+	resolverSettings(t, "")
 }
 
 // envIn reads an environment assignment (WICK_AGENT_ID=...) out of a launch

@@ -408,6 +408,34 @@ func TestReviewersResolveTheirOwnSlots(t *testing.T) {
 	}
 }
 
+// A reviewer does not copy the worker's model: with the worker's model set and
+// the slot empty, the reviewer launches with none.
+func TestReviewersDoNotCopyTheWorkerModel(t *testing.T) {
+	_, tree := reviewRepo(t)
+	store, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := store["07-x"]
+	w.Model = "worker-model"
+	store["07-x"] = w
+	if err := save(store); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeReviewers(answers(verdictPass, verdictPass))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{reviewerStandards, reviewerSpec} {
+		if got := flagIn(f.paneOf(t, typ).line, "--model"); got != "" {
+			t.Errorf("%s reviewer model = %q, want none: the worker's model must not leak", typ, got)
+		}
+		if rec := reviewersOf(tree)[typ]; rec.Model != "" {
+			t.Errorf("%s reviewer record model = %q, want none", typ, rec.Model)
+		}
+	}
+}
+
 // WICK_READONLY_HARNESS is a resolver flag layer: it overrides the slot's
 // harness, so a reviewer on a machine with the variable set still launches
 // with it.
