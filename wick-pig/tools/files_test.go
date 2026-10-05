@@ -91,8 +91,8 @@ func TestReadWickIndexesSkills(t *testing.T) {
 		t.Fatalf("index read failed: %v", err)
 	}
 	for _, want := range []string{
-		"grilling: Grill a plan with relentless questions.",
-		"research: Research a topic deeply.",
+		"grilling/: Grill a plan with relentless questions.",
+		"research/: Research a topic deeply.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("index missing %q, got:\n%s", want, out)
@@ -109,8 +109,13 @@ func TestReadWickReadsAFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("file read failed: %v", err)
 	}
-	if !strings.Contains(out, "Ask hard questions.") || !strings.Contains(out, "wick://matt-pocock/grilling/SKILL.md#") {
+	if !strings.Contains(out, "Ask hard questions.") || !strings.Contains(out, "[wick://matt-pocock/grilling/SKILL.md] 5 lines") {
 		t.Fatalf("file read = %q", out)
+	}
+	// A wick:// file can never be edited, so it carries no tag and no line
+	// numbers: they would only cost tokens.
+	if strings.Contains(out, "#") || strings.Contains(out, "→") {
+		t.Errorf("a wick:// file must be plain text, got:\n%s", out)
 	}
 }
 
@@ -157,7 +162,7 @@ func TestReadWickIndexHandlesSkillWithNoDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "described: Has one.") {
+	if !strings.Contains(out, "described/: Has one.") {
 		t.Errorf("index dropped a description, got:\n%s", out)
 	}
 	if !strings.Contains(out, "bare") || strings.Contains(out, "bare:") {
@@ -312,7 +317,7 @@ func TestReadWickIndexReadsBlockScalarDescription(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "folded: A long description wrapped over lines.") {
+	if !strings.Contains(out, "folded/: A long description wrapped over lines.") {
 		t.Fatalf("block scalar description not read, got:\n%s", out)
 	}
 	if strings.Contains(out, "should be ignored") {
@@ -332,5 +337,95 @@ func TestReadWickRefusesCredentialPaths(t *testing.T) {
 	}
 	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock/grilling/.env"}); err == nil {
 		t.Fatalf("a .env under a namespace must be refused, served %q", out)
+	}
+}
+
+// A directory reads as a one-level listing: directories end in "/", files
+// carry a size. A workspace directory and a wick:// directory share it.
+func TestReadListsADirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "a.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"docs", filepath.Join(root, "docs")} {
+		out, err := run(t, readTool{}, root, map[string]any{"path": path})
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, want := range []string{"2 entries", "sub/", "a.md  6B"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("read %s missing %q:\n%s", path, want, out)
+			}
+		}
+	}
+}
+
+func TestReadPagesALargeDirectory(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"a", "b", "c", "d"} {
+		if err := os.WriteFile(filepath.Join(root, n), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := run(t, readTool{}, root, map[string]any{"path": ".", "offset": 2, "limit": 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "\nb  ") || !strings.Contains(out, "\nc  ") || strings.Contains(out, "\na  ") || strings.Contains(out, "\nd  ") {
+		t.Errorf("offset 2 limit 2 must list b and c only:\n%s", out)
+	}
+	if !strings.Contains(out, "4 entries") {
+		t.Errorf("the header must count every entry:\n%s", out)
+	}
+}
+
+// Reading a skill's directory leads to the skill: the listing ends with a hint
+// naming its SKILL.md.
+func TestReadWickSkillDirectoryPointsAtSkillFile(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{"grilling": "---\ndescription: x\n---\n"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock/grilling"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "SKILL.md  ") || !strings.Contains(out, "read wick://matt-pocock/grilling/SKILL.md for the skill") {
+		t.Errorf("a skill directory must list and point at SKILL.md:\n%s", out)
+	}
+}
+
+func TestReadExpandsAGlob(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"a.md", "b.md", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(root, n), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := run(t, readTool{}, root, map[string]any{"path": "*.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "2 matches") || !strings.Contains(out, "a.md") || !strings.Contains(out, "b.md") || strings.Contains(out, "c.txt") {
+		t.Errorf("glob *.md:\n%s", out)
+	}
+	if strings.Contains(out, "x") && strings.Contains(out, "→") {
+		t.Errorf("a glob lists paths, never contents:\n%s", out)
+	}
+	if _, err := run(t, readTool{}, root, map[string]any{"path": "*.go"}); err == nil || !strings.Contains(err.Error(), "no match") {
+		t.Errorf("a glob with no match must say so, got %v", err)
+	}
+}
+
+func TestReadWickFilePagesWithoutTag(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{"s": "one\ntwo\nthree\n"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "wick://matt-pocock/s/SKILL.md", "offset": 2, "limit": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "[wick://matt-pocock/s/SKILL.md] 3 lines\ntwo\n" {
+		t.Errorf("got %q", out)
 	}
 }

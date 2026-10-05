@@ -175,7 +175,6 @@ func TestReadPlainRefusesWithAReason(t *testing.T) {
 		{"blob.bin", "binary"},
 		{"big.txt", "read limit"},
 		{"missing.txt", "no such file"},
-		{".", "not a regular file"},
 	} {
 		_, err := readPlain(dir, tc.path, 0, 0)
 		if err == nil {

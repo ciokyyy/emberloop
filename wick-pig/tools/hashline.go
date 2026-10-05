@@ -342,8 +342,9 @@ func parseHashlineOps(text string) ([]patchOp, error) {
 // read
 // ---------------------------------------------------------------------------
 
-// readPlain renders a source file with line numbers and its snapshot tag. The
-// error names why a target is not rendered here.
+// readPlain renders a source file with line numbers and its snapshot tag, a
+// directory as a listing, and a glob as the paths it matches. The error names
+// why a target is not rendered here.
 //
 // read opens any path: an absolute target is taken as given, a relative one is
 // resolved under baseDir. The credential deny list is checked first, so a
@@ -355,6 +356,16 @@ func parseHashlineOps(text string) ([]patchOp, error) {
 // read there is no route to its PDF/notebook/archive handling. Verified
 // against pig 0.4.0; see scripts/read-precedence.sh.
 func readPlain(baseDir, target string, offset, limit int) (string, error) {
+	// A pattern is a glob unless a file by that literal name exists.
+	if isGlob(target) {
+		literal := target
+		if !filepath.IsAbs(literal) {
+			literal = filepath.Join(baseDir, literal)
+		}
+		if _, err := os.Lstat(literal); err != nil {
+			return readGlob(baseDir, target, offset, limit)
+		}
+	}
 	full, err := readTarget(baseDir, target)
 	if err != nil {
 		return "", err
@@ -362,7 +373,10 @@ func readPlain(baseDir, target string, offset, limit int) (string, error) {
 	if err := refuseCredential(target, full); err != nil {
 		return "", err
 	}
-	return renderFile(target, full, offset, limit)
+	if isDir(full) {
+		return listDir(target, full, offset, limit, nil)
+	}
+	return renderFile(target, full, offset, limit, false)
 }
 
 // readTarget resolves a read target to the path on disk. An absolute target is
@@ -379,8 +393,10 @@ func readTarget(baseDir, target string) (string, error) {
 }
 
 // renderFile renders the regular text file at full, labelling it display in the
-// tag. The caller has already decided the path is one this tool may serve.
-func renderFile(display, full string, offset, limit int) (string, error) {
+// header. The caller has already decided the path is one this tool may serve.
+// A plain render is for files that can never be edited (wick://): no tag and
+// no line numbers, since both only cost tokens there.
+func renderFile(display, full string, offset, limit int, plain bool) (string, error) {
 	info, err := os.Stat(full)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", display, err)
@@ -404,20 +420,18 @@ func renderFile(display, full string, offset, limit int) (string, error) {
 	}
 
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	if offset < 1 {
-		offset = 1
-	}
-	if limit <= 0 || limit > len(lines) {
-		limit = len(lines)
-	}
-	end := offset - 1 + limit
-	if end > len(lines) {
-		end = len(lines)
-	}
+	start, end := window(len(lines), offset, limit)
 
 	var b strings.Builder
+	if plain {
+		fmt.Fprintf(&b, "[%s] %d lines\n", display, len(lines))
+		for _, line := range lines[start:end] {
+			b.WriteString(line + "\n")
+		}
+		return b.String(), nil
+	}
 	fmt.Fprintf(&b, "[%s#%s] %d lines\n", display, contentTag(data), len(lines))
-	for i := offset - 1; i < end; i++ {
+	for i := start; i < end; i++ {
 		fmt.Fprintf(&b, "%6d→%s\n", i+1, lines[i])
 	}
 	return b.String(), nil

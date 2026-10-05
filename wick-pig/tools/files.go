@@ -27,13 +27,14 @@ type readTool struct{}
 func (readTool) Name() string   { return "read" }
 func (readTool) ReadOnly() bool { return true }
 func (readTool) Description() string {
-	return "Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it."
+	return "Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it. " +
+		"Any absolute path works, except credential files. A directory returns a listing, a glob (*.md) the matching paths. wick:// files are plain text: they cannot be edited."
 }
 func (readTool) Schema() map[string]any {
 	return obj(map[string]any{
-		"path":   map[string]any{"type": "string", "description": "File to read."},
-		"offset": map[string]any{"type": "integer", "description": "First line, 1-based."},
-		"limit":  map[string]any{"type": "integer", "description": "Maximum lines."},
+		"path":   map[string]any{"type": "string", "description": "File, directory, glob, or wick:// address to read."},
+		"offset": map[string]any{"type": "integer", "description": "First line (or entry), 1-based."},
+		"limit":  map[string]any{"type": "integer", "description": "Maximum lines (or entries)."},
 	}, "path")
 }
 func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (string, error) {
@@ -102,12 +103,12 @@ func readWick(addr string, offset, limit int) (string, error) {
 		return "", fmt.Errorf("%s: %w", addr, err)
 	}
 	if info.IsDir() {
-		return wickIndex(addr, full)
+		return wickIndex(addr, full, offset, limit)
 	}
 	if err := refuseCredential(addr, full); err != nil {
 		return "", err
 	}
-	return renderFile(addr, full, offset, limit)
+	return renderFile(addr, full, offset, limit, true)
 }
 
 // splitWick breaks the address after the scheme into namespace and the rest of
@@ -161,31 +162,20 @@ func wickInside(dir, rel string) (string, error) {
 	return full, nil
 }
 
-// wickIndex lists one entry per line. A directory that holds a SKILL.md gets
-// the description from its frontmatter after its name; anything else is just
-// its name, so the reader can see what is there.
-func wickIndex(addr, dir string) (string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "[%s]\n", addr)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			// The SKILL.md is resolved the same way a read of it would be, so
-			// a symlink pointing out of the namespace is skipped rather than
-			// read for its description.
-			if skill, err := wickInside(dir, filepath.Join(entry.Name(), "SKILL.md")); err == nil {
-				if desc := skillDescription(skill); desc != "" {
-					fmt.Fprintf(&b, "%s: %s\n", entry.Name(), desc)
-					continue
-				}
-			}
+// wickIndex lists a wick:// directory in the shared listing format. A
+// subdirectory that holds a SKILL.md gets the description from its
+// frontmatter after its name, so the namespace reads as an index of skills.
+func wickIndex(addr, dir string, offset, limit int) (string, error) {
+	return listDir(addr, dir, offset, limit, func(name string) string {
+		// The SKILL.md is resolved the same way a read of it would be, so a
+		// symlink pointing out of the namespace is skipped rather than read
+		// for its description.
+		skill, err := wickInside(dir, filepath.Join(name, "SKILL.md"))
+		if err != nil {
+			return ""
 		}
-		fmt.Fprintf(&b, "%s\n", entry.Name())
-	}
-	return b.String(), nil
+		return skillDescription(skill)
+	})
 }
 
 // skillDescription reads the description field of a SKILL.md. It is empty when
