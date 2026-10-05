@@ -21,6 +21,15 @@ A second look at the live sessions' spawn calls found that **reviews were not ju
 - Blocking spawns stopped waiting at about 4 minutes (213 to 247 seconds in every case) and answered "still running; end your turn". That is the intended hand-off, but it is undocumented and unmeasured, and it explains why some workers looked idle.
 - Spawn calls whose entries omitted `type` were rejected by the tool schema in under a second; that is the schema working, and a model error, not a wick fault.
 
+A third finding, reported by the user: **when two agents spawn at the same moment, one of the two spawned agents is thrown away.** Reading the code, spawn's shared state is only safe inside one process, and every session runs its own wick MCP process:
+
+- Grid placement (which slot a new pane takes, and creating the overflow tab) is serialised by an in-process lock over an in-memory record. Two processes read the same pane list, choose the same slot, and split the same source pane; one pane then sits outside the grid's record, and a later replace or prune can close it. Two processes can also both create the same overflow tab.
+- The worker store is read, changed and written back under an in-process lock only, and is written in place rather than renamed. A second process can overwrite an entry, and a reader can see a half-written file and treat a worker as unknown (which changes a review's base and tab).
+- The reviewer record is keyed by worktree and type. Two spawns that both find no live reviewer for the same key each start one, and the second record overwrites the first, leaving the first pane running and unowned.
+- The pause between launches, added because simultaneous first requests make the provider answer with empty bodies or a 503 (seen in three worker sessions), is kept per process, so simultaneous spawns from different sessions still collide.
+
+The exact symptom has not been reproduced; the first ticket reproduces it before any fix.
+
 ## Solution
 
 Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox): a hierarchy of `AGENTS.md` files in which the root holds project-wide rules and an index, each durable folder holds its own contract, an agent reads the chain from the root to its target before editing, and updates the owning docs after meaningful changes. The DOX tree replaces the pointer file the retro proposed.
@@ -57,6 +66,13 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 28. As a user, I want a pass recorded against an exact working state, so that a pass on one version of the code never covers another.
 29. As a worker, I want a blocking spawn that outlasts its wait to say how long it waited and that the result arrives as a notice, so that I know to end my turn.
 30. As a user, I want the length of that wait written down and covered by a test, so that a change to it is deliberate.
+31. As a user, I want two agents that spawn at the same time to both get the agents they asked for, so that no spawned agent is closed, overwritten or orphaned.
+32. As an orchestrator, I want two spawns from different sessions to place their panes in distinct grid slots, so that no pane displaces another.
+33. As a user, I want only one overflow tab per label to ever exist, so that simultaneous spawns do not open duplicates.
+34. As a user, I want the worker store to survive simultaneous writers and readers, so that no entry is lost and no reader sees a partial file.
+35. As a worker, I want a second simultaneous spawn of the same reviewer type for my worktree to re-prompt the one already starting instead of starting another, so that there is one reviewer per type.
+36. As a user, I want launches from separate sessions spaced apart too, so that simultaneous first requests do not make the provider answer with empty bodies.
+37. As a maintainer, I want a concurrency test across real processes, so that this class of bug cannot return unseen.
 
 ## Implementation Decisions
 
@@ -74,6 +90,9 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - A reviewer's follow-up diff is the difference between the snapshot it last judged and the current one, so it covers new and uncommitted files and shrinks to the real change. If the previous snapshot is gone (a rebase, a gc), the full diff is given and the prompt says so, as now.
 - The reviewer prompt states how many files the diff covers and how many the working tree changed or added; a mismatch is flagged in the prompt, not left for the reviewer to notice.
 - "Nothing to review" compares snapshots, not commits.
+- Concurrency: every piece of spawn state shared between sessions is guarded by a cross-process lock and written atomically, using the lock helper wick already has for agent state and reviewers. That covers grid placement and overflow-tab creation (per tab), the worker store, and the check-then-launch of a reviewer (per worktree and type). The grid's slot record is read under the same lock, from a file, not process memory.
+- The spacing between launches uses a shared timestamp under a lock, so it holds across sessions.
+- The first ticket is a reproduction: concurrent spawns across real processes against a fake herdr, asserting every requested agent exists, owns a distinct pane, and appears in the stores. The fixes follow its failures.
 - The spawn wait for blocking agents keeps its current bound; the bound becomes a named setting, the "still running" reply states the wait in seconds, and the worker and orchestrator briefs mention it once.
 
 ## Testing Decisions
@@ -88,6 +107,7 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - Review packet: a worktree with a new untracked file produces a diff that contains it; an unchanged dirty tree yields "nothing to review"; the same tree after another edit does not; a follow-up diff after an uncommitted edit contains only that edit; a rebase falls back to the full diff with a note. Prior art: the review tests with a fake herdr and a real temp git repo.
 - Merge gate: a pass on a clean commit still opens the gate; a pass on a dirty snapshot still does not.
 - Spawn wait: a fake slow reviewer exceeds the bound and the reply names it and says results arrive as notices.
+- Concurrency: several helper processes spawn scouts, workers and reviewers at once against a fake herdr that records splits and closes; the test asserts no close of a pane another spawn owns, distinct slots, one overflow tab per label, a complete worker store, and one reviewer per worktree and type. It must fail on the current code. Prior art: the fake herdr in the grid and review tests, and the cross-process file lock tests.
 
 ## Out of Scope
 
