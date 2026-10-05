@@ -92,11 +92,11 @@ func backgroundAgent(id string) (bool, error) {
 
 // claimNextSubmit takes a blocking child's next submit for a waiting tell: it
 // points the child's result at the caller rather than the notice path, and
-// clears the this-turn flag on its last submit so only a fresh turn's submit
-// answers the tell. Both writes happen under the child's own lock, so a submit
-// arriving at the same instant is either claimed here or delivered as a notice,
-// never both. It returns an undo, so a tell whose delivery then fails puts the
-// child back on the notice path rather than leaving its result owned by nobody.
+// clears its last submit's this-turn and give-up flags so only a fresh turn's
+// submit answers the tell. Both writes happen under the child's own lock, so a
+// submit arriving at the same instant is either claimed here or delivered as a
+// notice, never both. It returns an undo, so a tell whose delivery then fails
+// puts the child back rather than leaving its result owned by nobody.
 func claimNextSubmit(id string) (undo func() error, err error) {
 	var (
 		prevState  AgentState
@@ -115,11 +115,12 @@ func claimNextSubmit(id string) (undo func() error, err error) {
 			return err
 		}
 		prevSubmit, hadSubmit, err = ReadAgentSubmit(id)
-		if err != nil || !hadSubmit || !prevSubmit.ThisTurn {
+		prevSubmit, hadSubmit, err = ReadAgentSubmit(id)
+		if err != nil || !hadSubmit || !(prevSubmit.ThisTurn || prevSubmit.Stopped) {
 			return err
 		}
 		sub := prevSubmit
-		sub.ThisTurn = false
+		sub.ThisTurn, sub.Stopped = false, false
 		return WriteAgentSubmit(sub)
 	})
 	if err != nil {
@@ -141,14 +142,14 @@ func claimNextSubmit(id string) (undo func() error, err error) {
 }
 
 // backgroundToldAgent switches a blocking agent that a tell waited on to the
-// notice path, unless a fresh turn's submit arrived at the deadline. It is the
-// tell-side counterpart to backgroundAgent: a told agent already has a submit
-// on disk, so it is the this-turn flag, not the file's existence, that says
-// whether there is a new result to own.
+// notice path, unless its answer arrived at the deadline. It is the tell-side
+// counterpart to backgroundAgent: a told agent already has a submit on disk, so
+// it is the submit's flags, not the file's existence, that say whether there is
+// a new result to own.
 func backgroundToldAgent(id string) (bool, error) {
 	backgrounded := false
 	err := withFileLock("state-"+id, func() error {
-		if s, ok, err := ReadAgentSubmit(id); err != nil || (ok && s.ThisTurn) {
+		if s, ok, err := ReadAgentSubmit(id); err != nil || (ok && answersTell(s)) {
 			return err
 		}
 		s, _, err := ReadAgentState(id)

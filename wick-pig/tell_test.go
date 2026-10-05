@@ -242,3 +242,65 @@ func TestFinishFallsBackToTheWorktreeRecordForAnUnknownType(t *testing.T) {
 		t.Errorf("finish must discard a worktree agent whose type is unknown, got %q", out)
 	}
 }
+
+// A blocking tell returns the stop gate's give-up the way it returns a submit,
+// rather than leaving it for a wait that no longer exists.
+func TestTellToABlockingAgentReturnsAGiveUp(t *testing.T) {
+	tellTestState(t)
+	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", Pane: "p2", Parent: "wP", ParentID: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{reply: func(_ string, args []string) Result {
+		switch {
+		case args[0] == "agent" && args[1] == "prompt":
+			return Result{Code: 1} // a pig pane refuses; Nudge types instead
+		case args[0] == "pane" && args[1] == "send-text":
+			_ = WriteAgentSubmit(AgentSubmit{AgentID: "a1", Type: "scout", Status: "stopped", Report: "stopped without submitting: I am stuck", Stopped: true})
+		}
+		return Result{}
+	}}
+	tellExec = rec.run
+
+	tell := toolForRole(t, "implement", "tell")
+	out, err := tell("/repo", map[string]any{"agent": "a1", "text": "again"})
+	if err != nil {
+		t.Fatalf("tell: %v", err)
+	}
+	if !strings.Contains(out, "stopped without submitting: I am stuck") {
+		t.Errorf("a tell must return the stop gate's give-up, got %q", out)
+	}
+}
+
+// A give-up the parent already read is not the answer to a later tell: the
+// claim clears it, so only the new turn's submit comes back.
+func TestTellDoesNotReturnAStaleGiveUp(t *testing.T) {
+	tellTestState(t)
+	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", Pane: "p2", Parent: "wP", ParentID: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: "a1", Type: "scout", Status: "stopped", Report: "stopped without submitting: old", Stopped: true}); err != nil {
+		t.Fatal(err)
+	}
+	scout := AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}
+	rec := &recorder{reply: func(_ string, args []string) Result {
+		switch {
+		case args[0] == "agent" && args[1] == "prompt":
+			return Result{Code: 1}
+		case args[0] == "pane" && args[1] == "send-text":
+			if _, err := submitOnce(t, scout, "a1", "answered", "report", "the new facts"); err != nil {
+				t.Errorf("submit: %v", err)
+			}
+		}
+		return Result{}
+	}}
+	tellExec = rec.run
+
+	tell := toolForRole(t, "implement", "tell")
+	out, err := tell("/repo", map[string]any{"agent": "a1", "text": "again"})
+	if err != nil {
+		t.Fatalf("tell: %v", err)
+	}
+	if !strings.Contains(out, "the new facts") || strings.Contains(out, "stopped without submitting: old") {
+		t.Errorf("tell must return the new turn's submit, got %q", out)
+	}
+}

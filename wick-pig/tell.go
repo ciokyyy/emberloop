@@ -11,15 +11,24 @@ var tellExec Exec = osExec
 
 // renderSubmit is one agent's report as its caller sees it: its type, id,
 // status and the body it gave, a summary for a non-blocking agent or a full
-// report for a blocking one. It is shared by the spawn result and a tell that
-// waited for a blocking agent's submit.
+// report for a blocking one. A give-up is not a status the agent chose but the
+// stop gate's, so it reads as what happened. It is shared by the spawn result
+// and a tell that waited for a blocking agent's submit.
 func renderSubmit(s AgentSubmit) string {
+	if s.Stopped {
+		return fmt.Sprintf("%s %s %s", s.Type, s.AgentID, s.Report)
+	}
 	body := s.Report
 	if body == "" {
 		body = s.Summary
 	}
 	return fmt.Sprintf("%s %s submitted (%s):\n%s", s.Type, s.AgentID, s.Status, body)
 }
+
+// answersTell reports whether a submit is the answer to a waiting tell: the
+// turn's own submit, or the stop gate's give-up, which is returned the way a
+// submit would be.
+func answersTell(s AgentSubmit) bool { return s.ThisTurn || s.Stopped }
 
 // tellAgent delivers text to any agent by id through the nudge path. A
 // non-blocking agent's answer arrives later as a submit notice, so tell returns
@@ -63,7 +72,7 @@ func tellAgent(run Exec, id, text string) (string, error) {
 
 	deadline := time.Now().Add(toolBudget)
 	for {
-		if s, ok, _ := ReadAgentSubmit(id); ok && s.ThisTurn {
+		if s, ok, _ := ReadAgentSubmit(id); ok && answersTell(s) {
 			return renderSubmit(s), nil
 		}
 		if !time.Now().Before(deadline) {
@@ -78,7 +87,7 @@ func tellAgent(run Exec, id, text string) (string, error) {
 	}
 	if !bg {
 		// It submitted right at the deadline.
-		if s, ok, _ := ReadAgentSubmit(id); ok && s.ThisTurn {
+		if s, ok, _ := ReadAgentSubmit(id); ok && answersTell(s) {
 			return renderSubmit(s), nil
 		}
 	}
