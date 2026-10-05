@@ -46,7 +46,7 @@ func schema(properties map[string]any, required ...string) map[string]any {
 // OrchestrationTools are the delegation tools: workers, reviews, scouts.
 func OrchestrationTools() []tools.Tool {
 	return []tools.Tool{
-		spawnTool, waitTool, finishTool, reviewTool, scoutTool, tellTool, codeReviewTool,
+		spawnTool, waitTool, finishTool, scoutTool, tellTool, codeReviewTool,
 	}
 }
 
@@ -199,7 +199,8 @@ var waitTool = fnTool{
 
 var finishTool = fnTool{
 	name: "finish_worker",
-	desc: "Take a finished worker: rebase and fast-forward it into the base, then drop its worktree.",
+	desc: "Take a finished worker: rebase and fast-forward it into its target branch, then drop its worktree and close its reviewers. " +
+		"It merges only once both of the worker's reviewers passed at its tip; merge=false discards it regardless.",
 	schema: schema(map[string]any{
 		"worker": map[string]any{"type": "string", "description": "Worker id."},
 		"merge":  map[string]any{"type": "boolean", "description": "False discards the branch. Defaults to true."},
@@ -218,26 +219,6 @@ var finishTool = fnTool{
 			return "", err
 		}
 		return renderFinish(result), nil
-	},
-}
-
-var reviewTool = fnTool{
-	name: "review_worker",
-	desc: "Have a read-only reviewer judge a settled worker's diff. Call before finish_worker. " +
-		"A review can outlast one call: if it answers \"still running\", call review_worker again with the same worker, never start another.",
-	schema: schema(map[string]any{
-		"worker": map[string]any{"type": "string", "description": "Worker id."},
-	}, "worker"),
-	run: func(_ string, params map[string]any) (string, error) {
-		id := str(params, "worker")
-		if id == "" {
-			return "", fmt.Errorf("worker is required")
-		}
-		verdict, err := Review(osExec, id)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("review of %s:\n%s", id, verdict), nil
 	},
 }
 
@@ -296,11 +277,17 @@ var reviewExec Exec = osExec
 
 var codeReviewTool = fnTool{
 	name: "code_review",
-	desc: "Have a read-only reviewer judge this worktree's diff against the base it was branched from, " +
-		"covering committed and uncommitted work alike. Call it once, after committing, and fix the real " +
-		"findings before you finish. It returns the reviewer's reply.",
-	schema: schema(map[string]any{}),
-	run: func(root string, _ map[string]any) (string, error) {
-		return SelfReview(reviewExec, root)
+	desc: "Have this worktree reviewed by two read-only reviewers: code (correctness and standards) and spec (does it do the ticket, and only the ticket). " +
+		"They stay open for the whole ticket: call again after fixing, and they review what changed. " +
+		"By default a call goes to every reviewer still asking for changes. It covers committed and uncommitted work; commit first. " +
+		"If it answers \"still running\", call it again with the same arguments.",
+	schema: schema(map[string]any{
+		"reviewer": map[string]any{"type": "string", "enum": []any{axisCode, axisSpec}, "description": "Only this reviewer. Default: every reviewer with open findings."},
+		"note":     map[string]any{"type": "string", "description": "Your answer to the findings: what you fixed, and what you decline and why."},
+	}),
+	run: func(root string, params map[string]any) (string, error) {
+		return once("code_review "+root, func() (string, error) {
+			return CodeReview(reviewExec, root, str(params, "reviewer"), str(params, "note"))
+		})
 	},
 }

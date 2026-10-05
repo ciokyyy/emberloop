@@ -142,17 +142,25 @@ func Tell(run Exec, pane, text string, budget time.Duration) (settled bool, err 
 
 // WaitReply polls the session transcript until the agent ends a turn, and
 // returns that last message. It is the same text a human sees last in the pane.
+// after is the transcript's length when a follow-up was sent: the reply must
+// be written past it, so the previous turn's reply is not mistaken for the
+// answer. 0 means the session's first turn.
 // A turn that ends in a provider error is nudged through nudge (nil to turn
 // that off) after each backoff, then reported as an error.
-func WaitReply(h Harness, s Session, timeout time.Duration, nudge func() error) (string, error) {
+func WaitReply(h Harness, s Session, after int64, timeout time.Duration, nudge func() error) (string, error) {
 	deadline := time.Now().Add(timeout)
 	nudges := 0
 	for time.Now().Before(deadline) {
-		if p := findSession(h.SessionRoot(s), s.ID); p != "" {
-			if text, ok := h.LastReply(p); ok && text != "" {
-				return text, nil
+		if p := findSession(h.SessionRoot(s), s.ID); p != "" && grownPast(p, after) {
+			// A follow-up is answered once the turn it started is done; until
+			// then the last finished reply is still the previous one.
+			state, detail := h.TurnState(p)
+			if after == 0 || state == TurnDone {
+				if text, ok := h.LastReply(p); ok && text != "" {
+					return text, nil
+				}
 			}
-			if state, detail := h.TurnState(p); state == TurnFailed && nudge != nil {
+			if state == TurnFailed && nudge != nil {
 				if nudges >= len(retryBackoff) {
 					return "", fmt.Errorf("%s turn failed after %d retries: %s", h.Name(), nudges, detail)
 				}
@@ -168,6 +176,15 @@ func WaitReply(h Harness, s Session, timeout time.Duration, nudge func() error) 
 		time.Sleep(pollEvery)
 	}
 	return "", fmt.Errorf("%s did not finish a turn within %s", h.Name(), timeout)
+}
+
+// grownPast reports whether the file at p is longer than after bytes.
+func grownPast(p string, after int64) bool {
+	if after == 0 {
+		return true
+	}
+	info, err := os.Stat(p)
+	return err == nil && info.Size() > after
 }
 
 // NewSessionID is newSessionID for the launcher.

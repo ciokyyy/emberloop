@@ -146,6 +146,7 @@ func TestSpawnWaitFinish(t *testing.T) {
 	}
 	gitOut(t, worker.Worktree, "add", ".")
 	gitOut(t, worker.Worktree, "commit", "-qm", "worker work")
+	passReviews(t, worker.Worktree, gitOut(t, worker.Worktree, "rev-parse", "HEAD"))
 
 	result, err := Finish(run, worker.ID, true)
 	if err != nil {
@@ -360,7 +361,7 @@ func TestFinishRebasesOntoARefBase(t *testing.T) {
 		}
 		return Result{}, nil
 	}
-
+	passReviews(t, worktree, gitOut(t, worktree, "rev-parse", "HEAD"))
 	res, err := Finish(run, "19-thing", true)
 	if err != nil {
 		t.Fatalf("finish: %v", err)
@@ -400,6 +401,7 @@ func TestFinishRebasesOntoTheTargetsCurrentTip(t *testing.T) {
 		gitOut(t, worktree, "commit", "-qm", id)
 		store[id] = Worker{ID: id, Repo: repo, Base: base, Target: "main", Branch: "implement/" + id,
 			Worktree: worktree, Pane: "%1", Workspace: "%2"}
+		passReviews(t, worktree, gitOut(t, worktree, "rev-parse", "HEAD"))
 	}
 	if err := save(store); err != nil {
 		t.Fatal(err)
@@ -449,6 +451,7 @@ func TestFinishRefusesWhenTheRepoIsOnAnotherBranch(t *testing.T) {
 		Branch: "implement/32-c", Worktree: worktree, Pane: "%1", Workspace: "%2"}}); err != nil {
 		t.Fatal(err)
 	}
+	passReviews(t, worktree, gitOut(t, worktree, "rev-parse", "HEAD"))
 	res, err := Finish(func(cmd string, args []string, opts ExecOpts) (Result, error) {
 		if cmd == "git" {
 			return osExec(cmd, args, opts)

@@ -5,7 +5,6 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -29,17 +28,22 @@ var (
 	jobs   = map[string]chan jobResult{}
 )
 
-// readOnlyOnce runs ReadOnly at most once per key. A caller waits up to
-// toolBudget; if the reviewer is still going it gets "still running" and the
-// reviewer carries on, and the next call with the same key rejoins it.
+// readOnlyOnce runs ReadOnly at most once per key; see once.
 func readOnlyOnce(run Exec, key, cwd, model, prompt string) (string, error) {
+	return once(key, func() (string, error) { return ReadOnly(run, cwd, model, prompt) })
+}
+
+// once runs fn at most once per key. A caller waits up to toolBudget; if fn is
+// still going it gets "still running" and fn carries on, and the next call
+// with the same key rejoins it.
+func once(key string, fn func() (string, error)) (string, error) {
 	jobsMu.Lock()
 	ch, running := jobs[key]
 	if !running {
 		ch = make(chan jobResult, 1)
 		jobs[key] = ch
 		go func() {
-			text, err := ReadOnly(run, cwd, model, prompt)
+			text, err := fn()
 			ch <- jobResult{text, err}
 		}()
 	}
@@ -81,11 +85,40 @@ func pigBin() string {
 
 // ReadOnly runs one prompt in a read-only agent (role "review": read and
 // find) in its own herdr pane, so the human can watch it, and returns the
-// agent's last message, read from its session transcript. The prompt goes
-// through a file: pane run types its argv as one line.
+// agent's last message, read from its session transcript. The pane closes
+// with the answer.
+func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
+	agent, err := startReadOnly(run, cwd, model, prompt)
+	if err != nil {
+		return "", err
+	}
+	defer run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	return agent.reply(run, 0)
+}
+
+// readOnlyAgent is a launched read-only agent: the pane it runs in and the
+// session its transcript is written under.
+type readOnlyAgent struct {
+	Pane    string
+	Harness string
+	Session Session
+}
+
+// readOnlyDir holds read-only agents' prompts and sessions.
+func readOnlyDir() string { return filepath.Join(filepath.Dir(statePath), "readonly") }
+
+// readOnlySession is the session a read-only agent with this id writes, so a
+// reviewer that outlives one tool call can be found again by its id.
+func readOnlySession(id, cwd, model string) Session {
+	return Session{Role: "review", Cwd: cwd, Model: model, ID: id, Dir: filepath.Join(readOnlyDir(), "sessions")}
+}
+
+// startReadOnly launches a read-only agent on prompt in a pane split from the
+// caller's, and leaves it running: the caller decides when the pane closes.
+// The prompt goes through a file: pane run types its argv as one line.
 // WICK_READONLY_HARNESS picks the harness (default pig); a model goes only to
 // pig, since worker models are pig model names.
-func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
+func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	harness := os.Getenv("WICK_READONLY_HARNESS")
 	if harness == "" {
 		harness = "pig"
@@ -93,25 +126,24 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	if harness != "pig" {
 		model = ""
 	}
-	dir := filepath.Join(filepath.Dir(statePath), "readonly")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+	if err := os.MkdirAll(readOnlyDir(), 0o755); err != nil {
+		return readOnlyAgent{}, err
 	}
-	sess := Session{Role: "review", Cwd: cwd, Model: model, ID: newSessionID(), Dir: filepath.Join(dir, "sessions")}
-	promptPath := filepath.Join(dir, sess.ID+".prompt")
+	sess := readOnlySession(newSessionID(), cwd, model)
+	promptPath := filepath.Join(readOnlyDir(), sess.ID+".prompt")
 	if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
-		return "", err
+		return readOnlyAgent{}, err
 	}
 	sess.Prompt = fmt.Sprintf("Read %s and follow it exactly. Your last message is your answer.", promptPath)
 	launch, err := PrepareLaunch(harness, sess)
 	if err != nil {
-		return "", err
+		return readOnlyAgent{}, err
 	}
-	// The reviewer is done with the MCP config the moment it has launched.
+	// The agent is done with the MCP config the moment it has launched.
 	defer CleanupSession(sess)
 	// --ratio is the share the pane being split keeps, not the share the new
 	// pane gets: measured on a scratch pane, a 229-column split at 0.3 left
-	// the original 69 columns and gave the new pane 160. So the reviewer gets
+	// the original 69 columns and gave the new pane 160. So the agent gets
 	// 0.7 here, and tilePanes below evens the tab back out.
 	// Two read-only launches at once must not race on the layout: herdr
 	// splits the pane the caller is in, and a second split against a
@@ -122,110 +154,68 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 		"--ratio", "0.3", "--cwd", cwd, "--no-focus"}, 15*time.Second)
 	splitMu.Unlock()
 	if err != nil {
-		return "", err
+		return readOnlyAgent{}, err
 	}
 	pane := split.Result.Pane.PaneID
 	if pane == "" {
-		return "", fmt.Errorf("herdr split returned no pane id")
+		return readOnlyAgent{}, fmt.Errorf("herdr split returned no pane id")
 	}
-	defer run(herdrBin(), []string{"pane", "close", pane}, ExecOpts{Timeout: 15 * time.Second})
+	agent := readOnlyAgent{Pane: pane, Harness: harness, Session: sess}
+	fail := func(err error) (readOnlyAgent, error) {
+		_, _ = run(herdrBin(), []string{"pane", "close", pane}, ExecOpts{Timeout: 15 * time.Second})
+		return readOnlyAgent{}, err
+	}
 
-	// Every review splits the caller's pane, so a few of them leave the tab at
-	// 1/2, 1/4, 1/8. Tiling is cosmetic: never fail a review over an uneven tab.
+	// Every launch splits the caller's pane, so a few of them leave the tab at
+	// 1/2, 1/4, 1/8. Tiling is cosmetic: never fail a launch over an uneven tab.
 	_ = tilePanes(run, split.Result.Pane.TabID)
 
 	if res, err := run(herdrBin(), []string{"pane", "run", pane, launch.Line}, ExecOpts{Timeout: 15 * time.Second}); err != nil || res.Code != 0 {
-		return "", fmt.Errorf("herdr pane run failed: %v %s", err, firstLine(res.Stderr, res.Stdout))
+		return fail(fmt.Errorf("herdr pane run failed: %v %s", err, firstLine(res.Stderr, res.Stdout)))
 	}
 	if err := DeliverLate(run, pane, launch.Late); err != nil {
-		return "", err
+		return fail(err)
 	}
-	return WaitReply(registry[harness], sess, readOnlyTimeout, func() error { return Nudge(run, pane, "continue") })
+	return agent, nil
 }
 
-// Review has a fresh agent with no edit tools judge a worker's diff.
-func Review(run Exec, id string) (string, error) {
-	w, err := recall(id)
+// reply waits for the agent's next finished turn after the transcript was
+// after bytes long (0: its first turn) and returns that turn's last message.
+func (a readOnlyAgent) reply(run Exec, after int64) (string, error) {
+	return WaitReply(registry[a.Harness], a.Session, after, readOnlyTimeout,
+		func() error { return Nudge(run, a.Pane, "continue") })
+}
+
+// transcriptSize is how long the agent's transcript is now; a reply to a
+// message sent after this point is one written past it.
+func (a readOnlyAgent) transcriptSize() int64 {
+	p := findSession(registry[a.Harness].SessionRoot(a.Session), a.Session.ID)
+	if p == "" {
+		return 0
+	}
+	info, err := os.Stat(p)
 	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// tell sends the agent a follow-up and waits for its reply to it.
+func (a readOnlyAgent) tell(run Exec, text string) (string, error) {
+	size := a.transcriptSize()
+	if err := Nudge(run, a.Pane, text); err != nil {
 		return "", err
 	}
-	return diffReview(run, diffRequest{
-		runDir: w.Repo, tree: w.Worktree, model: w.Model, name: id, key: "review " + id,
-		args: []string{"diff", w.Base + "..." + w.Branch},
-	})
+	return a.reply(run, size)
 }
 
-// SelfReview judges the work in the tree the caller is standing in, so a
-// worker can review its own before it hands the branch back. It takes no
-// arguments: the tree is wherever the tool runs, and the base is the commit
-// that tree was created from.
-func SelfReview(run Exec, tree string) (string, error) {
-	return diffReview(run, diffRequest{
-		runDir: tree, tree: tree, name: filepath.Base(tree), key: "code_review " + filepath.Base(tree),
-		// A ref against the *working tree*, not a three-dot ref against a
-		// branch: a worker reviews mid-branch, and only this form covers
-		// commits and uncommitted work in one diff. The base is a SHA
-		// (resolveRef), so it still means "since the worktree branched".
-		args: []string{"diff", baseFor(tree)},
-	})
-}
-
-// baseFor is the commit a worktree branched from, as recorded when it was
-// spawned. Outside a worktree wick created there is no such record, and the
-// default branch name is the only fallback available; the diff it produces is
-// then measured from there rather than from the worker's real base.
-func baseFor(tree string) string {
-	if store, err := load(); err == nil {
-		for _, w := range store {
-			if w.Base != "" && filepath.Clean(w.Worktree) == filepath.Clean(tree) {
-				return w.Base
-			}
-		}
+// alive reports whether the agent's pane still exists.
+func (a readOnlyAgent) alive(run Exec) bool {
+	if a.Pane == "" {
+		return false
 	}
-	return "main"
-}
-
-// diffReview is the one path both reviewers take: run git, write the diff
-// somewhere the reviewer can read it, hand it to ReadOnly. The reviewer
-// cannot run git itself, and it gets the diff rather than the worker's own
-// account of the work: reviewing that would review what the worker believes
-// it did.
-type diffRequest struct {
-	runDir, tree, model, name, key string
-	args                           []string
-}
-
-func diffReview(run Exec, in diffRequest) (string, error) {
-	res, err := run("git", in.args, ExecOpts{Cwd: in.runDir})
-	if err != nil {
-		return "", err
-	}
-	if res.Code != 0 {
-		return "", fmt.Errorf("git diff for %s failed: %s", in.name, firstLine(res.Stderr, "unknown error"))
-	}
-	if strings.TrimSpace(res.Stdout) == "" {
-		return "no changes: nothing differs from the base. Nothing to review.", nil
-	}
-
-	dir := filepath.Join(filepath.Dir(statePath), "reviews")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	diffPath := filepath.Join(dir, in.name+".diff")
-	if err := os.WriteFile(diffPath, []byte(res.Stdout), 0o644); err != nil {
-		return "", err
-	}
-
-	return readOnlyOnce(run, in.key, in.tree, in.model, reviewPrompt(diffPath, in.tree))
-}
-
-func reviewPrompt(diffPath, tree string) string {
-	return fmt.Sprintf(`Review the change in %s (a git diff). The working directory, %s, holds the result; read files there for context.
-
-You can only read and find. List real defects: correctness bugs, missed edge cases, callers the change broke, new logic with no test. Skip style.
-
-One line per defect: file:line severity: problem. Severity is blocker, major or minor.
-If there are none, reply exactly "no defects found". Do not praise and do not suggest rewrites.`, diffPath, tree)
+	res, err := run(herdrBin(), []string{"pane", "get", a.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	return err == nil && res.Code == 0
 }
 
 func scoutPrompt(question string) string {

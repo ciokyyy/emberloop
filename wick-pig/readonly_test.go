@@ -76,48 +76,6 @@ func TestLastReplyIgnoresMidTurnMessages(t *testing.T) {
 	}
 }
 
-func TestReviewHandsTheDiffToAReadOnlyAgent(t *testing.T) {
-	statePath = filepath.Join(t.TempDir(), "workers.json")
-	if err := save(map[string]Worker{"01-x": {
-		ID: "01-x", Repo: "/repo", Base: "main", Branch: "implement/01-x", Worktree: "/repo/wt", Model: "m1",
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	rec := &recorder{reply: func(cmd string, args []string) Result {
-		return fakeHerdr(cmd, args, "f:1 major: bug\n", Result{Stdout: "diff --git a/f b/f\n+bug\n"})
-	}}
-	got, err := Review(rec.run, "01-x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "f:1 major: bug" {
-		t.Errorf("verdict = %q", got)
-	}
-	if strings.Join(rec.calls[0], " ") != "git diff main...implement/01-x" {
-		t.Errorf("diff call = %v", rec.calls[0])
-	}
-	pig := strings.Join(rec.calls[2], " ")
-	if !strings.Contains(pig, "WICK_ROLE=review") || !strings.Contains(pig, "--model m1") {
-		t.Errorf("reviewer launch = %s", pig)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(statePath), "reviews", "01-x.diff")); err != nil {
-		t.Errorf("diff file not written: %v", err)
-	}
-}
-
-func TestReviewOfAnEmptyBranchSkipsTheModel(t *testing.T) {
-	statePath = filepath.Join(t.TempDir(), "workers.json")
-	_ = save(map[string]Worker{"01-x": {ID: "01-x", Base: "main", Branch: "b"}})
-	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
-	if _, err := Review(rec.run, "01-x"); err != nil {
-		t.Fatal(err)
-	}
-	if len(rec.calls) != 1 {
-		t.Errorf("only git should run for an empty diff, got %v", rec.calls)
-	}
-}
-
 func TestReadOnlySurfacesFailure(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	rec := &recorder{reply: func(string, []string) Result { return Result{Code: 1, Stderr: "no herdr\n"} }}

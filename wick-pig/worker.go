@@ -544,6 +544,18 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	merged := false
 
 	if merge {
+		// Both reviewers must have passed the tip they judged; a worker that
+		// stopped before its review is sent back, not merged. The check is
+		// on the worker's own tip, before the rebase below rewrites it.
+		res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo})
+		if err != nil {
+			return nil, err
+		}
+		if why := reviewGate(w.Worktree, strings.TrimSpace(res.Stdout), axesFor(&w)); why != "" {
+			return &FinishResult{ID: id, Kept: true,
+				Detail: "not reviewed to a pass: " + why + ". Have it call code_review until both reviewers pass at its tip"}, nil
+		}
+
 		// Rebase onto where the target is *now*: another worker may have moved
 		// it since this one spawned. Old records without a target fall back to
 		// the base they recorded.
@@ -595,8 +607,9 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 		detail = "discarded"
 	}
 
-	// Only reached when the worker did not conflict. A conflict returns above
-	// with its worktree deliberately left on disk for a human to look at.
+	// Only reached when the worker merged or was discarded. A refusal returns
+	// above with the worktree, pane and reviewers left for the worker to use.
+	closeReviewers(run, w.Worktree)
 	if _, err := herdrJSON(run, []string{
 		"worktree", "remove", "--workspace", w.Workspace, "--force", "--trust-repository",
 	}, 60*time.Second); err != nil {

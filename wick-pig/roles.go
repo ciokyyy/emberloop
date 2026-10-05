@@ -16,8 +16,8 @@ var roles = map[string][]string{
 	// review and scout can only look.
 	"review": {"read", "find"},
 	"scout":  {"read", "find"},
-	// work is an implementer: every file tool, plus a review of its own work.
-	// No delegation: review_worker belongs to the merger.
+	// work is an implementer: every file tool, plus code_review, which runs
+	// its two persistent reviewers. No delegation.
 	"work": {"read", "edit", "write", "bash", "find", "background", "code_review"},
 	// plan is a wayfinder, grill, research or to-spec session: file tools plus
 	// scouts. No review: review belongs where code is written, in the workers.
