@@ -16,13 +16,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"example.com/wick"
 	"example.com/wick/mcp"
 )
 
 func main() {
-	role := flag.String("role", wick.RoleFromEnv(), "implement, review, scout, work, plan, agent or full")
+	role := flag.String("role", wick.RoleFromEnv(), "one of: "+strings.Join(wick.RoleNames(), ", "))
 	flag.Parse()
 
 	if *role == "" {
