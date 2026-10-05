@@ -92,13 +92,16 @@ type herdrReply struct {
 	Result struct {
 		Pane struct {
 			PaneID string `json:"pane_id"`
+			TabID  string `json:"tab_id"`
 		} `json:"pane"`
 		RootPane struct {
 			PaneID string `json:"pane_id"`
+			TabID  string `json:"tab_id"`
 		} `json:"root_pane"`
 		Workspace struct {
 			WorkspaceID string `json:"workspace_id"`
 		} `json:"workspace"`
+		Layout paneLayout `json:"layout"`
 		Agents []struct {
 			PaneID string `json:"pane_id"`
 			Status string `json:"agent_status"`
@@ -107,6 +110,7 @@ type herdrReply struct {
 		} `json:"agents"`
 		Panes []struct {
 			PaneID    string `json:"pane_id"`
+			TabID     string `json:"tab_id"`
 			Workspace string `json:"workspace_id"`
 			Cwd       string `json:"cwd"`
 		} `json:"panes"`
@@ -317,6 +321,10 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	if w.Pane == "" || w.Workspace == "" {
 		return nil, fmt.Errorf("herdr worktree create returned no pane or workspace for %q; raw: %.600s", id, reply.raw)
 	}
+
+	// A worktree opens in a tab of its own, but a tab can hold more than one
+	// pane. Tiling is cosmetic: never fail a spawn over an uneven tab.
+	_ = tilePanes(run, reply.Result.RootPane.TabID)
 
 	if res, err := run(herdrBin(), append([]string{"pane", "run", w.Pane}, in.Launch...), ExecOpts{}); err != nil {
 		return nil, err

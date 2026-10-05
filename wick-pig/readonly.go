@@ -104,7 +104,10 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	}
 	// The reviewer is done with the MCP config the moment it has launched.
 	defer CleanupSession(sess)
-
+	// --ratio is the share the pane being split keeps, not the share the new
+	// pane gets: measured on a scratch pane, a 229-column split at 0.3 left
+	// the original 69 columns and gave the new pane 160. So the reviewer gets
+	// 0.7 here, and tilePanes below evens the tab back out.
 	split, err := herdrJSON(run, []string{"pane", "split", "--current", "--direction", "down",
 		"--ratio", "0.3", "--cwd", cwd, "--no-focus"}, 15*time.Second)
 	if err != nil {
@@ -115,6 +118,10 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 		return "", fmt.Errorf("herdr split returned no pane id")
 	}
 	defer run(herdrBin(), []string{"pane", "close", pane}, ExecOpts{Timeout: 15 * time.Second})
+
+	// Every review splits the caller's pane, so a few of them leave the tab at
+	// 1/2, 1/4, 1/8. Tiling is cosmetic: never fail a review over an uneven tab.
+	_ = tilePanes(run, split.Result.Pane.TabID)
 
 	if res, err := run(herdrBin(), []string{"pane", "run", pane, launch.Line}, ExecOpts{Timeout: 15 * time.Second}); err != nil || res.Code != 0 {
 		return "", fmt.Errorf("herdr pane run failed: %v %s", err, firstLine(res.Stderr, res.Stdout))
