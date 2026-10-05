@@ -384,7 +384,9 @@ func (c *CascadeSearcher) logFindCall(req systemone.Request, resp systemone.Resp
 func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []string, targetDir string) ([]SearchHit, error) {
 	// One find-call id per search groups the decision calls of its stages
 	// in the calling agent's usage log. Outside a session there is no agent
-	// to attribute to, and the search logs nothing.
+	// to attribute to, and the search logs nothing. Both fields reset first,
+	// so a reused searcher never attributes to a previous search's agent.
+	c.agentID, c.findCallID = "", ""
 	if agent := os.Getenv("WICK_AGENT_ID"); agent != "" {
 		c.agentID, c.findCallID = agent, newFindCallID()
 	}
