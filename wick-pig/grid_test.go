@@ -495,3 +495,34 @@ func TestGridReusesAFreedSlot(t *testing.T) {
 	}
 	equalSizes(t, tab)
 }
+
+// An overflow tab whose root pane died still takes the next agent: the grid
+// skips the root slot it cannot split and grows from a pane that is still
+// there, rather than failing while the caller's tab stays full.
+func TestGridPlacesAfterAnOverflowRootDies(t *testing.T) {
+	g := newFakeGrid()
+	tab := g.tabs[0]
+	for i := 0; i < 8; i++ {
+		if _, err := placeInGrid(g.run, tab.tab, "scouts", "/repo"); err != nil {
+			t.Fatalf("placement %d: %v", i+2, err)
+		}
+	}
+	root, err := placeInGrid(g.run, tab.tab, "scouts", "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := placeInGrid(g.run, tab.tab, "scouts", "/repo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.run(herdrBin(), []string{"pane", "close", root.Pane}, ExecOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	spot, err := placeInGrid(g.run, tab.tab, "scouts", "/repo")
+	if err != nil {
+		t.Fatalf("the next overflow launch failed: %v", err)
+	}
+	if spot.Tab != root.Tab {
+		t.Errorf("the pane landed in %s, want the overflow tab %s", spot.Tab, root.Tab)
+	}
+}

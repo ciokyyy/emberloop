@@ -20,7 +20,6 @@ import (
 // gets. A scratch pane 229 columns wide split at 0.3 measured 69 columns on
 // the pane that was split and 160 on the new one, and the same held splitting
 // down: 0.25 off a 70-row pane left it 18 rows and gave the new pane 52. So
-// down: 0.25 off a 70-row pane left it 18 rows and gave the new pane 52. So
 // grid.go splits at 0.5 and leaves the evening to tilePanes.
 //
 // --direction names the way the divider moves, and --amount is a share of the

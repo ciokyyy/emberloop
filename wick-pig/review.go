@@ -385,7 +385,7 @@ func reviewOn(run Exec, git func(...string) (string, error), dir, name, axis str
 		if err != nil {
 			// Nothing remembers a reviewer that never answered, so its pane
 			// is closed here or it is never closed at all.
-			_, _ = run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
+			closeAgent(run, agent)
 			return reviewer{}, "", "", err
 		}
 	}

@@ -209,11 +209,21 @@ func recordGridSlot(tab string, slot int, pane string) {
 	m[slot] = pane
 }
 
-// nextSlot is the first slot with no pane, so a pane that finished frees its
-// slot for the next one, or gridMax+1 when every slot is taken.
+// nextSlot is the lowest slot a new pane can take: one that is free and whose
+// source pane (the one before it, or the one a row above) is still there to
+// split. Slot 1 is the tab's root and has no source, so a tab whose root died
+// fills its next splittable slot instead of failing. gridMax+1 means no slot
+// is left.
 func nextSlot(slots map[int]string) int {
-	for s := 1; s <= gridMax; s++ {
-		if _, ok := slots[s]; !ok {
+	for s := 2; s <= gridMax; s++ {
+		if slots[s] != "" {
+			continue
+		}
+		source := s - 1
+		if s > gridCols {
+			source = s - gridCols
+		}
+		if slots[source] != "" {
 			return s
 		}
 	}
