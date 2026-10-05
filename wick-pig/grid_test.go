@@ -30,9 +30,18 @@ type fakeGrid struct {
 }
 
 func newFakeGrid() *fakeGrid {
+	resetGrid()
 	g := &fakeGrid{label: map[string]string{}}
 	g.newTab("1")
 	return g
+}
+
+// resetGrid forgets the slots of every earlier test: the registry is
+// process-wide, and the fakes reuse tab and pane ids.
+func resetGrid() {
+	gridPlacedMu.Lock()
+	gridPlaced = map[string]map[int]string{}
+	gridPlacedMu.Unlock()
 }
 
 // newTab adds a tab with one pane, the caller's, and returns it.
@@ -218,6 +227,21 @@ func TestGridFillsRowsOfThree(t *testing.T) {
 	if got := rowsOf(tab); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("reading order = %v, want %v", got, want)
 	}
+	// Three columns each three deep: a single vertical stack would also read
+	// 1..9, so count the columns too.
+	cols, rows := map[int]int{}, map[int]int{}
+	for _, b := range tab.boxes() {
+		cols[b.Rect.X]++
+		rows[b.Rect.Y]++
+	}
+	if len(cols) != 3 || len(rows) != 3 {
+		t.Errorf("the grid is %d columns by %d rows, want 3 by 3", len(cols), len(rows))
+	}
+	for x, n := range cols {
+		if n != 3 {
+			t.Errorf("column at x=%d holds %d panes, want 3", x, n)
+		}
+	}
 	equalSizes(t, tab)
 }
 
@@ -378,6 +402,7 @@ func TestGridSplitsDifferentTabsAtOnceAndOneTabInTurn(t *testing.T) {
 // Tiling is cosmetic: a tab that will not even out still takes the pane, and
 // the placement succeeds.
 func TestGridPlacementSurvivesATabThatWillNotEven(t *testing.T) {
+	resetGrid()
 	// Two unequal panes with no divider between them: tilePanes has nothing to
 	// move, so it returns an error the grid must swallow.
 	static := `{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"},` +
@@ -403,4 +428,70 @@ func TestGridPlacementSurvivesATabThatWillNotEven(t *testing.T) {
 	if spot.Pane != "w1:p3" {
 		t.Errorf("pane = %q, want the split pane", spot.Pane)
 	}
+}
+
+// A replacement after an earlier one still lands in the dead pane's slot: the
+// grid orders panes by where they sit, not by the order herdr made them, which
+// an earlier replacement has already disturbed.
+func TestGridReplacesAfterAnEarlierReplacement(t *testing.T) {
+	g := newFakeGrid()
+	tab := g.tabs[0]
+	for i := 0; i < 8; i++ {
+		if _, err := placeInGrid(g.run, tab.tab, "scouts", "/repo"); err != nil {
+			t.Fatalf("placement %d: %v", i+2, err)
+		}
+	}
+	order := rowsOf(tab)
+	dead4, dead7 := order[3], order[6]
+
+	if _, err := g.run(herdrBin(), []string{"pane", "close", dead4}, ExecOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := replaceInGrid(g.run, tab.tab, 4, "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before7 := rects(tab)[dead7]
+
+	if _, err := g.run(herdrBin(), []string{"pane", "close", dead7}, ExecOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := replaceInGrid(g.run, tab.tab, 7, "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !closeRect(rects(tab)[second.Pane], before7) {
+		t.Errorf("the second replacement sits at %+v, the dead slot held %+v", rects(tab)[second.Pane], before7)
+	}
+	want := []string{order[0], order[1], order[2], first.Pane, order[4], order[5], second.Pane, order[7], order[8]}
+	if got := rowsOf(tab); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("reading order = %v, want %v", got, want)
+	}
+	equalSizes(t, tab)
+}
+
+// A read-only pane that finished frees its slot, and the next agent takes it
+// rather than a slot that is still occupied.
+func TestGridReusesAFreedSlot(t *testing.T) {
+	g := newFakeGrid()
+	tab := g.tabs[0]
+	caller := tab.order[0]
+	first, err := placeInGrid(g.run, tab.tab, "scouts", "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.run(herdrBin(), []string{"pane", "close", first.Pane}, ExecOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := placeInGrid(g.run, tab.tab, "scouts", "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Slot != 2 {
+		t.Errorf("the next agent took slot %d, want the freed slot 2", second.Slot)
+	}
+	if got, want := rowsOf(tab), []string{caller, second.Pane}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("reading order = %v, want %v", got, want)
+	}
+	equalSizes(t, tab)
 }

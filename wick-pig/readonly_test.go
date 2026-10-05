@@ -129,6 +129,38 @@ func TestReadOnlyPlacesTheAgentInTheCallersTabGrid(t *testing.T) {
 	}
 }
 
+// Without HERDR_TAB_ID, the caller's own pane names the tab, so a session that
+// knows only its pane still opens the agent beside it rather than in the
+// focused pane.
+func TestReadOnlyFindsTheCallersTabFromItsPane(t *testing.T) {
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	g := newFakeGrid()
+	caller := g.tabs[0].order[0]
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("HERDR_PANE_ID", caller)
+	rec := &recorder{reply: func(cmd string, args []string) Result {
+		if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "run" {
+			return fakeHerdr(cmd, args, "no defects found", Result{})
+		}
+		res, _ := g.run(cmd, args, ExecOpts{})
+		return res
+	}}
+
+	if _, err := ReadOnly(rec.run, "/repo", "", "look"); err != nil {
+		t.Fatal(err)
+	}
+	split := ""
+	for _, c := range g.calls {
+		if strings.Contains(c, "pane split") {
+			split = c
+			break
+		}
+	}
+	if !strings.Contains(split, "--pane "+caller) {
+		t.Errorf("the split must target the caller's pane named by HERDR_PANE_ID: %s", split)
+	}
+}
+
 func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	got := skillPrompt("grilling", "the auth plan", true)
 	for _, want := range []string{"wick://matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout("} {

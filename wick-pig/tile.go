@@ -20,8 +20,8 @@ import (
 // gets. A scratch pane 229 columns wide split at 0.3 measured 69 columns on
 // the pane that was split and 160 on the new one, and the same held splitting
 // down: 0.25 off a 70-row pane left it 18 rows and gave the new pane 52. So
-// readonly.go's split hands the reviewer 0.7 of the pane and keeps 0.3 for the
-// caller.
+// down: 0.25 off a 70-row pane left it 18 rows and gave the new pane 52. So
+// grid.go splits at 0.5 and leaves the evening to tilePanes.
 //
 // --direction names the way the divider moves, and --amount is a share of the
 // region the divider splits: 0.007 on a 70-row region moved a ratio of 0.53 to

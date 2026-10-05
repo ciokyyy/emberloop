@@ -32,6 +32,7 @@ type fakePane struct {
 }
 
 func newFakeReviewers(answer func(axis string, turn int, prompt string) string) *fakeReviewers {
+	resetGrid()
 	return &fakeReviewers{panes: map[string]*fakePane{}, answer: answer}
 }
 

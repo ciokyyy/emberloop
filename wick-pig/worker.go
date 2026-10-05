@@ -106,13 +106,6 @@ type herdrReply struct {
 			PaneID string `json:"pane_id"`
 			TabID  string `json:"tab_id"`
 		} `json:"root_pane"`
-		Tab struct {
-			TabID string `json:"tab_id"`
-		} `json:"tab"`
-		Tabs []struct {
-			TabID string `json:"tab_id"`
-			Label string `json:"label"`
-		} `json:"tabs"`
 		Workspace struct {
 			WorkspaceID string `json:"workspace_id"`
 		} `json:"workspace"`

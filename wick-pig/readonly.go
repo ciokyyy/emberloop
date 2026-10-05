@@ -78,6 +78,30 @@ func pigBin() string {
 	return "pig"
 }
 
+// callerTab is the tab a read-only agent opens in: the tab wick itself runs
+// in. herdr injects HERDR_TAB_ID; without it, the caller's own pane names the
+// tab, so a session that knows only its pane still places the agent beside it
+// rather than in whichever pane is focused.
+func callerTab(run Exec) string {
+	if tab := os.Getenv("HERDR_TAB_ID"); tab != "" {
+		return tab
+	}
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		return ""
+	}
+	reply, err := herdrJSON(run, []string{"pane", "list"}, 15*time.Second)
+	if err != nil {
+		return ""
+	}
+	for _, p := range reply.Result.Panes {
+		if p.PaneID == pane {
+			return p.TabID
+		}
+	}
+	return ""
+}
+
 // ReadOnly runs one prompt in a read-only agent (role "review": read and
 // find) in its own herdr pane, so the human can watch it, and returns the
 // agent's last message, read from its session transcript. The pane closes
@@ -87,7 +111,7 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
+	defer closeAgent(run, agent)
 	return agent.reply(run, 0)
 }
 
@@ -95,8 +119,18 @@ func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 // session its transcript is written under.
 type readOnlyAgent struct {
 	Pane    string
+	Tab     string
 	Harness string
 	Session Session
+}
+
+// closeAgent closes an agent's pane under its tab's grid lock, so a close
+// never races a concurrent split of that tab.
+func closeAgent(run Exec, agent readOnlyAgent) {
+	lock := gridLock(agent.Tab)
+	lock.Lock()
+	defer lock.Unlock()
+	_, _ = run(herdrBin(), []string{"pane", "close", agent.Pane}, ExecOpts{Timeout: 15 * time.Second})
 }
 
 // readOnlyDir holds read-only agents' prompts and sessions.
@@ -140,7 +174,7 @@ func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	// ninth caller overflow opens a `scouts` tab. The grid serializes the
 	// splits in one tab and evens its sizes out, best effort; the agent then
 	// runs and is waited on concurrently.
-	placed, err := placeInGrid(run, os.Getenv("HERDR_TAB_ID"), "scouts", cwd)
+	placed, err := placeInGrid(run, callerTab(run), "scouts", cwd)
 	if err != nil {
 		return readOnlyAgent{}, err
 	}
@@ -148,9 +182,9 @@ func startReadOnly(run Exec, cwd, model, prompt string) (readOnlyAgent, error) {
 	if pane == "" {
 		return readOnlyAgent{}, fmt.Errorf("herdr split returned no pane id")
 	}
-	agent := readOnlyAgent{Pane: pane, Harness: harness, Session: sess}
+	agent := readOnlyAgent{Pane: pane, Tab: placed.Tab, Harness: harness, Session: sess}
 	fail := func(err error) (readOnlyAgent, error) {
-		_, _ = run(herdrBin(), []string{"pane", "close", pane}, ExecOpts{Timeout: 15 * time.Second})
+		closeAgent(run, agent)
 		return readOnlyAgent{}, err
 	}
 

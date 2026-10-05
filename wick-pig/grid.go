@@ -10,8 +10,8 @@ import (
 
 // The agent grid lays agents out in a tab side by side, in rows of three,
 // filling left to right and top to bottom: `1 2 3` / `4 5 6` / `7 8 9`. A tab
-// holds gridMax of them (the caller is pane 1); the next one opens in a tab
-// labelled by the caller.
+// holds gridMax of them (the caller is the root pane); the next one opens in a
+// tab labelled by the caller.
 //
 // herdr can only split a pane, never a region, so the grid is three columns
 // that are each split into rows. A new pane at slot k splits `right` from the
@@ -24,7 +24,8 @@ const (
 )
 
 // gridPane is where the grid put a pane: the pane and tab it landed in, and
-// its slot in the tab's fill order (1 is the caller).
+// its slot in the tab's reading order (1 is the tab's root pane: the caller in
+// the caller's tab, the first pane of an overflow tab).
 type gridPane struct {
 	Pane string
 	Tab  string
@@ -50,6 +51,16 @@ func gridLock(tab string) *sync.Mutex {
 	return m
 }
 
+// gridPlaced remembers which pane holds which slot of a tab. herdr cannot say:
+// a pane's slot is gone with the pane, and a replacement lands at the end of
+// pane list, not in the hole it filled. The grid is the only place that knows,
+// because it chose every slot. It is pruned against pane list on every read,
+// so a pane closed behind the grid's back still frees its slot.
+var (
+	gridPlacedMu sync.Mutex
+	gridPlaced   = map[string]map[int]string{}
+)
+
 // placeInGrid puts one new pane in tab and returns it. When tab already holds
 // gridMax panes the pane opens in a tab labelled overflow in the same
 // workspace, and the overflow tab is created under tab's lock. Sizes are evened
@@ -59,33 +70,31 @@ func placeInGrid(run Exec, tab, overflow, cwd string) (gridPane, error) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	ids, err := tabPanes(run, tab)
+	slots, err := gridSlots(run, tab)
 	if err != nil {
 		return gridPane{}, err
 	}
-	if len(ids) < gridMax {
-		return splitForGrid(run, tab, len(ids)+1, ids, cwd)
+	if slot := nextSlot(slots); slot <= gridMax {
+		return splitForGrid(run, tab, slot, slots, cwd)
 	}
 
-	over, overIDs, fresh, err := overflowTab(run, tab, overflow, cwd)
+	over, overSlots, fresh, err := overflowTab(run, tab, overflow, cwd)
 	if err != nil {
 		return gridPane{}, err
 	}
 	if fresh {
 		// A fresh overflow tab's root pane is the agent's, the way the
-		// caller's pane is pane 1 of the tab it opened.
-		return gridPane{Pane: overIDs[0], Tab: over, Slot: 1}, nil
+		// caller's pane is the root of the tab it opened.
+		recordGridSlot(over, 1, overSlots[1])
+		return gridPane{Pane: overSlots[1], Tab: over, Slot: 1}, nil
 	}
-	if len(overIDs) >= gridMax {
-		return gridPane{}, fmt.Errorf("tab %s and its overflow %q are both full", tab, overflow)
-	}
-	return splitForGrid(run, over, len(overIDs)+1, overIDs, cwd)
+	return splitForGrid(run, over, nextSlot(overSlots), overSlots, cwd)
 }
 
 // replaceInGrid puts a new pane in the slot a dead pane left, so the rest of
 // the grid keeps its positions and only the sizes are evened out. slot is the
-// dead pane's slot, 2..gridMax; slot 1 is the caller, which has no slot to
-// rebuild.
+// dead pane's slot, 2..gridMax; slot 1 is the tab's root pane, which has no
+// pane before it to split and cannot be rebuilt.
 func replaceInGrid(run Exec, tab string, slot int, cwd string) (gridPane, error) {
 	if slot < 2 || slot > gridMax {
 		return gridPane{}, fmt.Errorf("slot %d is not a grid slot", slot)
@@ -94,17 +103,17 @@ func replaceInGrid(run Exec, tab string, slot int, cwd string) (gridPane, error)
 	lock.Lock()
 	defer lock.Unlock()
 
-	ids, err := tabPanes(run, tab)
+	slots, err := gridSlots(run, tab)
 	if err != nil {
 		return gridPane{}, err
 	}
-	return splitForGrid(run, tab, slot, ids, cwd)
+	return splitForGrid(run, tab, slot, slots, cwd)
 }
 
-// splitForGrid splits the pane a new pane at slot grows from and evens the tab
-// out.
-func splitForGrid(run Exec, tab string, slot int, ids []string, cwd string) (gridPane, error) {
-	target, dir, ok := gridTarget(slot, ids)
+// splitForGrid splits the pane a new pane at slot grows from, evens the tab
+// out, and remembers the slot.
+func splitForGrid(run Exec, tab string, slot int, slots map[int]string, cwd string) (gridPane, error) {
+	target, dir, ok := gridTarget(slot, slots)
 	if !ok {
 		return gridPane{}, fmt.Errorf("no pane in %s to split for slot %d", tab, slot)
 	}
@@ -126,6 +135,7 @@ func splitForGrid(run Exec, tab string, slot int, ids []string, cwd string) (gri
 	if landed == "" {
 		landed = tab
 	}
+	recordGridSlot(landed, slot, pane)
 	// Tiling is cosmetic: never fail a launch over a tab that stays uneven.
 	_ = tilePanes(run, landed)
 	return gridPane{Pane: pane, Tab: landed, Slot: slot}, nil
@@ -134,7 +144,7 @@ func splitForGrid(run Exec, tab string, slot int, ids []string, cwd string) (gri
 // gridTarget is the pane a new pane at slot splits from and the way it splits:
 // the first row grows to the right of the pane before it, later rows split
 // down from the pane a row above.
-func gridTarget(slot int, ids []string) (pane, dir string, ok bool) {
+func gridTarget(slot int, slots map[int]string) (pane, dir string, ok bool) {
 	if slot < 2 {
 		return "", "", false
 	}
@@ -144,16 +154,76 @@ func gridTarget(slot int, ids []string) (pane, dir string, ok bool) {
 		source = slot - gridCols
 		dir = "down"
 	}
-	if source < 1 || source > len(ids) {
-		return "", "", false
+	pane, ok = slots[source]
+	return pane, dir, ok
+}
+
+// gridSlots is the pane in each grid slot of tab. Slots the grid has placed
+// come from its record, kept only while that pane is still live; a pane the
+// grid never placed (before a restart, say) fills the first free slot in pane
+// list order, which is the fill order until a pane has been replaced.
+func gridSlots(run Exec, tab string) (map[int]string, error) {
+	live, err := tabPanes(run, tab)
+	if err != nil {
+		return nil, err
 	}
-	return ids[source-1], dir, true
+	liveSet := make(map[string]bool, len(live))
+	for _, id := range live {
+		liveSet[id] = true
+	}
+
+	gridPlacedMu.Lock()
+	defer gridPlacedMu.Unlock()
+	slots := map[int]string{}
+	taken := map[string]bool{}
+	for s, pane := range gridPlaced[tab] {
+		if liveSet[pane] {
+			slots[s] = pane
+			taken[pane] = true
+		}
+	}
+	next := 1
+	for _, pane := range live {
+		if taken[pane] {
+			continue
+		}
+		for slots[next] != "" {
+			next++
+		}
+		slots[next] = pane
+		taken[pane] = true
+	}
+	gridPlaced[tab] = slots
+	return slots, nil
+}
+
+// recordGridSlot remembers that pane holds slot of tab.
+func recordGridSlot(tab string, slot int, pane string) {
+	gridPlacedMu.Lock()
+	defer gridPlacedMu.Unlock()
+	m := gridPlaced[tab]
+	if m == nil {
+		m = map[int]string{}
+		gridPlaced[tab] = m
+	}
+	m[slot] = pane
+}
+
+// nextSlot is the first slot with no pane, so a pane that finished frees its
+// slot for the next one, or gridMax+1 when every slot is taken.
+func nextSlot(slots map[int]string) int {
+	for s := 1; s <= gridMax; s++ {
+		if _, ok := slots[s]; !ok {
+			return s
+		}
+	}
+	return gridMax + 1
 }
 
 // overflowTab is the tab labelled label in tab's workspace that still has room
 // for a pane, creating one when none does. fresh says it was just created, so
 // its root pane is the pane the agent takes.
-func overflowTab(run Exec, tab, label, cwd string) (id string, ids []string, fresh bool, err error) {
+func overflowTab(run Exec, tab, label, cwd string) (id string, slots map[int]string, fresh bool, err error) {
 	ws := workspaceOf(tab)
 	reply, err := herdrJSON(run, []string{"tab", "list", "--workspace", ws}, 15*time.Second)
 	if err != nil {
@@ -163,7 +233,7 @@ func overflowTab(run Exec, tab, label, cwd string) (id string, ids []string, fre
 		if t.Label != label {
 			continue
 		}
-		panes, err := tabPanes(run, t.TabID)
+		panes, err := gridSlots(run, t.TabID)
 		if err != nil {
 			return "", nil, false, err
 		}
@@ -188,7 +258,7 @@ func overflowTab(run Exec, tab, label, cwd string) (id string, ids []string, fre
 	if tid == "" || pane == "" {
 		return "", nil, false, fmt.Errorf("herdr tab create returned no tab or pane for %q", label)
 	}
-	return tid, []string{pane}, true, nil
+	return tid, map[int]string{1: pane}, true, nil
 }
 
 // workspaceOf is the workspace a tab id belongs to, from the id herdr qualifies
