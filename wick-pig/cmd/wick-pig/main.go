@@ -7,6 +7,8 @@
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
 //	wick-pig exec <launch-file>                                run a launch file the pane typed
 //	wick-pig skills install                                    fill the skill library
+//	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
+//	                                                         prune archived run data (dry run by default)
 //	wick-pig [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
 //	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
@@ -57,6 +59,9 @@ func run(argv []string) error {
 			return fmt.Errorf("usage: wick-pig retry <worker-id|pane-id>")
 		}
 		return wick.Retry(wick.OSExec, argv[0])
+	}
+	if sub == "stats" {
+		return wick.RunStats(argv, os.Stdout)
 	}
 	if sub == "skills" {
 		if len(argv) != 1 || argv[0] != "install" {
