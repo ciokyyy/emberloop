@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,56 @@ func TestHashlineOps(t *testing.T) {
 				t.Errorf("result must carry the new tag, got %q", got)
 			}
 		})
+	}
+}
+
+// The edit reply shows the changed lines with a few lines of context, so a
+// wrong range is visible at once without re-reading the file.
+func TestEditReplyShowsChangedRegionWithContext(t *testing.T) {
+	body := "l01\nl02\nl03\nl04\nl05\nl06\nl07\nl08\nl09\nl10\n"
+	dir, _, tag := seed(t, body)
+	got, err := applyHashline(dir, "[a.txt#"+tag+"]\nPUT 5.=5:\n+FIVE")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !strings.Contains(got, "updated successfully") {
+		t.Errorf("the reply must keep its success line, got:\n%s", got)
+	}
+	for _, want := range []string{"FIVE", "l04", "l06"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the reply must show the change with context, missing %q in:\n%s", want, got)
+		}
+	}
+	for _, distant := range []string{"l01", "l10"} {
+		if strings.Contains(got, distant) {
+			t.Errorf("the reply must show a window, not the whole file; %q should be outside it, got:\n%s", distant, got)
+		}
+	}
+}
+
+// A patch that deletes far more lines than it adds is flagged in the reply,
+// so a swallowed block is visible where it happens.
+func TestEditReplyFlagsABlockDeletion(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 20; i++ {
+		fmt.Fprintf(&b, "l%02d\n", i)
+	}
+	dir, _, tag := seed(t, b.String())
+	got, err := applyHashline(dir, "[a.txt#"+tag+"]\nCUT 5.=16")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !strings.Contains(got, "warning") || !strings.Contains(got, "12") {
+		t.Errorf("a block deletion must be flagged with its size, got:\n%s", got)
+	}
+
+	dir, _, tag = seed(t, five)
+	small, err := applyHashline(dir, "[a.txt#"+tag+"]\nPUT 2.=2:\n+two-b")
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if strings.Contains(small, "warning") {
+		t.Errorf("a one-line replacement must not be flagged, got:\n%s", small)
 	}
 }
 

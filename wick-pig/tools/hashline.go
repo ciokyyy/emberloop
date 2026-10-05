@@ -93,7 +93,9 @@ PUT. Empty PUT body deletes — use CUT for deletes.
 
 Header: if you were given [path#TAG], open with it. It is verified, and a stale
 tag is refused rather than applied. A successful call returns the file's NEW tag
-as [path#TAG]; reuse it for the next call on that file without re-reading.`
+as [path#TAG]; reuse it for the next call on that file without re-reading.
+The reply echoes the changed lines with surrounding context, and warns when
+the patch deleted far more lines than it added.`
 
 // applyHashline parses and applies one patch. baseDir bounds every path, so a
 // patch cannot reach outside the workspace.
@@ -162,7 +164,169 @@ func applyHashline(baseDir, input string) (string, error) {
 	if err := os.WriteFile(full, newBytes, 0o644); err != nil {
 		return "", fmt.Errorf("write %q: %w", relPath, err)
 	}
-	return fmt.Sprintf("[%s#%s] updated successfully (%d lines)", relPath, contentTag(newBytes), lines), nil
+	reply := fmt.Sprintf("[%s#%s] updated successfully (%d lines)\n", relPath, contentTag(newBytes), lines)
+	reply += renderChangedRegions(newBytes, ops, origLineCount(data))
+	reply += deletionWarning(ops)
+	return reply, nil
+}
+
+// editContextLines is how many unchanged lines the edit reply shows on each
+// side of a change, so a wrong range is visible without re-reading the file.
+const editContextLines = 3
+
+// editDeletionWarnNet is the net lines lost (deleted minus added) at which a
+// patch is flagged in the reply. Small cleanups stay quiet; a swallowed
+// block does not.
+const editDeletionWarnNet = 10
+
+// patchLineCounts totals the lines a patch deleted from the original file
+// and the lines it added. A replace counts on both sides.
+func patchLineCounts(ops []patchOp) (deleted, added int) {
+	for _, op := range ops {
+		switch op.kind {
+		case opReplace:
+			deleted += op.endLine - op.startLine + 1
+			added += len(op.body)
+		case opDelete:
+			deleted += op.endLine - op.startLine + 1
+		case opInsertBefore, opInsertAfter, opAppend:
+			added += len(op.body)
+		}
+	}
+	return deleted, added
+}
+
+// deletionWarning flags a patch that deleted far more lines than it added,
+// so a swallowed block is visible where it happens. It is a warning, not a
+// refusal: large deletions are sometimes intended.
+func deletionWarning(ops []patchOp) string {
+	deleted, added := patchLineCounts(ops)
+	if deleted > added && deleted-added >= editDeletionWarnNet {
+		return fmt.Sprintf("warning: this patch deleted %d lines but added only %d; if the range was wider than intended, re-read the file and fix it\n", deleted, added)
+	}
+	return ""
+}
+
+// origLineCount counts lines the way the patcher sees them: each newline ends
+// a line, and a trailing partial line counts too.
+func origLineCount(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	n := bytes.Count(data, []byte{'\n'})
+	if data[len(data)-1] != '\n' {
+		n++
+	}
+	return n
+}
+
+// renderChangedRegions shows the lines a patch changed with a few unchanged
+// lines on each side, numbered as read renders them. Far-apart changes read
+// as separate windows; the header already carried the new tag.
+func renderChangedRegions(newBytes []byte, ops []patchOp, origCount int) string {
+	if len(newBytes) == 0 {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSuffix(string(newBytes), "\n"), "\n")
+	windows := expandAndMerge(changedIntervals(ops, origCount), len(lines), editContextLines)
+	if len(windows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for wi, w := range windows {
+		if wi > 0 {
+			b.WriteString("  ...\n")
+		}
+		for i := w[0]; i <= w[1]; i++ {
+			fmt.Fprintf(&b, "%6d→%s\n", i, lines[i-1])
+		}
+	}
+	return b.String()
+}
+
+// changedIntervals maps each operation to the lines it changed in the new
+// file. A pure deletion holds no new lines, so it maps to the point where
+// lines went missing; the caller expands it into surrounding context.
+func changedIntervals(ops []patchOp, origCount int) [][2]int {
+	ordered := append([]patchOp(nil), ops...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].startLine < ordered[j].startLine })
+	intervals := make([][2]int, 0, len(ordered))
+	cursorLine := 1
+	newEmitted := 0
+	for _, op := range ordered {
+		switch op.kind {
+		case opReplace:
+			newEmitted += op.startLine - cursorLine
+			newEmitted += len(op.body)
+			intervals = append(intervals, [2]int{newEmitted - len(op.body) + 1, newEmitted})
+			cursorLine = op.endLine + 1
+		case opDelete:
+			newEmitted += op.startLine - cursorLine
+			intervals = append(intervals, [2]int{newEmitted + 1, newEmitted + 1})
+			cursorLine = op.endLine + 1
+		case opInsertBefore:
+			newEmitted += op.startLine - cursorLine
+			newEmitted += len(op.body)
+			intervals = append(intervals, [2]int{newEmitted - len(op.body) + 1, newEmitted})
+			cursorLine = op.startLine
+		case opInsertAfter:
+			newEmitted += op.startLine + 1 - cursorLine
+			newEmitted += len(op.body)
+			intervals = append(intervals, [2]int{newEmitted - len(op.body) + 1, newEmitted})
+			cursorLine = op.startLine + 1
+		case opAppend:
+			newEmitted += origCount + 1 - cursorLine
+			newEmitted += len(op.body)
+			intervals = append(intervals, [2]int{newEmitted - len(op.body) + 1, newEmitted})
+			cursorLine = origCount + 1
+		}
+	}
+	return intervals
+}
+
+// expandAndMerge widens each changed interval by ctx lines on each side,
+// clamped to the file, and merges windows that touch or overlap.
+func expandAndMerge(intervals [][2]int, total, ctx int) [][2]int {
+	if total <= 0 {
+		return nil
+	}
+	expanded := make([][2]int, 0, len(intervals))
+	for _, iv := range intervals {
+		s, e := iv[0], iv[1]
+		if s < 1 {
+			s = 1
+		}
+		if s > total {
+			s = total
+		}
+		if e < 1 {
+			e = 1
+		}
+		if e > total {
+			e = total
+		}
+		a := s - ctx
+		if a < 1 {
+			a = 1
+		}
+		b := e + ctx
+		if b > total {
+			b = total
+		}
+		expanded = append(expanded, [2]int{a, b})
+	}
+	sort.Slice(expanded, func(i, j int) bool { return expanded[i][0] < expanded[j][0] })
+	merged := expanded[:0]
+	for _, w := range expanded {
+		if len(merged) == 0 || w[0] > merged[len(merged)-1][1]+1 {
+			merged = append(merged, w)
+			continue
+		}
+		if w[1] > merged[len(merged)-1][1] {
+			merged[len(merged)-1][1] = w[1]
+		}
+	}
+	return merged
 }
 
 // applyPatchBytes splices operations over byte ranges, so a multi-megabyte file
