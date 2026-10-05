@@ -166,3 +166,49 @@ func TestCodeReviewIsServedWhereWorkIs(t *testing.T) {
 		}
 	}
 }
+
+// A tab that cannot be evened out is still a working tab, so the spawn stands
+// and the result carries a short warning instead of failing.
+func TestSpawnWorkerWarnsWhenTilingFails(t *testing.T) {
+	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	spawnGap = 0
+	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "20-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_TAB_ID", "w1:t1")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	spawnExec = func(cmd string, args []string, _ ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return Result{Stdout: "abc123def\n"}, nil
+		}
+		switch {
+		case len(args) > 0 && args[0] == "worktree":
+			return Result{Stdout: `{"result":{"root_pane":{"pane_id":"w9:p1","tab_id":"w9:t1"},"workspace":{"workspace_id":"w9"}}}`}, nil
+		case len(args) > 1 && args[0] == "pane" && args[1] == "split":
+			return Result{Stdout: `{"result":{"pane":{"pane_id":"w1:p2","tab_id":"w1:t1"}}}`}, nil
+		case len(args) > 1 && args[0] == "pane" && args[1] == "list":
+			return Result{Stdout: `{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"},{"pane_id":"w1:p2","tab_id":"w1:t1"}]}}`}, nil
+		case len(args) > 1 && args[0] == "pane" && args[1] == "layout":
+			// Two panes of different sizes and no divider between them: the
+			// tab is uneven and nothing can move it.
+			return Result{Stdout: `{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":100},"tab_id":"w1:t1",` +
+				`"panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":100}},{"pane_id":"w1:p2","rect":{"x":80,"y":0,"width":20,"height":100}}],"splits":[]}}}`}, nil
+		}
+		return Result{}, nil
+	}
+	args, _ := json.Marshal(map[string]any{"ticket": ticket})
+	out, err := spawnTool.Execute(context.Background(), repo, args)
+	if err != nil {
+		t.Fatalf("spawn_worker: %v", err)
+	}
+	if !strings.Contains(out, "spawned worker") {
+		t.Errorf("the spawn must still succeed, got %q", out)
+	}
+	if !strings.Contains(out, "warning") {
+		t.Errorf("a failed tile must be reported as a warning, got %q", out)
+	}
+}

@@ -20,6 +20,7 @@ type Worker struct {
 	Branch    string `json:"branch"`
 	Worktree  string `json:"worktree"`
 	Pane      string `json:"pane"`
+	Tab       string `json:"tab,omitempty"`
 	Workspace string `json:"workspace"`
 	Harness   string `json:"harness"`
 	Model     string `json:"model,omitempty"`
@@ -226,6 +227,11 @@ type SpawnInput struct {
 	Late string
 	// SessionID names the harness session so Wait can find its transcript.
 	SessionID string
+	// RunTab and Anchor point at the tab a run's workers share: the pane is
+	// split in RunTab next to Anchor so the worker joins it. Empty means no
+	// shared tab, and the worker stays in the pane its worktree opened.
+	RunTab string
+	Anchor string
 }
 
 func worktreePath(repo, id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
@@ -317,14 +323,38 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	}
 
 	w.Pane = reply.Result.RootPane.PaneID
+	w.Tab = reply.Result.RootPane.TabID
 	w.Workspace = reply.Result.Workspace.WorkspaceID
 	if w.Pane == "" || w.Workspace == "" {
 		return nil, fmt.Errorf("herdr worktree create returned no pane or workspace for %q; raw: %.600s", id, reply.raw)
 	}
 
-	// A worktree opens in a tab of its own, but a tab can hold more than one
-	// pane. Tiling is cosmetic: never fail a spawn over an uneven tab.
-	_ = tilePanes(run, reply.Result.RootPane.TabID)
+	// A worktree opens in a tab of its own, so tiling that tab would have
+	// nothing to even out. When the caller names the run's tab, split it here:
+	// every worker of the run lands as a pane of that one tab. The worktree's
+	// own pane is left in place, because it is what keeps the worktree
+	// workspace open for finish to remove.
+	if in.RunTab != "" && in.Anchor != "" && in.RunTab != w.Tab {
+		split, err := herdrJSON(run, []string{"pane", "split",
+			"--pane", in.Anchor,
+			"--direction", "down",
+			"--ratio", "0.5",
+			"--cwd", w.Worktree,
+			"--no-focus",
+		}, 15*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		pane := split.Result.Pane.PaneID
+		if pane == "" {
+			return nil, fmt.Errorf("herdr split returned no pane id for %q", id)
+		}
+		w.Pane = pane
+		w.Tab = split.Result.Pane.TabID
+		if w.Tab == "" {
+			w.Tab = in.RunTab
+		}
+	}
 
 	if res, err := run(herdrBin(), append([]string{"pane", "run", w.Pane}, in.Launch...), ExecOpts{}); err != nil {
 		return nil, err
@@ -494,6 +524,10 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 	}, 60*time.Second); err != nil {
 		return nil, err
 	}
+	// The worker's pane belongs to the run's tab, not the worktree workspace,
+	// so removing the worktree leaves it behind. Close it, and shrug at a pane
+	// that is already gone (the worktree's own pane, when there was no run tab).
+	_, _ = run(herdrBin(), []string{"pane", "close", w.Pane}, ExecOpts{Timeout: 15 * time.Second})
 	// The worker's MCP config goes with it: nothing reads the file once the
 	// worktree is gone.
 	CleanupSession(Session{Label: id})
