@@ -642,7 +642,9 @@ Short-lived reviewer.
 	old := f.paneOf(t, reviewerStandards)
 
 	// The standards reviewer passed; a persistent one would be left alone, but
-	// this type is not kept.
+	// this type is not kept. The spec reviewer asked for changes, which the
+	// worker answered with a real change.
+	changeTree(t, tree, "answer the spec findings")
 	f.answer = answers("pass", "pass")
 	out, err := reviewSpawnWith(t, f, repo, tree, bothReviewers()...)
 	if err != nil {
@@ -1123,7 +1125,7 @@ func TestSpecPassHoldsWhileOnlyStandardsIsReprompted(t *testing.T) {
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
 		t.Fatal(err)
 	}
-	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "fix the standards findings")
+	changeTree(t, tree, "fix the standards findings")
 	f.answer = answers("pass", "pass")
 	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
 	if err != nil {
@@ -1152,12 +1154,42 @@ func TestSpecWithChangesIsStillReprompted(t *testing.T) {
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
 		t.Fatal(err)
 	}
-	gitOut(t, tree, "commit", "-q", "--allow-empty", "-m", "address the spec findings")
+	changeTree(t, tree, "address the spec findings")
 	f.answer = answers("pass", "pass")
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
 		t.Fatal(err)
 	}
 	if turns := f.paneOf(t, reviewerSpec).turns; turns != 2 {
 		t.Errorf("spec turns = %d, want 2", turns)
+	}
+}
+
+// changeTree commits a real content change, the way a worker answers findings.
+func changeTree(t *testing.T, tree, msg string) {
+	t.Helper()
+	name := "change-" + strings.ReplaceAll(msg, " ", "-") + ".go"
+	writeFile(t, filepath.Join(tree, name), "package a\n\n// "+msg+"\n")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", msg)
+}
+
+// A reviewer that already judged exactly this state and asked for changes
+// repeats its answer when spawned again with no note, so a spawn whose first
+// answer was lost does not buy a second review.
+func TestRespawnAtTheSameStateRepeatsTheChangesAnswer(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "changes"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turns := f.paneOf(t, reviewerSpec).turns; turns != 1 {
+		t.Errorf("spec turns = %d, want 1: its answer is repeated", turns)
+	}
+	if !strings.Contains(out, "changes") || !strings.Contains(out, "already judged exactly this state") {
+		t.Errorf("the repeated answer must come back, got:\n%s", out)
 	}
 }

@@ -281,3 +281,34 @@ func TestStaleBinaryAddsNoticeToNextReply(t *testing.T) {
 		t.Errorf("the stale line must be added after the tool's output, got %q", got)
 	}
 }
+
+// waitTool blocks until its call is cancelled.
+type waitTool struct{}
+
+func (waitTool) Name() string           { return "wait" }
+func (waitTool) Description() string    { return "waits for cancellation" }
+func (waitTool) Schema() map[string]any { return map[string]any{"type": "object"} }
+func (waitTool) Execute(ctx context.Context, _ string, _ json.RawMessage) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "cancelled", nil
+	case <-time.After(10 * time.Second):
+		return "never cancelled", nil
+	}
+}
+
+// A cancellation notification ends the call it names, so a tool waiting on an
+// agent stops waiting when the harness gives up on the call.
+func TestCancelledNotificationEndsTheNamedCall(t *testing.T) {
+	call := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"wait"}}`
+	cancel := `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}`
+	start := time.Now()
+	replies := serve(t, []tools.Tool{waitTool{}}, call, cancel)
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("the call kept waiting after it was cancelled")
+	}
+	body, _ := json.Marshal(replies)
+	if !strings.Contains(string(body), "cancelled") {
+		t.Errorf("want the tool to see its context end, got %s", body)
+	}
+}

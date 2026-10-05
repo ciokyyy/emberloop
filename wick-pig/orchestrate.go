@@ -18,18 +18,24 @@ type fnTool struct {
 	schema     map[string]any
 	readOnly   bool
 	run        func(root string, params map[string]any) (string, error)
+	// runCtx, when set, is used instead of run and receives the call's
+	// context, which ends when the harness cancels the call.
+	runCtx func(ctx context.Context, root string, params map[string]any) (string, error)
 }
 
 func (t fnTool) Name() string           { return t.name }
 func (t fnTool) Description() string    { return t.desc }
 func (t fnTool) Schema() map[string]any { return t.schema }
 func (t fnTool) ReadOnly() bool         { return t.readOnly }
-func (t fnTool) Execute(_ context.Context, root string, args json.RawMessage) (string, error) {
+func (t fnTool) Execute(ctx context.Context, root string, args json.RawMessage) (string, error) {
 	params := map[string]any{}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &params); err != nil {
 			return "", fmt.Errorf("invalid %s parameters: %w", t.name, err)
 		}
+	}
+	if t.runCtx != nil {
+		return t.runCtx(ctx, root, params)
 	}
 	return t.run(root, params)
 }
@@ -154,11 +160,11 @@ var tellTool = fnTool{
 		"agent": map[string]any{"type": "string", "description": "Agent id."},
 		"text":  map[string]any{"type": "string", "description": "What to tell it."},
 	}, "agent", "text"),
-	run: func(_ string, params map[string]any) (string, error) {
+	runCtx: func(ctx context.Context, _ string, params map[string]any) (string, error) {
 		id, text := str(params, "agent"), str(params, "text")
 		if id == "" || text == "" {
 			return "", fmt.Errorf("agent and text are required")
 		}
-		return tellAgent(tellExec, id, text)
+		return tellAgentCtx(ctx, tellExec, id, text)
 	},
 }
