@@ -94,9 +94,9 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 	}
 	for _, t := range base {
 		name := t.Name()
-		enabled, placement, rename := true, tools.PlacementMain, ""
+		enabled, placement, rename := true, tools.DefaultPlacement(name), ""
 		if e, ok := s.Tools[name]; ok {
-			enabled, placement, rename = effectiveToolSetting(e, role)
+			enabled, placement, rename = effectiveToolSetting(name, e, role)
 		}
 		if name == "submit" {
 			if !enabled || placement != tools.PlacementMain || rename != "" {
@@ -171,9 +171,9 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 }
 
 // effectiveToolSetting folds a tool entry's top level with its override for
-// role: enabled defaults true, placement defaults main.
-func effectiveToolSetting(e tools.ToolSetting, role string) (enabled bool, placement, rename string) {
-	enabled, placement, rename = true, tools.PlacementMain, e.Rename
+// role: enabled defaults true, placement defaults to DefaultPlacement(name).
+func effectiveToolSetting(name string, e tools.ToolSetting, role string) (enabled bool, placement, rename string) {
+	enabled, placement, rename = true, tools.DefaultPlacement(name), e.Rename
 	if e.Enabled != nil {
 		enabled = *e.Enabled
 	}

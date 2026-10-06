@@ -17,16 +17,17 @@ var roles = map[string][]string{
 	// edit and write only the paths its project's settings list (see
 	// tools.Guard), enough to keep tickets and specs current.
 	"implement": {"read", "edit", "write", "find", "spawn", "finish", "tell"},
-	// review and scout can only look.
-	"review": {"read", "find"},
+	// review and scout can only look. review also re-runs the repo's checks;
+	// check defaults behind execute, so it is reachable there, not in main.
+	"review": {"read", "find", "check"},
 	"scout":  {"read", "find"},
 	// work is an implementer: every file tool. Its review is a spawn of the
 	// reviewer types its agent type allows, not a tool of its own.
-	"work": {"read", "edit", "write", "bash", "find", "background"},
+	"work": {"read", "edit", "write", "bash", "find", "background", "check"},
 	// plan is a wayfinder, grill, research or to-spec session: file tools plus
 	// spawn, so it can start scouts. No review: review belongs where code is
 	// written, in the workers.
-	"plan": {"read", "edit", "write", "bash", "find", "background", "spawn"},
+	"plan": {"read", "edit", "write", "bash", "find", "background", "spawn", "check"},
 	// full is everything.
 	"full": nil,
 }

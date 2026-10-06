@@ -61,7 +61,7 @@ func toolsOf(t *testing.T, reply map[string]any) []map[string]any {
 
 // The harness batches read-only calls only when the server says they are safe
 // to batch, and it must never be told a call that writes or spawns is.
-func TestToolsListMarksExactlyReadFindGrepReadOnly(t *testing.T) {
+func TestToolsListMarksExactlyReadFindGrepCheckReadOnly(t *testing.T) {
 	replies := serve(t, wick.AllTools(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	if len(replies) != 1 {
 		t.Fatalf("want one reply, got %d", len(replies))
@@ -74,9 +74,9 @@ func TestToolsListMarksExactlyReadFindGrepReadOnly(t *testing.T) {
 			marked[name] = true
 		}
 	}
-	want := map[string]bool{"read": true, "find": true, "grep": true}
+	want := map[string]bool{"read": true, "find": true, "grep": true, "check": true}
 	if len(marked) != len(want) {
-		t.Fatalf("readOnlyHint on %v, want exactly read, find and grep", marked)
+		t.Fatalf("readOnlyHint on %v, want exactly read, find, grep and check", marked)
 	}
 	for name := range want {
 		if !marked[name] {
@@ -392,7 +392,7 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 			t.Fatalf("tools/list serves %v but resolution lists %v", names, mainNames)
 		}
 	}
-	if len(executeNames) != 0 {
-		t.Fatalf("nothing here hides behind execute, got %v", executeNames)
+	if len(executeNames) != 1 || executeNames[0] != "check" {
+		t.Fatalf("only check hides behind execute here, got %v", executeNames)
 	}
 }

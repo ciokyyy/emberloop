@@ -43,6 +43,18 @@ const (
 	PlacementExecute = "execute"
 )
 
+// DefaultPlacement is where a tool serves when settings name no placement:
+// the read-only toolkit (grep, git, check) lives inside execute, everything
+// else in the main list.
+func DefaultPlacement(name string) string {
+	switch name {
+	case "grep", "git", "check":
+		return PlacementExecute
+	default:
+		return PlacementMain
+	}
+}
+
 // ToolRoleOverride overrides a tool entry for one role. Only enabled and
 // placement are per-role; the rename is global to every role.
 type ToolRoleOverride struct {
@@ -51,7 +63,8 @@ type ToolRoleOverride struct {
 }
 
 // ToolSetting tunes one native tool. Enabled defaults to true when unset;
-// placement defaults to main. Roles overrides enabled and placement per role.
+// placement defaults to DefaultPlacement. Roles overrides enabled and
+// placement per role.
 type ToolSetting struct {
 	Enabled   *bool                       `json:"enabled,omitempty"`
 	Placement string                      `json:"placement,omitempty"`
@@ -98,7 +111,7 @@ type Settings struct {
 	// Roles holds one default per launch slot, keyed by slot name.
 	Roles map[string]Role `json:"roles,omitempty"`
 	// Tools tunes native tools by name: enabled, placement, rename and per-role
-	// overrides. Absent means the defaults (enabled, main).
+	// overrides. Absent means the defaults (enabled, DefaultPlacement).
 	Tools map[string]ToolSetting `json:"tools,omitempty"`
 	// MCPServers registers outside MCP servers by name.
 	MCPServers map[string]MCPServerSetting `json:"mcp_servers,omitempty"`
