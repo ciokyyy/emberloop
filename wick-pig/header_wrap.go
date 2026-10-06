@@ -187,6 +187,11 @@ func resolveTranscript(src HeaderSource) string {
 	if src.TranscriptPath != "" {
 		return src.TranscriptPath
 	}
+	if src.Harness == "claude" {
+		if p := readLiveTranscript(src.StateDir, src.AgentID); p != "" {
+			return p
+		}
+	}
 	if src.SessionID == "" {
 		return ""
 	}

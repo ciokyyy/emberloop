@@ -518,7 +518,19 @@ func ThemeLaunchArgs(harness string, args []string, dark bool, themeDir string) 
 			}
 		}
 		file := files[pigThemeFile(dark)]
-		return append(append([]string{}, args...), "--theme", file, "--use-theme", ThemeName(dark)), nil
+		// Flags go before a "--": everything after it is the prompt, and pig
+		// would take the theme flags as user messages.
+		flags := []string{"--theme", file, "--use-theme", ThemeName(dark)}
+		at := len(args)
+		for i, a := range args {
+			if a == "--" {
+				at = i
+				break
+			}
+		}
+		out := append([]string{}, args[:at]...)
+		out = append(out, flags...)
+		return append(out, args[at:]...), nil
 	case "claude":
 		ref := ClaudeThemeRef(dark)
 		for i, a := range args {

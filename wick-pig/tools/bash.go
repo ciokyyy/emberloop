@@ -77,7 +77,7 @@ type bashTool struct{}
 
 func (bashTool) Name() string { return "bash" }
 func (bashTool) Description() string {
-	return "Execute a bash command in the workspace. Returns combined stdout and stderr, and the exit status when it is not 0. Commands are token-compressed via rtk. A server, watcher or anything that does not exit goes to the background tool, never here."
+	return "Execute a bash command in the workspace. Returns combined stdout and stderr, and the exit status when it is not 0. Commands are token-compressed via rtk. A server, watcher or anything that does not exit goes to the background tool, never here. Python never runs here: use the execute tool, not python or python3 through bash."
 }
 func (bashTool) Schema() map[string]any {
 	return obj(map[string]any{

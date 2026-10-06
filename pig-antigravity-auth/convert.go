@@ -1,6 +1,9 @@
 package antigravity
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 func asMap(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func asStr(v any) string         { s, _ := v.(string); return s }
@@ -246,4 +249,84 @@ func convertTools(tools []any) []any {
 		})
 	}
 	return []any{map[string]any{"functionDeclarations": decls}}
+}
+
+// foldSystem returns the system prompt and the tool set of a transcript.
+// Pig, like Pi 0.86, sends no systemPrompt or tools field: both ride on system
+// messages (Pi's getCurrentSystemPrompt and getCurrentTools read them back).
+// The prompt is every message's text joined by a blank line, then the named
+// sections that remain (a null value removes one); toolsAdded and toolsRemoved
+// change the tool set in order. The top-level fields, which the older wire
+// shape names, still apply first. Without the tools a model has nothing to
+// call and ends its turn with a malformed function call. Sections arrive as a
+// JSON object, so their order is by name, not as pig ordered them.
+func foldSystem(transcript map[string]any) (string, []any) {
+	var texts []string
+	if t := strings.TrimSpace(asStr(transcript["systemPrompt"])); t != "" {
+		texts = append(texts, asStr(transcript["systemPrompt"]))
+	}
+	tools := append([]any(nil), sliceOf(transcript["tools"])...)
+	sections := map[string]string{}
+	for _, m := range sliceOf(transcript["messages"]) {
+		msg := asMap(m)
+		if asStr(msg["role"]) != "system" {
+			continue
+		}
+		switch c := msg["content"].(type) {
+		case string:
+			if c != "" {
+				texts = append(texts, c)
+			}
+		case []any:
+			var parts []string
+			for _, b := range c {
+				if t := asStr(asMap(b)["text"]); t != "" {
+					parts = append(parts, t)
+				}
+			}
+			if len(parts) > 0 {
+				texts = append(texts, strings.Join(parts, "\n"))
+			}
+		}
+		for name, v := range asMap(msg["sections"]) {
+			if v == nil {
+				delete(sections, name)
+			} else {
+				sections[name] = asStr(v)
+			}
+		}
+		for _, r := range sliceOf(msg["toolsRemoved"]) {
+			name := asStr(asMap(r)["name"])
+			kept := tools[:0]
+			for _, t := range tools {
+				if asStr(asMap(t)["name"]) != name {
+					kept = append(kept, t)
+				}
+			}
+			tools = kept
+		}
+		for _, a := range sliceOf(msg["toolsAdded"]) {
+			name := asStr(asMap(a)["name"])
+			replaced := false
+			for i, t := range tools {
+				if asStr(asMap(t)["name"]) == name {
+					tools[i], replaced = a, true
+				}
+			}
+			if !replaced {
+				tools = append(tools, a)
+			}
+		}
+	}
+	names := make([]string, 0, len(sections))
+	for n := range sections {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if sections[n] != "" {
+			texts = append(texts, sections[n])
+		}
+	}
+	return strings.Join(texts, "\n\n"), tools
 }

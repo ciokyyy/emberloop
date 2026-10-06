@@ -18,6 +18,7 @@ package wick
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -150,6 +151,7 @@ func WrapChild(cfg WrapConfig) error {
 		child:   child, snapshot: snapshot, filter: filter,
 		reporter: newAgentReporter(cfg),
 	}
+	w.syncMouseLocked()
 	defer w.reporter.release()
 	w.reporter.report(HeaderIdle)
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) && cfg.Start == nil {
@@ -288,11 +290,15 @@ type wrapper struct {
 	snapshot func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
 	filter   *wrapFilter
 	reporter *agentReporter
-	usageKey atomic.Value // string: the account the strip's usage reads
-	mu       sync.Mutex
-	last     string
-	phase    bool
-	closed   bool
+	mouse    mouseMapper
+	// lastPlain is the painted strip rows without colors, for copying a
+	// drag across them.
+	lastPlain []string
+	usageKey  atomic.Value // string: the account the strip's usage reads
+	mu        sync.Mutex
+	last      string
+	phase     bool
+	closed    bool
 }
 
 // sideCols are the columns the strip and the child lose on the left and the
@@ -457,6 +463,7 @@ func (w *wrapper) paintLocked(strip string) {
 		return
 	}
 	w.last = strip
+	w.lastPlain = strings.Split(ansiRe.ReplaceAllString(strip, ""), "\n")
 	var b strings.Builder
 	b.WriteString("\x1b7\x1b[?6l")
 	col, _ := w.sideCols()
@@ -579,8 +586,13 @@ func (w *wrapper) forwardInput() {
 	for {
 		n, err := w.stdin.Read(buf)
 		if n > 0 {
-			if _, werr := w.child.Write(buf[:n]); werr != nil {
-				return
+			w.mu.Lock()
+			in := w.mouse.translate(buf[:n])
+			w.mu.Unlock()
+			if len(in) > 0 {
+				if _, werr := w.child.Write(in); werr != nil {
+					return
+				}
 			}
 		}
 		if err != nil {
@@ -588,6 +600,10 @@ func (w *wrapper) forwardInput() {
 		}
 	}
 }
+
+// resizeSettle is the quiet time after the last SIGWINCH before the child
+// is resized.
+const resizeSettle = 150 * time.Millisecond
 
 // watchResize forwards terminal resizes to resized: the child keeps the
 // reduced height and the strip repaints around the new size.
@@ -600,6 +616,18 @@ func (w *wrapper) watchResize(done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ch:
+			// A layout change sends a burst of sizes. Wait for the burst
+			// to settle: every size the child sees is a full redraw that
+			// lands in scrollback.
+			for settled := false; !settled; {
+				select {
+				case <-ch:
+				case <-done:
+					return
+				case <-time.After(resizeSettle):
+					settled = true
+				}
+			}
 			if f, ok := w.stdout.(*os.File); ok {
 				if ws, err := pty.GetsizeFull(f); err == nil {
 					w.resized(int(ws.Cols), int(ws.Rows))
@@ -616,6 +644,9 @@ func (w *wrapper) resized(termW, termH int) {
 	snap, ok := w.readSnap()
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if termW == w.termW && termH == w.termH {
+		return
+	}
 	w.termW, w.termH = termW, termH
 	w.pad = FitPad(w.termW, w.termH, w.rows, w.frame, Pad{
 		Left:   w.cfg.Settings.EffectivePadLeft(),
@@ -625,10 +656,12 @@ func (w *wrapper) resized(termW, termH int) {
 	w.childW, w.childH = ChildSizePad(w.termW, w.termH, w.rows, w.frame, w.pad)
 	w.child.Resize(w.childW, w.childH)
 	w.filter.setSize(w.childH, wrapMarginSetupPad(w.termW, w.frame, w.pad))
+	w.syncMouseLocked()
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
 	b.WriteString(w.filter.marginStr())
 	w.writeLocked(b.String())
+	w.clearBelowChildLocked()
 	w.drawFrameLocked()
 	w.last = ""
 	if ok {
@@ -782,6 +815,9 @@ func detectProfile(stdout io.Writer) termenv.Profile {
 func realStart(bin string, args, env []string, w, h int, stderr io.Writer) (wrapPty, func() error, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(), env...)
+	if filepath.Base(bin) == "claude" {
+		cmd.Env = withoutHerdrClaudeHook(cmd.Env)
+	}
 	if stderr != nil {
 		cmd.Stderr = stderr
 	}
@@ -875,4 +911,80 @@ func (p *ptyChild) Write(b []byte) (int, error) { return p.f.Write(b) }
 func (p *ptyChild) Close() error                { return p.f.Close() }
 func (p *ptyChild) Resize(w, h int) {
 	_ = pty.Setsize(p.f, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
+}
+
+// clearBelowChildLocked blanks every row under the child screen, padding
+// included, so a resize leaves no ghost of the strip at its old rows or
+// columns. The strip repaints right after.
+func (w *wrapper) clearBelowChildLocked() {
+	var b strings.Builder
+	b.WriteString("\x1b7\x1b[?6l")
+	for r := w.childH + 1; r <= w.termH; r++ {
+		b.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2K", r))
+	}
+	b.WriteString("\x1b8")
+	w.writeLocked(b.String())
+}
+
+// withoutHerdrClaudeHook drops HERDR_ENV from a wrapped claude's env. Herdr's
+// own claude hook runs only when HERDR_ENV=1 and, on SessionStart, takes the
+// pane's agent session. Once taken, herdr silently refuses every later
+// report-agent from the wrapper, which is the only way herdr can see a
+// wrapped claude (the foreground process is wick-pig), so the pane freezes
+// at its first state and then shows no agent. The wrapper reports instead.
+func withoutHerdrClaudeHook(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, "HERDR_ENV=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// syncMouseLocked tells the mouse mapper where the child screen sits.
+func (w *wrapper) syncMouseLocked() {
+	off := w.pad.Left
+	if w.frame {
+		off++
+	}
+	w.mouse.set(off, w.childW, w.childH)
+	w.mouse.onStrip = w.copyStripSelection
+}
+
+// copyStripSelection copies the strip text between two terminal cells to the
+// clipboard through OSC 52, the way claude and pig copy their own selections.
+// A child that captures the mouse never lets the terminal select the strip,
+// so a drag over it is handled here. It runs inside translate, which holds
+// w.mu.
+func (w *wrapper) copyStripSelection(x1, y1, x2, y2 int) {
+	if y2 < y1 || (y2 == y1 && x2 < x1) {
+		x1, y1, x2, y2 = x2, y2, x1, y1
+	}
+	col, _ := w.sideCols()
+	var lines []string
+	for y := y1; y <= y2; y++ {
+		i := y - w.ruleRow() - 1
+		if i < 0 || i >= len(w.lastPlain) {
+			continue
+		}
+		cells := []rune(w.lastPlain[i])
+		from, to := 0, len(cells)
+		if y == y1 {
+			from = x1 - col - 1
+		}
+		if y == y2 {
+			to = x2 - col
+		}
+		from, to = min(max(from, 0), len(cells)), min(max(to, 0), len(cells))
+		if from < to {
+			lines = append(lines, strings.TrimRight(string(cells[from:to]), " "))
+		}
+	}
+	text := strings.Join(lines, "\n")
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	w.writeLocked("\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + "\x07")
 }

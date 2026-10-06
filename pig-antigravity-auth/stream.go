@@ -99,9 +99,10 @@ func buildEnvelope(model, transcript, options map[string]any, project string) (e
 		tiered = false
 	}
 	req := request{Contents: convertMessages(sliceOf(transcript["messages"]), asStr(model["provider"]), id)}
-	req.Tools = convertTools(sliceOf(transcript["tools"]))
-	if sp := strings.TrimSpace(asStr(transcript["systemPrompt"])); sp != "" {
-		req.SystemInstruction = map[string]any{"parts": []any{map[string]any{"text": sanitize(asStr(transcript["systemPrompt"]))}}}
+	prompt, tools := foldSystem(transcript)
+	req.Tools = convertTools(tools)
+	if strings.TrimSpace(prompt) != "" {
+		req.SystemInstruction = map[string]any{"parts": []any{map[string]any{"text": sanitize(prompt)}}}
 	}
 	if len(req.Tools) > 0 {
 		req.ToolConfig = map[string]any{"functionCallingConfig": map[string]any{"mode": "VALIDATED"}}
@@ -265,6 +266,17 @@ type message struct {
 	stopReason           string
 	errMsg               string
 	ts                   int64
+}
+
+// hasOutput reports whether the turn carries text or a tool call, not only
+// thinking.
+func (m *message) hasOutput() bool {
+	for _, b := range m.blocks {
+		if b.kind == "toolCall" || (b.kind == "text" && strings.TrimSpace(b.text) != "") {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *message) snapshot() map[string]any {
@@ -593,6 +605,14 @@ func run(ctx context.Context, stream *sdk.ModelEventStream, model, transcript, o
 			return
 		}
 		resp.Body.Close()
+		if msg.stopReason == "stop" && !msg.hasOutput() {
+			// Thinking only, no text and no tool call: the turn would end
+			// silently and the worker would stop without a submit. omp raises
+			// the same case as an error. The wording matches pig's retryable
+			// pattern ("server error"), so pig re-sends the request itself.
+			fail(fmt.Errorf("Antigravity server error: thought-only response without final output (%s %s)", terminalReason, strings.TrimSpace(terminalFinishMessage)))
+			return
+		}
 		if msg.stopReason == "stop" || msg.stopReason == "length" {
 			sessions.complete(key)
 		}

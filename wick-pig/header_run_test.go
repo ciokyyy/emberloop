@@ -509,3 +509,11 @@ func TestAgentReporterIdleAfterLimit(t *testing.T) {
 		t.Errorf("calls = %v, want idle after the limit", calls)
 	}
 }
+
+func TestWithoutHerdrClaudeHookDropsOnlyHerdrEnv(t *testing.T) {
+	got := withoutHerdrClaudeHook([]string{"A=1", "HERDR_ENV=1", "HERDR_PANE_ID=p1", "HERDR_ENVX=2"})
+	want := []string{"A=1", "HERDR_PANE_ID=p1", "HERDR_ENVX=2"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
