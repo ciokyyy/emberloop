@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately). If ticket 14's sandbox self-test exists, reuse it; otherwise implement the equivalent check here in one function that ticket 14 adopts.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Detects each missing dependency and prints the right install command per package manager (table-driven test)
-- [ ] Without a terminal it prints the command and exits non-zero instead of calling sudo
-- [ ] Graph binary download is checksum-verified; a wrong checksum is refused; the binary lands in the bin directory with the execute bit
-- [ ] Each dependency gets a proof line with its version; a failing required dependency fails the command; the graph binary only warns
-- [ ] A second run changes nothing; `wick-pig install` runs the same step
-- [ ] The shared binary resolver (bin directory, then `PATH`) is used by the other tools
-- [ ] Fake package manager and fake release server cover the tests; no real installs in the standard check; repo check passes
+- [x] Detects each missing dependency and prints the right install command per package manager (table-driven test)
+- [x] Without a terminal it prints the command and exits non-zero instead of calling sudo
+- [x] Graph binary download is checksum-verified; a wrong checksum is refused; the binary lands in the bin directory with the execute bit
+- [x] Each dependency gets a proof line with its version; a failing required dependency fails the command; the graph binary only warns
+- [x] A second run changes nothing; `wick-pig install` runs the same step
+- [x] The shared binary resolver (bin directory, then `PATH`) is used by the other tools
+- [x] Fake package manager and fake release server cover the tests; no real installs in the standard check; repo check passes
