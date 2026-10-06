@@ -403,6 +403,10 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			Parent:   parentPane,
 			GroupID:  groupFor(agent.ID),
 			Deliver:  true,
+			// The harness session the launch started: transcript lookup, the
+			// usage tailer and reply waiting read this current value, so a
+			// restart only changes it here.
+			SessionID: agent.Sess.ID,
 		}
 		if t.Checkout == "worktree" {
 			state.Ticket = r.Ticket
