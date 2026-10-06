@@ -525,3 +525,21 @@ func TestSpawnSweepFinalizesStrandedLostGroup(t *testing.T) {
 		t.Errorf("the swept notice must report the vanished member as lost, got:\n%s", got[0])
 	}
 }
+
+// A pane whose agent finished a turn but is not focused is reported by herdr
+// as done, not idle. The parent probe must wait on both states, or a grouped
+// notice to an unfocused orchestrator is held for the whole hold timeout.
+func TestParentIdleProbeAcceptsDone(t *testing.T) {
+	var got []string
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		got = args
+		return Result{Stdout: "{}"}, nil
+	}
+	if !parentIdle(run, "wFD:p1") {
+		t.Fatal("a parent that herdr says reached the state is idle")
+	}
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "--until idle") || !strings.Contains(joined, "--until done") {
+		t.Fatalf("probe must wait on idle and done, got %q", joined)
+	}
+}
