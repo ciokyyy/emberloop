@@ -246,3 +246,15 @@ func TestBuildHeaderSnapshotIgnoresStaleCompressing(t *testing.T) {
 		t.Error("stale mark still reads as compressing")
 	}
 }
+
+// An agent with no transcript yet has started no turn: it is idle, waiting
+// for its first message. herdr's wait for idle depends on that state.
+func TestSnapshotIsIdleBeforeTheFirstTurn(t *testing.T) {
+	snap, err := BuildHeaderSnapshot(HeaderSource{AgentID: "fresh-1", AgentType: "worker", AgentName: "implementer", Harness: "claude", SessionID: "no-such-session"}, tools.Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != HeaderIdle {
+		t.Errorf("state before the first turn = %q, want idle", snap.State)
+	}
+}
