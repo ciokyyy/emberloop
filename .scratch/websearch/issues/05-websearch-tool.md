@@ -4,12 +4,12 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Chain order, no-fallback for a named provider and bad-query handling are tested against fake provider servers
-- [ ] Missing-key behaviour for both `auto` and a named provider
-- [ ] Cache hit, expiry and `fresh` bypass
-- [ ] Quota rows written from Brave headers and Exa cost, nothing invented when absent
-- [ ] Parallel mode merges and tags `sources`, behind the setting
-- [ ] `search.provider` and `search.mode` settable through `wick-pig settings`
-- [ ] Tool is available to every role that can read; repo check passes
+- [x] Chain order, no-fallback for a named provider and bad-query handling are tested against fake provider servers
+- [x] Missing-key behaviour for both `auto` and a named provider
+- [x] Cache hit, expiry and `fresh` bypass
+- [x] Quota rows written from Brave headers and Exa cost, nothing invented when absent
+- [x] Parallel mode merges and tags `sources`, behind the setting
+- [x] `search.provider` and `search.mode` settable through `wick-pig settings`
+- [x] Tool is available to every role that can read; repo check passes
