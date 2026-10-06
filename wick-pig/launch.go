@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // launchFile is the complete launch wick types into a pane: the binary, its
@@ -131,5 +132,61 @@ func RunExecFile(path string) error {
 	c := exec.Command(cmd.Bin, cmd.Args...)
 	c.Env = append(os.Environ(), cmd.Env...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if log, name := openToolsLog(cmd); log != nil {
+		defer log.Close()
+		c.Env = append(c.Env, "PIG_DEBUG_TOOLS=1")
+		c.Stderr = &stampWriter{w: log, label: name}
+	}
 	return c.Run()
+}
+
+// openToolsLog opens the per-session log of how many tools pig sent with each
+// provider request, so a session that says a tool is missing can be checked
+// against what its provider was actually sent. It applies to pig sessions
+// only, and WICK_PIG_TOOLS_LOG=0 turns it off. A log that cannot be opened is
+// no reason to stop the session: it returns nil and the session runs as before.
+func openToolsLog(cmd Command) (*os.File, string) {
+	if filepath.Base(cmd.Bin) != "pig" || os.Getenv("WICK_PIG_TOOLS_LOG") == "0" {
+		return nil, ""
+	}
+	name := ""
+	for _, e := range cmd.Env {
+		if v, ok := strings.CutPrefix(e, "WICK_SESSION_ID="); ok && v != "" {
+			name = v
+		}
+	}
+	if name == "" {
+		name = fmt.Sprintf("pid-%d", os.Getpid())
+	}
+	dir := filepath.Join(filepath.Dir(statePath), "debug")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, ""
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name+".tools.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, ""
+	}
+	return f, name
+}
+
+// stampWriter writes pig's stderr to the tools log one line at a time, each
+// line led by the time it arrived, since pig's own lines carry none.
+type stampWriter struct {
+	w     *os.File
+	label string
+	part  []byte
+}
+
+func (s *stampWriter) Write(p []byte) (int, error) {
+	s.part = append(s.part, p...)
+	for {
+		i := strings.IndexByte(string(s.part), '\n')
+		if i < 0 {
+			break
+		}
+		line := string(s.part[:i])
+		s.part = s.part[i+1:]
+		fmt.Fprintf(s.w, "%s %s\n", time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), line)
+	}
+	return len(p), nil
 }

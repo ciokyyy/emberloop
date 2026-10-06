@@ -324,3 +324,53 @@ func TestFailedLaunchLeavesNoMCPConfigBehind(t *testing.T) {
 		t.Errorf("MCP config outlived the failed launch (err=%v)", err)
 	}
 }
+
+// A pig session logs how many tools pig sent with each provider request, so a
+// session that says a tool is missing can be checked against what its provider
+// received. Other harnesses and an explicit opt-out leave no log.
+func TestPigSessionLogsToolCountsPerRequest(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "pig")
+	script := "#!/bin/sh\n" +
+		"if [ \"$PIG_DEBUG_TOOLS\" = 1 ]; then echo 'openai.Stream: sending 8 tools (tools=8)' >&2; echo 'openai.Stream: sending 7 tools (tools=7)' >&2; fi\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateState(t)
+	run := func(bin, session string) string {
+		cmd := Command{Bin: bin, Env: []string{"WICK_SESSION_ID=" + session}}
+		path, err := writeLaunch(Session{ID: session}, cmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := RunExecFile(path); err != nil {
+			t.Fatal(err)
+		}
+		return filepath.Join(filepath.Dir(statePath), "debug", session+".tools.log")
+	}
+
+	raw, err := os.ReadFile(run(fake, "tools-1"))
+	if err != nil {
+		t.Fatalf("a pig session must leave a tools log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "tools=8") || !strings.Contains(lines[1], "tools=7") {
+		t.Fatalf("log must hold one line per request, got %q", raw)
+	}
+	if !strings.HasPrefix(lines[0], "20") || !strings.Contains(lines[0], "Z ") {
+		t.Errorf("each line must lead with a timestamp, got %q", lines[0])
+	}
+
+	t.Setenv("WICK_PIG_TOOLS_LOG", "0")
+	if _, err := os.Stat(run(fake, "tools-off")); err == nil {
+		t.Error("WICK_PIG_TOOLS_LOG=0 must leave no log")
+	}
+	t.Setenv("WICK_PIG_TOOLS_LOG", "")
+	other := filepath.Join(dir, "claude")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(run(other, "tools-claude")); err == nil {
+		t.Error("only pig sessions log tool counts")
+	}
+}
