@@ -165,6 +165,8 @@ func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 	b.WriteString("\nWhere a skill says /code-review, spawn both of your reviewer types in one spawn call: " +
 		"spawn(agents=[{type: \"reviewer-standards\"}, {type: \"reviewer-spec\"}]). They review this worktree and report pass or changes. " +
 		"The spawn tool is in your tool list: in pig its name is mcp__wick__spawn. Call it directly; do not decide it is missing, and never start reviewers through bash or a second wick-mcp.\n")
+	b.WriteString("\nBefore editing, read the AGENTS.md chain from the repo root down to each file you will touch, following each doc's Child DOX Index; the nearest doc is the local contract. " +
+		"After a change that alters purpose, ownership, contracts, structure, workflow, inputs, outputs, or permissions, update the nearest owning AGENTS.md (plus affected parents and children, refreshing indexes) in the same task.\n")
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
 	if target != "" {
 		fmt.Fprintf(&b, "\nBefore your final review, bring the branch up to date: `git rebase %s`. "+

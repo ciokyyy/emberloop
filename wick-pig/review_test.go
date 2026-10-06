@@ -1234,3 +1234,22 @@ func TestSpawnReplyNamesTheReviewerWhosePassHolds(t *testing.T) {
 		t.Errorf("the reply must say the spec pass holds, got:\n%s", out)
 	}
 }
+
+// A change that alters a documented contract without updating the owning doc
+// reaches each reviewer carrying the DOX flag: both launch prompts tell the
+// reviewer to report the missing doc update and any stale index as a finding.
+// The fixture worktree holds a committed contract change (a.go gains func A)
+// and no AGENTS.md update.
+func TestReviewPromptFlagsContractChangeWithoutDocUpdate(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []string{reviewerStandards, reviewerSpec} {
+		prompt := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(prompt, "owning AGENTS.md") || !strings.Contains(prompt, "stale") {
+			t.Errorf("%s launch prompt must carry the DOX flag, got:\n%s", typ, prompt)
+		}
+	}
+}
