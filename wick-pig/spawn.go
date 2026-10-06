@@ -258,6 +258,10 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	// A reviewer spawn shares one packet and one check run across every
 	// reviewer type in the call; it is prepared once, on the first reviewer.
 	var review *reviewPacket
+	// held says, for each reviewer left alone because its pass still stands,
+	// that its answer is in: a worker must never wait for a verdict that is
+	// not coming.
+	var held []string
 	for _, r := range reqs {
 		t := types[r.Type]
 		if t.Checkout == "parent" {
@@ -282,6 +286,8 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			}
 			if agent != nil {
 				agents = append(agents, agent)
+			} else {
+				held = append(held, heldPassLine(review, t))
 			}
 			continue
 		}
@@ -337,7 +343,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		if review.noChanges {
 			return "no changes: nothing differs from the base. Nothing to review.", nil
 		}
-		return fmt.Sprintf("every reviewer passed at %s; nothing to review.", short(review.head)), nil
+		return fmt.Sprintf("every reviewer passed at %s; nothing to review.\n%s", short(review.head), strings.Join(held, "\n")), nil
 	}
 	for {
 		if allSubmitted(agents) || !time.Now().Before(deadline) || ctx.Err() != nil {
@@ -375,7 +381,21 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			backgrounded = append(backgrounded, a.ID)
 		}
 	}
-	return renderSpawn(agents, backgrounded), nil
+	out := renderSpawn(agents, backgrounded)
+	if len(held) > 0 {
+		out += "\n\n" + strings.Join(held, "\n")
+	}
+	return out, nil
+}
+
+// heldPassLine tells the caller a reviewer was not started because its pass
+// already covers this work.
+func heldPassLine(p *reviewPacket, t AgentType) string {
+	at := short(p.head)
+	if prev, ok := reviewersOf(p.tree)[t.Name]; ok && prev.VerdictAt != "" {
+		at = short(prev.VerdictAt)
+	}
+	return fmt.Sprintf("%s: PASS already on record (judged %s) and it still holds; it was not run again and no result from it is coming.", t.Name, at)
 }
 
 // closeSpawned rolls back the agents a failed call launched, so a parent that

@@ -611,7 +611,7 @@ func TestReviewSpawnFollowUpGoesToOpenFindingsOnly(t *testing.T) {
 	if !strings.Contains(spec.prompts[1], "B is out of scope") || !strings.Contains(spec.prompts[1], "Follow-up") {
 		t.Errorf("the follow-up must carry the note:\n%s", spec.prompts[1])
 	}
-	if !strings.Contains(out, reviewerSpec) || strings.Contains(out, reviewerStandards) {
+	if !strings.Contains(out, reviewerSpec+" ") || strings.Contains(out, reviewerStandards+" ") {
 		t.Errorf("the reply must carry only the reviewer that was re-prompted: %s", out)
 	}
 	if got := reviewersOf(tree)[reviewerSpec].Verdict; got != verdictPass {
@@ -1135,8 +1135,8 @@ func TestSpecPassHoldsWhileOnlyStandardsIsReprompted(t *testing.T) {
 	if spec.turns != 1 || standards.turns != 2 {
 		t.Errorf("turns: spec %d (want 1, its pass holds), standards %d (want 2)", spec.turns, standards.turns)
 	}
-	if strings.Contains(out, reviewerSpec) {
-		t.Errorf("the reply must not carry the spec reviewer: %s", out)
+	if strings.Contains(out, reviewerSpec+" ") {
+		t.Errorf("the reply must not carry a report from the spec reviewer: %s", out)
 	}
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
 	if why := reviewGate(tree, tip, "", defaultReviewers, passHolds(repo)); why != "" {
@@ -1213,5 +1213,24 @@ func TestReviewerLockKeyIsPerWorktreeAndType(t *testing.T) {
 		if len(k) > 100 {
 			t.Errorf("lock key %q is %d bytes, risking the file name limit", k, len(k))
 		}
+	}
+}
+
+// A reviewer left alone because its pass holds is named in the reply, so a
+// worker does not wait for a verdict that is not coming.
+func TestSpawnReplyNamesTheReviewerWhosePassHolds(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("changes", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	changeTree(t, tree, "fix the standards findings")
+	f.answer = answers("pass", "pass")
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, reviewerSpec+": PASS already on record") || !strings.Contains(out, "no result from it is coming") {
+		t.Errorf("the reply must say the spec pass holds, got:\n%s", out)
 	}
 }
