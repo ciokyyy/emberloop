@@ -60,7 +60,8 @@ owns its `_test.go` and the behaviour below):
   styled string out, Lip Gloss adaptive palette, width tiers),
   `theme.go` (the shared palette: Catppuccin Mocha and Latte driving the
   strip, the generated claude and pig themes and the OSC pane colors;
-  per-run launch flags only, never the user's saved settings),
+  per-run launch flags plus a per-run CLAUDE_CONFIG_DIR only, never the
+  user's saved settings),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
   builder reading the queued compress mark and the compressing state),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
