@@ -278,6 +278,10 @@ func (w *wrapper) init() {
 	defer w.mu.Unlock()
 	var b strings.Builder
 	b.WriteString(ThemeSetSequence(w.dark))
+	// Wipe the screen and home the cursor first: the shell that started the
+	// wrapper leaves its greeting and command line behind, and a child that
+	// redraws only the cells it changes (claude) would show them through.
+	b.WriteString("\x1b[2J\x1b[H")
 	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
 	if w.frame {
 		b.WriteString(w.filter.marginStr())
