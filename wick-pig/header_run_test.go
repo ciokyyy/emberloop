@@ -211,8 +211,8 @@ func TestWrapDefaultIsBorderless(t *testing.T) {
 	}
 }
 
-// A wrapped claude child is reported to herdr as an agent: idle at start,
-// then released when the child ends. Pig reports itself through its
+// A wrapped claude child is reported to herdr as an agent: working while it
+// starts (never idle before its prompt shows), then released when the child ends. Pig reports itself through its
 // extension, so a pig child is never reported here.
 func TestWrapReportsClaudeToHerdr(t *testing.T) {
 	var calls [][]string
@@ -230,7 +230,7 @@ func TestWrapReportsClaudeToHerdr(t *testing.T) {
 		t.Fatalf("herdr calls = %v, want a report then a release", calls)
 	}
 	join := func(a []string) string { return strings.Join(a, " ") }
-	if got := join(calls[0]); !strings.HasPrefix(got, "pane report-agent w:p1 --source wick --agent code-reviewer --state idle --seq ") {
+	if got := join(calls[0]); !strings.HasPrefix(got, "pane report-agent w:p1 --source wick --agent code-reviewer --state working --seq ") {
 		t.Errorf("first call = %q", got)
 	}
 	if got := join(calls[1]); !strings.HasPrefix(got, "pane release-agent w:p1 --source wick --agent code-reviewer --seq ") {
@@ -255,7 +255,7 @@ func TestWrapDoesNotReportPigToHerdr(t *testing.T) {
 
 func TestAgentReporterTracksState(t *testing.T) {
 	var calls []string
-	r := &agentReporter{run: func(a []string) { calls = append(calls, strings.Join(a, " ")) }, pane: "p", label: "x", seq: 10}
+	r := &agentReporter{run: func(a []string) { calls = append(calls, strings.Join(a, " ")) }, pane: "p", label: "x", seq: 10, ready: true}
 	r.report(HeaderIdle)
 	r.report(HeaderIdle) // unchanged: no call
 	r.report(HeaderWorking)
@@ -412,5 +412,34 @@ func TestWrapClearsScreenBeforeRegion(t *testing.T) {
 	region := strings.Index(got, "\x1b[1;21r")
 	if clear < 0 || region < 0 || clear > region {
 		t.Errorf("clear at %d, scroll region at %d: want the clear first\n%q", clear, region, got)
+	}
+}
+
+// A starting claude is reported working until its input prompt shows, so
+// herdr's wait for idle cannot return while the first prompt would be typed
+// into a screen that is not listening yet.
+func TestAgentReporterIdleOnlyOnceReady(t *testing.T) {
+	var calls []string
+	r := &agentReporter{run: func(a []string) { calls = append(calls, strings.Join(a, " ")) }, pane: "p", label: "x", seq: 10, readyAfter: time.Now().Add(time.Hour)}
+	r.report(HeaderIdle)
+	r.observe([]byte("\x1b[2J Welcome to Claude Code\r\n"))
+	r.report(HeaderIdle)
+	if len(calls) != 1 || !strings.Contains(calls[0], "--state working") {
+		t.Fatalf("before the prompt: calls = %v, want one working report", calls)
+	}
+	r.observe([]byte("\x1b[1m\xe2\x8f\xb5\xe2\x8f\xb5 auto mode on\x1b[0m (shift+tab to cycle)"))
+	if len(calls) != 2 || !strings.Contains(calls[1], "--state idle") {
+		t.Fatalf("after the prompt: calls = %v, want idle second", calls)
+	}
+}
+
+// A claude UI that never shows a known footer still becomes idle after the
+// wait limit, so a spawn slows down instead of hanging.
+func TestAgentReporterIdleAfterLimit(t *testing.T) {
+	var calls []string
+	r := &agentReporter{run: func(a []string) { calls = append(calls, strings.Join(a, " ")) }, pane: "p", label: "x", seq: 10, readyAfter: time.Now().Add(-time.Second)}
+	r.observe([]byte("some unknown screen"))
+	if len(calls) != 1 || !strings.Contains(calls[0], "--state idle") {
+		t.Errorf("calls = %v, want idle after the limit", calls)
 	}
 }

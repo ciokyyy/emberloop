@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,7 +31,25 @@ type agentReporter struct {
 	seq       int64
 	last      string
 	released  bool
+	// ready turns true once the child shows its input prompt, or once
+	// readyAfter has passed. Until then the pane reports working: herdr's
+	// own wait for idle must not return while the child is still starting,
+	// or the first prompt is typed into a screen that is not listening.
+	ready      bool
+	readyAfter time.Time
+	tail       string
 }
+
+// claudeReadyAfter is the longest a claude child may take to show its
+// prompt before the pane is reported idle anyway, so a UI change in claude
+// slows a spawn down instead of hanging it.
+const claudeReadyAfter = 25 * time.Second
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-B]`)
+
+// readyMarks are the footer texts claude draws only once its input box is
+// up, with and without a permission mode showing.
+var readyMarks = []string{"? for shortcuts", "shift+tab to cycle", "esc to interrupt", "bypass permissions on"}
 
 // newAgentReporter builds the reporter for a wrapped child, or nil when
 // none applies: not claude, or no herdr pane around the process.
@@ -54,7 +74,39 @@ func newAgentReporter(cfg WrapConfig) *agentReporter {
 	}
 	return &agentReporter{
 		run: run, pane: pane, label: label, sessionID: cfg.Source.SessionID,
-		seq: time.Now().UnixMilli() * 1000,
+		seq: time.Now().UnixMilli() * 1000, readyAfter: time.Now().Add(claudeReadyAfter),
+	}
+}
+
+// observe watches the child's output for the input prompt. When it shows,
+// or the wait limit passes, the pane is reported idle.
+func (r *agentReporter) observe(out []byte) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.ready || r.released {
+		r.mu.Unlock()
+		return
+	}
+	r.tail += ansiRe.ReplaceAllString(string(out), "")
+	if len(r.tail) > 8192 {
+		r.tail = r.tail[len(r.tail)-8192:]
+	}
+	ready := time.Now().After(r.readyAfter)
+	low := strings.ToLower(r.tail)
+	for _, m := range readyMarks {
+		if strings.Contains(low, m) {
+			ready = true
+		}
+	}
+	if ready {
+		r.ready = true
+		r.tail = ""
+	}
+	r.mu.Unlock()
+	if ready {
+		r.report(HeaderIdle)
 	}
 }
 
@@ -65,10 +117,13 @@ func (r *agentReporter) report(state HeaderState) {
 		return
 	}
 	herdrState := "idle"
-	if state == HeaderWorking || state == HeaderCompressing {
+	r.mu.Lock()
+	if !r.ready && time.Now().After(r.readyAfter) {
+		r.ready = true
+	}
+	if state == HeaderWorking || state == HeaderCompressing || !r.ready {
 		herdrState = "working"
 	}
-	r.mu.Lock()
 	if r.released || r.last == herdrState {
 		r.mu.Unlock()
 		return

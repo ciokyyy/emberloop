@@ -179,6 +179,7 @@ func WrapChild(cfg WrapConfig) error {
 		n, err := child.Read(buf)
 		if n > 0 {
 			out, repaint := filter.push(buf[:n])
+			w.reporter.observe(out)
 			w.write(string(out))
 			if repaint {
 				w.forced()
