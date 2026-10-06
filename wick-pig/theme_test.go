@@ -129,6 +129,25 @@ func TestLatteVariantExists(t *testing.T) {
 	}
 }
 
+// Generators and OSC read the shared palette struct: no independent hex
+// tables. Spot-check tokens across all three consumers.
+func TestGeneratorsReadPaletteStruct(t *testing.T) {
+	mocha := WickMocha()
+	if got := ClaudeTheme(true).Overrides; got != mocha.Claude {
+		t.Error("claude mocha drifts from the palette struct")
+	}
+	if got := PigTheme(true); got.Vars != mocha.PigVars || got.Colors != mocha.PigColors {
+		t.Error("pig mocha drifts from the palette struct")
+	}
+	if got := PaneColors(true); got.FG != mocha.PaneFG || got.BG != mocha.PaneBG || got.ANSI != mocha.PaneANSI {
+		t.Error("OSC mocha drifts from the palette struct")
+	}
+	latte := WickLatte()
+	if got := ClaudeTheme(false).Overrides; got != latte.Claude {
+		t.Error("claude latte drifts from the palette struct")
+	}
+}
+
 // Golden fixtures: the generated files compare byte-equal to the checked-in
 // pair, so a palette edit shows up as a fixture diff.
 func TestGeneratedThemesMatchFixtures(t *testing.T) {

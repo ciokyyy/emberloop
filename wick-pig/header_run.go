@@ -105,7 +105,7 @@ func WrapChild(cfg WrapConfig) error {
 	if cfg.ThemeDark != nil {
 		dark = *cfg.ThemeDark
 	}
-	bin, args := themedChildCommand(cfg, dark)
+	bin, args, themeEnv := themedChildCommand(cfg, dark)
 	start := cfg.Start
 	if start == nil {
 		start = realStart
@@ -114,7 +114,7 @@ func WrapChild(cfg WrapConfig) error {
 	if snapshot == nil {
 		snapshot = BuildHeaderSnapshot
 	}
-	child, wait, err := start(bin, args, cfg.Env, childW, childH)
+	child, wait, err := start(bin, args, themeEnv, childW, childH)
 	if err != nil {
 		return err
 	}
@@ -127,6 +127,11 @@ func WrapChild(cfg WrapConfig) error {
 		dark:    dark,
 		profile: detectProfile(stdout),
 		child:   child, snapshot: snapshot, filter: filter,
+	}
+	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) && cfg.Start == nil {
+		if state, err := term.MakeRaw(int(f.Fd())); err == nil {
+			defer term.Restore(int(f.Fd()), state)
+		}
 	}
 	w.init()
 	done := make(chan struct{})
@@ -592,8 +597,8 @@ func detectTermSize(stdout io.Writer) (int, int, bool) {
 
 // detectDark says whether the terminal is dark. Termenv reads COLORFGBG
 // first and otherwise asks the terminal with a bounded wait, so a terminal
-// that ignores the query costs a timeout, never a hang. It runs before raw
-// mode, while the tty still answers.
+// that ignores the query costs a timeout, never a hang. It runs before the
+// stdin raw-mode switch below, while the tty still answers.
 func detectDark(stdout io.Writer) bool {
 	if f, ok := stdout.(*os.File); ok {
 		if out := termenv.NewOutput(f); out != nil {
@@ -624,17 +629,18 @@ func realStart(bin string, args, env []string, w, h int) (wrapPty, func() error,
 	return &ptyChild{f: f}, cmd.Wait, nil
 }
 
-// themedChildCommand adds the per-run theme flags when the child is the
+// themedChildCommand adds the per-run theme launch when the child is the
 // harness binary itself (wrap passes the harness through): pig gains its
-// theme file, claude its theme reference in the launch settings. Any other
-// binary runs untouched, and a theme failure runs the child unthemed rather
-// than refusing the session.
-func themedChildCommand(cfg WrapConfig, dark bool) (string, []string) {
+// theme file in the args, claude its theme reference in the launch settings
+// plus a per-run CLAUDE_CONFIG_DIR in the env. Any other binary runs
+// untouched, and a theme failure runs the child unthemed rather than
+// refusing the session.
+func themedChildCommand(cfg WrapConfig, dark bool) (string, []string, []string) {
 	if cfg.Source.Harness == "" || filepath.Base(cfg.Bin) != cfg.Source.Harness {
-		return cfg.Bin, cfg.Args
+		return cfg.Bin, cfg.Args, cfg.Env
 	}
 	if Registered(cfg.Source.Harness) == nil {
-		return cfg.Bin, cfg.Args
+		return cfg.Bin, cfg.Args, cfg.Env
 	}
 	args, err := ThemeLaunchArgs(cfg.Source.Harness, cfg.Args, dark, cfg.ThemeDir)
 	if err != nil {
@@ -643,9 +649,25 @@ func themedChildCommand(cfg WrapConfig, dark bool) (string, []string) {
 			stderr = os.Stderr
 		}
 		fmt.Fprintf(stderr, "wick-pig: theme disabled: %v\n", err)
-		return cfg.Bin, cfg.Args
+		return cfg.Bin, cfg.Args, cfg.Env
 	}
-	return cfg.Bin, args
+	env := append(append([]string{}, cfg.Env...), mustThemeEnv(cfg, dark)...)
+	return cfg.Bin, args, env
+}
+
+// mustThemeEnv resolves the extra theme environment, logging and falling
+// back to none when the theme files cannot be written.
+func mustThemeEnv(cfg WrapConfig, dark bool) []string {
+	env, err := ThemeLaunchEnv(cfg.Source.Harness, dark, cfg.ThemeDir)
+	if err != nil {
+		stderr := cfg.Stderr
+		if stderr == nil {
+			stderr = os.Stderr
+		}
+		fmt.Fprintf(stderr, "wick-pig: theme env disabled: %v\n", err)
+		return nil
+	}
+	return env
 }
 
 // watchWrapSignals resets the pane palette on SIGINT, SIGTERM and SIGHUP,

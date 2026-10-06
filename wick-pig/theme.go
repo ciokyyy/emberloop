@@ -2,12 +2,14 @@ package wick
 
 // Shared theme (ticket 06): one palette definition drives the strip, the
 // generated claude and pig themes, and the pane colors (OSC). Catppuccin
-// Mocha for dark terminals, Latte for light ones. The strip reads it through
-// the headerColor vars in header.go; the generators and the OSC setter read
-// it here. Generated files live under wick's state dir and reach the child
-// only through per-run launch flags, so the user's saved theme choice is
-// never changed. Mocha is live-verified in herdr; Latte is generated from
-// the same source and is not verified.
+// Mocha for dark terminals, Latte for light ones. WickPalette is the single
+// source: the strip reads its roles through the headerColor vars in
+// header.go, and the generators and the OSC setter assemble from the same
+// struct, so no consumer keeps an independent hex table. Generated files
+// live under wick's state dir and reach the child only through per-run
+// launch flags (and, for claude, a per-run CLAUDE_CONFIG_DIR), so the
+// user's saved theme choice is never changed. Mocha is live-verified in
+// herdr; Latte is generated from the same source and is not verified.
 
 import (
 	"encoding/json"
@@ -25,95 +27,9 @@ type WickHue struct {
 	Light string
 }
 
-// WickPalette is the full shared palette for one variant pair: every role
-// the strip, the generators and the OSC setter need, each as a dark/light
-// pair from the same Catppuccin source.
-type WickPalette struct {
-	StripBg string
-	Text    string
-	Dim     string
-	Accent  string
-	Calm    string
-	Warm    string
-	Hot     string
-	Cost    string
-	Tool    string
-	Idle    string
-	BarDim  string
-	Hues    [7]WickHue
-}
-
-// WickMocha is the dark variant: Catppuccin Mocha.
-func WickMocha() WickPalette {
-	return WickPalette{
-		StripBg: "#181825",
-		Text:    "#cdd6f4",
-		Dim:     "#6c7086",
-		Accent:  "#cba6f7",
-		Calm:    "#a6e3a1",
-		Warm:    "#f9e2af",
-		Hot:     "#f38ba8",
-		Cost:    "#fab387",
-		Tool:    "#89b4fa",
-		Idle:    "#94e2d5",
-		BarDim:  "#313244",
-		Hues: [7]WickHue{
-			{"#cba6f7", "#8839ef"}, // mauve: the orchestrator
-			{"#f5c2e7", "#ea76cb"}, // pink
-			{"#b4befe", "#7287fd"}, // lavender
-			{"#74c7ec", "#209fb5"}, // sapphire
-			{"#89dceb", "#04a5e5"}, // sky
-			{"#f2cdcd", "#dd7878"}, // flamingo
-			{"#eba0ac", "#e64553"}, // maroon
-		},
-	}
-}
-
-// WickLatte is the light variant: Catppuccin Latte, generated from the same
-// source as Mocha. Not live-verified (spec: Out of Scope).
-func WickLatte() WickPalette {
-	m := WickMocha()
-	return WickPalette{
-		StripBg: "#e6e9ef",
-		Text:    "#4c4f69",
-		Dim:     "#9ca0b0",
-		Accent:  "#8839ef",
-		Calm:    "#40a02b",
-		Warm:    "#df8e1d",
-		Hot:     "#d20f39",
-		Cost:    "#fe640b",
-		Tool:    "#1e66f5",
-		Idle:    "#179299",
-		BarDim:  "#ccd0da",
-		Hues:    m.Hues,
-	}
-}
-
-// ThemeVariant names a generated theme: mocha for dark, latte for light.
-func ThemeVariant(dark bool) string {
-	if dark {
-		return "mocha"
-	}
-	return "latte"
-}
-
-// ThemeName is the theme name inside a generated file: wick-mocha or
-// wick-latte, so the strip, claude, pig and the pane cannot drift.
-func ThemeName(dark bool) string { return "wick-" + ThemeVariant(dark) }
-
-// ClaudeThemeRef is the theme reference passed to claude through the launch
-// settings JSON: custom:<name>, as in the theme probe.
-func ClaudeThemeRef(dark bool) string { return "custom:" + ThemeName(dark) }
-
-// claudeTheme is the generated claude custom theme: name, base appearance
-// and token overrides, in the probe's shape. Borders stay at the surface
-// tone (the borderless look); themed borders are a later ticket.
-type claudeTheme struct {
-	Name      string               `json:"name"`
-	Base      string               `json:"base"`
-	Overrides claudeThemeOverrides `json:"overrides"`
-}
-
+// claudeThemeOverrides is one variant's claude token table, in the probe's
+// shape. Borders stay at the surface tone (the borderless look); themed
+// borders are a later ticket.
 type claudeThemeOverrides struct {
 	Claude                string `json:"claude"`
 	Text                  string `json:"text"`
@@ -143,55 +59,7 @@ type claudeThemeOverrides struct {
 	SelectionBg           string `json:"selectionBg"`
 }
 
-// ClaudeTheme builds the generated claude theme for the variant.
-func ClaudeTheme(dark bool) claudeTheme {
-	if dark {
-		return claudeTheme{
-			Name: "Wick (Catppuccin Mocha)",
-			Base: "dark",
-			Overrides: claudeThemeOverrides{
-				Claude: "#cba6f7", Text: "#cdd6f4", InverseText: "#181825",
-				Inactive: "#7f849c", Subtle: "#313244",
-				Suggestion: "#f5c2e7", Permission: "#f5c2e7", Remember: "#94e2d5",
-				Success: "#a6e3a1", Error: "#f38ba8", Warning: "#fab387",
-				Merged: "#cba6f7", PromptBorder: "#313244", PlanMode: "#89dceb",
-				AutoAccept: "#a6e3a1", BashBorder: "#313244", Ide: "#89b4fa",
-				DiffAdded: "#2a3b2f", DiffRemoved: "#43262f",
-				DiffAddedWord: "#40604a", DiffRemovedWord: "#6b3a48",
-				UserMessageBackground: "#3b3b57",
-				BashMessageBackground: "#2a2a3c", MemoryBackground: "#2a2a3c",
-				UserMessageHover: "#45475a", SelectionBg: "#585b70",
-			},
-		}
-	}
-	return claudeTheme{
-		Name: "Wick (Catppuccin Latte)",
-		Base: "light",
-		Overrides: claudeThemeOverrides{
-			Claude: "#8839ef", Text: "#4c4f69", InverseText: "#e6e9ef",
-			Inactive: "#8c8f9e", Subtle: "#ccd0da",
-			Suggestion: "#ea76cb", Permission: "#ea76cb", Remember: "#179299",
-			Success: "#40a02b", Error: "#d20f39", Warning: "#fe640b",
-			Merged: "#8839ef", PromptBorder: "#ccd0da", PlanMode: "#04a5e5",
-			AutoAccept: "#40a02b", BashBorder: "#ccd0da", Ide: "#1e66f5",
-			DiffAdded: "#d9e8dc", DiffRemoved: "#f3d7dd",
-			DiffAddedWord: "#b3d4ba", DiffRemovedWord: "#e6aeb9",
-			UserMessageBackground: "#dde1ed",
-			BashMessageBackground: "#e4e7f0", MemoryBackground: "#e4e7f0",
-			UserMessageHover: "#bcc0cc", SelectionBg: "#acb0be",
-		},
-	}
-}
-
-// pigTheme is the generated pig theme: vars plus color refs, in the probe's
-// shape. Borders stay at the surface tone (the borderless look).
-type pigTheme struct {
-	Name       string         `json:"name"`
-	Appearance string         `json:"appearance"`
-	Vars       pigThemeVars   `json:"vars"`
-	Colors     pigThemeColors `json:"colors"`
-}
-
+// pigThemeVars is one variant's pig var table, in the probe's shape.
 type pigThemeVars struct {
 	Text     string `json:"text"`
 	Muted    string `json:"muted"`
@@ -208,6 +76,8 @@ type pigThemeVars struct {
 	Mantle   string `json:"mantle"`
 }
 
+// pigThemeColors is one variant's pig color table, in the probe's shape.
+// Borders stay at the surface tone (the borderless look).
 type pigThemeColors struct {
 	Accent          string `json:"accent"`
 	Border          string `json:"border"`
@@ -267,55 +137,158 @@ type pigThemeColors struct {
 	BashMode        string `json:"bashMode"`
 }
 
-// PigTheme builds the generated pig theme for the variant.
-func PigTheme(dark bool) pigTheme {
-	if dark {
-		return pigTheme{
-			Name: "wick-mocha", Appearance: "dark",
-			Vars: pigThemeVars{
-				Text: "#cdd6f4", Muted: "#a6adc8", Dim: "#6c7086",
-				Mauve: "#cba6f7", Blue: "#89b4fa", Green: "#a6e3a1",
-				Red: "#f38ba8", Yellow: "#f9e2af", Peach: "#fab387",
-				Teal:     "#94e2d5",
-				Surface0: "#313244", Surface1: "#45475a", Mantle: "#181825",
-			},
-			Colors: pigThemeColors{
-				Accent: "#f5c2e7",
-				Border: "surface0", BorderAccent: "surface0", BorderMuted: "surface0",
-				Success: "green", Error: "red", Warning: "peach",
-				Muted: "muted", Dim: "#7f849c", Text: "text",
-				ThinkingText: "dim", SelectedBg: "#45475a",
-				ScrollbarTrack: "surface0", ScrollbarThumb: "dim",
-				SearchMatchBg: "surface1", SearchMatchText: "text",
-				UserMessageBg: "#3b3b57", UserMessageText: "text",
-				CustomMessageBg: "mantle", CustomMessageTx: "muted",
-				CustomMessageLb: "mauve",
-				ToolPendingBg:   "#252536", ToolSuccessBg: "#1f2f2c", ToolErrorBg: "#35212b",
-				ToolTitle: "text", ToolOutput: "muted",
-				MdHeading: "#f5c2e7", MdLink: "blue", MdLinkURL: "dim",
-				MdCode: "peach", MdCodeBlock: "green", MdCodeBlockBrd: "surface0",
-				MdQuote: "muted", MdQuoteBorder: "surface0", MdHr: "surface0",
-				MdListBullet:  "mauve",
-				ToolDiffAdded: "green", ToolDiffRemoved: "red", ToolDiffContext: "dim",
-				SyntaxComment: "dim", SyntaxKeyword: "mauve", SyntaxFunction: "blue",
-				SyntaxVariable: "text", SyntaxString: "green", SyntaxNumber: "peach",
-				SyntaxType: "yellow", SyntaxOperator: "teal", SyntaxPunct: "muted",
-				ThinkingOff: "dim", ThinkingMinimal: "surface1", ThinkingLow: "blue",
-				ThinkingMedium: "teal", ThinkingHigh: "mauve", ThinkingXhigh: "peach",
-				ThinkingMax: "red", BashMode: "peach",
-			},
-		}
+// WickPalette is the full shared palette for one variant: every token the
+// strip, the generators and the OSC setter need, from one Catppuccin source.
+type WickPalette struct {
+	StripBg string
+	Text    string
+	Dim     string
+	Accent  string
+	Calm    string
+	Warm    string
+	Hot     string
+	Cost    string
+	Tool    string
+	Idle    string
+	BarDim  string
+	Hues    [7]WickHue
+	// Generator and OSC tokens: the claude and pig theme tables and the
+	// pane colors for this variant.
+	ClaudeName    string
+	ClaudeBase    string
+	Claude        claudeThemeOverrides
+	PigName       string
+	PigAppearance string
+	PigVars       pigThemeVars
+	PigColors     pigThemeColors
+	PaneFG        string
+	PaneBG        string
+	PaneCursor    string
+	PaneANSI      [16]string
+}
+
+// WickMocha is the dark variant: Catppuccin Mocha.
+func WickMocha() WickPalette {
+	return WickPalette{
+		StripBg: "#181825",
+		Text:    "#cdd6f4",
+		Dim:     "#6c7086",
+		Accent:  "#cba6f7",
+		Calm:    "#a6e3a1",
+		Warm:    "#f9e2af",
+		Hot:     "#f38ba8",
+		Cost:    "#fab387",
+		Tool:    "#89b4fa",
+		Idle:    "#94e2d5",
+		BarDim:  "#313244",
+		Hues: [7]WickHue{
+			{"#cba6f7", "#8839ef"}, // mauve: the orchestrator
+			{"#f5c2e7", "#ea76cb"}, // pink
+			{"#b4befe", "#7287fd"}, // lavender
+			{"#74c7ec", "#209fb5"}, // sapphire
+			{"#89dceb", "#04a5e5"}, // sky
+			{"#f2cdcd", "#dd7878"}, // flamingo
+			{"#eba0ac", "#e64553"}, // maroon
+		},
+		ClaudeName: "Wick (Catppuccin Mocha)",
+		ClaudeBase: "dark",
+		Claude: claudeThemeOverrides{
+			Claude: "#cba6f7", Text: "#cdd6f4", InverseText: "#181825",
+			Inactive: "#7f849c", Subtle: "#313244",
+			Suggestion: "#f5c2e7", Permission: "#f5c2e7", Remember: "#94e2d5",
+			Success: "#a6e3a1", Error: "#f38ba8", Warning: "#fab387",
+			Merged: "#cba6f7", PromptBorder: "#313244", PlanMode: "#89dceb",
+			AutoAccept: "#a6e3a1", BashBorder: "#313244", Ide: "#89b4fa",
+			DiffAdded: "#2a3b2f", DiffRemoved: "#43262f",
+			DiffAddedWord: "#40604a", DiffRemovedWord: "#6b3a48",
+			UserMessageBackground: "#3b3b57",
+			BashMessageBackground: "#2a2a3c", MemoryBackground: "#2a2a3c",
+			UserMessageHover: "#45475a", SelectionBg: "#585b70",
+		},
+		PigName: "wick-mocha", PigAppearance: "dark",
+		PigVars: pigThemeVars{
+			Text: "#cdd6f4", Muted: "#a6adc8", Dim: "#6c7086",
+			Mauve: "#cba6f7", Blue: "#89b4fa", Green: "#a6e3a1",
+			Red: "#f38ba8", Yellow: "#f9e2af", Peach: "#fab387",
+			Teal:     "#94e2d5",
+			Surface0: "#313244", Surface1: "#45475a", Mantle: "#181825",
+		},
+		PigColors: pigThemeColors{
+			Accent: "#f5c2e7",
+			Border: "surface0", BorderAccent: "surface0", BorderMuted: "surface0",
+			Success: "green", Error: "red", Warning: "peach",
+			Muted: "muted", Dim: "#7f849c", Text: "text",
+			ThinkingText: "dim", SelectedBg: "#45475a",
+			ScrollbarTrack: "surface0", ScrollbarThumb: "dim",
+			SearchMatchBg: "surface1", SearchMatchText: "text",
+			UserMessageBg: "#3b3b57", UserMessageText: "text",
+			CustomMessageBg: "mantle", CustomMessageTx: "muted",
+			CustomMessageLb: "mauve",
+			ToolPendingBg:   "#252536", ToolSuccessBg: "#1f2f2c", ToolErrorBg: "#35212b",
+			ToolTitle: "text", ToolOutput: "muted",
+			MdHeading: "#f5c2e7", MdLink: "blue", MdLinkURL: "dim",
+			MdCode: "peach", MdCodeBlock: "green", MdCodeBlockBrd: "surface0",
+			MdQuote: "muted", MdQuoteBorder: "surface0", MdHr: "surface0",
+			MdListBullet:  "mauve",
+			ToolDiffAdded: "green", ToolDiffRemoved: "red", ToolDiffContext: "dim",
+			SyntaxComment: "dim", SyntaxKeyword: "mauve", SyntaxFunction: "blue",
+			SyntaxVariable: "text", SyntaxString: "green", SyntaxNumber: "peach",
+			SyntaxType: "yellow", SyntaxOperator: "teal", SyntaxPunct: "muted",
+			ThinkingOff: "dim", ThinkingMinimal: "surface1", ThinkingLow: "blue",
+			ThinkingMedium: "teal", ThinkingHigh: "mauve", ThinkingXhigh: "peach",
+			ThinkingMax: "red", BashMode: "peach",
+		},
+		PaneFG: "#cdd6f4", PaneBG: "#1e1e2e", PaneCursor: "#f5e0dc",
+		PaneANSI: [16]string{
+			"#45475a", "#f38ba8", "#a6e3a1", "#f9e2af",
+			"#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+			"#585b70", "#f38ba8", "#a6e3a1", "#f9e2af",
+			"#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+		},
 	}
-	return pigTheme{
-		Name: "wick-latte", Appearance: "light",
-		Vars: pigThemeVars{
+}
+
+// WickLatte is the light variant: Catppuccin Latte, generated from the same
+// source as Mocha. Not live-verified (spec: Out of Scope).
+func WickLatte() WickPalette {
+	m := WickMocha()
+	return WickPalette{
+		StripBg:    "#e6e9ef",
+		Text:       "#4c4f69",
+		Dim:        "#9ca0b0",
+		Accent:     "#8839ef",
+		Calm:       "#40a02b",
+		Warm:       "#df8e1d",
+		Hot:        "#d20f39",
+		Cost:       "#fe640b",
+		Tool:       "#1e66f5",
+		Idle:       "#179299",
+		BarDim:     "#ccd0da",
+		Hues:       m.Hues,
+		ClaudeName: "Wick (Catppuccin Latte)",
+		ClaudeBase: "light",
+		Claude: claudeThemeOverrides{
+			Claude: "#8839ef", Text: "#4c4f69", InverseText: "#e6e9ef",
+			Inactive: "#8c8f9e", Subtle: "#ccd0da",
+			Suggestion: "#ea76cb", Permission: "#ea76cb", Remember: "#179299",
+			Success: "#40a02b", Error: "#d20f39", Warning: "#fe640b",
+			Merged: "#8839ef", PromptBorder: "#ccd0da", PlanMode: "#04a5e5",
+			AutoAccept: "#40a02b", BashBorder: "#ccd0da", Ide: "#1e66f5",
+			DiffAdded: "#d9e8dc", DiffRemoved: "#f3d7dd",
+			DiffAddedWord: "#b3d4ba", DiffRemovedWord: "#e6aeb9",
+			UserMessageBackground: "#dde1ed",
+			BashMessageBackground: "#e4e7f0", MemoryBackground: "#e4e7f0",
+			UserMessageHover: "#bcc0cc", SelectionBg: "#acb0be",
+		},
+		PigName: "wick-latte", PigAppearance: "light",
+		PigVars: pigThemeVars{
 			Text: "#4c4f69", Muted: "#6c6f85", Dim: "#9ca0b0",
 			Mauve: "#8839ef", Blue: "#1e66f5", Green: "#40a02b",
 			Red: "#d20f39", Yellow: "#df8e1d", Peach: "#fe640b",
 			Teal:     "#179299",
 			Surface0: "#ccd0da", Surface1: "#bcc0cc", Mantle: "#e6e9ef",
 		},
-		Colors: pigThemeColors{
+		PigColors: pigThemeColors{
 			Accent: "#ea76cb",
 			Border: "surface0", BorderAccent: "surface0", BorderMuted: "surface0",
 			Success: "green", Error: "red", Warning: "peach",
@@ -340,7 +313,69 @@ func PigTheme(dark bool) pigTheme {
 			ThinkingMedium: "teal", ThinkingHigh: "mauve", ThinkingXhigh: "peach",
 			ThinkingMax: "red", BashMode: "peach",
 		},
+		PaneFG: "#4c4f69", PaneBG: "#eff1f5", PaneCursor: "#dc8a78",
+		PaneANSI: [16]string{
+			"#bcc0cc", "#d20f39", "#40a02b", "#df8e1d",
+			"#1e66f5", "#ea76cb", "#179299", "#5c5f77",
+			"#acb0be", "#d20f39", "#40a02b", "#df8e1d",
+			"#1e66f5", "#ea76cb", "#179299", "#6c6f85",
+		},
 	}
+}
+
+// wickVariant selects the palette variant: Mocha for dark, Latte for light.
+func wickVariant(dark bool) WickPalette {
+	if dark {
+		return WickMocha()
+	}
+	return WickLatte()
+}
+
+// ThemeVariant names a generated theme: mocha for dark, latte for light.
+func ThemeVariant(dark bool) string {
+	if dark {
+		return "mocha"
+	}
+	return "latte"
+}
+
+// ThemeName is the theme name inside a generated file: wick-mocha or
+// wick-latte, so the strip, claude, pig and the pane cannot drift.
+func ThemeName(dark bool) string { return "wick-" + ThemeVariant(dark) }
+
+// ClaudeThemeRef is the theme reference passed to claude through the launch
+// settings JSON: custom:<name>, as in the theme probe.
+func ClaudeThemeRef(dark bool) string { return "custom:" + ThemeName(dark) }
+
+// claudeTheme is the generated claude custom theme: name, base appearance
+// and token overrides, in the probe's shape.
+type claudeTheme struct {
+	Name      string               `json:"name"`
+	Base      string               `json:"base"`
+	Overrides claudeThemeOverrides `json:"overrides"`
+}
+
+// ClaudeTheme builds the generated claude theme for the variant, from the
+// shared palette.
+func ClaudeTheme(dark bool) claudeTheme {
+	v := wickVariant(dark)
+	return claudeTheme{Name: v.ClaudeName, Base: v.ClaudeBase, Overrides: v.Claude}
+}
+
+// pigTheme is the generated pig theme: vars plus color refs, in the probe's
+// shape.
+type pigTheme struct {
+	Name       string         `json:"name"`
+	Appearance string         `json:"appearance"`
+	Vars       pigThemeVars   `json:"vars"`
+	Colors     pigThemeColors `json:"colors"`
+}
+
+// PigTheme builds the generated pig theme for the variant, from the shared
+// palette.
+func PigTheme(dark bool) pigTheme {
+	v := wickVariant(dark)
+	return pigTheme{Name: v.PigName, Appearance: v.PigAppearance, Vars: v.PigVars, Colors: v.PigColors}
 }
 
 // Marshal helpers keep the golden fixtures byte-stable: two-space indent
@@ -398,6 +433,31 @@ func EnsureThemeFiles(dir string) (map[string]string, error) {
 	return out, nil
 }
 
+// ClaudeConfigDir installs the generated claude themes where Claude Code
+// resolves custom:<slug>: <dir>/themes/<slug>.json, and returns dir for a
+// per-run CLAUDE_CONFIG_DIR. The state-dir files stay the generated
+// artefacts (spec line 79); these slug-named copies are what the launch
+// points at, so the user's ~/.claude is never touched.
+func ClaudeConfigDir(themeDir string) (string, error) {
+	if themeDir == "" {
+		themeDir = DefaultThemeDir()
+	}
+	dir := filepath.Join(themeDir, "claude-config", "themes")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	for _, dark := range []bool{true, false} {
+		cj, err := ClaudeThemeJSON(dark)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(dir, ThemeName(dark)+".json"), []byte(cj), 0o600); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(themeDir, "claude-config"), nil
+}
+
 // ThemePaneColors is the pane's own palette: default foreground,
 // background, cursor and the 16 ANSI colors, from the same source.
 type ThemePaneColors struct {
@@ -407,30 +467,12 @@ type ThemePaneColors struct {
 	ANSI   [16]string
 }
 
-// PaneColors returns the OSC palette for the variant. The Mocha values are
-// the approved probe (run-themed.sh); Latte mirrors its structure with the
-// Latte source.
+// PaneColors returns the OSC palette for the variant, from the shared
+// palette. The Mocha values are the approved probe (run-themed.sh); Latte
+// mirrors its structure with the Latte source.
 func PaneColors(dark bool) ThemePaneColors {
-	if dark {
-		return ThemePaneColors{
-			FG: "#cdd6f4", BG: "#1e1e2e", Cursor: "#f5e0dc",
-			ANSI: [16]string{
-				"#45475a", "#f38ba8", "#a6e3a1", "#f9e2af",
-				"#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
-				"#585b70", "#f38ba8", "#a6e3a1", "#f9e2af",
-				"#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
-			},
-		}
-	}
-	return ThemePaneColors{
-		FG: "#4c4f69", BG: "#eff1f5", Cursor: "#dc8a78",
-		ANSI: [16]string{
-			"#bcc0cc", "#d20f39", "#40a02b", "#df8e1d",
-			"#1e66f5", "#ea76cb", "#179299", "#5c5f77",
-			"#acb0be", "#d20f39", "#40a02b", "#df8e1d",
-			"#1e66f5", "#ea76cb", "#179299", "#6c6f85",
-		},
-	}
+	v := wickVariant(dark)
+	return ThemePaneColors{FG: v.PaneFG, BG: v.PaneBG, Cursor: v.PaneCursor, ANSI: v.PaneANSI}
 }
 
 // ThemeSetSequence is the exact bytes the wrapper writes to the terminal at
@@ -494,6 +536,22 @@ func ThemeLaunchArgs(harness string, args []string, dark bool, themeDir string) 
 	default:
 		return args, fmt.Errorf("unknown harness %q", harness)
 	}
+}
+
+// ThemeLaunchEnv returns the extra child environment for the harness theme:
+// claude gets a per-run CLAUDE_CONFIG_DIR whose themes/ holds the generated
+// slug files, so custom:<slug> resolves with no user file touched. Pig
+// needs none: its theme travels in the args.
+func ThemeLaunchEnv(harness string, dark bool, themeDir string) ([]string, error) {
+	_ = dark
+	if harness != "claude" {
+		return nil, nil
+	}
+	dir, err := ClaudeConfigDir(themeDir)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"CLAUDE_CONFIG_DIR=" + dir}, nil
 }
 
 // mergeClaudeTheme sets the theme reference in a claude --settings JSON
