@@ -25,6 +25,7 @@ The process that owns the agent child (the wrapper from the header-strip ticket)
 - **Child clear sequence.** Ctrl+U sent six times. Probed: it fully clears a three-line draft in both claude and pig, and is harmless on an empty box. Ctrl+C is never used for clearing, because a second Ctrl+C within 500 ms exits pig.
 - **Order.** The user's own submitted message goes before pending injections. After a compress restart the queue and the row draft survive, and the handoff goes ahead of everything.
 - **Visibility.** The strip shows pending count and mode: `N pending`, `raw`, `raw, N queued`, alongside the existing `compress queued` and `compressing` states.
+- **Borderless look.** Areas are separated by background tint, not lines. The agent-colored frame columns are off by default (the setting stays). The strip's top edge is a soft row of lower half blocks in the strip background instead of a rule line. The generated claude and pig themes set border and rule tokens to the surface tone. Agent identity stays in the name chip and ctx label. The frame default and the soft edge already shipped; the themed borders are ticket 08.
 - **Theme.** One palette source drives the strip and the agents. Catppuccin Mocha for dark, Latte for light, the strip's table. Wick launches claude with a generated custom theme and pig with a generated theme file, both per run, never touching the user's saved selection. The wrapper also sets the pane's default foreground and background, cursor and 16 ANSI colors with OSC 4, 10, 11 and 12 at start and resets them on exit. Verified live in herdr: the pane background and the agents' colors follow. Not verified: Latte, and what other terminals do.
 
 ## User Stories
@@ -58,6 +59,8 @@ The process that owns the agent child (the wrapper from the header-strip ticket)
 27. As a maintainer, I want per-harness input keys in one table, so that adding a harness is one entry.
 28. As a maintainer, I want agents with no human typing to share the queue with no row, so that workers use the same delivery code.
 29. As a maintainer, I want a fallback to the herdr delivery path when no wrapper runs, so that nothing breaks during rollout.
+30. As a user, I want areas separated by tint instead of drawn lines, so that the pane looks calm and uniform.
+31. As a user, I want the agent's own input box and rules dimmed to the surface tone, so that they stop competing with the strip.
 
 ## Implementation Decisions
 

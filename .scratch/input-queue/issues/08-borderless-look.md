@@ -4,15 +4,16 @@
 
 **Blocked by:** 06-shared-theme
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent (partly shipped: frame default off and the soft-edge strip row are in the repo; the setting to restore the rule line and the themed borders remain)
 
-- [ ] Frame columns default off; the `strip-frame` setting still turns them on
-- [ ] The strip's top row is a soft-edge row in the strip background by default; a setting can restore the rule line
+- [x] Frame columns default off; the `strip-frame` setting still turns them on
+- [x] The strip's top row is a soft-edge row in the strip background by default
+- [ ] A setting can restore the rule line
 - [ ] Child size stays correct with the frame off and the soft-edge row on, including after resize and alt-screen
 - [ ] The generated claude and pig themes set every border and rule token to the surface tone, from the same palette source as the strip
 - [ ] The strip background stays one step off the pane background in dark and light palettes
 - [ ] Golden tests for the soft-edge row at each color profile and for the generated theme border tokens
 - [ ] Live probe covers the borderless look and records what reads well and what does not
-- [ ] Spec stories 22, 26
+- [ ] Spec stories 22, 26, 30, 31
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.
