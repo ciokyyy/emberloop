@@ -97,7 +97,9 @@ func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error
 	deadline := time.Now().Add(toolBudget)
 	for {
 		if s, ok, _ := ReadAgentSubmit(id); ok && answersTell(s) {
-			return renderSubmit(s), nil
+			out := renderSubmit(s)
+			closeDeliveredScout(run, id)
+			return out, nil
 		}
 		if !time.Now().Before(deadline) || ctx.Err() != nil {
 			break
@@ -114,7 +116,9 @@ func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error
 	if !bg {
 		// It submitted right at the deadline.
 		if s, ok, _ := ReadAgentSubmit(id); ok && answersTell(s) {
-			return renderSubmit(s), nil
+			out := renderSubmit(s)
+			closeDeliveredScout(run, id)
+			return out, nil
 		}
 	}
 	return fmt.Sprintf("delivered to %s; it is still running. Its result will arrive as a system notice; end your turn.", id), nil

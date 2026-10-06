@@ -2,6 +2,7 @@ package wick
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,9 @@ type AgentState struct {
 	Ticket string `json:"ticket,omitempty"`
 	// Pane is where the agent runs, so a tell can reach it.
 	Pane string `json:"pane,omitempty"`
+	// Tab is the herdr tab the pane lives in, so a close can take its grid
+	// lock. Old records carry none; a close without it still closes.
+	Tab string `json:"tab,omitempty"`
 	// ParentID is the spawning agent's id, when there was one. The children an
 	// agent is still waiting on are the agent states that name it as ParentID,
 	// are set to Deliver, and have not submitted: the stop gate reads them.
@@ -220,4 +224,70 @@ func PendingChildren(parentID string) []string {
 		out = append(out, s.ID)
 	}
 	return out
+}
+
+// resolvePaneToAgent turns a herdr pane id into the agent that runs in it,
+// through the agent record that stores its pane. An unknown pane, a pane
+// shared by several records, or one whose agent is no longer live is a
+// clear error that acts on nothing.
+func resolvePaneToAgent(pane string, run Exec) (string, error) {
+	entries, err := os.ReadDir(agentStateDir())
+	if err != nil {
+		return "", fmt.Errorf("unknown pane %q: no agent runs in it", pane)
+	}
+	var matches []AgentState
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		s, ok, err := ReadAgentState(id)
+		if err != nil || !ok || s.Pane != pane {
+			continue
+		}
+		s.ID = id
+		matches = append(matches, s)
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("unknown pane %q: no agent runs in it", pane)
+	}
+	if len(matches) > 1 {
+		ids := make([]string, 0, len(matches))
+		for _, m := range matches {
+			ids = append(ids, m.ID)
+		}
+		return "", fmt.Errorf("pane %q matches multiple agents (%s): tell or finish one agent id instead", pane, strings.Join(ids, ", "))
+	}
+	if isPaneLost(run, matches[0].Pane) {
+		return "", fmt.Errorf("pane %q matches no live agent (agent %q is gone)", pane, matches[0].ID)
+	}
+	return matches[0].ID, nil
+}
+
+// resolveAgentParam takes the agent/pane pair of tell and finish: exactly
+// one is required, and a pane resolves to its agent. It returns the agent
+// id to act on.
+func resolveAgentParam(params map[string]any, run Exec) (string, error) {
+	agent := str(params, "agent")
+	pane := str(params, "pane")
+	switch {
+	case agent == "" && pane == "":
+		return "", fmt.Errorf("agent or pane is required (exactly one)")
+	case agent != "" && pane != "":
+		return "", fmt.Errorf("agent and pane are exclusive: give exactly one")
+	case pane != "":
+		return resolvePaneToAgent(pane, run)
+	default:
+		return agent, nil
+	}
+}
+
+// isScoutState reports whether an agent's record is a scout's: its type's
+// checkout is none (read-only, runs in the repo). Unknown types fall back
+// to the name, so a scout outlives its definition.
+func isScoutState(st AgentState) bool {
+	if t, ok := mustLoadAgentTypes(cwd())[st.Type]; ok {
+		return t.Checkout == "none"
+	}
+	return st.Type == "scout"
 }

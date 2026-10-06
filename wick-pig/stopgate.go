@@ -343,7 +343,10 @@ func giveUpWithoutSubmit(id, excerpt string) error {
 		return err
 	}
 	if deliver {
-		return deliverToParent(st, stoppedNotice(typ, id, excerpt))
+		if err := deliverToParent(st, stoppedNotice(typ, id, excerpt)); err != nil {
+			return err
+		}
+		closeDeliveredScout(deliverExec, id)
 	}
 	return nil
 }
