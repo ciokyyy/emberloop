@@ -84,11 +84,12 @@ owns its `_test.go` and the behaviour below):
   fake exec and temp directories; no test touches the real home, a live
   agent or harness, or the network beyond loopback `httptest` servers.
 - Liveness is a process past the pane's shell in herdr's process-info, never
-  mere pane existence and never herdr's flapping agent detection; a launch
-  inside the boot grace still counts as starting. A dead reviewer is replaced
-  in its slot and open groups record the replacement, so they resolve with
-  its verdict. The launcher records a bad child exit (code, signal, stderr
-  tail) in the agent's state, and the lost notice carries it.
+  mere pane existence and never herdr's flapping agent detection; automated
+  waits honor a boot grace after launch, while tell and finish by pane fail
+  fast. A dead reviewer is replaced in its slot and open groups record the
+  replacement, so they resolve with its verdict. The launcher records a bad
+  child exit (code, signal, stderr tail) in the agent's state, and the lost
+  notice carries it.
 - A wick MCP server with no role refuses to start; the full tool set needs
   an explicit full role.
 - The tree stays gofmt-clean; formatting is a check result, never a

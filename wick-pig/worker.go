@@ -122,11 +122,6 @@ type herdrReply struct {
 		Pane struct {
 			PaneID string `json:"pane_id"`
 			TabID  string `json:"tab_id"`
-			// Agent is the agent herdr sees running in the pane: empty when
-			// the pane holds a bare shell, so liveness reads it, not mere
-			// pane existence.
-			Agent       string `json:"agent"`
-			AgentStatus string `json:"agent_status"`
 		} `json:"pane"`
 		RootPane struct {
 			PaneID string `json:"pane_id"`
@@ -232,7 +227,9 @@ func decodePaneProcess(text string) (paneProcess, bool) {
 // bootGrace is how long after launch an empty pane still counts as booting
 // rather than dead: the shell needs a moment to start the child, while
 // herdr's agent detection lags far longer, so presence comes from the
-// process list and only the launch time gates the verdict.
+// process list and only the launch time gates the verdict. Tradeoff: a
+// child that crashes inside the grace reads as booting for up to the
+// remainder, delaying its lost notice and cap release that long.
 const bootGrace = 2 * time.Minute
 
 // booting reports whether launchedAt is recent enough that an empty pane
