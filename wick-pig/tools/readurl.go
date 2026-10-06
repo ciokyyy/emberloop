@@ -36,7 +36,7 @@ const (
 
 const urlBrowserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-const defaultJinaBase = "https://localhost:8080/http://"
+const defaultJinaBase = "https://r.jina.ai/"
 
 func urlTimeout() time.Duration {
 	if s := strings.TrimSpace(os.Getenv("WICK_URL_TIMEOUT")); s != "" {
@@ -58,11 +58,23 @@ func urlBodyCap() int64 {
 
 func jinaKey() string { return os.Getenv("JINA_API_KEY") }
 
+// jinaBase is the reader endpoint the target URL is appended to: the default
+// is the public Jina reader; tests point it at a fake server via
+// WICK_JINA_ENDPOINT.
 func jinaBase() string {
 	if s := strings.TrimSpace(os.Getenv("WICK_JINA_ENDPOINT")); s != "" {
 		return s
 	}
 	return defaultJinaBase
+}
+
+// jinaRequestURL appends the full target URL to the reader base.
+func jinaRequestURL(target string) string {
+	base := jinaBase()
+	if strings.HasSuffix(base, "/") {
+		return base + target
+	}
+	return base + "/" + target
 }
 
 func allowLoopback() bool { return os.Getenv("WICK_URL_ALLOW_LOOPBACK") == "1" }
@@ -535,9 +547,45 @@ type tierResult struct {
 	retried429 bool
 }
 
+// remoteIPBlocked names why a connected IP must be refused, or "" when the
+// connection may proceed. It mirrors the URL check at dial time so a host
+// that resolves public at check time but connects private (DNS rebinding)
+// is still refused before any request bytes go out. Loopback is allowed only
+// under WICK_URL_ALLOW_LOOPBACK=1 (tests).
+func remoteIPBlocked(ip net.IP) string {
+	if ip == nil {
+		return ""
+	}
+	reason := ipBlockedReason(ip)
+	if reason == "loopback" && allowLoopback() {
+		return ""
+	}
+	return reason
+}
+
 func newURLClient() *http.Client {
+	dialer := &net.Dialer{Timeout: urlTimeout()}
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if host, _, serr := net.SplitHostPort(conn.RemoteAddr().String()); serr == nil {
+				if rip := net.ParseIP(host); rip != nil {
+					if reason := remoteIPBlocked(rip); reason != "" {
+						conn.Close()
+						return nil, fmt.Errorf("refused: connected address is %s (%s); private, loopback and link-local targets are blocked", rip.String(), reason)
+					}
+				}
+			}
+			return conn, nil
+		},
+	}
 	return &http.Client{
-		Timeout: urlTimeout(),
+		Timeout:   urlTimeout(),
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("too many redirects")
@@ -660,11 +708,7 @@ func fetchTier1WithRetry(ctx context.Context, target string) (tierResult, http.H
 }
 
 func fetchJina(ctx context.Context, target string) (tierResult, error) {
-	base := jinaBase()
-	jinaURL := base + target
-	if !strings.HasSuffix(base, "/") {
-		jinaURL = base + "/" + target
-	}
+	jinaURL := jinaRequestURL(target)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jinaURL, nil)
 	if err != nil {
 		return tierResult{}, err
@@ -756,7 +800,9 @@ func readURLCtx(ctx context.Context, target string, offset, limit int) (string, 
 	}
 
 	skipJina := jinaSkipReason(fetchURL)
-	directJina := isPDFOrOfficeURL(fetchURL)
+	// :raw returns the origin body unshaped and never escalates, so the
+	// straight-to-Jina shortcut for PDFs does not apply to raw reads.
+	directJina := isPDFOrOfficeURL(fetchURL) && !raw
 
 	var notes []string
 	if raw {
@@ -882,7 +928,7 @@ func renderURL(fetchURL, body, contentType, tier string, notes []string, sel []l
 	overflowPath := ""
 	if len(paged) > urlMaxLines {
 		shown = paged[:urlMaxLines]
-		path, err := saveURLOverflow(paged)
+		path, err := saveURLOverflow(paged[len(shown):])
 		if err != nil {
 			return "", err
 		}
@@ -904,6 +950,9 @@ func renderURL(fetchURL, body, contentType, tier string, notes []string, sel []l
 	return b.String(), nil
 }
 
+// saveURLOverflow stores the remainder past urlMaxLines in a temp file the
+// read tool can open (it reads any absolute path). Ticket 09 later replaces
+// this with the overflow store.
 func saveURLOverflow(lines []string) (string, error) {
 	f, err := os.CreateTemp("", "wick-url-*.md")
 	if err != nil {
