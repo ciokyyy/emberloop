@@ -30,6 +30,9 @@ func IsRoleSlot(name string) bool {
 	return false
 }
 
+// DefaultMaxWorkers caps how many workers run at once when nothing is stored.
+const DefaultMaxWorkers = 3
+
 // Settings are the user's choices that tools read at call time. They live in
 // the user's wick-pig directory, beside the skills, so pig, the MCP server and
 // the TUI all read the same file.
@@ -41,6 +44,8 @@ type Settings struct {
 	// ponytail: 0.20 is the value old wick measured against jev-1.13; a different
 	// decisions model may need its own, so re-measure before trusting it.
 	Threshold float64 `json:"threshold,omitempty"`
+	// MaxWorkers caps how many workers run at once. Zero means the default.
+	MaxWorkers int `json:"max_workers,omitempty"`
 	// Roles holds one default per launch slot, keyed by slot name.
 	Roles map[string]Role `json:"roles,omitempty"`
 
@@ -65,6 +70,15 @@ func (s Settings) SourceOf(key string) string {
 	return "default"
 }
 
+// EffectiveMaxWorkers is the worker cap in force: the stored value, or three
+// when nothing valid is stored.
+func (s Settings) EffectiveMaxWorkers() int {
+	if s.MaxWorkers > 0 {
+		return s.MaxWorkers
+	}
+	return DefaultMaxWorkers
+}
+
 // SettingsPath is where settings are saved. WICK_SETTINGS overrides it for
 // tests and for a second profile.
 func SettingsPath() string {
@@ -82,8 +96,8 @@ func oldSettingsPath() string {
 
 // LoadSettings reads the file; a missing or unreadable file is the defaults.
 // When WICK_SETTINGS is unset and the new file is absent, the old state-dir
-// file is read instead. WICK_DECISION_MODEL and WICK_FIND_THRESHOLD win over
-// the file.
+// file is read instead. WICK_DECISION_MODEL, WICK_FIND_THRESHOLD and
+// WICK_MAX_WORKERS win over the file.
 func LoadSettings() Settings {
 	var s Settings
 	if raw, err := os.ReadFile(SettingsPath()); err == nil {
@@ -102,6 +116,10 @@ func LoadSettings() Settings {
 	if t, err := strconv.ParseFloat(os.Getenv("WICK_FIND_THRESHOLD"), 64); err == nil && t > 0 {
 		s.Threshold = t
 		s.setSource("threshold", "env")
+	}
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WICK_MAX_WORKERS"))); err == nil && w > 0 {
+		s.MaxWorkers = w
+		s.setSource("max_workers", "env")
 	}
 	return s
 }
@@ -124,7 +142,7 @@ func decodeSettings(raw []byte) Settings {
 		switch strings.ToLower(k) {
 		case "roles":
 			s.roleExtra = unknownRoleFields(v)
-		case "decision_model", "threshold":
+		case "decision_model", "threshold", "max_workers":
 		default:
 			s.extra[k] = v
 		}
@@ -136,6 +154,9 @@ func decodeSettings(raw []byte) Settings {
 	}
 	if s.Threshold != 0 {
 		s.src["threshold"] = "file"
+	}
+	if s.MaxWorkers != 0 {
+		s.src["max_workers"] = "file"
 	}
 	return s
 }

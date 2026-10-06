@@ -43,6 +43,7 @@ func spawnTestState(t *testing.T) {
 	spawnGap = 0
 	pollEvery = 5 * time.Millisecond
 	t.Cleanup(func() { statePath, spawnGap, spawnExec, pollEvery = oldState, oldGap, oldExec, oldPoll })
+	t.Setenv("WICK_MAX_WORKERS", "")
 	resolverSettings(t, "")
 }
 

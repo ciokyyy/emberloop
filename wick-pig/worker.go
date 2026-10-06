@@ -718,15 +718,15 @@ func Finish(run Exec, id string, merge bool) (*FinishResult, error) {
 // here, and a ticket that never ran is not a finished ticket, so it records
 // nothing.
 func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error) {
+	// storeMu is released before the queue drain below: the drain launches
+	// through Spawn, which takes storeMu itself.
 	storeMu.Lock()
-	defer storeMu.Unlock()
-
 	// The store is shared between sessions, which are separate processes: the
 	// cross-process lock holds across the whole finish, from load to the final
 	// delete, so two simultaneous finishes never load the same map and resurrect
 	// each other's entry.
 	var out *FinishResult
-	if err := withFileLock("workers", func() error {
+	lockErr := withFileLock("workers", func() error {
 		store, err := load()
 		if err != nil {
 			return err
@@ -914,8 +914,16 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 		}
 		out = &FinishResult{ID: id, Merged: merged, SHA: sha, Detail: detail}
 		return nil
-	}); err != nil {
-		return nil, err
+	})
+	storeMu.Unlock()
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	// A freed slot starts the next queued worker, if any. Only a real finish
+	// (recorded) drains: rollbacks free slots too, but the next real finish
+	// picks those up, and draining from a rollback would nest drains.
+	if record && out != nil && !out.Kept {
+		drainWorkerQueue(run)
 	}
 	return out, nil
 }

@@ -1,6 +1,7 @@
 package wick
 
 import (
+	"example.com/wick/tools"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -200,12 +201,14 @@ func renderFinish(r *FinishResult) string {
 // the thinking; the adapter only maps its vocabulary onto wick's tools and
 // drops what wick already does (review per ticket, the integration branch).
 func implementPrompt(run SpecRun) string {
+	maxWorkers := tools.LoadSettings().EffectiveMaxWorkers()
 	return fmt.Sprintf(`Implement the spec at %s. Its tickets are under %s.
 
 Read %s and follow it, with these wick adaptations:
 
 - The integration branch is %s. It already exists and is checked out; never switch away from it.
 - An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else. Workers are non-blocking: spawn returns as soon as they start.
+- At most %d workers run at once; further workers from one spawn queue and start as earlier ones finish.
 - An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Scouts are blocking, so one spawn returns their reports together; ask several at once when they are independent.
 - After a spawn that starts non-blocking workers, end your turn: each worker's result arrives later as a system notice, and waiting for it only spends tokens.
 - The merger subagent is finish(agent=<worker id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
@@ -214,7 +217,7 @@ Read %s and follow it, with these wick adaptations:
 - You never run code. You may edit and write only the paths listed under "orchestrator_paths" in .wick-pig/settings.json; any other path is refused. Use that only to keep the spec and notes current: finish marks a merged worker's ticket done itself. Never touch source files, and leave the edits uncommitted.
 
 When nothing more is ready, report the integration branch, each merged ticket with its sha, every worker left unmerged and why, and the follow-ups workers listed.`,
-		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch)
+		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch, maxWorkers)
 }
 
 func str(params map[string]any, key string) string {
