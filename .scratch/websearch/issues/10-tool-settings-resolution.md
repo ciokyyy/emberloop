@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Global and project files merge as specified; unknown keys survive a settings write
-- [ ] Per-role overrides, rename, include and exclude globs resolve correctly (table tests)
-- [ ] A disabled tool is absent from the served tool list for that role (and globally when disabled globally)
-- [ ] Settings never widen a role's allowlist; `submit` is undisableable
-- [ ] Unknown tool names are reported once and ignored
-- [ ] `wick-pig settings` can show and set the new keys
-- [ ] Repo check passes
+- [x] Global and project files merge as specified; unknown keys survive a settings write
+- [x] Per-role overrides, rename, include and exclude globs resolve correctly (table tests)
+- [x] A disabled tool is absent from the served tool list for that role (and globally when disabled globally)
+- [x] Settings never widen a role's allowlist; `submit` is undisableable
+- [x] Unknown tool names are reported once and ignored
+- [x] `wick-pig settings` can show and set the new keys
+- [x] Repo check passes
