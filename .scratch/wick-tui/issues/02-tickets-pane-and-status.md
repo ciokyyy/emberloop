@@ -4,8 +4,8 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Table test covering every status from fixture signals
-- [ ] Glyphs and colours defined once
-- [ ] Click and keyboard selection in the tickets pane
+- [x] Table test covering every status from fixture signals
+- [x] Glyphs and colours defined once
+- [x] Click and keyboard selection in the tickets pane
