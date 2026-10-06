@@ -129,15 +129,18 @@ func RunExecFile(path string) error {
 	if cmd.Bin == "" {
 		return fmt.Errorf("launch file %s names no binary", path)
 	}
-	c := exec.Command(cmd.Bin, cmd.Args...)
-	c.Env = append(os.Environ(), cmd.Env...)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if log, name := openToolsLog(cmd); log != nil {
+		// The tools log needs the child's raw stderr, which a PTY would
+		// merge into stdout: debug sessions run unwrapped, exactly as
+		// before, and keep the strip off.
 		defer log.Close()
-		c.Env = append(c.Env, "PIG_DEBUG_TOOLS=1")
+		c := exec.Command(cmd.Bin, cmd.Args...)
+		c.Env = append(append(os.Environ(), cmd.Env...), "PIG_DEBUG_TOOLS=1")
+		c.Stdin, c.Stdout = os.Stdin, os.Stdout
 		c.Stderr = &stampWriter{w: log, label: name}
+		return c.Run()
 	}
-	return c.Run()
+	return WrapLaunch(cmd)
 }
 
 // openToolsLog opens the per-session log of how many tools pig sent with each
