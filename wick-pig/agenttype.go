@@ -64,10 +64,13 @@ var builtinAgentSources = map[string]string{
 
 // hostToolNames are the MCP tools a type's `tools` field may name. `submit` is
 // added to every spawned agent by the runtime, so it is not listed here.
-var hostToolNames = []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search"}
+// grep, git and check live behind execute (their default placement), so a
+// type lists them to reach them inside scripts without serving them in main.
+var hostToolNames = []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "grep", "git", "check", "execute"}
 
-// readOnlyToolNames are the host tools a `none` (read-only) type may use.
-var readOnlyToolNames = []string{"read", "find", "websearch", "ctx_search"}
+// readOnlyToolNames are the host tools a `none` (read-only) type may use. A
+// scout reaches grep and git only inside its sandboxed execute, never check.
+var readOnlyToolNames = []string{"read", "find", "websearch", "ctx_search", "grep", "git", "execute"}
 
 // LoadAgentTypes returns the built-in types, then every type in
 // <root>/.wick/agents/*.md, a repo file overriding a built-in of the same name.

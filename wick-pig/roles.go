@@ -18,17 +18,19 @@ var roles = map[string][]string{
 	// tools.Guard), enough to keep tickets and specs current.
 	"implement": {"read", "edit", "write", "find", "websearch", "ctx_search", "spawn", "finish", "tell"},
 	// review and scout can only look, plus search the web and what is
-	// stored. review also re-runs the repo's checks; check defaults behind
-	// execute, so it is reachable there, not in main.
-	"review": {"read", "find", "websearch", "ctx_search", "check"},
-	"scout":  {"read", "find", "websearch", "ctx_search"},
+	// stored. review also re-runs the repo's checks. grep and git live
+	// behind execute for them (as for every role with execute); execute
+	// itself is in main, sandboxed for these roles.
+	"review": {"read", "find", "websearch", "ctx_search", "check", "grep", "git", "execute"},
+	"scout":  {"read", "find", "websearch", "ctx_search", "grep", "git", "execute"},
 	// work is an implementer: every file tool. Its review is a spawn of the
-	// reviewer types its agent type allows, not a tool of its own.
-	"work": {"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "check"},
+	// reviewer types its agent type allows, not a tool of its own. execute
+	// runs its Python directly: the role already has bash.
+	"work": {"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "check", "grep", "git", "execute"},
 	// plan is a wayfinder, grill, research or to-spec session: file tools plus
 	// spawn, so it can start scouts. No review: review belongs where code is
 	// written, in the workers.
-	"plan": {"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "check"},
+	"plan": {"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "check", "grep", "git", "execute"},
 	// full is everything.
 	"full": nil,
 }

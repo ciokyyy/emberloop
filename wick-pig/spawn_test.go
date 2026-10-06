@@ -381,7 +381,8 @@ func TestSpawnFindsTheCallersTabFromItsPane(t *testing.T) {
 }
 
 // A spawned agent's wick-mcp serves its type's tools, plus submit, and nothing
-// that writes: scout is read-only.
+// that writes: scout is read-only, with grep and git reachable only inside
+// its sandboxed execute.
 func TestScoutAgentServesReadOnlyToolsAndSubmit(t *testing.T) {
 	t.Setenv("WICK_AGENT_TYPE", "scout")
 	t.Setenv("WICK_AGENT_ID", "a1")
@@ -393,14 +394,14 @@ func TestScoutAgentServesReadOnlyToolsAndSubmit(t *testing.T) {
 	for _, tool := range served {
 		got[tool.Name()] = true
 	}
-	for _, want := range []string{"read", "find", "websearch", "ctx_search", "submit"} {
+	for _, want := range []string{"read", "find", "websearch", "ctx_search", "submit", "execute"} {
 		if !got[want] {
 			t.Errorf("a scout agent must serve %q, got %v", want, got)
 		}
 	}
-	for _, unwanted := range []string{"edit", "write", "bash", "background", "spawn", "code_review"} {
+	for _, unwanted := range []string{"edit", "write", "bash", "background", "spawn", "code_review", "grep", "git", "check"} {
 		if got[unwanted] {
-			t.Errorf("a scout agent must not serve %q", unwanted)
+			t.Errorf("a scout agent must not serve %q in main", unwanted)
 		}
 	}
 }
@@ -781,7 +782,7 @@ func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
 	for _, tool := range served {
 		got[tool.Name()] = true
 	}
-	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "submit", "spawn"} {
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "submit", "spawn", "execute"} {
 		if !got[want] {
 			t.Errorf("a worker agent must serve %q, got %v", want, got)
 		}

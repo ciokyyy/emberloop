@@ -59,7 +59,9 @@ func TestReviewRoleServesOnlyLooking(t *testing.T) {
 	hermeticSettings(t)
 	served, _ := RoleTools("review")
 	for _, tl := range served {
-		if n := tl.Name(); n != "read" && n != "find" && n != "websearch" && n != "ctx_search" && n != "check" {
+		// execute is the sandboxed script runner: read-only through the
+		// sandbox, with grep, git and check reachable only inside it.
+		if n := tl.Name(); n != "read" && n != "find" && n != "websearch" && n != "ctx_search" && n != "check" && n != "execute" {
 			t.Errorf("review role serves %s", n)
 		}
 	}
