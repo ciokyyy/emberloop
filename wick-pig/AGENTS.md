@@ -27,7 +27,8 @@ owns its `_test.go` and the behaviour below):
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`
 - Transport: `mcp/` (child doc); binaries are `cmd/wick-pig/main.go` (harness
-  CLI) and `cmd/wick-mcp/main.go` (tool server)
+  CLI) and `cmd/wick-mcp/main.go` (tool server); `tui.go` execs the installed
+  `wick-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go`, `agenttype.go` (built-in types plus
   `.wick/agents` overrides), `transcript.go`, `usage.go`, `memory.go`,
   `archive.go`, `prune.go`
@@ -55,7 +56,7 @@ owns its `_test.go` and the behaviour below):
 
 ## Verification
 
-`.wick/check` (`cd wick-pig && go vet ./... && go test -skip TestLive ./...`).
+`.wick/check` (`cd wick-pig && go vet ./... && go test -skip TestLive ./... && cd ../wick-tui && go vet ./... && go test ./...`).
 
 ## Child DOX Index
 

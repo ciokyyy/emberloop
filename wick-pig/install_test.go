@@ -19,7 +19,13 @@ func installTestState(t *testing.T) string {
 	t.Cleanup(func() { statePath = old })
 	dir := t.TempDir()
 	t.Setenv("WICK_INSTALL_DIR", dir)
-	t.Setenv("WICK_SOURCE_DIR", t.TempDir())
+	src := t.TempDir()
+	t.Setenv("WICK_SOURCE_DIR", src)
+	// The TUI module sits beside the main module in a real checkout; the
+	// builder fake asserts every build dir exists, so the fixture mirrors it.
+	if err := os.MkdirAll(filepath.Join(src, "..", "wick-tui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -94,7 +100,8 @@ func TestInstallRefusesWhileAWorkerIsLiveAndReplacesNothing(t *testing.T) {
 
 // installBuildExec answers `herdr pane list` with panes alive and plays `go
 // build` by writing a marker where -o points, so the test sees what would be
-// installed without a toolchain.
+// installed without a toolchain. Builds run in the source checkout, or in the
+// TUI module under it for the wick-tui target.
 func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 	t.Helper()
 	return func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -108,8 +115,11 @@ func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 			if out == "" {
 				return Result{Code: 1, Stderr: "no -o"}, nil
 			}
-			if o.Cwd != src {
-				t.Errorf("go build must run in the source checkout %q, got %q", src, o.Cwd)
+			if o.Cwd != src && o.Cwd != filepath.Join(src, "..", "wick-tui") {
+				t.Errorf("go build must run in the source checkout %q or its sibling wick-tui module, got %q", src, o.Cwd)
+			}
+			if info, err := os.Stat(o.Cwd); err != nil || !info.IsDir() {
+				t.Errorf("go build must run in an existing checkout dir, got %q", o.Cwd)
 			}
 			pkg := args[len(args)-1]
 			if err := os.WriteFile(out, []byte("built "+pkg), 0o755); err != nil {
@@ -142,6 +152,9 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	if got := readInstallFile(t, dir, "wick-mcp"); got != "built ./cmd/wick-mcp" {
 		t.Errorf("wick-mcp = %q, want the new build", got)
 	}
+	if got := readInstallFile(t, dir, "wick-tui"); got != "built ./cmd/wick-tui" {
+		t.Errorf("wick-tui = %q, want the new build", got)
+	}
 }
 
 // Seam (ticket 13): install --force — force installs past a live agent and
@@ -169,6 +182,9 @@ func TestInstallForceInstallsPastALiveAgentWithWarning(t *testing.T) {
 	}
 	if got := readInstallFile(t, dir, "wick-mcp"); got != "built ./cmd/wick-mcp" {
 		t.Errorf("a forced install must replace, wick-mcp = %q", got)
+	}
+	if got := readInstallFile(t, dir, "wick-tui"); got != "built ./cmd/wick-tui" {
+		t.Errorf("a forced install must replace, wick-tui = %q", got)
 	}
 }
 

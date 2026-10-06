@@ -10,6 +10,7 @@
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
 //	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
+//	wick-pig tui                                            open the dashboard in the current pane
 //	wick-pig [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
 //	wick-pig implement <spec> [flags]                          run a spec on spec/<slug>
 //	wick-pig <wayfinder|grill|research|...> [flags] [input...] one route skill
@@ -63,6 +64,9 @@ func run(argv []string) error {
 	}
 	if sub == "stats" {
 		return wick.RunStats(argv, os.Stdout)
+	}
+	if sub == "tui" {
+		return wick.RunTUI(argv)
 	}
 	if sub == "install" {
 		return wick.RunInstall(argv, os.Stdout)

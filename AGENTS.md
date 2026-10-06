@@ -3,12 +3,13 @@
 Project preamble: wick is a harness extension for running parallel agent
 implement/review loops. Pig and claude sessions spawn workers in git
 worktrees, judge them with persistent reviewers, and merge through a gate
-(`finish`). The main Go package is `wick-pig/`; `herdr-report/` and
-`pig-antigravity-auth/` are separate pig extensions; `scripts/` holds live
+(`finish`). The main Go package is `wick-pig/`; `wick-tui/` is the dashboard
+module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
+extensions; `scripts/` holds live
 probes that need running agents; `.scratch/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
 `CLAUDE.md`, which imports this file. The repo check is `.wick/check`
-(`cd wick-pig && go vet ./... && go test -skip TestLive ./...`).
+(`cd wick-pig && go vet ./... && go test -skip TestLive ./... && cd ../wick-tui && go vet ./... && go test ./...`).
 
 ## DOX contract
 
@@ -42,6 +43,7 @@ child it belongs to, and every entry must resolve to a file.
 
 - `wick-pig/AGENTS.md` — the main Go package, its file map, and its Go
   workflow; indexes tools, MCP server, agent types, and test data
+- `wick-tui/AGENTS.md` — the dashboard module (Runs list, read model, toolkit lock)
 - `herdr-report/AGENTS.md` — the herdr report extension (pig panes as
   addressable agents)
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
