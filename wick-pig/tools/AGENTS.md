@@ -8,7 +8,8 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 `files.go` (read, edit, write), `readurl.go` (the tiered URL reader `read`
 serves: native fetch, then Jina, then an uninstalled browser tier),
 `bash.go`, `background.go`, `find.go`
-(plus the `cascade.go` ranker), `hashline.go` (tag-anchored edits),
+(plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
+with a Go fallback), `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools and
 mcp_servers maps and their merge), `rename.go` (serve a tool under a new
