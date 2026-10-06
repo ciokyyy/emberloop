@@ -826,10 +826,12 @@ func reviewerLockKey(tree, typ string) string {
 	return "reviewer-" + strconv.FormatUint(sum.Sum64(), 16) + "-" + lockName(typ)
 }
 
-// followUpReviewer re-prompts the live reviewer with only what changed since it
-// last looked: the diff since its commit, the new checks and the worker's note.
-// Its submit for the new turn joins groupID's single notice, so the previous
-// one is dropped first.
+// followUpReviewer re-prompts the live reviewer with what changed since it
+// last looked: the incremental diff inline as the message itself, plus the
+// full diff for reference, through the shared DeliverPrompt path. Its submit
+// for the new turn joins groupID's single notice, so the previous one is
+// dropped first. The prompt and diff files stay as archive copies; the
+// message never names them.
 func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, parentPane, parentID, groupID string) (*spawnedAgent, error) {
 	agent := prev.agent()
 	dir := filepath.Join(filepath.Dir(statePath), "reviews")
@@ -837,11 +839,13 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	// A branch rebased since the reviewer last looked no longer holds the
 	// commit it saw, and a diff from it would show every other ticket merged
 	// meanwhile: the reviewer gets the full diff again.
+	rebased := true
 	incPath := p.fullDiff
 	// When the branch was not rebased, the increment is exact if both states
 	// are known by tree (uncommitted and new files included), else the diff
 	// since the commit the reviewer saw.
 	if _, err := gitIn(run, p.tree, "merge-base", "--is-ancestor", prev.Reviewed, "HEAD"); err == nil {
+		rebased = false
 		args := []string{"diff", prev.Reviewed}
 		if prev.VerdictTree != "" && p.treeID != "" {
 			if _, err := gitIn(run, p.tree, "cat-file", "-e", prev.VerdictTree+"^{tree}"); err == nil {
@@ -857,8 +861,17 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 			return nil, err
 		}
 	}
+	inc, err := os.ReadFile(incPath)
+	if err != nil {
+		return nil, err
+	}
+	full, err := os.ReadFile(p.fullDiff)
+	if err != nil {
+		return nil, err
+	}
+	text := followUpPrompt(p, prev, rebased, string(inc), string(full))
 	promptPath := filepath.Join(dir, name+"."+t.Name+".followup")
-	if err := os.WriteFile(promptPath, []byte(followUpPrompt(p, prev, incPath)), 0o644); err != nil {
+	if err := os.WriteFile(promptPath, []byte(text), 0o644); err != nil {
 		return nil, err
 	}
 	// The previous turn's submit must not satisfy the group for this one.
@@ -868,7 +881,7 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID, groupID, agent.Pane, agent.Tab); err != nil {
 		return nil, err
 	}
-	if err := Nudge(run, agent.Pane, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath)); err != nil {
+	if err := DeliverPrompt(run, agent.Pane, text); err != nil {
 		return nil, err
 	}
 	// Reused: the reviewer was already running, so a failed spawn call has
@@ -978,14 +991,18 @@ func packetPrompt(p *reviewPacket, typ string, prev reviewer, replaced bool) str
 	return b.String()
 }
 
-func followUpPrompt(p *reviewPacket, prev reviewer, incPath string) string {
+// followUpPrompt is the follow-up review message itself: the incremental diff
+// since the reviewer last looked, inline in full with no size cap, plus the
+// full diff for reference. When the branch was rebased the increment is the
+// full diff, carried once.
+func followUpPrompt(p *reviewPacket, prev reviewer, rebased bool, inc, full string) string {
 	var b strings.Builder
-	if incPath == p.fullDiff {
-		fmt.Fprintf(&b, "Follow-up review. The branch was rebased since you last looked (%s), so read the full diff again, at %s.\n\n",
-			short(prev.Reviewed), p.fullDiff)
+	if rebased {
+		fmt.Fprintf(&b, "Follow-up review. The branch was rebased since you last looked (%s), so here is the full diff again:\n\n%s\n\n",
+			short(prev.Reviewed), full)
 	} else {
-		fmt.Fprintf(&b, "Follow-up review. What changed since you last looked (%s) is the diff at %s; the full diff is still at %s.\n\n",
-			short(prev.Reviewed), incPath, p.fullDiff)
+		fmt.Fprintf(&b, "Follow-up review. What changed since you last looked (%s):\n\n%s\n\nThe full diff, base to working tree, for reference:\n\n%s\n\n",
+			short(prev.Reviewed), inc, full)
 	}
 	if prev.Verdict == verdictPass {
 		fmt.Fprintf(&b, "You passed this work at %s. It changed since, likely for the other reviewer: check that the change did not break what you approved.\n\n", short(prev.VerdictAt))

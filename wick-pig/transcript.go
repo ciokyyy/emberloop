@@ -99,11 +99,14 @@ func lastTurn(path string, classify func(rec map[string]any) (state, detail stri
 	return state, detail
 }
 
-// Nudge sends text to the agent in pane. herdr only prompts an agent it
+// DeliverPrompt sends text to the agent in pane as the message itself, so the
+// agent spends no turn reading a file. It is the one shared prompt-delivery
+// path: steering, reviewer follow-ups, late first messages and (later)
+// compress handoffs all send through it. herdr only prompts an agent it
 // detects itself; pig only reports its state, so herdr refuses to prompt it
 // ("not an active named agent") and the text is typed into the pane instead.
 // Typed text is one line: a newline would submit the message half-written.
-func Nudge(run Exec, pane, text string) error {
+func DeliverPrompt(run Exec, pane, text string) error {
 	if res, err := run(herdrBin(), []string{"agent", "prompt", pane, text}, ExecOpts{Timeout: 30 * time.Second}); err == nil && res.Code == 0 {
 		return nil
 	}
@@ -118,6 +121,12 @@ func Nudge(run Exec, pane, text string) error {
 		}
 	}
 	return nil
+}
+
+// Nudge sends text to the agent in pane through the shared DeliverPrompt path,
+// kept under its old name for its callers.
+func Nudge(run Exec, pane, text string) error {
+	return DeliverPrompt(run, pane, text)
 }
 
 // WaitReply polls the session transcript until the agent ends a turn, and

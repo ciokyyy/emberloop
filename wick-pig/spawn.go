@@ -802,22 +802,21 @@ func liveFor(s AgentState, typ, parentID, parentPane string, run Exec) bool {
 }
 
 // repromptAgent reuses a live agent of a persistent type instead of starting a
-// new one: it hands the agent the prompt the launch would have given it,
-// forgets the previous turn's submit and points the agent's next submit at
-// groupID's single notice, so the caller ends its turn exactly as for a
-// fresh launch.
+// new one: it sends the prompt the launch would have given it as the message
+// itself through the shared DeliverPrompt path, forgets the previous turn's
+// submit and points the agent's next submit at groupID's single notice, so
+// the caller ends its turn exactly as for a fresh launch. The prompt file
+// stays as an archive copy; the message never names it.
 func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest, groupID string) (*spawnedAgent, error) {
-	promptPath := filepath.Join(readOnlyDir(), s.ID+".prompt")
-	if t.Checkout == "worktree" {
-		// A worktree agent's brief is already on disk, beside the worker store.
-		promptPath = briefPath(s.ID)
-	} else {
-		if err := os.MkdirAll(readOnlyDir(), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(promptPath, []byte(renderPrompt(t, r.Prompt)), 0o644); err != nil {
-			return nil, err
-		}
+	prompt := renderPrompt(t, r.Prompt)
+	// The archive copy stays; the message never names it. A worktree agent's
+	// brief is already on disk beside the worker store and stays untouched:
+	// the steering text gets its own copy.
+	if err := os.MkdirAll(readOnlyDir(), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(readOnlyDir(), s.ID+".prompt"), []byte(prompt), 0o644); err != nil {
+		return nil, err
 	}
 	clearAgentSubmit(s.ID)
 	clearChildError(s.ID)
@@ -826,7 +825,7 @@ func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest, groupID 
 	if err := WriteAgentState(s); err != nil {
 		return nil, err
 	}
-	if err := Nudge(run, s.Pane, fmt.Sprintf("Read %s and follow it exactly.", promptPath)); err != nil {
+	if err := DeliverPrompt(run, s.Pane, prompt); err != nil {
 		return nil, err
 	}
 	return &spawnedAgent{ID: s.ID, Type: t, Pane: s.Pane, Worktree: t.Checkout == "worktree", Reused: true}, nil
