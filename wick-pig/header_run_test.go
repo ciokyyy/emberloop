@@ -124,6 +124,30 @@ func TestWrapPipesChildStderrToLog(t *testing.T) {
 	}
 }
 
+// Without a terminal the child runs plainly with ChildStderr as its sink.
+// Stderr keeps wrapper warnings only, never the child's lines.
+func TestWrapPlainPrefersChildStderr(t *testing.T) {
+	var stdout, childLog, wrapperLog bytes.Buffer
+	cfg := WrapConfig{
+		Source:      HeaderSource{AgentID: "w1", AgentType: "worker", AgentName: "implementer", Harness: "pig"},
+		Settings:    tools.Settings{},
+		Bin:         "sh",
+		Args:        []string{"-c", "echo oops >&2"},
+		Stdout:      &stdout,
+		Stderr:      &wrapperLog,
+		ChildStderr: &childLog,
+	}
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(childLog.String(), "oops") {
+		t.Errorf("child stderr must reach ChildStderr, got %q", childLog.String())
+	}
+	if wrapperLog.Len() != 0 {
+		t.Errorf("child stderr must not reach Stderr, got %q", wrapperLog.String())
+	}
+}
+
 // The wrapper forwards both directions, starts the child at the reduced
 // size, constrains its columns to the frame, and keeps the strip — top
 // rule included — on screen across a region reset.
