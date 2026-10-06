@@ -47,7 +47,9 @@ func run(argv []string) error {
 	load := func() (tui.Snap, error) {
 		return tui.Snapshot(dir, current, tui.HerdrPanes(execRunner))
 	}
-	p := tea.NewProgram(tui.NewModel(load), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	model := tui.NewModel(load)
+	model.SetSettingsBackend(tui.LiveBackend())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }

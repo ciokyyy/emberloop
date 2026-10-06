@@ -62,6 +62,11 @@ func blobDir() string { return filepath.Join(filepath.Dir(statePath), "blobs") }
 // archiveRoot holds one directory per run, beside the worker store.
 func archiveRoot() string { return filepath.Join(filepath.Dir(statePath), "archive") }
 
+// ArchiveSize is the bytes the archive and blob store hold on disk, for the
+// dashboard's Settings tab. Missing directories read as zero; sizes are best
+// effort the way prune's are.
+func ArchiveSize() int64 { return dirSize(archiveRoot()) + dirSize(blobDir()) }
+
 // ArchiveAgentDir is the archive directory of one agent's session, for the
 // stats indexer and pruner to read as plain files.
 func ArchiveAgentDir(run, agent string) string {

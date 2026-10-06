@@ -17,8 +17,9 @@ const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>`
 
-// defaultThreshold is find's passage cutoff when nothing is stored.
-const defaultThreshold = 0.20
+// defaultThreshold is find's passage cutoff when nothing is stored, shared
+// with the dashboard's Settings tab.
+const defaultThreshold = tools.DefaultThreshold
 
 // defaultHarness is the harness a slot with nothing stored launches with; the
 // resolver's built-in default is the single source for it.

@@ -3,6 +3,7 @@ module example.com/wick-tui
 go 1.26
 
 require (
+	example.com/wick v0.0.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -34,3 +35,5 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 )
+
+replace example.com/wick => ../wick-pig

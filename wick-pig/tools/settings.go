@@ -30,6 +30,9 @@ func IsRoleSlot(name string) bool {
 	return false
 }
 
+// DefaultThreshold is find's passage cutoff when nothing is stored.
+const DefaultThreshold = 0.20
+
 // DefaultMaxWorkers caps how many workers run at once when nothing is stored.
 const DefaultMaxWorkers = 3
 
