@@ -151,6 +151,7 @@ func WrapChild(cfg WrapConfig) error {
 		cfg: cfg, stdin: stdin, stdout: stdout,
 		termW: termW, termH: termH, childW: childW, childH: childH,
 		rows: rows, frame: frame, rule: rule, pad: pad,
+		symbols: cfg.Settings.EffectiveStripSymbols(), separator: cfg.Settings.EffectiveStripSeparator(),
 		dark:    dark,
 		profile: detectProfile(stdout),
 		child:   child, snapshot: snapshot, filter: filter,
@@ -297,24 +298,26 @@ func wrapMarginSetupPad(termW int, frame bool, pad Pad) string {
 // the input queue and its pump, and is the only writer to the child PTY:
 // typed input and queued prompts serialize through writeChild.
 type wrapper struct {
-	cfg      WrapConfig
-	stdin    io.Reader
-	stdout   io.Writer
-	termW    int
-	termH    int
-	childW   int
-	childH   int
-	rows     int
-	frame    bool
-	rule     bool
-	pad      Pad
-	dark     bool
-	profile  termenv.Profile
-	child    wrapPty
-	snapshot func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
-	filter   *wrapFilter
-	reporter *agentReporter
-	mouse    mouseMapper
+	cfg       WrapConfig
+	stdin     io.Reader
+	stdout    io.Writer
+	termW     int
+	termH     int
+	childW    int
+	childH    int
+	rows      int
+	frame     bool
+	rule      bool
+	pad       Pad
+	symbols   string
+	separator string
+	dark      bool
+	profile   termenv.Profile
+	child     wrapPty
+	snapshot  func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
+	filter    *wrapFilter
+	reporter  *agentReporter
+	mouse     mouseMapper
 	// lastPlain is the painted strip rows without colors, for copying a
 	// drag across them.
 	lastPlain []string
@@ -423,9 +426,9 @@ func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 func (w *wrapper) renderSnapLocked(snap HeaderSnapshot) string {
 	inner := w.contentW() - 2*stripInset
 	if inner < 1 {
-		return RenderHeader(snap, w.contentW(), HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase})
+		return RenderHeader(snap, w.contentW(), HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase, Symbols: w.symbols, Separator: w.separator})
 	}
-	strip := RenderHeader(snap, inner, HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase})
+	strip := RenderHeader(snap, inner, HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase, Symbols: w.symbols, Separator: w.separator})
 	side := w.edgeStyle().Render(strings.Repeat(" ", stripInset))
 	lines := strings.Split(strip, "\n")
 	for i, line := range lines {

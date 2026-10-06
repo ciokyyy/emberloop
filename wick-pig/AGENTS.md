@@ -60,9 +60,11 @@ owns its `_test.go` and the behaviour below):
   `antigravity-`, case-insensitive longest prefix match with `deepseek-v4` at 1M and `gemini-` at 1M;
   settings override via `context.windows` / `wick-pig settings window <model> <n>` beats table; unknown models get 200k default),
   `context_report.go` (the `wick-pig context` output)
-- Header strip: `header.go` (pure strip render: snapshot and width in,
-  styled string out, Lip Gloss adaptive palette, width tiers, `N pending`
+- Header strip: `header.go` (pure strip render: snapshot, width and preset
+  in, styled string out, Lip Gloss adaptive palette, width tiers, `N pending`
   beside the state pill, `compress failed: <reason>` pill on refusal/error),
+  `strip_symbols.go` (the omp-style segment system: the Nerd Fonts v3 icon
+  table, the symbol presets, the separator glyphs, the nerd rounded caps),
   `header_tool.go` (the second row's activity label: the tool running now
   or the last one finished, a glyph and verb per tool in `toolStyles`,
   `N pending` when items wait; an idle agent shows no state word. **A new tool wick serves needs its
@@ -96,7 +98,7 @@ owns its `_test.go` and the behaviour below):
   agent id, pump with transcript acceptance and head retry, DeliverPrompt
   in `transcript.go` tries the channel first with the herdr path as
   fallback); settings carry strip rows, frame, rule,
-  per-harness compress models, the auto-compress switch and cooldown. `exec`,
+  symbols and separator, per-harness compress models, the auto-compress switch and cooldown. `exec`,
   top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
   keep the strip: stdin and stdout stay on the PTY while stderr keeps its

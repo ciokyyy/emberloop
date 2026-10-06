@@ -527,3 +527,25 @@ func TestWithoutHerdrClaudeHookDropsOnlyHerdrEnv(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// The symbol preset travels from settings to the painted strip: nerd
+// renders its icons and rounded caps, while the child keeps the same
+// reduced size and the strip the same configured rows.
+func TestWrapStripSymbols(t *testing.T) {
+	child := &fakeChild{pending: []byte("hello")}
+	var stdout bytes.Buffer
+	cfg := wrapTestConfig(child, &stdout)
+	cfg.Settings = withNoPad(tools.ContextSettings{StripSymbols: "nerd", StripSeparator: "powerline"})
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(child.sizes) == 0 || child.sizes[0] != [2]int{100, 21} {
+		t.Errorf("child sizes = %v, want first 100x21", child.sizes)
+	}
+	out := stdout.String()
+	for _, want := range []string{"\uf007", "\ue0b0", "\ue0b6", "implementer"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("nerd terminal misses %q", want)
+		}
+	}
+}

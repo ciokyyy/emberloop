@@ -134,6 +134,10 @@ type OverflowSettings struct {
 // StripPadLeft, StripPadRight and StripPadBottom inset the agent screen
 // and the strip by that many columns and rows (nil means the defaults
 // below). Padding is background only: nothing is drawn in it.
+// StripSymbols picks the strip glyph set (nerd, unicode default, ascii);
+// StripSeparator picks the between-segment separator (powerline,
+// powerline-thin, rounded, slash, pipe, none default). Unknown values read
+// as the defaults, so a terminal without a Nerd Font stays correct.
 // CompressModels names the summarizer model per harness (unset
 // means compression refuses with a warning, never a silent default).
 // AutoCompress disables the automatic trigger when false (nil means on; the
@@ -159,10 +163,30 @@ type ContextSettings struct {
 	StripPadLeft      *int              `json:"strip_pad_left,omitempty"`
 	StripPadRight     *int              `json:"strip_pad_right,omitempty"`
 	StripPadBottom    *int              `json:"strip_pad_bottom,omitempty"`
+	StripSymbols      string            `json:"strip_symbols,omitempty"`
+	StripSeparator    string            `json:"strip_separator,omitempty"`
 	CompressModels    map[string]string `json:"compress_models,omitempty"`
 	AutoCompress      *bool             `json:"auto_compress,omitempty"`
 	CompressCooldown  int               `json:"compress_cooldown,omitempty"`
 }
+
+// Strip glyph sets: nerd needs a Nerd Font, unicode is the plain-symbol
+// default, ascii is plain ASCII.
+const (
+	StripSymbolsNerd    = "nerd"
+	StripSymbolsUnicode = "unicode"
+	StripSymbolsASCII   = "ascii"
+)
+
+// Strip between-segment separators.
+const (
+	StripSeparatorPowerline     = "powerline"
+	StripSeparatorPowerlineThin = "powerline-thin"
+	StripSeparatorRounded       = "rounded"
+	StripSeparatorSlash         = "slash"
+	StripSeparatorPipe          = "pipe"
+	StripSeparatorNone          = "none"
+)
 
 // Settings are the user's choices that tools read at call time. They live in
 // the user's wick-pig directory, beside the skills, so pig, the MCP server and
@@ -488,6 +512,38 @@ func (s Settings) EffectivePadBottom() int {
 	return DefaultPadBottom
 }
 
+// EffectiveStripSymbols is the strip glyph set in force: nerd, unicode or
+// ascii, default unicode. Anything else reads as the default, so a terminal
+// without a Nerd Font stays correct.
+func (s Settings) EffectiveStripSymbols() string {
+	if s.Context != nil {
+		switch NormalizeStripSymbols(s.Context.StripSymbols) {
+		case StripSymbolsNerd, StripSymbolsUnicode, StripSymbolsASCII:
+			return NormalizeStripSymbols(s.Context.StripSymbols)
+		}
+	}
+	return StripSymbolsUnicode
+}
+
+// EffectiveStripSeparator is the strip between-segment separator in force:
+// powerline, powerline-thin, rounded, slash, pipe or none, default none
+// (the current spaced look). Anything else reads as the default.
+func (s Settings) EffectiveStripSeparator() string {
+	if s.Context != nil {
+		switch NormalizeStripSeparator(s.Context.StripSeparator) {
+		case StripSeparatorPowerline, StripSeparatorPowerlineThin, StripSeparatorRounded, StripSeparatorSlash, StripSeparatorPipe, StripSeparatorNone:
+			return NormalizeStripSeparator(s.Context.StripSeparator)
+		}
+	}
+	return StripSeparatorNone
+}
+
+// NormalizeStripSymbols lowercases and trims a glyph set name.
+func NormalizeStripSymbols(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+
+// NormalizeStripSeparator lowercases and trims a separator name.
+func NormalizeStripSeparator(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+
 // unknownContextFields collects the keys inside the context object that are
 // not the known context settings, so a save writes them back.
 func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage {
@@ -498,7 +554,7 @@ func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage
 	var out map[string]json.RawMessage
 	for k, v := range contextFields {
 		switch strings.ToLower(k) {
-		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "strip_rule", "strip_pad_left", "strip_pad_right", "strip_pad_bottom", "compress_models", "auto_compress", "compress_cooldown":
+		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "strip_rule", "strip_pad_left", "strip_pad_right", "strip_pad_bottom", "strip_symbols", "strip_separator", "compress_models", "auto_compress", "compress_cooldown":
 			continue
 		}
 		if out == nil {
@@ -623,6 +679,14 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			out.StripPadBottom = &v
 			src["context.strip_pad_bottom"] = "project"
 		}
+		if project.StripSymbols != "" {
+			out.StripSymbols = project.StripSymbols
+			src["context.strip_symbols"] = "project"
+		}
+		if project.StripSeparator != "" {
+			out.StripSeparator = project.StripSeparator
+			src["context.strip_separator"] = "project"
+		}
 		for h, m := range project.CompressModels {
 			if m == "" {
 				continue
@@ -644,7 +708,7 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 		}
 	}
 	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 &&
-		out.StripRows == 0 && out.StripFrame == nil && out.StripRule == nil && out.StripPadLeft == nil && out.StripPadRight == nil && out.StripPadBottom == nil && len(out.CompressModels) == 0 &&
+		out.StripRows == 0 && out.StripFrame == nil && out.StripRule == nil && out.StripPadLeft == nil && out.StripPadRight == nil && out.StripPadBottom == nil && out.StripSymbols == "" && out.StripSeparator == "" && len(out.CompressModels) == 0 &&
 		out.AutoCompress == nil && out.CompressCooldown == 0 {
 		return nil
 	}
@@ -831,6 +895,12 @@ func decodeSettings(raw []byte) Settings {
 		}
 		if s.Context.StripRule != nil {
 			s.src["context.strip_rule"] = "file"
+		}
+		if s.Context.StripSymbols != "" {
+			s.src["context.strip_symbols"] = "file"
+		}
+		if s.Context.StripSeparator != "" {
+			s.src["context.strip_separator"] = "file"
 		}
 		if s.Context.AutoCompress != nil {
 			s.src["context.auto_compress"] = "file"
@@ -1105,7 +1175,7 @@ func SaveSettings(s Settings) error {
 	// A set-but-empty context pointer marshals as {} because omitempty does
 	// not omit structs. Drop the key when nothing context-related is set, so
 	// clearing the last override removes the object instead of leaving {}.
-	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && s.Context.StripRule == nil && len(s.Context.CompressModels) == 0 && s.Context.AutoCompress == nil && s.Context.CompressCooldown == 0 && len(s.contextExtra) == 0 {
+	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && s.Context.StripRule == nil && s.Context.StripSymbols == "" && s.Context.StripSeparator == "" && len(s.Context.CompressModels) == 0 && s.Context.AutoCompress == nil && s.Context.CompressCooldown == 0 && len(s.contextExtra) == 0 {
 		delete(fields, "context")
 	}
 	// A zero graph struct marshals as {} because encoding/json omitempty does
