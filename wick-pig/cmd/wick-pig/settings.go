@@ -761,8 +761,14 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 	}
 	sort.Strings(harnesses)
 	for _, h := range harnesses {
+		src := s.SourceOf("context.harness_thresholds." + h)
+		// An env global wins over the file override, so the printed value
+		// is the env's: label it as such.
+		if s.SourceOf("context.compress_threshold") == "env" {
+			src = "env"
+		}
 		fmt.Fprintf(out, "compress-threshold %s: %d (%s)\n",
-			h, s.EffectiveCompressThreshold(h), s.SourceOf("context.harness_thresholds."+h))
+			h, s.EffectiveCompressThreshold(h), src)
 	}
 	windows := s.ContextWindows()
 	if len(windows) == 0 {
