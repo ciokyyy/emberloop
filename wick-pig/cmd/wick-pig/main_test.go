@@ -155,3 +155,13 @@ func TestInstallRefusesUnknownFlags(t *testing.T) {
 		t.Errorf("run(install --bogus) must fail with usage, got %v", err)
 	}
 }
+
+// `wick-pig tui` opens the dashboard with no arguments. Here its dispatch
+// and its usage error are pinned; the binary lookup and starter are covered
+// in the wick package. The unknown arg fails before any exec, so this starts
+// no terminal.
+func TestTuiRefusesArgs(t *testing.T) {
+	if err := run([]string{"tui", "--bogus"}); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("run(tui --bogus) must fail with usage, got %v", err)
+	}
+}

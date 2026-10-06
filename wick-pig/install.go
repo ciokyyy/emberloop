@@ -11,7 +11,7 @@ import (
 )
 
 // `wick-pig install` is the only path that replaces the installed wick
-// binaries (wick-pig and wick-mcp). Nothing else in this package writes to
+// binaries (wick-pig, wick-mcp and wick-tui). Nothing else in this package writes to
 // the install directory, so a running session never changes behaviour under
 // itself except through this gate: while any agent of a run is live, the
 // install is refused, naming the agents; --force installs anyway and warns
@@ -49,9 +49,10 @@ func installDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".local", "bin")
 }
 
-// installSourceDir is the checkout the install builds from: the current
-// directory — run `wick-pig install` from the wick source — or
-// WICK_SOURCE_DIR when set, which is what tests use.
+// installSourceDir is the checkout the install builds from: the wick-pig
+// module directory — run `wick-pig install` from the wick source — or
+// WICK_SOURCE_DIR when set, which is what tests use. Sibling modules (the
+// TUI) resolve against it, so it must be the module dir, not the repo root.
 func installSourceDir() string {
 	if dir := os.Getenv("WICK_SOURCE_DIR"); dir != "" {
 		return dir
@@ -145,12 +146,17 @@ func liveInstallAgents(run Exec) ([]string, error) {
 }
 
 // installTargets are the binaries one install replaces, each built from its
-// package in the source checkout. Every target is built to a temp file
-// first, and the installed pair is swapped only when all built, so a failed
-// build replaces nothing.
-var installTargets = []struct{ name, pkg string }{
-	{"wick-pig", "./cmd/wick-pig"},
-	{"wick-mcp", "./cmd/wick-mcp"},
+// package in its module under the source checkout: dir is the module's
+// directory relative to the main module ("" for the main module itself),
+// pkg the package within it. The TUI is a sibling module, not a package of
+// the main one, so its build runs in ../wick-tui. It ships here too, so the
+// `wick-pig tui` launcher finds its binary beside wick-pig. Every target is
+// built to a temp file first, and the installed set is swapped only when
+// all built, so a failed build replaces nothing.
+var installTargets = []struct{ name, pkg, dir string }{
+	{"wick-pig", "./cmd/wick-pig", ""},
+	{"wick-mcp", "./cmd/wick-mcp", ""},
+	{"wick-tui", "./cmd/wick-tui", "../wick-tui"},
 }
 
 // refuseInstall is why the binaries stay put: unknown liveness, or the live
@@ -167,8 +173,8 @@ func refuseInstall(live []string, checkErr error) error {
 // file holding the new build, and the installed path it renames over.
 type staged struct{ tmp, dst string }
 
-// InstallBinaries rebuilds wick-pig and wick-mcp from the source checkout
-// and installs them into installDir. While any agent of a run is live it
+// InstallBinaries rebuilds wick-pig, wick-mcp and wick-tui from the source
+// checkout and installs them into installDir. While any agent of a run is live it
 // refuses instead, naming the agents, and changes nothing: the live check
 // runs before any build, so a refused install never even builds. Liveness
 // is checked again after the build and before anything is replaced, because
@@ -198,8 +204,12 @@ func InstallBinaries(run Exec, opts InstallOptions) (InstallResult, error) {
 		tmp := f.Name()
 		_ = f.Close()
 		_ = os.Remove(tmp)
+		buildDir := src
+		if target.dir != "" {
+			buildDir = filepath.Join(src, target.dir)
+		}
 		res, err := run("go", []string{"build", "-o", tmp, target.pkg},
-			ExecOpts{Cwd: src, Timeout: 5 * time.Minute})
+			ExecOpts{Cwd: buildDir, Timeout: 5 * time.Minute})
 		if err != nil {
 			_ = os.Remove(tmp)
 			discard()
@@ -236,7 +246,7 @@ type placedBinary struct {
 
 // swapInstalled renames every staged build over its destination. Each
 // destination the swap already replaced is restored when a later rename
-// fails, so a half-installed pair is never left: both binaries go, or the
+// fails, so a half-installed set is never left: all binaries go, or the
 // old ones stay. Only regular files are backed up; anything else at a
 // destination fails the rename loudly instead of being clobbered.
 func swapInstalled(done []staged) error {
@@ -299,14 +309,14 @@ func plural(n int, one, many string) string {
 // binaries, and the gate around it.
 const installUsage = `usage: wick-pig install [--force]
 
-  Rebuild wick-pig and wick-mcp from this source checkout and install them.
+  Rebuild wick-pig, wick-mcp and wick-tui from this source checkout and install them.
   Refuses while any agent of a run is live (worker, reviewer or scout),
   naming the agents, and changes nothing. --force installs anyway: running
   sessions keep the old binary until they restart.
 
   This is the only way to replace the installed wick binaries.`
 
-// RunInstall serves `wick-pig install`. It rebuilds both binaries through
+// RunInstall serves `wick-pig install`. It rebuilds every binary through
 // the gate: live agents refuse with their names, --force installs anyway
 // and prints the stale-session warning.
 func RunInstall(argv []string, out io.Writer) error {
@@ -326,7 +336,7 @@ func RunInstall(argv []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "installed wick-pig and wick-mcp into %s\n", res.Dir)
+	fmt.Fprintf(out, "installed wick-pig, wick-mcp and wick-tui into %s\n", res.Dir)
 	if res.Warning != "" {
 		fmt.Fprintln(out, res.Warning)
 	}
