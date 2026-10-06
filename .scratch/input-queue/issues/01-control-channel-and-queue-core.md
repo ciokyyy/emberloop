@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A prompt sent with the tell command to a wrapped agent arrives through the wrapper, never through herdr send-text
 - [x] With no wrapper running, delivery takes the existing herdr path unchanged
