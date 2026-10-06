@@ -99,6 +99,11 @@ type MCPServerSetting struct {
 // the user's wick-pig directory, beside the skills, so pig, the MCP server and
 // the TUI all read the same file.
 type Settings struct {
+	// Search holds the websearch defaults: which provider answers and whether
+	// providers run as a fallback chain or concurrently. Nil means the
+	// defaults (auto provider, fallback mode); a pointer, so omitempty keeps
+	// a settings file without search free of an empty object on save.
+	Search *SearchSetting `json:"search,omitempty"`
 	// DecisionModel is the OpenRouter decisions model find asks. Empty means
 	// the pinned Jev.
 	DecisionModel string `json:"decision_model,omitempty"`
@@ -122,6 +127,9 @@ type Settings struct {
 	// roleExtra holds keys inside a role object that wick does not know yet,
 	// keyed by slot then field. SaveSettings merges it into Roles.
 	roleExtra map[string]map[string]json.RawMessage
+	// searchExtra holds keys inside the search object that wick does not know
+	// yet. SaveSettings merges it back, so new search keys survive an old wick.
+	searchExtra map[string]json.RawMessage
 	// toolExtra holds unknown fields inside a tools entry, keyed by tool then
 	// field; mcpExtra the same for an mcp_servers entry. toolRoleExtra holds
 	// unknown fields inside a tool's per-role override, keyed by tool, role
@@ -134,6 +142,71 @@ type Settings struct {
 	// src names where a top-level value came from: "file", "env" or "default".
 	// Print uses it to show a value's origin.
 	src map[string]string
+}
+
+// Search vocabularies: the providers websearch may answer with, and whether
+// providers run as a fallback chain or concurrently. The tool's provider
+// argument takes the same provider values; there is no mode argument.
+const (
+	SearchProviderAuto  = "auto"
+	SearchProviderBrave = "brave"
+	SearchProviderExa   = "exa"
+	SearchModeFallback  = "fallback"
+	SearchModeParallel  = "parallel"
+)
+
+// SearchSetting is the search object in the settings file: the default
+// provider behind websearch's provider argument, and the mode the providers
+// run in. Empty fields mean the defaults.
+type SearchSetting struct {
+	Provider string `json:"provider,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+}
+
+// validSearchProvider reports whether p names a provider the tool accepts.
+func validSearchProvider(p string) bool {
+	switch p {
+	case SearchProviderAuto, SearchProviderBrave, SearchProviderExa:
+		return true
+	}
+	return false
+}
+
+// validSearchMode reports whether m names a mode providers run in.
+func validSearchMode(m string) bool {
+	switch m {
+	case SearchModeFallback, SearchModeParallel:
+		return true
+	}
+	return false
+}
+
+// EffectiveSearchProvider is the provider in force: the stored value, or auto
+// when nothing valid is stored. An unknown value reads as the default, the
+// way an unparsable threshold does.
+func (s Settings) EffectiveSearchProvider() string {
+	if s.Search != nil && validSearchProvider(s.Search.Provider) {
+		return s.Search.Provider
+	}
+	return SearchProviderAuto
+}
+
+// EffectiveSearchMode is the mode in force: the stored value, or fallback
+// when nothing valid is stored.
+func (s Settings) EffectiveSearchMode() string {
+	if s.Search != nil && validSearchMode(s.Search.Mode) {
+		return s.Search.Mode
+	}
+	return SearchModeFallback
+}
+
+// searchSetting returns the search object, creating it when absent, so an
+// edit never dereferences a nil pointer.
+func (s *Settings) searchSetting() *SearchSetting {
+	if s.Search == nil {
+		s.Search = &SearchSetting{}
+	}
+	return s.Search
 }
 
 // SourceOf names where a top-level value came from: "file", "env" or
@@ -171,8 +244,9 @@ func oldSettingsPath() string {
 
 // LoadSettings reads the file; a missing or unreadable file is the defaults.
 // When WICK_SETTINGS is unset and the new file is absent, the old state-dir
-// file is read instead. WICK_DECISION_MODEL, WICK_FIND_THRESHOLD and
-// WICK_MAX_WORKERS win over the file.
+// file is read instead. WICK_DECISION_MODEL, WICK_FIND_THRESHOLD,
+// WICK_MAX_WORKERS, WICK_SEARCH_PROVIDER and WICK_SEARCH_MODE win over the
+// file.
 func LoadSettings() Settings {
 	var s Settings
 	if raw, err := os.ReadFile(SettingsPath()); err == nil {
@@ -196,6 +270,14 @@ func LoadSettings() Settings {
 		s.MaxWorkers = w
 		s.setSource("max_workers", "env")
 	}
+	if p := strings.ToLower(strings.TrimSpace(os.Getenv("WICK_SEARCH_PROVIDER"))); validSearchProvider(p) {
+		s.searchSetting().Provider = p
+		s.setSource("search.provider", "env")
+	}
+	if m := strings.ToLower(strings.TrimSpace(os.Getenv("WICK_SEARCH_MODE"))); validSearchMode(m) {
+		s.searchSetting().Mode = m
+		s.setSource("search.mode", "env")
+	}
 	return s
 }
 
@@ -218,6 +300,8 @@ func decodeSettings(raw []byte) Settings {
 		case "roles":
 			s.roleExtra = unknownRoleFields(v)
 		case "decision_model", "threshold", "max_workers":
+		case "search":
+			s.searchExtra = unknownSearchFields(v)
 		case "tools":
 			s.toolExtra = unknownEntryFields(v, []string{"enabled", "placement", "rename", "roles"})
 			s.toolRoleExtra = unknownOverrideFields(v)
@@ -230,6 +314,14 @@ func decodeSettings(raw []byte) Settings {
 	}
 	// A value that failed to parse or is empty stays the default, and the
 	// source has to say so: the value and the name it prints must agree.
+	if s.Search != nil {
+		if s.Search.Provider != "" {
+			s.src["search.provider"] = "file"
+		}
+		if s.Search.Mode != "" {
+			s.src["search.mode"] = "file"
+		}
+	}
 	if s.DecisionModel != "" {
 		s.src["decision_model"] = "file"
 	}
@@ -342,6 +434,86 @@ func unknownRoleFields(rawRoles json.RawMessage) map[string]map[string]json.RawM
 	return out
 }
 
+// unknownSearchFields collects the keys inside a search object that are not
+// provider or mode, so a save writes them back.
+func unknownSearchFields(rawSearch json.RawMessage) map[string]json.RawMessage {
+	var searchFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawSearch, &searchFields); err != nil {
+		return nil
+	}
+	var out map[string]json.RawMessage
+	for k, v := range searchFields {
+		switch strings.ToLower(k) {
+		case "provider", "mode":
+		default:
+			if out == nil {
+				out = map[string]json.RawMessage{}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// mergeSearch folds the project search object over the global one, field by
+// field, recording a project source for every field the project set. A value
+// the environment set always wins over the project file. Either side may be
+// nil; the result is nil only when both are.
+func mergeSearch(global, project *SearchSetting, src map[string]string) *SearchSetting {
+	var out SearchSetting
+	if global != nil {
+		out = *global
+	}
+	if project != nil {
+		if project.Provider != "" && src["search.provider"] != "env" {
+			out.Provider = project.Provider
+			src["search.provider"] = "project"
+		}
+		if project.Mode != "" && src["search.mode"] != "env" {
+			out.Mode = project.Mode
+			src["search.mode"] = "project"
+		}
+	}
+	if out == (SearchSetting{}) {
+		return nil
+	}
+	return &out
+}
+
+// cloneSearchExtra copies the unknown search fields, so a merge never shares
+// the map with its inputs.
+func cloneSearchExtra(m map[string]json.RawMessage) map[string]json.RawMessage {
+	if m == nil {
+		return map[string]json.RawMessage{}
+	}
+	return cloneRawMap(m)
+}
+
+// mergeSearchExtras writes the unknown fields of the search object back into
+// the object already in fields.
+func mergeSearchExtras(fields map[string]json.RawMessage, searchExtra map[string]json.RawMessage) error {
+	if len(searchExtra) == 0 {
+		return nil
+	}
+	search := map[string]json.RawMessage{}
+	if raw, ok := fields["search"]; ok {
+		if err := json.Unmarshal(raw, &search); err != nil {
+			return err
+		}
+	}
+	for k, v := range searchExtra {
+		if _, ok := search[k]; !ok {
+			search[k] = v
+		}
+	}
+	raw, err := json.Marshal(search)
+	if err != nil {
+		return err
+	}
+	fields["search"] = raw
+	return nil
+}
+
 func (s *Settings) setSource(key, where string) {
 	if s.src == nil {
 		s.src = map[string]string{}
@@ -377,6 +549,9 @@ func SaveSettings(s Settings) error {
 		}
 	}
 	if err := mergeRoleExtras(fields, s.roleExtra); err != nil {
+		return err
+	}
+	if err := mergeSearchExtras(fields, s.searchExtra); err != nil {
 		return err
 	}
 	if err := mergeEntryExtras(fields, "tools", s.toolExtra); err != nil {
@@ -639,6 +814,11 @@ func MergeSettings(global, project Settings) Settings {
 	out.Roles = mergeRoles(global.Roles, project.Roles, out.src)
 	out.Tools = mergeTools(global.Tools, project.Tools, out.src)
 	out.MCPServers = mergeMCPServers(global.MCPServers, project.MCPServers, out.src)
+	out.Search = mergeSearch(global.Search, project.Search, out.src)
+	out.searchExtra = cloneSearchExtra(global.searchExtra)
+	for k, v := range project.searchExtra {
+		out.searchExtra[k] = v
+	}
 	for k, v := range project.extra {
 		out.extra[k] = v
 	}

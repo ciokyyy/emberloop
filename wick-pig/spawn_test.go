@@ -388,7 +388,7 @@ func TestScoutAgentServesReadOnlyToolsAndSubmit(t *testing.T) {
 	for _, tool := range served {
 		got[tool.Name()] = true
 	}
-	for _, want := range []string{"read", "find", "submit"} {
+	for _, want := range []string{"read", "find", "websearch", "submit"} {
 		if !got[want] {
 			t.Errorf("a scout agent must serve %q, got %v", want, got)
 		}
@@ -776,7 +776,7 @@ func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
 	for _, tool := range served {
 		got[tool.Name()] = true
 	}
-	for _, want := range []string{"read", "edit", "write", "bash", "find", "background", "submit", "spawn"} {
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background", "submit", "spawn"} {
 		if !got[want] {
 			t.Errorf("a worker agent must serve %q, got %v", want, got)
 		}

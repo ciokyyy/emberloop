@@ -24,6 +24,8 @@ func settingsFile(t *testing.T) string {
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
 	t.Setenv("WICK_MAX_WORKERS", "")
+	t.Setenv("WICK_SEARCH_PROVIDER", "")
+	t.Setenv("WICK_SEARCH_MODE", "")
 	return p
 }
 

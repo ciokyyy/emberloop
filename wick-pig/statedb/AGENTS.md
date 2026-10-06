@@ -3,9 +3,11 @@
 ## Purpose
 
 Wick's SQLite state database: one file (`wick.db`) in the wick state
-directory holding usage rows today and the search cache, quota and overflow
-stores follow-up tickets build on. Files: `statedb.go` (paths, WAL/busy-timeout
-opens, versioned migrations), `usage.go` (usage rows, idempotent inserts,
+directory holding usage rows, the search cache and quota the websearch tool
+fills, and the overflow store a follow-up ticket builds on. Files:
+`statedb.go` (paths, WAL/busy-timeout opens, versioned migrations),
+`search.go` (search cache reads and writes, per-call quota rows, latest
+reported quota), `usage.go` (usage rows, idempotent inserts,
 one-time JSONL import, per-agent delete), `flock.go` (migration file lock).
 
 ## Ownership

@@ -14,6 +14,8 @@ func settingsEnv(t *testing.T, path string) {
 	t.Setenv("WICK_SETTINGS", path)
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
+	t.Setenv("WICK_SEARCH_PROVIDER", "")
+	t.Setenv("WICK_SEARCH_MODE", "")
 }
 
 // homeEnv makes the default path resolve under a temp home with the override
@@ -24,6 +26,8 @@ func homeEnv(t *testing.T, home string) {
 	t.Setenv("HOME", home)
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
+	t.Setenv("WICK_SEARCH_PROVIDER", "")
+	t.Setenv("WICK_SEARCH_MODE", "")
 }
 
 // The default store lives beside the user's skills, not in machine state.
