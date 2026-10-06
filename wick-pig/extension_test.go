@@ -262,3 +262,20 @@ func TestReportExtensionWarning(t *testing.T) {
 		t.Errorf("a found extension must not warn, got %q", got)
 	}
 }
+
+// Ticket completion moved into finish: the orchestrator prompt no longer asks
+// the orchestrator to set a merged ticket's status or tick its boxes. Its
+// allowed-paths ability stays, for specs and notes.
+func TestImplementPromptLeavesTicketsToFinish(t *testing.T) {
+	got := implementPrompt(testRun)
+	for _, want := range []string{"orchestrator_paths"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the prompt must keep the orchestrator's allowed-paths ability, missing %q:\n%s", want, got)
+		}
+	}
+	for _, stale := range []string{"tick its checkboxes", "set its ticket's Status", "Status line to done"} {
+		if strings.Contains(got, stale) {
+			t.Errorf("the prompt must not ask the orchestrator to complete tickets, found %q:\n%s", stale, got)
+		}
+	}
+}

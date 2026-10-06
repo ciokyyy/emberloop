@@ -14,6 +14,9 @@ import (
 type AgentState struct {
 	ID   string `json:"id"`
 	Type string `json:"type,omitempty"`
+	// Ticket is the ticket file a worktree agent was spawned from, recorded
+	// beside the worker entry that finish merges.
+	Ticket string `json:"ticket,omitempty"`
 	// Pane is where the agent runs, so a tell can reach it.
 	Pane string `json:"pane,omitempty"`
 	// ParentID is the spawning agent's id, when there was one. The children an
