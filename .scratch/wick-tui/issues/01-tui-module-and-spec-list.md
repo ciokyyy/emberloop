@@ -4,10 +4,10 @@
 
 **Blocked by:** run-records 01, run-records 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Separate module; `wick-pig tui` starts it (exec or installed binary, decided and documented here)
-- [ ] `Snapshot` returns repos → specs with run status and progress; tested against fixture state dirs
-- [ ] Running is decided by the orchestrator pane being alive (fake herdr in tests)
-- [ ] Keyboard and mouse selection; 1-second polling
-- [ ] A few model tests feeding key and mouse messages
+- [x] Separate module; `wick-pig tui` starts it (exec or installed binary, decided and documented here)
+- [x] `Snapshot` returns repos → specs with run status and progress; tested against fixture state dirs
+- [x] Running is decided by the orchestrator pane being alive (fake herdr in tests)
+- [x] Keyboard and mouse selection; 1-second polling
+- [x] A few model tests feeding key and mouse messages
