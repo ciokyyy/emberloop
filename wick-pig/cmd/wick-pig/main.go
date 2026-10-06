@@ -6,6 +6,7 @@
 //	wick-pig settings tool <name> ... | mcp-server <name> ...    tune tools and MCP servers
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
+//	wick-pig claude-status                                     claude statusline command: stores the 5h and weekly usage
 //	wick-pig voice-reminder [hook]                             per-turn register reminder (pig extension, claude hook)
 //	wick-pig exec <launch-file>                                run a launch file the pane typed
 //	wick-pig wrap --harness h -- <bin> [args...]              run a command under the header strip
@@ -56,6 +57,9 @@ func run(argv []string) error {
 	}
 	if sub == "stop-gate" {
 		return wick.RunStopGate(os.Stdin, os.Stdout)
+	}
+	if sub == "claude-status" {
+		return wick.RunClaudeStatus(os.Stdin, "")
 	}
 	if sub == "voice-reminder" {
 		return wick.RunVoiceReminder(argv, os.Stdout)
@@ -253,7 +257,7 @@ func run(argv []string) error {
 	// strip wrapper is the child's parent here, so a bad exit still lands
 	// in the agent's state, without a stderr tail the wrapper owns.
 	err = wick.WrapTopLevel(cmd, wick.HeaderSource{
-		AgentID: s.AgentID, AgentType: s.AgentType, AgentName: wick.PaneNameForType(s.AgentType),
+		AgentID: s.AgentID, AgentType: s.AgentType, AgentName: wick.TopLevelChipName(s.AgentType, s.Role),
 		Harness: choice.Harness, SessionID: s.ID, SessionDir: s.Dir,
 	})
 	if exit, ok := wick.ChildExitOf(err); ok {
