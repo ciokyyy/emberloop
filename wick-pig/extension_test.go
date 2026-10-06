@@ -279,3 +279,25 @@ func TestImplementPromptLeavesTicketsToFinish(t *testing.T) {
 		}
 	}
 }
+
+// The brief carries the DOX pass: read the root-to-target AGENTS.md chain
+// before editing, and update the owning doc after a contract-changing edit.
+// Review enforces it; the brief only tells the worker to do it.
+func TestBriefCarriesDoxReadAndUpdateRules(t *testing.T) {
+	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := readFile(t, path)
+	for _, want := range []string{"AGENTS.md", "Child DOX Index", "owning AGENTS.md"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("brief must carry the DOX pass (%q):\n%s", want, text)
+		}
+	}
+	before := strings.Index(text, "Before editing")
+	index := strings.Index(text, "Child DOX Index")
+	if before < 0 || index < 0 || !(before < index) {
+		t.Errorf("the chain must be read before editing:\n%s", text)
+	}
+}

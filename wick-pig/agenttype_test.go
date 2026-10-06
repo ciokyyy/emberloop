@@ -254,3 +254,21 @@ statuses: [answered]
 		t.Errorf("a none type with edit must be refused, got %v", err)
 	}
 }
+
+// Both built-in reviewer types enforce the DOX pass: each tells its reviewer
+// to flag a change that alters a documented contract or structure without
+// updating the owning doc, and to flag a stale index.
+func TestReviewerTypesEnforceDox(t *testing.T) {
+	types, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{reviewerStandards, reviewerSpec} {
+		body := types[name].Body
+		for _, want := range []string{"owning AGENTS.md", "stale"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s body must carry the DOX flag (%q), got:\n%s", name, want, body)
+			}
+		}
+	}
+}
