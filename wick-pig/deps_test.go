@@ -1,10 +1,14 @@
 package wick
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"example.com/wick/tools"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -131,20 +135,66 @@ func TestDepsGraphDownloadRefusesWrongChecksum(t *testing.T) {
 
 func depsFakeRelease(t *testing.T, payload []byte, wrong bool) string {
 	t.Helper()
-	sum := sha256.Sum256(payload)
+	tarball := depsMakeTarball(t, payload)
+	sum := sha256.Sum256(tarball)
 	good := hex.EncodeToString(sum[:])
 	if wrong {
 		good = strings.Repeat("0", 64)
 	}
+	var sums strings.Builder
+	for _, asset := range []string{
+		GraphBinaryName + "-linux-amd64.tar.gz",
+		GraphBinaryName + "-linux-arm64.tar.gz",
+		GraphBinaryName + "-darwin-amd64.tar.gz",
+		GraphBinaryName + "-darwin-arm64.tar.gz",
+	} {
+		fmt.Fprintf(&sums, "%s  %s\n", good, asset)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, ".sha256") {
-			fmt.Fprintf(w, "%s  asset\n", good)
+		if strings.HasSuffix(r.URL.Path, "checksums.txt") {
+			_, _ = io.WriteString(w, sums.String())
 			return
 		}
-		_, _ = w.Write(payload)
+		if strings.HasSuffix(r.URL.Path, ".tar.gz") {
+			_, _ = w.Write(tarball)
+			return
+		}
+		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+// depsMakeTarball packs payload as the graph binary plus a decoy install.sh,
+// mirroring the upstream tarball layout. Only the binary may be extracted.
+func depsMakeTarball(t *testing.T, payload []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range []struct {
+		name string
+		body []byte
+		mode int64
+	}{
+		{GraphBinaryName, payload, 0o755},
+		{"install.sh", []byte("#!/bin/sh\nexit 1\n"), 0o755},
+		{"LICENSE", []byte("fake license\n"), 0o644},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(f.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func depsWriteFake(t *testing.T, dir, name, body string) {
@@ -367,5 +417,58 @@ func TestRunDepsFlags(t *testing.T) {
 	out.Reset()
 	if err := RunDeps([]string{"--help"}, &out); err != nil {
 		t.Errorf("deps --help must succeed, got %v", err)
+	}
+}
+
+// Seam (ticket 19): installer — an empty checksums.txt is a refused
+// download, never a panic; the graph only warns.
+func TestDepsGraphEmptyChecksumIsRefused(t *testing.T) {
+	binDir := t.TempDir()
+	tarball := depsMakeTarball(t, []byte("#!/bin/sh\necho hi\n"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "checksums.txt") {
+			_, _ = io.WriteString(w, "   \n")
+			return
+		}
+		_, _ = w.Write(tarball)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := DepsConfig{BinDir: binDir, ReleaseBaseURL: srv.URL, GraphVersion: "v9.9.9", GOOS: "linux", GOARCH: "amd64"}
+	if _, err := cfg.downloadGraph(); err == nil {
+		t.Fatal("an empty checksum file must be refused")
+	} else if !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("the refusal must name the checksum, got: %v", err)
+	}
+	if entries, _ := os.ReadDir(binDir); len(entries) != 0 {
+		t.Errorf("a refused download must leave the bin directory empty")
+	}
+}
+
+// Seam (ticket 19): installer — without a terminal and with a manager
+// present, the exact command is printed and exits non-zero without calling
+// sudo.
+func TestDepsWithoutTerminalWithManagerPrintsCommand(t *testing.T) {
+	dir := t.TempDir()
+	sudoRecord := filepath.Join(t.TempDir(), "sudo-args")
+	aptRecord := filepath.Join(t.TempDir(), "apt-args")
+	depsWriteFake(t, dir, "sudo", "#!/bin/sh\necho ran > \""+sudoRecord+"\"\nexit 0\n")
+	depsWriteFake(t, dir, "apt-get", "#!/bin/sh\necho ran > \""+aptRecord+"\"\nexit 0\n")
+	t.Setenv("PATH", dir)
+	t.Setenv("WICK_BIN_DIR", t.TempDir())
+	t.Setenv("WICK_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("WICK_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "proj.json"))
+	var out strings.Builder
+	cfg := DepsConfig{BinDir: t.TempDir(), Settings: depsEnabledSettings(), IsTerminal: func() bool { return false }, Worktree: t.TempDir()}
+	if err := InstallDeps(&out, cfg); err == nil {
+		t.Fatalf("without a terminal, InstallDeps must fail, output:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "sudo apt-get install -y") {
+		t.Errorf("output must print the exact install command, got:\n%s", out.String())
+	}
+	if _, err := os.Stat(sudoRecord); err == nil {
+		t.Error("sudo must not run without a terminal")
+	}
+	if _, err := os.Stat(aptRecord); err == nil {
+		t.Error("the package manager must not run without a terminal")
 	}
 }

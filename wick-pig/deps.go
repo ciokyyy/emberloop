@@ -1,11 +1,14 @@
 package wick
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"example.com/wick/tools"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,8 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"example.com/wick/tools"
 )
 
 // `wick-pig deps` installs and verifies every external dependency.
@@ -28,10 +29,10 @@ import (
 // system packages install with the detected package manager from one table;
 // the exact command is printed and run through sudo only when attached to a
 // terminal, otherwise printed and the command exits non-zero. The graph
-// binary downloads from its GitHub release for the platform, verified
-// against the release's published SHA-256, into the wick bin directory
-// (WICK_BIN_DIR overrides). Its own install command never runs and no agent
-// client config is touched. Every dependency is proved after install and
+// binary downloads from its GitHub release tarball for the platform,
+// verified against the release checksums.txt SHA-256, into the wick bin
+// directory (WICK_BIN_DIR overrides). Its own install.sh never runs and no
+// agent client config is touched. Every dependency is proved after install and
 // printed one line with version and status; a failing required dependency
 // fails the command while the graph only warns. A second run changes nothing
 // and says so.
@@ -47,7 +48,7 @@ const GraphBinaryName = "codebase-memory-mcp"
 
 // DefaultGraphVersion pins the graph release deps installs. Bump with the
 // upstream release; tests override it with DepsConfig.GraphVersion.
-const DefaultGraphVersion = "v0.6.3"
+const DefaultGraphVersion = "v0.11.0"
 
 // DefaultGraphReleaseBase is the release download base: version and asset
 // append as "<base>/<version>/<asset>". Tests point it at an httptest server.
@@ -296,19 +297,17 @@ func depsFirstLine(s string) string {
 	return s
 }
 
-// resolveDep finds dep in the wick bin directory first, then PATH, honouring
-// DepsConfig.BinDir. It mirrors tools.ResolveBinary so the installer and the
-// tools agree on what "installed" means.
+// resolveDep finds dep in the wick bin directory first, then PATH, through
+// the shared tools.ResolveBinary order so the installer and the tools agree
+// on what "installed" means. A DepsConfig.BinDir override is checked first
+// for tests; otherwise resolution is exactly the shared helper.
 func (c DepsConfig) resolveDep(name string) (string, error) {
-	if dir := c.binDir(); dir != "" {
+	if dir := c.BinDir; dir != "" {
 		if p := filepath.Join(dir, name); isDepsExecutable(p) {
 			return p, nil
 		}
 	}
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
-	}
-	return "", fmt.Errorf("%s not found in %s or PATH", name, c.binDir())
+	return tools.ResolveBinary(name)
 }
 
 func isDepsExecutable(path string) bool {
@@ -393,35 +392,21 @@ func (c DepsConfig) probeBwrap() (string, error) {
 	return out + " (self-test passed)", nil
 }
 
-// graphAssetName names the release asset for the platform.
+// graphAssetName names the upstream release tarball for the platform, e.g.
+// codebase-memory-mcp-linux-amd64.tar.gz. Upstream ships tarballs (and .mcpb
+// bundles); the checksums live in one checksums.txt beside them.
 func graphAssetName(goos, goarch string) (string, error) {
-	var osPart string
 	switch goos {
-	case "linux":
-		osPart = "linux"
-	case "darwin":
-		osPart = "darwin"
+	case "linux", "darwin":
 	default:
 		return "", fmt.Errorf("unsupported platform %s/%s", goos, goarch)
 	}
-	var archPart string
 	switch goarch {
-	case "amd64":
-		if osPart == "linux" {
-			archPart = "x86_64"
-		} else {
-			archPart = "x86_64"
-		}
-	case "arm64":
-		if osPart == "linux" {
-			archPart = "aarch64"
-		} else {
-			archPart = "arm64"
-		}
+	case "amd64", "arm64":
 	default:
 		return "", fmt.Errorf("unsupported platform %s/%s", goos, goarch)
 	}
-	return fmt.Sprintf("%s-%s-%s", GraphBinaryName, osPart, archPart), nil
+	return fmt.Sprintf("%s-%s-%s.tar.gz", GraphBinaryName, goos, goarch), nil
 }
 
 // resolveGraph finds the graph binary in the bin dir, on PATH, or at
@@ -448,9 +433,11 @@ func (c DepsConfig) resolveGraph(s tools.Settings) string {
 	return ""
 }
 
-// downloadGraph fetches the release asset for the platform, verifies it
-// against the release's published SHA-256, and places it in the bin
-// directory with the execute bit. A wrong checksum is refused.
+// downloadGraph fetches the release tarball for the platform, verifies it
+// against the release checksums.txt SHA-256, extracts the graph binary and
+// places it in the bin directory with the execute bit. A wrong checksum is
+// refused. The tarball's install.sh never runs and no agent client config is
+// touched: only the binary is extracted.
 func (c DepsConfig) downloadGraph() (string, error) {
 	asset, err := graphAssetName(c.goos(), c.goarch())
 	if err != nil {
@@ -459,27 +446,27 @@ func (c DepsConfig) downloadGraph() (string, error) {
 	base := c.releaseBase()
 	version := c.graphVersion()
 	assetURL := base + "/" + version + "/" + asset
-	sumURL := assetURL + ".sha256"
+	sumsURL := base + "/" + version + "/checksums.txt"
 	client := c.httpClient()
-
-	sumRaw, err := fetchURL(client, sumURL)
+	sumsRaw, err := fetchURL(client, sumsURL)
 	if err != nil {
-		return "", fmt.Errorf("could not fetch %s: %v", sumURL, err)
+		return "", fmt.Errorf("could not fetch %s: %v", sumsURL, err)
 	}
-	want := strings.Fields(strings.TrimSpace(string(sumRaw)))[0]
-	if want == "" {
-		return "", fmt.Errorf("checksum file %s is empty", sumURL)
-	}
-	if _, err := hex.DecodeString(want); err != nil || len(want) != 64 {
-		return "", fmt.Errorf("checksum file %s holds %q, not a SHA-256", sumURL, depsFirstLine(string(sumRaw)))
+	want, err := graphChecksum(sumsRaw, asset)
+	if err != nil {
+		return "", fmt.Errorf("%s: %v", sumsURL, err)
 	}
 	data, err := fetchURL(client, assetURL)
 	if err != nil {
 		return "", fmt.Errorf("could not fetch %s: %v", assetURL, err)
 	}
 	sum := sha256.Sum256(data)
-	if got := hex.EncodeToString(sum[:]); got != strings.ToLower(want) {
+	if got := hex.EncodeToString(sum[:]); got != want {
 		return "", fmt.Errorf("checksum mismatch for %s: want %s, got %s; refusing it", asset, want, got)
+	}
+	bin, err := extractGraphBinary(data)
+	if err != nil {
+		return "", err
 	}
 	dir := c.binDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -490,7 +477,7 @@ func (c DepsConfig) downloadGraph() (string, error) {
 		return "", err
 	}
 	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := tmp.Write(bin); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 		return "", err
@@ -506,6 +493,68 @@ func (c DepsConfig) downloadGraph() (string, error) {
 		return "", err
 	}
 	return dst, nil
+}
+
+// graphChecksum finds the SHA-256 for asset in a checksums.txt body. An
+// empty or malformed file is an error, never a panic, so the caller warns
+// instead of crashing.
+func graphChecksum(sums []byte, asset string) (string, error) {
+	var want string
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[1] == asset {
+			want = strings.ToLower(fields[0])
+			break
+		}
+	}
+	if want == "" {
+		if len(strings.TrimSpace(string(sums))) == 0 {
+			return "", fmt.Errorf("checksum file is empty")
+		}
+		return "", fmt.Errorf("no checksum for %s", asset)
+	}
+	if _, err := hex.DecodeString(want); err != nil || len(want) != 64 {
+		return "", fmt.Errorf("checksum for %s holds %q, not a SHA-256", asset, want)
+	}
+	return want, nil
+}
+
+// extractGraphBinary pulls the graph binary out of its release tarball. Only
+// the binary is read; install.sh and the docs stay in the tarball.
+func extractGraphBinary(tarball []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(tarball))
+	if err != nil {
+		return nil, fmt.Errorf("release tarball is not gzip: %v", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("release tarball is corrupt: %v", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(hdr.Name) != GraphBinaryName {
+			continue
+		}
+		bin, err := io.ReadAll(io.LimitReader(tr, 200<<20))
+		if err != nil {
+			return nil, fmt.Errorf("release tarball is corrupt: %v", err)
+		}
+		if len(bin) == 0 {
+			return nil, fmt.Errorf("release tarball holds an empty %s", GraphBinaryName)
+		}
+		return bin, nil
+	}
+	return nil, fmt.Errorf("release tarball holds no %s binary", GraphBinaryName)
 }
 
 func fetchURL(client *http.Client, url string) ([]byte, error) {
@@ -696,9 +745,7 @@ func InstallDeps(out io.Writer, cfg DepsConfig) error {
 	for _, l := range lines {
 		fmt.Fprintln(out, l.String())
 	}
-	if changed {
-		_ = changed
-	} else {
+	if !changed {
 		fmt.Fprintln(out, "all dependencies satisfied (nothing to do)")
 	}
 	if failed {

@@ -227,3 +227,62 @@ func TestSaveSettingsKeepsUnknownOverrideFields(t *testing.T) {
 		t.Fatalf("override unknown fields lost, want 2 kept: %s", raw)
 	}
 }
+
+// Seam (ticket 19): installer — the graph settings decode, default to
+// enabled, merge project-over-global field by field, and round-trip unknown
+// graph fields through a save.
+func TestGraphSettingsDecodeMergeAndRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	globalProjectEnv(t, dir,
+		`{"graph":{"enabled":true,"binary":"/global/cbm","future":"kept"}}`,
+		`{"graph":{"enabled":false}}`)
+	s := EffectiveSettings(dir)
+	if s.GraphEnabled() {
+		t.Fatalf("project graph.enabled=false must win, got %+v", s.Graph)
+	}
+	if s.Graph.Binary != "/global/cbm" {
+		t.Fatalf("global graph.binary must show through, got %+v", s.Graph)
+	}
+	if got := s.SourceOf("graph.enabled"); got != "project" {
+		t.Fatalf("graph.enabled source = %q, want project", got)
+	}
+	// Unknown graph fields survive a save.
+	g := LoadSettings()
+	if err := SaveSettings(g); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(os.Getenv("WICK_SETTINGS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `kept`) {
+		t.Errorf("saved settings lost the unknown graph field: %s", raw)
+	}
+	if !strings.Contains(string(raw), `binary`) {
+		t.Errorf("saved settings lost graph.binary: %s", raw)
+	}
+}
+
+func TestGraphEnabledDefaultsToTrue(t *testing.T) {
+	dir := t.TempDir()
+	globalProjectEnv(t, dir, `{}`, `{}`)
+	if !EffectiveSettings(dir).GraphEnabled() {
+		t.Fatal("graph must be enabled by default")
+	}
+}
+
+func TestSaveSettingsOmitsAnUnsetGraph(t *testing.T) {
+	dir := t.TempDir()
+	globalProjectEnv(t, dir, `{"threshold":0.3}`, `{}`)
+	s := LoadSettings()
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(os.Getenv("WICK_SETTINGS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"graph"`) {
+		t.Errorf("a save with no graph settings must not write one, got: %s", raw)
+	}
+}
