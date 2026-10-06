@@ -88,7 +88,10 @@ func wrapTestConfig(child *fakeChild, stdout *bytes.Buffer) WrapConfig {
 func TestWrapFakeChild(t *testing.T) {
 	child := &fakeChild{pending: []byte("hello\x1b[rworld")}
 	var stdout bytes.Buffer
-	if err := WrapChild(wrapTestConfig(child, &stdout)); err != nil {
+	cfg := wrapTestConfig(child, &stdout)
+	frame := true
+	cfg.Settings = tools.Settings{Context: &tools.ContextSettings{StripFrame: &frame}}
+	if err := WrapChild(cfg); err != nil {
 		t.Fatal(err)
 	}
 	if len(child.sizes) == 0 || child.sizes[0] != [2]int{98, 21} {
@@ -102,7 +105,7 @@ func TestWrapFakeChild(t *testing.T) {
 		t.Errorf("child got %q, want the typed input", got)
 	}
 	out := stdout.String()
-	for _, want := range []string{"hello", "world", "implementer", "ctx", "\x1b[1;21r", "\x1b[?69h", "\x1b[2;99s", "─", "\x1b7", "\x1b8"} {
+	for _, want := range []string{"hello", "world", "implementer", "ctx", "\x1b[1;21r", "\x1b[?69h", "\x1b[2;99s", "\u2584", "\x1b7", "\x1b8"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("terminal misses %q:\n%q", want, out)
 		}
@@ -180,5 +183,29 @@ func TestWrapFilterFollowsResize(t *testing.T) {
 	out, _ := f.push([]byte("\x1b[15;1H"))
 	if s := string(out); s != "\x1b[10;1H" {
 		t.Errorf("post-resize clamp = %q, want row 10", s)
+	}
+}
+
+// The default look is borderless: no frame columns, so the child gets the
+// full width, and the strip's top edge is a soft half-block row, never a
+// drawn line.
+func TestWrapDefaultIsBorderless(t *testing.T) {
+	child := &fakeChild{}
+	var stdout bytes.Buffer
+	if err := WrapChild(wrapTestConfig(child, &stdout)); err != nil {
+		t.Fatal(err)
+	}
+	if len(child.sizes) == 0 || child.sizes[0] != [2]int{100, 21} {
+		t.Errorf("child sizes = %v, want first 100x21", child.sizes)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "\u2584") {
+		t.Error("strip top edge is not the soft half-block row")
+	}
+	if strings.Contains(got, "\u2500") {
+		t.Error("strip draws a rule line")
+	}
+	if strings.Contains(got, "\x1b[?69h") {
+		t.Error("column margins set with the frame off")
 	}
 }
