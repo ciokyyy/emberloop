@@ -4,14 +4,14 @@
 
 **Blocked by:** 04 Launches are spaced across sessions, and concurrent workers are capped (both change spawn)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Spawn returns at once with agents still running, for blocking and non-blocking types
-- [ ] Two reviewers started by one call deliver exactly one notice, after the second submit, carrying both results
-- [ ] An agent whose pane vanishes is reported as lost in the group notice
-- [ ] A notice for a busy parent pane is held until the pane is idle (fake herdr)
-- [ ] A cancelled call strands nothing: the result still arrives as the group notice
-- [ ] Briefs and the spawn tool description state that results arrive as a notice
-- [ ] Spec stories 29 and 30
+- [x] Spawn returns at once with agents still running, for blocking and non-blocking types
+- [x] Two reviewers started by one call deliver exactly one notice, after the second submit, carrying both results
+- [x] An agent whose pane vanishes is reported as lost in the group notice
+- [x] A notice for a busy parent pane is held until the pane is idle (fake herdr)
+- [x] A cancelled call strands nothing: the result still arrives as the group notice
+- [x] Briefs and the spawn tool description state that results arrive as a notice
+- [x] Spec stories 29 and 30
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
