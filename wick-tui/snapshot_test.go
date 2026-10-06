@@ -312,3 +312,41 @@ func TestSnapshotRehomesSubdirectoryRunsOfOtherRepos(t *testing.T) {
 		}
 	}
 }
+
+// Even when every run of a repo was recorded from subdirectories — no root
+// candidate anywhere — the standard spec layout still homes them, so the
+// repo groups and its runless specs are discovered.
+func TestSnapshotHomesRunsWithNoRootCandidate(t *testing.T) {
+	stateDir := t.TempDir()
+	repoA := t.TempDir()
+	repoC := t.TempDir()
+	writeSpec(t, repoA, "alpha", []ticketFile{{"01-one.md", "ready-for-agent"}})
+	writeSpec(t, repoA, "beta", []ticketFile{{"01-one.md", "ready-for-agent"}})
+	sub := filepath.Join(repoA, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runs := map[string]any{
+		"alpha": map[string]any{
+			"slug": "alpha", "spec": filepath.Join(repoA, ".scratch", "alpha", "spec.md"),
+			"repo": sub, "branch": "spec/alpha",
+			"agent_id": "o1", "pane": "w1:alive", "harness": "pig",
+		},
+	}
+	raw, _ := json.Marshal(runs)
+	if err := os.WriteFile(filepath.Join(stateDir, "runs.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := Snapshot(stateDir, repoC, liveHerdr("w1:alive"))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	alpha := findSpec(t, snap, repoA, "beta")
+	if alpha.Total != 1 {
+		t.Errorf("beta must be discovered under the derived root: %+v", alpha)
+	}
+	if s := findSpec(t, snap, repoA, "alpha"); !s.HasRun {
+		t.Errorf("alpha must carry its run: %+v", s)
+	}
+}

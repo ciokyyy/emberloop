@@ -25,7 +25,7 @@ model selection lives in `wick-pig/models.go`.
 
 ## Verification
 
-No check; the repo check covers `wick-pig/` only.
+ No check; the repo check covers `wick-pig/` and `wick-tui/`.
 
 ## Child DOX Index
 
