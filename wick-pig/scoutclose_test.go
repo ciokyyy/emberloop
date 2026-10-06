@@ -94,6 +94,7 @@ func TestScoutPaneClosesAfterGroupDelivery(t *testing.T) {
 	if got := waitForPrompts(t, rec, "wP", 1, 2*time.Second); len(got) != 1 {
 		t.Fatalf("the grouped notice must arrive, got %v", rec.calls)
 	}
+	pendingDeliveries.Wait()
 	closed := false
 	for _, c := range rec.calls {
 		if strings.Contains(strings.Join(c, " "), "pane close "+pane) {

@@ -428,9 +428,10 @@ func TestWrapCtrlEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildHeaderSnapshot: %v", err)
 	}
-	if snap.Pending != 1 {
-		t.Fatalf("snapshot pending = %d, want 1", snap.Pending)
+	if got := ctrlPending("w1"); got != 1 {
+		t.Fatalf("pending through socket = %d, want 1", got)
 	}
+	snap.Pending = ctrlPending(cfg.Source.AgentID)
 	if plain := stripANSI(renderTrue(snap, 100)); !strings.Contains(plain, "1 pending") {
 		t.Errorf("strip misses the pending count:\n%s", plain)
 	}
@@ -445,5 +446,70 @@ func TestWrapCtrlEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(ctrlSocketPath("w1")); !os.IsNotExist(err) {
 		t.Errorf("control socket survives the wrapper")
+	}
+}
+
+// A transcript that appears after newWrapperPump is built still accepts the
+// item: wrapperTurns resolves the path dynamically per step.
+func TestWrapperTurnsDeferredTranscript(t *testing.T) {
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "deferred.jsonl")
+	src := HeaderSource{Harness: "pig", TranscriptPath: transcript}
+	q := newInputQueue()
+	var sink bytes.Buffer
+	p := newWrapperPump(src, q, func(b []byte) error { _, err := sink.Write(b); return err })
+	p.enqueue(QueueKindSteer, "steer it", "tell")
+	// Transcript does not exist yet: write happens, but item stays unaccepted.
+	p.step()
+	if got := sink.String(); got != "steer it\r" {
+		t.Fatalf("first step wrote %q, want %q", got, "steer it\r")
+	}
+	if got := p.len(); got != 1 {
+		t.Fatalf("pending before transcript = %d, want 1", got)
+	}
+	// Transcript appears with the user turn: next step accepts and pops.
+	if err := os.WriteFile(transcript, []byte(pigUserTurn(t, "steer it")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p.step()
+	if got := p.len(); got != 0 {
+		t.Errorf("pending after transcript appeared = %d, want 0", got)
+	}
+}
+
+// queueGate evaluates steer and queue against transcript state.
+func TestQueueGateSteerAndQueueKinds(t *testing.T) {
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "gate.jsonl")
+	// An empty/missing transcript opens all gates.
+	src := HeaderSource{Harness: "pig", TranscriptPath: transcript}
+	if !queueGate(src, QueueKindSteer) || !queueGate(src, QueueKindQueue) {
+		t.Fatal("missing transcript should open gates")
+	}
+	// Tool call running: steer blocked (outstanding > 0), queue blocked (not done).
+	toolCall := `{"type":"message","id":"a1","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"ls"}}]}}` + "\n"
+	if err := os.WriteFile(transcript, []byte(toolCall), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if queueGate(src, QueueKindSteer) {
+		t.Error("steer should be blocked while tool call is outstanding")
+	}
+	if queueGate(src, QueueKindQueue) {
+		t.Error("queue should be blocked while turn is running")
+	}
+	// Tool done: tool result appended. Outstanding is 0, so steer passes, but turn not done.
+	toolDone := `{"type":"message","id":"r1","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":"ok"}]}}` + "\n"
+	appendLine(t, transcript, toolDone)
+	if !queueGate(src, QueueKindSteer) {
+		t.Error("steer should pass when outstanding is 0")
+	}
+	if queueGate(src, QueueKindQueue) {
+		t.Error("queue should be blocked until turn is done")
+	}
+	// Turn done: stopReason endTurn. Both steer and queue pass.
+	turnDone := `{"type":"message","id":"a2","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"finished"}]}}` + "\n"
+	appendLine(t, transcript, turnDone)
+	if !queueGate(src, QueueKindQueue) {
+		t.Error("queue should pass when turn is done")
 	}
 }
