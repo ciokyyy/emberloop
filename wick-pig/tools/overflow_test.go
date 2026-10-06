@@ -253,3 +253,17 @@ func TestTruncateHeadTailCapsWithNote(t *testing.T) {
 		t.Errorf("cap must keep head and tail, got %q", got)
 	}
 }
+
+// Seam: merge purity — folding a project threshold over a global one must
+// not mutate the global settings through the shared pointer.
+func TestMergeSettingsDoesNotMutateGlobalOverflow(t *testing.T) {
+	global := decodeSettings([]byte(`{"overflow":{"threshold_bytes":4096}}`))
+	project := decodeSettings([]byte(`{"overflow":{"threshold_bytes":2048}}`))
+	out := MergeSettings(global, project)
+	if got := out.EffectiveOverflowThresholdBytes(); got != 2048 {
+		t.Fatalf("merged threshold = %d, want 2048", got)
+	}
+	if got := global.EffectiveOverflowThresholdBytes(); got != 4096 {
+		t.Errorf("merge mutated the global threshold to %d, want 4096", got)
+	}
+}
