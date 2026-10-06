@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A sandboxed command cannot write inside the worktree, outside it, or to the home directory
-- [ ] A sandboxed command cannot open a network connection
-- [ ] A command can use the bridge directory (read-write) and read the worktree and system files
-- [ ] Timeout kills the whole process group, including children
-- [ ] Missing `bwrap` and a forced self-test failure both return the typed error naming `wick-pig deps`
-- [ ] Tests skip with a clear message when `bwrap` is absent; repo check passes
+- [x] A sandboxed command cannot write inside the worktree, outside it, or to the home directory
+- [x] A sandboxed command cannot open a network connection
+- [x] A command can use the bridge directory (read-write) and read the worktree and system files
+- [x] Timeout kills the whole process group, including children
+- [x] Missing `bwrap` and a forced self-test failure both return the typed error naming `wick-pig deps`
+- [x] Tests skip with a clear message when `bwrap` is absent; repo check passes
