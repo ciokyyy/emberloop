@@ -175,7 +175,7 @@ func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 			"Other tickets merge into %s while you work, so do this last.\n", target, target)
 	}
 	b.WriteString("\nA review finding you cannot fix within this ticket (outside what it may touch, or against the spec) " +
-		"is declined, with the reason, in the prompt of the next review spawn. List every declined finding under \"Follow-ups\" in your final message.\n")
+		"is declined, with the reason, in the prompt of the next review spawn. Name every declined finding in your submit summary after \"Follow-ups:\", a clause each.\n")
 	b.WriteString("\nServers, watchers and log tails go to the background tool, never bash: it blocks until timeout.\n")
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
