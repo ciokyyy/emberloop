@@ -17,10 +17,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -202,6 +204,29 @@ func concurrencyHerdrExec() Exec {
 				return nil
 			})
 			return Result{Stdout: `{"result":{}}`}, nil
+		case "pane get":
+			pane := ""
+			if v, ok := flag(args, "--pane"); ok && v != "" {
+				pane = v
+			} else if len(args) > 2 {
+				pane = args[2]
+			}
+			found := false
+			_ = withFileLock("concurrency-herdr", func() error {
+				st := loadConcurrencyHerdr()
+				for _, ps := range st.Panes {
+					for _, p := range ps {
+						if p == pane {
+							found = true
+						}
+					}
+				}
+				return nil
+			})
+			if !found {
+				return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
+			}
+			return Result{Stdout: `{"result":{}}`}, nil
 		case "pane run":
 			return Result{}, nil
 		case "pane process-info":
@@ -262,6 +287,47 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 		if err != nil {
 			writeResult(err, nil)
 			t.Fatalf("helper %s finish: %v", id, err)
+		}
+		writeResult(nil, nil)
+	case "reviewer-spawn":
+		// One reviewer spawn through the spawn tool path, the way a worker
+		// spawns its reviewers. The tree and type come from the parent; the
+		// barrier holds every helper until all are started, so the
+		// check-then-launch windows overlap and a missing lock shows as two
+		// panes for one key.
+		toolBudget = time.Second
+		pollEvery = 5 * time.Millisecond
+		spawnGap = 0
+		barrier := filepath.Join(concurrencyHerdrDir(), "barrier")
+		_ = os.MkdirAll(barrier, 0o755)
+		_ = os.WriteFile(filepath.Join(barrier, "ready-"+id), []byte("ready"), 0o644)
+		if want := os.Getenv("WICK_CONCURRENCY_WANT"); want != "" {
+			wantN, _ := strconv.Atoi(want)
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				entries, _ := os.ReadDir(barrier)
+				if len(entries) >= wantN {
+					break
+				}
+				if time.Now().After(deadline) {
+					writeResult(fmt.Errorf("barrier: only %d of %s helpers ready", len(entries), want), nil)
+					t.Fatalf("helper %s barrier: only %d of %s helpers ready", id, len(entries), want)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+		tree := os.Getenv("WICK_CONCURRENCY_TREE")
+		typ := os.Getenv("WICK_CONCURRENCY_TYPE")
+		types := mustLoadAgentTypes(repo)
+		rt, ok := types[typ]
+		if !ok {
+			writeResult(fmt.Errorf("unknown reviewer type %q", typ), nil)
+			t.Fatalf("helper %s: unknown reviewer type %q", id, typ)
+		}
+		_ = rt
+		if _, err := spawnAgents(run, tree, types, []spawnRequest{{Type: typ}}); err != nil {
+			writeResult(err, nil)
+			t.Fatalf("helper %s reviewer spawn: %v", id, err)
 		}
 		writeResult(nil, nil)
 	default:
@@ -467,4 +533,160 @@ func TestWorkerStoreSurvivesSimultaneousSessions(t *testing.T) {
 	if len(rest) != 0 {
 		t.Fatalf("worker store holds %d workers after concurrent finishes, want 0", len(rest))
 	}
+}
+
+// ---------------------------------------------------------------------------
+// reviewer race test (spec story 35)
+// ---------------------------------------------------------------------------
+
+// Two simultaneous spawns of the same reviewer type for one worktree must
+// produce one reviewer, not two: the second re-prompts the one already
+// starting. The check-then-launch runs under a cross-process lock per worktree
+// and type, so the record cannot be overwritten and leave an orphan pane.
+//
+// Seams (pre-agreed per the spec's Testing Decisions): the spawn tool path
+// (spawnAgents, the way a worker spawns its reviewers) and the shared stores
+// (reviewersOf plus the file-backed fake herdr's pane list and call log).
+// Good tests assert behaviour through the tool, not internals.
+func TestConcurrentReviewerSpawnProducesOneReviewer(t *testing.T) {
+	oldState := statePath
+	stateFile := filepath.Join(t.TempDir(), "workers.json")
+	statePath = stateFile
+	t.Cleanup(func() { statePath = oldState })
+
+	herdrDir := t.TempDir()
+	t.Setenv("WICK_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("WICK_CONCURRENCY_STATE", stateFile)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	resolverSettings(t, "")
+	resetGrid()
+
+	oldGap, oldPoll, oldBudget := spawnGap, pollEvery, toolBudget
+	spawnGap, pollEvery, toolBudget = 0, 5*time.Millisecond, time.Second
+	t.Cleanup(func() { spawnGap, pollEvery, toolBudget = oldGap, oldPoll, oldBudget })
+
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "wick@test.local")
+	gitOut(t, repo, "config", "user.name", "wick")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "base")
+	base := gitOut(t, repo, "rev-parse", "HEAD")
+
+	mkWorktree := func(id string) string {
+		tree := filepath.Join(repo, ".wick-worktrees", id)
+		gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/"+id, tree, "main")
+		writeFile(t, filepath.Join(tree, "a.go"), "package a\n\nfunc A() {}\n")
+		gitOut(t, tree, "add", ".")
+		gitOut(t, tree, "commit", "-qam", "work "+id)
+		return tree
+	}
+	tree1 := mkWorktree("07-x")
+	tree2 := mkWorktree("08-y")
+	if err := save(map[string]Worker{
+		"07-x": {ID: "07-x", Ticket: "/t/07-x.md", Spec: "/t/spec.md", Repo: repo, Base: base, Target: "main",
+			Branch: "implement/07-x", Worktree: tree1, Pane: "w1:p1", Tab: "w1:t1", Workspace: "w1",
+			AgentType: "worker", Started: "2026-10-05T00:00:00Z"},
+		"08-y": {ID: "08-y", Ticket: "/t/08-y.md", Spec: "/t/spec.md", Repo: repo, Base: base, Target: "main",
+			Branch: "implement/08-y", Worktree: tree2, Pane: "w1:p2", Tab: "w1:t2", Workspace: "w1",
+			AgentType: "worker", Started: "2026-10-05T00:00:00Z"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	saveConcurrencyHerdr(concurrencyHerdrState{
+		Tabs:   map[string]string{"07-x": "w1:t1", "08-y": "w1:t2"},
+		Labels: map[string]string{"w1:t1": "07-x", "w1:t2": "08-y"},
+		Panes:  map[string][]string{"w1:t1": {"w1:p1"}, "w1:t2": {"w1:p2"}},
+		Next:   2,
+	})
+
+	splits := func() int {
+		raw, _ := os.ReadFile(concurrencyHerdrCalls())
+		return strings.Count(string(raw), "pane split")
+	}
+	assertNoOrphan := func(tree, tab, root string) {
+		t.Helper()
+		st := loadConcurrencyHerdr()
+		have := reviewersOf(tree)
+		stored := map[string]bool{}
+		for _, r := range have {
+			stored[r.Pane] = true
+		}
+		raw, _ := os.ReadFile(concurrencyHerdrCalls())
+		for _, pane := range st.Panes[tab] {
+			if pane == root {
+				continue
+			}
+			if stored[pane] {
+				continue
+			}
+			if strings.Contains(string(raw), "pane close "+pane) {
+				continue
+			}
+			t.Fatalf("pane %s in %s is orphaned: not in the reviewers record and never closed (panes %v, stored %v)",
+				pane, tab, st.Panes[tab], stored)
+		}
+	}
+
+	// Phase 1: the race. Two processes spawn reviewer-standards for tree1 at
+	// once, behind a barrier so their check-then-launch windows overlap.
+	runConcurrencyHelpers(t, "reviewer-spawn", []string{"rv-a", "rv-b"}, map[string]string{
+		"WICK_CONCURRENCY_STATE": stateFile,
+		"WICK_CONCURRENCY_REPO":  repo,
+		"WICK_CONCURRENCY_HERDR": herdrDir,
+		"WICK_CONCURRENCY_TREE":  tree1,
+		"WICK_CONCURRENCY_TYPE":  reviewerStandards,
+		"WICK_CONCURRENCY_WANT":  "2",
+	})
+	have := reviewersOf(tree1)
+	if len(have) != 1 {
+		t.Fatalf("two simultaneous %s spawns for one worktree must leave one reviewer, got %d (%v)",
+			reviewerStandards, len(have), have)
+	}
+	r, ok := have[reviewerStandards]
+	if !ok || r.Pane == "" {
+		t.Fatalf("the one reviewer must be %s with a pane, got %v", reviewerStandards, have)
+	}
+	if got := splits(); got != 1 {
+		t.Fatalf("two simultaneous spawns of one reviewer type must split one pane, got %d splits", got)
+	}
+	// The second spawn re-prompted the one already starting instead of
+	// launching: the follow-up nudge is on the wire.
+	if raw, _ := os.ReadFile(concurrencyHerdrCalls()); !strings.Contains(string(raw), "agent prompt") &&
+		!strings.Contains(string(raw), "pane send-text") {
+		t.Fatalf("the second simultaneous spawn must re-prompt the reviewer already starting (a nudge), got:\n%s", raw)
+	}
+	assertNoOrphan(tree1, "w1:t1", "w1:p1")
+
+	// Phase 2: a different type for the same worktree is unaffected: it gets
+	// its own reviewer beside the first.
+	types := mustLoadAgentTypes(repo)
+	if _, err := spawnAgents(concurrencyHerdrExec(), tree1, types, []spawnRequest{{Type: reviewerSpec}}); err != nil {
+		t.Fatalf("spawn %s for the same worktree: %v", reviewerSpec, err)
+	}
+	have = reviewersOf(tree1)
+	if len(have) != 2 {
+		t.Fatalf("a different reviewer type must get its own reviewer, got %v", have)
+	}
+	if got := splits(); got != 2 {
+		t.Fatalf("the second type must split its own pane, got %d splits total", got)
+	}
+	assertNoOrphan(tree1, "w1:t1", "w1:p1")
+
+	// Phase 3: the same type for a different worktree is unaffected: it gets
+	// its own reviewer under its own key.
+	if _, err := spawnAgents(concurrencyHerdrExec(), tree2, types, []spawnRequest{{Type: reviewerStandards}}); err != nil {
+		t.Fatalf("spawn %s for another worktree: %v", reviewerStandards, err)
+	}
+	have2 := reviewersOf(tree2)
+	if len(have2) != 1 || have2[reviewerStandards].Pane == "" {
+		t.Fatalf("the same type for another worktree must get its own reviewer, got %v", have2)
+	}
+	if have2[reviewerStandards].Pane == reviewersOf(tree1)[reviewerStandards].Pane {
+		t.Fatalf("different worktrees must not share a reviewer pane: %v vs %v", have2, reviewersOf(tree1))
+	}
+	assertNoOrphan(tree2, "w1:t2", "w1:p2")
 }

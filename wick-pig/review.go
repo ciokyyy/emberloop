@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -420,34 +422,73 @@ func gitIn(run Exec, tree string, args ...string) (string, error) {
 // its place. A dead reviewer is replaced in its slot, briefed with its findings.
 func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID string) (*spawnedAgent, error) {
 	p.note = note
-	have := reviewersOf(p.tree)
-	prev, had := have[t.Name]
+	// Two spawns of the same reviewer type for one worktree race: both find
+	// no live reviewer, both start one, and the second record overwrites the
+	// first, leaving its pane running and unowned. The check-then-launch runs
+	// under a cross-process lock per worktree and type, so the second waits
+	// for the first's record and re-prompts the reviewer already starting
+	// instead of starting another. A different type or worktree takes a
+	// different lock and is unaffected.
+	var out *spawnedAgent
+	err := withFileLock(reviewerLockKey(p.tree, t.Name), func() error {
+		have := reviewersOf(p.tree)
+		prev, had := have[t.Name]
 
-	// A pass that holds is never asked again, live reviewer or not.
-	if had && t.Persistent && t.PassHolds && prev.Verdict == verdictPass {
-		return nil, nil
-	}
-	if had && prev.agent().alive(run) {
-		if !t.Persistent {
-			closeAgent(run, prev.agent())
-			return freshReviewer(run, p, t, prev, false, parentPane, parentID)
+		// A pass that holds is never asked again, live reviewer or not.
+		if had && t.Persistent && t.PassHolds && prev.Verdict == verdictPass {
+			return nil
 		}
-		if prev.Verdict == verdictPass && samePassState(prev, p) {
-			return nil, nil
-		}
-		// The reviewer already judged exactly this state and asked for
-		// changes: a spawn that lost the first answer (a cancelled call, a
-		// restarted harness) gets that answer back, not a second review.
-		if prev.Verdict != "" && p.note == "" && samePassState(prev, p) {
-			if s, ok, _ := ReadAgentSubmit(prev.SessionID); ok && s.Status == prev.Verdict {
-				agent := prev.agent()
-				return &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab, Reused: true,
-					Notice: "(this reviewer already judged exactly this state; its answer is repeated, not re-reviewed)"}, nil
+		if had && prev.agent().alive(run) {
+			if !t.Persistent {
+				closeAgent(run, prev.agent())
+				agent, err := freshReviewer(run, p, t, prev, false, parentPane, parentID)
+				if err != nil {
+					return err
+				}
+				out = agent
+				return nil
 			}
+			if prev.Verdict == verdictPass && samePassState(prev, p) {
+				return nil
+			}
+			// The reviewer already judged exactly this state and asked for
+			// changes: a spawn that lost the first answer (a cancelled call, a
+			// restarted harness) gets that answer back, not a second review.
+			if prev.Verdict != "" && p.note == "" && samePassState(prev, p) {
+				if s, ok, _ := ReadAgentSubmit(prev.SessionID); ok && s.Status == prev.Verdict {
+					agent := prev.agent()
+					out = &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab, Reused: true,
+						Notice: "(this reviewer already judged exactly this state; its answer is repeated, not re-reviewed)"}
+					return nil
+				}
+			}
+			agent, err := followUpReviewer(run, p, t, prev, parentPane, parentID)
+			if err != nil {
+				return err
+			}
+			out = agent
+			return nil
 		}
-		return followUpReviewer(run, p, t, prev, parentPane, parentID)
-	}
-	return freshReviewer(run, p, t, prev, had, parentPane, parentID)
+		agent, err := freshReviewer(run, p, t, prev, had, parentPane, parentID)
+		if err != nil {
+			return err
+		}
+		out = agent
+		return nil
+	})
+	return out, err
+}
+
+// reviewerLockKey is the cross-process lock for one reviewer's check-then-launch:
+// the worktree it reviews and the type it is, so simultaneous spawns of the
+// same key serialize while any other key runs free. The tree rides as a short
+// hash: the lock helper turns its key into a file name, and a full absolute
+// path could exceed the file name limit. A hash collision only costs
+// concurrency, never correctness: the record is re-checked inside the lock.
+func reviewerLockKey(tree, typ string) string {
+	sum := fnv.New64a()
+	_, _ = sum.Write([]byte(filepath.Clean(tree)))
+	return "reviewer-" + strconv.FormatUint(sum.Sum64(), 16) + "-" + lockName(typ)
 }
 
 // followUpReviewer re-prompts the live reviewer with only what changed since it

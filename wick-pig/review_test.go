@@ -1193,3 +1193,25 @@ func TestRespawnAtTheSameStateRepeatsTheChangesAnswer(t *testing.T) {
 		t.Errorf("the repeated answer must come back, got:\n%s", out)
 	}
 }
+
+// The reviewer spawn lock is per worktree and type: different worktrees and
+// different types take different locks, so neither serializes the other. The
+// tree rides as a short hash, keeping the lock file name far under the file
+// system limit. Regression guard: a dropped hash input once made every
+// worktree share one lock per type.
+func TestReviewerLockKeyIsPerWorktreeAndType(t *testing.T) {
+	sameTree := reviewerLockKey("/repo/.wick-worktrees/07-x", reviewerStandards)
+	otherTree := reviewerLockKey("/repo/.wick-worktrees/08-y", reviewerStandards)
+	otherType := reviewerLockKey("/repo/.wick-worktrees/07-x", reviewerSpec)
+	if sameTree == otherTree {
+		t.Errorf("different worktrees must take different locks, both %q", sameTree)
+	}
+	if sameTree == otherType {
+		t.Errorf("different reviewer types must take different locks, both %q", sameTree)
+	}
+	for _, k := range []string{sameTree, otherTree, otherType} {
+		if len(k) > 100 {
+			t.Errorf("lock key %q is %d bytes, risking the file name limit", k, len(k))
+		}
+	}
+}
