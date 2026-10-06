@@ -1511,10 +1511,10 @@ func TestSpecPassHoldsWhileOnlyStandardsIsReprompted(t *testing.T) {
 		t.Errorf("the reply must not carry a report from the spec reviewer: %s", out)
 	}
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
-	if why := reviewGate(tree, tip, "", "", defaultReviewers, passHolds(repo)); why != "" {
+	if why := reviewGate(tree, tip, "", "", defaultReviewers, passHolds(repo), nil); why != "" {
 		t.Errorf("a held spec pass and a tip standards pass must open the gate, got %q", why)
 	}
-	if why := reviewGate(tree, tip, "", "", defaultReviewers, nil); !strings.Contains(why, reviewerSpec) {
+	if why := reviewGate(tree, tip, "", "", defaultReviewers, nil, nil); !strings.Contains(why, reviewerSpec) {
 		t.Errorf("without a holding type the older spec pass is stale, got %q", why)
 	}
 }
@@ -1724,5 +1724,29 @@ func TestStrandedReviewerGroupResolvesWithFreshVerdict(t *testing.T) {
 	}
 	if got := reviewersOf(tree)[reviewerSpec].Verdict; got != verdictPass {
 		t.Errorf("spec verdict = %q, want pass from the replacement", got)
+	}
+}
+
+// A pass judged on a dirty tree that held a stray untracked file still opens
+// the gate once the file is gone: the tip ships nothing the review missed.
+// A tip that changed a tracked file does not.
+func TestGateAcceptsPassOverStrayUntrackedFile(t *testing.T) {
+	_, tree := reviewRepo(t)
+	run := osExec
+	if err := os.WriteFile(filepath.Join(tree, "stray.md"), []byte("stray"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	judged := snapshotTree(run, tree)
+	if err := os.Remove(filepath.Join(tree, "stray.md")); err != nil {
+		t.Fatal(err)
+	}
+	tip := snapshotTree(run, tree)
+	if !treeSubsumes(run, tree, judged, tip) {
+		t.Error("a judged tree with only an extra file must cover the tip")
+	}
+	changeTree(t, tree, "real change")
+	changed := snapshotTree(run, tree)
+	if treeSubsumes(run, tree, judged, changed) {
+		t.Error("a tip with its own change must not be covered")
 	}
 }

@@ -460,7 +460,12 @@ func closeReviewers(run Exec, tree string) {
 // a pass counts when its content (VerdictTree against headTree) or its change
 // (VerdictPatch against headPatch) matches the tip, so a clean rebase keeps
 // the pass while a conflicting or content-changing one does not.
-func reviewGate(tree, head, headTree, headPatch string, required []string, holds map[string]bool) string {
+//
+// subsumes, when set, says whether a judged tree holds nothing beyond the tip:
+// a review of a dirty tree also judges untracked files the worker never
+// commits, so its tree is a superset of the tip and a pass there still covers
+// everything that ships.
+func reviewGate(tree, head, headTree, headPatch string, required []string, holds map[string]bool, subsumes func(verdictTree string) bool) string {
 	have := reviewersOf(tree)
 	var missing []string
 	for _, typ := range required {
@@ -470,7 +475,7 @@ func reviewGate(tree, head, headTree, headPatch string, required []string, holds
 			missing = append(missing, typ+": no review yet")
 		case r.Verdict != verdictPass:
 			missing = append(missing, fmt.Sprintf("%s: %s at %s", typ, r.Verdict, short(r.VerdictAt)))
-		case r.VerdictAt != head && !holds[typ] && !passCoversTip(r, headTree, headPatch):
+		case r.VerdictAt != head && !holds[typ] && !passCoversTip(r, headTree, headPatch) && !(r.VerdictTree != "" && subsumes != nil && subsumes(r.VerdictTree)):
 			missing = append(missing, fmt.Sprintf("%s: passed at %s, not at the tip %s", typ, short(r.VerdictAt), short(head)))
 		}
 	}
@@ -561,6 +566,26 @@ func patchIDOf(diff string) string {
 
 // passCoversTip says a pass on record covers the tip: its content matches, or
 // its change identity does. Either opens the gate.
+// treeSubsumes says verdictTree differs from headTree only by files the tip
+// lacks: nothing in the tip was missed by a review of verdictTree. Any file
+// the tip adds or changes against it makes the answer false, as does a git
+// failure.
+func treeSubsumes(run Exec, repo, verdictTree, headTree string) bool {
+	if verdictTree == "" || headTree == "" {
+		return false
+	}
+	res, err := run("git", []string{"diff-tree", "-r", "--name-status", "--no-renames", verdictTree, headTree}, ExecOpts{Cwd: repo, Timeout: time.Minute})
+	if err != nil || res.Code != 0 {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "D") {
+			return false
+		}
+	}
+	return true
+}
+
 func passCoversTip(r reviewer, headTree, headPatch string) bool {
 	if r.VerdictTree != "" && headTree != "" && r.VerdictTree == headTree {
 		return true
