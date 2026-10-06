@@ -4,8 +4,8 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Candidates compared against every criterion from primary sources
-- [ ] One recommendation with integration shape and install steps
-- [ ] Open risks listed
+- [x] Candidates compared against every criterion from primary sources
+- [x] One recommendation with integration shape and install steps
+- [x] Open risks listed
