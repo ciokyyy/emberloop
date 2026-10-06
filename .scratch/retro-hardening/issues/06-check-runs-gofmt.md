@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A deliberately unformatted file makes the check command fail (test or recorded run)
-- [ ] The current tree passes the check, vet and tests
-- [ ] Spec stories 5 and 6
+- [x] A deliberately unformatted file makes the check command fail (test or recorded run)
+- [x] The current tree passes the check, vet and tests
+- [x] Spec stories 5 and 6
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.

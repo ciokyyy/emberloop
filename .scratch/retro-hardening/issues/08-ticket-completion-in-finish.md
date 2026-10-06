@@ -4,11 +4,11 @@
 
 **Blocked by:** 05 finish says exactly why it refuses (both change the finish path)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Merged worker: ticket status done, all boxes ticked, one commit on the target
-- [ ] Refused or conflicting merge: ticket file unchanged
-- [ ] The orchestrator brief no longer asks for the edit
-- [ ] Spec stories 10, 11, 12, 13
+- [x] Merged worker: ticket status done, all boxes ticked, one commit on the target
+- [x] Refused or conflicting merge: ticket file unchanged
+- [x] The orchestrator brief no longer asks for the edit
+- [x] Spec stories 10, 11, 12, 13
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.

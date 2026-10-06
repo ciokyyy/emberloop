@@ -4,11 +4,11 @@
 
 **Blocked by:** 01 Worker store survives simultaneous sessions (the multi-process helper)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A multi-process test spawns the same reviewer type for one worktree twice at once and fails on the unfixed code
-- [ ] After the fix exactly one reviewer exists per worktree and type and no pane is orphaned
-- [ ] A different type, or a different worktree, is unaffected
-- [ ] Spec story 35
+- [x] A multi-process test spawns the same reviewer type for one worktree twice at once and fails on the unfixed code
+- [x] After the fix exactly one reviewer exists per worktree and type and no pane is orphaned
+- [x] A different type, or a different worktree, is unaffected
+- [x] Spec story 35
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
