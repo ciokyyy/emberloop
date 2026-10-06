@@ -586,6 +586,11 @@ func (t *mcpTool) Schema() map[string]any {
 
 func (t *mcpTool) ReadOnly() bool { return t.readOnly }
 
+// MCPServer names the configured server the tool was listed from. The
+// execute stub reads it to serve the tool as tools.<server>.<name> beside
+// its configured name; renames forward it through the embedded Tool.
+func (t *mcpTool) MCPServer() string { return t.server }
+
 func (t *mcpTool) Execute(ctx context.Context, _ string, args json.RawMessage) (string, error) {
 	return t.client.CallTool(ctx, t.original, args)
 }

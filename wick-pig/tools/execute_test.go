@@ -188,7 +188,7 @@ func TestExecuteSearchAndHelp(t *testing.T) {
 // Seam: the description lists the tools behind execute by name and carries a
 // tools.grep example.
 func TestExecuteDescriptionListsTools(t *testing.T) {
-	desc := ExecuteDescription([]string{"grep", "git", "check"})
+	desc := ExecuteDescription([]string{"grep", "git", "check"}, nil)
 	for _, want := range []string{"grep", "git", "check", "tools.grep"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("execute description must name %q:\n%s", want, desc)

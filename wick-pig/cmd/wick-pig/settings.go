@@ -21,7 +21,7 @@ const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <
        wick-pig settings search provider|mode <value>
        wick-pig settings tool <name> enabled|placement|rename <value>
        wick-pig settings tool <name> role <role> enabled|placement <value>
-       wick-pig settings mcp-server <name> command|args|placement|include|exclude <value>
+       wick-pig settings mcp-server <name> command|args|placement|summary|include|exclude <value>
        wick-pig settings mcp-server <name> env <KEY=VALUE>
        wick-pig settings mcp-server <name> rename <ORIG=NEW>
        wick-pig settings mcp-server <name> role <role> enabled|placement <value>
@@ -568,6 +568,8 @@ func setMCPServer(s *tools.Settings, argv []string) (string, error) {
 			return "", err
 		}
 		e.Placement = value
+	case "summary":
+		e.Summary = strings.TrimSpace(value)
 	case "include", "exclude":
 		globs := splitList(value)
 		for _, g := range globs {
@@ -594,7 +596,7 @@ func setMCPServer(s *tools.Settings, argv []string) (string, error) {
 			e.Rename[orig] = renamed
 		}
 	default:
-		return "", fmt.Errorf("unknown mcp-server field %q (have command, args, env, placement, include, exclude, rename)\n%s", field, settingsUsage)
+		return "", fmt.Errorf("unknown mcp-server field %q (have command, args, env, placement, summary, include, exclude, rename)\n%s", field, settingsUsage)
 	}
 	s.MCPServers[name] = e
 	return "", nil
@@ -732,6 +734,9 @@ func printMCPServers(out io.Writer, s tools.Settings) {
 			orDefault(e.Placement, tools.PlacementExecute), s.SourceOf("mcp_servers."+name+".placement"))
 		if e.Args != nil {
 			line += fmt.Sprintf(", args [%s] (%s)", strings.Join(e.Args, " "), s.SourceOf("mcp_servers."+name+".args"))
+		}
+		if e.Summary != "" {
+			line += fmt.Sprintf(", summary %q (%s)", e.Summary, s.SourceOf("mcp_servers."+name+".summary"))
 		}
 		if e.Env != nil {
 			keys := make([]string, 0, len(e.Env))

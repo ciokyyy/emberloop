@@ -804,3 +804,27 @@ func TestSettingsPrintsProjectSources(t *testing.T) {
 		}
 	}
 }
+
+// `settings mcp-server <name> summary` sets the short line the execute
+// description shows; an empty value clears it.
+func TestSettingsSetsMCPServerSummary(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"mcp-server", "github", "command", "npx"},
+		{"mcp-server", "github", "summary", "GitHub search"},
+	} {
+		if err := runSettings(argv, &out, noModels); err != nil {
+			t.Fatalf("%v: %v", argv, err)
+		}
+	}
+	if got := tools.LoadSettings().MCPServers["github"].Summary; got != "GitHub search" {
+		t.Fatalf("server summary not saved: %q", got)
+	}
+	if err := runSettings([]string{"mcp-server", "github", "summary", ""}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().MCPServers["github"].Summary; got != "" {
+		t.Fatalf("empty summary must clear: %q", got)
+	}
+}

@@ -24,7 +24,8 @@ via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
 (the Python bridge: a fresh `python3 -I` per call, a socket plus a generated
 `tools` module in a private temp dir, `ToolError` on refusal, `search`/`help`
 discovery, stdout-then-stderr through the overflow store; sandboxed for
-read-only roles), `websearch.go`
+read-only roles; MCP tools serve under their configured names and as
+`tools.<server>.<name>`, with one description line per server), `websearch.go`
 (the provider-neutral search tool: Brave then Exa under auto, a 15-minute
 answer cache, quota rows; adapters and response parsing live in
 `websearch_providers.go`), `git.go` (read-only inspection: diff, log, show,
@@ -34,8 +35,9 @@ plain command or JSON name map, one `{args}` slot, metacharacters refused),
 `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools,
-mcp_servers, search and graph maps, the search defaults, the overflow
-threshold, and their merge), `rename.go` (serve a tool under a new name),
+mcp_servers, search and graph maps, the per-server summary, the search
+defaults, the overflow threshold, and their merge), `rename.go` (serve a tool
+under a new name, forwarding its MCP markers),
 `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `wick-pig deps` error), `mcpclient.go` (the stdio JSON-RPC client
@@ -74,8 +76,10 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   stored with a `ctx:` handle instead of entering context; `ctx_search`
   is read-only and rides with `read` in every role that can read.
 - `execute` serves exactly the role's resolved toolset minus itself and the
-  orchestration tools: a disabled tool is uncallable, renames show under
-  their new names, and `Guard` wrappers stay on the instances it calls.
+  orchestration tools, native and MCP alike: a disabled tool is uncallable,
+  renames show under their new names, MCP tools answer as
+  `tools.<server>.<name>` too, and `Guard` wrappers stay on the instances it
+  calls.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
   self-test is a typed error naming `wick-pig deps`.
 - Binaries resolve from the wick bin directory first, then PATH, through the

@@ -289,9 +289,9 @@ func (f mcpListedFake) Execute(context.Context, string, json.RawMessage) (string
 }
 func (f mcpListedFake) OriginalName() string { return f.original }
 
-// Seam: ticket 16 is native tools only — a configured MCP tool resolves
-// behind execute but stays out of the stub until ticket 17.
-func TestExecuteExcludesMCPToolsUntilTicket17(t *testing.T) {
+// Seam: ticket 17 — a configured MCP tool resolves behind execute and answers
+// in the stub under its configured name.
+func TestExecuteIncludesMCPTools(t *testing.T) {
 	hermeticSettings(t)
 	t.Setenv("WICK_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
@@ -301,19 +301,19 @@ func TestExecuteExcludesMCPToolsUntilTicket17(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !containsName(toolNames(execute), "gh_search") {
-		t.Fatalf("the MCP tool must still resolve behind execute: %v", toolNames(execute))
+		t.Fatalf("the MCP tool must resolve behind execute: %v", toolNames(execute))
 	}
 	ex := executeToolByName(t, main, "execute")
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(`{"code":"import tools\n`+
 		`print(tools.search(\"gh\"))\n`+
-		`try:\n    print(tools.call(\"gh_search\"))\nexcept tools.ToolError as e:\n    print(\"refused:\", e)\n"}`))
+		`print(tools.call(\"gh_search\"))\n"}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if strings.Contains(out, "gh_search(") {
-		t.Errorf("the stub must not list MCP tools yet: %q", out)
+	if !strings.Contains(out, "gh_search(") {
+		t.Fatalf("the stub must list the MCP tool: %q", out)
 	}
-	if !strings.Contains(out, "refused:") {
-		t.Errorf("an MCP tool must raise ToolError until ticket 17: %q", out)
+	if !strings.Contains(out, "mcp gh_search") {
+		t.Fatalf("the stub must call the MCP tool: %q", out)
 	}
 }
