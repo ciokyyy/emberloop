@@ -264,6 +264,10 @@ func usageTailPath(agent string) string {
 type usageTailState struct {
 	Offset int64    `json:"offset"`
 	Seen   []string `json:"seen"`
+	// Path is the transcript the offset belongs to. A restart gives the
+	// agent a new transcript, so the old byte offset is meaningless
+	// there: a different path starts over, keeping the keys.
+	Path string `json:"path,omitempty"`
 }
 
 // usageSeenCap bounds the dedupe memory: keys for lines already passed by the
@@ -391,6 +395,11 @@ func TailUsage(transcriptPath, agent, harness string) (int, error) {
 		defer f.Close()
 		if info, err := f.Stat(); err != nil {
 			return err
+		} else if st.Path != transcriptPath {
+			// A new transcript, not an append: the old byte offset points
+			// nowhere in it, so the restart's first lines tail from the
+			// start. Keys stay, so nothing already logged logs again.
+			st.Offset, st.Path = 0, transcriptPath
 		} else if info.Size() < st.Offset {
 			// The transcript was replaced, not appended to: start over,
 			// keeping the keys so nothing already logged logs again.
@@ -493,7 +502,17 @@ func TailUsageFile(cfg UsageTailConfig) error {
 	if h == nil {
 		return fmt.Errorf("no harness %q", cfg.Harness)
 	}
-	path := findSession(h.SessionRoot(Session{Dir: cfg.Dir}), cfg.SessionID)
+	// The agent's current harness session wins over the id the tailer
+	// started with: a restart gives the same agent a new transcript,
+	// while the rows keep accumulating on the agent id. No state (an
+	// agent that never restarted through wick) tails the launch id.
+	sessionID := cfg.SessionID
+	if cfg.AgentID != "" {
+		if s, ok, err := ReadAgentState(cfg.AgentID); err == nil && ok && s.SessionID != "" {
+			sessionID = s.SessionID
+		}
+	}
+	path := findSession(h.SessionRoot(Session{Dir: cfg.Dir}), sessionID)
 	if path == "" {
 		return nil
 	}

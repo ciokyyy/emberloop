@@ -959,6 +959,11 @@ func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, gro
 	s.ID, s.Type = id, typ
 	s.Pane, s.Tab = pane, tab
 	s.Parent, s.ParentID, s.GroupID, s.Deliver = parentPane, parentID, groupID, true
+	// A fresh reviewer records its harness session; a follow-up keeps the
+	// current one, so a restart in between survives the re-prompt.
+	if s.SessionID == "" {
+		s.SessionID = id
+	}
 	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID, PatchID: p.patchID}
 	return WriteAgentState(s)
 }

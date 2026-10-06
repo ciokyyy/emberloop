@@ -221,17 +221,32 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 	return agent, nil
 }
 
+// currentSessionID is the harness session the agent's transcript is
+// written under now: the current id its agent state records, so a restart
+// moves every lookup to the new transcript. No state (an agent that never
+// restarted through wick) keeps the launch id.
+func (a readOnlyAgent) currentSessionID() string {
+	if a.Session.AgentID != "" {
+		if s, ok, err := ReadAgentState(a.Session.AgentID); err == nil && ok && s.SessionID != "" {
+			return s.SessionID
+		}
+	}
+	return a.Session.ID
+}
+
 // reply waits for the agent's next finished turn after the transcript was
 // after bytes long (0: its first turn) and returns that turn's last message.
 func (a readOnlyAgent) reply(run Exec, after int64) (string, error) {
-	return WaitReply(registry[a.Harness], a.Session, after, readOnlyTimeout,
+	sess := a.Session
+	sess.ID = a.currentSessionID()
+	return WaitReply(registry[a.Harness], sess, after, readOnlyTimeout,
 		func() error { return Nudge(run, a.Pane, "continue") })
 }
 
 // transcriptSize is how long the agent's transcript is now; a reply to a
 // message sent after this point is one written past it.
 func (a readOnlyAgent) transcriptSize() int64 {
-	p := findSession(registry[a.Harness].SessionRoot(a.Session), a.Session.ID)
+	p := findSession(registry[a.Harness].SessionRoot(a.Session), a.currentSessionID())
 	if p == "" {
 		return 0
 	}

@@ -323,6 +323,9 @@ func launchQueuedWorker(run Exec, e queuedWorker) (*spawnedAgent, error) {
 		// returned and told its parent to end the turn, so the submit joins
 		// the queuing call's group notice whatever the type's blocking says.
 		Deliver: true,
+		// The harness session the drain started, read back the way a spawn
+		// launch is.
+		SessionID: sess.ID,
 	}
 	if err := WriteAgentState(state); err != nil {
 		_, _ = finishWorker(run, worker.ID, false, false)

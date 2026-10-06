@@ -55,6 +55,12 @@ type AgentState struct {
 	// LostNotified marks a dead child whose lost notice already went out, so
 	// the dead-child sweep reports it exactly once.
 	LostNotified bool `json:"lost_notified,omitempty"`
+	// SessionID is the harness session id currently in use: the id the
+	// transcript file carries. It is set at launch and changes at each
+	// restart, while ID stays the stable wick agent id every other record
+	// (usage rows, submits, gate state, pane mapping) is keyed by. A new
+	// child always gets a fresh UUID, never a reused id.
+	SessionID string `json:"session_id,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.
@@ -97,6 +103,47 @@ func WriteAgentState(s AgentState) error {
 		return err
 	}
 	return os.Rename(tmp, agentStatePath(s.ID))
+}
+
+// RotateAgentSession gives the agent a fresh harness session id for a
+// restart: a new UUID, recorded as its current session, with every other
+// record left where it is. Usage rows keep accumulating on the agent id,
+// and submits, gate state and the pane mapping persist untouched. A worker
+// record names its harness session too, so it follows the rotation; the
+// reviewer store keeps the agent id, which never changes.
+func RotateAgentSession(id string) (string, error) {
+	next := newSessionID()
+	err := withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("unknown agent %q", id)
+		}
+		s.SessionID = next
+		return WriteAgentState(s)
+	})
+	if err != nil {
+		return "", err
+	}
+	// The worker record names its harness session too: a failed save
+	// reports, so the caller never sees success with the record stale.
+	if err := withFileLock("workers", func() error {
+		store, err := load()
+		if err != nil {
+			return err
+		}
+		if w, exists := store[id]; exists {
+			w.SessionID = next
+			store[id] = w
+			return save(store)
+		}
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return next, nil
 }
 
 // ReadAgentState returns an agent's state, and false when there is none.
