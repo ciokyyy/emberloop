@@ -345,7 +345,28 @@ func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 // renderSnapLocked renders a snapshot under the lock, so geometry and
 // pulse phase stay consistent with the paint.
 func (w *wrapper) renderSnapLocked(snap HeaderSnapshot) string {
-	return RenderHeader(snap, w.contentW(), HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase})
+	inner := w.contentW() - 2*stripInset
+	if inner < 1 {
+		return RenderHeader(snap, w.contentW(), HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase})
+	}
+	strip := RenderHeader(snap, inner, HeaderOpts{Rows: w.rows, Dark: w.dark, Profile: w.profile, Pulse: w.phase})
+	side := w.edgeStyle().Render(strings.Repeat(" ", stripInset))
+	lines := strings.Split(strip, "\n")
+	for i, line := range lines {
+		lines[i] = side + line + side
+	}
+	return strings.Join(lines, "\n")
+}
+
+// stripInset is the blank strip-colored columns inside each side of the
+// strip, so its text does not touch the block's edge.
+const stripInset = 2
+
+// edgeStyle is the strip background alone, for blank cells and edge glyphs.
+func (w *wrapper) edgeStyle() lipgloss.Style {
+	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(w.profile))
+	r.SetColorProfile(w.profile)
+	return r.NewStyle().Background(lipgloss.Color(w.stripBg()))
 }
 
 // repaint redraws the strip when the numbers changed.
@@ -406,8 +427,32 @@ func (w *wrapper) paintLocked(strip string) {
 	for i, line := range strings.Split(strip, "\n") {
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s", w.ruleRow()+1+i, col, line))
 	}
+	if w.pad.Bottom >= 1 && !w.rule {
+		if row := w.ruleRow() + 1 + len(strings.Split(strip, "\n")); row <= w.termH {
+			b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s", row, col, w.bottomEdge()))
+		}
+	}
 	b.WriteString("\x1b8")
 	w.writeLocked(b.String())
+}
+
+// bottomEdge is the strip's soft lower edge: upper half blocks in the strip
+// color, with quadrant glyphs at both ends that leave the outer lower
+// corner empty, so the block reads as rounded.
+func (w *wrapper) bottomEdge() string {
+	return w.roundedEdge("▜", "▀", "▛")
+}
+
+// roundedEdge draws one full-width edge row from a left corner, a fill and a
+// right corner glyph, colored as the strip background.
+func (w *wrapper) roundedEdge(left, fill, right string) string {
+	n := w.contentW()
+	if n < 2 {
+		return ""
+	}
+	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(w.profile))
+	r.SetColorProfile(w.profile)
+	return r.NewStyle().Foreground(lipgloss.Color(w.stripBg())).Render(left + strings.Repeat(fill, n-2) + right)
 }
 
 // topRule is the strip's top edge. By default it is a full-width row of
@@ -427,7 +472,7 @@ func (w *wrapper) topRule() string {
 		}
 		return r.NewStyle().Foreground(lipgloss.Color(hex)).Background(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("─", w.contentW()))
 	}
-	return r.NewStyle().Foreground(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("▄", w.contentW()))
+	return w.roundedEdge("▟", "▄", "▙")
 }
 
 func (w *wrapper) stripBg() string {
