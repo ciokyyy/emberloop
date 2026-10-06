@@ -3,6 +3,7 @@ package wick
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // A child with no submit and no live pane is not pending: its pane is gone,
@@ -10,7 +11,7 @@ import (
 func TestDeadChildWithGonePaneIsNotPending(t *testing.T) {
 	deliverTestState(t)
 	rec := &recorder{reply: func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -27,7 +28,7 @@ func TestDeadChildWithGonePaneIsNotPending(t *testing.T) {
 // A live child that owes a result is still pending.
 func TestLiveChildOwingAResultIsPending(t *testing.T) {
 	deliverTestState(t)
-	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	rec := &recorder{reply: liveDeliverReply}
 	deliverExec = rec.run
 	if err := WriteAgentState(AgentState{ID: "c1", Type: "scout", Pane: "live-pane", ParentID: "p", Parent: "pP", Deliver: true}); err != nil {
 		t.Fatal(err)
@@ -74,7 +75,7 @@ func TestErroredTurnNotifiesParentWithError(t *testing.T) {
 func TestDeadChildYieldsExactlyOneLostNotice(t *testing.T) {
 	deliverTestState(t)
 	rec := &recorder{reply: func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -134,7 +135,7 @@ func TestStopGateBlocksAWorkerWithOnlyDeadChildren(t *testing.T) {
 	t.Setenv("WICK_AGENT_ID", "wp")
 	t.Setenv("WICK_AGENT_TYPE", "worker")
 	deliverExec = (&recorder{reply: func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -224,7 +225,7 @@ func TestDeliveredGroupDeadMemberIsNotReportedTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.reply = func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" && args[2] == "pane-d2-gone" {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" && paneArg(args) == "pane-d2-gone" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -262,7 +263,7 @@ func TestStopGateBlocksWithOnlyDeadGroupedChildren(t *testing.T) {
 	t.Setenv("WICK_AGENT_TYPE", "worker")
 	oldDeliver := deliverExec
 	rec2 := &recorder{reply: func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -284,5 +285,73 @@ func TestStopGateBlocksWithOnlyDeadGroupedChildren(t *testing.T) {
 	}
 	if d.Outcome != GateBlock {
 		t.Fatalf("a worker with only dead grouped children must be blocked, got %v", d.Outcome)
+	}
+}
+
+// A dead child whose launcher recorded its exit names it in the lost notice,
+// so the parent sees how it died instead of only that its pane is gone.
+func TestLostNoticeCarriesChildExit(t *testing.T) {
+	deliverTestState(t)
+	rec := &recorder{reply: func(cmd string, args []string) Result {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
+			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
+		}
+		return Result{Stdout: "{}"}
+	}}
+	deliverExec = rec.run
+	code := 1
+	if err := WriteAgentState(AgentState{ID: "c1", Type: "scout", Pane: "gone-pane", ParentID: "p", Parent: "pP", Deliver: true, ExitCode: &code, ExitStderr: "boom happened"}); err != nil {
+		t.Fatal(err)
+	}
+	sweepDeadChildren("", "p")
+	var noticed []string
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "lost:") {
+			noticed = append(noticed, strings.Join(c, " "))
+		}
+	}
+	if len(noticed) != 1 {
+		t.Fatalf("a dead child must yield exactly one lost notice, got %v", rec.calls)
+	}
+	if !strings.Contains(noticed[0], "exit 1") || !strings.Contains(noticed[0], "boom happened") {
+		t.Errorf("the lost notice must carry the child's exit, got:\n%s", noticed[0])
+	}
+}
+
+// A child inside its boot grace still counts as pending when its pane looks
+// empty: the shell may still be starting it. Past the grace the same empty
+// pane is dead and reported once.
+func TestBootingChildIsPendingNotLost(t *testing.T) {
+	deliverTestState(t)
+	rec := &recorder{reply: func(cmd string, args []string) Result {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
+			return barePaneProcs(paneArg(args))
+		}
+		return Result{Stdout: "{}"}
+	}}
+	deliverExec = rec.run
+	now := time.Now().UTC().Format(time.RFC3339)
+	old := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	if err := WriteAgentState(AgentState{ID: "c-boot", Type: "scout", Pane: "boot-pane", ParentID: "p", Parent: "pP", Deliver: true, LaunchedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentState(AgentState{ID: "c-old", Type: "scout", Pane: "old-pane", ParentID: "p", Parent: "pP", Deliver: true, LaunchedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+	if got := PendingChildren("p"); len(got) != 1 || got[0] != "c-boot" {
+		t.Fatalf("only the booting child must stay pending, got %v", got)
+	}
+	sweepDeadChildren("", "p")
+	var noticed []string
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "lost:") {
+			noticed = append(noticed, strings.Join(c, " "))
+		}
+	}
+	if len(noticed) != 1 || !strings.Contains(noticed[0], "c-old") {
+		t.Fatalf("only the past-grace child must be reported, got %v", rec.calls)
+	}
+	if got := PendingChildren("p"); len(got) != 1 || got[0] != "c-boot" {
+		t.Fatalf("the booting child must stay pending after the sweep, got %v", got)
 	}
 }

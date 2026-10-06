@@ -697,7 +697,7 @@ func (s *firstScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, 
 func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 	spawnTestState(t)
 	oldDeliver := deliverExec
-	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	rec := &recorder{reply: liveDeliverReply}
 	deliverExec = rec.run
 	t.Cleanup(func() { deliverExec = oldDeliver })
 	g := newFakeGrid()
@@ -817,7 +817,7 @@ func (s *noneScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, e
 func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 	spawnTestState(t)
 	oldDeliver := deliverExec
-	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	rec := &recorder{reply: liveDeliverReply}
 	deliverExec = rec.run
 	t.Cleanup(func() { deliverExec = oldDeliver })
 

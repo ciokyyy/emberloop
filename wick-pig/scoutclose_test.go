@@ -178,7 +178,7 @@ func TestTellPaneWithNoLiveAgentIsAClearError(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := &recorder{reply: func(_ string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{}
@@ -358,7 +358,7 @@ func TestScoutLostPaneCleansLaunchFile(t *testing.T) {
 		t.Fatalf("scout launch file must exist before delivery: %v", err)
 	}
 	rec.reply = func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" && args[2] == lostPane {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" && paneArg(args) == lostPane {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}

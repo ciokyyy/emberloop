@@ -2,10 +2,14 @@ package wick
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // AgentState is a spawned agent's own small record, kept beside the submit
@@ -61,6 +65,10 @@ type AgentState struct {
 	// (usage rows, submits, gate state, pane mapping) is keyed by. A new
 	// child always gets a fresh UUID, never a reused id.
 	SessionID string `json:"session_id,omitempty"`
+	// LaunchedAt is when the agent's current child process started, so a
+	// pane that looks empty right after launch still counts as booting
+	// rather than dead. Restarts stamp it anew; empty means no grace.
+	LaunchedAt string `json:"launched_at,omitempty"`
 	// Compressed counts how many handoffs this agent went through: the
 	// `compressed xN` the header shows. It starts at zero and grows by one
 	// at each supervisor restart, while ID and Pane stay.
@@ -73,10 +81,85 @@ type AgentState struct {
 	// records where wick-pig started, so a compress restart relaunches
 	// there. Workers restart in their worktree from their own store.
 	Cwd string `json:"cwd,omitempty"`
+	// ExitCode is how the agent's child process ended, recorded by the
+	// launcher that waited on it: nil while the child still runs or ended
+	// cleanly, so a crash leaves a trace in the same record the lost
+	// notice reads.
+	ExitCode *int `json:"exit_code,omitempty"`
+	// ExitSignal is the signal that killed the child, when one did.
+	ExitSignal string `json:"exit_signal,omitempty"`
+	// ExitStderr is the last lines of the child's stderr, so the trace
+	// says what it was doing when it died.
+	ExitStderr string `json:"exit_stderr,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.
 	Review *ReviewTarget `json:"review,omitempty"`
+}
+
+// ChildExit is how an agent's child process ended: its exit code, the
+// signal that killed it when one did, and the last lines of its stderr.
+type ChildExit struct {
+	Code   int
+	Signal string
+	Stderr string
+}
+
+// ChildExitOf reads how a waited-on child ended from its Run error: the
+// exit code, and the killing signal when one ended it. A nil error is a
+// clean exit, which leaves no trace, so it reports nothing to record.
+func ChildExitOf(err error) (ChildExit, bool) {
+	if err == nil {
+		return ChildExit{}, false
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return ChildExit{}, false
+	}
+	out := ChildExit{Code: exitErr.ExitCode()}
+	if st, ok := exitErr.Sys().(syscall.WaitStatus); ok && st.Signaled() {
+		out.Signal = strings.ToLower(st.Signal().String())
+	}
+	return out, true
+}
+
+// RecordChildExit files a waited-on child's end in its agent's state, so a
+// crash leaves a trace the lost notice carries. An agent with no record yet
+// gains a bare one; the exit fields overwrite any earlier end.
+func RecordChildExit(id string, exit ChildExit) error {
+	if id == "" {
+		return nil
+	}
+	return withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			s = AgentState{ID: id}
+		}
+		code := exit.Code
+		s.ExitCode, s.ExitSignal, s.ExitStderr = &code, exit.Signal, exit.Stderr
+		return WriteAgentState(s)
+	})
+}
+
+// exitSuffix names how the agent's process ended for a lost notice: empty
+// when no exit was recorded, so notices without a trace read as before.
+func exitSuffix(s AgentState) string {
+	if s.ExitCode == nil {
+		return ""
+	}
+	if s.ExitSignal != "" {
+		if s.ExitStderr != "" {
+			return fmt.Sprintf(" (signal %s; stderr: %s)", s.ExitSignal, s.ExitStderr)
+		}
+		return fmt.Sprintf(" (signal %s)", s.ExitSignal)
+	}
+	if s.ExitStderr != "" {
+		return fmt.Sprintf(" (exit %d; stderr: %s)", *s.ExitCode, s.ExitStderr)
+	}
+	return fmt.Sprintf(" (exit %d)", *s.ExitCode)
 }
 
 // ReviewTarget is what a reviewer's submit is folded into: the worktree whose
@@ -134,6 +217,10 @@ func RotateAgentSession(id string) (string, error) {
 			return fmt.Errorf("unknown agent %q", id)
 		}
 		s.SessionID = next
+		// A restart starts a new child: stamp its launch and drop the old
+		// child's trace, so a later lost notice never carries a stale exit.
+		s.LaunchedAt = time.Now().UTC().Format(time.RFC3339)
+		s.ExitCode, s.ExitSignal, s.ExitStderr = nil, "", ""
 		return WriteAgentState(s)
 	})
 	if err != nil {
@@ -279,7 +366,9 @@ func submitDelivers(id string) (AgentState, bool, error) {
 // it as their parent, have been set to deliver as notices, have not
 // submitted, and are still alive. A child with no submit but a dead pane, or
 // whose last turn ended in a provider error, is lost or errored, not pending:
-// the sweep reports it and the stop gate does not wait on it.
+// the sweep reports it and the stop gate does not wait on it. A child still
+// inside its boot grace stays pending: its pane may look empty while the
+// shell starts it.
 func PendingChildren(parentID string) []string {
 	if parentID == "" {
 		return nil
@@ -303,7 +392,7 @@ func PendingChildren(parentID string) []string {
 		if s.Errored {
 			continue
 		}
-		if isPaneLost(deliverExec, s.Pane) {
+		if paneDead(deliverExec, s.Pane, s.LaunchedAt) {
 			continue
 		}
 		out = append(out, s.ID)
@@ -343,7 +432,7 @@ func resolvePaneToAgent(pane string, run Exec) (string, error) {
 		}
 		return "", fmt.Errorf("pane %q matches multiple agents (%s): tell or finish one agent id instead", pane, strings.Join(ids, ", "))
 	}
-	if isPaneLost(run, matches[0].Pane) {
+	if paneDead(run, matches[0].Pane, "") {
 		return "", fmt.Errorf("pane %q matches no live agent (agent %q is gone)", pane, matches[0].ID)
 	}
 	return matches[0].ID, nil
@@ -415,7 +504,7 @@ func sweepDeadChildren(parentPane, parentID string) {
 			if s.Errored {
 				return nil
 			}
-			if !isPaneLost(deliverExec, s.Pane) {
+			if !paneDead(deliverExec, s.Pane, s.LaunchedAt) {
 				return nil
 			}
 			if s.GroupID != "" {
@@ -441,12 +530,13 @@ func lostNotice(typ, id string) string {
 // lostNoticeFor is the individual lost notice for one dead child: a worktree
 // agent carries the ticket it was spawned from, and its pane went away
 // because the user closed it by hand, so its line says so; every other
-// child keeps the existing lost line.
+// child keeps the existing lost line. Either way the child's recorded exit
+// rides along when the launcher caught one, so the parent sees how it died.
 func lostNoticeFor(s AgentState, id string) string {
 	if s.Ticket != "" {
-		return "<system-notice> " + workerLostLine(id, s.Type) + "</system-notice>"
+		return "<system-notice> " + workerLostLine(id, s.Type) + exitSuffix(s) + "</system-notice>"
 	}
-	return lostNotice(s.Type, id)
+	return "<system-notice> " + lostLine(id, s.Type) + exitSuffix(s) + "</system-notice>"
 }
 
 // errorNotice is the stopped-with-error notice a turn that ends in a provider

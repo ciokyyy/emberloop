@@ -33,14 +33,15 @@ func (d *deadPaneExec) run(cmd string, args []string, opts ExecOpts) (Result, er
 		d.mu.Unlock()
 		return Result{Stdout: "abc123def\n"}, nil
 	}
-	if cmd == herdrBin() && len(args) > 2 && args[0] == "pane" && args[1] == "get" {
-		if d.errPane[args[2]] {
+	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "process-info" {
+		pane := paneArg(args)
+		if d.errPane[pane] {
 			return Result{Code: 1, Stderr: "herdr blew up"}, nil
 		}
-		if d.dead[args[2]] {
+		if d.dead[pane] {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 		}
-		return Result{Stdout: "{}"}, nil
+		return livePaneProcs(pane), nil
 	}
 	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "run" {
 		d.mu.Lock()
@@ -173,7 +174,7 @@ func TestDeadPaneWorkerIsCancelledByThePrune(t *testing.T) {
 	h := newTicketHerdr(osExec)
 	dead := false
 	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		if dead && cmd == herdrBin() && len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if dead && cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 		}
 		return h.run(cmd, args, opts)
@@ -232,8 +233,11 @@ func TestCancelledWorkerNotifiesParentOnce(t *testing.T) {
 	spawnExec = ex.run
 	oldDeliver := deliverExec
 	rec := &recorder{reply: func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" && ex.dead[args[2]] {
-			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
+			if ex.dead[paneArg(args)] {
+				return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
+			}
+			return livePaneProcs(paneArg(args))
 		}
 		return Result{Stdout: "{}"}
 	}}
@@ -297,7 +301,7 @@ func TestRespawnReusesCancelledWorktreeAndBranch(t *testing.T) {
 	h := newTicketHerdr(osExec)
 	dead := false
 	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		if dead && cmd == herdrBin() && len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if dead && cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 		}
 		return h.run(cmd, args, opts)
@@ -465,8 +469,11 @@ func TestOrchestratorSpawnReportsCancelledWorker(t *testing.T) {
 	spawnExec = ex.run
 	oldDeliver := deliverExec
 	rec := &recorder{reply: func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" && ex.dead[args[2]] {
-			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
+			if ex.dead[paneArg(args)] {
+				return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
+			}
+			return livePaneProcs(paneArg(args))
 		}
 		return Result{Stdout: "{}"}
 	}}
@@ -570,7 +577,7 @@ func TestRespawnReusesCancelledBranchWithCommits(t *testing.T) {
 	h := newTicketHerdr(osExec)
 	dead := false
 	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		if dead && cmd == herdrBin() && len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		if dead && cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 		}
 		return h.run(cmd, args, opts)

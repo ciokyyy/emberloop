@@ -164,6 +164,10 @@ func recordPaneRestart(agentID, pane, next string) error {
 		}
 		s.SessionID = next
 		s.Compressed++
+		// A restart starts a new child: stamp its launch and drop the old
+		// child's trace, so a later lost notice never carries a stale exit.
+		s.LaunchedAt = time.Now().UTC().Format(time.RFC3339)
+		s.ExitCode, s.ExitSignal, s.ExitStderr = nil, "", ""
 		return WriteAgentState(s)
 	})
 	if err != nil {

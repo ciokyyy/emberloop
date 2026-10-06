@@ -124,6 +124,14 @@ func (g *fakeGrid) run(cmd string, args []string, _ ExecOpts) (Result, error) {
 	switch args[0] {
 	case "pane":
 		switch args[1] {
+		case "process-info":
+			pane := paneArg(args)
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if pane != "" && g.tabWith(pane) != nil {
+				return livePaneProcs(pane), nil
+			}
+			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 		case "list":
 			g.mu.Lock()
 			defer g.mu.Unlock()
