@@ -212,6 +212,10 @@ type spawnedAgent struct {
 	Pane string
 	Tab  string
 	Sess Session
+	// Harness is the harness the agent runs on. The session carries the
+	// model and effort; the harness lives here because no session field
+	// names it, and the spawn caller records all three on scouts.
+	Harness string
 	// Worktree marks an agent that owns a git worktree, which has to be
 	// cleaned up through finish rather than by closing its pane.
 	Worktree bool
@@ -356,7 +360,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		// Every member joins the group and delivers through it: its submit
 		// never comes back here, it joins the group's single notice.
 		// A worktree agent's state also carries the ticket it was spawned
-		// from, so finish can mark it done.
+		// from, so finish can mark it done. A scout's state carries how it
+		// runs instead: workers and reviewers keep theirs in their own
+		// stores, but a scout has no other record for the TUI to read.
 		state := AgentState{
 			ID:       agent.ID,
 			Type:     t.Name,
@@ -368,6 +374,8 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		}
 		if t.Checkout == "worktree" {
 			state.Ticket = r.Ticket
+		} else {
+			state.Harness, state.Model, state.Effort = agent.Harness, agent.Sess.Model, agent.Sess.Effort
 		}
 		if err := WriteAgentState(state); err != nil {
 			closeSpawned(run, append(agents, agent))
@@ -498,7 +506,7 @@ func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAge
 	if err != nil {
 		return nil, err
 	}
-	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Sess: agent.Session}, nil
+	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Sess: agent.Session, Harness: choice.Harness}, nil
 }
 
 // launchWorktree starts one worktree agent: it gets its own git worktree,

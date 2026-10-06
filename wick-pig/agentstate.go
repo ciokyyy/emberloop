@@ -14,6 +14,12 @@ import (
 type AgentState struct {
 	ID   string `json:"id"`
 	Type string `json:"type,omitempty"`
+	// Harness, Model and Effort name how the agent runs. Set for scouts at
+	// spawn, so readers without their own store (the TUI) can list them;
+	// workers and reviewers keep theirs in their own stores.
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 	// Ticket is the ticket file a worktree agent was spawned from, recorded
 	// beside the worker entry that finish merges.
 	Ticket string `json:"ticket,omitempty"`

@@ -397,6 +397,103 @@ func TestModelTicketClickSelects(t *testing.T) {
 	}
 }
 
+// cannedDetailSnapshot is alpha with one rich ticket: a costed worker and
+// an uncosted reviewer, ticket totals, a spec total with an orchestrator,
+// and a machine-wide RSS. The detail view renders all of it.
+func cannedDetailSnapshot() Snap {
+	snap := cannedSnapshot("/repo-a", "/repo-b")
+	snap.MachineRSS = 6500
+	alpha := &snap.Repos[0].Specs[0]
+	alpha.Orchestrator = &AgentSnap{ID: "orch", Kind: AgentOrchestrator,
+		Harness: "claude", Model: "opus", Effort: "high",
+		Pane: "pane-orch", Status: "working", Alive: true,
+		Input: 2, Output: 10, RSS: 4000, HasRSS: true}
+	alpha.Totals = Totals{Input: 312, Output: 135, CacheRead: 40, CacheWrite: 60,
+		Cost: 0.03, HasCost: true, FindCalls: 2, RSS: 6500, HasRSS: true}
+	alpha.Tickets = []TicketSnap{{
+		Path: "/repo-a/.scratch/alpha/issues/01-one.md", Name: "01-one.md",
+		Status: TicketWorking, Title: "My ticket", Body: "# My ticket\n\nDo things.\n",
+		Agents: []AgentSnap{
+			{ID: "01-one", Kind: AgentWorker, Harness: "pig", Model: "opus", Effort: "high",
+				Pane: "pane-w1", Status: "working", Alive: true,
+				Input: 300, Output: 120, CacheRead: 40, CacheWrite: 60, Reasoning: 12,
+				Cost: 0.03, HasCost: true, FindCalls: 2, RSS: 2500, HasRSS: true},
+			{ID: "rs1", Kind: AgentReviewerStandards, Harness: "pig", Model: "sonnet",
+				Pane: "pane-rs", Status: "idle", Alive: true,
+				Input: 10, Output: 5},
+		},
+		Totals: Totals{Input: 310, Output: 125, CacheRead: 40, CacheWrite: 60,
+			Cost: 0.03, HasCost: true, FindCalls: 2, RSS: 2500, HasRSS: true},
+	}}
+	return snap
+}
+
+func openDetail(m Model) Model {
+	m, _ = pressKey(m, "l")
+	m, _ = pressKey(m, "enter")
+	return m
+}
+
+func TestModelEnterOpensTicketDetailAndEscCloses(t *testing.T) {
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+
+	m = openDetail(m)
+	if m.detail == nil {
+		t.Fatal("after enter the ticket detail must be open")
+	}
+	if m.detail.name != "01-one.md" {
+		t.Fatalf("detail ticket = %q, want 01-one.md", m.detail.name)
+	}
+	view := m.View()
+	for _, want := range []string{"My ticket", "Do things.", "opus · high", "sonnet",
+		"$0.03", "no cost reported", "2.4 KB", "worker", "std", "300/120/100"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("detail view must contain %q, got:\n%s", want, view)
+		}
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.detail != nil {
+		t.Fatal("after esc the detail must be closed")
+	}
+}
+
+func TestModelDoubleClickOpensTicketDetail(t *testing.T) {
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+
+	_ = m.View()
+	x, y := waitZone(t, m, ticketZoneID("/repo-a", "alpha", "01-one.md"))
+	click := tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	updated, _ := m.Update(click)
+	m = updated.(Model)
+	if m.detail != nil {
+		t.Fatal("a single click only selects")
+	}
+	updated, _ = m.Update(click)
+	m = updated.(Model)
+	if m.detail == nil {
+		t.Fatal("a double click opens the ticket detail")
+	}
+}
+
+func TestModelRunsShowsTokensCostMemoryAndOrchestrator(t *testing.T) {
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+
+	view := m.View()
+	for _, want := range []string{"6.3 KB", "$0.03", "orchestrator", "claude"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("runs view must contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
 // The tickets pane renders every ticket name with its status glyph: an
 // in-review ticket carries its code/spec verdicts in the row, and every
 // status maps to its own glyph.
