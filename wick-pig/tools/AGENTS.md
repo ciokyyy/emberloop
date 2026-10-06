@@ -10,7 +10,9 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 serves: native fetch, then Jina, then an uninstalled browser tier),
 `bash.go`, `background.go`, `find.go`
 (plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
-with a Go fallback), `check.go` (the repo's named checks from `.wick/check`:
+with a Go fallback), `git.go` (read-only inspection: diff, log, show,
+blame, status, ls-files, grep, rev-parse, merge-base, cat-file, branch
+and tag listing only), `check.go` (the repo's named checks from `.wick/check`:
 plain command or JSON name map, one `{args}` slot, metacharacters refused),
 `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
