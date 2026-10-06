@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A plain `.wick/check` file behaves exactly as before for the spawn-time run and the tool
-- [ ] A named map runs the named check; an unknown name lists the available names
-- [ ] `{args}` substitution works; metacharacters (`;`, `|`, `&`, `$`, backticks, newlines, redirects) are refused
-- [ ] Timeout, failure tail and pass output match the existing strings
-- [ ] Tool is limited to the roles above; repo check passes
+- [x] A plain `.wick/check` file behaves exactly as before for the spawn-time run and the tool
+- [x] A named map runs the named check; an unknown name lists the available names
+- [x] `{args}` substitution works; metacharacters (`;`, `|`, `&`, `$`, backticks, newlines, redirects) are refused
+- [x] Timeout, failure tail and pass output match the existing strings
+- [x] Tool is limited to the roles above; repo check passes
