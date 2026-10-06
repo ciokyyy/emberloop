@@ -6,6 +6,7 @@
 //	wick-pig settings tool <name> ... | mcp-server <name> ...    tune tools and MCP servers
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
+//	wick-pig voice-reminder [hook]                             per-turn register reminder (pig extension, claude hook)
 //	wick-pig exec <launch-file>                                run a launch file the pane typed
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
@@ -48,6 +49,9 @@ func run(argv []string) error {
 	}
 	if sub == "stop-gate" {
 		return wick.RunStopGate(os.Stdin, os.Stdout)
+	}
+	if sub == "voice-reminder" {
+		return wick.RunVoiceReminder(argv, os.Stdout)
 	}
 	if sub == "pig-gate" {
 		if len(argv) != 1 {

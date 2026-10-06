@@ -15,6 +15,8 @@ are separate durable boundaries with their own docs. File map (non-test file
 owns its `_test.go` and the behaviour below):
 
 - Sessions and harnesses: `harness.go` (pig/claude commands, system prompt),
+  `voice.go` + `caveman/SKILL.md` (the register: the caveman plugin skill, byte
+  for byte, at ultra; plus the per-turn reminder, `wick-pig voice-reminder`),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
   (pane launch text), `commands.go`, `skills.go`, `install.go` (the live-agent
   gate, ending with the deps step), `deps.go` (the `wick-pig deps` installer)

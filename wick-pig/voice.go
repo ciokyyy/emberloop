@@ -1,34 +1,98 @@
 package wick
 
-// voiceRegister is the one register every wick session writes its own words
-// in: terse, no filler, full technical substance. It is a layer of the system
-// prompt, so every role and agent type reads it and no skill body can outrank
-// it. It has no setting, no flag and no reminder: the system prompt is static,
-// so the provider caches it, and a reminder per turn would cost tokens on every
-// read. Adapted from JuliusBrussee/caveman (the Rules block, the ultra deltas,
-// the ASD-STE100 clarity register and Auto-Clarity), minus the level switch.
+import (
+	_ "embed"
+	"encoding/json"
+	"io"
+	"regexp"
+	"strings"
+)
+
+// The register every wick session writes its own words in is the caveman
+// plugin's, adopted as the plugin loads it, at its ultra level, always:
 //
-// It covers chat and submit text only. Code, comments, docs, commit messages,
-// tickets and specs are written normally: tests and later readers depend on
-// their exact wording.
+//   - the SessionStart text: a banner and caveman/SKILL.md, a byte-for-byte
+//     copy of the plugin's skill, with the frontmatter stripped and only the
+//     ultra row of the intensity table and the ultra examples kept (the
+//     plugin's loadFilteredRuleset), so the model is never handed a second
+//     level to choose between. It is a layer of the system prompt, so every
+//     role and agent type reads it and no skill body can outrank it.
+//   - the UserPromptSubmit text: the plugin's one-line per-turn reminder,
+//     delivered on every user message by the claude harness's UserPromptSubmit
+//     hook and by the pig extension, because the rules read far back in the
+//     system prompt lose to whatever the latest message says.
 //
-// It is one line of text: the shell line a pane types holds no newline.
-const voiceRegister = `Speak terse like smart caveman. All technical substance stay. Only fluff die.` +
-	" " +
-	`This register is fixed for every reply until the session ends. Keep it on long sessions: no filler drift, no long replies.` +
-	" " +
-	`Rules. Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/of course/happy to) and hedging. Fragments OK. Short synonyms (big not extensive, fix not "implement a solution for"). No decorative tables or emoji. No long raw error dumps: quote the shortest decisive line. Standard tech acronyms OK (DB/API/HTTP); never invent abbreviations (cfg/impl/req/fn): they save nothing and cost the reader. Technical terms exact. Code blocks unchanged. Errors quoted exact. Numbers and units exact.` +
-	" " +
-	`Never drop not/never/no/only/except: flipping meaning costs more than any token saved. Never add a word to sound caveman: compression never grows output. No fake broken grammar. When caveman phrasing is not shorter than plain phrasing, use plain phrasing. State each fact once.` +
-	" " +
-	`Clarity. One idea per sentence, 20 words max. Active voice. Same term for the same thing, never a synonym rotation. Instructions are imperatives: "Run X". A pronoun only when it has one clear referent. When compression and clarity conflict, clarity wins.` +
-	" " +
-	`Tool calls. Fire direct: no preamble, plan or progress note before or between calls, and never announce the next call. Text before a call only to warn about security or an irreversible action, or to resolve ambiguity. After a result: the next call, or the final answer.` +
-	" " +
-	`Final answer. Your report goes in the submit tool when you have one: call it last, with the full result inside it, and end the turn with no text after it. Without submit, the final answer is the result, not a recap of the steps.` +
-	" " +
-	`Scope. This register is for your replies and submit text. Write code, comments, docs, commit messages, tickets and specs in normal clear prose, and quote exact strings verbatim. Never name or announce the register.` +
-	" " +
-	`Pattern: [thing] [action] [reason]. [next step].` +
-	" " +
-	`Auto-Clarity. Drop the register for security warnings, irreversible-action confirmations, multi-step sequences where fragment order could be misread, any case where compression creates ambiguity, and when the user asks to clarify. Resume after the clear part.`
+// Source: JuliusBrussee/caveman, plugin skill caveman at commit
+// b39c90862855ad2f0813ce775b8bf07a9d6d2a50. To update, copy SKILL.md again;
+// nothing else here restates it.
+//
+//go:embed caveman/SKILL.md
+var cavemanSkill string
+
+// voiceLevel is the one intensity level wick runs. It has no switch.
+const voiceLevel = "ultra"
+
+// voiceBanner is the plugin's ruleset banner for that level.
+const voiceBanner = "CAVEMAN MODE ACTIVE — level: " + voiceLevel
+
+// voiceReminder is the plugin's ultra per-turn reminder, as it emits it.
+const voiceReminder = "CAVEMAN MODE ACTIVE (" + voiceLevel + "). Enforce this reply: " +
+	"Drop articles, filler, pleasantries, hedging, and excess conjunctions. Prefer fragments over full natural-prose sentences. State each fact once. No preamble or recap." +
+	" Technical terms, code, commands, paths, and errors stay exact."
+
+// voiceWick is what wick adds after the plugin's text: where a spawned agent's
+// result goes.
+const voiceWick = "Wick. Your report goes in the submit tool when you have one: call it last, " +
+	"with the full result inside it, in this register, and end the turn with no text after it. " +
+	"Without submit, the final answer is the result, not a recap of the steps."
+
+var (
+	skillFrontmatter = regexp.MustCompile(`^---[\s\S]*?---\s*`)
+	skillTableRow    = regexp.MustCompile(`^\|\s*\*\*(\S+?)\*\*\s*\|`)
+	skillExample     = regexp.MustCompile(`^- (\S+?):\s`)
+)
+
+// filterRuleset is the plugin's loadFilteredRuleset: the skill without its
+// frontmatter, keeping only level's row of the intensity table and level's
+// example lines.
+func filterRuleset(skill, level string) string {
+	body := skillFrontmatter.ReplaceAllString(skill, "")
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		if m := skillTableRow.FindStringSubmatch(line); m != nil {
+			if m[1] == level {
+				out = append(out, line)
+			}
+			continue
+		}
+		if m := skillExample.FindStringSubmatch(line); m != nil {
+			if m[1] == level {
+				out = append(out, line)
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// voiceRegister is the register as the system prompt carries it.
+var voiceRegister = voiceBanner + "\n\n" + filterRuleset(cavemanSkill, voiceLevel) + "\n\n" + voiceWick
+
+// VoiceReminder is the per-turn reminder, for the extension that cannot import
+// this package.
+func VoiceReminder() string { return voiceReminder }
+
+// RunVoiceReminder serves `wick-pig voice-reminder`. Plain, it prints the
+// reminder text, which the pig extension reads. With hook it prints claude's
+// UserPromptSubmit hook output, which adds the reminder to the user's message.
+func RunVoiceReminder(args []string, out io.Writer) error {
+	if len(args) == 1 && args[0] == "hook" {
+		return json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+			"hookEventName":     "UserPromptSubmit",
+			"additionalContext": voiceReminder,
+		}})
+	}
+	_, err := io.WriteString(out, voiceReminder)
+	return err
+}

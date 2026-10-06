@@ -33,8 +33,15 @@ func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 		line := cmd.Line()
-		if strings.Contains(line, "\n") {
-			t.Errorf("%s: pane run types one line: %q", name, line)
+		// The system prompt holds newlines (the register is the plugin's
+		// text); the launch file carries them, so the line the pane types
+		// is only the exec line, and that stays one line.
+		launch, err := PrepareLaunch(name, workerSession())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(launch.Line, "\n") {
+			t.Errorf("%s: pane run types one line: %q", name, launch.Line)
 		}
 		if !strings.HasPrefix(line, "WICK_ROLE=work ") && !strings.Contains(line, " WICK_ROLE=work ") {
 			t.Errorf("%s: role missing: %q", name, line)

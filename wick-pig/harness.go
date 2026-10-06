@@ -14,7 +14,7 @@ import (
 // wick's own; background exists because a blocking bash call on a dev server
 // never returns. The skill sentence names the one address the read tool serves
 // the library under, so an open session can load a skill the user names.
-const systemPrompt = "Your file and shell tools are wick's: read, find, edit, write, bash, background. " +
+var systemPrompt = "Your file and shell tools are wick's: read, find, edit, write, bash, background. " +
 	"Never start a dev server, watcher or log tail with bash: it blocks until timeout. Use background(action=start) and read or stop it later. " +
 	"For facts about this repo, spawn a scout when you have one: spawn(agents=[{type: \"scout\", prompt: \"...\"}]). Scouts report facts only; decisions stay with you and the user. " +
 	"Skills are listed by reading wick://" + skillsNamespace + "; when the user asks for one by name " +
@@ -316,9 +316,11 @@ func (claudeHarness) LastReply(path string) (string, bool) {
 
 // claudeStopGate is the settings claude is launched with: a `Stop` hook that
 // runs wick's shared gate, so a claude agent cannot end a turn without
-// submitting. It is passed inline with --settings, which still applies under
-// --setting-sources "".
-const claudeStopGate = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}]}}`
+// submitting, and a `UserPromptSubmit` hook that adds the register's per-turn
+// reminder to every user message, as the caveman plugin does. It is passed
+// inline with --settings, which still applies under --setting-sources "".
+const claudeStopGate = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
+	`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"wick-pig voice-reminder hook"}]}]}}`
 
 type claudeHarness struct{}
 

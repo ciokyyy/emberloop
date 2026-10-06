@@ -94,6 +94,9 @@ func Extension() *sdk.Extension {
 	gate := newGate(execGate)
 	gate.register(e)
 
+	// The register's per-turn reminder, as the caveman plugin sends it.
+	registerVoice(e, execVoice)
+
 	// Hand authority back so herdr does not keep treating this pane as an agent
 	// after the session ends, instead of leaving a stale entry behind.
 	e.OnSessionShutdown(func(ctx sdk.Context, _ map[string]any) (any, error) {
