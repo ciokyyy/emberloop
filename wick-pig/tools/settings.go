@@ -130,13 +130,25 @@ type OverflowSettings struct {
 // model. StripRows is the header strip height (1 or 2, default 2);
 // StripFrame draws the agent-colored frame beside the agent screen (nil
 // means off); StripRule draws the agent-hue rule line above the strip
-// instead of the soft half-block edge (nil means the soft edge).
+// instead of the soft half-block edge (nil means the soft edge);
+// StripPadLeft, StripPadRight and StripPadBottom inset the agent screen
+// and the strip by that many columns and rows (nil means the defaults
+// below). Padding is background only: nothing is drawn in it.
 // CompressModels names the summarizer model per harness (unset
 // means compression refuses with a warning, never a silent default).
 // AutoCompress disables the automatic trigger when false (nil means on; the
 // manual key keeps working); CompressCooldown is the tool calls after a
 // compress that block a second auto-compress (zero means the default). A
 // pointer, so an unset context stays out of the saved file.
+// Default padding around the wrapped agent screen: four columns left and
+// right, one empty row below the strip. Zero restores the edge-to-edge
+// layout.
+const (
+	DefaultPadLeft   = 4
+	DefaultPadRight  = 4
+	DefaultPadBottom = 2
+)
+
 type ContextSettings struct {
 	CompressThreshold int64             `json:"compress_threshold,omitempty"`
 	HarnessThresholds map[string]int64  `json:"harness_thresholds,omitempty"`
@@ -144,6 +156,9 @@ type ContextSettings struct {
 	StripRows         int               `json:"strip_rows,omitempty"`
 	StripFrame        *bool             `json:"strip_frame,omitempty"`
 	StripRule         *bool             `json:"strip_rule,omitempty"`
+	StripPadLeft      *int              `json:"strip_pad_left,omitempty"`
+	StripPadRight     *int              `json:"strip_pad_right,omitempty"`
+	StripPadBottom    *int              `json:"strip_pad_bottom,omitempty"`
 	CompressModels    map[string]string `json:"compress_models,omitempty"`
 	AutoCompress      *bool             `json:"auto_compress,omitempty"`
 	CompressCooldown  int               `json:"compress_cooldown,omitempty"`
@@ -437,6 +452,42 @@ func (s Settings) StripRuleEnabled() bool {
 	return false
 }
 
+// EffectivePadLeft is the left padding columns in force: the default two
+// when unset, an explicit zero restoring the edge-to-edge layout, a
+// negative reading as zero.
+func (s Settings) EffectivePadLeft() int {
+	if s.Context != nil && s.Context.StripPadLeft != nil {
+		if *s.Context.StripPadLeft < 0 {
+			return 0
+		}
+		return *s.Context.StripPadLeft
+	}
+	return DefaultPadLeft
+}
+
+// EffectivePadRight is the right padding columns in force, like the left.
+func (s Settings) EffectivePadRight() int {
+	if s.Context != nil && s.Context.StripPadRight != nil {
+		if *s.Context.StripPadRight < 0 {
+			return 0
+		}
+		return *s.Context.StripPadRight
+	}
+	return DefaultPadRight
+}
+
+// EffectivePadBottom is the bottom padding rows in force: the default one
+// when unset, zero restoring today's layout.
+func (s Settings) EffectivePadBottom() int {
+	if s.Context != nil && s.Context.StripPadBottom != nil {
+		if *s.Context.StripPadBottom < 0 {
+			return 0
+		}
+		return *s.Context.StripPadBottom
+	}
+	return DefaultPadBottom
+}
+
 // unknownContextFields collects the keys inside the context object that are
 // not the known context settings, so a save writes them back.
 func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage {
@@ -447,7 +498,7 @@ func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage
 	var out map[string]json.RawMessage
 	for k, v := range contextFields {
 		switch strings.ToLower(k) {
-		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "strip_rule", "compress_models", "auto_compress", "compress_cooldown":
+		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "strip_rule", "strip_pad_left", "strip_pad_right", "strip_pad_bottom", "compress_models", "auto_compress", "compress_cooldown":
 			continue
 		}
 		if out == nil {
@@ -501,6 +552,18 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			v := *global.StripRule
 			out.StripRule = &v
 		}
+		if global.StripPadLeft != nil {
+			v := *global.StripPadLeft
+			out.StripPadLeft = &v
+		}
+		if global.StripPadRight != nil {
+			v := *global.StripPadRight
+			out.StripPadRight = &v
+		}
+		if global.StripPadBottom != nil {
+			v := *global.StripPadBottom
+			out.StripPadBottom = &v
+		}
 		if global.AutoCompress != nil {
 			v := *global.AutoCompress
 			out.AutoCompress = &v
@@ -545,6 +608,21 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			out.StripRule = &v
 			src["context.strip_rule"] = "project"
 		}
+		if project.StripPadLeft != nil {
+			v := *project.StripPadLeft
+			out.StripPadLeft = &v
+			src["context.strip_pad_left"] = "project"
+		}
+		if project.StripPadRight != nil {
+			v := *project.StripPadRight
+			out.StripPadRight = &v
+			src["context.strip_pad_right"] = "project"
+		}
+		if project.StripPadBottom != nil {
+			v := *project.StripPadBottom
+			out.StripPadBottom = &v
+			src["context.strip_pad_bottom"] = "project"
+		}
 		for h, m := range project.CompressModels {
 			if m == "" {
 				continue
@@ -566,7 +644,7 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 		}
 	}
 	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 &&
-		out.StripRows == 0 && out.StripFrame == nil && out.StripRule == nil && len(out.CompressModels) == 0 &&
+		out.StripRows == 0 && out.StripFrame == nil && out.StripRule == nil && out.StripPadLeft == nil && out.StripPadRight == nil && out.StripPadBottom == nil && len(out.CompressModels) == 0 &&
 		out.AutoCompress == nil && out.CompressCooldown == 0 {
 		return nil
 	}

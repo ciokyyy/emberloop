@@ -66,7 +66,7 @@ func (f *fakeChild) forwardedString() string {
 func wrapTestConfig(child *fakeChild, stdout *bytes.Buffer) WrapConfig {
 	return WrapConfig{
 		Source:   HeaderSource{AgentID: "w1", AgentType: "worker", AgentName: "implementer", Harness: "pig"},
-		Settings: tools.Settings{},
+		Settings: noPadSettings(),
 		Bin:      "agent",
 		Stdin:    strings.NewReader("typed\n"),
 		Stdout:   stdout,
@@ -130,7 +130,7 @@ func TestWrapPlainPrefersChildStderr(t *testing.T) {
 	var stdout, childLog, wrapperLog bytes.Buffer
 	cfg := WrapConfig{
 		Source:      HeaderSource{AgentID: "w1", AgentType: "worker", AgentName: "implementer", Harness: "pig"},
-		Settings:    tools.Settings{},
+		Settings:    noPadSettings(),
 		Bin:         "sh",
 		Args:        []string{"-c", "echo oops >&2"},
 		Stdout:      &stdout,
@@ -156,7 +156,7 @@ func TestWrapFakeChild(t *testing.T) {
 	var stdout bytes.Buffer
 	cfg := wrapTestConfig(child, &stdout)
 	frame := true
-	cfg.Settings = tools.Settings{Context: &tools.ContextSettings{StripFrame: &frame}}
+	cfg.Settings = withNoPad(tools.ContextSettings{StripFrame: &frame})
 	if err := WrapChild(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestWrapRuleLineRestored(t *testing.T) {
 	var stdout bytes.Buffer
 	cfg := wrapTestConfig(child, &stdout)
 	rule := true
-	cfg.Settings = tools.Settings{Context: &tools.ContextSettings{StripRule: &rule}}
+	cfg.Settings = withNoPad(tools.ContextSettings{StripRule: &rule})
 	if err := WrapChild(cfg); err != nil {
 		t.Fatal(err)
 	}

@@ -27,7 +27,46 @@ const StripFootprint = 1
 // the strip rows and its top rule. The child is told this size and gets it
 // again on every resize, so its own output never reaches the strip rows.
 func ChildSize(termW, termH, stripRows int, frame bool) (w, h int) {
-	w, h = termW, termH-stripRows-StripFootprint
+	return ChildSizePad(termW, termH, stripRows, frame, Pad{})
+}
+
+// Pad is the empty space around the wrapped agent screen and the strip:
+// columns on the left and right, rows below the strip. It is background
+// only; nothing is drawn in it.
+type Pad struct{ Left, Right, Bottom int }
+
+// minPadChildW and minPadChildH are the smallest child screen padding may
+// leave: padding shrinks first, before the strip drops a row or a segment.
+const (
+	minPadChildW = 20
+	minPadChildH = 5
+)
+
+// FitPad shrinks pad until the child screen keeps minPadChildW columns and
+// minPadChildH rows (or padding is gone): the wider side column gives first,
+// then the bottom rows.
+func FitPad(termW, termH, stripRows int, frame bool, pad Pad) Pad {
+	frameCols := 0
+	if frame {
+		frameCols = 2
+	}
+	for termW-frameCols-pad.Left-pad.Right < minPadChildW && pad.Left+pad.Right > 0 {
+		if pad.Left >= pad.Right {
+			pad.Left--
+		} else {
+			pad.Right--
+		}
+	}
+	for termH-stripRows-StripFootprint-pad.Bottom < minPadChildH && pad.Bottom > 0 {
+		pad.Bottom--
+	}
+	return pad
+}
+
+// ChildSizePad is ChildSize with padding: the child also loses the padding
+// columns on each side and the padding rows below the strip.
+func ChildSizePad(termW, termH, stripRows int, frame bool, pad Pad) (w, h int) {
+	w, h = termW-pad.Left-pad.Right, termH-stripRows-StripFootprint-pad.Bottom
 	if frame {
 		w -= 2
 	}
