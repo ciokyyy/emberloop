@@ -4,11 +4,11 @@
 
 **Blocked by:** 10 Reviewers are told when the diff covers less than the tree (both change the review gate and prompt)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A pass survives a clean rebase onto an unrelated merged change and the gate accepts it (test with a real temp git repo)
-- [ ] A conflicting or content-changing rebase makes the pass stale
-- [ ] A follow-up after a rebase shows only the worker's own change
-- [ ] Spec stories 38 and 39
+- [x] A pass survives a clean rebase onto an unrelated merged change and the gate accepts it (test with a real temp git repo)
+- [x] A conflicting or content-changing rebase makes the pass stale
+- [x] A follow-up after a rebase shows only the worker's own change
+- [x] Spec stories 38 and 39
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
