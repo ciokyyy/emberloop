@@ -44,15 +44,28 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 }
 
 // full stays reachable, but only by asking for it: it is every tool, including
-// the orchestration tools no planning session should hold.
+// the orchestration tools no planning session should hold. Tools whose default
+// placement is execute (grep, check) serve behind execute, not in main.
 func TestFullServesEveryTool(t *testing.T) {
 	hermeticSettings(t)
 	served, err := RoleTools("full")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(served) != len(AllTools()) {
-		t.Errorf("full served %d tools, want all %d", len(served), len(AllTools()))
+	_, execute, err := ResolvedTools("full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(served)+len(execute) != len(AllTools()) {
+		t.Errorf("full served %d in main plus %d behind execute, want all %d", len(served), len(execute), len(AllTools()))
+	}
+	for _, want := range []string{"grep", "check"} {
+		if containsName(toolNames(served), want) {
+			t.Errorf("full must keep %q behind execute, not in main", want)
+		}
+		if !containsName(toolNames(execute), want) {
+			t.Errorf("full must offer %q behind execute", want)
+		}
 	}
 	names := map[string]bool{}
 	for _, tool := range served {
@@ -150,5 +163,51 @@ func TestNoRoleServesAWaitTool(t *testing.T) {
 				t.Errorf("%s role must serve %s", role, want)
 			}
 		}
+	}
+}
+
+// check lives behind execute by default for review, work, plan and full,
+// and is offered to no scout list at all.
+func TestCheckLivesBehindExecuteForItsRoles(t *testing.T) {
+	hermeticSettings(t)
+	for _, role := range []string{"review", "work", "plan", "full"} {
+		main, execute, err := ResolvedTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if containsName(toolNames(main), "check") {
+			t.Errorf("%s must not serve check in main, want it behind execute", role)
+		}
+		if !containsName(toolNames(execute), "check") {
+			t.Errorf("%s must offer check behind execute: main=%v execute=%v", role, toolNames(main), toolNames(execute))
+		}
+	}
+	main, execute, err := ResolvedTools("scout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range append(toolNames(main), toolNames(execute)...) {
+		if got == "check" {
+			t.Errorf("scout must not reach check: main=%v execute=%v", toolNames(main), toolNames(execute))
+		}
+	}
+}
+
+// Settings can promote check to the main list for a role that offers it.
+func TestCheckPlacementMainServesIt(t *testing.T) {
+	writeSettingsFile(t, `{"tools":{"check":{"placement":"main"}}}`)
+	served, err := RoleTools("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsName(toolNames(served), "check") {
+		t.Fatalf("execute-placed check must serve in main when placed there: %v", toolNames(served))
+	}
+	served, err = RoleTools("scout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsName(toolNames(served), "check") {
+		t.Fatalf("settings must not widen scout with check: %v", toolNames(served))
 	}
 }

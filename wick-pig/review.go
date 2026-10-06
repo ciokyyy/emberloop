@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"example.com/wick/tools"
 )
 
 // The reviewer types wick ships. A worker's reviewers are the types its
@@ -599,40 +601,32 @@ func workerPlace(w *Worker) readOnlyPlace {
 	return readOnlyPlace{Tab: w.Tab, Overflow: w.ID + " (2)"}
 }
 
-// checkTimeout bounds the repo's check command, inside the tool budget.
-var checkTimeout = 3 * time.Minute
-
-// runChecks runs the one command in .wick/check at the root of tree, so the
-// reviewers judge real results rather than the worker's word. A repo with no
-// such file is reviewed without checks, and the packet says so.
+// runChecks runs the repo's check at the root of tree, so the reviewers
+// judge real results rather than the worker's word. A plain .wick/check runs
+// its one command; a named map runs "default", or the first name in order
+// when no default exists, and the packet says which. A repo with no such
+// file is reviewed without checks, and the packet says so.
 func runChecks(run Exec, tree string) string {
-	raw, err := os.ReadFile(filepath.Join(tree, ".wick", "check"))
-	cmd := strings.TrimSpace(string(raw))
-	if err != nil || cmd == "" {
-		return "no checks configured (the repo has no .wick/check)"
+	cmd, display, err := tools.SpawnCheck(tree)
+	if err != nil {
+		if errors.Is(err, tools.ErrNoChecks) {
+			return err.Error()
+		}
+		return fmt.Sprintf("the repo's .wick/check is invalid: %v", err)
 	}
 	start := time.Now()
-	res, err := run("sh", []string{"-c", cmd}, ExecOpts{Cwd: tree, Timeout: checkTimeout})
-	out := tail(strings.TrimSpace(res.Stdout+"\n"+res.Stderr), 60)
+	res, err := run("sh", []string{"-c", cmd}, ExecOpts{Cwd: tree, Timeout: tools.CheckTimeout})
+	out := tools.CheckTail(strings.TrimSpace(res.Stdout + "\n" + res.Stderr))
 	switch {
 	case err != nil:
-		return fmt.Sprintf("`%s` could not run: %v", cmd, err)
-	case res.Code != 0 && time.Since(start) >= checkTimeout:
-		return fmt.Sprintf("`%s` TIMED OUT after %s, which is not a pass. Output so far:\n%s", cmd, checkTimeout, out)
+		return fmt.Sprintf("`%s` could not run: %v", display, err)
+	case res.Code != 0 && time.Since(start) >= tools.CheckTimeout:
+		return fmt.Sprintf("`%s` TIMED OUT after %s, which is not a pass. Output so far:\n%s", display, tools.CheckTimeout, out)
 	case res.Code != 0:
-		return fmt.Sprintf("`%s` FAILED (exit %d):\n%s", cmd, res.Code, out)
+		return fmt.Sprintf("`%s` FAILED (exit %d):\n%s", display, res.Code, out)
 	default:
-		return fmt.Sprintf("`%s` passed (exit 0):\n%s", cmd, out)
+		return fmt.Sprintf("`%s` passed (exit 0):\n%s", display, out)
 	}
-}
-
-// tail keeps the last n lines of text: a check's verdict is at its end.
-func tail(text string, n int) string {
-	lines := strings.Split(text, "\n")
-	if len(lines) <= n {
-		return text
-	}
-	return "…\n" + strings.Join(lines[len(lines)-n:], "\n")
 }
 
 // reviewPacket is what one call hands its reviewers.

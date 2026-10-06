@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"example.com/wick/tools"
 )
 
 // Reviewer tabs are named here so a test can tell the worker's ticket tab from
@@ -857,9 +860,9 @@ func TestRunChecksPassAndTimeout(t *testing.T) {
 	if got := runChecks(osExec, tree); !strings.Contains(got, "passed (exit 0)") || !strings.Contains(got, "all good") {
 		t.Errorf("got %q", got)
 	}
-	old := checkTimeout
-	checkTimeout = 200e6 // 200ms
-	t.Cleanup(func() { checkTimeout = old })
+	old := tools.CheckTimeout
+	tools.CheckTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { tools.CheckTimeout = old })
 	writeFile(t, filepath.Join(tree, ".wick", "check"), "sleep 5\n")
 	if got := runChecks(osExec, tree); !strings.Contains(got, "TIMED OUT") {
 		t.Errorf("a timed-out check must say so, got %q", got)
@@ -1539,5 +1542,35 @@ func TestReviewPromptFlagsContractChangeWithoutDocUpdate(t *testing.T) {
 		if !strings.Contains(prompt, "owning AGENTS.md") || !strings.Contains(prompt, "stale") {
 			t.Errorf("%s launch prompt must carry the DOX flag, got:\n%s", typ, prompt)
 		}
+	}
+}
+
+// A named map runs its default check at spawn time, the way the tool does.
+func TestRunChecksRunsTheNamedDefault(t *testing.T) {
+	tree := t.TempDir()
+	writeFile(t, filepath.Join(tree, ".wick", "check"), `{"default": "echo default-ok", "test": "echo test-ok"}`+"\n")
+	got := runChecks(osExec, tree)
+	if !strings.Contains(got, "passed (exit 0)") || !strings.Contains(got, "default-ok") {
+		t.Errorf("want the default check's pass, got %q", got)
+	}
+	if strings.Contains(got, "test-ok") {
+		t.Errorf("the wrong check ran, got %q", got)
+	}
+}
+
+// Without a default the spawn-time run takes the first name in order and
+// says which one it ran.
+func TestRunChecksFallsBackToTheFirstName(t *testing.T) {
+	tree := t.TempDir()
+	writeFile(t, filepath.Join(tree, ".wick", "check"), `{"zeta": "echo zeta-ok", "alpha": "echo alpha-ok"}`+"\n")
+	got := runChecks(osExec, tree)
+	if !strings.Contains(got, "alpha-ok") {
+		t.Errorf("want the first check's output, got %q", got)
+	}
+	if strings.Contains(got, "zeta-ok") {
+		t.Errorf("the wrong check ran, got %q", got)
+	}
+	if !strings.Contains(got, "alpha") {
+		t.Errorf("the packet must say which check ran, got %q", got)
 	}
 }

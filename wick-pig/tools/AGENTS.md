@@ -10,7 +10,9 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 serves: native fetch, then Jina, then an uninstalled browser tier),
 `bash.go`, `background.go`, `find.go`
 (plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
-with a Go fallback), `hashline.go` (tag-anchored edits),
+with a Go fallback), `check.go` (the repo's named checks from `.wick/check`:
+plain command or JSON name map, one `{args}` slot, metacharacters refused),
+`hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools and
 mcp_servers maps and their merge), `rename.go` (serve a tool under a new
@@ -37,6 +39,9 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   credentialed or token-like URLs to Jina.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
   self-test is a typed error naming `wick-pig deps`.
+- `check` shares its timeout (3 minutes), 60-line tail and status strings
+  between the tool and the harness spawn-time run; the map's `default`, or
+  its first name when no default exists, is what the spawn run executes.
 
 ## Work Guidance
 
