@@ -15,10 +15,10 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-// settingsUsage is printed on an unknown subcommand and on a bad argument.
 const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
+       wick-pig settings search provider|mode <value>
        wick-pig settings tool <name> enabled|placement|rename <value>
        wick-pig settings tool <name> role <role> enabled|placement <value>
        wick-pig settings mcp-server <name> command|args|placement|include|exclude <value>
@@ -87,6 +87,10 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 			return err
 		}
 		note = n
+	case "search":
+		if err := setSearch(&s, argv[1:]); err != nil {
+			return err
+		}
 	case "mcp-server":
 		n, err := setMCPServer(&s, argv[1:])
 		if err != nil {
@@ -446,6 +450,38 @@ func toolEntry(s *tools.Settings, name string) tools.ToolSetting {
 	return s.Tools[name]
 }
 
+// setSearch applies `search provider|mode <value>` to s. Values outside the
+// vocabulary are an error naming what is accepted, so a typo never saves a
+// provider the tool cannot resolve.
+func setSearch(s *tools.Settings, argv []string) error {
+	if len(argv) != 2 {
+		return fmt.Errorf("search needs a field and a value\n%s", settingsUsage)
+	}
+	if s.Search == nil {
+		s.Search = &tools.SearchSetting{}
+	}
+	field, value := argv[0], strings.ToLower(strings.TrimSpace(argv[1]))
+	switch field {
+	case "provider":
+		switch value {
+		case tools.SearchProviderAuto, tools.SearchProviderBrave, tools.SearchProviderExa:
+			s.Search.Provider = value
+		default:
+			return fmt.Errorf("unknown search provider %q (have auto, brave, exa)\n%s", argv[1], settingsUsage)
+		}
+	case "mode":
+		switch value {
+		case tools.SearchModeFallback, tools.SearchModeParallel:
+			s.Search.Mode = value
+		default:
+			return fmt.Errorf("unknown search mode %q (have fallback, parallel)\n%s", argv[1], settingsUsage)
+		}
+	default:
+		return fmt.Errorf("unknown search field %q (have provider, mode)\n%s", field, settingsUsage)
+	}
+	return nil
+}
+
 // setMCPServer applies `mcp-server ...` to s: field edits on a named server,
 // or `mcp-server remove <name>`. Lists (args, include, exclude) are comma
 // separated and replace; an empty value clears them. env takes one KEY=VALUE
@@ -622,6 +658,9 @@ func printSettings(out io.Writer, s tools.Settings) {
 	fmt.Fprintf(out, "decision-model: %s (%s)\n", orDefault(s.DecisionModel, systemone.JevModelPinned), s.SourceOf("decision_model"))
 	fmt.Fprintf(out, "threshold: %g (%s)\n", orDefault(s.Threshold, defaultThreshold), s.SourceOf("threshold"))
 	fmt.Fprintf(out, "max-workers: %d (%s)\n", s.EffectiveMaxWorkers(), maxWorkersSource(s))
+	fmt.Fprintf(out, "search: provider %s (%s), mode %s (%s)\n",
+		s.EffectiveSearchProvider(), s.SourceOf("search.provider"),
+		s.EffectiveSearchMode(), s.SourceOf("search.mode"))
 	for _, slot := range tools.RoleSlots {
 		r := s.Roles[slot]
 		fmt.Fprintf(out, "%s: harness %s (%s), model %s (%s), effort %s (%s)\n",

@@ -24,8 +24,8 @@ func TestNoRoleServesCodeReview(t *testing.T) {
 	}
 }
 
-// The review roles still reach only read and find, and implement still does not
-// hold the old review_worker tool.
+// The review roles still reach only read-only tools, and implement still does
+// not hold the old review_worker tool.
 func TestReviewRolesServeNothingThatWrites(t *testing.T) {
 	hermeticSettings(t)
 	for _, role := range []string{"review", "scout"} {
@@ -34,7 +34,7 @@ func TestReviewRolesServeNothingThatWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, tl := range served {
-			if n := tl.Name(); n != "read" && n != "find" {
+			if n := tl.Name(); n != "read" && n != "find" && n != "websearch" {
 				t.Errorf("%s role serves %s", role, n)
 			}
 		}

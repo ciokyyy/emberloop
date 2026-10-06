@@ -1,7 +1,7 @@
 ---
 name: worker
 description: "Implement one ticket in its own git worktree and report done or blocked."
-tools: [read, edit, write, bash, find, background]
+tools: [read, edit, write, bash, find, websearch, background]
 checkout: worktree
 blocking: false
 statuses: [done, blocked]

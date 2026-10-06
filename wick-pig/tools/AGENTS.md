@@ -10,15 +10,17 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 serves: native fetch, then Jina, then an uninstalled browser tier),
 `bash.go`, `background.go`, `find.go`
 (plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
-with a Go fallback), `git.go` (read-only inspection: diff, log, show,
-blame, status, ls-files, grep, rev-parse, merge-base, cat-file, branch
-and tag listing only), `check.go` (the repo's named checks from `.wick/check`:
-plain command or JSON name map, one `{args}` slot, metacharacters refused),
-`hashline.go` (tag-anchored edits),
+with a Go fallback), `websearch.go` (the provider-neutral search tool: Brave
+then Exa under auto, a 15-minute answer cache, quota rows; adapters and
+response parsing live in `websearch_providers.go`), `git.go` (read-only
+inspection: diff, log, show, blame, status, ls-files, grep, rev-parse,
+merge-base, cat-file, branch and tag listing only), `check.go` (the repo's
+named checks from `.wick/check`: plain command or JSON name map, one
+`{args}` slot, metacharacters refused), `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools and
-mcp_servers maps and their merge), `rename.go` (serve a tool under a new
-name), `usage.go`, `sandbox.go` (the bubblewrap
+mcp_servers maps, the search defaults and their merge), `rename.go` (serve a
+tool under a new name), `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `wick-pig deps` error), and `systemone/` (the
 decisions-model client the find cascade asks).
@@ -39,6 +41,14 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 - `read` refuses loopback, private and link-local URL targets on every
   redirect hop, caps the body near 10 MB at 20 s, and never sends
   credentialed or token-like URLs to Jina.
+- `websearch` answers from Brave then Exa under `auto` (a named provider
+  never falls back, a bad-query 4xx neither); keys come from
+  `BRAVE_API_KEY` and `EXA_API_KEY`, never settings or the database.
+  Answers cache 15 minutes keyed by query, resolved provider and arguments
+  (`fresh` bypasses); each live call writes one quota row with only what
+  the provider reported, and the footer reads the latest row that reports
+  something. `WICK_BRAVE_ENDPOINT` and `WICK_EXA_ENDPOINT` redirect the
+  adapters at test fakes.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
   self-test is a typed error naming `wick-pig deps`.
 - `check` shares its timeout (3 minutes), 60-line tail and status strings

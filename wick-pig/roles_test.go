@@ -19,7 +19,7 @@ func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "edit", "write", "bash", "find", "background", "spawn"}
+	want := []string{"read", "edit", "write", "bash", "find", "websearch", "background", "spawn"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("plan tools = %v, want %v", got, want)
 	}
@@ -37,7 +37,7 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "edit", "write", "find", "spawn", "finish", "tell"}
+	want := []string{"read", "edit", "write", "find", "websearch", "spawn", "finish", "tell"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("implement tools = %v, want %v", got, want)
 	}
@@ -209,5 +209,26 @@ func TestCheckPlacementMainServesIt(t *testing.T) {
 	}
 	if containsName(toolNames(served), "check") {
 		t.Fatalf("settings must not widen scout with check: %v", toolNames(served))
+	}
+}
+
+// Every role that can read serves websearch: researchers in every seat get
+// the same engine, and settings can still narrow it per role.
+func TestEveryReadingRoleServesWebsearch(t *testing.T) {
+	hermeticSettings(t)
+	for _, role := range []string{"implement", "plan", "work", "review", "scout", "full"} {
+		served, err := RoleTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, tool := range served {
+			if tool.Name() == "websearch" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s can read but does not serve websearch", role)
+		}
 	}
 }

@@ -1,7 +1,7 @@
 ---
 name: scout
 description: "Answer a factual question about this repository, with file:line citations. Facts only; it does not decide."
-tools: [read, find]
+tools: [read, find, websearch]
 checkout: none
 blocking: true
 statuses: [answered]

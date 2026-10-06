@@ -23,6 +23,8 @@ func hermeticSettings(t *testing.T) {
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
 	t.Setenv("WICK_MAX_WORKERS", "")
+	t.Setenv("WICK_SEARCH_PROVIDER", "")
+	t.Setenv("WICK_SEARCH_MODE", "")
 }
 
 // writeSettingsFile points the global store at a temp file holding body.
@@ -37,6 +39,8 @@ func writeSettingsFile(t *testing.T, body string) {
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
 	t.Setenv("WICK_MAX_WORKERS", "")
+	t.Setenv("WICK_SEARCH_PROVIDER", "")
+	t.Setenv("WICK_SEARCH_MODE", "")
 }
 
 // fakeTool is a named tool for the resolution tests.
