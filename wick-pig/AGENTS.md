@@ -16,7 +16,8 @@ owns its `_test.go` and the behaviour below):
 
 - Sessions and harnesses: `harness.go` (pig/claude commands, system prompt),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
-  (pane launch text), `commands.go`, `skills.go`
+  (pane launch text), `commands.go`, `skills.go`, `install.go` (the live-agent
+  gate, ending with the deps step), `deps.go` (the `wick-pig deps` installer)
 - Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),
   `workerqueue.go` (worker-cap queue and drain), `grid.go`, `tile.go`,

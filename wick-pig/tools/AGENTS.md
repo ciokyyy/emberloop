@@ -10,16 +10,17 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 serves: native fetch, then Jina, then an uninstalled browser tier),
 `bash.go`, `background.go`, `find.go`
 (plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
-with a Go fallback), `websearch.go` (the provider-neutral search tool: Brave
-then Exa under auto, a 15-minute answer cache, quota rows; adapters and
-response parsing live in `websearch_providers.go`), `git.go` (read-only
-inspection: diff, log, show, blame, status, ls-files, grep, rev-parse,
-merge-base, cat-file, branch and tag listing only), `check.go` (the repo's
-named checks from `.wick/check`: plain command or JSON name map, one
-`{args}` slot, metacharacters refused), `hashline.go` (tag-anchored edits),
+via the shared bin-dir-then-PATH resolver with a Go fallback), `websearch.go`
+(the provider-neutral search tool: Brave then Exa under auto, a 15-minute
+answer cache, quota rows; adapters and response parsing live in
+`websearch_providers.go`), `git.go` (read-only inspection: diff, log, show,
+blame, status, ls-files, grep, rev-parse, merge-base, cat-file, branch
+and tag listing only), `check.go` (the repo's named checks from `.wick/check`:
+plain command or JSON name map, one `{args}` slot, metacharacters refused),
+`hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
-`credentials.go`, `settings.go` (global and project files, the tools and
-mcp_servers maps, the search defaults and their merge), `rename.go` (serve a
+`credentials.go`, `settings.go` (global and project files, the tools,
+mcp_servers, search and graph maps and their merge), `rename.go` (serve a
 tool under a new name), `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `wick-pig deps` error), `mcpclient.go` (the stdio JSON-RPC client
@@ -53,6 +54,9 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   adapters at test fakes.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
   self-test is a typed error naming `wick-pig deps`.
+- Binaries resolve from the wick bin directory first, then PATH, through the
+  shared resolver the installer, grep, the sandbox runner, execute and the
+  graph use.
 - `check` shares its timeout (3 minutes), 60-line tail and status strings
   between the tool and the harness spawn-time run; the map's `default`, or
   its first name when no default exists, is what the spawn run executes.

@@ -55,6 +55,13 @@ func DefaultPlacement(name string) string {
 	}
 }
 
+// GraphSetting tunes the optional code graph.
+type GraphSetting struct {
+	Enabled  *bool  `json:"enabled,omitempty"`
+	Binary   string `json:"binary,omitempty"`
+	CacheDir string `json:"cache_dir,omitempty"`
+}
+
 // ToolRoleOverride overrides a tool entry for one role. Only enabled and
 // placement are per-role; the rename is global to every role.
 type ToolRoleOverride struct {
@@ -120,6 +127,8 @@ type Settings struct {
 	Tools map[string]ToolSetting `json:"tools,omitempty"`
 	// MCPServers registers outside MCP servers by name.
 	MCPServers map[string]MCPServerSetting `json:"mcp_servers,omitempty"`
+	// Graph tunes the optional code graph binary.
+	Graph GraphSetting `json:"graph,omitempty"`
 	// extra holds top-level keys wick does not know yet, so a save writes them
 	// back and the file can grow without a version bump. Never written from the
 	// struct itself; SaveSettings merges it in.
@@ -139,6 +148,8 @@ type Settings struct {
 	mcpExtra      map[string]map[string]json.RawMessage
 	toolRoleExtra map[string]map[string]map[string]json.RawMessage
 	mcpRoleExtra  map[string]map[string]map[string]json.RawMessage
+	// graphExtra holds unknown fields inside the graph object.
+	graphExtra map[string]json.RawMessage
 	// src names where a top-level value came from: "file", "env" or "default".
 	// Print uses it to show a value's origin.
 	src map[string]string
@@ -207,6 +218,23 @@ func (s *Settings) searchSetting() *SearchSetting {
 		s.Search = &SearchSetting{}
 	}
 	return s.Search
+}
+
+func (s Settings) GraphEnabled() bool {
+	if s.Graph.Enabled == nil {
+		return true
+	}
+	return *s.Graph.Enabled
+}
+
+// GraphBinaryPath is the explicit graph binary from settings, or "".
+func (s Settings) GraphBinaryPath() string {
+	return s.Graph.Binary
+}
+
+// GraphCacheDir is the graph cache directory override, or "".
+func (s Settings) GraphCacheDir() string {
+	return s.Graph.CacheDir
 }
 
 // SourceOf names where a top-level value came from: "file", "env" or
@@ -308,6 +336,8 @@ func decodeSettings(raw []byte) Settings {
 		case "mcp_servers":
 			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "placement", "include", "exclude", "rename", "roles"})
 			s.mcpRoleExtra = unknownOverrideFields(v)
+		case "graph":
+			s.graphExtra = unknownGraphFields(v)
 		default:
 			s.extra[k] = v
 		}
@@ -406,6 +436,15 @@ func markToolSources(s *Settings) {
 			}
 		}
 	}
+	if s.Graph.Enabled != nil {
+		s.src["graph.enabled"] = "file"
+	}
+	if s.Graph.Binary != "" {
+		s.src["graph.binary"] = "file"
+	}
+	if s.Graph.CacheDir != "" {
+		s.src["graph.cache_dir"] = "file"
+	}
 }
 
 // unknownRoleFields collects, per slot, the keys inside a role object that are
@@ -445,6 +484,27 @@ func unknownSearchFields(rawSearch json.RawMessage) map[string]json.RawMessage {
 	for k, v := range searchFields {
 		switch strings.ToLower(k) {
 		case "provider", "mode":
+		default:
+			if out == nil {
+				out = map[string]json.RawMessage{}
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// unknownGraphFields collects the keys inside a graph object that are not
+// enabled, binary or cache_dir, so a save writes them back.
+func unknownGraphFields(raw json.RawMessage) map[string]json.RawMessage {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil
+	}
+	var out map[string]json.RawMessage
+	for k, v := range fields {
+		switch strings.ToLower(k) {
+		case "enabled", "binary", "cache_dir":
 		default:
 			if out == nil {
 				out = map[string]json.RawMessage{}
@@ -566,6 +626,9 @@ func SaveSettings(s Settings) error {
 	if err := mergeOverrideExtras(fields, "mcp_servers", s.mcpRoleExtra); err != nil {
 		return err
 	}
+	if err := mergeGraphExtras(fields, s.graphExtra); err != nil {
+		return err
+	}
 	raw, err := json.MarshalIndent(fields, "", "  ")
 	if err != nil {
 		return err
@@ -603,6 +666,30 @@ func mergeRoleExtras(fields map[string]json.RawMessage, roleExtra map[string]map
 		return err
 	}
 	fields["roles"] = raw
+	return nil
+}
+
+// mergeGraphExtras writes the unknown fields of the graph object back.
+func mergeGraphExtras(fields map[string]json.RawMessage, graphExtra map[string]json.RawMessage) error {
+	if len(graphExtra) == 0 {
+		return nil
+	}
+	graph := map[string]json.RawMessage{}
+	if raw, ok := fields["graph"]; ok {
+		if err := json.Unmarshal(raw, &graph); err != nil {
+			return err
+		}
+	}
+	for k, v := range graphExtra {
+		if _, ok := graph[k]; !ok {
+			graph[k] = v
+		}
+	}
+	raw, err := json.Marshal(graph)
+	if err != nil {
+		return err
+	}
+	fields["graph"] = raw
 	return nil
 }
 
@@ -795,6 +882,7 @@ func MergeSettings(global, project Settings) Settings {
 	out.toolExtra = cloneNestedRawMap(global.toolExtra)
 	out.mcpExtra = cloneNestedRawMap(global.mcpExtra)
 	out.toolRoleExtra = cloneDeepNestedRawMap(global.toolRoleExtra)
+	out.graphExtra = cloneRawMap(global.graphExtra)
 	out.mcpRoleExtra = cloneDeepNestedRawMap(global.mcpRoleExtra)
 	if out.src == nil {
 		out.src = map[string]string{}
@@ -819,6 +907,7 @@ func MergeSettings(global, project Settings) Settings {
 	for k, v := range project.searchExtra {
 		out.searchExtra[k] = v
 	}
+	out.Graph = mergeGraph(global.Graph, project.Graph, out.src)
 	for k, v := range project.extra {
 		out.extra[k] = v
 	}
@@ -826,7 +915,29 @@ func MergeSettings(global, project Settings) Settings {
 	mergeNestedRaw(project.toolExtra, out.toolExtra)
 	mergeNestedRaw(project.mcpExtra, out.mcpExtra)
 	mergeDeepNestedRaw(project.toolRoleExtra, out.toolRoleExtra)
+	for k, v := range project.graphExtra {
+		out.graphExtra[k] = v
+	}
 	mergeDeepNestedRaw(project.mcpRoleExtra, out.mcpRoleExtra)
+	return out
+}
+
+// mergeGraph folds project graph settings over global ones field by field.
+func mergeGraph(global, project GraphSetting, src map[string]string) GraphSetting {
+	out := global
+	if project.Enabled != nil {
+		v := *project.Enabled
+		out.Enabled = &v
+		src["graph.enabled"] = "project"
+	}
+	if project.Binary != "" {
+		out.Binary = project.Binary
+		src["graph.binary"] = "project"
+	}
+	if project.CacheDir != "" {
+		out.CacheDir = project.CacheDir
+		src["graph.cache_dir"] = "project"
+	}
 	return out
 }
 

@@ -312,9 +312,17 @@ const installUsage = `usage: wick-pig install [--force]
   Rebuild wick-pig, wick-mcp and wick-tui from this source checkout and install them.
   Refuses while any agent of a run is live (worker, reviewer or scout),
   naming the agents, and changes nothing. --force installs anyway: running
-  sessions keep the old binary until they restart.
+  sessions keep the old binary until they restart. Ends with the same step
+  as wick-pig deps, proving every external dependency.
 
   This is the only way to replace the installed wick binaries.`
+
+// runInstallDeps is the dependency step at the end of `wick-pig install`.
+// A var so tests stub it with a fake instead of real package installs and
+// downloads.
+var runInstallDeps = func(out io.Writer) error {
+	return InstallDeps(out, DepsConfig{})
+}
 
 // RunInstall serves `wick-pig install`. It rebuilds every binary through
 // the gate: live agents refuse with their names, --force installs anyway
@@ -339,6 +347,9 @@ func RunInstall(argv []string, out io.Writer) error {
 	fmt.Fprintf(out, "installed wick-pig, wick-mcp and wick-tui into %s\n", res.Dir)
 	if res.Warning != "" {
 		fmt.Fprintln(out, res.Warning)
+	}
+	if err := runInstallDeps(out); err != nil {
+		return err
 	}
 	return nil
 }

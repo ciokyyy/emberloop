@@ -390,3 +390,25 @@ func TestGrepCappedOffMatchStaysOutOfSharedContext(t *testing.T) {
 		t.Errorf("backends disagree:\nrg:\n%s\ngo:\n%s", rg, fallback)
 	}
 }
+
+// Seam (ticket 19): installer — grep resolves rg through the shared binary
+// resolver (bin directory first, then PATH), so the installer and the tool
+// agree on what "installed" means.
+func TestGrepResolvesRgThroughTheSharedResolver(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "rg")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_BIN_DIR", dir)
+	if got := rgPath(); got != fake {
+		t.Fatalf("rgPath() = %q, want the bin-directory fake %q", got, fake)
+	}
+	resolved, err := ResolveBinary("rg")
+	if err != nil {
+		t.Fatalf("ResolveBinary(rg) must find the fake: %v", err)
+	}
+	if resolved != fake {
+		t.Fatalf("ResolveBinary(rg) = %q, want %q", resolved, fake)
+	}
+}
