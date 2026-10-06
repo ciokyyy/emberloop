@@ -4,13 +4,13 @@
 
 **Blocked by:** 09, 10, 11, 12, 13, 14
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A script calls `tools.read`, `tools.grep`, `tools.git`, `tools.find`, and for allowed roles `tools.check` and `tools.bash`
-- [ ] A refused or failing tool call raises a catchable `ToolError`; an uncaught exception returns the traceback tail
-- [ ] A disabled tool is not callable; renamed tools appear under the new name; `Guard` limits still apply for guarded roles
-- [ ] Timeout kills the process group; the temp directory and socket are removed after every call
-- [ ] Over-threshold output is stored and summarised; `intent` returns matching chunks inline
-- [ ] For `review` and `scout`, the script cannot write files or reach the network, yet `tools.check` can still write its own caches; with the sandbox broken, `execute` refuses and names `wick-pig deps`
-- [ ] `tools.search` and `tools.help` work; the description lists the tools behind `execute`
-- [ ] `implement` does not get `execute`; real-`python3` tests skip clearly when absent; repo check passes
+- [x] A script calls `tools.read`, `tools.grep`, `tools.git`, `tools.find`, and for allowed roles `tools.check` and `tools.bash`
+- [x] A refused or failing tool call raises a catchable `ToolError`; an uncaught exception returns the traceback tail
+- [x] A disabled tool is not callable; renamed tools appear under the new name; `Guard` limits still apply for guarded roles
+- [x] Timeout kills the process group; the temp directory and socket are removed after every call
+- [x] Over-threshold output is stored and summarised; `intent` returns matching chunks inline
+- [x] For `review` and `scout`, the script cannot write files or reach the network, yet `tools.check` can still write its own caches; with the sandbox broken, `execute` refuses and names `wick-pig deps`
+- [x] `tools.search` and `tools.help` work; the description lists the tools behind `execute`
+- [x] `implement` does not get `execute`; real-`python3` tests skip clearly when absent; repo check passes
