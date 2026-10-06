@@ -90,6 +90,9 @@ func TestVoiceReminderReachesEveryTurn(t *testing.T) {
 	if err := json.Unmarshal([]byte(claudeStopGate), &cfg); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(claudeStopGate, `"awaySummaryEnabled":false`) {
+		t.Error("claude settings must turn the away recap off")
+	}
 	if got := cfg.Hooks["UserPromptSubmit"]; len(got) != 1 || got[0].Hooks[0].Command != "wick-pig voice-reminder hook" {
 		t.Errorf("claude settings must run the reminder hook on every prompt, got %+v", got)
 	}
@@ -145,5 +148,24 @@ func TestBriefPutsDeclinedFindingsInTheSubmitSummary(t *testing.T) {
 	}
 	if !strings.Contains(text, "in your submit summary") {
 		t.Errorf("the brief must send declined findings to the submit summary:\n%s", text)
+	}
+}
+
+// A claude agent never writes the away recap: it is one more unrequested
+// message, and its pane has no person to welcome back.
+func TestClaudeLaunchDisablesTheAwayRecap(t *testing.T) {
+	isolateState(t)
+	cmd, err := claudeHarness{}.Command(Session{Role: "work", Cwd: t.TempDir(), ID: "recap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range cmd.Env {
+		if e == "CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("claude env must switch the away recap off, got %v", cmd.Env)
 	}
 }
