@@ -756,23 +756,86 @@ func fetchJina(ctx context.Context, target string) (tierResult, error) {
 // features. Each resolves through the shared bin-dir-then-PATH resolver.
 var browserNames = []string{"chrome-headless-shell", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"}
 
-// browserBinary finds the tier-3 browser. WICK_CHROME_BIN names the exact
-// binary (the operator full-Chrome fallback path, and the test seam);
-// otherwise the research order above resolves through the shared resolver.
+// browserBinaries lists every usable tier-3 browser in launch order.
+// WICK_CHROME_BIN names the exact binary (the operator full-Chrome fallback
+// path, and the test seam); otherwise every resolvable name above is tried
+// shell-first, so a page the shell cannot render falls back to full Chrome.
 // A miss keeps the clear "not installed" error tier 3 always returned.
-func browserBinary() (string, error) {
+func browserBinaries() ([]string, error) {
 	if p := strings.TrimSpace(os.Getenv("WICK_CHROME_BIN")); p != "" {
 		if isExecutable(p) {
-			return p, nil
+			return []string{p}, nil
 		}
-		return "", fmt.Errorf("browser tier (tier 3) not installed: WICK_CHROME_BIN=%q is not executable; install chrome-headless-shell with `wick-pig deps`", p)
+		return nil, fmt.Errorf("browser tier (tier 3) not installed: WICK_CHROME_BIN=%q is not executable; install chrome-headless-shell with `wick-pig deps`", p)
 	}
+	var bins []string
 	for _, name := range browserNames {
 		if p, err := ResolveBinary(name); err == nil {
-			return p, nil
+			bins = append(bins, p)
 		}
 	}
-	return "", fmt.Errorf("browser tier (tier 3) not installed: no stealth browser is configured yet; the page is out of reach")
+	if len(bins) == 0 {
+		return nil, fmt.Errorf("browser tier (tier 3) not installed: no chrome-headless-shell or Chrome/Chromium in %s or PATH; install with `wick-pig deps`", BinDir())
+	}
+	return bins, nil
+}
+
+// browserHostBlockRules keeps tier-3 navigation off local ranges inside the
+// browser, which does its own DNS: every private, link-local and
+// unspecified IPv4 literal resolves to NOTFOUND there, and loopback too
+// unless WICK_URL_ALLOW_LOOPBACK=1 lifts it (the same flag that lifts it
+// for tiers 1-2).
+func browserHostBlockRules() string {
+	rules := []string{
+		"MAP 10.* ~NOTFOUND",
+		"MAP 172.16.* ~NOTFOUND", "MAP 172.17.* ~NOTFOUND", "MAP 172.18.* ~NOTFOUND", "MAP 172.19.* ~NOTFOUND",
+		"MAP 172.20.* ~NOTFOUND", "MAP 172.21.* ~NOTFOUND", "MAP 172.22.* ~NOTFOUND", "MAP 172.23.* ~NOTFOUND",
+		"MAP 172.24.* ~NOTFOUND", "MAP 172.25.* ~NOTFOUND", "MAP 172.26.* ~NOTFOUND", "MAP 172.27.* ~NOTFOUND",
+		"MAP 172.28.* ~NOTFOUND", "MAP 172.29.* ~NOTFOUND", "MAP 172.30.* ~NOTFOUND", "MAP 172.31.* ~NOTFOUND",
+		"MAP 192.168.* ~NOTFOUND", "MAP 169.254.* ~NOTFOUND", "MAP 0.0.0.0 ~NOTFOUND",
+	}
+	if !allowLoopback() {
+		rules = append(rules, "MAP 127.* ~NOTFOUND")
+	}
+	return strings.Join(rules, ", ")
+}
+
+// resolveBrowserURL follows the redirect chain with the checked tier-1
+// client and returns the final URL, so the browser launches at the same
+// hop-checked address tier 1 validated instead of re-following it blind.
+func resolveBrowserURL(ctx context.Context, target string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", urlBrowserUA)
+	resp, err := newURLClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	_, _, rerr := readCappedBody(resp)
+	if rerr != nil {
+		return "", rerr
+	}
+	return resp.Request.URL.String(), nil
+}
+
+// chromeSandboxArgs passes --no-sandbox only where the sandbox cannot run
+// (root, containers without userns): untrusted page JS otherwise keeps
+// Chrome's own sandbox.
+func chromeSandboxArgs() []string {
+	if os.Geteuid() == 0 || os.Getenv("WICK_CHROME_NO_SANDBOX") == "1" {
+		return []string{"--no-sandbox"}
+	}
+	return nil
+}
+
+// isBrowserErrorPage reports a Chrome navigation-error dump: the browser
+// reached no page (blocked address, dead host), so there is no content to
+// shape.
+func isBrowserErrorPage(body string) bool {
+	return strings.Contains(body, "chromewebdata")
 }
 
 // cappedWriter streams command output through the shared body cap instead of
@@ -798,26 +861,23 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// browserTier renders target through the tier-3 browser and returns the
-// rendered HTML. The same safety rules as tiers 1-2 apply: the address
-// block is checked before launch, the run keeps the shared timeout, and
-// the body keeps the shared cap. The browser fetches directly (no third
-// party), so credentialed and token-like URLs are safe here, unlike at
-// Jina. Per-request launch keeps no resident browser: tier 3 fires rarely,
-// one page at a time, and there is no daemon to leak.
-func browserTier(ctx context.Context, target string) (string, bool, error) {
-	if err := checkURLAllowed(target); err != nil {
-		return "", false, err
-	}
-	bin, err := browserBinary()
+// runBrowserOnce renders target with one browser binary and returns the
+// rendered HTML. Each run gets a fresh profile directory, removed
+// afterwards, and WaitDelay bounds pipe waits past a timeout kill.
+func runBrowserOnce(ctx context.Context, bin, target string) (string, bool, error) {
+	profile, err := os.MkdirTemp("", "wick-chrome-*")
 	if err != nil {
 		return "", false, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, urlTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin,
-		"--headless", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
+	defer os.RemoveAll(profile)
+	args := append([]string{"--headless", "--disable-gpu"},
+		chromeSandboxArgs()...)
+	args = append(args, "--disable-dev-shm-usage",
+		"--user-data-dir="+profile,
+		"--host-resolver-rules="+browserHostBlockRules(),
 		"--dump-dom", "--virtual-time-budget=8000", target)
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = 10 * time.Second
 	var stdout, stderr cappedWriter
 	stdout.cap = urlBodyCap()
 	stderr.cap = 4096
@@ -844,7 +904,48 @@ func browserTier(ctx context.Context, target string) (string, bool, error) {
 	if strings.TrimSpace(body) == "" {
 		return "", false, fmt.Errorf("browser tier (tier 3) returned an empty page")
 	}
+	if isBrowserErrorPage(body) {
+		return "", false, fmt.Errorf("browser tier (tier 3) failed: the page did not load (navigation blocked or unreachable)")
+	}
 	return body, stdout.over, nil
+}
+
+// browserTier renders target through the tier-3 browser and returns the
+// rendered HTML. The same safety rules as tiers 1-2 apply: the address
+// block is checked before launch and again after redirect resolution, the
+// browser's own resolver blocks local ranges too, the run keeps the shared
+// timeout, and the body keeps the shared cap. The browser fetches directly
+// (no third party), so credentialed and token-like URLs are safe here,
+// unlike at Jina. Per-request launch keeps no resident browser: tier 3
+// fires rarely, one page at a time, and there is no daemon to leak.
+// Residual risk: page-script subresource fetches inside the browser are
+// covered only by the resolver rules (IPv4 ranges), not per-hop checks.
+func browserTier(ctx context.Context, target string) (string, bool, error) {
+	if err := checkURLAllowed(target); err != nil {
+		return "", false, err
+	}
+	bins, err := browserBinaries()
+	if err != nil {
+		return "", false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, urlTimeout())
+	defer cancel()
+	final, err := resolveBrowserURL(ctx, target)
+	if err != nil {
+		return "", false, err
+	}
+	if err := checkURLAllowed(final); err != nil {
+		return "", false, err
+	}
+	var last error
+	for _, bin := range bins {
+		body, over, rerr := runBrowserOnce(ctx, bin, final)
+		if rerr == nil {
+			return body, over, nil
+		}
+		last = rerr
+	}
+	return "", false, last
 }
 
 // renderBrowserTier answers from the tier-3 browser: rendered HTML through

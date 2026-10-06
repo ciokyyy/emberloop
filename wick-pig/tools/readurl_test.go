@@ -871,3 +871,186 @@ func TestReadURLTier3OversizeCapped(t *testing.T) {
 	}
 	mustContain(t, out, "tier3", "capped")
 }
+
+func writeExecFake(t *testing.T, dir, name, script string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestReadURLTier3LaunchFailureReportsStderr(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	bin := writeExecFake(t, t.TempDir(), "chrome-headless-shell", "#!/bin/sh\necho boom happened >&2\nexit 3\n")
+	t.Setenv("WICK_CHROME_BIN", bin)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := readURLPath(t, srv.URL+"/dead")
+	if err == nil || !strings.Contains(err.Error(), "failed") || !strings.Contains(err.Error(), "boom happened") {
+		t.Fatalf("launch failure must report stderr, got %v", err)
+	}
+}
+
+func TestReadURLTier3EmptyPage(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	bin := writeExecFake(t, t.TempDir(), "chrome-headless-shell", "#!/bin/sh\nexit 0\n")
+	t.Setenv("WICK_CHROME_BIN", bin)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := readURLPath(t, srv.URL+"/dead")
+	if err == nil || !strings.Contains(err.Error(), "empty page") {
+		t.Fatalf("empty render must error, got %v", err)
+	}
+}
+
+func TestReadURLTier3ShellFallbackToFullChrome(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	dir := t.TempDir()
+	writeExecFake(t, dir, "chrome-headless-shell", "#!/bin/sh\nexit 1\n")
+	bodyFile := filepath.Join(dir, "body.html")
+	if err := os.WriteFile(bodyFile, []byte(`<html><body><h1>Fallback chrome render</h1><p>`+strings.Repeat("Full chrome words with plenty of descriptive text. ", 6)+`</p></body></html>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecFake(t, dir, "chromium", "#!/bin/sh\ncat "+bodyFile+"\n")
+	t.Setenv("WICK_BIN_DIR", dir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/dead")
+	if err != nil {
+		t.Fatalf("shell failure must fall back to full chrome: %v", err)
+	}
+	mustContain(t, out, "tier3", "Fallback chrome render")
+}
+
+func TestReadURLTier3ShellFirstWins(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	dir := t.TempDir()
+	shellBody := filepath.Join(dir, "shell.html")
+	if err := os.WriteFile(shellBody, []byte(`<html><body><h1>Shell render wins</h1><p>`+strings.Repeat("Shell words with plenty of descriptive text. ", 6)+`</p></body></html>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecFake(t, dir, "chrome-headless-shell", "#!/bin/sh\ncat "+shellBody+"\n")
+	otherBody := filepath.Join(dir, "other.html")
+	if err := os.WriteFile(otherBody, []byte(`<html><body><h1>Other render loses</h1><p>`+strings.Repeat("Other words with plenty of descriptive text. ", 6)+`</p></body></html>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecFake(t, dir, "chromium", "#!/bin/sh\ncat "+otherBody+"\n")
+	t.Setenv("WICK_BIN_DIR", dir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/dead")
+	if err != nil {
+		t.Fatalf("shell render: %v", err)
+	}
+	mustContain(t, out, "tier3", "Shell render wins")
+	mustNotContain(t, out, "Other render loses")
+}
+
+func TestReadURLTier3LaunchArgs(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	argsFile := startBrowserFake(t, `<html><body><h1>Args probe page</h1><p>`+strings.Repeat("Args probe words with plenty of descriptive text. ", 6)+`</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := readURLPath(t, srv.URL+"/dead"); err != nil {
+		t.Fatalf("args probe: %v", err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(raw)
+	for _, want := range []string{"--dump-dom", "--user-data-dir=", "--host-resolver-rules=", "--disable-dev-shm-usage"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("browser args missing %q:\n%s", want, args)
+		}
+	}
+	if os.Geteuid() == 0 || os.Getenv("WICK_CHROME_NO_SANDBOX") == "1" {
+		if !strings.Contains(args, "--no-sandbox") {
+			t.Errorf("root must pass --no-sandbox:\n%s", args)
+		}
+	} else if strings.Contains(args, "--no-sandbox") {
+		t.Errorf("non-root must keep the browser sandbox:\n%s", args)
+	}
+}
+
+func TestReadURLTier3RedirectResolvedBeforeLaunch(t *testing.T) {
+	allowLocal(t)
+	jf := startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	argsFile := startBrowserFake(t, `<html><body><h1>Final page render</h1><p>`+strings.Repeat("Final page words with plenty of descriptive text. ", 6)+`</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "/final", http.StatusFound)
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<html><head><title>App</title></head><body><div id="app"></div></body></html>`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/start")
+	if err != nil {
+		t.Fatalf("redirected page via browser: %v", err)
+	}
+	mustContain(t, out, "tier3", "Final page render")
+	if jf.count() != 1 {
+		t.Errorf("jina hits = %d, want 1", jf.count())
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "/final") {
+		t.Errorf("browser must launch at the resolved final URL, got:\n%s", string(raw))
+	}
+}
+
+func TestBrowserHostBlockRules(t *testing.T) {
+	t.Setenv("WICK_URL_ALLOW_LOOPBACK", "")
+	blocked := browserHostBlockRules()
+	for _, want := range []string{"MAP 10.* ~NOTFOUND", "MAP 192.168.* ~NOTFOUND", "MAP 169.254.* ~NOTFOUND", "MAP 127.* ~NOTFOUND", "MAP 0.0.0.0 ~NOTFOUND", "MAP 172.31.* ~NOTFOUND"} {
+		if !strings.Contains(blocked, want) {
+			t.Errorf("rules missing %q: %s", want, blocked)
+		}
+	}
+	t.Setenv("WICK_URL_ALLOW_LOOPBACK", "1")
+	if strings.Contains(browserHostBlockRules(), "MAP 127.* ~NOTFOUND") {
+		t.Errorf("allow-loopback must lift only the loopback rule: %s", browserHostBlockRules())
+	}
+	if !strings.Contains(browserHostBlockRules(), "MAP 10.* ~NOTFOUND") {
+		t.Errorf("allow-loopback must keep private ranges blocked: %s", browserHostBlockRules())
+	}
+}
