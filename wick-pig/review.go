@@ -1,6 +1,8 @@
 package wick
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -308,11 +310,14 @@ type reviewer struct {
 	// Verdict holds at VerdictAt only: a pass on an older commit is stale,
 	// unless VerdictTree, the git tree of the content judged, is the content
 	// the commit holds: committing reviewed work changes nothing it judged.
-	Verdict     string `json:"verdict"`
-	VerdictAt   string `json:"verdict_at"`
-	VerdictTree string `json:"verdict_tree,omitempty"`
-	// Findings is its last reply, kept to brief a replacement.
-	Findings string `json:"findings"`
+	// VerdictPatch is the same pass keyed by change instead of place: the
+	// hash of the worker's own diff from its base, which a clean rebase leaves
+	// identical while a conflicting or content-changing rebase alters.
+	Verdict      string `json:"verdict"`
+	VerdictAt    string `json:"verdict_at"`
+	VerdictTree  string `json:"verdict_tree,omitempty"`
+	VerdictPatch string `json:"verdict_patch,omitempty"`
+	Findings     string `json:"findings"`
 }
 
 func (r reviewer) agent() readOnlyAgent {
@@ -403,7 +408,7 @@ func storeReviewerPane(tree, typ string, r reviewer) error {
 		}
 		prev := all[key][typ]
 		if prev.Verdict != "" {
-			r.Verdict, r.VerdictAt, r.VerdictTree, r.Findings = prev.Verdict, prev.VerdictAt, prev.VerdictTree, prev.Findings
+			r.Verdict, r.VerdictAt, r.VerdictTree, r.VerdictPatch, r.Findings = prev.Verdict, prev.VerdictAt, prev.VerdictTree, prev.VerdictPatch, prev.Findings
 		}
 		all[key][typ] = r
 		return nil
@@ -413,14 +418,16 @@ func storeReviewerPane(tree, typ string, r reviewer) error {
 // mergeReviewerVerdict folds a reviewer's submit into the record for its
 // worktree: its status is the verdict, its report the findings kept for
 // follow-ups and for briefing a replacement, and reviewed the commit it judged.
-func mergeReviewerVerdict(tree, typ, verdict, at, reviewed, treeID, findings string) error {
+// treeID is the content snapshot it judged and patch its change identity: the
+// gate accepts a pass when either matches the tip.
+func mergeReviewerVerdict(tree, typ, verdict, at, reviewed, treeID, patch, findings string) error {
 	return updateReviewers(func(all map[string]map[string]reviewer) error {
 		key := filepath.Clean(tree)
 		if all[key] == nil {
 			all[key] = map[string]reviewer{}
 		}
 		r := all[key][typ]
-		r.Verdict, r.VerdictAt, r.VerdictTree, r.Reviewed, r.Findings = verdict, at, treeID, reviewed, findings
+		r.Verdict, r.VerdictAt, r.VerdictTree, r.VerdictPatch, r.Reviewed, r.Findings = verdict, at, treeID, patch, reviewed, findings
 		all[key][typ] = r
 		return nil
 	})
@@ -447,8 +454,11 @@ func closeReviewers(run Exec, tree string) {
 
 // reviewGate is why the worktree at tree, whose tip is head, may not merge
 // yet, or "" when every required reviewer type passed at head. A type whose
-// pass holds (holds[type]) needs a pass at some commit, not at head.
-func reviewGate(tree, head, headTree string, required []string, holds map[string]bool) string {
+// pass holds (holds[type]) needs a pass at some commit, not at head. Otherwise
+// a pass counts when its content (VerdictTree against headTree) or its change
+// (VerdictPatch against headPatch) matches the tip, so a clean rebase keeps
+// the pass while a conflicting or content-changing one does not.
+func reviewGate(tree, head, headTree, headPatch string, required []string, holds map[string]bool) string {
 	have := reviewersOf(tree)
 	var missing []string
 	for _, typ := range required {
@@ -458,7 +468,7 @@ func reviewGate(tree, head, headTree string, required []string, holds map[string
 			missing = append(missing, typ+": no review yet")
 		case r.Verdict != verdictPass:
 			missing = append(missing, fmt.Sprintf("%s: %s at %s", typ, r.Verdict, short(r.VerdictAt)))
-		case r.VerdictAt != head && !holds[typ] && (r.VerdictTree == "" || r.VerdictTree != headTree):
+		case r.VerdictAt != head && !holds[typ] && !passCoversTip(r, headTree, headPatch):
 			missing = append(missing, fmt.Sprintf("%s: passed at %s, not at the tip %s", typ, short(r.VerdictAt), short(head)))
 		}
 	}
@@ -522,14 +532,47 @@ func snapshotTree(run Exec, tree string) string {
 	return strings.TrimSpace(res.Stdout)
 }
 
-// samePassState says the pass on record covers the content in p: the same
+// samePassState says the pass on record covers the exact content in p: the same
 // tree when both know it, so changed code is reviewed again and unchanged code
-// is not; the commit string otherwise.
+// is not; the commit string otherwise. It stays exact on purpose: a clean
+// rebase moves the tree, so only the patch identity (passCovers) keeps a pass
+// there, while a changes verdict still gets its follow-up.
 func samePassState(prev reviewer, p *reviewPacket) bool {
 	if prev.VerdictTree != "" && p.treeID != "" {
 		return prev.VerdictTree == p.treeID
 	}
 	return prev.VerdictAt == p.verdictAt
+}
+
+// patchIDOf is the identity of the worker's own change: the SHA-256 of its
+// diff from its base. The diff names no commit, only the change itself, so the
+// hash does not depend on where the branch sits: a clean rebase leaves it
+// identical, a conflict resolution or an edit alters it. Empty when there is
+// no change, so an empty diff never matches a judged one.
+func patchIDOf(diff string) string {
+	if strings.TrimSpace(diff) == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(diff))
+	return hex.EncodeToString(sum[:])
+}
+
+// passCoversTip says a pass on record covers the tip: its content matches, or
+// its change identity does. Either opens the gate.
+func passCoversTip(r reviewer, headTree, headPatch string) bool {
+	if r.VerdictTree != "" && headTree != "" && r.VerdictTree == headTree {
+		return true
+	}
+	return r.VerdictPatch != "" && headPatch != "" && r.VerdictPatch == headPatch
+}
+
+// passCovers says a pass on record covers the packet: the exact content, or
+// the same change on a new base after a clean rebase.
+func passCovers(prev reviewer, p *reviewPacket) bool {
+	if samePassState(prev, p) {
+		return true
+	}
+	return prev.VerdictPatch != "" && p.patchID != "" && prev.VerdictPatch == p.patchID
 }
 
 func workerAt(tree string) *Worker {
@@ -597,6 +640,7 @@ type reviewPacket struct {
 	tree, head, base string
 	verdictAt        string // head, or head+"+uncommitted" when the tree is dirty
 	treeID           string // git tree of the working state, new files included
+	patchID          string // hash of the worker's own diff from its base
 	fullDiff         string // path of the full diff, base..working tree
 	checks           string
 	note             string
@@ -655,6 +699,7 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 	name := filepath.Base(tree)
 	p := &reviewPacket{
 		tree: tree, head: head, verdictAt: verdictAt, treeID: treeID, base: base, note: note,
+		patchID:  patchIDOf(full),
 		fullDiff: filepath.Join(dir, name+".diff"),
 	}
 	p.noChanges = strings.TrimSpace(full) == ""
@@ -737,7 +782,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 				out = agent
 				return nil
 			}
-			if prev.Verdict == verdictPass && samePassState(prev, p) {
+			if prev.Verdict == verdictPass && passCovers(prev, p) {
 				return nil
 			}
 			// The reviewer already judged exactly this state and asked for
@@ -896,7 +941,7 @@ func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID stri
 	}
 	s.ID, s.Type = id, typ
 	s.Parent, s.ParentID, s.Deliver = parentPane, parentID, false
-	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID}
+	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID, PatchID: p.patchID}
 	return WriteAgentState(s)
 }
 
@@ -982,4 +1027,25 @@ func diffBase(run Exec, tree string, w *Worker) string {
 		}
 	}
 	return "main"
+}
+
+// workerPatchID is the patch identity of the worker's tip: its diff from its
+// base, hashed. Empty when git cannot say, so the gate falls back to content.
+func workerPatchID(run Exec, w *Worker, tip, tipTree string) string {
+	if w == nil {
+		return ""
+	}
+	base := diffBase(run, w.Worktree, w)
+	if base == "" {
+		return ""
+	}
+	endpoint := tip
+	if tipTree != "" {
+		endpoint = tipTree
+	}
+	d, err := gitIn(run, w.Worktree, "diff", base, endpoint)
+	if err != nil {
+		return ""
+	}
+	return patchIDOf(d)
 }

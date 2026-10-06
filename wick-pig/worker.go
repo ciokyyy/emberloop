@@ -773,7 +773,8 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 			if t, err := run("git", []string{"rev-parse", tip + "^{tree}"}, ExecOpts{Cwd: w.Repo}); err == nil && t.Code == 0 {
 				tipTree = strings.TrimSpace(t.Stdout)
 			}
-			if why := reviewGate(w.Worktree, tip, tipTree, requiredReviewers(&w), passHolds(w.Repo)); why != "" {
+			tipPatch := workerPatchID(run, &w, tip, tipTree)
+			if why := reviewGate(w.Worktree, tip, tipTree, tipPatch, requiredReviewers(&w), passHolds(w.Repo)); why != "" {
 				r, err := kept("not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip")
 				out = r
 				return err
