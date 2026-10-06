@@ -93,7 +93,7 @@ var gitRefusedLongs = []string{
 // gitBranchMutatingShorts are branch short flags that change refs or
 // config. Matching decomposes single-dash bundles, because git parses
 // `-ad` as `-a -d` and delete wins over listing.
-const gitBranchMutatingShorts = "dDmMCfut"
+const gitBranchMutatingShorts = "cdDmMCfut"
 
 // gitBranchMutatingLongs are the same for long flags, matched by prefix
 // for the same abbreviation reason as gitRefusedLongs.
@@ -184,35 +184,56 @@ func (gitTool) Execute(ctx context.Context, root string, raw json.RawMessage) (s
 	return "", err
 }
 
+// gitSafeExactLongs are legitimate long flags that prefix-match a refused
+// one but resolve to themselves: git prefers the exact match, so `--text`
+// (treat binary as text, on diff, log, show and grep) never reaches
+// textconv. They skip the prefix refusal below.
+var gitSafeExactLongs = map[string]bool{"text": true}
+
 // refusedGitFlag reports the first refused flag in args, or "". `-c` is
 // refused as its own argument (the `git -c key=value ...` form), and
-// grep's `-O` pager in exact or attached-value (`-Oless`) form. A
+// grep's `-O` pager in any single-dash bundle containing `O` (`-O`,
+// `-Oless`, `-iOless`), since git parses bundles letter by letter. A
 // double-dash flag is refused when its name (before any `=`) is a
 // refused flag or a prefix of one (`--out`, `--ext-d`, `--upl`), because
-// git parses unambiguous abbreviations as the full flag. Scanning stops
-// at `--`: past it every argument is a path or pattern to git too.
+// git parses unambiguous abbreviations as the full flag. A `--format`
+// or `--pretty` value containing `%G` is refused: formatting a signature
+// runs the repo's gpg.program even without `--show-signature`. Scanning
+// stops at `--`: past it every argument is a path or pattern to git too.
 func refusedGitFlag(args []string) string {
 	for _, a := range args {
 		if a == "--" {
 			break
 		}
-		if a == "-c" || (len(a) > 1 && a[0] == '-' && a[1] == 'O') {
+		if a == "-c" {
 			return a
+		}
+		if len(a) > 1 && a[0] == '-' && a[1] != '-' {
+			if strings.ContainsRune(a[1:], 'O') {
+				return a
+			}
+			continue
 		}
 		if !strings.HasPrefix(a, "--") {
 			continue
 		}
-		name := strings.TrimPrefix(a, "--")
+		name, value := strings.TrimPrefix(a, "--"), ""
 		if i := strings.IndexByte(name, '='); i >= 0 {
-			name = name[:i]
+			name, value = name[:i], name[i+1:]
 		}
 		if name == "" {
+			continue
+		}
+		if gitSafeExactLongs[name] {
 			continue
 		}
 		for _, f := range gitRefusedLongs {
 			if strings.HasPrefix(f, name) {
 				return a
 			}
+		}
+		if strings.Contains(value, "%G") && (strings.HasPrefix("format", name) || strings.HasPrefix("pretty", name)) {
+			return a
 		}
 	}
 	return ""
