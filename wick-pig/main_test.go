@@ -72,6 +72,8 @@ func TestMain(m *testing.M) {
 	// finish test may spawn a real graph server. Graph tests wire the dial
 	// themselves, per test.
 	graphLifecycleDial = nil
+	// The pause between a message and its Enter is real time; tests skip it.
+	submitSettle = 0
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

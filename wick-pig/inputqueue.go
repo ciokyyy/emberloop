@@ -229,10 +229,26 @@ const queueAcceptWait = 10 * time.Second
 // does: a newline in the PTY would submit the message half-written.
 func collapseLine(text string) string { return strings.Join(strings.Fields(text), " ") }
 
-// deliveryBytes is exactly what the child PTY receives for one item: the
-// single line followed by Enter. Bracketed paste per harness arrives with
-// the ticket-04 harness table; the default writes plain text.
-func deliveryBytes(text string) []byte { return []byte(collapseLine(text) + "\r") }
+// submitSettle is the pause between an item's text and its Enter. A TUI that
+// reads a fast burst as one paste (claude does for long input) swallows an
+// Enter in the same burst into the pasted text, so the message sits unsent in
+// the input box. Text first, a short gap, then Enter alone. A var so tests
+// run it fast.
+var submitSettle = 250 * time.Millisecond
+
+// deliver writes one item to the child PTY: the single line, a settle pause,
+// then Enter in its own write. The bytes the child receives in order are the
+// line followed by "\r". Bracketed paste per harness arrives with the
+// ticket-04 harness table; the default writes plain text.
+func (p *queuePump) deliver(text string) error {
+	if err := p.gates.write([]byte(collapseLine(text))); err != nil {
+		return err
+	}
+	if submitSettle > 0 {
+		time.Sleep(submitSettle)
+	}
+	return p.gates.write([]byte("\r"))
+}
 
 // head reports the first waiting item without removing it.
 func (q *inputQueue) head() (queueItem, bool) {
@@ -302,14 +318,14 @@ func (p *queuePump) step() {
 			return
 		}
 		if p.gates.countTurns == nil {
-			if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
+			if err := p.deliver(head.Text); err != nil {
 				return
 			}
 			p.q.pop()
 			return
 		}
 		p.baseline = p.gates.countTurns(head.Text)
-		if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
+		if err := p.deliver(head.Text); err != nil {
 			return
 		}
 		p.written = true
@@ -325,7 +341,7 @@ func (p *queuePump) step() {
 	wait := queueAcceptWait * time.Duration(1<<min(p.tries, 3))
 	if !p.gates.now().Before(p.lastTry.Add(wait)) {
 		p.baseline = p.gates.countTurns(head.Text)
-		if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
+		if err := p.deliver(head.Text); err != nil {
 			return
 		}
 		p.tries++
