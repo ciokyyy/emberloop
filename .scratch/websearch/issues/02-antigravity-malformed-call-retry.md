@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Malformed call then good response succeeds, with one stream of events to the agent
-- [ ] Three malformed responses give the specific error including the finish message
-- [ ] Empty `STOP` still gives "empty response"
-- [ ] No retry after partial content was emitted
-- [ ] The session is marked complete only on the successful attempt
-- [ ] Fixture-based tests, no live calls; the extension's tests and the repo check pass
+- [x] Malformed call then good response succeeds, with one stream of events to the agent
+- [x] Three malformed responses give the specific error including the finish message
+- [x] Empty `STOP` still gives "empty response"
+- [x] No retry after partial content was emitted
+- [x] The session is marked complete only on the successful attempt
+- [x] Fixture-based tests, no live calls; the extension's tests and the repo check pass
