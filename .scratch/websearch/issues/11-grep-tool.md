@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Regex and fixed-string search, glob, context lines, case folding and the result cap work against a fixture tree
-- [ ] `.gitignore` is respected; binary files are skipped
-- [ ] Works with and without `rg` installed (the fallback gives the same results on the fixtures)
-- [ ] Paths outside the working directory are refused
-- [ ] Tool is registered, read-only, with a schema that fits the existing `Tool` interface; repo check passes
+- [x] Regex and fixed-string search, glob, context lines, case folding and the result cap work against a fixture tree
+- [x] `.gitignore` is respected; binary files are skipped
+- [x] Works with and without `rg` installed (the fallback gives the same results on the fixtures)
+- [x] Paths outside the working directory are refused
+- [x] Tool is registered, read-only, with a schema that fits the existing `Tool` interface; repo check passes
