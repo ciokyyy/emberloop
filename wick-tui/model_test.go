@@ -417,7 +417,7 @@ func TestModelTicketsViewShowsNamesAndVerdicts(t *testing.T) {
 	var calls int
 	m := loadModel(t, &snap, &calls)
 	view := m.View()
-	for _, want := range []string{"01.md", "10.md", "[pass/changes]", "○", "●", "↻", "◌", "✓", "✗", "◐", "■", "□", "✖"} {
+	for _, want := range []string{"01.md", "10.md", "[pass/changes]", "○ 01.md", "● 02.md", "↻", "◌", "✓", "✗", "◐", "■", "□", "✖"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view must contain %q, got:\n%s", want, view)
 		}
