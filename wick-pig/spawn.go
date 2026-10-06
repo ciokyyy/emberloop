@@ -321,6 +321,8 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		}
 		// The child's own state says where its submit goes: a non-blocking
 		// agent's from the start, a blocking one's once it is backgrounded.
+		// A worktree agent's state also carries the ticket it was spawned
+		// from, so finish can mark it done.
 		state := AgentState{
 			ID:       agent.ID,
 			Type:     t.Name,
@@ -328,6 +330,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			ParentID: parentID,
 			Parent:   parentPane,
 			Deliver:  !t.Blocking,
+		}
+		if t.Checkout == "worktree" {
+			state.Ticket = r.Ticket
 		}
 		if err := WriteAgentState(state); err != nil {
 			closeSpawned(run, append(agents, agent))

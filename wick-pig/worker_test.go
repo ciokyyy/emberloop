@@ -1139,3 +1139,244 @@ func TestFinishRefusesWhenUntrackedDirOverlapsIncomingFile(t *testing.T) {
 		t.Error("finish ran the merge after refusing: it must refuse before it starts")
 	}
 }
+
+// A merged worker's ticket is marked done by finish itself: the status line
+// reads done, every checkbox is ticked, and that lands in one commit on the
+// target branch beside the merged work.
+func TestFinishMarksTicketDoneAndTicksBoxesInOneCommit(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	ticket := filepath.Join(repo, "07-x.md")
+	writeFile(t, ticket, "# 07-x: example\n\n**Status:** ready-for-agent\n\n- [ ] first box\n- [ ] second box\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "track the ticket")
+	pointWorkerAtTicket(t, ticket)
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	before := gitOut(t, repo, "rev-list", "--count", "main")
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if !res.Merged {
+		t.Fatalf("want merged, got %+v", res)
+	}
+	body, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "**Status:** done") {
+		t.Errorf("ticket status must read done:\n%s", body)
+	}
+	if strings.Contains(string(body), "[ ]") {
+		t.Errorf("every checkbox must be ticked:\n%s", body)
+	}
+	if n := strings.Count(string(body), "[x]"); n != 2 {
+		t.Errorf("want 2 ticked boxes, got %d:\n%s", n, body)
+	}
+	// The merge fast-forwards the worker's own commit onto main, so the count
+	// grows by two: the rebased work, then the ticket's own commit at the tip.
+	if got := gitOut(t, repo, "rev-list", "--count", "main"); got != strconv.Itoa(mustAtoi(t, before)+2) {
+		t.Errorf("main commit count = %s, want two more than %s: the rebased work and the ticket commit", got, before)
+	}
+	if got := gitOut(t, repo, "log", "--format=%s", "-1", "HEAD"); got != "mark 07-x done" {
+		t.Errorf("tip commit message = %q, want the ticket's own commit", got)
+	}
+	if got := gitOut(t, repo, "show", "--name-only", "--format=", "HEAD"); strings.TrimSpace(got) != "07-x.md" {
+		t.Errorf("the tip commit must hold only the ticket, got %q", got)
+	}
+	if got := gitOut(t, repo, "show", "HEAD:a.go"); !strings.Contains(got, "func A()") {
+		t.Errorf("worker change missing on main after merge: %q", got)
+	}
+}
+
+// A refused merge leaves the ticket exactly as it was: overlapping dirt keeps
+// the worker, and the ticket file is untouched.
+func TestFinishLeavesTicketUntouchedWhenRefused(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	ticket := filepath.Join(repo, "07-x.md")
+	writeFile(t, ticket, "# 07-x: example\n\n**Status:** ready-for-agent\n\n- [ ] first box\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "track the ticket")
+	pointWorkerAtTicket(t, ticket)
+	want, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "a.go"), "package b\n")
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if res.Merged || !res.Kept {
+		t.Fatalf("overlapping dirt must keep the worker: %+v", res)
+	}
+	if got, err := os.ReadFile(ticket); err != nil || string(got) != string(want) {
+		t.Errorf("a refused merge must leave the ticket untouched, got:\n%s", got)
+	}
+}
+
+// A conflicting rebase keeps the worker and leaves the ticket exactly as it
+// was: the branch is aborted back to the worker's own change.
+func TestFinishLeavesTicketUntouchedOnConflict(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	ticket := filepath.Join(repo, "07-x.md")
+	writeFile(t, ticket, "# 07-x: example\n\n**Status:** ready-for-agent\n\n- [ ] first box\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "track the ticket")
+	pointWorkerAtTicket(t, ticket)
+	want, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	writeFile(t, filepath.Join(repo, "a.go"), "package conflict\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "another ticket merged first")
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", true)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if res.Merged || !res.Kept {
+		t.Fatalf("a conflicting rebase must keep the worker: %+v", res)
+	}
+	if got, err := os.ReadFile(ticket); err != nil || string(got) != string(want) {
+		t.Errorf("a conflicting merge must leave the ticket untouched, got:\n%s", got)
+	}
+}
+
+// pointWorkerAtTicket re-records the reviewRepo worker with a real ticket file
+// in the repo, the way a spawned worker records the ticket it was spawned from.
+func pointWorkerAtTicket(t *testing.T, ticket string) {
+	t.Helper()
+	store, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := store["07-x"]
+	w.Ticket = ticket
+	store["07-x"] = w
+	if err := save(store); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mustAtoi reads a rev-list --count.
+func mustAtoi(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// A discarded worker was not merged, so its ticket stays exactly as it was.
+func TestDiscardLeavesTicketUntouched(t *testing.T) {
+	repo, _ := reviewRepo(t)
+	ticket := filepath.Join(repo, "07-x.md")
+	writeFile(t, ticket, "# 07-x: example\n\n**Status:** ready-for-agent\n\n- [ ] first box\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "track the ticket")
+	pointWorkerAtTicket(t, ticket)
+	want, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := gitOut(t, repo, "rev-list", "--count", "main")
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	res, err := Finish(run, "07-x", false)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if res.Merged || res.Kept {
+		t.Fatalf("discard: %+v", res)
+	}
+	if got, err := os.ReadFile(ticket); err != nil || string(got) != string(want) {
+		t.Errorf("a discard must leave the ticket untouched, got:\n%s", got)
+	}
+	if got := gitOut(t, repo, "rev-list", "--count", "main"); got != before {
+		t.Errorf("a discard must commit nothing, count %s want %s", got, before)
+	}
+}
+
+// tickTicket only completes the header field: a file with no status line is
+// left alone, an already-done ticket comes back identical so the caller skips
+// the commit, and a "Status:" mentioned in the body is not a status line.
+func TestTickTicketTouchesOnlyTheHeaderField(t *testing.T) {
+	if _, ok := tickTicket("# x\n\n- [ ] box\n"); ok {
+		t.Error("a file with no status line must not count as a ticket")
+	}
+	done, ok := tickTicket("# 07-x\n\n**Status:** done\n\n- [x] box\n")
+	if !ok || strings.Contains(done, "[ ]") || !strings.Contains(done, "**Status:** done") {
+		t.Errorf("an already-done ticket must come back as-is: %q ok=%v", done, ok)
+	}
+	raw := "# 07-x\n\n**Status:** ready-for-agent\n\nThe old Status: line read pending.\n\n- [ ] box\n"
+	got, ok := tickTicket(raw)
+	if !ok {
+		t.Fatal("a ticket with a header status must complete")
+	}
+	if !strings.Contains(got, "**Status:** done") {
+		t.Errorf("the header status must read done:\n%s", got)
+	}
+	if !strings.Contains(got, "The old Status: line read pending.") {
+		t.Errorf("a body mention is not a status line and must be left alone:\n%s", got)
+	}
+	if strings.Contains(got, "[ ]") || !strings.Contains(got, "- [x] box") {
+		t.Errorf("the checkbox must still be ticked:\n%s", got)
+	}
+}
+
+// A ticket commit that fails is reported, with the worker kept: the merge
+// already moved the target, so finishing again retries the ticket commit
+// rather than merging twice.
+func TestFinishReportsATicketCommitFailureAndKeepsTheWorker(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	ticket := filepath.Join(repo, "07-x.md")
+	writeFile(t, ticket, "# 07-x: example\n\n**Status:** ready-for-agent\n\n- [ ] first box\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "track the ticket")
+	pointWorkerAtTicket(t, ticket)
+	passReviews(t, tree, gitOut(t, tree, "rev-parse", "HEAD"))
+	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" {
+			if len(args) > 0 && args[0] == "commit" {
+				return Result{Code: 1, Stderr: "error: commit failed\n"}, nil
+			}
+			return osExec(cmd, args, opts)
+		}
+		return Result{Stdout: `{"result":{}}`}, nil
+	}
+	if _, err := Finish(run, "07-x", true); err == nil {
+		t.Fatal("a failed ticket commit must be reported")
+	}
+	store, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store["07-x"]; !ok {
+		t.Error("the worker must be kept when its ticket commit fails")
+	}
+}

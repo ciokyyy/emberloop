@@ -1225,3 +1225,40 @@ func TestWorkerSpawnEntryBeatsTheImplementerSlot(t *testing.T) {
 		t.Errorf("worker record = harness %q model %q effort %q, want pig/entry-model/xhigh", w.Harness, w.Model, w.Effort)
 	}
 }
+
+// A spawned worker's entries carry the ticket path it was spawned from: the
+// worker record finish merges, and the agent state beside it.
+func TestSpawnedWorkerEntryCarriesItsTicket(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_WORKSPACE_ID", "w1")
+	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
+	spawnExec = (&mixedExec{g: g}).run
+
+	repo := t.TempDir()
+	ticket := filepath.Join(repo, "20-x.md")
+	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spawn, _ := spawnToolForRole(t, "implement")
+	if _, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": ticket},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	w, err := recall("20-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Ticket != ticket {
+		t.Errorf("worker entry ticket = %q, want %q", w.Ticket, ticket)
+	}
+	st, ok, err := ReadAgentState("20-x")
+	if err != nil || !ok {
+		t.Fatalf("agent state: %+v ok=%v err=%v", st, ok, err)
+	}
+	if st.Ticket != ticket {
+		t.Errorf("agent state ticket = %q, want %q", st.Ticket, ticket)
+	}
+}

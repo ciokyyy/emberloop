@@ -862,6 +862,12 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 				sha = strings.TrimSpace(res.Stdout)
 			}
 			merged, detail = true, "merged"
+			// The merge moved the target; the ticket's own completion lands on top
+			// of it, in one commit: done status, ticked boxes. Every earlier return
+			// (refused, conflicting) left the ticket untouched.
+			if err := completeTicket(run, &w); err != nil {
+				return err
+			}
 		} else {
 			detail = "discarded"
 		}
@@ -912,6 +918,85 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 		return nil, err
 	}
 	return out, nil
+}
+
+// completeTicket marks the worker's ticket done after its merge: the status
+// line reads done and every checkbox is ticked, committed on the target branch
+// in one commit. A ticket that is missing, outside the repo, or without a
+// status line is not a ticket finish can complete, and is left alone: records
+// made before workers stored their ticket, and fixtures, carry none.
+func completeTicket(run Exec, w *Worker) error {
+	if w.Ticket == "" {
+		return nil
+	}
+	abs := w.Ticket
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(w.Repo, abs)
+	}
+	rel, err := filepath.Rel(w.Repo, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	raw, err := os.ReadFile(abs)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	done, ok := tickTicket(string(raw))
+	if !ok || done == string(raw) {
+		return nil
+	}
+	if err := os.WriteFile(abs, []byte(done), 0o644); err != nil {
+		return err
+	}
+	// The commit names only the ticket: dirt in other paths stays uncommitted,
+	// the way the merge left it. Uncommitted edits to the ticket file itself
+	// are included, since the commit takes the file as it stands.
+	if res, err := run("git", []string{"add", "--", rel}, ExecOpts{Cwd: w.Repo}); err != nil {
+		return err
+	} else if res.Code != 0 {
+		return fmt.Errorf("git add %s failed: %s", rel, gitFullText(res.Stderr, "unknown error"))
+	}
+	if res, err := run("git", []string{"commit", "-m", "mark " + w.ID + " done", "--", rel}, ExecOpts{Cwd: w.Repo}); err != nil {
+		return err
+	} else if res.Code != 0 {
+		return fmt.Errorf("git commit %s failed: %s", rel, gitFullText(res.Stderr, "unknown error"))
+	}
+	return nil
+}
+
+// tickTicket returns the ticket with its status done and its boxes ticked. ok
+// is false when the file holds no status line, so prose and fixtures never
+// gain one here. Only the header field counts: a "Status:" mentioned in the
+// body is left alone.
+func tickTicket(raw string) (done string, ok bool) {
+	var out []string
+	seen := false
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Status:") || strings.HasPrefix(trimmed, "**Status:") {
+			seen = true
+			if i := strings.Index(line, "Status:"); i >= 0 {
+				// Keep the markup between the key and the value (`**Status:** x`
+				// stays bold); only the value itself becomes done.
+				rest := line[i+len("Status:"):]
+				j := 0
+				for j < len(rest) && (rest[j] == '*' || rest[j] == ' ' || rest[j] == '\t') {
+					j++
+				}
+				sep := strings.TrimRight(rest[:j], " \t") + " "
+				line = line[:i+len("Status:")] + sep + "done"
+			}
+		}
+		line = strings.ReplaceAll(line, "[ ]", "[x]")
+		out = append(out, line)
+	}
+	if !seen {
+		return "", false
+	}
+	return strings.Join(out, "\n"), true
 }
 
 func firstLine(text, fallback string) string {

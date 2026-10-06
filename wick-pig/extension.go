@@ -211,7 +211,7 @@ Read %s and follow it, with these wick adaptations:
 - The merger subagent is finish(agent=<worker id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
 - Skip the skill's final code-review step: every worker reviewed its own ticket before submitting. Never review a worker yourself.
 - If finish does not merge a worker, tell(agent=<id>, text=<the reason finish gave>) it what failed, and its next submit arrives as a notice. Once it submits, finish it again. If the same worker fails again, leave it, report it, and carry on with every ticket it does not block.
-- You never run code. You may edit and write only the paths listed under "orchestrator_paths" in .wick-pig/settings.json; any other path is refused. Use that only to keep tickets and the spec current: after finish merges a worker, set its ticket's Status line to done and tick its checkboxes. Never touch source files, and leave the edits uncommitted.
+- You never run code. You may edit and write only the paths listed under "orchestrator_paths" in .wick-pig/settings.json; any other path is refused. Use that only to keep the spec and notes current: finish marks a merged worker's ticket done itself. Never touch source files, and leave the edits uncommitted.
 
 When nothing more is ready, report the integration branch, each merged ticket with its sha, every worker left unmerged and why, and the follow-ups workers listed.`,
 		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch)
