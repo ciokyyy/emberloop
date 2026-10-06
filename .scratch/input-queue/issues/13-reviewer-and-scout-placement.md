@@ -6,7 +6,7 @@ Evidence from the live check: reviewers whose parent was the worker sat in the t
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** cancelled (already fixed on spec/input-queue; do not spawn)
 
 - [ ] A failed read of the worker store is retried and logged, never treated as "no worker"
 - [ ] A reviewer started from the orchestrator for a ticket opens in that ticket's tab

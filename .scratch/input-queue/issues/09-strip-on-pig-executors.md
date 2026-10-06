@@ -6,14 +6,14 @@ Evidence from the live check: the orchestrator pane shows the strip; the two pig
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done (code merged in a08d9e0 and afc8242; live-pane check of claude and pig workers still open)
 
-- [ ] A pig worker, reviewer and scout launched through the launch file show the strip, with the name chip of their type
-- [ ] The tools log still receives pig's raw stderr, one stamped line at a time
-- [ ] A pig child that exits badly records its exit and stderr tail as before
-- [ ] `WICK_PIG_TOOLS_LOG=0` and `WICK_HEADER_STRIP=0` still switch each feature off independently
+- [x] A pig worker, reviewer and scout launched through the launch file show the strip, with the name chip of their type
+- [x] The tools log still receives pig's raw stderr, one stamped line at a time
+- [x] A pig child that exits badly records its exit and stderr tail as before
+- [x] `WICK_PIG_TOOLS_LOG=0` and `WICK_HEADER_STRIP=0` still switch each feature off independently
 - [ ] Claude workers and reviewers show the strip, confirmed in a live pane
-- [ ] Tests through the wrapper's exec seam with a fake child that writes to stderr: the strip is painted and the stderr lines reach the log
-- [ ] Spec: context-compress story 1 (every agent pane shows the header strip)
+- [x] Tests through the wrapper's exec seam with a fake child that writes to stderr: the strip is painted and the stderr lines reach the log
+- [x] Spec: context-compress story 1 (every agent pane shows the header strip)
 
 Spec: `.scratch/context-compress/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.
