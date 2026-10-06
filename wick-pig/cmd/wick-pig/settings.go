@@ -13,7 +13,7 @@ import (
 )
 
 // settingsUsage is printed on an unknown subcommand and on a bad argument.
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>`
 
@@ -52,6 +52,15 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 			return fmt.Errorf("threshold %q is not a number above zero\n%s", argv[1], settingsUsage)
 		}
 		s.Threshold = v
+	case "max-workers":
+		if len(argv) < 2 {
+			return fmt.Errorf("max-workers needs a number\n%s", settingsUsage)
+		}
+		v, err := strconv.Atoi(argv[1])
+		if err != nil || v <= 0 {
+			return fmt.Errorf("max-workers %q is not a whole number above zero\n%s", argv[1], settingsUsage)
+		}
+		s.MaxWorkers = v
 	case "role":
 		warn, err := setRole(&s, argv[1:], models)
 		if err != nil {
@@ -330,6 +339,7 @@ func printSettings(out io.Writer, s tools.Settings) {
 	fmt.Fprintf(out, "settings: %s\n", tools.SettingsPath())
 	fmt.Fprintf(out, "decision-model: %s (%s)\n", orDefault(s.DecisionModel, systemone.JevModelPinned), s.SourceOf("decision_model"))
 	fmt.Fprintf(out, "threshold: %g (%s)\n", orDefault(s.Threshold, defaultThreshold), s.SourceOf("threshold"))
+	fmt.Fprintf(out, "max-workers: %d (%s)\n", s.EffectiveMaxWorkers(), maxWorkersSource(s))
 	for _, slot := range tools.RoleSlots {
 		r := s.Roles[slot]
 		fmt.Fprintf(out, "%s: harness %s (%s), model %s (%s), effort %s (%s)\n",
@@ -338,6 +348,22 @@ func printSettings(out io.Writer, s tools.Settings) {
 			orDefault(r.Model, "-"), sourceOf(r.Model),
 			orDefault(r.Effort, "-"), sourceOf(r.Effort))
 	}
+}
+
+// maxWorkersSource is where the worker cap came from. The env wins when set;
+// otherwise a valid stored value is the file's. A missing or non-positive
+// value stays the default, the way decode treats it: the value and the name
+// it prints must agree. A just-saved value reads as the file's even though
+// the loaded source map still says default, the way a role field's source
+// follows its value.
+func maxWorkersSource(s tools.Settings) string {
+	if s.SourceOf("max_workers") == "env" {
+		return "env"
+	}
+	if s.MaxWorkers > 0 {
+		return "file"
+	}
+	return "default"
 }
 
 // sourceOf is where a role field came from: the file owns any value it holds,

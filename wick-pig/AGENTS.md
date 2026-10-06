@@ -18,8 +18,9 @@ owns its `_test.go` and the behaviour below):
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
   (pane launch text), `commands.go`, `skills.go`
 - Spawning and layout: `spawn.go`, `worker.go` (brief, worktree, lifecycle),
-  `grid.go`, `tile.go`, `background.go`, `orchestrate.go` (the
-  spawn/finish/tell orchestration tools)
+  `workerqueue.go` (worker-cap queue and drain), `grid.go`, `tile.go`,
+  `background.go`, `orchestrate.go` (the spawn/finish/tell orchestration
+  tools)
 - Review and merge: `review.go` (packet, pass record), `submit.go`,
   `tell.go`, `deliver.go`, `integration.go`, `run.go`, `history.go`
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface

@@ -3,11 +3,14 @@ package wick
 import (
 	"context"
 	"encoding/json"
+	"example.com/wick/tools"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
-
-	"example.com/wick/tools"
 )
 
 // fnTool is one orchestration tool: a name, a schema and a handler over the
@@ -77,18 +80,62 @@ var spawnExec Exec = osExec
 // tests can zero it.
 var spawnGap = 3 * time.Second
 
-var (
-	spawnGate sync.Mutex
-	lastSpawn time.Time
-)
+var spawnGate sync.Mutex
 
+// spawnTimestampPath is the shared launch timestamp, beside the worker store so
+// every session (every wick-mcp process) shares it. A per-process timestamp
+// cannot space launches from separate sessions.
+func spawnTimestampPath() string { return filepath.Join(filepath.Dir(statePath), "last-spawn") }
+
+// readSpawnTimestamp returns the last reserved launch time, or zero when none
+// was recorded yet. A corrupt file reads as zero rather than blocking launches.
+func readSpawnTimestamp() time.Time {
+	raw, err := os.ReadFile(spawnTimestampPath())
+	if err != nil {
+		return time.Time{}
+	}
+	nanos, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(0, nanos)
+}
+
+// writeSpawnTimestamp records t as the last reserved launch time, atomically,
+// so a concurrent reader never sees a half-written file.
+func writeSpawnTimestamp(t time.Time) {
+	_ = os.MkdirAll(filepath.Dir(spawnTimestampPath()), 0o755)
+	tmp := spawnTimestampPath() + ".tmp"
+	raw := []byte(strconv.FormatInt(t.UnixNano(), 10) + "\n")
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, spawnTimestampPath())
+}
+
+// spaceSpawns spaces launches by the configured gap, across sessions. The next
+// slot is reserved under a cross-process lock before sleeping, so two processes
+// launching at the same instant take successive slots: the first proceeds at
+// once and records now, the second records now+gap and waits for it. The sleep
+// happens outside both locks, so a slow launcher never blocks a reservation.
 func spaceSpawns() {
 	spawnGate.Lock()
-	defer spawnGate.Unlock()
-	if wait := spawnGap - time.Since(lastSpawn); wait > 0 {
+	var wait time.Duration
+	_ = withFileLock("spawn-spacing", func() error {
+		last := readSpawnTimestamp()
+		now := time.Now()
+		scheduled := now
+		if last.Add(spawnGap).After(now) {
+			scheduled = last.Add(spawnGap)
+			wait = scheduled.Sub(now)
+		}
+		writeSpawnTimestamp(scheduled)
+		return nil
+	})
+	spawnGate.Unlock()
+	if wait > 0 {
 		time.Sleep(wait)
 	}
-	lastSpawn = time.Now()
 }
 
 // finishExec is the exec the finish tool drives. A var, so a test can stand in

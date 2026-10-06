@@ -20,6 +20,7 @@ func settingsFile(t *testing.T) string {
 	t.Setenv("WICK_SETTINGS", p)
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
+	t.Setenv("WICK_MAX_WORKERS", "")
 	return p
 }
 
@@ -550,5 +551,45 @@ func TestSettingsRefreshesOnceForAnEffortOnAFreeTextModel(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("the list was fetched %d times, want one cache read and one refresh", calls)
+	}
+}
+
+// The worker cap is readable and settable through the settings command and
+// file, defaulting to three (spec story 44).
+func TestSettingsSavesMaxWorkers(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"max-workers", "5"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().MaxWorkers; got != 5 {
+		t.Fatalf("saved max-workers is %d, want 5", got)
+	}
+	if !strings.Contains(out.String(), "max-workers: 5 (file)") {
+		t.Fatalf("output %q does not confirm the new cap with its source", out.String())
+	}
+}
+
+func TestSettingsRejectsBadMaxWorkers(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	for _, bad := range []string{"soon", "0", "-2"} {
+		if err := runSettings([]string{"max-workers", bad}, &out, noModels); err == nil {
+			t.Fatalf("max-workers %q should be an error", bad)
+		}
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected max-workers must not be saved")
+	}
+}
+
+func TestSettingsPrintsMaxWorkersDefault(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings(nil, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "max-workers: 3 (default)") {
+		t.Fatalf("output %q does not show the default cap of three", out.String())
 	}
 }

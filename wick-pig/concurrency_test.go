@@ -279,7 +279,6 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 		raw, _ := json.Marshal(out)
 		_ = os.WriteFile(result, append(raw, '\n'), 0o644)
 	}
-
 	// The start barrier holds every helper until they have all arrived, so
 	// every helper overlaps every other one in the work below. Without it a
 	// fast helper finishes before a slow one starts and a check-then-act
@@ -287,7 +286,6 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 	if os.Getenv("WICK_CONCURRENCY_BARRIER") != "" {
 		waitConcurrencyBarrier(t, id)
 	}
-
 	switch mode {
 	case "worker-spawn":
 		ticket := filepath.Join(repo, ".scratch", id+".md")
@@ -364,6 +362,16 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 			"tab":  placed.Tab,
 			"slot": strconv.Itoa(placed.Slot),
 		})
+	case "spacing":
+		// Two processes calling spaceSpawns at the same instant must take
+		// successive slots: the gap comes from the env so the test controls it.
+		if g := os.Getenv("WICK_CONCURRENCY_GAP"); g != "" {
+			if d, err := time.ParseDuration(g); err == nil {
+				spawnGap = d
+			}
+		}
+		spaceSpawns()
+		writeResult(nil, map[string]string{"at": strconv.FormatInt(time.Now().UnixNano(), 10)})
 	default:
 		t.Fatalf("unknown helper mode %q", mode)
 	}
@@ -828,4 +836,38 @@ func TestConcurrentReviewerSpawnProducesOneReviewer(t *testing.T) {
 		t.Fatalf("different worktrees must not share a reviewer pane: %v vs %v", have2, reviewersOf(tree1))
 	}
 	assertNoOrphan(tree2, "w1:t2", "w1:p2")
+}
+
+// Two processes launching at the same instant are separated by the configured
+// pause: the spacing timestamp is shared under a lock, not per process (spec
+// stories 36 and 37).
+func TestLaunchesAreSpacedAcrossSessions(t *testing.T) {
+	oldState, oldGap := statePath, spawnGap
+	stateFile := filepath.Join(t.TempDir(), "workers.json")
+	statePath = stateFile
+	spawnGap = time.Second
+	t.Cleanup(func() { statePath, spawnGap = oldState, oldGap })
+	herdrDir := t.TempDir()
+	t.Setenv("WICK_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("WICK_CONCURRENCY_STATE", stateFile)
+	results := runConcurrencyHelpers(t, "spacing", []string{"a", "b"}, map[string]string{
+		"WICK_CONCURRENCY_STATE": stateFile,
+		"WICK_CONCURRENCY_HERDR": herdrDir,
+		"WICK_CONCURRENCY_GAP":   "1s",
+	})
+	at := make([]int64, 2)
+	for i, r := range results {
+		n, err := strconv.ParseInt(r["at"], 10, 64)
+		if err != nil {
+			t.Fatalf("helper %d reported no timestamp: %v", i, r)
+		}
+		at[i] = n
+	}
+	diff := at[0] - at[1]
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff < int64(800*time.Millisecond) {
+		t.Fatalf("two simultaneous launches are %v apart, want at least the 1s pause", time.Duration(diff))
+	}
 }

@@ -225,6 +225,10 @@ type spawnedAgent struct {
 	// spawn re-prompted it rather than starting it, so a failed call has
 	// nothing to roll back.
 	Reused bool
+	// Queued marks a worktree agent that did not start: the worker cap was
+	// full, so it waits in the queue and a later finish starts it. It owns
+	// no pane yet, so rollback only dequeues it.
+	Queued bool
 }
 
 // spawnAgents starts every entry, launches spaced as always, then waits at most
@@ -309,7 +313,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			err   error
 		)
 		if t.Checkout == "worktree" {
-			agent, err = launchWorktree(run, root, t, r)
+			agent, err = launchWorktreeCapped(run, root, t, r, parentID, parentPane)
 		} else {
 			agent, err = launchScout(run, root, t, r.Prompt)
 		}
@@ -318,6 +322,12 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			// what was already started rather than leave it orphaned.
 			closeSpawned(run, agents)
 			return "", err
+		}
+		if agent.Queued {
+			// No pane yet, so no agent state: the drain writes it when the
+			// worker starts. The queue entry already records the parent.
+			agents = append(agents, agent)
+			continue
 		}
 		// The child's own state says where its submit goes: a non-blocking
 		// agent's from the start, a blocking one's once it is backgrounded.
@@ -361,6 +371,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	}
 	if ctx.Err() != nil {
 		for _, a := range agents {
+			if a.Queued {
+				continue
+			}
 			if a.Type.Blocking {
 				handOffToNotices(a.ID)
 			}
@@ -374,6 +387,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	// the meantime is returned here instead of being reported twice.
 	var backgrounded []string
 	for _, a := range agents {
+		if a.Queued {
+			continue
+		}
 		if !a.Type.Blocking {
 			continue
 		}
@@ -409,8 +425,13 @@ func heldPassLine(p *reviewPacket, t AgentType) string {
 // A rolled-back worktree records no ticket history: its ticket never ran, so
 // there is no finished ticket to keep.
 func closeSpawned(run Exec, agents []*spawnedAgent) {
+	var queued []string
 	for _, a := range agents {
 		if a.Reused {
+			continue
+		}
+		if a.Queued {
+			queued = append(queued, a.ID)
 			continue
 		}
 		if a.Worktree {
@@ -425,10 +446,23 @@ func closeSpawned(run Exec, agents []*spawnedAgent) {
 		}
 		closeAgent(run, readOnlyAgent{Pane: a.Pane, Tab: a.Tab})
 	}
+	dequeueWorkers(queued)
+	// A concurrent finish may have drained an entry this call just queued and
+	// started it: the parent never learned the id, so tear the worker down
+	// rather than leave it running orphaned. Its ticket never ran, so no
+	// history is recorded.
+	for _, id := range queued {
+		if _, err := recall(id); err == nil {
+			_, _ = finishWorker(run, id, false, false)
+		}
+	}
 }
 
 func allSubmitted(agents []*spawnedAgent) bool {
 	for _, a := range agents {
+		if a.Queued {
+			continue
+		}
 		if !a.Type.Blocking {
 			continue
 		}
@@ -550,6 +584,69 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	}, nil
 }
 
+// launchWorktreeCapped starts one worktree agent, or queues it when the worker
+// cap is full. Worktree launches are serialized under the worker-launch lock,
+// so two sessions deciding at the same instant cannot both take the last slot:
+// the check and the launch (or queue) are one critical section. The launch
+// itself runs inside the lock, the way Spawn already holds the workers lock
+// across its own herdr calls.
+func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, parentID, parentPane string) (*spawnedAgent, error) {
+	var out *spawnedAgent
+	err := withFileLock("worker-launch", func() error {
+		if r.Ticket != "" {
+			id := WorkerID(r.Ticket)
+			store, err := loadWorkersLocked()
+			if err != nil {
+				return err
+			}
+			if _, exists := store[id]; !exists {
+				queued := false
+				_ = withFileLock("worker-queue", func() error {
+					for _, e := range loadWorkerQueue() {
+						if e.ID == id {
+							queued = true
+						}
+					}
+					return nil
+				})
+				if queued {
+					return fmt.Errorf("worker %q is already queued", id)
+				}
+				if len(store) >= effectiveWorkerCap() {
+					repo := r.Repo
+					if repo == "" {
+						repo = root
+					}
+					choice := Resolve(slotImplementer,
+						Choice{Harness: r.Harness, Model: r.Model, Effort: r.Effort},
+						Choice{Harness: t.Harness, Model: t.Model, Effort: t.Effort})
+					if _, err := os.Stat(r.Ticket); err != nil {
+						return fmt.Errorf("cannot read ticket %s: %w", r.Ticket, err)
+					}
+					entry := queuedWorker{
+						ID: id, Type: t.Name, Ticket: r.Ticket, Spec: os.Getenv("WICK_SPEC"),
+						Repo: repo, Base: r.Base, Target: r.Target,
+						Harness: choice.Harness, Model: choice.Model, Effort: choice.Effort,
+						ParentID: parentID, Parent: parentPane,
+					}
+					if err := queueWorker(entry); err != nil {
+						return err
+					}
+					out = &spawnedAgent{ID: id, Type: t, Worktree: true, Queued: true}
+					return nil
+				}
+			}
+		}
+		agent, err := launchWorktree(run, root, t, r)
+		if err != nil {
+			return err
+		}
+		out = agent
+		return nil
+	})
+	return out, err
+}
+
 // renderPrompt fills a type's prompt template with the prompt the parent gave.
 // A body with no {{prompt}} placeholder gets the prompt appended.
 func renderPrompt(t AgentType, prompt string) string {
@@ -563,7 +660,8 @@ func renderPrompt(t AgentType, prompt string) string {
 }
 
 // renderSpawn is the spawn result: each non-blocking agent reported as started,
-// each blocking agent's report with it, and a closing line for the callers who
+// each queued worktree agent reported as queued behind the worker cap, each
+// blocking agent's report with it, and a closing line for the callers who
 // must end their turn because a result is still to arrive. A backgrounded
 // agent's result is not repeated here: it arrives as a notice. It never tells
 // the caller to call again.
@@ -571,6 +669,12 @@ func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
 	var parts []string
 	startedNonBlocking := false
 	for _, a := range agents {
+		if a.Queued {
+			startedNonBlocking = true
+			parts = append(parts, fmt.Sprintf("%s %s queued behind the worker cap (%d max); it starts as earlier workers finish.",
+				a.Type.Name, a.ID, effectiveWorkerCap()))
+			continue
+		}
 		if !a.Type.Blocking {
 			startedNonBlocking = true
 			line := fmt.Sprintf("%s %s started.", a.Type.Name, a.ID)

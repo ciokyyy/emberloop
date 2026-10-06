@@ -1,6 +1,6 @@
 // wick-pig starts an agent session: pig or claude, with wick's tools over MCP.
 //
-//	wick-pig settings [decision-model <id>|threshold <n>]  read and save settings
+//	wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>]  read and save settings
 //	wick-pig settings models [--refresh] [--harness h]    list a harness's models
 //	wick-pig settings role <slot> harness|model|effort <value>   set a launch slot
 //	wick-pig stop-gate                                         claude Stop hook gate
