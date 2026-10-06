@@ -4,11 +4,11 @@
 
 **Blocked by:** 10
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Start-on-first-use: a configured server is not started until one of its tools is called or listed
-- [ ] Initialize, list, call and cleanup on exit work against the fake server
-- [ ] A server that never answers, exits, or fails to start gives a bounded, named error
-- [ ] `include`, `exclude` and `rename` shape the exposed tool set
-- [ ] Children are killed when the wick-mcp process ends, including on error paths
-- [ ] The fake server helper is reusable by tickets 17 and 20; repo check passes
+- [x] Start-on-first-use: a configured server is not started until one of its tools is called or listed
+- [x] Initialize, list, call and cleanup on exit work against the fake server
+- [x] A server that never answers, exits, or fails to start gives a bounded, named error
+- [x] `include`, `exclude` and `rename` shape the exposed tool set
+- [x] Children are killed when the wick-mcp process ends, including on error paths
+- [x] The fake server helper is reusable by tickets 17 and 20; repo check passes
