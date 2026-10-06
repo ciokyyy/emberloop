@@ -92,7 +92,14 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 		taken[final] = true
 		*where = append(*where, t)
 	}
+	wantExecute := false
 	for _, t := range base {
+		// execute is bound after the buckets resolve, carrying this role's
+		// allowed tools in its stub, so the served list and the stub agree.
+		if t.Name() == "execute" {
+			wantExecute = true
+			continue
+		}
 		name := t.Name()
 		enabled, placement, rename := true, tools.DefaultPlacement(name), ""
 		if e, ok := s.Tools[name]; ok {
@@ -171,6 +178,9 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 				claim(final, t, placement, &main)
 			}
 		}
+	}
+	if wantExecute {
+		main = append(main, boundExecuteTool(role, s, main, execute, taken, warn)...)
 	}
 	return main, execute
 }

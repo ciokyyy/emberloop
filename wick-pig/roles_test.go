@@ -19,7 +19,7 @@ func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn"}
+	want := []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("plan tools = %v, want %v", got, want)
 	}
@@ -66,7 +66,7 @@ func TestEveryRoleThatCanReadServesCtxSearch(t *testing.T) {
 
 // full stays reachable, but only by asking for it: it is every tool, including
 // the orchestration tools no planning session should hold. Tools whose default
-// placement is execute (grep, check) serve behind execute, not in main.
+// placement is execute (grep, git, check) serve behind execute, not in main.
 func TestFullServesEveryTool(t *testing.T) {
 	hermeticSettings(t)
 	served, err := RoleTools("full")
@@ -80,7 +80,7 @@ func TestFullServesEveryTool(t *testing.T) {
 	if len(served)+len(execute) != len(AllTools()) {
 		t.Errorf("full served %d in main plus %d behind execute, want all %d", len(served), len(execute), len(AllTools()))
 	}
-	for _, want := range []string{"grep", "check"} {
+	for _, want := range []string{"grep", "git", "check"} {
 		if containsName(toolNames(served), want) {
 			t.Errorf("full must keep %q behind execute, not in main", want)
 		}
@@ -92,7 +92,7 @@ func TestFullServesEveryTool(t *testing.T) {
 	for _, tool := range served {
 		names[tool.Name()] = true
 	}
-	for _, want := range []string{"spawn"} {
+	for _, want := range []string{"spawn", "execute"} {
 		if !names[want] {
 			t.Errorf("full must still reach %q", want)
 		}

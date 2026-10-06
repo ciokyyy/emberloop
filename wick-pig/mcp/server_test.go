@@ -392,7 +392,7 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 			t.Fatalf("tools/list serves %v but resolution lists %v", names, mainNames)
 		}
 	}
-	if len(executeNames) != 1 || executeNames[0] != "check" {
-		t.Fatalf("only check hides behind execute here, got %v", executeNames)
+	if len(executeNames) != 3 || executeNames[0] != "check" || executeNames[1] != "grep" || executeNames[2] != "git" {
+		t.Fatalf("check, grep and git hide behind execute here, got %v", executeNames)
 	}
 }

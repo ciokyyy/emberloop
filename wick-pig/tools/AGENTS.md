@@ -17,7 +17,11 @@ view that fits still answers inline),
 excerpts, `ctx:` handle parsing), `ctxsearch.go` (the `ctx_search` tool and
 the `ctx:` handle reader), `background.go`, `find.go`
 (plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
-via the shared bin-dir-then-PATH resolver with a Go fallback), `websearch.go`
+via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
+(the Python bridge: a fresh `python3 -I` per call, a socket plus a generated
+`tools` module in a private temp dir, `ToolError` on refusal, `search`/`help`
+discovery, stdout-then-stderr through the overflow store; sandboxed for
+read-only roles), `websearch.go`
 (the provider-neutral search tool: Brave then Exa under auto, a 15-minute
 answer cache, quota rows; adapters and response parsing live in
 `websearch_providers.go`), `git.go` (read-only inspection: diff, log, show,
@@ -63,6 +67,9 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 - Tool output above `overflow.threshold_bytes` (about 8KB by default) is
   stored with a `ctx:` handle instead of entering context; `ctx_search`
   is read-only and rides with `read` in every role that can read.
+- `execute` serves exactly the role's resolved toolset minus itself and the
+  orchestration tools: a disabled tool is uncallable, renames show under
+  their new names, and `Guard` wrappers stay on the instances it calls.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
   self-test is a typed error naming `wick-pig deps`.
 - Binaries resolve from the wick bin directory first, then PATH, through the

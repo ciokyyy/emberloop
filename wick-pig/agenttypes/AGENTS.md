@@ -16,7 +16,9 @@ spawn which types) lives in `spawn.go` with the main package doc.
 
 - Type files carry name, description, tools, checkout, blocking, and status
   shape; read-only types (reviewers, scout) stay on `read`, `find`,
-  `websearch` and `ctx_search` and judge from the review packet.
+  `websearch`, `ctx_search` and the sandboxed `execute` (with `grep`, `git`
+  and, for reviewers, `check` reachable only inside it) and judge from the
+  review packet.
 
 ## Work Guidance
 

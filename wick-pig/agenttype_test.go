@@ -36,8 +36,14 @@ func TestBuiltinScoutTypeLoads(t *testing.T) {
 		t.Errorf("scout statuses = %q", got)
 	}
 	for _, tool := range scout.Tools {
-		if tool != "read" && tool != "find" && tool != "websearch" && tool != "ctx_search" {
-			t.Errorf("a none type may only read, find, websearch and ctx_search, scout has %q", tool)
+		if tool != "read" && tool != "find" && tool != "websearch" && tool != "ctx_search" &&
+			tool != "grep" && tool != "git" && tool != "execute" {
+			t.Errorf("a none type may only read, find, websearch, ctx_search, grep, git and execute, scout has %q", tool)
+		}
+	}
+	for _, want := range []string{"execute", "grep", "git"} {
+		if !contains(scout.Tools, want) {
+			t.Errorf("a scout must reach %s inside execute, tools = %v", want, scout.Tools)
 		}
 	}
 	if scout.Description == "" || scout.Body == "" {
@@ -62,7 +68,7 @@ func TestBuiltinWorkerTypeLoads(t *testing.T) {
 	if got := strings.Join(worker.Statuses, ","); got != "done,blocked" {
 		t.Errorf("worker statuses = %q, want done,blocked", got)
 	}
-	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search"} {
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "grep", "git", "check", "execute"} {
 		if !contains(worker.Tools, want) {
 			t.Errorf("a worker must be able to %s, tools = %v", want, worker.Tools)
 		}
@@ -105,8 +111,14 @@ func TestBuiltinReviewerTypesLoad(t *testing.T) {
 			t.Errorf("%s statuses = %q, want pass,changes", name, got)
 		}
 		for _, tool := range r.Tools {
-			if tool != "read" && tool != "find" && tool != "websearch" && tool != "ctx_search" {
-				t.Errorf("%s is read-only, so it may only read, find, websearch and ctx_search, has %q", name, tool)
+			if tool != "read" && tool != "find" && tool != "websearch" && tool != "ctx_search" &&
+				tool != "grep" && tool != "git" && tool != "check" && tool != "execute" {
+				t.Errorf("%s is read-only, so it may only read, find, websearch, ctx_search, grep, git, check and execute, has %q", name, tool)
+			}
+		}
+		for _, want := range []string{"execute", "grep", "git", "check"} {
+			if !contains(r.Tools, want) {
+				t.Errorf("%s must reach %s inside execute, tools = %v", name, want, r.Tools)
 			}
 		}
 		if r.Description == "" || r.Body == "" {

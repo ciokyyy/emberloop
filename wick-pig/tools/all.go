@@ -1,8 +1,10 @@
 package tools
 
-// All is every file tool this package serves, in loadout order.
+// All is every file tool this package serves, in loadout order. execute is
+// the unbound placeholder here: wick replaces it per role with a bound
+// NewExecute carrying that role's allowed tools.
 func All() []Tool {
-	return []Tool{readTool{}, editTool{}, writeTool{}, bashTool{}, findTool{}, websearchTool{}, grepTool{}, gitTool{}, checkTool{}, backgroundTool{}, ctxSearchTool{}}
+	return []Tool{readTool{}, editTool{}, writeTool{}, bashTool{}, findTool{}, websearchTool{}, grepTool{}, gitTool{}, checkTool{}, backgroundTool{}, ctxSearchTool{}, executeTool{}}
 }
 
 // Named returns the tools called names, in the order given. Unknown names are
