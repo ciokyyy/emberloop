@@ -129,7 +129,8 @@ func submitToolFor(t AgentType, agentID string) tools.Tool {
 // every other type stays available for one.
 func submitDescription(t AgentType) string {
 	base := fmt.Sprintf("Report back to your parent. Set status from %s. "+
-		"A blocking type submits a report; a non-blocking one a one-line summary. ",
+		"A blocking type submits a report; a non-blocking one a one-line summary. "+
+		"Submit is your whole answer: call it as your last action with the full result inside it, and end the turn with no text after it. ",
 		strings.Join(t.Statuses, ", "))
 	if t.Checkout == "none" {
 		return base + "Your pane closes once your result is delivered; a follow-up means a new scout."
