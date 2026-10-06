@@ -77,8 +77,8 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 26. As a worker, I want "nothing to review" only when my working tree is the same state a reviewer already passed, so that changed code is always reviewed again.
 27. As a worker, I want my second spawn of reviewers to give each one just what changed since it last looked, including uncommitted and new files, so that a follow-up is small and exact.
 28. As a user, I want a pass recorded against an exact working state, so that a pass on one version of the code never covers another.
-29. As a worker, I want a blocking spawn that outlasts its wait to say how long it waited and that the result arrives as a notice, so that I know to end my turn.
-30. As a user, I want the length of that wait written down and covered by a test, so that a change to it is deliberate.
+29. As a worker or orchestrator, I want spawn to return at once and never wait for the agents it starts, so that a cancelled or interrupted call can never strand a result.
+30. As a worker, I want the results of one spawn call to arrive as a single notice once every agent of that call has submitted, so that I am interrupted once, with everything, and never mid-tool-call.
 31. As a user, I want two agents that spawn at the same time to both get the agents they asked for, so that no spawned agent is closed, overwritten or orphaned.
 32. As an orchestrator, I want two spawns from different sessions to place their panes in distinct grid slots, so that no pane displaces another.
 33. As a user, I want only one overflow tab per label to ever exist, so that simultaneous spawns do not open duplicates.
@@ -117,7 +117,10 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - Wick binaries are installed through one command. It refuses while any agent of a run is live (worker, reviewer or scout panes known to the stores and the terminal multiplexer), names them, and exits without changing anything. A force option installs anyway and prints that running sessions keep the old binary. Nothing replaces a binary any other way.
 - A wick MCP server records its own binary's identity at start and, on a call, notes in its reply when the installed binary has changed since. It does not restart itself: restarting mid-run would drop state, and the install gate is what prevents the situation.
 - A setting caps concurrent workers (default three). Further workers from one spawn call start as earlier ones finish, and the call reports which are queued.
-- The spawn wait for blocking agents keeps its current bound; the bound becomes a named setting, the "still running" reply states the wait in seconds, and the worker and orchestrator briefs mention it once.
+- Spawn never waits. It starts the agents and returns, saying that one notice with every result will arrive and that the caller should end its turn. This applies to every agent type, blocking or not; the blocking flag now only decides whether the notice carries a full report or a one-line summary. The wait loop, the wait bound and the 'still running' reply are removed.
+- Results of one spawn call are a group. Each agent's submit is recorded as it comes; when the last agent of the group has submitted, one notice carrying all the results is delivered to the parent pane. An agent that cannot submit (pane gone) is reported in the group as lost, so the group always completes. A reviewer that is already judged at the exact state (held pass, same content) is reported in the first reply, not started, and is not part of the group.
+- Delivery waits for the parent to be idle: the notice is held while the parent pane is working a tool call, because typed text cancels a running call, and delivered when the pane goes idle. A parent that never goes idle for a long time gets the notice anyway, with a warning logged.
+- The briefs say once: after spawn, end your turn; the result arrives as a system notice.
 
 ## Testing Decisions
 
@@ -130,7 +133,7 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - Review wording is covered by the existing reviewer-type tests.
 - Review packet: a worktree with a new untracked file produces a diff that contains it; an unchanged dirty tree yields "nothing to review"; the same tree after another edit does not; a follow-up diff after an uncommitted edit contains only that edit; a rebase falls back to the full diff with a note. Prior art: the review tests with a fake herdr and a real temp git repo.
 - Merge gate: a pass on a clean commit still opens the gate; a pass on a dirty snapshot still does not.
-- Spawn wait: a fake slow reviewer exceeds the bound and the reply names it and says results arrive as notices.
+- Spawn: the reply returns at once even when agents are still running; a group of two reviewers delivers exactly one notice, after the second submit, carrying both results; a lost agent is reported in the group; a notice for a busy parent pane is held until the pane is idle. Prior art: the deliver and spawn tests with a fake herdr.
 - Concurrency: several helper processes spawn scouts, workers and reviewers at once against a fake herdr that records splits and closes; the test asserts no close of a pane another spawn owns, distinct slots, one overflow tab per label, a complete worker store, and one reviewer per worktree and type. It must fail on the current code. Prior art: the fake herdr in the grid and review tests, and the cross-process file lock tests.
 - Rebase: a pass survives a clean rebase onto an unrelated merged change and the gate accepts it; a conflicting or content-changing rebase makes it stale. Prior art: the existing rebase review test.
 - Install gate: with a live agent in the stores and the fake multiplexer, install exits non-zero, names the agent and replaces nothing; with none it installs; force installs and prints the warning.
