@@ -692,3 +692,30 @@ func TestRemoteIPBlocked(t *testing.T) {
 		t.Errorf("private with allow-loopback flag must still be refused")
 	}
 }
+
+// A large page read with an explicit range answers the range inline, with
+// the full output's handle alongside: selectors are honoured above the
+// threshold, not replaced by the summary.
+func TestReadURLLargePageWithSelectorAnswersInline(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 200, "unused")
+	t.Setenv("JINA_API_KEY", "")
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	t.Setenv("WICK_OVERFLOW_THRESHOLD_BYTES", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		for i := 1; i <= 350; i++ {
+			fmt.Fprintf(w, "overflow-line-%03d-with-extra-words-to-be-long-enough\n", i)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	root := t.TempDir()
+	raw, _ := json.Marshal(map[string]any{"path": srv.URL + "/long:340-342"})
+	out, err := readTool{}.Execute(context.Background(), root, raw)
+	if err != nil {
+		t.Fatalf("ranged long: %v", err)
+	}
+	mustContain(t, out, "tier1", "ctx:", "stored as", "overflow-line-340", "overflow-line-342")
+	mustNotContain(t, out, "overflow-line-100", "head (")
+}

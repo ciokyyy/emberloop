@@ -25,20 +25,27 @@ const (
 // ctx: handle, and searchable terms. intent, when non-empty, also returns
 // the chunks matching it inline (the execute ticket's use).
 func MaybeOverflow(root, session, source, contentType, content, intent string) (string, bool, error) {
+	_, out, stored, err := storeOverflow(root, session, source, contentType, content, intent)
+	return out, stored, err
+}
+
+// storeOverflow is MaybeOverflow with the blob id: callers that name the
+// handle alongside inline content (URL read's narrowed view) need it.
+func storeOverflow(root, session, source, contentType, content, intent string) (int64, string, bool, error) {
 	threshold := EffectiveSettings(root).EffectiveOverflowThresholdBytes()
 	if len(content) <= threshold {
-		return content, false, nil
+		return 0, content, false, nil
 	}
 	db, err := statedb.Open(statedb.DBPath())
 	if err != nil {
-		return "", false, err
+		return 0, "", false, err
 	}
 	defer db.Close()
 	id, err := statedb.InsertCtxBlob(db, statedb.CtxBlob{
 		Session: session, Source: source, ContentType: contentType, Bytes: content,
 	}, statedb.ChunkText(content))
 	if err != nil {
-		return "", false, err
+		return 0, "", false, err
 	}
 	lines := splitOverflowLines(content)
 	var b strings.Builder
@@ -71,7 +78,7 @@ func MaybeOverflow(root, session, source, contentType, content, intent string) (
 	if strings.TrimSpace(intent) != "" {
 		hits, err := statedb.SearchCtx(db, intent, &id, 3)
 		if err != nil {
-			return "", false, err
+			return 0, "", false, err
 		}
 		if len(hits) > 0 {
 			fmt.Fprintf(&b, "matching excerpts for intent %q:\n", intent)
@@ -80,7 +87,16 @@ func MaybeOverflow(root, session, source, contentType, content, intent string) (
 			}
 		}
 	}
-	return b.String(), true, nil
+	return id, b.String(), true, nil
+}
+
+// truncateHeadTail caps text at head+tail bytes with an omission note: the
+// bounded fallback when the overflow store itself is unavailable.
+func truncateHeadTail(text string, head, tail int) string {
+	if len(text) <= head+tail {
+		return text
+	}
+	return text[:head] + fmt.Sprintf("\n... [%d bytes omitted] ...\n", len(text)-head-tail) + text[len(text)-tail:]
 }
 
 // overflowSession is the session a stored output is attributed to: the

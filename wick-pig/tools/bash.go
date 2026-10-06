@@ -115,7 +115,11 @@ func (bashTool) Execute(ctx context.Context, root string, args json.RawMessage) 
 	out, err := cmd.CombinedOutput()
 	text := sanitize(string(out))
 	if summary, stored, merr := MaybeOverflow(root, overflowSession(), bashSource(p.Command), "bash", text, ""); merr != nil {
-		text += fmt.Sprintf("\n[overflow store unavailable: %v]", merr)
+		// The store is unavailable: cap the output where the old 30KB
+		// truncation did, and say so, rather than failing the call or
+		// flooding context without bound.
+		text = truncateHeadTail(text, 15*1024, 15*1024) +
+			fmt.Sprintf("\n[overflow store unavailable: %v]", merr)
 	} else if stored {
 		text = summary
 	}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -263,3 +264,53 @@ func TestDeleteCtxForSessionsKeepsOthers(t *testing.T) {
 }
 
 func containsLineRange(start, end, line int) bool { return start <= line && line <= end }
+
+// Seam: concurrent opens with a purge due — repeated waves of concurrent
+// opens stay clean (regression: a purge write racing setup made
+// journal_mode fail with SQLITE_BUSY), and the expired row is collected.
+func TestConcurrentOpensWithExpiredRowsStayClean(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, DBFileName)
+	seed, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldID, err := InsertCtxBlob(seed, CtxBlob{Session: "s", Source: "old", Bytes: "old body\n", CreatedAt: time.Now().UTC().Add(-25 * time.Hour).Unix()}, ChunkText("old body\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = seed.Close()
+
+	for round := 0; round < 3; round++ {
+		var wg sync.WaitGroup
+		errs := make(chan error, 8)
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				db, err := Open(path)
+				if err != nil {
+					errs <- err
+					return
+				}
+				_ = db.Close()
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatalf("round %d concurrent open: %v", round, err)
+		}
+	}
+	check, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	if v, err := SchemaVersion(check); err != nil || v != CurrentVersion {
+		t.Errorf("version = %d, %v; want %d", v, err, CurrentVersion)
+	}
+	if _, ok, _ := GetCtxBlob(check, oldID); ok {
+		t.Errorf("expired blob %d survived concurrent opens", oldID)
+	}
+}

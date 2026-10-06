@@ -56,15 +56,18 @@ type PruneRunPlan struct {
 // selected after running-run protection; SkippedRunning names the runs left
 // alone because their orchestrator pane is still alive. BlobFiles counts the
 // orphaned blobs selected alongside the runs, and TotalBytes covers runs and
-// blobs together. Applied reports whether the prune ran with --apply rather
-// than as a dry run. LivenessUnknown reports that herdr could not be asked
-// which panes are alive; a dry run still lists, but an apply refuses.
+// blobs together. CtxPurged counts overflow-store rows older than 24 hours
+// purged by an applied prune, even when no run was selected. Applied reports
+// whether the prune ran with --apply rather than as a dry run.
+// LivenessUnknown reports that herdr could not be asked which panes are
+// alive; a dry run still lists, but an apply refuses.
 type PruneResult struct {
 	Runs            []PruneRunPlan
 	SkippedRunning  []string
 	BlobFiles       int
 	BlobBytes       int64
 	TotalBytes      int64
+	CtxPurged       int64
 	Applied         bool
 	LivenessUnknown bool
 }
@@ -173,8 +176,12 @@ func PruneRuns(run Exec, now time.Time, opts PruneOptions) (PruneResult, error) 
 	}
 	plan.Applied = true
 	if len(plan.Runs) == 0 {
+		// No run selected, but an applied prune still collects expired
+		// overflow rows: the ticket purges them by prune, not only by open.
+		purged, perr := purgeExpiredCtxRows()
 		plan.BlobFiles, plan.BlobBytes, plan.TotalBytes = 0, 0, 0
-		return plan, nil
+		plan.CtxPurged = purged
+		return plan, perr
 	}
 	kept := keptSlugs(mustPruneSlugs(), plan.Runs)
 	blobNames, _ := orphanBlobNames(kept)
@@ -536,6 +543,32 @@ func deletePruneUsageRows(agents []string) error {
 	return err
 }
 
+// purgeExpiredCtxRows purges overflow-store rows older than 24 hours,
+// returning how many went. A state with no database yet is nothing to purge,
+// not an error. The due count is read first over a read-only handle: the
+// migrating open below purges as a side effect, so counting after it would
+// always report zero.
+func purgeExpiredCtxRows() (int64, error) {
+	if _, err := os.Stat(dbPath()); os.IsNotExist(err) {
+		return 0, nil
+	}
+	var due int64
+	if ro, err := statedb.OpenReadOnly(dbPath()); err == nil {
+		_ = ro.QueryRow(`SELECT COUNT(*) FROM ctx_blobs WHERE created_at <= ?`,
+			time.Now().UTC().Unix()-statedb.CtxTTLSeconds).Scan(&due)
+		_ = ro.Close()
+	}
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	if _, err := statedb.PurgeExpiredCtx(db, time.Now().UTC().Unix()); err != nil {
+		return 0, err
+	}
+	return due, nil
+}
+
 // ParseOlderThan parses an --older-than age: a Go duration (72h, 15m) or a
 // day/week count (30d, 2w). Days and weeks are what age filters are written
 // in; time.ParseDuration is what handles the rest.
@@ -667,6 +700,9 @@ func printPruneResult(out io.Writer, opts PruneOptions, res PruneResult) {
 	}
 	if res.BlobFiles > 0 {
 		fmt.Fprintf(out, "  orphaned blobs: %d file(s), %s\n", res.BlobFiles, formatBytes(res.BlobBytes))
+	}
+	if res.CtxPurged > 0 {
+		fmt.Fprintf(out, "  expired overflow rows purged: %d\n", res.CtxPurged)
 	}
 	for _, s := range res.SkippedRunning {
 		fmt.Fprintf(out, "  skipped running run: %s\n", s)

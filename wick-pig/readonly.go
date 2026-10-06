@@ -53,10 +53,10 @@ func callerTab(run Exec) string {
 	return ""
 }
 
-// ReadOnly runs one prompt in a read-only agent (role "review": read and
-// find) in its own herdr pane, so the human can watch it, and returns the
-// agent's last message, read from its session transcript. The pane closes
-// with the answer.
+// ReadOnly runs one prompt in a read-only agent (role "review": read, find
+// and ctx_search) in its own herdr pane, so the human can watch it, and
+// returns the agent's last message, read from its session transcript. The
+// pane closes with the answer.
 func ReadOnly(run Exec, cwd, model, prompt string) (string, error) {
 	agent, err := startReadOnly(run, readOnlyPlace{Overflow: "scouts"}, cwd, model, prompt)
 	if err != nil {

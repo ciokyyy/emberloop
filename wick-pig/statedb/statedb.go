@@ -1,6 +1,6 @@
 // Package statedb owns wick's SQLite state database: one file in the wick
-// state directory holding usage stats today and the search cache, quota and
-// overflow stores follow-up tickets build on. Both the harness (usage tailer,
+// state directory holding usage stats, the search cache and quota, and the
+// overflow store. Both the harness (usage tailer,
 // prune) and the agent tools (find logging) write through here, and the TUI
 // reads through here, so the schema has one home. It is a leaf package: it
 // imports nothing from wick or its tools, so both can import it without a
@@ -68,9 +68,9 @@ func writeParams() url.Values {
 // timeout, migrates the schema to CurrentVersion, imports legacy JSONL usage
 // logs sitting beside it, and purges overflow rows older than 24 hours.
 // Import runs only while the usage table is empty, and inserts idempotently,
-// so re-opening never double counts. Migration holds a cross-process file
-// lock, so sessions starting together (a tailer, the MCP server, a prune)
-// migrate exactly once.
+// so re-opening never double counts. Setup holds a cross-process file lock,
+// so sessions starting together (a tailer, the MCP server, a prune) tune,
+// migrate and purge exactly once instead of colliding on the write lock.
 func Open(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -79,19 +79,7 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := tune(db); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := migrateLocked(db, filepath.Dir(path)); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if _, err := EnsureImport(db, filepath.Dir(path)); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if _, err := PurgeExpiredCtx(db, time.Now().UTC().Unix()); err != nil {
+	if err := setupLocked(db, filepath.Dir(path)); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -121,11 +109,14 @@ func OpenReadOnly(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// migrateLocked runs Migrate under a cross-process file lock in the state
-// dir's locks directory (the same directory the harness's withFileLock
-// uses), so concurrent first opens migrate exactly once instead of racing
-// on the version row.
-func migrateLocked(db *sql.DB, stateDir string) error {
+// setupLocked runs first-open setup under a cross-process file lock in the
+// state dir's locks directory (the same directory the harness's withFileLock
+// uses): tune, migrate, the one-time import, and the overflow purge. Tune
+// runs inside the lock because PRAGMA journal_mode can report SQLITE_BUSY
+// while another opener holds a write transaction; serializing setup keeps
+// concurrent first opens from racing there (or on the version row, or on
+// duplicate purge writes).
+func setupLocked(db *sql.DB, stateDir string) error {
 	dir := filepath.Join(stateDir, "locks")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -139,7 +130,17 @@ func migrateLocked(db *sql.DB, stateDir string) error {
 		return err
 	}
 	defer funlock(f)
-	return Migrate(db)
+	if err := tune(db); err != nil {
+		return err
+	}
+	if err := Migrate(db); err != nil {
+		return err
+	}
+	if _, err := EnsureImport(db, stateDir); err != nil {
+		return err
+	}
+	_, err = PurgeExpiredCtx(db, time.Now().UTC().Unix())
+	return err
 }
 
 // tune sets the pragmas every writer needs. WAL lets readers work while a

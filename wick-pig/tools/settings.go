@@ -131,8 +131,10 @@ type Settings struct {
 	Threshold float64 `json:"threshold,omitempty"`
 	// MaxWorkers caps how many workers run at once. Zero means the default.
 	MaxWorkers int `json:"max_workers,omitempty"`
-	// Overflow tunes the overflow store. ThresholdBytes of zero means the default.
-	Overflow OverflowSettings `json:"overflow,omitempty"`
+	// Overflow tunes the overflow store. Nil means the defaults; a set
+	// ThresholdBytes of zero means the default too. A pointer, so an unset
+	// overflow stays out of the saved file entirely.
+	Overflow *OverflowSettings `json:"overflow,omitempty"`
 	// Roles holds one default per launch slot, keyed by slot name.
 	Roles map[string]Role `json:"roles,omitempty"`
 	// Tools tunes native tools by name: enabled, placement, rename and per-role
@@ -275,7 +277,7 @@ func (s Settings) EffectiveMaxWorkers() int {
 // tool result is stored in the overflow store: the stored value, or about
 // 8KB when nothing valid is stored.
 func (s Settings) EffectiveOverflowThresholdBytes() int {
-	if s.Overflow.ThresholdBytes > 0 {
+	if s.Overflow != nil && s.Overflow.ThresholdBytes > 0 {
 		return s.Overflow.ThresholdBytes
 	}
 	return DefaultOverflowThresholdBytes
@@ -333,7 +335,7 @@ func LoadSettings() Settings {
 		s.setSource("search.mode", "env")
 	}
 	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WICK_OVERFLOW_THRESHOLD_BYTES"))); err == nil && b > 0 {
-		s.Overflow.ThresholdBytes = b
+		s.Overflow = &OverflowSettings{ThresholdBytes: b}
 		s.setSource("overflow.threshold_bytes", "env")
 	}
 	return s
@@ -393,7 +395,7 @@ func decodeSettings(raw []byte) Settings {
 	if s.MaxWorkers != 0 {
 		s.src["max_workers"] = "file"
 	}
-	if s.Overflow.ThresholdBytes != 0 {
+	if s.Overflow != nil && s.Overflow.ThresholdBytes != 0 {
 		s.src["overflow.threshold_bytes"] = "file"
 	}
 	for slot, r := range s.Roles {
@@ -989,7 +991,10 @@ func MergeSettings(global, project Settings) Settings {
 		out.MaxWorkers = project.MaxWorkers
 		out.src["max_workers"] = "project"
 	}
-	if project.Overflow.ThresholdBytes != 0 && out.src["overflow.threshold_bytes"] != "env" {
+	if project.Overflow != nil && project.Overflow.ThresholdBytes != 0 && out.src["overflow.threshold_bytes"] != "env" {
+		if out.Overflow == nil {
+			out.Overflow = &OverflowSettings{}
+		}
 		out.Overflow.ThresholdBytes = project.Overflow.ThresholdBytes
 		out.src["overflow.threshold_bytes"] = "project"
 	}

@@ -21,8 +21,9 @@ or the tools, so both can import it without a cycle.
 
 - Pure-Go driver (modernc.org/sqlite, no cgo), WAL mode and a 5s busy timeout
   on every open, so readers never block writers.
-- Schema versions migrate forward with each version recorded; concurrent first
-  opens serialize on a file lock, so migration runs exactly once.
+- Schema versions migrate forward with each version recorded; concurrent
+  opens serialize tune, migrate, import and purge on a file lock, so setup
+  runs exactly once and never collides on the write lock.
 - Usage inserts are idempotent by dedupe key (unique index, `INSERT OR
   IGNORE`); a re-tailed line or a re-run import never double counts.
 - `Open` migrates, imports legacy JSONL once (only while the usage table

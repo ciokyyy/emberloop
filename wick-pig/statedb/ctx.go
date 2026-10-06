@@ -172,7 +172,7 @@ func applyV3(db *sql.DB) error {
 			ON ctx_blobs(session, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_ctx_blobs_created
 			ON ctx_blobs(created_at)`,
-		`CREATE VIRTUAL TABLE ctx_fts USING fts5(
+		`CREATE VIRTUAL TABLE IF NOT EXISTS ctx_fts USING fts5(
 			blob_id UNINDEXED, chunk_idx UNINDEXED,
 			heading, body,
 			start_line UNINDEXED, end_line UNINDEXED,
@@ -297,9 +297,18 @@ func SearchCtx(db *sql.DB, query string, scopeID *int64, limit int) ([]CtxHit, e
 }
 
 // PurgeExpiredCtx deletes blobs (and their chunks) older than the 24-hour
-// lifetime, returning how many blobs went.
+// lifetime, returning how many blobs went. A cheap count gates the deletes,
+// so the common case (nothing expired) stays a read and never takes the
+// write lock — Open calls this on every open.
 func PurgeExpiredCtx(db *sql.DB, nowUnix int64) (int64, error) {
 	cutoff := nowUnix - CtxTTLSeconds
+	var due int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ctx_blobs WHERE created_at <= ?`, cutoff).Scan(&due); err != nil {
+		return 0, fmt.Errorf("statedb: purge ctx count: %w", err)
+	}
+	if due == 0 {
+		return 0, nil
+	}
 	if _, err := db.Exec(`DELETE FROM ctx_fts WHERE blob_id IN
 		(SELECT id FROM ctx_blobs WHERE created_at <= ?)`, cutoff); err != nil {
 		return 0, fmt.Errorf("statedb: purge ctx chunks: %w", err)

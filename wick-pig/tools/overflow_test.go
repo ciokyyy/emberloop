@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -205,5 +206,50 @@ func TestReadCtxHandlePagesStoredOutput(t *testing.T) {
 	}
 	if _, err := run(t, readTool{}, root, map[string]any{"path": "ctx:999999"}); err == nil {
 		t.Error("unknown handle must fail")
+	}
+}
+
+// Seam: settings round trip — an unset overflow stays out of the saved file;
+// a set threshold survives it.
+func TestOverflowOmittedWhenUnsetKeptWhenSet(t *testing.T) {
+	dir := t.TempDir()
+	globalProjectEnv(t, dir, `{}`, "")
+	t.Setenv("WICK_OVERFLOW_THRESHOLD_BYTES", "")
+	if err := SaveSettings(LoadSettings()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(os.Getenv("WICK_SETTINGS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "overflow") {
+		t.Errorf("unset overflow must stay out of the saved file: %s", raw)
+	}
+
+	globalProjectEnv(t, dir, `{"overflow":{"threshold_bytes":4096}}`, "")
+	if err := SaveSettings(LoadSettings()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(os.Getenv("WICK_SETTINGS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"threshold_bytes": 4096`) {
+		t.Errorf("set threshold must survive the save: %s", raw)
+	}
+}
+
+// Seam: bounded fallback — the head/tail cap, not the whole text, when the
+// store is unavailable.
+func TestTruncateHeadTailCapsWithNote(t *testing.T) {
+	if got := truncateHeadTail("short", 10, 10); got != "short" {
+		t.Errorf("short text must pass through, got %q", got)
+	}
+	got := truncateHeadTail(strings.Repeat("x", 100), 10, 10)
+	if len(got) >= 100 || !strings.Contains(got, "omitted") {
+		t.Errorf("long text must cap with a note, got %d bytes", len(got))
+	}
+	if !strings.Contains(got, "xxxxxxxxxx") {
+		t.Errorf("cap must keep head and tail, got %q", got)
 	}
 }
