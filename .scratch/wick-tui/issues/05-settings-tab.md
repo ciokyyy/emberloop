@@ -4,9 +4,9 @@
 
 **Blocked by:** 01, global-settings 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Edits persist via the shared settings functions; the CLI sees them
-- [ ] No model lists hard-coded in the TUI
-- [ ] Effort row reflects the selected model's levels
-- [ ] Model tests: change harness, model and effort via keys and clicks, assert the saved file
+- [x] Edits persist via the shared settings functions; the CLI sees them
+- [x] No model lists hard-coded in the TUI
+- [x] Effort row reflects the selected model's levels
+- [x] Model tests: change harness, model and effort via keys and clicks, assert the saved file
