@@ -49,7 +49,7 @@ var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x
 
 // readyMarks are the footer texts claude draws only once its input box is
 // up, with and without a permission mode showing.
-var readyMarks = []string{"? for shortcuts", "shift+tab to cycle", "esc to interrupt", "bypass permissions on"}
+var readyMarks = []string{"?forshortcuts", "shift+tabtocycle", "esctointerrupt", "bypasspermissionson"}
 
 // newAgentReporter builds the reporter for a wrapped child, or nil when
 // none applies: not claude, or no herdr pane around the process.
@@ -94,7 +94,9 @@ func (r *agentReporter) observe(out []byte) {
 		r.tail = r.tail[len(r.tail)-8192:]
 	}
 	ready := time.Now().After(r.readyAfter)
-	low := strings.ToLower(r.tail)
+	// Claude spaces words with cursor moves, not blanks, so compare with all
+	// whitespace removed.
+	low := strings.Join(strings.Fields(strings.ToLower(r.tail)), "")
 	for _, m := range readyMarks {
 		if strings.Contains(low, m) {
 			ready = true

@@ -427,7 +427,7 @@ func TestAgentReporterIdleOnlyOnceReady(t *testing.T) {
 	if len(calls) != 1 || !strings.Contains(calls[0], "--state working") {
 		t.Fatalf("before the prompt: calls = %v, want one working report", calls)
 	}
-	r.observe([]byte("\x1b[1m\xe2\x8f\xb5\xe2\x8f\xb5 auto mode on\x1b[0m (shift+tab to cycle)"))
+	r.observe([]byte("\x1b[1m\xe2\x8f\xb5\xe2\x8f\xb5 auto mode on\x1b[0m (shift+tab\x1b[1Cto\x1b[1Ccycle)"))
 	if len(calls) != 2 || !strings.Contains(calls[1], "--state idle") {
 		t.Fatalf("after the prompt: calls = %v, want idle second", calls)
 	}
