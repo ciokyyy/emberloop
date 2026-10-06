@@ -132,7 +132,10 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 	for _, server := range servers {
 		cfg := s.MCPServers[server]
 		for _, t := range mcp[server] {
-			original := t.Name()
+			// Include, exclude and rename match over the tool's original
+			// server-side name, so a listing the registry already shaped
+			// resolves to the same set instead of filtering its renames out.
+			original := mcpOriginalName(t)
 			if !mcpIncluded(original, cfg) {
 				continue
 			}
@@ -155,10 +158,12 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 				warnf(warn, "mcp server %q has invalid placement %q; serving its tools behind execute", server, placement)
 				placement = tools.PlacementExecute
 			}
-			final := original
+			final := t.Name()
 			if renamed, ok := cfg.Rename[original]; ok && renamed != "" {
 				final = renamed
-				t = tools.Renamed(t, final)
+				if final != t.Name() {
+					t = tools.Renamed(t, final)
+				}
 			}
 			if placement == tools.PlacementExecute {
 				claim(final, t, placement, &execute)
@@ -168,6 +173,17 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 		}
 	}
 	return main, execute
+}
+
+// mcpOriginalName is the name a server listed a tool under, before any
+// rename. A plain tool has no original distinct from its name.
+func mcpOriginalName(t tools.Tool) string {
+	if o, ok := t.(interface{ OriginalName() string }); ok {
+		if original := o.OriginalName(); original != "" {
+			return original
+		}
+	}
+	return t.Name()
 }
 
 // effectiveToolSetting folds a tool entry's top level with its override for
