@@ -44,6 +44,17 @@ type AgentState struct {
 	// rather than back to a waiting caller. Every spawn member starts this
 	// way, grouped; a tell takes over its next submit by clearing it.
 	Deliver bool `json:"deliver,omitempty"`
+	// Errored marks a child whose last turn ended in a provider error, with
+	// the error text in ErrorDetail. An errored child owes no result until
+	// its next turn starts (fresh clears it), so the stop gate does not wait
+	// on it. Set by the child's own stop gate when it allows on a failure.
+	Errored bool `json:"errored,omitempty"`
+	// ErrorDetail is the provider error that ended the last turn, named in
+	// the stopped-with-error notice the child's gate sends its parent.
+	ErrorDetail string `json:"error_detail,omitempty"`
+	// LostNotified marks a dead child whose lost notice already went out, so
+	// the dead-child sweep reports it exactly once.
+	LostNotified bool `json:"lost_notified,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.
@@ -198,9 +209,10 @@ func submitDelivers(id string) (AgentState, bool, error) {
 }
 
 // PendingChildren is the children an agent is still waiting on: those that name
-// it as their parent, have been set to deliver as notices, and have not
-// submitted yet. A submit clears the child from the list by existing, so no
-// cross-process bookkeeping can leave a delivered child behind.
+// it as their parent, have been set to deliver as notices, have not
+// submitted, and are still alive. A child with no submit but a dead pane, or
+// whose last turn ended in a provider error, is lost or errored, not pending:
+// the sweep reports it and the stop gate does not wait on it.
 func PendingChildren(parentID string) []string {
 	if parentID == "" {
 		return nil
@@ -219,6 +231,12 @@ func PendingChildren(parentID string) []string {
 			continue
 		}
 		if _, submitted, _ := ReadAgentSubmit(s.ID); submitted {
+			continue
+		}
+		if s.Errored {
+			continue
+		}
+		if isPaneLost(deliverExec, s.Pane) {
 			continue
 		}
 		out = append(out, s.ID)
@@ -290,4 +308,111 @@ func isScoutState(st AgentState) bool {
 		return t.Checkout == "none"
 	}
 	return st.Type == "scout"
+}
+
+// sweepDeadChildren reports every dead child of parentID that has no submit
+// and no live pane, exactly once. Members of any group are skipped: the group
+// reports them in its single notice, exactly once through its delivered flag,
+// whether the group is still open or already delivered. Any other dead child
+// gets the existing lost notice as an individual system notice, then stops
+// counting as pending through the pane check above. It runs synchronously, so
+// the stop gate blocks on what is left after it.
+func sweepDeadChildren(parentID string) {
+	if parentID == "" {
+		return
+	}
+	entries, err := os.ReadDir(agentStateDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		_ = withFileLock("state-"+id, func() error {
+			s, ok, err := ReadAgentState(id)
+			if err != nil || !ok || s.ParentID != parentID || !s.Deliver || s.LostNotified {
+				return nil
+			}
+			if _, submitted, _ := ReadAgentSubmit(id); submitted {
+				return nil
+			}
+			if s.Errored {
+				return nil
+			}
+			if !isPaneLost(deliverExec, s.Pane) {
+				return nil
+			}
+			if s.GroupID != "" {
+				return nil
+			}
+			s.LostNotified = true
+			if err := WriteAgentState(s); err != nil {
+				return nil
+			}
+			_ = deliverToParent(s, lostNotice(s.Type, id))
+			return nil
+		})
+	}
+}
+
+// lostNotice is the individual lost notice for a dead child outside any
+// group: the existing lost line inside a system notice, the shape of every
+// other individual notice.
+func lostNotice(typ, id string) string {
+	return "<system-notice> " + lostLine(id, typ) + "</system-notice>"
+}
+
+// errorNotice is the stopped-with-error notice a turn that ends in a provider
+// error sends its parent, naming the agent and the error.
+func errorNotice(typ, id, detail string) string {
+	if typ == "" {
+		typ = "agent"
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	if detail == "" {
+		detail = "unknown error"
+	}
+	return "<system-notice> " + typ + " " + id + " stopped with error: " + detail + "</system-notice>"
+}
+
+// setChildErrored marks id as errored with detail, and reports whether this
+// call is the one that owns the notice: only the first set per detail sends.
+func setChildErrored(id, detail string) bool {
+	owned := false
+	_ = withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			s = AgentState{ID: id}
+		}
+		if s.Errored && s.ErrorDetail == detail {
+			return nil
+		}
+		s.ID = id
+		s.Errored, s.ErrorDetail = true, detail
+		if err := WriteAgentState(s); err != nil {
+			return err
+		}
+		owned = true
+		return nil
+	})
+	return owned
+}
+
+// clearChildError clears the errored mark, so a new turn starts pending
+// afresh. A real submit still excludes through its file; this only drops the
+// transient failed-turn mark.
+func clearChildError(id string) {
+	_ = withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil || !ok || !s.Errored {
+			return err
+		}
+		s.Errored, s.ErrorDetail = false, ""
+		return WriteAgentState(s)
+	})
 }

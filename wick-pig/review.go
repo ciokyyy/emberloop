@@ -863,8 +863,10 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 		return nil, err
 	}
 	// The previous turn's submit must not satisfy the group for this one.
+	// A follow-up is a new turn, so a previous failed-turn mark goes too.
 	clearAgentSubmit(prev.SessionID)
-	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID, groupID); err != nil {
+	clearChildError(prev.SessionID)
+	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID, groupID, agent.Pane, agent.Tab); err != nil {
 		return nil, err
 	}
 	if err := Nudge(run, agent.Pane, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath)); err != nil {
@@ -913,7 +915,7 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 			}); err != nil {
 				return err
 			}
-			return writeReviewState(id, t.Name, p, parentPane, parentID, groupID)
+			return writeReviewState(id, t.Name, p, parentPane, parentID, groupID, a.Pane, a.Tab)
 		})
 	if err != nil {
 		return nil, err
@@ -933,14 +935,17 @@ func reviewSlot(typ string) string {
 // writeReviewState records where a reviewer's submit belongs: the worktree, the
 // reviewer type, and the commit the review is tied to, plus the worker's pane
 // and id and the spawn group it joins, so the submit joins the group's single
-// notice. The reviewer process reads it back when it submits, so the verdict
-// lands on the right record even when the spawn never waits.
-func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, groupID string) error {
+// notice. The pane lives here too, so the stop gate's pending check sees the
+// same liveness a scout's state carries. The reviewer process reads it back
+// when it submits, so the verdict lands on the right record even when the
+// spawn never waits.
+func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, groupID, pane, tab string) error {
 	s, _, err := ReadAgentState(id)
 	if err != nil {
 		return err
 	}
 	s.ID, s.Type = id, typ
+	s.Pane, s.Tab = pane, tab
 	s.Parent, s.ParentID, s.GroupID, s.Deliver = parentPane, parentID, groupID, true
 	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID, PatchID: p.patchID}
 	return WriteAgentState(s)

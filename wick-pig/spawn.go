@@ -802,7 +802,9 @@ func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest, groupID 
 		}
 	}
 	clearAgentSubmit(s.ID)
+	clearChildError(s.ID)
 	s.GroupID, s.Deliver = groupID, true
+	s.Errored, s.ErrorDetail, s.LostNotified = false, "", false
 	if err := WriteAgentState(s); err != nil {
 		return nil, err
 	}

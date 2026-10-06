@@ -30,10 +30,12 @@ const (
 
 // gateInput is one settle attempt, the JSON `wick-pig pig-gate` reads. It
 // mirrors wick.PigGateInput, which is the same contract on the other side of
-// the process boundary.
+// the process boundary: fresh, failed, the provider error text, and the last
+// message the give-up quotes.
 type gateInput struct {
 	Fresh       bool   `json:"fresh"`
 	Failed      bool   `json:"failed"`
+	Error       string `json:"error,omitempty"`
 	LastMessage string `json:"last_message"`
 }
 
@@ -98,9 +100,11 @@ func (g *gate) turnStarted(sdk.Context, map[string]any) (any, error) {
 // lets it settle. A decision that cannot be asked lets it settle too: a gate
 // that cannot answer must never leave an agent unable to stop.
 func (g *gate) beforeSettle(ctx sdk.Context, data map[string]any) (any, error) {
+	failed := data["outcome"] == "error"
 	event, err := json.Marshal(gateInput{
 		Fresh:       g.fresh.Swap(false),
-		Failed:      data["outcome"] == "error",
+		Failed:      failed,
+		Error:       settleErrorText(data, failed),
 		LastMessage: lastAssistantText(data),
 	})
 	if err != nil {
@@ -197,6 +201,28 @@ func lastAssistantText(data map[string]any) string {
 		return messageText(message["content"])
 	}
 	return ""
+}
+
+// settleErrorText is the provider error that ended the turn, which the
+// stopped-with-error notice names. The settle event carries it beside the
+// outcome; when it carries none, the turn's last assistant message is what the
+// test fixtures hold, so that is the fallback rather than an empty error.
+func settleErrorText(data map[string]any, failed bool) string {
+	if !failed {
+		return ""
+	}
+	if s, _ := data["error"].(string); strings.TrimSpace(s) != "" {
+		return s
+	}
+	if m, _ := data["error"].(map[string]any); m != nil {
+		if s, _ := m["message"].(string); strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	if s, _ := data["errorMessage"].(string); strings.TrimSpace(s) != "" {
+		return s
+	}
+	return lastAssistantText(data)
 }
 
 // messageText joins the text of an assistant message's content blocks. A

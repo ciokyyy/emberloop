@@ -182,8 +182,14 @@ func TestBeforeSettleSettlesOnASubmitAndOnAProviderError(t *testing.T) {
 	if !fake.events[1].Failed {
 		t.Error("the gate must hear that the turn ended in a provider error")
 	}
+	if got := fake.events[1].Error; got != "provider blew up" {
+		t.Errorf("the gate must forward the provider error text, got %q", got)
+	}
 	if fake.events[0].Failed {
 		t.Error("a completed turn is not a provider error")
+	}
+	if fake.events[0].Error != "" {
+		t.Errorf("a completed turn carries no error, got %q", fake.events[0].Error)
 	}
 }
 
