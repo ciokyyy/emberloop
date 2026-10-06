@@ -509,3 +509,32 @@ func TestMaybeAutoCompressSkipsRotatedSession(t *testing.T) {
 		t.Errorf("rotation must summarize nothing: pig=%d ran=%d", fake.pig, fake.ran)
 	}
 }
+
+// The top-level session is no worker, but the automatic sweep still
+// compresses it past the threshold: it recorded its pane, harness and
+// session at startup, and the restart rebuilds its own launch.
+func TestSweepAutoCompressCoversTopLevel(t *testing.T) {
+	isolateState(t)
+	oldPoll, oldWait := pollEvery, paneStopWait
+	pollEvery, paneStopWait = 5*time.Millisecond, 50*time.Millisecond
+	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	oldID := "sess-top-auto"
+	root := filepath.Join(home, ".pig", "agent", "sessions")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, filepath.Join(root, oldID+".jsonl"), overThresholdIdle())
+	if err := WriteTopLevelState(TopLevelSession{AgentID: "top-1", Pane: "top-pane", Harness: "pig", Model: "m", Effort: "e", Role: "plan", Cwd: t.TempDir(), SessionID: oldID}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
+	done := SweepAutoCompress(fake.run, autoSettings())
+	if len(done) != 1 || done[0] != "top-pane" {
+		t.Fatalf("sweep compressed %v, want the top-level pane", done)
+	}
+	if s, _, _ := ReadAgentState("top-1"); s.SessionID == oldID || s.Compressed != 1 {
+		t.Errorf("top-level state = %+v, want a fresh session, compressed 1", s)
+	}
+}
