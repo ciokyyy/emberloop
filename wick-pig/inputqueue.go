@@ -2,7 +2,9 @@ package wick
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
 	"path/filepath"
@@ -53,11 +55,13 @@ type inputQueue struct {
 
 func newInputQueue() *inputQueue { return &inputQueue{} }
 
-// enqueue appends one item and reports the pending count.
+// enqueue appends one item and reports the pending count. Text is collapsed
+// to a single line on the way in, so delivery and acceptance agree on what
+// the child receives.
 func (q *inputQueue) enqueue(kind QueueKind, text, source string) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.items = append(q.items, queueItem{Kind: kind, Text: text, Source: source})
+	q.items = append(q.items, queueItem{Kind: kind, Text: collapseLine(text), Source: source})
 	return len(q.items)
 }
 
@@ -73,9 +77,17 @@ func (q *inputQueue) len() int {
 var ctrlTimeout = 3 * time.Second
 
 // ctrlSocketPath names one wrapper's control channel by agent identity,
-// beside the agent records. lockName keeps the file name safe.
+// beside the agent records. lockName keeps the file name safe; a path past
+// 100 bytes falls back to a hash, since unix socket paths stop near 108.
 func ctrlSocketPath(agentID string) string {
-	return filepath.Join(filepath.Dir(statePath), "agents", "ctrl-"+lockName(agentID)+".sock")
+	dir := filepath.Join(filepath.Dir(statePath), "agents")
+	name := "ctrl-" + lockName(agentID) + ".sock"
+	if len(filepath.Join(dir, name)) > 100 {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(agentID))
+		name = fmt.Sprintf("ctrl-%x.sock", h.Sum64())
+	}
+	return filepath.Join(dir, name)
 }
 
 // ctrlRequest is one channel message. Macro-run and pause/resume arrive in
@@ -95,12 +107,17 @@ type ctrlResponse struct {
 }
 
 // serveCtrl listens on the agent's socket and enqueues into q until stop
-// runs. A stale socket file from a dead wrapper is removed first; stop
-// closes the listener and removes the file.
+// runs. A socket that still answers belongs to a live wrapper, so a second
+// one for the same agent refuses to start; a stale file from a dead wrapper
+// is removed first; stop closes the listener and removes the file.
 func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
 	path := ctrlSocketPath(agentID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
+	}
+	if conn, err := net.DialTimeout("unix", path, time.Second); err == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("control channel %s already served", path)
 	}
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
@@ -116,8 +133,12 @@ func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
 				case <-done:
 					return
 				default:
+				}
+				var ne net.Error
+				if errors.As(err, &ne) && ne.Temporary() {
 					continue
 				}
+				return
 			}
 			go serveOne(conn, q)
 		}
@@ -204,10 +225,14 @@ func ctrlPending(agentID string) int {
 // swallow the first attempt, and the item stays at the head until accepted.
 const queueAcceptWait = 10 * time.Second
 
+// collapseLine folds one item to a single line, the way the herdr fallback
+// does: a newline in the PTY would submit the message half-written.
+func collapseLine(text string) string { return strings.Join(strings.Fields(text), " ") }
+
 // deliveryBytes is exactly what the child PTY receives for one item: the
-// whole message followed by Enter. Bracketed paste per harness arrives with
+// single line followed by Enter. Bracketed paste per harness arrives with
 // the ticket-04 harness table; the default writes plain text.
-func deliveryBytes(text string) []byte { return []byte(text + "\r") }
+func deliveryBytes(text string) []byte { return []byte(collapseLine(text) + "\r") }
 
 // head reports the first waiting item without removing it.
 func (q *inputQueue) head() (queueItem, bool) {
@@ -275,17 +300,19 @@ func (p *queuePump) step() {
 		if !p.gates.gate(head.Kind) {
 			return
 		}
+		if p.gates.countTurns == nil {
+			if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
+				return
+			}
+			p.q.pop()
+			return
+		}
+		p.baseline = p.gates.countTurns(head.Text)
 		if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
 			return
 		}
 		p.written = true
 		p.lastTry = p.gates.now()
-		if p.gates.countTurns == nil {
-			p.q.pop()
-			p.written = false
-			return
-		}
-		p.baseline = p.gates.countTurns(head.Text)
 		return
 	}
 	if p.gates.countTurns(head.Text) > p.baseline {
@@ -294,11 +321,11 @@ func (p *queuePump) step() {
 		return
 	}
 	if !p.gates.now().Before(p.lastTry.Add(queueAcceptWait)) {
+		p.baseline = p.gates.countTurns(head.Text)
 		if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
 			return
 		}
 		p.lastTry = p.gates.now()
-		p.baseline = p.gates.countTurns(head.Text)
 	}
 }
 
@@ -382,7 +409,7 @@ func queueGate(src HeaderSource, kind QueueKind) bool {
 	}
 	if kind == QueueKindQueue {
 		state, _ := h.TurnState(path)
-		return state == TurnDone
+		return state == TurnDone || state == TurnFailed
 	}
 	snap, err := summarizePath(src.Harness, path)
 	if err != nil {
@@ -396,6 +423,9 @@ func queueGate(src HeaderSource, kind QueueKind) bool {
 // at once.
 func wrapperTurns(src HeaderSource) func(string) int {
 	if Registered(src.Harness) == nil {
+		return nil
+	}
+	if resolveTranscript(src) == "" {
 		return nil
 	}
 	return func(text string) int {
