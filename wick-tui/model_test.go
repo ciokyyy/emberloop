@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -519,4 +521,206 @@ func TestModelTicketsViewShowsNamesAndVerdicts(t *testing.T) {
 			t.Errorf("view must contain %q, got:\n%s", want, view)
 		}
 	}
+}
+
+// Jumping to an agent's pane: Enter on an agent (or a double-click, or
+// Enter on a spec's orchestrator) focuses its herdr tab and pane through
+// the jump CommandRunner; a pane herdr no longer lists shows a short
+// message instead of any focus call.
+
+// jumpExecWith serves a canned pane list mapping each pane to its tab and
+// records every herdr invocation, so jump tests assert the focus sequence
+// through the fake Exec.
+func jumpExecWith(calls *[]string, tabs map[string]string) CommandRunner {
+	return func(name string, args ...string) ([]byte, error) {
+		*calls = append(*calls, strings.Join(append([]string{name}, args...), " "))
+		if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
+			panes := ""
+			for pane, tab := range tabs {
+				if panes != "" {
+					panes += ","
+				}
+				panes += `{"pane_id":"` + pane + `","tab_id":"` + tab + `","agent_status":"working"}`
+			}
+			return []byte(`{"result":{"panes":[` + panes + `]}}`), nil
+		}
+		return []byte(`{}`), nil
+	}
+}
+
+// detailPanes maps every pane the detail snapshot names to a tab.
+func detailPanes() map[string]string {
+	return map[string]string{"pane-w1": "tab-a", "pane-rs": "tab-a", "pane-orch": "tab-o"}
+}
+
+func TestModelEnterOnAgentJumpsToItsPane(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, detailPanes()))
+
+	m = openDetail(m)
+	m, _ = pressKey(m, "enter")
+	want := []string{"herdr pane list", "herdr tab focus tab-a", "herdr agent focus pane-w1"}
+	if !reflect.DeepEqual(jcalls, want) {
+		t.Fatalf("jump calls = %q, want %q", jcalls, want)
+	}
+	noPaneChanges(t, jcalls)
+	if m.notice != "" {
+		t.Fatalf("notice = %q, want none after a clean jump", m.notice)
+	}
+}
+
+func TestModelAgentKeysMoveSelectionAndEnterJumps(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, detailPanes()))
+
+	m = openDetail(m)
+	m, _ = pressKey(m, "j")
+	if got := m.agentRows.Cursor(); got != 1 {
+		t.Fatalf("agent cursor = %d, want the reviewer row", got)
+	}
+	m, _ = pressKey(m, "enter")
+	want := []string{"herdr pane list", "herdr tab focus tab-a", "herdr agent focus pane-rs"}
+	if !reflect.DeepEqual(jcalls, want) {
+		t.Fatalf("jump calls = %q, want %q", jcalls, want)
+	}
+}
+
+func TestModelEnterOnDeadAgentShowsGoneMessage(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, map[string]string{"pane-rs": "tab-a"}))
+
+	m = openDetail(m)
+	m, _ = pressKey(m, "enter")
+	if !reflect.DeepEqual(jcalls, []string{"herdr pane list"}) {
+		t.Fatalf("jump calls = %q, want only the lookup, never a focus", jcalls)
+	}
+	if m.notice != "agent 01-one's pane is gone" {
+		t.Fatalf("notice = %q, want the gone message", m.notice)
+	}
+	if view := m.View(); !strings.Contains(view, "agent 01-one's pane is gone") {
+		t.Fatalf("view must show the gone message, got:\n%s", view)
+	}
+}
+
+func TestModelJumpFailureShowsFailedMessage(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(func(name string, args ...string) ([]byte, error) {
+		jcalls = append(jcalls, strings.Join(append([]string{name}, args...), " "))
+		return nil, errors.New("herdr down")
+	})
+
+	m = openDetail(m)
+	m, _ = pressKey(m, "enter")
+	if !reflect.DeepEqual(jcalls, []string{"herdr pane list"}) {
+		t.Fatalf("jump calls = %q, want only the failed lookup", jcalls)
+	}
+	if m.notice != "jump failed: herdr down" {
+		t.Fatalf("notice = %q, want the failure message", m.notice)
+	}
+	if view := m.View(); !strings.Contains(view, "jump failed: herdr down") {
+		t.Fatalf("view must show the failure message, got:\n%s", view)
+	}
+}
+
+func TestModelEnterOnSpecJumpsToOrchestrator(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, detailPanes()))
+
+	m, _ = pressKey(m, "enter")
+	want := []string{"herdr pane list", "herdr tab focus tab-o", "herdr agent focus pane-orch"}
+	if !reflect.DeepEqual(jcalls, want) {
+		t.Fatalf("jump calls = %q, want %q", jcalls, want)
+	}
+	noPaneChanges(t, jcalls)
+}
+
+func TestModelEnterOnSpecWithoutRunDoesNothing(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, detailPanes()))
+
+	m, _ = pressKey(m, "j") // beta has no run and no orchestrator
+	m, _ = pressKey(m, "enter")
+	if len(jcalls) != 0 {
+		t.Fatalf("jump calls = %q, want none without an orchestrator", jcalls)
+	}
+	if m.notice != "" {
+		t.Fatalf("notice = %q, want none", m.notice)
+	}
+}
+
+func TestModelDoubleClickAgentJumpsToItsPane(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, detailPanes()))
+
+	m = openDetail(m)
+	_ = m.View()
+	x, y := waitZone(t, m, agentZoneID("/repo-a", "alpha", "01-one.md", "rs1"))
+	click := tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	updated, _ := m.Update(click)
+	m = updated.(Model)
+	if m.detail == nil {
+		t.Fatal("a single click on an agent only selects")
+	}
+	if got := m.agentRows.Cursor(); got != 1 {
+		t.Fatalf("agent cursor = %d, want the clicked reviewer row", got)
+	}
+	updated, _ = m.Update(click)
+	m = updated.(Model)
+	want := []string{"herdr pane list", "herdr tab focus tab-a", "herdr agent focus pane-rs"}
+	if !reflect.DeepEqual(jcalls, want) {
+		t.Fatalf("jump calls = %q, want %q", jcalls, want)
+	}
+}
+
+func TestModelDoubleClickOrchestratorJumpsToItsPane(t *testing.T) {
+	t.Setenv("HERDR_BIN_PATH", "")
+	snap := cannedDetailSnapshot()
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	var jcalls []string
+	m.SetJumpExec(jumpExecWith(&jcalls, detailPanes()))
+
+	_ = m.View()
+	x, y := waitZone(t, m, orchZoneID("/repo-a", "alpha"))
+	click := tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	updated, _ := m.Update(click)
+	m = updated.(Model)
+	if len(jcalls) != 0 {
+		t.Fatalf("a single click only selects, but ran %q", jcalls)
+	}
+	updated, _ = m.Update(click)
+	m = updated.(Model)
+	want := []string{"herdr pane list", "herdr tab focus tab-o", "herdr agent focus pane-orch"}
+	if !reflect.DeepEqual(jcalls, want) {
+		t.Fatalf("jump calls = %q, want %q", jcalls, want)
+	}
+	noPaneChanges(t, jcalls)
 }

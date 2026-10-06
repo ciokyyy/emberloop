@@ -52,6 +52,7 @@ func run(argv []string) error {
 	}
 	model := tui.NewModel(load)
 	model.SetSettingsBackend(tui.LiveBackend())
+	model.SetJumpExec(execRunner)
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err

@@ -10,21 +10,27 @@ each, refreshed every second. Enter or double-click opens a ticket's
 detail: its Markdown plus every attached agent (worker, reviewers,
 scouts) with harness, model, tokens, reported cost and RSS, with ticket
 totals; the header carries the machine-wide RSS of all running agents.
+Enter on an agent (or a spec's orchestrator) or a double-click focuses
+its herdr tab and pane through `tab focus` plus `agent focus`, leaving
+the TUI running in its own pane; a pane herdr no longer lists shows a
+gone message instead of focusing anything.
 The Settings tab edits the role slots, decision model and threshold
 through the global settings load/save functions, with model choices from
-each harness's cached `Models()` and the archive size beside them. Pane
-jumping arrives in its own ticket.
+each harness's cached `Models()` and the archive size beside them.
 
 ## Ownership
 
 Owns this directory as a separate Go module (`snapshot.go` and its test,
 `costs.go` with the usage/memory sums and its tests, `model.go` and its
-test, `herdr.go` and its test, `settings.go` and its test,
+test, `herdr.go` (pane-list parse, liveness, and the `focusAgentPane`
+jump primitive) and its test, `settings.go` and its test,
 `cmd/wick-tui/main.go`). Ticket status derivation lives in `Snapshot`;
 status glyphs and colours live in `model.go`'s view layer. The Settings tab
 edits through the `SettingsBackend` seam: the live backend calls the core's
 settings load/save, harness `Models()` cache and archive size (this module
-may import the core; never the reverse).
+may import the core; never the reverse). Pane jumps run through the
+model's jump `CommandRunner`: the live binary passes os/exec, tests a
+fake over a canned pane list.
 
 ## Local Contracts
 
@@ -36,6 +42,9 @@ may import the core; never the reverse).
   retries; merged never exceeds total.
 - Usage logs are read incrementally through one live `Reader`'s per-file
   offsets; costs are harness-reported only, never estimated.
+- Jumping only ever focuses: `tab focus` plus `agent focus` through the
+  jump seam, never a close, move or split; a pane herdr no longer lists
+  shows a gone message instead.
 - UI toolkit lock (bubbletea v1 line throughout): bubbletea v1.3.10 (program,
   `tea.Tick` polling, no extra dep), bubbles v1.0.0 (list for runs/tickets,
   viewport for ticket Markdown, table for agent rows, textinput for the
@@ -57,7 +66,9 @@ may import the core; never the reverse).
   a temp file and stubbed model lists.
 - Behavioural change needs a test through `Snapshot` or model messages, not
   internals; expected values come from the fixture, never recomputed the way
-  the code does.
+  the code does. Enter and double-click jumps assert the focus sequence
+  through a fake jump runner over a canned pane list, plus the gone
+  message for a pane the list no longer names.
 
  ## Verification
 
