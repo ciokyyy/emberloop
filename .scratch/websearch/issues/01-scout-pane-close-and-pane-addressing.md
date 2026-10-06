@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] After a scout's result is delivered, its pane is closed and its launch file cleaned up
-- [ ] A failed spawn still rolls back as before
-- [ ] `spawn` output lists agent id and pane id for each entry
-- [ ] `tell` and `finish` take `agent` or `pane`; neither or both is an error
-- [ ] An unknown pane id gives a clear error and acts on nothing
-- [ ] Fake-herdr tests cover the close after delivery and pane resolution; repo check passes
+- [x] After a scout's result is delivered, its pane is closed and its launch file cleaned up
+- [x] A failed spawn still rolls back as before
+- [x] `spawn` output lists agent id and pane id for each entry
+- [x] `tell` and `finish` take `agent` or `pane`; neither or both is an error
+- [x] An unknown pane id gives a clear error and acts on nothing
+- [x] Fake-herdr tests cover the close after delivery and pane resolution; repo check passes
