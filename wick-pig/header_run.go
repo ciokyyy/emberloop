@@ -59,6 +59,11 @@ type WrapConfig struct {
 	// starts a real PTY. Wait reaps the child and reports its exit.
 	Start    func(bin string, args, env []string, w, h int) (child wrapPty, wait func() error, err error)
 	Snapshot func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
+	// Report runs one herdr command that reports a claude child as an agent;
+	// the default runs herdr. PaneID names the pane; the default reads
+	// HERDR_PANE_ID when HERDR_ENV is 1. Both exist for tests.
+	Report func(args []string)
+	PaneID string
 }
 
 // DefaultWrapPoll is the snapshot refresh while the child runs: usage rows
@@ -117,7 +122,10 @@ func WrapChild(cfg WrapConfig) error {
 		dark:    detectDark(stdout),
 		profile: detectProfile(stdout),
 		child:   child, snapshot: snapshot, filter: filter,
+		reporter: newAgentReporter(cfg),
 	}
+	defer w.reporter.release()
+	w.reporter.report(HeaderIdle)
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) && cfg.Start == nil {
 		if state, err := term.MakeRaw(int(f.Fd())); err == nil {
 			defer term.Restore(int(f.Fd()), state)
@@ -225,6 +233,7 @@ type wrapper struct {
 	child    wrapPty
 	snapshot func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
 	filter   *wrapFilter
+	reporter *agentReporter
 	mu       sync.Mutex
 	last     string
 	phase    bool
@@ -284,6 +293,7 @@ func (w *wrapper) repaint() {
 	if !ok {
 		return
 	}
+	w.reporter.report(snap.State)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.paintLocked(w.renderSnapLocked(snap))

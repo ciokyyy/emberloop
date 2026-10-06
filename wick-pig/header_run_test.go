@@ -209,3 +209,67 @@ func TestWrapDefaultIsBorderless(t *testing.T) {
 		t.Error("column margins set with the frame off")
 	}
 }
+
+// A wrapped claude child is reported to herdr as an agent: idle at start,
+// then released when the child ends. Pig reports itself through its
+// extension, so a pig child is never reported here.
+func TestWrapReportsClaudeToHerdr(t *testing.T) {
+	var calls [][]string
+	child := &fakeChild{}
+	var stdout bytes.Buffer
+	cfg := wrapTestConfig(child, &stdout)
+	cfg.Source.Harness = "claude"
+	cfg.Source.AgentName = "code-reviewer"
+	cfg.PaneID = "w:p1"
+	cfg.Report = func(args []string) { calls = append(calls, args) }
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("herdr calls = %v, want a report then a release", calls)
+	}
+	join := func(a []string) string { return strings.Join(a, " ") }
+	if got := join(calls[0]); !strings.HasPrefix(got, "pane report-agent w:p1 --source wick --agent code-reviewer --state idle --seq ") {
+		t.Errorf("first call = %q", got)
+	}
+	if got := join(calls[1]); !strings.HasPrefix(got, "pane release-agent w:p1 --source wick --agent code-reviewer --seq ") {
+		t.Errorf("last call = %q", got)
+	}
+}
+
+func TestWrapDoesNotReportPigToHerdr(t *testing.T) {
+	called := false
+	child := &fakeChild{}
+	var stdout bytes.Buffer
+	cfg := wrapTestConfig(child, &stdout)
+	cfg.PaneID = "w:p1"
+	cfg.Report = func([]string) { called = true }
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Error("a pig child was reported by the wrapper")
+	}
+}
+
+func TestAgentReporterTracksState(t *testing.T) {
+	var calls []string
+	r := &agentReporter{run: func(a []string) { calls = append(calls, strings.Join(a, " ")) }, pane: "p", label: "x", seq: 10}
+	r.report(HeaderIdle)
+	r.report(HeaderIdle) // unchanged: no call
+	r.report(HeaderWorking)
+	r.report(HeaderCompressing) // still busy: no call
+	r.report(HeaderIdle)
+	r.release()
+	r.release()             // once only
+	r.report(HeaderWorking) // after release: no call
+	want := []string{
+		"pane report-agent p --source wick --agent x --state idle --seq 11",
+		"pane report-agent p --source wick --agent x --state working --seq 12",
+		"pane report-agent p --source wick --agent x --state idle --seq 13",
+		"pane release-agent p --source wick --agent x --seq 14",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
