@@ -937,7 +937,7 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 				tipTree = strings.TrimSpace(t.Stdout)
 			}
 			tipPatch := workerPatchID(run, &w, tip, tipTree)
-			if why := reviewGate(w.Worktree, tip, tipTree, tipPatch, requiredReviewers(&w), passHolds(w.Repo)); why != "" {
+			if why := reviewGate(w.Worktree, tip, tipTree, tipPatch, requiredReviewers(&w), passHolds(w.Repo), func(vt string) bool { return treeSubsumes(run, w.Repo, vt, tipTree) }); why != "" {
 				r, err := kept("not reviewed to a pass: " + why + ". Have it spawn its reviewer types until they pass at its tip")
 				out = r
 				return err
