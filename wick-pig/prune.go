@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"example.com/wick/statedb"
 )
 
 // Pruning deletes archived run data on purpose, never automatically: `wick-pig
@@ -191,6 +193,7 @@ func PruneRuns(run Exec, now time.Time, opts PruneOptions) (PruneResult, error) 
 		}
 	}
 	var errs []error
+	var droppedAgents []string
 	for _, r := range plan.Runs {
 		if err := deletePruneRun(r.Slug); err != nil {
 			errs = append(errs, err)
@@ -203,8 +206,12 @@ func PruneRuns(run Exec, now time.Time, opts PruneOptions) (PruneResult, error) 
 				if err := os.Remove(usageTailPath(a)); err != nil && !os.IsNotExist(err) {
 					errs = append(errs, err)
 				}
+				droppedAgents = append(droppedAgents, a)
 			}
 		}
+	}
+	if err := deletePruneUsageRows(droppedAgents); err != nil {
+		errs = append(errs, err)
 	}
 	for _, name := range blobNames {
 		if err := os.Remove(filepath.Join(blobDir(), name)); err != nil && !os.IsNotExist(err) {
@@ -498,6 +505,26 @@ func deletePruneRun(slug string) error {
 		delete(store, slug)
 		return nil
 	})
+}
+
+// deletePruneUsageRows deletes the state-database usage rows of agents that
+// belong only to pruned runs — the database form of the usage logs removed
+// above. Agents shared with a kept run never reach here. A state with no
+// database yet (no usage ever tailed) is nothing to delete, not an error.
+func deletePruneUsageRows(agents []string) error {
+	if len(agents) == 0 {
+		return nil
+	}
+	if _, err := os.Stat(dbPath()); os.IsNotExist(err) {
+		return nil
+	}
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	_, err = statedb.DeleteUsageForAgents(db, agents)
+	return err
 }
 
 // ParseOlderThan parses an --older-than age: a Go duration (72h, 15m) or a

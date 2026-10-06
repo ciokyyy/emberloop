@@ -5,23 +5,9 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-)
 
-// appendLines appends each string as its own line to path, the way the
-// usage tailer grows a log between polls.
-func appendLines(t *testing.T, path string, lines []string) {
-	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	for _, l := range lines {
-		if _, err := f.WriteString(l + "\n"); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
+	"example.com/wick/statedb"
+)
 
 // reviewersScoutsFixture builds a ticket with a worker, two reviewers on
 // the worker's worktree, and three scout states: one spawned by the worker,
@@ -80,14 +66,10 @@ func reviewersScoutsFixture(t *testing.T) (stateDir, repo string) {
 		"parent_id": "01-one",
 	})
 
-	writeLines(t, filepath.Join(stateDir, "usage", "01-one.jsonl"), []string{
-		`{"agent":"01-one","at":"2026-10-06T10:00:00Z","harness":"pig","provider":"p","model":"opus","input":100,"output":50,"cacheRead":0,"cacheWrite":0,"reasoning":0,"reportedCost":0.01,"kind":"request"}`,
-	})
-	writeLines(t, filepath.Join(stateDir, "usage", "rs1.jsonl"), []string{
-		`{"agent":"rs1","at":"2026-10-06T10:00:00Z","harness":"pig","provider":"p","model":"sonnet","input":10,"output":5,"cacheRead":0,"cacheWrite":0,"reasoning":0,"reportedCost":0.001,"kind":"request"}`,
-	})
-	writeLines(t, filepath.Join(stateDir, "usage", "sc1.jsonl"), []string{
-		`{"agent":"sc1","at":"2026-10-06T10:00:00Z","harness":"pig","provider":"p","model":"haiku","input":7,"output":3,"cacheRead":0,"cacheWrite":0,"reasoning":0,"reportedCost":0.0001,"kind":"request"}`,
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "01-one", At: "2026-10-06T10:00:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 100, Output: 50, ReportedCost: costp(0.01)},
+		{Agent: "rs1", At: "2026-10-06T10:00:00Z", Harness: "pig", Provider: "p", Model: "sonnet", Kind: statedb.KindRequest, Input: 10, Output: 5, ReportedCost: costp(0.001)},
+		{Agent: "sc1", At: "2026-10-06T10:00:00Z", Harness: "pig", Provider: "p", Model: "haiku", Kind: statedb.KindRequest, Input: 7, Output: 3, ReportedCost: costp(0.0001)},
 	})
 	return stateDir, repo
 }
@@ -176,7 +158,7 @@ func TestSnapshotTicketWithoutWorkerHasNoAgents(t *testing.T) {
 
 // A Reader polling across ticks accumulates appended usage without
 // double-counting: the second snapshot holds both batches' sums, and an
-// agent whose log appears later joins with only its own rows.
+// agent whose rows appear later joins with only its own rows.
 func TestReaderIncrementalPollsDoNotDoubleCount(t *testing.T) {
 	stateDir, repo := costsFixture(t)
 	r := new(Reader)
@@ -188,8 +170,8 @@ func TestReaderIncrementalPollsDoNotDoubleCount(t *testing.T) {
 	}
 	before := findSpec(t, first, repo, "alpha").Tickets[0].Totals.Input
 
-	appendLines(t, filepath.Join(stateDir, "usage", "01-one.jsonl"), []string{
-		`{"agent":"01-one","at":"2026-10-06T11:00:00Z","harness":"pig","provider":"p","model":"opus","input":50,"output":10,"cacheRead":0,"cacheWrite":0,"reasoning":0,"reportedCost":0.005,"kind":"request"}`,
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "01-one", At: "2026-10-06T11:00:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 50, Output: 10, ReportedCost: costp(0.005)},
 	})
 
 	second, err := r.Snapshot(stateDir, repo, herdr)
@@ -204,7 +186,7 @@ func TestReaderIncrementalPollsDoNotDoubleCount(t *testing.T) {
 		t.Errorf("find calls after append = %d, want the same 2, not 4", after.Agents[0].FindCalls)
 	}
 
-	// A fresh one-shot Snapshot over the same files agrees with the
+	// A fresh one-shot Snapshot over the same database agrees with the
 	// incremental Reader: neither double-counts.
 	fresh, err := Snapshot(stateDir, repo, herdr)
 	if err != nil {
@@ -217,7 +199,7 @@ func TestReaderIncrementalPollsDoNotDoubleCount(t *testing.T) {
 }
 
 // Overlapping poll loads share one live Reader: concurrent Snapshots
-// serialize on its mutex instead of racing on the usage offsets. Run with
+// serialize on its mutex instead of racing on the high-water mark. Run with
 // -race: without the lock this fails on concurrent map access.
 func TestReaderConcurrentSnapshotsDoNotRace(t *testing.T) {
 	stateDir, repo := costsFixture(t)
@@ -257,8 +239,8 @@ func TestReaderIncrementalCostSnapshotReplaces(t *testing.T) {
 	}
 	// A newer cost-state for the same session start replaces the opus
 	// model row and leaves the sonnet row alone: 6.25 + 0.07.
-	appendLines(t, filepath.Join(stateDir, "usage", "orch.jsonl"), []string{
-		`{"agent":"orch","at":"2026-10-06T09:00:00Z","harness":"claude","provider":"anthropic","model":"claude-opus-5","input":3,"output":500,"cacheRead":0,"cacheWrite":18000,"reasoning":180,"reportedCost":6.25,"kind":"cost"}`,
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "orch", At: "2026-10-06T09:00:00Z", Harness: "claude", Provider: "anthropic", Model: "claude-opus-5", Kind: statedb.KindCost, Input: 3, Output: 500, CacheRead: 18000, Reasoning: 180, ReportedCost: costp(6.25)},
 	})
 
 	second, err := r.Snapshot(stateDir, repo, herdr)
@@ -272,5 +254,60 @@ func TestReaderIncrementalCostSnapshotReplaces(t *testing.T) {
 	// Request tokens still sum: the original request plus nothing new.
 	if orch.Input != 2 {
 		t.Errorf("orchestrator input = %d, want 2 (no new request rows)", orch.Input)
+	}
+}
+
+// A deleted and recreated database restarts row ids at 1: the next poll
+// notices the file identity changed and starts the accumulation over instead
+// of skipping every row — even when the new file already reaches past the
+// old high-water mark.
+func TestReaderRestartsWhenDatabaseIsRecreated(t *testing.T) {
+	stateDir, repo := costsFixture(t)
+	r := new(Reader)
+	herdr := func() (map[string]string, error) { return costsLive(), nil }
+
+	first, err := r.Snapshot(stateDir, repo, herdr)
+	if err != nil {
+		t.Fatalf("first Snapshot: %v", err)
+	}
+	if got := findSpec(t, first, repo, "alpha").Tickets[0].Totals.Input; got != 300 {
+		t.Fatalf("input = %d, want the fixture's 300", got)
+	}
+	for _, p := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(statedb.DBPathForDir(stateDir) + p); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "01-one", At: "2026-10-06T12:00:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 9, Output: 1},
+	})
+
+	second, err := r.Snapshot(stateDir, repo, herdr)
+	if err != nil {
+		t.Fatalf("second Snapshot: %v", err)
+	}
+	if got := findSpec(t, second, repo, "alpha").Tickets[0].Totals.Input; got != 9 {
+		t.Errorf("input after recreate = %d, want only the new database's 9", got)
+	}
+	// Recreate once more, this time already past the old mark (ids 1-3
+	// against a mark of 1): without the identity check the first row would
+	// be skipped as already seen.
+	for _, p := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(statedb.DBPathForDir(stateDir) + p); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "01-one", At: "2026-10-06T13:00:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 7, Output: 1},
+		{Agent: "01-one", At: "2026-10-06T13:01:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 7, Output: 1},
+		{Agent: "01-one", At: "2026-10-06T13:02:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 7, Output: 1},
+	})
+
+	third, err := r.Snapshot(stateDir, repo, herdr)
+	if err != nil {
+		t.Fatalf("third Snapshot: %v", err)
+	}
+	if got := findSpec(t, third, repo, "alpha").Tickets[0].Totals.Input; got != 21 {
+		t.Errorf("input after second recreate = %d, want all three new rows' 21", got)
 	}
 }

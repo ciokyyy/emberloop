@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"example.com/wick/statedb"
 )
 
 var errPruneHerdrDown = errors.New("herdr down")
@@ -452,4 +454,69 @@ func TestPruneDatesRecordLessRunsByActivity(t *testing.T) {
 	if len(aged.Runs) != 1 || aged.Runs[0].Slug != "adhoc" {
 		t.Fatalf("a stale record-less archive must be selected, got %+v", aged.Runs)
 	}
+}
+
+// Seam (ticket 03): prune deletes a run's usage rows as well as its files —
+// pruning old-run removes agent-old's rows and keeps agent-new's, and a row
+// belonging to an agent of both a pruned and a kept run survives.
+func TestPruneApplyDeletesUsageRowsAndKeepsSharedOnes(t *testing.T) {
+	pruneFixture(t)
+	insertPruneRow(t, "agent-old", 100)
+	insertPruneRow(t, "agent-new", 200)
+
+	if _, err := PruneRuns(pruneDeadExec(t), time.Now().UTC(), PruneOptions{Runs: []string{"old-run"}, Apply: true}); err != nil {
+		t.Fatalf("PruneRuns: %v", err)
+	}
+	if got := pruneRows(t, "agent-old"); len(got) != 0 {
+		t.Errorf("pruned rows = %+v, want none", got)
+	}
+	if got := pruneRows(t, "agent-new"); len(got) != 1 || got[0].Input != 200 {
+		t.Errorf("kept rows = %+v, want the surviving agent's row", got)
+	}
+
+	// Sharing works at the row level too: agent-old joins the kept run, so
+	// pruning old-run must leave its rows alone next time.
+	pruneFixture(t)
+	insertPruneRow(t, "agent-old", 100)
+	mustSnapshot(t, "new-run", "agent-old", time.Now().UTC().Format(time.RFC3339))
+	if _, err := PruneRuns(pruneDeadExec(t), time.Now().UTC(), PruneOptions{Runs: []string{"old-run"}, Apply: true}); err != nil {
+		t.Fatalf("PruneRuns: %v", err)
+	}
+	if got := pruneRows(t, "agent-old"); len(got) != 1 {
+		t.Errorf("shared rows = %+v, want the row kept with the surviving run", got)
+	}
+}
+
+func insertPruneRow(t *testing.T, agent string, input int64) {
+	t.Helper()
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := statedb.InsertUsageRow(db, statedb.UsageRow{
+		Agent: agent, At: time.Now().UTC().Format(time.RFC3339),
+		Harness: "pig", Kind: statedb.KindRequest,
+		Input: input, DedupeKey: "prune-test:" + agent,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pruneRows(t *testing.T, agent string) []statedb.UsageRow {
+	t.Helper()
+	// A prune that removed every row may leave no database behind at all.
+	if _, err := os.Stat(dbPath()); os.IsNotExist(err) {
+		return nil
+	}
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := statedb.UsageRowsForAgent(db, agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
 }

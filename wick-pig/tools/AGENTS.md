@@ -18,8 +18,10 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 
 ## Local Contracts
 
-- A tool imports nothing from pig, so a plain `go build` of `cmd/wick-mcp`
-  works.
+- A tool imports nothing from the harness root (`example.com/wick` would
+  cycle); the one shared dependency is the `statedb` leaf, which owns the
+  state database the tools and the harness both write, so a plain `go
+  build` of `cmd/wick-mcp` keeps working.
 - `edit` answers with the changed region plus context and flags a patch
   whose deletions greatly exceed its additions; tag semantics do not change.
 

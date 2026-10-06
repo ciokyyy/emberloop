@@ -2,11 +2,11 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
+	"example.com/wick/statedb"
 	"example.com/wick/tools/systemone"
 )
 
@@ -38,21 +38,25 @@ func (b bareJudge) Evaluate(ctx context.Context, req systemone.Request) (systemo
 	return resp, err
 }
 
-func readFindLines(t *testing.T, agent string) []map[string]any {
+// readFindLines returns the agent's find rows from the state database, in row
+// order: find logs rows there now, not JSONL lines.
+func readFindLines(t *testing.T, agent string) []statedb.UsageRow {
 	t.Helper()
-	raw, err := os.ReadFile(UsagePath(agent))
+	db, err := statedb.Open(statedb.DBPath())
 	if err != nil {
-		t.Fatalf("read usage log: %v", err)
+		t.Fatalf("open state database: %v", err)
 	}
-	var out []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		var m map[string]any
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
-			t.Fatalf("decode %q: %v", line, err)
+	defer db.Close()
+	rows, err := statedb.UsageRowsForAgent(db, agent)
+	if err != nil {
+		t.Fatalf("read usage rows: %v", err)
+	}
+	for _, r := range rows {
+		if r.Kind != statedb.KindFind {
+			t.Fatalf("row kind = %q, want find", r.Kind)
 		}
-		out = append(out, m)
 	}
-	return out
+	return rows
 }
 
 func TestFindLogsDecisionCallsAgainstTheCallingAgent(t *testing.T) {
@@ -71,28 +75,27 @@ func TestFindLogsDecisionCallsAgainstTheCallingAgent(t *testing.T) {
 
 	lines := readFindLines(t, "agent-find")
 	if len(lines) == 0 {
-		t.Fatal("no find lines logged")
+		t.Fatal("no find rows logged")
 	}
-	callID, _ := lines[0]["find_call_id"].(string)
+	callID := lines[0].FindCallID
 	if callID == "" {
-		t.Fatalf("lines carry no find-call id: %v", lines[0])
+		t.Fatalf("rows carry no find-call id: %+v", lines[0])
 	}
 	for _, line := range lines {
-		if line["agent"] != "agent-find" || line["kind"] != "find" {
-			t.Errorf("line identity = %v", line)
+		if line.Agent != "agent-find" || line.Kind != statedb.KindFind {
+			t.Errorf("row identity = %+v", line)
 		}
-		if line["model"] != systemone.JevModelPinned {
-			t.Errorf("line model = %v, want %v", line["model"], systemone.JevModelPinned)
+		if line.Model != systemone.JevModelPinned {
+			t.Errorf("row model = %v, want %v", line.Model, systemone.JevModelPinned)
 		}
-		if line["find_call_id"] != callID {
-			t.Errorf("line groups under %v, want %v", line["find_call_id"], callID)
+		if line.FindCallID != callID {
+			t.Errorf("row groups under %v, want %v", line.FindCallID, callID)
 		}
-		if q, _ := line["questions"].(float64); q < 1 {
-			t.Errorf("line questions = %v", line["questions"])
+		if line.FindQuestions < 1 {
+			t.Errorf("row questions = %v, want >= 1", line.FindQuestions)
 		}
-		usage, _ := line["usage"].(map[string]any)
-		if usage["input_tokens"] != float64(278) || usage["cost"] != 0.000011676 {
-			t.Errorf("line usage = %v", line["usage"])
+		if line.Input != 278 || line.ReportedCost == nil || *line.ReportedCost != 0.000011676 {
+			t.Errorf("row usage = %d/%v, want 278/0.000011676", line.Input, line.ReportedCost)
 		}
 	}
 }
@@ -109,22 +112,22 @@ func TestFindWithoutUsageStillLogsCallCounts(t *testing.T) {
 	}
 	lines := readFindLines(t, "agent-bare")
 	if len(lines) == 0 {
-		t.Fatal("no find lines logged")
+		t.Fatal("no find rows logged")
 	}
 	for _, line := range lines {
-		if _, ok := line["usage"]; ok {
-			t.Errorf("line carries usage = %v, want none", line["usage"])
+		if line.ReportedCost != nil {
+			t.Errorf("row carries cost = %v, want none", *line.ReportedCost)
 		}
-		if line["agent"] != "agent-bare" || line["kind"] != "find" {
-			t.Errorf("line = %v", line)
+		if line.Agent != "agent-bare" || line.Kind != statedb.KindFind {
+			t.Errorf("row = %+v", line)
 		}
-		// The call count is the lines themselves; each line names how many
+		// The call count is the rows themselves; each row names how many
 		// decisions its call carried.
-		if q, _ := line["questions"].(float64); q < 1 {
-			t.Errorf("line questions = %v, want >= 1", line["questions"])
+		if line.FindQuestions < 1 {
+			t.Errorf("row questions = %v, want >= 1", line.FindQuestions)
 		}
-		if line["find_call_id"] == nil || line["find_call_id"] == "" {
-			t.Errorf("line carries no find-call id: %v", line)
+		if line.FindCallID == "" {
+			t.Errorf("row carries no find-call id: %+v", line)
 		}
 	}
 }
@@ -149,14 +152,14 @@ func TestFindCallIDGroupsOneSearchAndResetsOnReuse(t *testing.T) {
 	first := readFindLines(t, "agent-reuse")
 	second := readFindLines(t, "agent-next")
 	if len(first) == 0 || len(second) == 0 {
-		t.Fatalf("logged %d then %d lines, want both non-empty", len(first), len(second))
+		t.Fatalf("logged %d then %d rows, want both non-empty", len(first), len(second))
 	}
-	if first[0]["find_call_id"] == second[0]["find_call_id"] {
-		t.Errorf("both searches share find-call id %v", first[0]["find_call_id"])
+	if first[0].FindCallID == second[0].FindCallID {
+		t.Errorf("both searches share find-call id %v", first[0].FindCallID)
 	}
 	for _, line := range second {
-		if line["agent"] != "agent-next" {
-			t.Errorf("reused searcher attributed to %v", line["agent"])
+		if line.Agent != "agent-next" {
+			t.Errorf("reused searcher attributed to %v", line.Agent)
 		}
 	}
 }

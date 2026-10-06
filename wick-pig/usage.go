@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"example.com/wick/statedb"
 )
 
 // UsageRecord is one line in an agent's usage log: the raw per-request token
@@ -232,10 +234,11 @@ func stamp(ts string) string {
 // tail
 // ---------------------------------------------------------------------------
 
-// usageDir holds the per-agent usage logs, beside the worker store, so the
-// TUI and stats can read them as plain files. WICK_STATE_DIR redirects it
-// the way it redirects the rest of the state dir: ticket 04's find lines
-// share these files, and must land in the same directory under that seam.
+// usageDir holds the tailer's resume state (byte offsets and seen keys) and
+// the legacy per-agent usage logs the database import reads on first open.
+// New usage records land in the database, not in per-agent JSONL: the old
+// files stay until prune removes them. WICK_STATE_DIR redirects the
+// directory the way it redirects the rest of the state dir.
 func usageDir() string {
 	if dir := os.Getenv("WICK_STATE_DIR"); dir != "" {
 		return filepath.Join(dir, "usage")
@@ -243,8 +246,10 @@ func usageDir() string {
 	return filepath.Join(filepath.Dir(statePath), "usage")
 }
 
-// UsageLogPath is the agent's append-only usage log: one JSON record per
-// line, one line per request (or per find call, or per cost snapshot).
+// UsageLogPath is the agent's legacy append-only usage log: one JSON record
+// per line, one line per request (or per find call, or per cost snapshot).
+// The tailer no longer writes it; it stays for the one-time import and until
+// prune removes it.
 func UsageLogPath(agent string) string {
 	return filepath.Join(usageDir(), lockName(agent)+".jsonl")
 }
@@ -299,38 +304,68 @@ func saveUsageTail(agent string, st usageTailState) error {
 	return os.Rename(tmp, usageTailPath(agent))
 }
 
-// appendUsageRecords appends records to the agent's log, one JSON object per
-// line.
-func appendUsageRecords(agent string, recs []UsageRecord) error {
-	if err := os.MkdirAll(usageDir(), 0o755); err != nil {
-		return err
+// dbPath is the state database file: under WICK_STATE_DIR when set, else
+// beside the worker store, so tests isolating statePath stay hermetic the
+// way usageDir does.
+func dbPath() string {
+	if dir := os.Getenv("WICK_STATE_DIR"); dir != "" {
+		return statedb.DBPathForDir(dir)
 	}
-	f, err := os.OpenFile(UsageLogPath(agent), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	return filepath.Join(filepath.Dir(statePath), statedb.DBFileName)
+}
+
+// insertUsageRows writes records to the state database under the line's
+// dedupe key scoped by agent, one row per record. The unique index on the
+// key is global, while the tailer's seen lists are per-agent, so the agent
+// scopes the key: two agents meeting identical lines (the same pig message
+// id, or byte-identical claude cost-state snapshots) each keep their row
+// instead of the second vanishing under INSERT OR IGNORE. A cost-state line
+// yields one row per model, so multi-record lines key each row by agent plus
+// line key plus model; the unique index ignores the repeat when the line is
+// somehow met twice. It returns how many rows were newly inserted.
+func insertUsageRows(recs []UsageRecord, key string) (int, error) {
+	if len(recs) == 0 || key == "" {
+		return 0, nil
+	}
+	db, err := statedb.Open(dbPath())
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer f.Close()
+	defer db.Close()
+	inserted := 0
 	for _, r := range recs {
-		raw, err := json.Marshal(r)
-		if err != nil {
-			return err
+		rowKey := r.Agent + "\x00" + key
+		if len(recs) > 1 {
+			rowKey += "\x00" + r.Model
 		}
-		if _, err := f.Write(append(raw, '\n')); err != nil {
-			return err
+		yes, err := statedb.InsertUsageRow(db, statedb.UsageRow{
+			Agent: r.Agent, At: r.At, Harness: r.Harness,
+			Provider: r.Provider, Model: r.Model, Kind: r.Kind,
+			Input: r.Input, Output: r.Output,
+			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite,
+			Reasoning: r.Reasoning, ReportedCost: r.ReportedCost,
+			DedupeKey: rowKey,
+		})
+		if err != nil {
+			return inserted, err
+		}
+		if yes {
+			inserted++
 		}
 	}
-	return nil
+	return inserted, nil
 }
 
 // TailUsage reads the transcript lines appended since the stored offset,
-// parses each with the harness's parser, and appends unseen records to the
-// agent's usage log. It returns how many records were appended. Only complete
+// parses each with the harness's parser, and inserts unseen records into the
+// state database. It returns how many rows were inserted. Only complete
 // lines (ending in a newline) move the offset, so a half-written line waits
 // for the next pass; a missing transcript is no error, only a harness that
 // has not written one yet. The offset and key land before the records they
-// cover, so killing the tailer mid-pass can lose the row it was writing but
-// never logs one twice. A settled session's final pass is a plain re-tail:
-// with nothing new it appends nothing.
+// cover, and the rows carry the line's dedupe key under a unique index, so
+// killing the tailer mid-pass and restarting it never logs one twice. A
+// settled session's final pass is a plain re-tail: with nothing new it
+// inserts nothing.
 func TailUsage(transcriptPath, agent, harness string) (int, error) {
 	p, ok := UsageParserFor(harness)
 	if !ok {
@@ -388,10 +423,11 @@ func TailUsage(transcriptPath, agent, harness string) (int, error) {
 				return err
 			}
 			if fresh && len(recs) > 0 {
-				if err := appendUsageRecords(agent, recs); err != nil {
+				n, err := insertUsageRows(recs, key)
+				if err != nil {
 					return err
 				}
-				appended += len(recs)
+				appended += n
 			}
 		}
 		return nil

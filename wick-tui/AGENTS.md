@@ -21,7 +21,8 @@ each harness's cached `Models()` and the archive size beside them.
 ## Ownership
 
 Owns this directory as a separate Go module (`snapshot.go` and its test,
-`costs.go` with the usage/memory sums and its tests, `model.go` and its
+`costs.go` with the usage/memory sums and its tests, `db_test.go` with the
+shared fixture-database helpers the usage tests build on, `model.go` and its
 test, `herdr.go` (pane-list parse, liveness, and the `focusAgentPane`
 jump primitive) and its test, `settings.go` and its test,
 `cmd/wick-tui/main.go`). Ticket status derivation lives in `Snapshot`;
@@ -40,8 +41,9 @@ fake over a canned pane list.
 - Running is decided by the orchestrator pane being alive in herdr, never by
   the run record's end time. A herdr failure keeps the last snapshot and
   retries; merged never exceeds total.
-- Usage logs are read incrementally through one live `Reader`'s per-file
-  offsets; costs are harness-reported only, never estimated.
+- Usage rows are read incrementally through one live `Reader`'s row-id
+  high-water mark over the state database opened read-only; costs are
+  harness-reported only, never estimated.
 - Jumping only ever focuses: `tab focus` plus `agent focus` through the
   jump seam, never a close, move or split; a pane herdr no longer lists
   shows a gone message instead.
