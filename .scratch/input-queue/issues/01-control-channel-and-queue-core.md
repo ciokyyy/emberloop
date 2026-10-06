@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] A prompt sent with the tell command to a wrapped agent arrives through the wrapper, never through herdr send-text
-- [ ] With no wrapper running, delivery takes the existing herdr path unchanged
-- [ ] Steer waits for the tool boundary; queue waits for turn end
-- [ ] An item not shown in the transcript as a user turn is retried and stays first in the queue
-- [ ] The strip shows the pending count and clears it when the queue is empty
-- [ ] Tests through the control channel and a fake child PTY with a fake clock: assert the exact bytes the PTY receives and the strip text
-- [ ] Spec stories 25, 28, 29, 4
+- [x] A prompt sent with the tell command to a wrapped agent arrives through the wrapper, never through herdr send-text
+- [x] With no wrapper running, delivery takes the existing herdr path unchanged
+- [x] Steer waits for the tool boundary; queue waits for turn end
+- [x] An item not shown in the transcript as a user turn is retried and stays first in the queue
+- [x] The strip shows the pending count and clears it when the queue is empty
+- [x] Tests through the control channel and a fake child PTY with a fake clock: assert the exact bytes the PTY receives and the strip text
+- [x] Spec stories 25, 28, 29, 4
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.

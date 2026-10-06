@@ -41,6 +41,19 @@ func LaunchStripSource(cmd Command) HeaderSource {
 	}
 }
 
+// wrapConfigFor runs a launch command under the header strip with the input
+// queue's control channel served: same binary, argv and env, on a terminal
+// sized for the strip. The channel is what lets tell and the shared delivery
+// path reach the child through the queue instead of herdr send-text.
+func wrapConfigFor(cmd Command, src HeaderSource, s tools.Settings) WrapConfig {
+	return WrapConfig{
+		Source: src, Settings: s,
+		Bin: cmd.Bin, Args: cmd.Args, Env: cmd.Env,
+		Stdin: os.Stdin, Stdout: os.Stdout,
+		ServeCtrl: true,
+	}
+}
+
 // WrapLaunch runs a launch command under the header strip: same binary,
 // argv and env, on a terminal sized for the strip, with the child's stderr
 // merged into the terminal. Without a terminal, or with the strip disabled,
@@ -63,16 +76,9 @@ func WrapLaunchWithChildStderr(cmd Command, childStderr io.Writer) error {
 		return RunPlainCommand(cmd.Bin, cmd.Args, cmd.Env, os.Stdin, os.Stdout, stderr)
 	}
 	cwd, _ := os.Getwd()
-	return WrapChild(WrapConfig{
-		Source:      LaunchStripSource(cmd),
-		Settings:    tools.EffectiveSettings(cwd),
-		Bin:         cmd.Bin,
-		Args:        cmd.Args,
-		Env:         cmd.Env,
-		Stdin:       os.Stdin,
-		Stdout:      os.Stdout,
-		ChildStderr: childStderr,
-	})
+	cfg := wrapConfigFor(cmd, LaunchStripSource(cmd), tools.EffectiveSettings(cwd))
+	cfg.ChildStderr = childStderr
+	return WrapChild(cfg)
 }
 
 // WrapTopLevel runs a top-level session command under the header strip:
@@ -84,13 +90,5 @@ func WrapTopLevel(cmd Command, src HeaderSource) error {
 		return RunPlainCommand(cmd.Bin, cmd.Args, cmd.Env, os.Stdin, os.Stdout, os.Stderr)
 	}
 	cwd, _ := os.Getwd()
-	return WrapChild(WrapConfig{
-		Source:   src,
-		Settings: tools.EffectiveSettings(cwd),
-		Bin:      cmd.Bin,
-		Args:     cmd.Args,
-		Env:      cmd.Env,
-		Stdin:    os.Stdin,
-		Stdout:   os.Stdout,
-	})
+	return WrapChild(wrapConfigFor(cmd, src, tools.EffectiveSettings(cwd)))
 }

@@ -216,6 +216,9 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 		State:         HeaderWorking,
 		CompressCount: src.CompressCount,
 	}
+	// The wrapper's queue length comes through its own control channel, so
+	// every snapshot reader shows `N pending`. Without a wrapper it is 0.
+	snap.Pending = ctrlPending(src.AgentID)
 	path := resolveTranscript(src)
 	provider := ""
 	// No transcript yet means no turn has started: the agent is waiting for

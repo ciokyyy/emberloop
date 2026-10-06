@@ -57,7 +57,8 @@ owns its `_test.go` and the behaviour below):
   per-harness line parsers a new harness registers), `context_window.go`
   (model window table), `context_report.go` (the `wick-pig context` output)
 - Header strip: `header.go` (pure strip render: snapshot and width in,
-  styled string out, Lip Gloss adaptive palette, width tiers),
+  styled string out, Lip Gloss adaptive palette, width tiers, `N pending`
+  beside the state pill),
   `header_tool.go` (the second row's activity label: the tool running now
   or the last one finished, a glyph and verb per tool in `toolStyles`; an
   idle agent shows no state word. **A new tool wick serves needs its
@@ -77,13 +78,20 @@ owns its `_test.go` and the behaviour below):
   dir, never a per-run CLAUDE_CONFIG_DIR (a fresh one has no login or
   onboarding state) and never the user's saved settings),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
-  builder reading the queued compress mark and the compressing state),
+  builder reading the queued compress mark, the compressing state and the
+  queue pending count),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
   pane palette set at start and reset at exit, on signals and across
-  restarts, exit restore, the child's own stderr pipe beside the PTY; the
+  restarts, exit restore, the wrapper queue and pump, sole child-PTY
+  writer, the child's own stderr pipe beside the PTY; the
   borderless soft top edge, with the strip-rule setting restoring the drawn
   line), `header_source.go` (strip source from launch env,
-  `wrap`/`exec`/top-level wiring); settings carry strip rows, frame, rule,
+  `wrap`/`exec`/top-level wiring, every wrapped launch serves the control
+  channel), `inputqueue.go` (one queue per wrapper: steer at the tool
+  boundary versus queued message at turn end, unix-socket channel named by
+  agent id, pump with transcript acceptance and head retry, DeliverPrompt
+  in `transcript.go` tries the channel first with the herdr path as
+  fallback); settings carry strip rows, frame, rule,
   per-harness compress models, the auto-compress switch and cooldown. `exec`,
   top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log

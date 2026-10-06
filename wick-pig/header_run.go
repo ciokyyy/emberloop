@@ -69,6 +69,11 @@ type WrapConfig struct {
 	Poll        time.Duration
 	ThemeDir    string // generated theme files; default wick's state dir
 	ThemeDark   *bool  // variant override; default detects from Stdout
+	// ServeCtrl serves the input-queue control channel for the source agent:
+	// production launchers set it, so tell and the shared delivery path
+	// reach the child through the queue. Tests set it with a temp state
+	// dir; without it no socket is created.
+	ServeCtrl bool
 	// Start launches the child on a terminal of the size, with its
 	// stderr on the pipe when non-nil and merged into the terminal
 	// when nil; the default starts a real PTY. Wait reaps the child
@@ -154,6 +159,22 @@ func WrapChild(cfg WrapConfig) error {
 	w.syncMouseLocked()
 	defer w.reporter.release()
 	w.reporter.report(HeaderIdle)
+	w.queue = newInputQueue()
+	w.pump = newWrapperPump(cfg.Source, w.queue, func(b []byte) error {
+		_, err := w.writeChild(b)
+		return err
+	})
+	if cfg.ServeCtrl && cfg.Source.AgentID != "" {
+		if stop, err := serveCtrl(cfg.Source.AgentID, w.queue); err == nil {
+			defer stop()
+		} else {
+			errSink := cfg.Stderr
+			if errSink == nil {
+				errSink = os.Stderr
+			}
+			fmt.Fprintf(errSink, "wick: control channel unavailable: %v\n", err)
+		}
+	}
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) && cfg.Start == nil {
 		if state, err := term.MakeRaw(int(f.Fd())); err == nil {
 			defer term.Restore(int(f.Fd()), state)
@@ -169,6 +190,7 @@ func WrapChild(cfg WrapConfig) error {
 	if cfg.Snapshot == nil {
 		go w.pollUsage(done)
 	}
+	go w.pumpQueue(done)
 	if f, ok := stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		go w.watchResize(done)
 	}
@@ -271,7 +293,9 @@ func wrapMarginSetupPad(termW int, frame bool, pad Pad) string {
 }
 
 // wrapper holds one wrapped child: its sizes, theme and the last strip it
-// painted, so repaints happen only when the numbers change.
+// painted, so repaints happen only when the numbers change. It also owns
+// the input queue and its pump, and is the only writer to the child PTY:
+// typed input and queued prompts serialize through writeChild.
 type wrapper struct {
 	cfg      WrapConfig
 	stdin    io.Reader
@@ -295,6 +319,9 @@ type wrapper struct {
 	// drag across them.
 	lastPlain []string
 	usageKey  atomic.Value // string: the account the strip's usage reads
+	queue     *inputQueue
+	pump      *queuePump
+	childMu   sync.Mutex
 	mu        sync.Mutex
 	last      string
 	phase     bool
@@ -578,6 +605,31 @@ func (w *wrapper) restore() {
 	w.writeLocked(b.String())
 }
 
+// writeChild is the wrapper's only write to the child PTY: typed input and
+// queued prompts serialize here, so injected text never interleaves a
+// half-typed line.
+func (w *wrapper) writeChild(p []byte) (int, error) {
+	w.childMu.Lock()
+	defer w.childMu.Unlock()
+	return w.child.Write(p)
+}
+
+// pumpQueue steps the input queue beside the read loop: an idle child blocks
+// in Read, and a queued prompt must still go out at its gate. Each step
+// writes at most once.
+func (w *wrapper) pumpQueue(done <-chan struct{}) {
+	ticker := time.NewTicker(queuePumpEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			w.pump.step()
+		}
+	}
+}
+
 // forwardInput copies typed input to the child until stdin ends or a write
 // fails. A post-exit write fails against the closed child and ends the
 // loop; a terminal stdin outlives the child only until the process exits.
@@ -590,7 +642,7 @@ func (w *wrapper) forwardInput() {
 			in := w.mouse.translate(buf[:n])
 			w.mu.Unlock()
 			if len(in) > 0 {
-				if _, werr := w.child.Write(in); werr != nil {
+				if _, werr := w.writeChild(in); werr != nil {
 					return
 				}
 			}
