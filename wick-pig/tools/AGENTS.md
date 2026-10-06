@@ -5,7 +5,9 @@
 The agent tools both hosts serve: pig through the extension adapter, claude
 through the MCP server. Files: `tool.go` (the `Tool` interface: name,
 schema, execute over a workspace root), `all.go` (the `All()` registry),
-`files.go` (read, edit, write), `bash.go`, `background.go`, `find.go`
+`files.go` (read, edit, write), `readurl.go` (the tiered URL reader `read`
+serves: native fetch, then Jina, then an uninstalled browser tier),
+`bash.go`, `background.go`, `find.go`
 (plus the `cascade.go` ranker), `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go`, `usage.go`, and `systemone/` (the
@@ -24,6 +26,9 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   build` of `cmd/wick-mcp` keeps working.
 - `edit` answers with the changed region plus context and flags a patch
   whose deletions greatly exceed its additions; tag semantics do not change.
+- `read` refuses loopback, private and link-local URL targets on every
+  redirect hop, caps the body near 10 MB at 20 s, and never sends
+  credentialed or token-like URLs to Jina.
 
 ## Work Guidance
 

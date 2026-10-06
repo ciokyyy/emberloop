@@ -28,11 +28,13 @@ func (readTool) Name() string   { return "read" }
 func (readTool) ReadOnly() bool { return true }
 func (readTool) Description() string {
 	return "Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it. " +
-		"Any absolute path works, except credential files. A directory returns a listing, a glob (*.md) the matching paths. wick:// files are plain text: they cannot be edited."
+		"Any absolute path works, except credential files. A directory returns a listing, a glob (*.md) the matching paths. wick:// files are plain text: they cannot be edited. " +
+		"Also reads http(s):// and www. links through a tiered reader (native fetch, then Jina, then an uninstalled browser): HTML becomes Markdown, JSON is pretty-printed, " +
+		"text and Markdown pass through; append :N, :N-M, :N+M, comma lists or :raw for line selectors or the unshaped body."
 }
 func (readTool) Schema() map[string]any {
 	return obj(map[string]any{
-		"path":   map[string]any{"type": "string", "description": "File, directory, glob, or wick:// address to read."},
+		"path":   map[string]any{"type": "string", "description": "File, directory, glob, wick:// address, or http(s):// / www. URL to read."},
 		"offset": map[string]any{"type": "integer", "description": "First line (or entry), 1-based."},
 		"limit":  map[string]any{"type": "integer", "description": "Maximum lines (or entries)."},
 	}, "path")
@@ -53,6 +55,11 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	// package because the tools package serves both hosts and cannot import it.
 	if strings.HasPrefix(p.Path, wickScheme) {
 		return readWick(p.Path, p.Offset, p.Limit)
+	}
+	// URLs read through the tiered reader (native, then Jina, then the
+	// uninstalled browser tier). Selectors (:N, :raw) trail the URL.
+	if isURLTarget(p.Path) {
+		return readURL(p.Path, p.Offset, p.Limit)
 	}
 	// read opens any absolute path, so a session can reach its brief, state,
 	// logs and transcripts outside the workspace. A relative path stays under
