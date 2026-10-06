@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,268 @@ const (
 	verdictPass    = "pass"
 	verdictChanges = "changes"
 )
+
+// coverage compares what the review diff holds against what the working tree
+// changed or added since base. The diff's files are parsed from the diff text
+// itself; the tree's are the same population from git: base against the
+// working-state tree the diff was taken over (or the worktree itself when no
+// snapshot exists), plus untracked files. It returns both file sets, or an
+// error when git cannot say what the tree holds, in which case the prompt
+// claims no counts.
+func coverage(run Exec, tree, base, treeID, diff string) (map[string]bool, map[string]bool, error) {
+	changed, err := treeChanged(run, tree, base, treeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return diffPaths(diff), changed, nil
+}
+
+// diffPaths is the distinct paths the diff text covers: the new name of each
+// changed file, the old one for a deletion.
+func diffPaths(text string) map[string]bool {
+	out := map[string]bool{}
+	var cur *diffBlock
+	flush := func() {
+		if cur == nil {
+			return
+		}
+		if p := cur.path(); p != "" {
+			out[p] = true
+		}
+		cur = nil
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if rest, ok := strings.CutPrefix(line, "diff --git "); ok {
+			flush()
+			cur = &diffBlock{header: rest}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		switch {
+		case cur.plus == "" && strings.HasPrefix(line, "+++ "):
+			cur.plus = strings.TrimPrefix(line, "+++ ")
+		case cur.minus == "" && strings.HasPrefix(line, "--- "):
+			cur.minus = strings.TrimPrefix(line, "--- ")
+		case cur.binary == "" && strings.HasPrefix(line, "Binary files ") && strings.HasSuffix(line, " differ"):
+			cur.binary = line
+		}
+	}
+	flush()
+	return out
+}
+
+// diffBlock is one file's section of a unified diff.
+type diffBlock struct {
+	header      string // the two paths of the `diff --git` line
+	plus, minus string // the +++ and --- lines' sides
+	binary      string // a `Binary files … differ` line, when present
+}
+
+// path resolves the block to the path it covers: the +++ side, the --- side
+// for a deletion, the Binary line's sides, and only then the header. The +++,
+// --- and Binary lines each carry a single path, so names with spaces resolve
+// exactly; the header's two paths stay ambiguous for such names and are only
+// a fallback for a change with no content lines, like a mode-only change.
+func (b *diffBlock) path() string {
+	if b.plus != "" && b.plus != "/dev/null" {
+		return cleanDiffSide(b.plus)
+	}
+	if b.minus != "" && b.minus != "/dev/null" {
+		return cleanDiffSide(b.minus)
+	}
+	if a, c, ok := binarySides(b.binary); ok {
+		if c != "" && c != "/dev/null" {
+			return c
+		}
+		return a
+	}
+	if a, c, ok := splitDiffSides(b.header); ok {
+		if c != "" && c != "/dev/null" {
+			return c
+		}
+		return a
+	}
+	return ""
+}
+
+// binarySides splits a `Binary files A and B differ` line into its cleaned
+// sides. A side is /dev/null or carries git's a/ or b/ prefix, quoted or not;
+// the first ` and ` that splits two such sides wins, else the last one is
+// tried, which holds for an old name holding " and ". Every candidate failing,
+// the block is skipped: a wrong split silently produces a wrong count.
+func binarySides(line string) (a, b string, ok bool) {
+	rest, ok := strings.CutPrefix(line, "Binary files ")
+	if !ok {
+		return "", "", false
+	}
+	rest, ok = strings.CutSuffix(rest, " differ")
+	if !ok {
+		return "", "", false
+	}
+	if first, second, ok := strings.Cut(rest, " and "); ok {
+		if a, b, ok := validBinarySides(first, second); ok {
+			return a, b, true
+		}
+	}
+	if i := strings.LastIndex(rest, " and "); i >= 0 {
+		if a, b, ok := validBinarySides(rest[:i], rest[i+len(" and "):]); ok {
+			return a, b, true
+		}
+	}
+	return "", "", false
+}
+
+// validBinarySides cleans two raw Binary sides and reports whether they look
+// like git's pair: /dev/null or an a/ side first, /dev/null or a b/ side
+// second. A wrong split is refused rather than counted.
+func validBinarySides(rawA, rawB string) (a, b string, ok bool) {
+	if rawA != "/dev/null" && !isDiffSide(rawA, "a/") {
+		return "", "", false
+	}
+	if rawB != "/dev/null" && !isDiffSide(rawB, "b/") {
+		return "", "", false
+	}
+	return cleanDiffSide(rawA), cleanDiffSide(rawB), true
+}
+
+// splitDiffSides splits the two paths of a `diff --git` header. Git does not
+// quote spaces in these headers, so the first space separates two plain names
+// only; when it does not split an a/ b/ pair, the last ` b/` is tried, which
+// holds for a spaced name. Both failing, the block is skipped: a wrong split
+// silently produces a wrong count.
+func splitDiffSides(rest string) (a, b string, ok bool) {
+	if i := firstSpaceOutsideQuotes(rest); i >= 0 {
+		if a, b, ok := validDiffSides(rest[:i], rest[i+1:]); ok {
+			return a, b, true
+		}
+	}
+	if i := strings.LastIndex(rest, " b/"); i >= 0 {
+		if a, b, ok := validDiffSides(rest[:i], rest[i+1:]); ok {
+			return a, b, true
+		}
+	}
+	return "", "", false
+}
+
+// validDiffSides cleans two raw header sides and reports whether they look
+// like git's a/ and b/ pair: a wrong split is refused rather than counted.
+func validDiffSides(rawA, rawB string) (a, b string, ok bool) {
+	if !isDiffSide(rawA, "a/") {
+		return "", "", false
+	}
+	if rawB != "/dev/null" && !isDiffSide(rawB, "b/") {
+		return "", "", false
+	}
+	return cleanDiffSide(rawA), cleanDiffSide(rawB), true
+}
+
+// isDiffSide says the raw side carries git's prefix, quoted or not.
+func isDiffSide(s, prefix string) bool {
+	return strings.HasPrefix(s, prefix) || strings.HasPrefix(s, `"`+prefix)
+}
+
+// cleanDiffSide dequotes a diff side and strips its a/ or b/ prefix. Git pads
+// these lines with a trailing tab, which is not part of the name.
+func cleanDiffSide(s string) string {
+	s = strings.TrimRight(s, " \t")
+	if len(s) >= 2 && s[0] == '"' {
+		if un, err := strconv.Unquote(s); err == nil {
+			s = un
+		}
+	}
+	if p, ok := strings.CutPrefix(s, "a/"); ok {
+		return p
+	}
+	return strings.TrimPrefix(s, "b/")
+}
+
+// firstSpaceOutsideQuotes is the index of the first space outside C quotes,
+// or -1. Quoting still matters for names with quotes or non-ASCII bytes,
+// which git C-quotes even though it leaves spaces bare.
+func firstSpaceOutsideQuotes(s string) int {
+	inQuotes, escaped := false, false
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case escaped:
+			escaped = false
+		case c == '\\' && inQuotes:
+			escaped = true
+		case c == '"':
+			inQuotes = !inQuotes
+		case c == ' ' && !inQuotes:
+			return i
+		}
+	}
+	return -1
+}
+
+// treeChanged is the distinct paths changed or added between base and the
+// working state: the same population the review diff is taken over. That is
+// base against the snapshot tree when one exists, else against the worktree,
+// plus untracked files, which a worktree diff leaves out. Measuring the same
+// population on both sides keeps renames and reverts consistent: a rename
+// counts once under its new name on each side, and a file reverted to base
+// counts nowhere.
+func treeChanged(run Exec, tree, base, treeID string) (map[string]bool, error) {
+	out := map[string]bool{}
+	args := []string{"diff", "--name-only", "-z", base}
+	if treeID != "" {
+		args = append(args, treeID)
+	}
+	named, err := gitIn(run, tree, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range strings.Split(named, "\x00") {
+		if p != "" {
+			out[p] = true
+		}
+	}
+	status, err := gitIn(run, tree, "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	// Only untracked entries count here: every tracked change is already in
+	// the name list above, under git's rename detection. Entries stay aligned
+	// by skipping a rename or copy's second NUL-terminated path.
+	for rest := status; len(rest) >= 4; {
+		x, y := rest[0], rest[1]
+		path, after, _ := strings.Cut(rest[3:], "\x00")
+		if x == '?' && y == '?' && path != "" {
+			out[path] = true
+		}
+		rest = after
+		if x == 'R' || y == 'R' || x == 'C' || y == 'C' {
+			_, rest, _ = strings.Cut(rest, "\x00")
+		}
+	}
+	return out, nil
+}
+
+// coverageNotice is the prompt's file-count line: how many files the diff
+// covers against how many the working tree changed or added. When the diff
+// leaves out files the tree holds, the prompt flags the gap and names what
+// is missing, so it is visible to the reviewer instead of discovered by
+// accident. The flag keys on the missing files themselves, not on the counts:
+// two sets can hold the same number of files while covering different ones.
+func coverageNotice(diffFiles, treeFiles int, missing []string) string {
+	if len(missing) > 0 {
+		return fmt.Sprintf("Coverage WARNING: the diff covers %s but the working tree changed or added %s. The diff does not cover: %s. Read the missing files in the worktree.",
+			pluralFiles(diffFiles), pluralFiles(treeFiles), strings.Join(missing, ", "))
+	}
+	return fmt.Sprintf("Coverage: the diff covers %s; the working tree changed or added %s.",
+		pluralFiles(diffFiles), pluralFiles(treeFiles))
+}
+
+// pluralFiles is "1 file" or "N files".
+func pluralFiles(n int) string {
+	if n == 1 {
+		return "1 file"
+	}
+	return fmt.Sprintf("%d files", n)
+}
 
 // reviewer is what wick remembers of one persistent reviewer between calls. Tab
 // and Slot are where it lives: the ticket's tab and its slot in the grid, so a
@@ -345,6 +608,14 @@ type reviewPacket struct {
 	// place is where the reviewers open: the worker's ticket tab, or the
 	// caller's tab when there is no ticket (a tree wick did not spawn).
 	place readOnlyPlace
+	// coverOK says the file counts below were computed. diffFiles is how many
+	// files the full diff covers, treeFiles how many the working tree changed
+	// or added since the base, and missing the changed files with no hunk in
+	// the diff. The prompt states the counts and flags a diff that covers
+	// fewer files than the tree holds.
+	coverOK              bool
+	diffFiles, treeFiles int
+	missing              []string
 }
 
 // prepareReview builds the packet every reviewer of a worktree judges: the
@@ -387,6 +658,24 @@ func prepareReview(run Exec, tree, note string) (*reviewPacket, error) {
 		fullDiff: filepath.Join(dir, name+".diff"),
 	}
 	p.noChanges = strings.TrimSpace(full) == ""
+	// The coverage counts compare what the reviewer was given against what the
+	// tree holds: the diff's files are parsed from the diff text itself, the
+	// tree's are the same population from git, so a gap between them is a
+	// file the reviewer was not given. The gap is flagged in the prompt
+	// rather than left for the reviewer to notice. When git cannot say what
+	// the tree holds, the prompt says nothing instead of claiming counts it
+	// did not measure.
+	if diff, tree, err := coverage(run, tree, base, treeID, full); err == nil {
+		p.coverOK = true
+		p.diffFiles = len(diff)
+		p.treeFiles = len(tree)
+		for f := range tree {
+			if !diff[f] {
+				p.missing = append(p.missing, f)
+			}
+		}
+		sort.Strings(p.missing)
+	}
 	if err := os.WriteFile(p.fullDiff, []byte(full), 0o644); err != nil {
 		return nil, err
 	}
@@ -625,6 +914,9 @@ func packetPrompt(p *reviewPacket, typ string, prev reviewer, replaced bool) str
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "\nThe change is the git diff at %s, from %s to the working tree; read files in the worktree for context.\n", p.fullDiff, short(p.base))
+	if p.coverOK {
+		fmt.Fprintf(&b, "\n%s\n", coverageNotice(p.diffFiles, p.treeFiles, p.missing))
+	}
 	fmt.Fprintf(&b, "\nChecks run by wick on this tree: %s\n", p.checks)
 	if p.note != "" {
 		fmt.Fprintf(&b, "\nThe worker says: %s\n", p.note)

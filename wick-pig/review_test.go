@@ -1058,6 +1058,175 @@ func TestReviewDiffIncludesNewFilesAndChangedWorkIsReviewedAgain(t *testing.T) {
 	}
 }
 
+// The reviewer prompt states how many files the diff covers and how many the
+// working tree changed or added. When the diff covers every changed file the
+// two counts match and no mismatch is flagged.
+func TestReviewPromptStatesMatchingCoverageCounts(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "newfile.go"), "package a\n\nfunc New() {}\n")
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range defaultReviewers {
+		got := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(got, "covers 2 files") || !strings.Contains(got, "changed or added 2 files") {
+			t.Errorf("%s prompt must state matching coverage counts:\n%s", typ, got)
+		}
+		if strings.Contains(got, "WARNING") {
+			t.Errorf("%s prompt must not flag a mismatch when the diff covers everything:\n%s", typ, got)
+		}
+	}
+}
+
+// When the diff covers fewer files than the working tree holds, the prompt
+// flags the mismatch and names the files the diff left out, so the reviewer
+// looks at what it was not given.
+func TestReviewPromptFlagsDiffCoveringFewerFiles(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "newfile.go"), "package a\n\nfunc New() {}\n")
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawnWithTruncatedDiff(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range defaultReviewers {
+		got := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(got, "WARNING") || !strings.Contains(got, "covers 1 file") ||
+			!strings.Contains(got, "changed or added 2 files") || !strings.Contains(got, "newfile.go") {
+			t.Errorf("%s prompt must flag the diff covering fewer files than the tree:\n%s", typ, got)
+		}
+	}
+}
+
+// reviewSpawnWithTruncatedDiff is reviewSpawn with the full review diff cut
+// down to its first file, the way a diff that left files out would read: the
+// tree holds two changed files but the reviewer is given one.
+func reviewSpawnWithTruncatedDiff(t *testing.T, f *fakeReviewers, tree string, entries ...map[string]any) (string, error) {
+	t.Helper()
+	oldExec := spawnExec
+	spawnExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		res, err := f.run(cmd, args, opts)
+		if err == nil && res.Code == 0 && cmd == "git" && len(args) == 3 && args[0] == "diff" &&
+			!strings.HasPrefix(args[1], "-") && !strings.HasPrefix(args[2], "-") {
+			if head, _, found := strings.Cut(res.Stdout, "\ndiff --git "); found {
+				res.Stdout = head + "\n"
+			}
+		}
+		return res, err
+	}
+	t.Cleanup(func() { spawnExec = oldExec })
+	types, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := spawnToolFor(types, []string{reviewerStandards, reviewerSpec})
+	agents := make([]any, len(entries))
+	for i, e := range entries {
+		agents[i] = e
+	}
+	raw, _ := json.Marshal(map[string]any{"agents": agents})
+	return tool.Execute(context.Background(), tree, raw)
+}
+
+// A file with a space in its name counts once on each side: the diff's file
+// is read from its +++ or Binary line and the tree's from git's
+// NUL-separated output, neither of which splits on spaces.
+func TestReviewPromptCountsSpacedFilenames(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "sp ace.go"), "package a\n\nfunc Spaced() {}\n")
+	writeFile(t, filepath.Join(tree, "bin ary.dat"), "a\x00b")
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range defaultReviewers {
+		got := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(got, "covers 3 files") || !strings.Contains(got, "changed or added 3 files") {
+			t.Errorf("%s prompt must count spaced filenames once each:\n%s", typ, got)
+		}
+		if strings.Contains(got, "WARNING") {
+			t.Errorf("%s prompt must not flag a mismatch for spaced filenames:\n%s", typ, got)
+		}
+	}
+}
+
+// A file present in the base and renamed with identical content is one entry
+// in the diff and one changed file in the tree: both sides collapse the
+// rename to its new name.
+func TestReviewPromptCountsARenameOnce(t *testing.T) {
+	_, tree := reviewRepo(t)
+	// Byte-identical content: git only reports a rename entry when the blob
+	// is unchanged, and gitOut trims the trailing newline, so it goes back.
+	baseContent := gitOut(t, tree, "show", "HEAD~1:a.go") + "\n"
+	writeFile(t, filepath.Join(tree, "a.go"), baseContent)
+	if err := os.Rename(filepath.Join(tree, "a.go"), filepath.Join(tree, "renamed.go")); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range defaultReviewers {
+		got := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(got, "covers 1 file") || !strings.Contains(got, "changed or added 1 file") {
+			t.Errorf("%s prompt must count a rename once:\n%s", typ, got)
+		}
+		if strings.Contains(got, "WARNING") {
+			t.Errorf("%s prompt must not flag a mismatch for a rename:\n%s", typ, got)
+		}
+	}
+}
+
+// An added binary whose name holds spaces and " and " resolves through the
+// Binary line: its /dev/null side carries no separator, so the split lands on
+// the right one.
+func TestReviewPromptCountsBinaryNameWithAnd(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "bin and ary.dat"), "a\x00b")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "add binary")
+	writeFile(t, filepath.Join(tree, "bin and ary.dat"), "c\x00d")
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range defaultReviewers {
+		got := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(got, "covers 2 files") || !strings.Contains(got, "changed or added 2 files") {
+			t.Errorf("%s prompt must count the binary once:\n%s", typ, got)
+		}
+		if strings.Contains(got, "WARNING") {
+			t.Errorf("%s prompt must not flag a mismatch for the binary name:\n%s", typ, got)
+		}
+	}
+}
+
+// A file committed after the base and then removed from the working tree is
+// no change against the base on either side: the tree follows the working
+// state, not the commit, so the reverted file counts nowhere.
+func TestReviewPromptIgnoresARevertedFile(t *testing.T) {
+	_, tree := reviewRepo(t)
+	writeFile(t, filepath.Join(tree, "b.go"), "package a\n")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "add b")
+	if err := os.Remove(filepath.Join(tree, "b.go")); err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range defaultReviewers {
+		got := f.paneOf(t, typ).prompts[0]
+		if !strings.Contains(got, "covers 1 file") || !strings.Contains(got, "changed or added 1 file") {
+			t.Errorf("%s prompt must ignore the reverted file:\n%s", typ, got)
+		}
+		if strings.Contains(got, "WARNING") {
+			t.Errorf("%s prompt must not flag a mismatch for a reverted file:\n%s", typ, got)
+		}
+	}
+}
+
 // After the worker rebases onto a target that moved, its diff starts at the
 // new tip, not at the spawn commit: other tickets' work stays out of it, and
 // the reviewer is told to read the full diff again.
