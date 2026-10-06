@@ -116,7 +116,9 @@ func liveInstallAgents(run Exec) ([]string, error) {
 		}
 	}
 	// Agent states hold the scouts, which have no other store. Workers and
-	// reviewers are already named above, so panes seen there are skipped.
+	// reviewers are already named above, so panes seen there are skipped. The
+	// user's own top-level session never blocks: it runs the install itself,
+	// and its panes keep the old binary until they restart like --force.
 	if entries, err := os.ReadDir(agentStateDir()); err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
@@ -132,6 +134,9 @@ func liveInstallAgents(run Exec) ([]string, error) {
 		for _, id := range stateIDs {
 			s, ok, err := ReadAgentState(id)
 			if err != nil || !ok {
+				continue
+			}
+			if s.Type == "orchestrator" {
 				continue
 			}
 			kind := s.Type
@@ -234,7 +239,43 @@ func InstallBinaries(run Exec, opts InstallOptions) (InstallResult, error) {
 	if len(live) > 0 || len(relive) > 0 || checkErr != nil || recheckErr != nil {
 		res.Warning = "warning: running sessions keep the old binary until they restart"
 	}
+	if w := linkHerdrPlugin(run); w != "" {
+		if res.Warning != "" {
+			res.Warning += "\n" + w
+		} else {
+			res.Warning = w
+		}
+	}
 	return res, nil
+}
+
+// herdrPluginDir is the herdr plugin checkout the install links: the
+// herdr-wick directory beside the wick-pig module the install builds from.
+// WICK_HERDR_PLUGIN_DIR points it at a temp dir in tests.
+func herdrPluginDir() string {
+	if dir := os.Getenv("WICK_HERDR_PLUGIN_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(installSourceDir(), "..", "herdr-wick")
+}
+
+// linkHerdrPlugin links the shipped compress plugin at install, so the
+// compress key has an action to invoke. A checkout without the plugin
+// directory skips quietly; a failed link warns with the manual command
+// rather than failing the install.
+func linkHerdrPlugin(run Exec) string {
+	dir := herdrPluginDir()
+	if info, err := os.Stat(filepath.Join(dir, "herdr-plugin.toml")); err != nil || info.IsDir() {
+		return ""
+	}
+	res, err := run(herdrBin(), []string{"plugin", "link", dir}, ExecOpts{Timeout: 30 * time.Second})
+	if err != nil {
+		return fmt.Sprintf("warning: herdr plugin link %s failed: %v; run `herdr plugin link %s` by hand", dir, err, dir)
+	}
+	if res.Code != 0 {
+		return fmt.Sprintf("warning: herdr plugin link %s failed: %s; run `herdr plugin link %s` by hand", dir, firstLine(res.Stderr, res.Stdout), dir)
+	}
+	return ""
 }
 
 // placedBinary is a destination the swap already replaced, with the backup
@@ -306,7 +347,7 @@ func plural(n int, one, many string) string {
 }
 
 // installUsage documents the one command that replaces the installed wick
-// binaries, and the gate around it.
+// binaries, links the herdr compress plugin, and the gate around it.
 const installUsage = `usage: wick-pig install [--force]
 
   Rebuild wick-pig, wick-mcp and wick-tui from this source checkout and install them.
@@ -314,6 +355,15 @@ const installUsage = `usage: wick-pig install [--force]
   naming the agents, and changes nothing. --force installs anyway: running
   sessions keep the old binary until they restart. Ends with the same step
   as wick-pig deps, proving every external dependency.
+
+  The install also links the herdr-wick plugin (the compress action for the
+  focused pane). Bind it to one key in ~/.config/herdr/config.toml, then
+  run ` + "`herdr server reload-config`" + `:
+
+  [[keys.command]]
+  key = "prefix+shift+c"
+  type = "plugin_action"
+  command = "wick.compress"
 
   This is the only way to replace the installed wick binaries.`
 

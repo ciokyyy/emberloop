@@ -159,9 +159,10 @@ func resolveTranscript(src HeaderSource) string {
 // BuildHeaderSnapshot folds one agent's current numbers into a strip
 // snapshot: context size, model and top tools from the transcript, the
 // window from settings, the cost from the usage rows, the state from the
-// harness's turn reader, and a warning when no compress model is set. A
-// transcript or database that is not there yet is an empty snapshot, not
-// an error: the strip appears once the session starts writing.
+// harness's turn reader (or the queued compress mark), and a warning when
+// no compress model is set. A transcript or database that is not there yet
+// is an empty snapshot, not an error: the strip appears once the session
+// starts writing.
 func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, error) {
 	snap := HeaderSnapshot{
 		AgentID:       src.AgentID,
@@ -194,6 +195,11 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 	}
 	if s.EffectiveCompressModel(src.Harness) == "" {
 		snap.Warning = "no compressModel"
+	}
+	// A queued manual compress waits at the tool-call boundary: the strip
+	// shows the queue instead of working or idle.
+	if src.AgentID != "" && CompressQueued(src.AgentID) {
+		snap.State = HeaderQueued
 	}
 	return snap, nil
 }

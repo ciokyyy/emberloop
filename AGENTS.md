@@ -5,7 +5,8 @@ implement/review loops. Pig and claude sessions spawn workers in git
 worktrees, judge them with persistent reviewers, and merge through a gate
 (`finish`). The main Go package is `wick-pig/`; `wick-tui/` is the dashboard
 module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
-extensions; `scripts/` holds live
+extensions, and `herdr-wick/` is the herdr compress plugin; `scripts/` holds
+live
 probes that need running agents; `.scratch/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
 `CLAUDE.md`, which imports this file. The repo check is `.wick/check`
@@ -46,6 +47,8 @@ child it belongs to, and every entry must resolve to a file.
 - `wick-tui/AGENTS.md` — the dashboard module (Runs list, read model, toolkit lock)
 - `herdr-report/AGENTS.md` — the herdr report extension (pig panes as
   addressable agents)
+- `herdr-wick/AGENTS.md` — the herdr compress plugin (one key compresses
+  the focused pane)
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
 - `.scratch/retro-hardening/AGENTS.md` — the spec and ticket area for this run

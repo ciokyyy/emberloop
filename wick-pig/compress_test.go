@@ -282,9 +282,9 @@ func (f *compressFake) run(cmd string, args []string, _ ExecOpts) (Result, error
 	return Result{Stdout: "{}"}, nil
 }
 
-// compressSettings names pig-cheap as the pig summarizer.
+// compressSettings names cheap summarizers for pig and claude.
 func compressSettings() tools.Settings {
-	return tools.Settings{Context: &tools.ContextSettings{CompressModels: map[string]string{"pig": "pig-cheap"}}}
+	return tools.Settings{Context: &tools.ContextSettings{CompressModels: map[string]string{"pig": "pig-cheap", "claude": "claude-cheap"}}}
 }
 
 // writeCompressWorker records worker w1 on pane-1 with a transcript under

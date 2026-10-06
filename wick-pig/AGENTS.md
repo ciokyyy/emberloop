@@ -20,13 +20,16 @@ owns its `_test.go` and the behaviour below):
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
   (pane launch text), `supervisor.go` (compress restart in the same pane:
   boundary wait, child stop, handoff relaunch, pane-name re-assertion,
-  session rotation with the compressed count), `compress.go` (manual compress:
-  pig one-off summary, handoff and transcript copies, same-pane restart
-  through the supervisor),
+  session rotation with the compressed count, forced restart past the wait),
+  `compress.go` (manual compress: pig one-off summary, handoff and transcript
+  copies, same-pane restart through the supervisor),
+  `compress_request.go` (the herdr key's signal: queue mark at the boundary,
+  second-press force, top-level fallback, `request-compress`),
   `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
   check), `compress_render.go` (transcript rendered as text in full),
-  `commands.go`, `skills.go`, `install.go` (the live-agent
-  gate, ending with the deps step), `deps.go` (the `wick-pig deps` installer)
+  `commands.go`, `skills.go`, `install.go` (the live-agent gate, top-level
+  exempt, the herdr plugin link and the keybinding line, ending with the deps
+  step), `deps.go` (the `wick-pig deps` installer)
 - Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),
   `workerqueue.go` (worker-cap queue and drain), `grid.go`, `tile.go`,
@@ -40,10 +43,11 @@ owns its `_test.go` and the behaviour below):
 - Transport: `mcp/` (child doc); binaries are `cmd/wick-pig/main.go` (harness
   CLI) and `cmd/wick-mcp/main.go` (tool server); `tui.go` execs the installed
   `wick-tui` dashboard for the `tui` subcommand
-- Agent data: `agentstate.go`, `agenttype.go` (built-in types plus
-  `.wick/agents` overrides), `transcript.go`, `usage.go` (tailer parsing;
-  rows land in `statedb/`), `memory.go`, `archive.go`, `prune.go` (deletes
-  usage and overflow rows as well as files)
+- Agent data: `agentstate.go` (per-agent record: pane, session, compressed
+  count, top-level role and cwd for compress restart), `agenttype.go`
+  (built-in types plus `.wick/agents` overrides), `transcript.go`,
+  `usage.go` (tailer parsing; rows land in `statedb/`), `memory.go`,
+  `archive.go`, `prune.go` (deletes usage and overflow rows as well as files)
 - Context core: `context.go` (snapshot over a transcript: the shared
   formula, outstanding calls, per-tool sizes), `context_parse.go` (the
   per-harness line parsers a new harness registers), `context_window.go`
@@ -51,12 +55,13 @@ owns its `_test.go` and the behaviour below):
 - Header strip: `header.go` (pure strip render: snapshot and width in,
   styled string out, Lip Gloss adaptive palette, width tiers),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
-  builder), `header_run.go` (PTY runner: reduced child size, forwarding,
-  repaints, exit restore), `header_source.go` (strip source from launch
-  env, `wrap`/`exec`/top-level wiring); settings carry strip rows, frame
-  and per-harness compress models. `exec`, top-level runs and `wick-pig
-  wrap` put the child on a PTY under the strip; WICK_HEADER_STRIP=0 runs
-  plainly. Pig sessions with the tools debug log stay unwrapped.
+  builder reading the queued compress mark), `header_run.go` (PTY runner:
+  reduced child size, forwarding, repaints, exit restore), `header_source.go`
+  (strip source from launch env, `wrap`/`exec`/top-level wiring); settings
+  carry strip rows, frame and per-harness compress models. `exec`, top-level
+  runs and `wick-pig wrap` put the child on a PTY under the strip;
+  WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
+  stay unwrapped.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
