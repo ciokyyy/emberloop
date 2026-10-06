@@ -1,7 +1,7 @@
 ---
 name: reviewer-spec
 description: "Review a worker's worktree against its ticket and spec, and submit pass or changes."
-tools: [read, find, websearch]
+tools: [read, find, websearch, ctx_search]
 checkout: parent
 blocking: true
 persistent: true

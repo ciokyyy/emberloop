@@ -507,14 +507,14 @@ func deletePruneRun(slug string) error {
 	})
 }
 
-// deletePruneUsageRows deletes the state-database usage rows of agents that
-// belong only to pruned runs — the database form of the usage logs removed
-// above. Agents shared with a kept run never reach here. A state with no
-// database yet (no usage ever tailed) is nothing to delete, not an error.
+// deletePruneUsageRows deletes the state-database rows of agents that belong
+// only to pruned runs: their usage rows (the database form of the usage logs
+// removed above) and their overflow-store blobs (scoped to the session, which
+// is the agent id). It also purges overflow rows older than 24 hours, so a
+// prune collects expired blobs even when their sessions survive. Agents
+// shared with a kept run never reach here. A state with no database yet (no
+// usage ever tailed) is nothing to delete, not an error.
 func deletePruneUsageRows(agents []string) error {
-	if len(agents) == 0 {
-		return nil
-	}
 	if _, err := os.Stat(dbPath()); os.IsNotExist(err) {
 		return nil
 	}
@@ -523,7 +523,16 @@ func deletePruneUsageRows(agents []string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = statedb.DeleteUsageForAgents(db, agents)
+	if _, err := statedb.PurgeExpiredCtx(db, time.Now().UTC().Unix()); err != nil {
+		return err
+	}
+	if len(agents) == 0 {
+		return nil
+	}
+	if _, err := statedb.DeleteUsageForAgents(db, agents); err != nil {
+		return err
+	}
+	_, err = statedb.DeleteCtxForSessions(db, agents)
 	return err
 }
 

@@ -1,12 +1,12 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -522,10 +522,14 @@ func TestReadURLOversizeCapped(t *testing.T) {
 	}
 }
 
-func TestReadURLTruncationOverflowFile(t *testing.T) {
+// A page larger than the overflow threshold is stored, not truncated to a
+// file: the output carries a ctx: handle and the full body pages through it.
+func TestReadURLLargePageUsesOverflowStore(t *testing.T) {
 	allowLocal(t)
 	_ = startJinaFake(t, 200, "unused")
 	t.Setenv("JINA_API_KEY", "")
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	t.Setenv("WICK_OVERFLOW_THRESHOLD_BYTES", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		for i := 1; i <= 350; i++ {
@@ -534,39 +538,38 @@ func TestReadURLTruncationOverflowFile(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	out, err := readURLPath(t, srv.URL+"/long")
+	root := t.TempDir()
+	raw, _ := json.Marshal(map[string]any{"path": srv.URL + "/long"})
+	out, err := readTool{}.Execute(context.Background(), root, raw)
 	if err != nil {
 		t.Fatalf("long: %v", err)
 	}
-	mustContain(t, out, "tier1", "truncated", "saved to")
-	mustContain(t, out, "overflow-line-001")
-	mustNotContain(t, out, "overflow-line-350")
-
-	var overflow string
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "saved to ") {
-			fields := strings.Fields(line)
-			for i, f := range fields {
-				if f == "to" && i+1 < len(fields) {
-					overflow = strings.Trim(fields[i+1], ";,")
-				}
+	mustContain(t, out, "tier1", "ctx:", "overflow-line-001")
+	mustNotContain(t, out, "saved to")
+	var handle string
+	for _, f := range strings.Fields(out) {
+		if strings.HasPrefix(f, "ctx:") {
+			cand := strings.Trim(f, "(),;")
+			if _, _, ok := ParseCtxHandle(cand); ok {
+				handle = cand
+				break
 			}
 		}
 	}
-	if overflow == "" {
-		t.Fatalf("no overflow path in output:\n%s", out)
+	if handle == "" {
+		t.Fatalf("no ctx handle in output:\n%s", out)
 	}
-	data, err := os.ReadFile(filepath.Clean(overflow))
-	t.Cleanup(func() { _ = os.Remove(overflow) })
+	id, _, ok := ParseCtxHandle(handle)
+	if !ok {
+		t.Fatalf("unparsable handle %q", handle)
+	}
+	praw, _ := json.Marshal(map[string]any{"path": fmt.Sprintf("ctx:%d:349-350", id)})
+	paged, err := readTool{}.Execute(context.Background(), root, praw)
 	if err != nil {
-		t.Fatalf("overflow file: %v", err)
+		t.Fatalf("page stored: %v", err)
 	}
-	if !strings.Contains(string(data), "overflow-line-350") {
-		t.Errorf("overflow file must hold the remainder (line 350), got %d bytes", len(data))
-	}
-	if strings.Contains(string(data), "overflow-line-001") {
-		t.Errorf("overflow file must hold only the remainder past line 300, not the shown head")
-	}
+	mustContain(t, paged, "overflow-line-349", "overflow-line-350")
+	mustNotContain(t, paged, "overflow-line-001")
 }
 
 func TestReadURLTier3NotInstalled(t *testing.T) {

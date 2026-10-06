@@ -6,9 +6,15 @@ The agent tools both hosts serve: pig through the extension adapter, claude
 through the MCP server.
 Files: `tool.go` (the `Tool` interface: name,
 schema, execute over a workspace root), `all.go` (the `All()` registry),
-`files.go` (read, edit, write), `readurl.go` (the tiered URL reader `read`
-serves: native fetch, then Jina, then an uninstalled browser tier),
-`bash.go`, `background.go`, `find.go`
+`files.go` (read, edit, write; `read` also pages stored output via `ctx:`
+handles), `readurl.go` (the tiered URL reader `read`
+serves: native fetch, then Jina, then an uninstalled browser tier; oversize
+bodies go to the overflow store, not a file),
+`bash.go` (oversize output goes to the overflow store, not truncation),
+`overflow.go` (the shared store-or-passthrough helper over
+`overflow.threshold_bytes`, head/tail summary, searchable terms, `intent`
+excerpts, `ctx:` handle parsing), `ctxsearch.go` (the `ctx_search` tool and
+the `ctx:` handle reader), `background.go`, `find.go`
 (plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
 via the shared bin-dir-then-PATH resolver with a Go fallback), `websearch.go`
 (the provider-neutral search tool: Brave then Exa under auto, a 15-minute
@@ -20,8 +26,9 @@ plain command or JSON name map, one `{args}` slot, metacharacters refused),
 `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools,
-mcp_servers, search and graph maps and their merge), `rename.go` (serve a
-tool under a new name), `usage.go`, `sandbox.go` (the bubblewrap
+mcp_servers, search and graph maps, the search defaults, the overflow
+threshold, and their merge), `rename.go` (serve a tool under a new name),
+`usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `wick-pig deps` error), `mcpclient.go` (the stdio JSON-RPC client
 and per-process server registry behind the same resolution), `systemone/`
@@ -52,6 +59,9 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   the provider reported, and the footer reads the latest row that reports
   something. `WICK_BRAVE_ENDPOINT` and `WICK_EXA_ENDPOINT` redirect the
   adapters at test fakes.
+- Tool output above `overflow.threshold_bytes` (about 8KB by default) is
+  stored with a `ctx:` handle instead of entering context; `ctx_search`
+  is read-only and rides with `read` in every role that can read.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
   self-test is a typed error naming `wick-pig deps`.
 - Binaries resolve from the wick bin directory first, then PATH, through the

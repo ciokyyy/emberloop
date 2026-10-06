@@ -50,6 +50,11 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	if p.Path == "" {
 		return "", errors.New("path is required")
 	}
+	// ctx: handles page stored tool output (the overflow store): ctx:<id>
+	// reads from the top, ctx:<id>:<range> reads that line range.
+	if _, _, ok := ParseCtxHandle(p.Path); ok {
+		return readCtxHandle(p.Path, p.Offset, p.Limit)
+	}
 	// wick:// addresses reach a namespace under the skills root: the library a
 	// session loads a skill from. It is served here rather than in the wick
 	// package because the tools package serves both hosts and cannot import it.
@@ -59,7 +64,7 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	// URLs read through the tiered reader (native, then Jina, then the
 	// uninstalled browser tier). Selectors (:N, :raw) trail the URL.
 	if isURLTarget(p.Path) {
-		return readURL(p.Path, p.Offset, p.Limit)
+		return readURL(root, p.Path, p.Offset, p.Limit)
 	}
 	// read opens any absolute path, so a session can reach its brief, state,
 	// logs and transcripts outside the workspace. A relative path stays under

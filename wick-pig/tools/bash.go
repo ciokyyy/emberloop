@@ -22,7 +22,6 @@ import (
 const (
 	defaultBashTimeout = 120 * time.Second
 	maxBashTimeout     = 600 * time.Second
-	maxOutputBytes     = 30 * 1024
 	rewriteTimeout     = 500 * time.Millisecond
 )
 
@@ -31,16 +30,23 @@ var (
 	multiNewlines = regexp.MustCompile(`\n{3,}`)
 )
 
-// sanitize strips terminal escapes, normalises line endings, collapses blank
-// runs and truncates to maxOutputBytes.
+// sanitize strips terminal escapes, normalises line endings and collapses
+// blank runs. Oversize output is not truncated here: Execute stores it in
+// the overflow store instead.
 func sanitize(raw string) string {
 	s := ansiRegex.ReplaceAllString(raw, "")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = multiNewlines.ReplaceAllString(s, "\n\n")
-	if len(s) > maxOutputBytes {
-		s = s[:maxOutputBytes] + fmt.Sprintf("\n... [output truncated: exceeded %dKB limit]", maxOutputBytes/1024)
+	return multiNewlines.ReplaceAllString(s, "\n\n")
+}
+
+// bashSource labels a stored bash output with the command that produced it,
+// truncated so the label stays one line.
+func bashSource(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if len(cmd) > 80 {
+		cmd = cmd[:80] + "..."
 	}
-	return s
+	return "bash " + cmd
 }
 
 // RTKRewrite asks `rtk rewrite` for the token-compressed form of a command.
@@ -108,6 +114,11 @@ func (bashTool) Execute(ctx context.Context, root string, args json.RawMessage) 
 
 	out, err := cmd.CombinedOutput()
 	text := sanitize(string(out))
+	if summary, stored, merr := MaybeOverflow(root, overflowSession(), bashSource(p.Command), "bash", text, ""); merr != nil {
+		text += fmt.Sprintf("\n[overflow store unavailable: %v]", merr)
+	} else if stored {
+		text = summary
+	}
 	if err == nil {
 		return text, nil
 	}

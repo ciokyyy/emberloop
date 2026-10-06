@@ -19,7 +19,7 @@ func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "edit", "write", "bash", "find", "websearch", "background", "spawn"}
+	want := []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("plan tools = %v, want %v", got, want)
 	}
@@ -37,9 +37,30 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 	for i, tool := range served {
 		got[i] = tool.Name()
 	}
-	want := []string{"read", "edit", "write", "find", "websearch", "spawn", "finish", "tell"}
+	want := []string{"read", "edit", "write", "find", "websearch", "ctx_search", "spawn", "finish", "tell"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("implement tools = %v, want %v", got, want)
+	}
+}
+
+// ctx_search rides with read: every role that can read serves it, so stored
+// output is searchable wherever it is readable.
+func TestEveryRoleThatCanReadServesCtxSearch(t *testing.T) {
+	hermeticSettings(t)
+	for _, role := range []string{"implement", "review", "scout", "work", "plan", "full"} {
+		served, err := RoleTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, tl := range served {
+			if tl.Name() == "ctx_search" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s role must serve ctx_search", role)
+		}
 	}
 }
 
