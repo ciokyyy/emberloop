@@ -4,11 +4,11 @@
 
 **Blocked by:** 15, 16
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A script calls an MCP tool from a fake server; a failing server call raises `ToolError` naming the server
-- [ ] The description lists servers by one line each; no full schemas appear in the tool list
-- [ ] `search` and `help` find MCP tools; the server starts only when needed
-- [ ] `include`, `exclude`, `rename`, `enabled` and per-role placement all take effect inside `execute`
-- [ ] MCP tools in the sandboxed read-only roles work through the socket (the server runs outside the sandbox)
-- [ ] Repo check passes
+- [x] A script calls an MCP tool from a fake server; a failing server call raises `ToolError` naming the server
+- [x] The description lists servers by one line each; no full schemas appear in the tool list
+- [x] `search` and `help` find MCP tools; the server starts only when needed
+- [x] `include`, `exclude`, `rename`, `enabled` and per-role placement all take effect inside `execute`
+- [x] MCP tools in the sandboxed read-only roles work through the socket (the server runs outside the sandbox)
+- [x] Repo check passes
