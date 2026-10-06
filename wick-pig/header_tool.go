@@ -6,6 +6,7 @@ package wick
 // says what the agent is doing: `▤ reading header.go`, `⑂ spawning scout`.
 
 import (
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -98,6 +99,9 @@ func (h *headerCtx) activityCell(max int) cell {
 	case h.snap.State == HeaderQueued, h.snap.State == HeaderCompressing:
 		return h.fit(h.pill(), max)
 	case h.snap.State == HeaderIdle:
+		if h.snap.Pending > 0 {
+			return h.fit(cell{text: strconv.Itoa(h.snap.Pending) + " pending", hex: h.idle}, max)
+		}
 		return cell{}
 	}
 	if h.snap.Running.Name != "" {
@@ -122,6 +126,9 @@ func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) c
 	if size != "" {
 		fixed += 3 + len(size)
 	}
+	if h.snap.Pending > 0 {
+		fixed += 3 + len(strconv.Itoa(h.snap.Pending)) + len(" pending")
+	}
 	if arg != "" {
 		room := max - fixed - 1
 		if room < 4 {
@@ -140,6 +147,9 @@ func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) c
 	}
 	if size != "" {
 		out += h.fill(" ") + h.style(cell{text: "· " + size, hex: h.dim})
+	}
+	if h.snap.Pending > 0 {
+		out += h.fill(" ") + h.style(cell{text: "· " + strconv.Itoa(h.snap.Pending) + " pending", hex: h.dim})
 	}
 	return cell{text: out, raw: true}
 }
