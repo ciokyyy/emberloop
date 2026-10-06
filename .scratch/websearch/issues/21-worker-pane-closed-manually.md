@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Dead-pane worker is not counted against the cap; a live worker and a herdr error both still count
-- [ ] Dead-pane worker with no submit is removed from `workers.json`, marked cancelled in history, worktree and branch kept
-- [ ] Parent receives one "pane closed manually" notice per cancelled worker, never repeated
-- [ ] Respawn of a cancelled ticket reuses its worktree and branch
-- [ ] Queued workers start after the prune; stale queue entries are dropped
-- [ ] Fake herdr covers all of the above; repo check passes
+- [x] Dead-pane worker is not counted against the cap; a live worker and a herdr error both still count
+- [x] Dead-pane worker with no submit is removed from `workers.json`, marked cancelled in history, worktree and branch kept
+- [x] Parent receives one "pane closed manually" notice per cancelled worker, never repeated
+- [x] Respawn of a cancelled ticket reuses its worktree and branch
+- [x] Queued workers start after the prune; stale queue entries are dropped
+- [x] Fake herdr covers all of the above; repo check passes
