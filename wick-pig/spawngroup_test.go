@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -104,122 +103,28 @@ func TestSpawnGroupReportsLostPaneInNotice(t *testing.T) {
 	}
 }
 
-// A notice for a busy parent pane is held until the pane is idle: while
-// herdr says the parent is working, nothing is typed; once it goes idle the
-// one grouped notice goes out.
-func TestSpawnGroupNoticeWaitsForIdleParent(t *testing.T) {
-	g := newFakeGrid()
-	spawnTestState(t)
-	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("WICK_AGENT_ID", "parent1")
-	var busy atomic.Bool
-	busy.Store(true)
-	oldDeliver := deliverExec
-	oldProbe, oldHold, oldPoll := groupIdleProbeTimeout, groupNoticeHoldTimeout, pollEvery
-	groupIdleProbeTimeout = 10 * time.Millisecond
-	groupNoticeHoldTimeout = 10 * time.Second
-	pollEvery = 5 * time.Millisecond
-	t.Cleanup(func() {
-		deliverExec = oldDeliver
-		groupIdleProbeTimeout, groupNoticeHoldTimeout, pollEvery = oldProbe, oldHold, oldPoll
-	})
-	var mu sync.Mutex
-	var prompts []string
-	deliverExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		if len(args) > 1 && args[0] == "agent" && args[1] == "wait" {
-			if busy.Load() {
-				return Result{Code: 1, Stdout: `{"error":{"code":"timeout"}}`}, nil
-			}
-			return Result{Stdout: "{}"}, nil
-		}
-		if len(args) > 2 && args[0] == "agent" && args[1] == "prompt" {
-			mu.Lock()
-			prompts = append(prompts, strings.Join(args, " "))
-			mu.Unlock()
-			return Result{Stdout: "{}"}, nil
-		}
-		return Result{Stdout: "{}"}, nil
-	}
-
-	ex := &noneScoutExec{g: g}
-	spawnExec = ex.run
-	spawn, _ := spawnToolForRole(t, "implement")
-	if _, err := spawn("/repo", map[string]any{"agents": []any{
-		map[string]any{"type": "scout", "prompt": "only"},
-	}}); err != nil {
-		t.Fatalf("spawn: %v", err)
-	}
-	ex.mu.Lock()
-	ids := append([]string{}, ex.ids...)
-	ex.mu.Unlock()
-	if len(ids) != 1 {
-		t.Fatalf("launched %d scouts, want 1", len(ids))
-	}
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := submitOnce(t, AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}, ids[0], "answered", "report", "held facts")
-		done <- err
-	}()
-	// While the parent is busy, nothing is typed.
-	time.Sleep(50 * time.Millisecond)
-	mu.Lock()
-	held := len(prompts)
-	mu.Unlock()
-	if held != 0 {
-		t.Fatalf("a notice for a busy parent must be held, got %d prompts", held)
-	}
-	select {
-	case err := <-done:
-		t.Fatalf("the submit must wait for the parent to go idle, but it returned: %v", err)
-	default:
-	}
-	// Once the parent goes idle the grouped notice goes out.
-	busy.Store(false)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("submit: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the held notice never arrived after the parent went idle")
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(prompts) != 1 || !strings.Contains(prompts[0], "held facts") {
-		t.Errorf("the idle parent must get exactly one notice with the result, got %v", prompts)
-	}
-}
-
-// A parent that never goes idle still gets the notice, with a warning: the
-// hold has a bound, so a busy parent cannot strand a group forever.
-func TestSpawnGroupNoticeDeliveredAnywayAfterLongBusy(t *testing.T) {
+// A busy parent still gets the notice at once: herdr queues typed text as
+// steering, so the submit never waits for the parent to go idle and the notice
+// carries no warning.
+func TestSpawnGroupNoticeDeliveredAtOnceToBusyParent(t *testing.T) {
 	g := newFakeGrid()
 	spawnTestState(t)
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
 	t.Setenv("WICK_AGENT_ID", "parent1")
 	oldDeliver := deliverExec
-	oldProbe, oldHold, oldPoll := groupIdleProbeTimeout, groupNoticeHoldTimeout, pollEvery
-	groupIdleProbeTimeout = 10 * time.Millisecond
-	groupNoticeHoldTimeout = 60 * time.Millisecond
-	pollEvery = 5 * time.Millisecond
-	t.Cleanup(func() {
-		deliverExec = oldDeliver
-		groupIdleProbeTimeout, groupNoticeHoldTimeout, pollEvery = oldProbe, oldHold, oldPoll
-	})
+	t.Cleanup(func() { deliverExec = oldDeliver })
 	var mu sync.Mutex
 	var prompts []string
 	deliverExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
 		if len(args) > 1 && args[0] == "agent" && args[1] == "wait" {
+			// The parent is working: any wait for idle times out.
 			return Result{Code: 1, Stdout: `{"error":{"code":"timeout"}}`}, nil
 		}
 		if len(args) > 2 && args[0] == "agent" && args[1] == "prompt" {
 			mu.Lock()
 			prompts = append(prompts, strings.Join(args, " "))
 			mu.Unlock()
-			return Result{Stdout: "{}"}, nil
 		}
 		return Result{Stdout: "{}"}, nil
 	}
@@ -238,19 +143,26 @@ func TestSpawnGroupNoticeDeliveredAnywayAfterLongBusy(t *testing.T) {
 	if len(ids) != 1 {
 		t.Fatalf("launched %d scouts, want 1", len(ids))
 	}
-	if _, err := submitOnce(t, AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}, ids[0], "answered", "report", "late facts"); err != nil {
-		t.Fatalf("submit: %v", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := submitOnce(t, AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}, ids[0], "answered", "report", "late facts")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("submit: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the submit waited on a busy parent")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(prompts) != 1 {
-		t.Fatalf("a parent that never idles must still get exactly one notice, got %v", prompts)
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "late facts") {
+		t.Fatalf("a busy parent must get exactly one notice with the result, got %v", prompts)
 	}
-	if !strings.Contains(prompts[0], "late facts") {
-		t.Errorf("the notice must carry the result, got:\n%s", prompts[0])
-	}
-	if !strings.Contains(prompts[0], "warning") {
-		t.Errorf("a notice delivered to a never-idle parent must carry a warning, got:\n%s", prompts[0])
+	if strings.Contains(prompts[0], "warning") {
+		t.Errorf("the notice must carry no busy warning, got:\n%s", prompts[0])
 	}
 }
 
@@ -523,23 +435,5 @@ func TestSpawnSweepFinalizesStrandedLostGroup(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "lost:") || !strings.Contains(got[0], ids[0]) {
 		t.Errorf("the swept notice must report the vanished member as lost, got:\n%s", got[0])
-	}
-}
-
-// A pane whose agent finished a turn but is not focused is reported by herdr
-// as done, not idle. The parent probe must wait on both states, or a grouped
-// notice to an unfocused orchestrator is held for the whole hold timeout.
-func TestParentIdleProbeAcceptsDone(t *testing.T) {
-	var got []string
-	run := func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		got = args
-		return Result{Stdout: "{}"}, nil
-	}
-	if !parentIdle(run, "wFD:p1") {
-		t.Fatal("a parent that herdr says reached the state is idle")
-	}
-	joined := strings.Join(got, " ")
-	if !strings.Contains(joined, "--until idle") || !strings.Contains(joined, "--until done") {
-		t.Fatalf("probe must wait on idle and done, got %q", joined)
 	}
 }

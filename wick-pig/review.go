@@ -991,7 +991,7 @@ func followUpPrompt(p *reviewPacket, prev reviewer, incPath string) string {
 	if p.note != "" {
 		fmt.Fprintf(&b, "The worker says: %s\n\n", p.note)
 	}
-	b.WriteString("When the review is done, call the submit tool with status \"pass\" or \"changes\" and put your findings in its report.")
+	b.WriteString("When the review is done, call the submit tool with status \"pass\" or \"changes\" and put your findings in its report. Submit is your whole answer: after it, yield and write no text.")
 	return b.String()
 }
 

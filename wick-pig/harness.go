@@ -19,7 +19,8 @@ const systemPrompt = "Your file and shell tools are wick's: read, find, edit, wr
 	"For facts about this repo, spawn a scout when you have one: spawn(agents=[{type: \"scout\", prompt: \"...\"}]). Scouts report facts only; decisions stay with you and the user. " +
 	"Skills are listed by reading wick://" + skillsNamespace + "; when the user asks for one by name " +
 	"(grill, research, wayfinder, tdd, to-spec), read the matching skill and follow it exactly. " +
-	"When a spawn starts agents, end your turn: one notice with every result arrives when the last agent of that call has submitted." +
+	"When a spawn starts agents, end your turn: one notice with every result arrives when the last agent of that call has submitted. Never poll with sleep or bash while agents run." +
+	" A spawned agent yields right after submit: end the turn at once, with no text." +
 	" " + voiceRegister
 
 // Session is everything an adapter needs to start one agent.
