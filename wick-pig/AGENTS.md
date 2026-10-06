@@ -60,10 +60,12 @@ owns its `_test.go` and the behaviour below):
   styled string out, Lip Gloss adaptive palette, width tiers),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
   builder reading the queued compress mark and the compressing state),
-  `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
-  exit restore), `header_source.go` (strip source from launch env,
-  `wrap`/`exec`/top-level wiring); settings carry strip rows, frame,
-  per-harness compress models, the auto-compress switch and cooldown. `exec`,
+  `header_run.go` (PTY runner: reduced child size, forwarding, resizes,
+  repaints, exit restore; the borderless soft top edge, with the strip-rule
+  setting restoring the drawn line), `header_source.go` (strip source from
+  launch env, `wrap`/`exec`/top-level wiring); settings carry strip rows,
+  frame, rule, per-harness compress models, the auto-compress switch and
+  cooldown. `exec`,
   top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
   stay unwrapped.
