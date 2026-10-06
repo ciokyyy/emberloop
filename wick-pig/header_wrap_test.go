@@ -31,6 +31,12 @@ func TestChildSize(t *testing.T) {
 	if w != 78 || h != 22 {
 		t.Errorf("framed 80x24 rows 1 = %dx%d, want 78x22", w, h)
 	}
+	// Borderless keeps the full width with the soft edge still costing its
+	// row: the footprint never depends on the frame or the edge style.
+	w, h = ChildSize(80, 24, 1, false)
+	if w != 80 || h != 22 {
+		t.Errorf("frameless 80x24 rows 1 = %dx%d, want 80x22", w, h)
+	}
 	w, h = ChildSize(3, 2, 2, true)
 	if w < 1 || h < 1 {
 		t.Errorf("tiny terminal = %dx%d, want at least 1x1", w, h)

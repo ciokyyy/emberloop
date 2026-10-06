@@ -8,7 +8,8 @@ import (
 )
 
 // Seam: strip settings — the header height (default two rows), the
-// agent-colored frame (default on) and the per-harness compress model the
+// agent-colored frame (default off), the soft top edge versus the restored
+// rule line (default soft), and the per-harness compress model the
 // strip warns about when unset. Expected values come from the ticket, never
 // the implementation.
 
@@ -49,8 +50,22 @@ func TestStripFrameDefaultsOff(t *testing.T) {
 	}
 }
 
+// The borderless look keeps the soft half-block edge unless the setting
+// restores the drawn rule line.
+func TestStripRuleDefaultsSoft(t *testing.T) {
+	if s := writeContextSettings(t, `{}`); s.StripRuleEnabled() {
+		t.Error("default strip edge is the rule line, want the soft edge")
+	}
+	if s := writeContextSettings(t, `{"context":{"strip_rule":false}}`); s.StripRuleEnabled() {
+		t.Error("strip_rule false reads as the rule line")
+	}
+	if s := writeContextSettings(t, `{"context":{"strip_rule":true}}`); !s.StripRuleEnabled() {
+		t.Error("strip_rule true reads as the soft edge")
+	}
+}
+
 func TestStripSettingsRoundTrip(t *testing.T) {
-	s := writeContextSettings(t, `{"context":{"strip_rows":1,"strip_frame":false,"compress_models":{"pig":"m"}}}`)
+	s := writeContextSettings(t, `{"context":{"strip_rows":1,"strip_frame":false,"strip_rule":true,"compress_models":{"pig":"m"}}}`)
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +75,9 @@ func TestStripSettingsRoundTrip(t *testing.T) {
 	}
 	if back.StripFrameEnabled() {
 		t.Error("round trip frame is on, want off")
+	}
+	if !back.StripRuleEnabled() {
+		t.Error("round trip rule is soft, want the rule line")
 	}
 	if got := back.EffectiveCompressModel("pig"); got != "m" {
 		t.Errorf("round trip compress model = %q, want m", got)
@@ -71,7 +89,7 @@ func TestStripProjectMerges(t *testing.T) {
 	global := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, global)
 	t.Setenv("WICK_COMPRESS_THRESHOLD", "")
-	globalBody := `{"context":{"strip_rows":1,"strip_frame":false,"compress_models":{"pig":"g","claude":"g"}}}`
+	globalBody := `{"context":{"strip_rows":1,"strip_frame":false,"strip_rule":false,"compress_models":{"pig":"g","claude":"g"}}}`
 	if err := os.WriteFile(global, []byte(globalBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +97,7 @@ func TestStripProjectMerges(t *testing.T) {
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	projBody := `{"context":{"strip_rows":2,"compress_models":{"pig":"p"}}}`
+	projBody := `{"context":{"strip_rows":2,"strip_rule":true,"compress_models":{"pig":"p"}}}`
 	if err := os.WriteFile(filepath.Join(proj, "settings.json"), []byte(projBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +107,9 @@ func TestStripProjectMerges(t *testing.T) {
 	}
 	if s.StripFrameEnabled() {
 		t.Error("merged frame is on, want global off kept")
+	}
+	if !s.StripRuleEnabled() {
+		t.Error("merged rule is soft, want project on kept")
 	}
 	if got := s.EffectiveCompressModel("pig"); got != "p" {
 		t.Errorf("merged pig model = %q, want project p", got)

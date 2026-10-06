@@ -55,6 +55,25 @@ func TestSettingsStripFrame(t *testing.T) {
 	}
 }
 
+// `settings strip-rule` restores the drawn rule line above the strip; the
+// default stays the soft edge. Anything but on or off is an error.
+func TestSettingsStripRule(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"strip-rule", "on"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if !tools.LoadSettings().StripRuleEnabled() {
+		t.Fatal("saved strip edge is soft, want the rule line")
+	}
+	if !strings.Contains(out.String(), "strip-rule: on") {
+		t.Fatalf("output %q does not confirm the rule line", out.String())
+	}
+	if err := runSettings([]string{"strip-rule", "maybe"}, &out, noModels); err == nil {
+		t.Fatal("strip-rule maybe should be an error")
+	}
+}
+
 // `settings compress-model` names the summarizer model per harness; an
 // unknown harness is an error.
 func TestSettingsCompressModel(t *testing.T) {

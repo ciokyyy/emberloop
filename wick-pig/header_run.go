@@ -105,6 +105,7 @@ func WrapChild(cfg WrapConfig) error {
 	}
 	rows := cfg.Settings.EffectiveStripRows()
 	frame := cfg.Settings.StripFrameEnabled()
+	rule := cfg.Settings.StripRuleEnabled()
 	childW, childH := ChildSize(termW, termH, rows, frame)
 	dark := detectDark(stdout)
 	if cfg.ThemeDark != nil {
@@ -128,7 +129,7 @@ func WrapChild(cfg WrapConfig) error {
 	w := &wrapper{
 		cfg: cfg, stdin: stdin, stdout: stdout,
 		termW: termW, termH: termH, childW: childW, childH: childH,
-		rows: rows, frame: frame,
+		rows: rows, frame: frame, rule: rule,
 		dark:    dark,
 		profile: detectProfile(stdout),
 		child:   child, snapshot: snapshot, filter: filter,
@@ -241,6 +242,7 @@ type wrapper struct {
 	childH   int
 	rows     int
 	frame    bool
+	rule     bool
 	dark     bool
 	profile  termenv.Profile
 	child    wrapPty
@@ -367,13 +369,24 @@ func (w *wrapper) paintLocked(strip string) {
 	w.writeLocked(b.String())
 }
 
-// topRule is the strip's top edge: a full-width row of lower half blocks in
-// the strip background, so the strip reads as a tinted block with a soft
-// edge and no drawn line. The agent hue stays in the name chip and ctx label.
+// topRule is the strip's top edge. By default it is a full-width row of
+// lower half blocks in the strip background, so the strip reads as a tinted
+// block with a soft edge and no drawn line. The strip-rule setting restores
+// the drawn line instead: one full-width row of dashes in the agent hue,
+// above the content rows, on the strip background. Either way the agent hue
+// stays in the name chip and ctx label.
 func (w *wrapper) topRule() string {
 	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(w.profile))
 	r.SetColorProfile(w.profile)
-	return r.NewStyle().Foreground(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("\u2584", w.contentW()))
+	if w.rule {
+		pair := agentHueColor(w.cfg.Source.AgentID, w.cfg.Source.AgentType)
+		hex := pair.dark
+		if !w.dark {
+			hex = pair.light
+		}
+		return r.NewStyle().Foreground(lipgloss.Color(hex)).Background(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("─", w.contentW()))
+	}
+	return r.NewStyle().Foreground(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("▄", w.contentW()))
 }
 
 func (w *wrapper) stripBg() string {
@@ -452,10 +465,8 @@ func (w *wrapper) forwardInput() {
 	}
 }
 
-// watchResize forwards terminal resizes at the reduced height and repaints
-// the frame and strip around the new size. The filter learns the new
-// height with the paint, so region repairs and clamps never use a stale
-// row.
+// watchResize forwards terminal resizes to resized: the child keeps the
+// reduced height and the strip repaints around the new size.
 func (w *wrapper) watchResize(done <-chan struct{}) {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGWINCH)
@@ -467,27 +478,34 @@ func (w *wrapper) watchResize(done <-chan struct{}) {
 		case <-ch:
 			if f, ok := w.stdout.(*os.File); ok {
 				if ws, err := pty.GetsizeFull(f); err == nil {
-					snap, ok := w.readSnap()
-					w.mu.Lock()
-					w.termW, w.termH = int(ws.Cols), int(ws.Rows)
-					w.childW, w.childH = ChildSize(w.termW, w.termH, w.rows, w.frame)
-					w.child.Resize(w.childW, w.childH)
-					w.filter.setSize(w.childH, wrapMarginSetup(w.termW, w.frame))
-					var b strings.Builder
-					b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
-					if w.frame {
-						b.WriteString(w.filter.marginStr())
-					}
-					w.writeLocked(b.String())
-					w.drawFrameLocked()
-					w.last = ""
-					if ok {
-						w.paintLocked(w.renderSnapLocked(snap))
-					}
-					w.mu.Unlock()
+					w.resized(int(ws.Cols), int(ws.Rows))
 				}
 			}
 		}
+	}
+}
+
+// resized applies a new terminal size: the child is re-sized to the reduced
+// size, the filter learns the new height and margins, and the strip repaints
+// around it. Split from the signal loop so tests drive it directly.
+func (w *wrapper) resized(termW, termH int) {
+	snap, ok := w.readSnap()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.termW, w.termH = termW, termH
+	w.childW, w.childH = ChildSize(w.termW, w.termH, w.rows, w.frame)
+	w.child.Resize(w.childW, w.childH)
+	w.filter.setSize(w.childH, wrapMarginSetup(w.termW, w.frame))
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
+	if w.frame {
+		b.WriteString(w.filter.marginStr())
+	}
+	w.writeLocked(b.String())
+	w.drawFrameLocked()
+	w.last = ""
+	if ok {
+		w.paintLocked(w.renderSnapLocked(snap))
 	}
 }
 
