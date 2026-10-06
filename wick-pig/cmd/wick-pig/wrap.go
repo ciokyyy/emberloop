@@ -70,7 +70,7 @@ func runWrap(argv []string, stdin io.Reader, stdout io.Writer) error {
 func wrapCmdConfig(agent, agentType, name, harness, session, dir string, compressCount int, settings tools.Settings, stdin io.Reader, stdout io.Writer, bin string, args []string) wick.WrapConfig {
 	return wick.WrapConfig{
 		Source: wick.HeaderSource{
-			AgentID: *&agent, AgentType: agentType, AgentName: name,
+			AgentID: agent, AgentType: agentType, AgentName: name,
 			Harness: harness, SessionID: session, SessionDir: dir,
 			CompressCount: compressCount,
 		},

@@ -134,11 +134,10 @@ func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
 					return
 				default:
 				}
-				var ne net.Error
-				if errors.As(err, &ne) && ne.Temporary() {
-					continue
+				if errors.Is(err, net.ErrClosed) {
+					return
 				}
-				return
+				continue
 			}
 			go serveOne(conn, q)
 		}
@@ -273,6 +272,7 @@ type queuePump struct {
 	written  bool
 	baseline int
 	lastTry  time.Time
+	tries    int
 }
 
 func newQueuePump(q *inputQueue, gates pumpGates) *queuePump {
@@ -318,13 +318,16 @@ func (p *queuePump) step() {
 	if p.gates.countTurns(head.Text) > p.baseline {
 		p.q.pop()
 		p.written = false
+		p.tries = 0
 		return
 	}
-	if !p.gates.now().Before(p.lastTry.Add(queueAcceptWait)) {
+	wait := queueAcceptWait * time.Duration(1<<min(p.tries, 3))
+	if !p.gates.now().Before(p.lastTry.Add(wait)) {
 		p.baseline = p.gates.countTurns(head.Text)
 		if err := p.gates.write(deliveryBytes(head.Text)); err != nil {
 			return
 		}
+		p.tries++
 		p.lastTry = p.gates.now()
 	}
 }
@@ -403,6 +406,9 @@ func queueGate(src HeaderSource, kind QueueKind) bool {
 	if path == "" {
 		return true
 	}
+	if _, err := os.Stat(path); err != nil {
+		return true
+	}
 	h := Registered(src.Harness)
 	if h == nil {
 		return true
@@ -425,10 +431,11 @@ func wrapperTurns(src HeaderSource) func(string) int {
 	if Registered(src.Harness) == nil {
 		return nil
 	}
-	if resolveTranscript(src) == "" {
-		return nil
-	}
 	return func(text string) int {
-		return countUserTurns(resolveTranscript(src), src.Harness, text)
+		path := resolveTranscript(src)
+		if path == "" {
+			return 0
+		}
+		return countUserTurns(path, src.Harness, text)
 	}
 }
