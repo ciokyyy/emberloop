@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Herdr is the liveness seam Snapshot reads through: every herdr pane still
@@ -25,9 +26,11 @@ type Herdr func() (map[string]string, error)
 // every other repo and every spec inside one sorts by path and slug. Specs
 // with no run yet are discovered from the repos' spec directories on disk, so
 // waiting work is visible; a recorded run whose spec file is gone stays listed
-// under its repo.
+// under its repo. MachineRSS is the summed current RSS of every running
+// agent, for the header's machine-wide load.
 type Snap struct {
-	Repos []RepoSnap
+	Repos      []RepoSnap
+	MachineRSS int64
 }
 
 // RepoSnap is one repo's specs.
@@ -40,15 +43,20 @@ type RepoSnap struct {
 // a run record exists; Running says its orchestrator pane is still alive in
 // herdr. Merged/Total is merged tickets over ticket files. Tickets lists
 // every ticket file with its derived status, in filename order.
+// Orchestrator is the run's own agent (nil without a run); Totals sums it
+// with every ticket's agents, so the spec row shows live tokens, reported
+// cost and RSS.
 type SpecSnap struct {
-	Slug    string
-	Spec    string
-	Branch  string
-	HasRun  bool
-	Running bool
-	Merged  int
-	Total   int
-	Tickets []TicketSnap
+	Slug         string
+	Spec         string
+	Branch       string
+	HasRun       bool
+	Running      bool
+	Merged       int
+	Total        int
+	Tickets      []TicketSnap
+	Orchestrator *AgentSnap
+	Totals       Totals
 }
 
 // TicketStatus is one ticket's derived status. The derivation lives in one
@@ -72,23 +80,35 @@ const (
 // TicketSnap is one ticket file with its derived status. CodeVerdict and
 // SpecVerdict carry the reviewers' verdicts while in review (`pass`,
 // `changes`, or "" while pending); they are "" in every other status.
+// Title and Body are the ticket's Markdown (title from its first heading)
+// for the detail view; Agents lists every attached agent (worker,
+// reviewers, scouts) with harness, model, tokens, cost and RSS; Totals
+// sums them for the detail's total row.
 type TicketSnap struct {
 	Path        string
 	Name        string
 	Status      TicketStatus
 	CodeVerdict string
 	SpecVerdict string
+	Title       string
+	Body        string
+	Agents      []AgentSnap
+	Totals      Totals
 }
 
 // workerRecord is the slice of workers.json Snapshot needs. The map key is
 // the worker id; Ticket is the ticket file it was spawned from, Spec the
 // spec path, Pane its herdr pane, Worktree its git worktree (the reviewers
-// key). Unknown fields are ignored.
+// key). Harness, Model and Effort name how it runs, for the agent row.
+// Unknown fields are ignored.
 type workerRecord struct {
 	Ticket   string `json:"ticket"`
 	Spec     string `json:"spec"`
 	Pane     string `json:"pane"`
 	Worktree string `json:"worktree"`
+	Harness  string `json:"harness"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
 }
 
 // submitRecord is the slice of a submit file Snapshot needs: the status the
@@ -98,25 +118,53 @@ type submitRecord struct {
 }
 
 // reviewerRecord is the slice of reviewers.json Snapshot needs: the verdict
-// the reviewer last submitted (`pass` or `changes`, "" while pending).
+// the reviewer last submitted (`pass` or `changes`, "" while pending), where
+// it runs (Pane), how (Harness, Model, Effort), and the usage-log key
+// (SessionID, the reviewer's agent id). Unknown fields are ignored.
 type reviewerRecord struct {
-	Verdict string `json:"verdict"`
+	Pane      string `json:"pane"`
+	Harness   string `json:"harness"`
+	Model     string `json:"model"`
+	Effort    string `json:"effort"`
+	SessionID string `json:"session_id"`
+	Verdict   string `json:"verdict"`
 }
 
-// runRecord is the slice of runs.json Snapshot needs. Unknown fields are
-// ignored, so the core can grow the record without breaking this read.
+// runRecord is the slice of runs.json Snapshot needs: the run identity plus
+// the orchestrator (AgentID, Pane, Harness, Model, Effort), whose spend the
+// spec row carries. Unknown fields are ignored, so the core can grow the
+// record without breaking this read.
 type runRecord struct {
-	Slug   string `json:"slug"`
-	Spec   string `json:"spec"`
-	Repo   string `json:"repo"`
-	Branch string `json:"branch"`
-	Pane   string `json:"pane"`
+	Slug    string `json:"slug"`
+	Spec    string `json:"spec"`
+	Repo    string `json:"repo"`
+	Branch  string `json:"branch"`
+	Pane    string `json:"pane"`
+	AgentID string `json:"agent_id"`
+	Harness string `json:"harness"`
+	Model   string `json:"model"`
+	Effort  string `json:"effort"`
 }
 
 // historyEntry is the slice of a run's ticket history Snapshot needs.
 type historyEntry struct {
 	Ticket  string `json:"ticket"`
 	Outcome string `json:"outcome"`
+}
+
+// Reader polls the read model incrementally: usage logs are read from
+// per-file offsets kept across calls (see usageCache), so a one-second
+// poll only parses what each agent appended since the last tick. The zero
+// value reads everything on its first call. The live binary holds one
+// Reader across ticks; Snapshot is the one-shot form — a fresh Reader per
+// call — which is what tests assert totals through.
+//
+// The live program drives loads from bubbletea Cmd goroutines, where a
+// tick can start the next load while the last still runs: the mutex
+// serializes overlapping Snapshots so the offsets never race.
+type Reader struct {
+	mu    sync.Mutex
+	cache *usageCache
 }
 
 // Snapshot reads the state dir's run records and ticket histories plus the
@@ -129,6 +177,22 @@ type historyEntry struct {
 // first and to discover specs with no run yet, and herdr liveness carries
 // no repo notion. Callers resolve it with CurrentRepo.
 func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
+	return new(Reader).Snapshot(stateDir, currentRepo, herdr)
+}
+
+// Snapshot reads through the Reader's usage offsets, accumulating new log
+// lines into the running per-agent totals without double-counting.
+func (r *Reader) Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cache == nil {
+		r.cache = newUsageCache()
+	}
+	return snapshotRead(stateDir, currentRepo, herdr, r.cache)
+}
+
+// snapshotRead is the Snapshot body over an explicit usage cache.
+func snapshotRead(stateDir, currentRepo string, herdr Herdr, cache *usageCache) (Snap, error) {
 	live, err := herdr()
 	if err != nil {
 		return Snap{}, err
@@ -212,10 +276,29 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 	workers := loadWorkers(stateDir)
 	submits := loadSubmits(stateDir)
 	reviewers := loadReviewerRecords(stateDir)
+	scouts := loadScouts(stateDir)
 	terminals := loadTerminalsBySlug(stateDir, byRepo)
+	var machineRSS int64
 	for _, specs := range byRepo {
 		for slug, s := range specs {
-			s.Tickets = specTickets(s, live, workers, submits, reviewers, terminals[slug])
+			ctx := agentCtx{stateDir: stateDir, runSlug: slug, live: live, workers: workers, reviewers: reviewers, scouts: scouts, cache: cache}
+			s.Tickets = specTickets(s, &ctx, submits, terminals[slug])
+			s.Orchestrator = specOrchestrator(slug, s, &ctx, runs)
+			s.Totals = Totals{}
+			if s.Orchestrator != nil {
+				s.Totals.add(*s.Orchestrator)
+				if s.Orchestrator.Alive && s.Orchestrator.HasRSS {
+					machineRSS += s.Orchestrator.RSS
+				}
+			}
+			for _, tk := range s.Tickets {
+				for _, a := range tk.Agents {
+					s.Totals.add(a)
+					if a.Alive && a.HasRSS {
+						machineRSS += a.RSS
+					}
+				}
+			}
 		}
 	}
 
@@ -237,7 +320,7 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 		}
 		return repos[i].Path < repos[j].Path
 	})
-	return Snap{Repos: repos}, nil
+	return Snap{Repos: repos, MachineRSS: machineRSS}, nil
 }
 
 // normalizeRepo cleans a repo path for grouping: symlinks resolved
@@ -443,18 +526,224 @@ const (
 	reviewerSpecType      = "reviewer-spec"
 )
 
-func specTickets(s *SpecSnap, live map[string]string, workers map[string]workerRecord, submits map[string]submitRecord, reviewers map[string]map[string]reviewerRecord, terminals map[string]string) []TicketSnap {
+// agentCtx carries what ticket and spec agent rows are built from: the
+// state dir, the archive run (the spec slug), live herdr panes, the worker
+// and reviewer stores, the scout agent states, and the usage offsets kept
+// across polls.
+type agentCtx struct {
+	stateDir  string
+	runSlug   string
+	live      map[string]string
+	workers   map[string]workerRecord
+	reviewers map[string]map[string]reviewerRecord
+	scouts    map[string]scoutRecord
+	cache     *usageCache
+}
+
+// scoutRecord is the slice of agents/<id>.json Snapshot needs for scouts:
+// where the scout runs (Pane), who spawned it (ParentID), and how it runs
+// (Harness, Model, Effort, recorded at launch). Reviewers also keep agent
+// states, but the TUI reads them from reviewers.json, which carries their
+// verdicts too. Unknown fields are ignored.
+type scoutRecord struct {
+	Type     string `json:"type"`
+	Pane     string `json:"pane"`
+	ParentID string `json:"parent_id"`
+	Harness  string `json:"harness"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
+}
+
+// loadScouts reads the scout agent states: agents/<id>.json files whose
+// type is scout. Workers and reviewers keep their own stores with richer
+// records, so only scouts come from here. A missing directory is no
+// scouts; unreadable files are skipped.
+func loadScouts(stateDir string) map[string]scoutRecord {
+	entries, err := os.ReadDir(filepath.Join(stateDir, "agents"))
+	if err != nil {
+		return nil
+	}
+	out := map[string]scoutRecord{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(stateDir, "agents", e.Name()))
+		if err != nil {
+			continue
+		}
+		var rec scoutRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			continue
+		}
+		if rec.Type != string(AgentScout) {
+			continue
+		}
+		out[strings.TrimSuffix(e.Name(), ".json")] = rec
+	}
+	return out
+}
+
+// fillAgent completes an agent's identity with its funds, memory and
+// liveness: usage sums from the incremental cache keyed by the agent id,
+// the latest memory sample under the spec's run, and the herdr status of
+// its pane (a pane missing from the live map is gone, never running).
+func fillAgent(ctx *agentCtx, id string, base AgentSnap) AgentSnap {
+	funds := ctx.cache.totals(ctx.stateDir, id)
+	base.ID = id
+	base.Input, base.Output, base.CacheRead, base.CacheWrite, base.Reasoning = funds.Input, funds.Output, funds.CacheRead, funds.CacheWrite, funds.Reasoning
+	base.Cost, base.HasCost = funds.Cost, funds.HasCost
+	base.FindCalls, base.FindInput, base.FindOutput = funds.FindCalls, funds.FindInput, funds.FindOutput
+	base.FindCost, base.HasFindCost = funds.FindCost, funds.HasFindCost
+	if base.Pane != "" {
+		if st, ok := ctx.live[base.Pane]; ok {
+			base.Alive, base.Status = true, st
+		}
+	}
+	if rss, ok := latestRSS(memoryLogPath(ctx.stateDir, ctx.runSlug, id)); ok {
+		base.RSS, base.HasRSS = rss, true
+	}
+	return base
+}
+
+// specOrchestrator builds the run's own agent from its run record: the
+// orchestrator whose spend the spec row carries. It is nil for specs with
+// no run, and for runs whose record names no agent.
+func specOrchestrator(slug string, s *SpecSnap, ctx *agentCtx, runs map[string]runRecord) *AgentSnap {
+	if !s.HasRun {
+		return nil
+	}
+	r, ok := runs[slug]
+	if !ok || r.AgentID == "" {
+		return nil
+	}
+	out := fillAgent(ctx, r.AgentID, AgentSnap{
+		Kind: AgentOrchestrator, Harness: r.Harness, Model: r.Model, Effort: r.Effort, Pane: r.Pane,
+	})
+	return &out
+}
+
+// ticketContent splits a ticket file into its title (the first Markdown
+// heading's text) and its raw body for the glamour detail view. A missing
+// file reads empty; a file with no heading falls back to its file name.
+func ticketContent(path string) (title, body string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	body = string(raw)
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		title = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		title = strings.TrimSpace(strings.Trim(title, "*"))
+		if title != "" {
+			return title, body
+		}
+	}
+	return filepath.Base(path), body
+}
+
+// scoutAttached reports whether a scout works on this ticket: its spawner
+// chain reaches the ticket's worker. Scouts spawned by the worker name it
+// directly; scouts spawned by those scouts resolve transitively, so one
+// level of delegation never hides spend. A cycle or a parent outside the
+// known agents attaches nowhere.
+func scoutAttached(sc scoutRecord, workerID string, scouts map[string]scoutRecord) bool {
+	if workerID == "" {
+		return false
+	}
+	seen := map[string]bool{}
+	for parent := sc.ParentID; parent != ""; {
+		if parent == workerID {
+			return true
+		}
+		if seen[parent] {
+			return false
+		}
+		seen[parent] = true
+		next, ok := scouts[parent]
+		if !ok {
+			return false
+		}
+		parent = next.ParentID
+	}
+	return false
+}
+
+// ticketAgents lists every agent attached to one ticket file: the worker,
+// the worktree's reviewers (standards, spec, and any other type on
+// record), and the scouts whose spawner chain reaches the worker. Reviewer
+// rows sort by kind so the order is stable.
+func ticketAgents(ctx *agentCtx, worker *workerRecord, workerID string, revs map[string]reviewerRecord) []AgentSnap {
+	var out []AgentSnap
+	if worker != nil {
+		out = append(out, fillAgent(ctx, workerID, AgentSnap{
+			Kind: AgentWorker, Harness: worker.Harness, Model: worker.Model, Effort: worker.Effort, Pane: worker.Pane,
+		}))
+	}
+	kinds := make([]string, 0, len(revs))
+	for kind := range revs {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		rev := revs[kind]
+		out = append(out, fillAgent(ctx, rev.SessionID, AgentSnap{
+			Kind: AgentKind(kind), Harness: rev.Harness, Model: rev.Model, Effort: rev.Effort, Pane: rev.Pane,
+		}))
+	}
+	scoutIDs := make([]string, 0, len(ctx.scouts))
+	for id := range ctx.scouts {
+		scoutIDs = append(scoutIDs, id)
+	}
+	sort.Strings(scoutIDs)
+	for _, id := range scoutIDs {
+		sc := ctx.scouts[id]
+		if !scoutAttached(sc, workerID, ctx.scouts) {
+			continue
+		}
+		out = append(out, fillAgent(ctx, id, AgentSnap{
+			Kind: AgentScout, Harness: sc.Harness, Model: sc.Model, Effort: sc.Effort, Pane: sc.Pane,
+		}))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if agentKindRank(out[i].Kind) != agentKindRank(out[j].Kind) {
+			return agentKindRank(out[i].Kind) < agentKindRank(out[j].Kind)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// agentKindRank orders ticket agents the way the detail lists them: the
+// worker first, then reviewers, then scouts.
+func agentKindRank(k AgentKind) int {
+	switch {
+	case k == AgentWorker:
+		return 0
+	case strings.HasPrefix(string(k), "reviewer"):
+		return 1
+	case k == AgentScout:
+		return 2
+	}
+	return 3
+}
+
+func specTickets(s *SpecSnap, ctx *agentCtx, submits map[string]submitRecord, terminals map[string]string) []TicketSnap {
 	files := ticketFiles(s)
 	out := make([]TicketSnap, 0, len(files))
 	for _, f := range files {
 		base := filepath.Base(f)
-		worker, workerID := workerForTicket(workers, s.Spec, base)
+		worker, workerID := workerForTicket(ctx.workers, s.Spec, base)
 		var submit *submitRecord
 		var revs map[string]reviewerRecord
 		var paneAlive bool
 		var paneStatus string
 		if worker != nil {
-			if st, ok := live[worker.Pane]; ok {
+			if st, ok := ctx.live[worker.Pane]; ok {
 				paneAlive, paneStatus = true, st
 			}
 			if sub, ok := submits[workerID]; ok {
@@ -462,11 +751,17 @@ func specTickets(s *SpecSnap, live map[string]string, workers map[string]workerR
 				submit = &c
 			}
 			if worker.Worktree != "" {
-				revs = reviewers[filepath.Clean(worker.Worktree)]
+				revs = ctx.reviewers[filepath.Clean(worker.Worktree)]
 			}
 		}
 		status, code, spec := deriveTicketStatus(worker != nil, paneAlive, paneStatus, submit, revs, terminals[base])
-		out = append(out, TicketSnap{Path: f, Name: base, Status: status, CodeVerdict: code, SpecVerdict: spec})
+		title, body := ticketContent(f)
+		agents := ticketAgents(ctx, worker, workerID, revs)
+		totals := Totals{}
+		for _, a := range agents {
+			totals.add(a)
+		}
+		out = append(out, TicketSnap{Path: f, Name: base, Status: status, CodeVerdict: code, SpecVerdict: spec, Title: title, Body: body, Agents: agents, Totals: totals})
 	}
 	return out
 }

@@ -263,6 +263,39 @@ func TestScoutResolvesTheScoutSlot(t *testing.T) {
 	}
 }
 
+// A scout's agent state records how it runs, so readers without their own
+// store (the TUI) can list it beside the worker: the resolved harness,
+// model and effort, not just where it runs.
+func TestScoutStateRecordsHarnessModelAndEffort(t *testing.T) {
+	spawnTestState(t)
+	g := newFakeGrid()
+	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	resolverSettings(t, `{"roles":{"scout":{"harness":"pig","model":"scout-model","effort":"low"}}}`)
+	ex := &scoutExec{g: g, writeOn: 1}
+	spawnExec = ex.run
+
+	spawn, _ := spawnToolForRole(t, "plan")
+	if _, err := spawn("/repo", map[string]any{"agents": []any{
+		map[string]any{"type": "scout", "prompt": "where is it?"},
+	}}); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if len(ex.ids) != 1 {
+		t.Fatalf("launched %d scouts, want 1", len(ex.ids))
+	}
+	s, ok, err := ReadAgentState(ex.ids[0])
+	if err != nil || !ok {
+		t.Fatalf("ReadAgentState: %v %v", ok, err)
+	}
+	if s.Type != "scout" || s.ParentID != "parent1" {
+		t.Errorf("scout state = %+v, want type scout of parent1", s)
+	}
+	if s.Harness != "pig" || s.Model != "scout-model" || s.Effort != "low" {
+		t.Errorf("scout runs = %q/%q/%q, want pig/scout-model/low", s.Harness, s.Model, s.Effort)
+	}
+}
+
 // An agent type that names its own harness, model or effort keeps it: the type
 // is the typeOrSpawn layer and beats the scout slot.
 func TestScoutTypeBeatsTheScoutSlot(t *testing.T) {

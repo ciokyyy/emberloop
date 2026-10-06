@@ -44,8 +44,11 @@ func run(argv []string) error {
 		}
 		current = tui.CurrentRepo(execRunner, cwd)
 	}
+	// One Reader across ticks: usage logs are read from per-file offsets,
+	// so the one-second poll only parses what each agent appended.
+	reader := new(tui.Reader)
 	load := func() (tui.Snap, error) {
-		return tui.Snapshot(dir, current, tui.HerdrPanes(execRunner))
+		return reader.Snapshot(dir, current, tui.HerdrPanes(execRunner))
 	}
 	model := tui.NewModel(load)
 	model.SetSettingsBackend(tui.LiveBackend())
