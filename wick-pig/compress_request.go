@@ -266,6 +266,17 @@ func CompressPaneWithForce(run Exec, pane string, s tools.Settings, force bool) 
 		}
 	}
 	model := s.EffectiveCompressModel(tgt.harness)
+	// The claim keeps one pane on one compress across the manual key, the
+	// force press and the automatic sweep: a live mark refuses instead of
+	// summarizing twice over the same transcript.
+	claimed, err := ClaimCompressing(agentID)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		return "", fmt.Errorf("pane %q is already compressing", pane)
+	}
+	defer SetAgentCompressing(agentID, false) //nolint:errcheck
 	handoff, err := SummarizeSession(run, tgt.harness, tgt.path, model, ModelWindow(model, s.ContextWindows()))
 	if err != nil {
 		return "", err

@@ -91,6 +91,16 @@ type AgentState struct {
 	// ExitStderr is the last lines of the child's stderr, so the trace
 	// says what it was doing when it died.
 	ExitStderr string `json:"exit_stderr,omitempty"`
+	// Compressing marks an agent whose session is being summarized and
+	// restarted right now: the header shows `compressing…` while set. The
+	// compress path claims it single-flight and clears it after, so a reader
+	// never writes it directly.
+	Compressing bool `json:"compressing,omitempty"`
+	// CompressingSince is when the mark was claimed, unix seconds. A crash
+	// between claim and clear leaves the mark behind; readers treat a mark
+	// older than the stale threshold as absent, so the header self-heals
+	// and a later compress can steal it.
+	CompressingSince int64 `json:"compressing_since,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.
@@ -198,6 +208,69 @@ func WriteAgentState(s AgentState) error {
 		return err
 	}
 	return os.Rename(tmp, agentStatePath(s.ID))
+}
+
+// autoCompressStaleAfter bounds one compress mark: older means the owner
+// crashed between claim and clear. A var so tests run it fast.
+var autoCompressStaleAfter = 15 * time.Minute
+
+// compressingLive says whether the mark still belongs to a running compress:
+// set and fresh. A stale mark reads as absent everywhere.
+func compressingLive(s AgentState) bool {
+	if !s.Compressing {
+		return false
+	}
+	if s.CompressingSince <= 0 {
+		return false
+	}
+	return time.Since(time.Unix(s.CompressingSince, 0)) < autoCompressStaleAfter
+}
+
+// ClaimCompressing test-and-sets the mid-compress mark for single flight: it
+// reports false when another compress owns the pane right now, true when
+// this caller owns it (fresh or stolen from a crashed owner). A missing
+// record starts one, the way the restart record does.
+func ClaimCompressing(id string) (bool, error) {
+	claimed := false
+	err := withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			s = AgentState{ID: id}
+		}
+		if compressingLive(s) {
+			return nil
+		}
+		s.ID = id
+		s.Compressing, s.CompressingSince = true, time.Now().Unix()
+		if err := WriteAgentState(s); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	})
+	return claimed, err
+}
+
+// SetAgentCompressing marks id as mid-compress (or clears the mark), so the
+// header shows `compressing…` while the summary and restart run. An unknown
+// id is nothing to mark, not a failure: a reader without a record simply
+// shows the working state.
+func SetAgentCompressing(id string, on bool) error {
+	return withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil || !ok {
+			return err
+		}
+		if on {
+			s.Compressing, s.CompressingSince = true, time.Now().Unix()
+		} else {
+			s.Compressing, s.CompressingSince = false, 0
+		}
+		return WriteAgentState(s)
+	})
 }
 
 // RotateAgentSession gives the agent a fresh harness session id for a

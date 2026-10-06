@@ -24,7 +24,10 @@ owns its `_test.go` and the behaviour below):
   past the wait), `compress.go` (manual compress: pig one-off summary,
   handoff and transcript copies, same-pane restart through the supervisor),
   `compress_request.go` (the herdr key's signal: queue mark at the boundary,
-  second-press force, top-level fallback, `request-compress`),
+  second-press force, top-level fallback, single-flight claim, `request-compress`),
+  `autocompress.go` (automatic trigger: threshold decision with cooldown and
+  disable switch, concurrent worker sweep and supervisor loop with failure
+  backoff, always-continue handoff),
   `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
   check), `compress_render.go` (transcript rendered as text in full),
   `commands.go`, `skills.go`, `install.go` (the live-agent gate, top-level
@@ -44,22 +47,24 @@ owns its `_test.go` and the behaviour below):
   CLI) and `cmd/wick-mcp/main.go` (tool server); `tui.go` execs the installed
   `wick-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go` (per-agent record: pane, session, compressed
-  count, top-level role and cwd for compress restart), `agenttype.go`
+  count, top-level role and cwd for compress restart, mid-compress claim with
+  stale steal the header shows as `compressing…`), `agenttype.go`
   (built-in types plus `.wick/agents` overrides), `transcript.go`,
   `usage.go` (tailer parsing; rows land in `statedb/`), `memory.go`,
   `archive.go`, `prune.go` (deletes usage and overflow rows as well as files)
 - Context core: `context.go` (snapshot over a transcript: the shared
-  formula, outstanding calls, per-tool sizes), `context_parse.go` (the
+  formula, outstanding and finished calls, per-tool sizes), `context_parse.go` (the
   per-harness line parsers a new harness registers), `context_window.go`
   (model window table), `context_report.go` (the `wick-pig context` output)
 - Header strip: `header.go` (pure strip render: snapshot and width in,
   styled string out, Lip Gloss adaptive palette, width tiers),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
-  builder reading the queued compress mark), `header_run.go` (PTY runner:
-  reduced child size, forwarding, repaints, exit restore), `header_source.go`
-  (strip source from launch env, `wrap`/`exec`/top-level wiring); settings
-  carry strip rows, frame and per-harness compress models. `exec`, top-level
-  runs and `wick-pig wrap` put the child on a PTY under the strip;
+  builder reading the queued compress mark and the compressing state),
+  `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
+  exit restore), `header_source.go` (strip source from launch env,
+  `wrap`/`exec`/top-level wiring); settings carry strip rows, frame,
+  per-harness compress models, the auto-compress switch and cooldown. `exec`,
+  top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
   stay unwrapped.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,

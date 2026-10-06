@@ -15,7 +15,7 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
        wick-pig settings search provider|mode <value>
@@ -93,6 +93,14 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 		}
 	case "strip-frame":
 		if err := setStripFrame(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "auto-compress":
+		if err := setAutoCompress(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "compress-cooldown":
+		if err := setCompressCooldown(&s, argv[1:]); err != nil {
 			return err
 		}
 	case "role":
@@ -324,6 +332,50 @@ func setStripFrame(s *tools.Settings, argv []string) error {
 		s.Context = c
 	}
 	c.StripFrame = &v
+	return nil
+}
+
+// setAutoCompress applies `auto-compress <on|off>` to s: the automatic
+// trigger. Off stops auto-compress only; the manual key keeps working.
+func setAutoCompress(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("auto-compress needs on or off\n%s", settingsUsage)
+	}
+	var v bool
+	switch argv[0] {
+	case "on":
+		v = true
+	case "off":
+		v = false
+	default:
+		return fmt.Errorf("auto-compress %q is not on or off\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.AutoCompress = &v
+	return nil
+}
+
+// setCompressCooldown applies `compress-cooldown <n>` to s: the tool calls
+// after a compress that block a second auto-compress. A whole number above
+// zero, or an error that saves nothing.
+func setCompressCooldown(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("compress-cooldown needs tool calls\n%s", settingsUsage)
+	}
+	v, err := strconv.Atoi(argv[0])
+	if err != nil || v <= 0 {
+		return fmt.Errorf("compress-cooldown %q is not a whole number above zero\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.CompressCooldown = v
 	return nil
 }
 
@@ -856,12 +908,18 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 		fmt.Fprintf(out, "compress-threshold %s: %d (%s)\n",
 			h, s.EffectiveCompressThreshold(h), src)
 	}
+	auto := "on"
+	if !s.EffectiveAutoCompress() {
+		auto = "off"
+	}
 	frame := "on"
 	if !s.StripFrameEnabled() {
 		frame = "off"
 	}
 	fmt.Fprintf(out, "strip-rows: %d (%s)\n", s.EffectiveStripRows(), s.SourceOf("context.strip_rows"))
 	fmt.Fprintf(out, "strip-frame: %s (%s)\n", frame, s.SourceOf("context.strip_frame"))
+	fmt.Fprintf(out, "auto-compress: %s (%s)\n", auto, s.SourceOf("context.auto_compress"))
+	fmt.Fprintf(out, "compress-cooldown: %d (%s)\n", s.EffectiveCompressCooldown(), s.SourceOf("context.compress_cooldown"))
 	models := s.CompressModels()
 	ordered := make([]string, 0, len(models))
 	for h := range models {
