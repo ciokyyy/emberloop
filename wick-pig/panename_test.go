@@ -194,8 +194,8 @@ func TestRepromptedAgentKeepsItsName(t *testing.T) {
 	var calls [][]string
 	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
 		calls = append(calls, append([]string{cmd}, args...))
-		if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "get" {
-			return Result{Stdout: "{}"}, nil
+		if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "process-info" {
+			return livePaneProcs(paneArg(args)), nil
 		}
 		if cmd == herdrBin() && len(args) > 1 && args[0] == "agent" {
 			return Result{Stdout: "{}"}, nil

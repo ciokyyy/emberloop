@@ -936,6 +936,16 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 	if err != nil {
 		return nil, err
 	}
+	if replaced && prev.SessionID != "" {
+		// The dead reviewer's seat moves to its replacement, so a group
+		// still waiting on it resolves with this reviewer's verdict. A
+		// reviewer that already answered submits during the launch, so the
+		// handover dispatches the groups it changed; a slower one's submit
+		// completes them through the submit path instead.
+		for _, gid := range replaceGroupMember(prev.SessionID, id) {
+			dispatchGroupDelivery(gid)
+		}
+	}
 	return &spawnedAgent{ID: id, Type: t, Pane: agent.Pane, Tab: agent.Tab, Sess: agent.Session, Notice: notice}, nil
 }
 
@@ -956,7 +966,7 @@ func reviewSlot(typ string) string {
 // when it submits, so the verdict lands on the right record even when the
 // spawn never waits.
 func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, groupID, pane, tab string) error {
-	s, _, err := ReadAgentState(id)
+	s, ok, err := ReadAgentState(id)
 	if err != nil {
 		return err
 	}
@@ -967,6 +977,12 @@ func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, gro
 	// current one, so a restart in between survives the re-prompt.
 	if s.SessionID == "" {
 		s.SessionID = id
+	}
+	// A new record is a new child: stamp its launch, so an empty pane
+	// still counts as booting rather than dead. A follow-up keeps the
+	// stamp of the child it re-prompts.
+	if !ok {
+		s.LaunchedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID, PatchID: p.patchID}
 	return WriteAgentState(s)

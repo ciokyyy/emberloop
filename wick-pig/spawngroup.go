@@ -23,6 +23,10 @@ type spawnGroup struct {
 	Parent   string   `json:"parent_pane,omitempty"`
 	ParentID string   `json:"parent_id,omitempty"`
 	Members  []string `json:"members"`
+	// Replaced maps a dead member to the fresh agent that took over its
+	// seat: the group resolves with the replacement's verdict, never with
+	// the dead member's stale answer or a lost line for it.
+	Replaced map[string]string `json:"replaced,omitempty"`
 	// Delivered marks a group whose notice already went out, so two members
 	// submitting at the same moment deliver exactly once.
 	Delivered bool   `json:"delivered,omitempty"`
@@ -123,39 +127,132 @@ func errorLine(id, typ, detail string) string {
 	return fmt.Sprintf("%s %s stopped with error: %s", typ, id, detail)
 }
 
-// isPaneLost reports whether pane is gone from herdr: a pane herdr no longer
-// knows. Only the explicit pane_not_found counts, the way deliverNotice
-// drops a notice for a session that is gone but still types into one that
-// is only booting.
-func isPaneLost(run Exec, pane string) bool {
+// paneDead reports whether no agent runs in pane: herdr no longer knows it,
+// or knows it but only its shell is left and the launch is past the boot
+// grace. A pane herdr answers pane_not_found for is dead at once, no grace:
+// only a pane that still exists but looks empty may still be starting its
+// child. launchedAt is the child's start time (RFC 3339); empty means no
+// grace. One process-info call answers it, judged the way the stop gate
+// judges it.
+func paneDead(run Exec, pane, launchedAt string) bool {
 	if pane == "" {
 		return false
 	}
-	res, err := run(herdrBin(), []string{"pane", "get", pane}, ExecOpts{Timeout: 15 * time.Second})
+	res, err := run(herdrBin(), []string{"pane", "process-info", "--pane", pane}, ExecOpts{Timeout: 15 * time.Second})
 	if err != nil {
 		return false
 	}
-	if res.Code == 0 {
+	if res.Code != 0 {
+		return paneNotFound(res)
+	}
+	proc, ok := decodePaneProcess(res.Stdout)
+	if !ok {
 		return false
 	}
-	return paneNotFound(res)
+	return proc.stopped() && !booting(launchedAt)
 }
 
-// maybeDeliverGroup delivers the grouped notice for the group agentID
-// belongs to, when its last member has submitted. Each submit records first;
-// only the submit that completes the group delivers, under the group's lock,
-// so two reviewers submitting at once deliver exactly one notice carrying
-// both results. A member whose pane vanished counts as lost, so the group
-// always completes. A group with no parent pane still completes: there is
-// nowhere to deliver to, so it is marked delivered without typing. A member
-// a tell claimed has left the group (claimNextSubmit clears its GroupID),
-// so the group completes without it and its answer goes to the waiting tell.
+// replaceGroupMember records a dead member's replacement in every still-open
+// group holding it, so the group resolves with the fresh agent's verdict
+// instead of the dead member's stale answer or a lost line for it. Members
+// stay as spawned; the replacement is read through the map at delivery, so
+// a tell-claimed member (GroupID cleared, still listed) keeps its old
+// meaning. Delivered groups keep their record. It returns the groups it
+// changed, so the caller can deliver the ones already complete.
+func replaceGroupMember(oldID, newID string) []string {
+	if oldID == "" || newID == "" || oldID == newID {
+		return nil
+	}
+	entries, err := os.ReadDir(groupDir())
+	if err != nil {
+		return nil
+	}
+	var changed []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		_ = withFileLock("group-"+id, func() error {
+			g, ok, err := readSpawnGroup(id)
+			if err != nil || !ok || g.Delivered {
+				return err
+			}
+			held := false
+			for _, m := range g.Members {
+				if m == oldID {
+					held = true
+					break
+				}
+			}
+			if !held {
+				return nil
+			}
+			if g.Replaced == nil {
+				g.Replaced = map[string]string{}
+			}
+			g.Replaced[oldID] = newID
+			if err := writeSpawnGroup(g); err != nil {
+				return err
+			}
+			changed = append(changed, id)
+			return nil
+		})
+	}
+	return changed
+}
+
+// groupsWaitingOn lists the still-open groups waiting on agentID: the ones
+// naming it a member, and the ones naming it as some dead member's
+// replacement, so one submit completes both its own group and the older one
+// it took over.
+func groupsWaitingOn(agentID string) []string {
+	if agentID == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(groupDir())
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		g, ok, err := readSpawnGroup(id)
+		if err != nil || !ok || g.Delivered {
+			continue
+		}
+		for _, m := range g.Members {
+			if m == agentID || g.Replaced[m] == agentID {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// maybeDeliverGroup delivers every still-open group waiting on agentID, when
+// its last member has submitted. Each submit records first; only the submit
+// that completes the group delivers, under the group's lock, so two
+// reviewers submitting at once deliver exactly one notice carrying both
+// results. A member whose pane vanished counts as lost, so the group always
+// completes. A group with no parent pane still completes: there is nowhere
+// to deliver to, so it is marked delivered without typing. A member a tell
+// claimed left the group (claimNextSubmit clears its GroupID, so the member
+// loop skips it), and its answer goes to the waiting tell.
 func maybeDeliverGroup(agentID string) error {
-	st, ok, err := ReadAgentState(agentID)
-	if err != nil || !ok || st.GroupID == "" {
+	if _, ok, err := ReadAgentState(agentID); err != nil || !ok {
 		return err
 	}
-	return deliverGroupIfComplete(st.GroupID)
+	for _, gid := range groupsWaitingOn(agentID) {
+		if err := deliverGroupIfComplete(gid); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // spawnGroupDelivered reports whether groupID's notice already went out. A
@@ -175,10 +272,42 @@ func spawnGroupDelivered(groupID string) (bool, error) {
 	return g.Delivered, nil
 }
 
+// replacementComplete folds a replaced member's outcome into the group's
+// maps: the replacement's submit under the dead member's seat, its error
+// line when its turn failed, or a lost line with its own exit trace when it
+// died too. It reports whether the seat is settled; while the replacement
+// still runs (or still boots) the group waits.
+func replacementComplete(submits map[string]AgentSubmit, lost, errored map[string]string, mid, rep string) (bool, error) {
+	if s, ok, err := ReadAgentSubmit(rep); err != nil {
+		return false, err
+	} else if ok {
+		submits[mid] = s
+		return true, nil
+	}
+	rst, rok, err := ReadAgentState(rep)
+	if err != nil {
+		return false, err
+	}
+	if !rok || rst.Pane == "" {
+		return false, nil
+	}
+	if rst.Errored {
+		errored[mid] = errorLine(rep, rst.Type, rst.ErrorDetail)
+		return true, nil
+	}
+	if !paneDead(deliverExec, rst.Pane, rst.LaunchedAt) {
+		return false, nil
+	}
+	lost[mid] = lostLine(rep, rst.Type) + exitSuffix(rst)
+	return true, nil
+}
+
 // deliverGroupIfComplete delivers the grouped notice for groupID when every
 // remaining member has submitted, is lost, or is errored — except a dead
 // worktree agent, which the worker prune cancels and the dead-child sweep
-// reports, so the group waits for it. A member's submit
+// reports, so the group waits for it. A replaced member counts through its
+// replacement (replacementComplete), so the notice carries the fresh
+// verdict, never a lost line for the seat it took. A member's submit
 // calls it synchronously. The notice goes out at once, busy parent or not:
 // herdr queues typed text as steering, and a working agent reads it after its
 // next tool call, so nothing is held and no tool call is cancelled. Every
@@ -208,6 +337,19 @@ func deliverGroupIfComplete(groupID string) error {
 				continue
 			}
 			remaining++
+			// A replaced member resolves only through its replacement:
+			// the dead member's own submit, if one is on disk, answered
+			// an earlier turn, never this group's wait.
+			if rep, ok := g.Replaced[mid]; ok && rep != "" {
+				complete, err := replacementComplete(submits, lost, errored, mid, rep)
+				if err != nil {
+					return err
+				}
+				if !complete {
+					return nil
+				}
+				continue
+			}
 			if s, ok, err := ReadAgentSubmit(mid); err != nil {
 				return err
 			} else if ok {
@@ -223,7 +365,7 @@ func deliverGroupIfComplete(groupID string) error {
 				// The group waits for it.
 				return nil
 			}
-			if isPaneLost(deliverExec, mst.Pane) {
+			if paneDead(deliverExec, mst.Pane, mst.LaunchedAt) {
 				if mst.Ticket != "" {
 					// A dead worktree agent is cancelled by the worker prune
 					// and reported by the dead-child sweep, never here: the
@@ -232,7 +374,7 @@ func deliverGroupIfComplete(groupID string) error {
 					return nil
 				}
 				typ := mst.Type
-				lost[mid] = lostLine(mid, typ)
+				lost[mid] = lostLine(mid, typ) + exitSuffix(mst)
 				continue
 			}
 			return nil

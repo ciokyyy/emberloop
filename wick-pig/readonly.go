@@ -270,11 +270,18 @@ func (a readOnlyAgent) tell(run Exec, text string) (string, error) {
 	return a.reply(run, size)
 }
 
-// alive reports whether the agent's pane still exists.
+// alive reports whether a process beyond the shell runs in the agent's
+// pane, judged from herdr's per-pane process list the way the stop gate
+// judges it. A bare shell, an unknown pane and a missing pane are all dead:
+// pane existence alone never counts as alive. herdr's own agent detection
+// lags and flaps, so the foreground process is the signal, not its name.
 func (a readOnlyAgent) alive(run Exec) bool {
 	if a.Pane == "" {
 		return false
 	}
-	res, err := run(herdrBin(), []string{"pane", "get", a.Pane}, ExecOpts{Timeout: 15 * time.Second})
-	return err == nil && res.Code == 0
+	proc, err := paneProcesses(run, a.Pane)
+	if err != nil {
+		return false
+	}
+	return !proc.stopped()
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // queuedWorker is one worktree agent waiting for a worker slot. It stores the
@@ -70,13 +71,14 @@ func effectiveWorkerCap() int {
 }
 
 // liveWorkerCount is the workers that count against the cap: only those
-// whose pane herdr still knows. Only an explicit pane_not_found means dead,
-// the way deliverNotice drops a notice for a session that is gone; any other
-// herdr error counts the worker as alive.
+// whose pane still runs something past the shell. Only an explicit
+// pane_not_found means gone, the way deliverNotice drops a notice for a
+// session that is gone; any other herdr error counts the worker as alive,
+// and a worker launched inside the boot grace is not dead yet.
 func liveWorkerCount(store map[string]Worker, run Exec) int {
 	n := 0
 	for _, w := range store {
-		if isPaneLost(run, w.Pane) {
+		if paneDead(run, w.Pane, w.Started) {
 			continue
 		}
 		n++
@@ -326,6 +328,9 @@ func launchQueuedWorker(run Exec, e queuedWorker) (*spawnedAgent, error) {
 		// The harness session the drain started, read back the way a spawn
 		// launch is.
 		SessionID: sess.ID,
+		// The child starts now: an empty pane still counts as booting
+		// rather than dead until the grace passes.
+		LaunchedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := WriteAgentState(state); err != nil {
 		_, _ = finishWorker(run, worker.ID, false, false)

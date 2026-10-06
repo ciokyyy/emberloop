@@ -242,11 +242,16 @@ func run(argv []string) error {
 	}
 	// The top-level session runs under the header strip too: same binary,
 	// argv and env, on a terminal sized for the strip. Without a terminal
-	// (or with the strip disabled) the session runs exactly as before.
+	// (or with the strip disabled) the session runs exactly as before. The
+	// strip wrapper is the child's parent here, so a bad exit still lands
+	// in the agent's state, without a stderr tail the wrapper owns.
 	err = wick.WrapTopLevel(cmd, wick.HeaderSource{
 		AgentID: s.AgentID, AgentType: s.AgentType, AgentName: wick.PaneNameForType(s.AgentType),
 		Harness: choice.Harness, SessionID: s.ID, SessionDir: s.Dir,
 	})
+	if exit, ok := wick.ChildExitOf(err); ok {
+		_ = wick.RecordChildExit(s.AgentID, exit)
+	}
 	if runSlug != "" {
 		_ = wick.FinishRun(runSlug)
 	}

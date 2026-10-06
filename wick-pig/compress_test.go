@@ -267,8 +267,6 @@ func (f *compressFake) run(cmd string, args []string, _ ExecOpts) (Result, error
 		f.ran++
 		f.alive = true
 		return Result{Stdout: "{}"}, nil
-	case "agent wait":
-		return Result{Stdout: "{}"}, nil
 	case "agent prompt":
 		return Result{Stdout: "{}"}, nil
 	case "pane close", "tab close":

@@ -3,6 +3,7 @@ package wick
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,7 +120,9 @@ func execFileFromLine(line string) (string, bool) {
 // RunExecFile runs the launch at path: it reads the file and execs the binary
 // with the exact argv and env, preserving newlines and quotes. The file is
 // consumed: it is removed once read, so a started session leaves nothing
-// behind even when its caller never cleans up.
+// behind even when its caller never cleans up. This process is the agent's
+// parent: when the child exits badly its end is recorded in the agent's
+// state, so a crash leaves a trace instead of a bare shell.
 func RunExecFile(path string) error {
 	cmd, err := readLaunch(path)
 	if err != nil {
@@ -132,15 +135,96 @@ func RunExecFile(path string) error {
 	if log, name := openToolsLog(cmd); log != nil {
 		// The tools log needs the child's raw stderr, which a PTY would
 		// merge into stdout: debug sessions run unwrapped, exactly as
-		// before, and keep the strip off.
+		// before, and keep the strip off. This process stays the parent,
+		// so a bad exit still lands in the agent's state with its tail.
 		defer log.Close()
 		c := exec.Command(cmd.Bin, cmd.Args...)
 		c.Env = append(append(os.Environ(), cmd.Env...), "PIG_DEBUG_TOOLS=1")
 		c.Stdin, c.Stdout = os.Stdin, os.Stdout
-		c.Stderr = &stampWriter{w: log, label: name}
-		return c.Run()
+		stderr, tail := TeeStderr(&stampWriter{w: log, label: name})
+		c.Stderr = stderr
+		err = c.Run()
+		if exit, ok := ChildExitOf(err); ok {
+			exit.Stderr = tail()
+			_ = RecordChildExit(agentIDFromEnv(cmd.Env), exit)
+		}
+		return err
 	}
-	return WrapLaunch(cmd)
+	// The strip wrapper runs the child: a bad exit still lands in the
+	// agent's state, without a stderr tail the PTY owns.
+	err = WrapLaunch(cmd)
+	if exit, ok := ChildExitOf(err); ok {
+		_ = RecordChildExit(agentIDFromEnv(cmd.Env), exit)
+	}
+	return err
+}
+
+// TeeStderr wraps dst so the child's stderr still streams there while its
+// last lines are kept for the exit trace. The top-level launcher shares it,
+// so both launchers record the same trace.
+func TeeStderr(dst io.Writer) (w io.Writer, tail func() string) {
+	var kept stderrTail
+	return io.MultiWriter(dst, &kept), kept.String
+}
+
+// agentIDFromEnv is the wick agent id a launch carries, or "".
+func agentIDFromEnv(env []string) string {
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "WICK_AGENT_ID="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// stderrTail keeps the last lines a child wrote to stderr, so the exit
+// trace says what it was doing when it died. It never grows past its cap.
+type stderrTail struct {
+	lines []string
+	part  []byte
+}
+
+// tailLines is how many stderr lines the trace keeps; tailBytes caps the
+// total, so one huge line cannot blow up the agent's state.
+const (
+	tailLines = 20
+	tailBytes = 8192
+)
+
+func (t *stderrTail) Write(p []byte) (int, error) {
+	t.part = append(t.part, p...)
+	for {
+		i := strings.IndexByte(string(t.part), '\n')
+		if i < 0 {
+			break
+		}
+		t.lines = append(t.lines, string(t.part[:i]))
+		if len(t.lines) > tailLines {
+			t.lines = t.lines[len(t.lines)-tailLines:]
+		}
+		t.part = t.part[i+1:]
+	}
+	if len(t.part) > tailBytes {
+		t.part = t.part[len(t.part)-tailBytes:]
+	}
+	return len(p), nil
+}
+
+// String is the tail as one block: whole lines first, then any partial
+// last line, trimmed and capped.
+func (t *stderrTail) String() string {
+	out := strings.Join(t.lines, "\n")
+	if len(t.part) > 0 {
+		if out != "" {
+			out += "\n"
+		}
+		out += string(t.part)
+	}
+	out = strings.TrimSpace(out)
+	if len(out) > tailBytes {
+		out = out[len(out)-tailBytes:]
+	}
+	return out
 }
 
 // openToolsLog opens the per-session log of how many tools pig sent with each

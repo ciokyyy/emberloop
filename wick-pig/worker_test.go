@@ -166,21 +166,38 @@ func (h *ticketHerdr) run(cmd string, args []string, opts ExecOpts) (Result, err
 		}
 		return reply(map[string]any{"panes": panes}), nil
 	case "pane process-info":
-		pane, _ := flag(args, "--pane")
-		group := h.procs[pane]
-		fg := []any{}
-		if group != 0 {
-			fg = append(fg, map[string]any{"pid": group})
+		pane := paneArg(args)
+		known := false
+		for _, ps := range h.panes {
+			for _, p := range ps {
+				if p == pane {
+					known = true
+				}
+			}
+		}
+		if !known {
+			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
+		}
+		if group := h.procs[pane]; group != 0 {
+			return reply(map[string]any{"process_info": map[string]any{
+				"pane_id": pane, "shell_pid": h.shell,
+				"foreground_process_group_id": group,
+				"foreground_processes":        []any{map[string]any{"pid": group}},
+			}}), nil
 		}
 		return reply(map[string]any{"process_info": map[string]any{
-			"pane_id":                     pane,
-			"shell_pid":                   h.shell,
-			"foreground_process_group_id": group,
-			"foreground_processes":        fg,
+			"pane_id": pane, "shell_pid": h.shell,
+			"foreground_process_group_id": h.shell,
+			"foreground_processes":        []any{map[string]any{"pid": h.shell}},
 		}}), nil
 	case "pane run":
 		if h.runErr {
 			return Result{Code: 1, Stderr: `{"error":{"message":"launch failed"}}`}, nil
+		}
+		// A launch starts a process past the shell, the way pane run
+		// starts the agent: liveness reads it until a stop ends it.
+		if len(args) > 2 {
+			h.procs[args[2]] = h.shell + 1
 		}
 		return Result{}, nil
 	case "agent list":
@@ -809,7 +826,7 @@ func TestSpawnRespawnsIntoTheTabsRootSlot(t *testing.T) {
 	if got := h.paneRun(); got != "w1:p9" {
 		t.Errorf("pane run in %q, want the slot-1 root pane w1:p9", got)
 	}
-	if h.procs["w1:p9"] != 0 {
+	if h.procs["w1:p9"] == 4242 {
 		t.Error("the old implementor's process group was left running in the pane")
 	}
 	stop, launch := h.stopCall(), h.launchCall()

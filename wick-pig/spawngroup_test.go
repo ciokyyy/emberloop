@@ -19,7 +19,7 @@ func groupTestState(t *testing.T, g *fakeGrid) *recorder {
 	t.Setenv("HERDR_PANE_ID", "wP")
 	t.Setenv("WICK_AGENT_ID", "parent1")
 	oldDeliver := deliverExec
-	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	rec := &recorder{reply: liveDeliverReply}
 	deliverExec = rec.run
 	t.Cleanup(func() { deliverExec = oldDeliver })
 	return rec
@@ -81,7 +81,7 @@ func TestSpawnGroupReportsLostPaneInNotice(t *testing.T) {
 		t.Fatal("the second scout has no pane to lose")
 	}
 	rec.reply = func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" && args[2] == lostPane {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" && paneArg(args) == lostPane {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -117,6 +117,9 @@ func TestSpawnGroupNoticeDeliveredAtOnceToBusyParent(t *testing.T) {
 	var mu sync.Mutex
 	var prompts []string
 	deliverExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
+			return livePaneProcs(paneArg(args)), nil
+		}
 		if len(args) > 1 && args[0] == "agent" && args[1] == "wait" {
 			// The parent is working: any wait for idle times out.
 			return Result{Code: 1, Stdout: `{"error":{"code":"timeout"}}`}, nil
@@ -414,7 +417,7 @@ func TestSpawnSweepFinalizesStrandedLostGroup(t *testing.T) {
 		t.Fatal("the scout has no pane to lose")
 	}
 	rec.reply = func(cmd string, args []string) Result {
-		if len(args) > 2 && args[0] == "pane" && args[1] == "get" && args[2] == doomedPane {
+		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" && paneArg(args) == doomedPane {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
 		}
 		return Result{Stdout: "{}"}
@@ -435,5 +438,35 @@ func TestSpawnSweepFinalizesStrandedLostGroup(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "lost:") || !strings.Contains(got[0], ids[0]) {
 		t.Errorf("the swept notice must report the vanished member as lost, got:\n%s", got[0])
+	}
+}
+
+// A dead member's replacement is recorded in every still-open group holding
+// it, so the group resolves with the fresh agent's verdict instead of the
+// dead member's stale answer or a lost line for it. Members stay as spawned
+// and delivered groups keep their record.
+func TestReplaceGroupMemberSwapsOpenGroup(t *testing.T) {
+	g := newFakeGrid()
+	groupTestState(t, g)
+	if err := writeSpawnGroup(spawnGroup{ID: "g-old", Parent: "wP", ParentID: "parent1", Members: []string{"old", "other"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSpawnGroup(spawnGroup{ID: "g-done", Parent: "wP", ParentID: "parent1", Members: []string{"old"}, Delivered: true}); err != nil {
+		t.Fatal(err)
+	}
+	replaceGroupMember("old", "new")
+	got, ok, err := readSpawnGroup("g-old")
+	if err != nil || !ok {
+		t.Fatalf("the open group must survive the swap: %v %v", got, err)
+	}
+	if len(got.Members) != 2 || got.Members[0] != "old" || got.Members[1] != "other" {
+		t.Errorf("members stay as spawned, members = %v", got.Members)
+	}
+	if got.Replaced["old"] != "new" {
+		t.Errorf("the open group must record the replacement, replaced = %v", got.Replaced)
+	}
+	done, _, _ := readSpawnGroup("g-done")
+	if len(done.Replaced) != 0 {
+		t.Errorf("a delivered group must keep its record, replaced = %v", done.Replaced)
 	}
 }

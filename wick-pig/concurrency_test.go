@@ -211,13 +211,8 @@ func concurrencyHerdrExec() Exec {
 				return nil
 			})
 			return Result{Stdout: `{"result":{}}`}, nil
-		case "pane get":
-			pane := ""
-			if v, ok := flag(args, "--pane"); ok && v != "" {
-				pane = v
-			} else if len(args) > 2 {
-				pane = args[2]
-			}
+		case "pane process-info":
+			pane := paneArg(args)
 			found := false
 			_ = withFileLock("concurrency-herdr", func() error {
 				st := loadConcurrencyHerdr()
@@ -233,15 +228,7 @@ func concurrencyHerdrExec() Exec {
 			if !found {
 				return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 			}
-			return Result{Stdout: `{"result":{}}`}, nil
-		case "pane run":
-			return Result{}, nil
-		case "pane process-info":
-			pane, _ := flag(args, "--pane")
-			return reply(map[string]any{"process_info": map[string]any{
-				"pane_id": pane, "shell_pid": 4000,
-				"foreground_process_group_id": 0, "foreground_processes": []any{},
-			}}), nil
+			return livePaneProcs(pane), nil
 		case "agent list":
 			return reply(map[string]any{"agents": []any{}}), nil
 		}

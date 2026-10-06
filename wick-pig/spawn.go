@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"example.com/wick/tools"
 )
@@ -263,13 +264,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	}
 	parentPane := os.Getenv("HERDR_PANE_ID")
 	parentID := os.Getenv("WICK_AGENT_ID")
-	// Each parent action finalizes its stranded groups first: a member whose
-	// pane vanished without any further submit leaves no other trigger, so
-	// the next spawn from the same parent delivers what is already complete.
-	// The prune runs here too, before any cap is read: a hand-closed worker
-	// pane frees its slot, and the sweep after it reports the cancelled
-	// worker to this parent through the dead-child sweep.
-	sweepOpenGroups(parentPane, parentID)
+	// The prune runs before any cap is read: a hand-closed worker pane frees
+	// its slot, and the sweep after it reports the cancelled worker to this
+	// parent through the dead-child sweep.
 	pruneDeadWorkers(run)
 	sweepDeadChildren(parentPane, parentID)
 	groupID := newSessionID()
@@ -407,6 +404,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			// usage tailer and reply waiting read this current value, so a
 			// restart only changes it here.
 			SessionID: agent.Sess.ID,
+			// The child starts now: an empty pane still counts as booting
+			// rather than dead until the grace passes.
+			LaunchedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 		if t.Checkout == "worktree" {
 			state.Ticket = r.Ticket
@@ -420,6 +420,11 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		agents = append(agents, agent)
 	}
 
+	// Stranded groups finalize after this call's launches, not before: a
+	// dead member this call replaces waits on its replacement instead of
+	// being reported lost first. It runs before every return below, so a
+	// call that launches nothing still finalizes what is already complete.
+	sweepOpenGroups(parentPane, parentID)
 	// Nothing to review, or every reviewer already passed: report that and
 	// start nothing.
 	if review != nil && len(agents) == 0 {

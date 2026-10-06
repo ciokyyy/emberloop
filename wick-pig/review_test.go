@@ -48,10 +48,13 @@ type fakePane struct {
 	turns           int
 	closed          bool
 	launched        bool // a reviewer agent was run in it
-	tab             string
-	id              string
-	harness         string
-	prompts         []string
+	// agentGone models a crash: the pane still exists but no agent runs in
+	// it, so herdr reports the pane with no agent fields.
+	agentGone bool
+	tab       string
+	id        string
+	harness   string
+	prompts   []string
 	// line is the launch line pane run typed; the tests read the harness,
 	// model and effort it carries from it.
 	line string
@@ -205,9 +208,13 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		if p.harness != "claude" {
 			f.turn(p, prompt)
 		}
-	case "pane get":
-		if p := f.panes[args[2]]; p != nil && !p.closed {
-			return Result{Stdout: "{}"}, nil
+	case "pane process-info":
+		pane := paneArg(args)
+		if p := f.panes[pane]; p != nil && !p.closed {
+			if p.agentGone {
+				return barePaneProcs(pane), nil
+			}
+			return livePaneProcs(pane), nil
 		}
 		return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}, nil
 	case "pane close":
@@ -718,6 +725,77 @@ func TestReviewSpawnReplacesADeadReviewer(t *testing.T) {
 	if after.Tab != before.Tab || after.Slot != before.Slot {
 		t.Errorf("the replacement went to %s slot %d, want the dead reviewer's %s slot %d",
 			after.Tab, after.Slot, before.Tab, before.Slot)
+	}
+}
+
+// A reviewer whose pane still exists but runs no agent anymore is dead too:
+// the respawn launches a fresh reviewer in its slot instead of typing the
+// follow-up into the bare shell. This holds both for a reviewer with a
+// verdict that no longer covers the state and for one with no verdict yet.
+func TestReviewSpawnDeadAgentPaneGetsFreshReviewer(t *testing.T) {
+	_, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "changes"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	deadPane := reviewersOf(tree)[reviewerSpec].Pane
+	dead := f.panes[deadPane]
+	dead.agentGone = true
+	f.answer = answers("pass", "pass")
+	splits := f.splits()
+	out, err := reviewSpawn(t, f, tree, withNote("B is out of scope: the ticket says A only")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.splits() != splits+1 {
+		t.Errorf("a dead agent must be replaced by one fresh launch, got %d splits", f.splits()-splits)
+	}
+	freshPane := reviewersOf(tree)[reviewerSpec].Pane
+	if freshPane == deadPane {
+		t.Fatalf("the dead pane %s must be replaced, not reused", deadPane)
+	}
+	fresh := f.panes[freshPane]
+	if fresh.turns != 1 {
+		t.Errorf("want a fresh spec reviewer on its first turn, got %+v", fresh)
+	}
+	if !strings.Contains(fresh.prompts[0], "You replace") {
+		t.Errorf("the replacement must inherit the findings:\n%s", fresh.prompts[0])
+	}
+	if !strings.Contains(out, "a new reviewer took over") {
+		t.Errorf("the worker must be told: %s", out)
+	}
+	if dead.turns != 1 {
+		t.Errorf("the dead pane must get no follow-up turn, turns = %d", dead.turns)
+	}
+	for _, c := range f.calls {
+		if len(c) > 3 && c[3] == deadPane && ((c[1] == "agent" && c[2] == "prompt") || (c[1] == "pane" && c[2] == "send-text")) {
+			t.Errorf("no follow-up text may be typed into the dead pane: %v", c)
+		}
+	}
+	// The same holds when the dead reviewer never reached a verdict.
+	if err := updateReviewers(func(all map[string]map[string]reviewer) error {
+		r := all[filepath.Clean(tree)][reviewerSpec]
+		r.Verdict, r.VerdictAt, r.VerdictTree, r.VerdictPatch, r.Findings = "", "", "", "", ""
+		all[filepath.Clean(tree)][reviewerSpec] = r
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fresh.agentGone = true
+	splits = f.splits()
+	out, err = reviewSpawn(t, f, tree, withNote("B is out of scope: the ticket says A only")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.splits() != splits+1 {
+		t.Errorf("a dead agent with no verdict must be replaced, got %d splits", f.splits()-splits)
+	}
+	freshPane2 := reviewersOf(tree)[reviewerSpec].Pane
+	if freshPane2 == freshPane || f.panes[freshPane2].turns != 1 {
+		t.Errorf("want a second fresh spec reviewer, got %+v", f.panes[freshPane2])
+	}
+	if !strings.Contains(out, "a new reviewer took over") {
+		t.Errorf("the worker must be told: %s", out)
 	}
 }
 
@@ -1575,5 +1653,76 @@ func TestRunChecksFallsBackToTheFirstName(t *testing.T) {
 	}
 	if !strings.Contains(got, "alpha") {
 		t.Errorf("the packet must say which check ran, got %q", got)
+	}
+}
+
+// A group still waiting on a dead reviewer resolves with its replacement's
+// verdict: the group records the replacement, and its notice carries the
+// fresh submit, never a lost line for the dead seat.
+func TestStrandedReviewerGroupResolvesWithFreshVerdict(t *testing.T) {
+	_, tree := reviewRepo(t)
+	t.Setenv("HERDR_PANE_ID", "wP")
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	oldDeliver := deliverExec
+	rec := &recorder{reply: liveDeliverReply}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
+
+	f := newFakeReviewers(answers("pass", "changes"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	old := reviewersOf(tree)[reviewerSpec]
+	// A still-waiting caller holds a group on the spec reviewer; its submit
+	// never arrives because the agent dies first.
+	clearAgentSubmit(old.SessionID)
+	if err := writeSpawnGroup(spawnGroup{ID: "g-stranded", Parent: "wP", ParentID: "parent1", Members: []string{old.SessionID}}); err != nil {
+		t.Fatal(err)
+	}
+	oldState, _, _ := ReadAgentState(old.SessionID)
+	oldState.GroupID = "g-stranded"
+	if err := WriteAgentState(oldState); err != nil {
+		t.Fatal(err)
+	}
+	f.panes[old.Pane].agentGone = true
+	f.answer = answers("pass", "pass")
+	if _, err := reviewSpawn(t, f, tree, withNote("B is out of scope")...); err != nil {
+		t.Fatal(err)
+	}
+	fresh := reviewersOf(tree)[reviewerSpec]
+	if fresh.SessionID == old.SessionID {
+		t.Fatal("the dead reviewer must be replaced")
+	}
+	stranded, ok, err := readSpawnGroup("g-stranded")
+	if err != nil || !ok {
+		t.Fatalf("the stranded group must survive: %v %v", stranded, err)
+	}
+	if stranded.Replaced[old.SessionID] != fresh.SessionID {
+		t.Fatalf("the stranded group must record the replacement, replaced = %v", stranded.Replaced)
+	}
+	if !waitForDeliveries(2 * time.Second) {
+		t.Fatal("background deliveries never finished")
+	}
+	stranded, _, _ = readSpawnGroup("g-stranded")
+	if !stranded.Delivered {
+		t.Fatal("the stranded group must resolve with the replacement's verdict")
+	}
+	// The fresh submit renders under the dead member's seat: its id and its
+	// pass verdict must be in some notice to the parent.
+	found := false
+	for _, c := range rec.calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "lost:") {
+			t.Errorf("no member may be reported as lost once replaced: %v", c)
+		}
+		if strings.Contains(joined, fresh.SessionID) && strings.Contains(joined, "submitted (pass)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no notice carries the replacement's verdict %s:\n%v", fresh.SessionID, rec.calls)
+	}
+	if got := reviewersOf(tree)[reviewerSpec].Verdict; got != verdictPass {
+		t.Errorf("spec verdict = %q, want pass from the replacement", got)
 	}
 }

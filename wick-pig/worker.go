@@ -122,6 +122,11 @@ type herdrReply struct {
 		Pane struct {
 			PaneID string `json:"pane_id"`
 			TabID  string `json:"tab_id"`
+			// Agent is the agent herdr sees running in the pane: empty when
+			// the pane holds a bare shell, so liveness reads it, not mere
+			// pane existence.
+			Agent       string `json:"agent"`
+			AgentStatus string `json:"agent_status"`
 		} `json:"pane"`
 		RootPane struct {
 			PaneID string `json:"pane_id"`
@@ -205,6 +210,43 @@ func herdrJSON(run Exec, args []string, timeout time.Duration) (*herdrReply, err
 		return nil, fmt.Errorf("herdr %s exited %d: %.200s", args[0], res.Code, text)
 	}
 	return &reply, nil
+}
+
+// decodePaneProcess reads what herdr reports of a pane's processes from a
+// process-info reply: the shell that owns the pane and whatever runs past
+// it. It shares paneProcesses' reading, so liveness and the stop gate judge
+// the same shape.
+func decodePaneProcess(text string) (paneProcess, bool) {
+	var reply herdrReply
+	if err := json.Unmarshal([]byte(text), &reply); err != nil {
+		return paneProcess{}, false
+	}
+	info := reply.Result.ProcessInfo
+	proc := paneProcess{ShellPID: info.ShellPID, Group: info.GroupID}
+	for _, fg := range info.Foreground {
+		proc.Foreground = append(proc.Foreground, fg.PID)
+	}
+	return proc, true
+}
+
+// bootGrace is how long after launch an empty pane still counts as booting
+// rather than dead: the shell needs a moment to start the child, while
+// herdr's agent detection lags far longer, so presence comes from the
+// process list and only the launch time gates the verdict.
+const bootGrace = 2 * time.Minute
+
+// booting reports whether launchedAt is recent enough that an empty pane
+// may still be starting its child. Empty or unparsable times are not
+// booting: only a recorded launch waits out the grace.
+func booting(launchedAt string) bool {
+	if launchedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, launchedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < bootGrace
 }
 
 // ---------------------------------------------------------------------------
@@ -577,9 +619,9 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 // with no submit and a pane herdr no longer knows leaves workers.json, keeps
 // its worktree and branch for a respawn, and records a cancelled history
 // entry. A worker that submitted keeps its entry: its group delivers the
-// result. Only an explicit pane_not_found means dead, the way the cap
-// counts; any other herdr error keeps the worker. Best effort: a store or
-// history failure cancels nothing.
+// result. A pane with no process past the shell counts as dead, unless the
+// worker launched inside the boot grace; any other herdr error keeps the
+// worker. Best effort: a store or history failure cancels nothing.
 func pruneDeadWorkers(run Exec) {
 	_ = withFileLock("workers", func() error {
 		store, err := load()
@@ -599,7 +641,7 @@ func pruneDeadWorkers(run Exec) {
 			if _, submitted, _ := ReadAgentSubmit(id); submitted {
 				continue
 			}
-			if !isPaneLost(run, w.Pane) {
+			if !paneDead(run, w.Pane, w.Started) {
 				continue
 			}
 			delete(store, id)
@@ -728,6 +770,11 @@ func (p paneProcess) stopped() bool {
 func stopPane(run Exec, pane string) error {
 	proc, err := paneProcesses(run, pane)
 	if err != nil {
+		// A pane herdr no longer knows holds nothing to stop: the
+		// respawn launches into the slot, not the pane.
+		if strings.Contains(err.Error(), "pane_not_found") || strings.Contains(err.Error(), "pane not found") {
+			return nil
+		}
 		return err
 	}
 	if proc.stopped() {
@@ -800,11 +847,7 @@ func paneProcesses(run Exec, pane string) (paneProcess, error) {
 	if err != nil {
 		return paneProcess{}, err
 	}
-	info := reply.Result.ProcessInfo
-	proc := paneProcess{ShellPID: info.ShellPID, Group: info.GroupID}
-	for _, fg := range info.Foreground {
-		proc.Foreground = append(proc.Foreground, fg.PID)
-	}
+	proc, _ := decodePaneProcess(reply.raw)
 	return proc, nil
 }
 

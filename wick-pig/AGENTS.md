@@ -18,11 +18,11 @@ owns its `_test.go` and the behaviour below):
   `voice.go` + `caveman/SKILL.md` (the register: the caveman plugin skill, byte
   for byte, at ultra; plus the per-turn reminder, `wick-pig voice-reminder`),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
-  (pane launch text), `supervisor.go` (compress restart in the same pane:
-  boundary wait, child stop, handoff relaunch, pane-name re-assertion,
-  session rotation with the compressed count, forced restart past the wait),
-  `compress.go` (manual compress: pig one-off summary, handoff and transcript
-  copies, same-pane restart through the supervisor),
+  (pane launch text, the child's exit trace), `supervisor.go` (compress restart
+  in the same pane: boundary wait, child stop, handoff relaunch, pane-name
+  re-assertion, session rotation with the compressed count, forced restart
+  past the wait), `compress.go` (manual compress: pig one-off summary,
+  handoff and transcript copies, same-pane restart through the supervisor),
   `compress_request.go` (the herdr key's signal: queue mark at the boundary,
   second-press force, top-level fallback, `request-compress`),
   `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
@@ -83,6 +83,12 @@ owns its `_test.go` and the behaviour below):
 - Every operation runs through the `Exec` seam (`exec.go`) so tests use a
   fake exec and temp directories; no test touches the real home, a live
   agent or harness, or the network beyond loopback `httptest` servers.
+- Liveness is a process past the pane's shell in herdr's process-info, never
+  mere pane existence and never herdr's flapping agent detection; a launch
+  inside the boot grace still counts as starting. A dead reviewer is replaced
+  in its slot and open groups record the replacement, so they resolve with
+  its verdict. The launcher records a bad child exit (code, signal, stderr
+  tail) in the agent's state, and the lost notice carries it.
 - A wick MCP server with no role refuses to start; the full tool set needs
   an explicit full role.
 - The tree stays gofmt-clean; formatting is a check result, never a

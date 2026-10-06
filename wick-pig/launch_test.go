@@ -374,3 +374,85 @@ func TestPigSessionLogsToolCountsPerRequest(t *testing.T) {
 		t.Error("only pig sessions log tool counts")
 	}
 }
+
+// The launcher is the agent's parent: when the child exits badly it records
+// the exit in the agent's state, so a crash leaves a trace instead of a bare
+// shell. Under the header strip the wrapper owns the terminal, so only the
+// code is recorded there.
+func TestExecRecordsChildExitInAgentState(t *testing.T) {
+	isolateState(t)
+	path, err := writeLaunch(Session{ID: "s1", AgentID: "dead1"}, Command{
+		Bin:  "sh",
+		Args: []string{"-c", "echo last words >&2; exit 3"},
+		Env:  []string{"WICK_AGENT_ID=dead1", "WICK_SESSION_ID=s1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunExecFile(path); err == nil {
+		t.Fatal("a child exiting 3 must fail the exec")
+	}
+	s, ok, err := ReadAgentState("dead1")
+	if err != nil || !ok {
+		t.Fatalf("the child's exit must be recorded: %v %v", s, err)
+	}
+	if s.ExitCode == nil || *s.ExitCode != 3 {
+		t.Errorf("exit code = %v, want 3", s.ExitCode)
+	}
+}
+
+// A debug session runs unwrapped with the child's raw stderr, so its trace
+// keeps the last lines too. The pig-named script takes the tools-log path
+// without needing a real pig binary.
+func TestExecRecordsChildStderrUnwrapped(t *testing.T) {
+	isolateState(t)
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "pig")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho last words >&2\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := writeLaunch(Session{ID: "s3", AgentID: "dead3"}, Command{
+		Bin:  bin,
+		Args: []string{},
+		Env:  []string{"WICK_AGENT_ID=dead3", "WICK_SESSION_ID=s3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunExecFile(path); err == nil {
+		t.Fatal("a child exiting 3 must fail the exec")
+	}
+	s, ok, err := ReadAgentState("dead3")
+	if err != nil || !ok {
+		t.Fatalf("the child's exit must be recorded: %v %v", s, err)
+	}
+	if s.ExitCode == nil || *s.ExitCode != 3 {
+		t.Errorf("exit code = %v, want 3", s.ExitCode)
+	}
+	if !strings.Contains(s.ExitStderr, "last words") {
+		t.Errorf("stderr tail = %q, want the child's last words", s.ExitStderr)
+	}
+}
+
+// A child killed by a signal records the signal, not just a code.
+func TestExecRecordsChildSignalInAgentState(t *testing.T) {
+	isolateState(t)
+	path, err := writeLaunch(Session{ID: "s2", AgentID: "dead2"}, Command{
+		Bin:  "sh",
+		Args: []string{"-c", "kill -TERM $$"},
+		Env:  []string{"WICK_AGENT_ID=dead2", "WICK_SESSION_ID=s2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunExecFile(path); err == nil {
+		t.Fatal("a child killed by TERM must fail the exec")
+	}
+	s, ok, err := ReadAgentState("dead2")
+	if err != nil || !ok {
+		t.Fatalf("the child's death must be recorded: %v %v", s, err)
+	}
+	if s.ExitSignal == "" {
+		t.Errorf("no signal recorded: %+v", s)
+	}
+}
