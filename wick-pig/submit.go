@@ -225,9 +225,9 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 // every other type stays available for a follow-up.
 func submitAck(t AgentType, status string) string {
 	if t.Checkout == "none" {
-		return fmt.Sprintf("submitted %s; your pane closes once delivered.", status)
+		return fmt.Sprintf("submitted %s. Yield now: end your turn with no text; your pane closes once delivered.", status)
 	}
-	return fmt.Sprintf("submitted %s; stay available for a follow-up.", status)
+	return fmt.Sprintf("submitted %s. Yield now: end your turn with no text; a follow-up arrives as a new message.", status)
 }
 
 func stringEnum(values []string) []any {

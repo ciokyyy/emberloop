@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,16 +28,6 @@ type spawnGroup struct {
 	Delivered bool   `json:"delivered,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 }
-
-// groupIdleProbeTimeout is how long one parent-idle probe may take: herdr
-// agent wait --until idle --timeout <ms>. A var so tests can shrink it.
-var groupIdleProbeTimeout = 2 * time.Second
-
-// groupNoticeHoldTimeout is how long a grouped notice waits for its parent
-// pane to go idle before it is delivered anyway, with a warning. Typed text
-// cancels a running tool call, so a notice is held while the parent works
-// one and delivered when it goes idle.
-var groupNoticeHoldTimeout = 5 * time.Minute
 
 func groupDir() string { return filepath.Join(filepath.Dir(statePath), "groups") }
 
@@ -142,49 +131,6 @@ func isPaneLost(run Exec, pane string) bool {
 	return paneNotFound(res)
 }
 
-// parentIdle reports whether the parent pane can take typed text: herdr's
-// agent wait for idle or done returns at once. Herdr reports a pane whose
-// agent finished a turn but is not focused as done, not idle, and such a
-// pane is not running a tool call, so a notice typed into it cancels nothing.
-// A pane herdr no longer knows counts as idle, so the delivery that follows
-// drops the notice the way any notice to a gone session drops. Any other
-// failure (a timeout: the agent is still working) counts as busy.
-func parentIdle(run Exec, parent string) bool {
-	if parent == "" {
-		return true
-	}
-	ms := strconv.Itoa(int(groupIdleProbeTimeout / time.Millisecond))
-	res, err := run(herdrBin(), []string{"agent", "wait", parent, "--until", "idle", "--until", "done", "--timeout", ms}, ExecOpts{Timeout: groupIdleProbeTimeout + 5*time.Second})
-	if err != nil {
-		return false
-	}
-	if res.Code == 0 {
-		return true
-	}
-	if paneNotFound(res) {
-		return true
-	}
-	return false
-}
-
-// waitForParentIdle holds a grouped notice while its parent pane works a tool
-// call, because typed text cancels a running call. It returns true once the
-// parent is idle, or false when the parent never goes idle within the hold
-// bound: the caller then delivers anyway, with a warning.
-func waitForParentIdle(run Exec, parent string) bool {
-	if parentIdle(run, parent) {
-		return true
-	}
-	deadline := time.Now().Add(groupNoticeHoldTimeout)
-	for time.Now().Before(deadline) {
-		time.Sleep(pollEvery)
-		if parentIdle(run, parent) {
-			return true
-		}
-	}
-	return parentIdle(run, parent)
-}
-
 // maybeDeliverGroup delivers the grouped notice for the group agentID
 // belongs to, when its last member has submitted. Each submit records first;
 // only the submit that completes the group delivers, under the group's lock,
@@ -221,11 +167,11 @@ func spawnGroupDelivered(groupID string) (bool, error) {
 
 // deliverGroupIfComplete delivers the grouped notice for groupID when every
 // remaining member has submitted, is lost, or is errored. A member's submit
-// calls it synchronously: the child's submit waits for the parent to go idle
-// (held, then delivered anyway with a warning past the bound). Every other
-// caller dispatches it asynchronously (dispatchGroupDelivery), because those
-// callers run inside the parent's own tool call: waiting there would stall
-// the call, and typing there would cancel it.
+// calls it synchronously. The notice goes out at once, busy parent or not:
+// herdr queues typed text as steering, and a working agent reads it after its
+// next tool call, so nothing is held and no tool call is cancelled. Every
+// other caller dispatches it asynchronously (dispatchGroupDelivery), because
+// those callers run inside the parent's own tool call and need not wait.
 func deliverGroupIfComplete(groupID string) error {
 	var deliverErr error
 	err := withFileLock("group-"+groupID, func() error {
@@ -277,10 +223,6 @@ func deliverGroupIfComplete(groupID string) error {
 			return writeSpawnGroup(g)
 		}
 		notice := groupNoticeText(g, submits, lost, errored)
-		idle := waitForParentIdle(deliverExec, g.Parent)
-		if !idle {
-			notice = "<system-notice> warning: the parent was busy for a long time; delivering anyway. The result that follows may have interrupted a tool call.</system-notice>\n" + notice
-		}
 		if g.Parent == "" {
 			g.Delivered = true
 			if err := writeSpawnGroup(g); err != nil {
@@ -327,10 +269,8 @@ func closeGroupScouts(run Exec, submits map[string]AgentSubmit, lost map[string]
 // dispatchGroupDelivery runs deliverGroupIfComplete in the background and
 // returns at once. Callers that run inside the parent's own tool call
 // (the spawn return path, the sweep inside spawn/tell/finish, the
-// tell-failure finalizer) must use it: waiting there would stall the call
-// they are part of, and typing there would cancel it. The background
-// delivery still holds for the parent to go idle (warning past the bound),
-// so the hold rule is kept; only the triggering call returns at once.
+// tell-failure finalizer) use it so they never wait on the delivery they are
+// part of. The notice is delivered at once, as steering.
 func dispatchGroupDelivery(groupID string) {
 	pendingDeliveries.Add(1)
 	go func() {
