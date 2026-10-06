@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately). Truncated output goes to a file here; ticket 09 later replaces that with the overflow store.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] HTML, JSON, text and Markdown pages read correctly; selectors and `:raw` work
-- [ ] Each escalation trigger moves to the next tier, and the header names the tier
-- [ ] PDF and office documents are read through tier 2
-- [ ] Private, loopback and link-local targets are refused, including via redirect
-- [ ] URLs with credentials or token-like parameters are never sent to Jina, and the header says so
-- [ ] Oversize and slow responses are cut off cleanly; truncation saves the overflow to a readable file
-- [ ] Tier 3 returns "not installed"
-- [ ] Local test servers and a fake Jina endpoint cover it; repo check passes
+- [x] HTML, JSON, text and Markdown pages read correctly; selectors and `:raw` work
+- [x] Each escalation trigger moves to the next tier, and the header names the tier
+- [x] PDF and office documents are read through tier 2
+- [x] Private, loopback and link-local targets are refused, including via redirect
+- [x] URLs with credentials or token-like parameters are never sent to Jina, and the header says so
+- [x] Oversize and slow responses are cut off cleanly; truncation saves the overflow to a readable file
+- [x] Tier 3 returns "not installed"
+- [x] Local test servers and a fake Jina endpoint cover it; repo check passes
