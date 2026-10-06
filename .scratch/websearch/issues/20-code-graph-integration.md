@@ -4,11 +4,11 @@
 
 **Blocked by:** 10, 15, 17, 19
 
-**Status:** ready-for-agent (optional: nothing else depends on it)
+**Status:** done
 
-- [ ] The exposed tool set per role matches the spec; management tools and `detect_changes` are never exposed
-- [ ] A worktree is indexed asynchronously on creation, re-indexed before a reviewer or scout spawn, and its project deleted on `finish`
-- [ ] Indexing and deletion failures are logged and never block spawn or finish
-- [ ] A missing binary or `graph.enabled: false` exposes no graph tools and raises no error
-- [ ] Two worktrees of one repo map to different projects
-- [ ] Repo check passes
+- [x] The exposed tool set per role matches the spec; management tools and `detect_changes` are never exposed
+- [x] A worktree is indexed asynchronously on creation, re-indexed before a reviewer or scout spawn, and its project deleted on `finish`
+- [x] Indexing and deletion failures are logged and never block spawn or finish
+- [x] A missing binary or `graph.enabled: false` exposes no graph tools and raises no error
+- [x] Two worktrees of one repo map to different projects
+- [x] Repo check passes
