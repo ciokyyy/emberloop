@@ -397,3 +397,20 @@ func TestWrapperResizeKeepsBorderlessSize(t *testing.T) {
 		t.Errorf("post-resize repaint restores a line or margins:\n%q", got)
 	}
 }
+
+// The wrapper wipes the screen before it claims the strip rows, so shell
+// output left behind by the launching pane (a greeting, the command line)
+// never shows through a child that redraws only what changed.
+func TestWrapClearsScreenBeforeRegion(t *testing.T) {
+	child := &fakeChild{}
+	var stdout bytes.Buffer
+	if err := WrapChild(wrapTestConfig(child, &stdout)); err != nil {
+		t.Fatal(err)
+	}
+	got := stdout.String()
+	clear := strings.Index(got, "\x1b[2J\x1b[H")
+	region := strings.Index(got, "\x1b[1;21r")
+	if clear < 0 || region < 0 || clear > region {
+		t.Errorf("clear at %d, scroll region at %d: want the clear first\n%q", clear, region, got)
+	}
+}
