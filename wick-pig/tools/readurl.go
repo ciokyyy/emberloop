@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,8 +25,10 @@ import (
 // and Markdown passed through, plus :raw and line-range selectors. Tier 2 is
 // the Jina reader using JINA_API_KEY from the environment (anonymous limits
 // when absent, noted in the header); PDFs and office documents go straight to
-// it. Tier 3 is a stealth-browser interface that returns a clear
-// "not installed" error.
+// it. Tier 3 renders the page in chrome-headless-shell (the research pick),
+// falling back to full Chrome/Chromium, per request with --dump-dom, and
+// shapes the rendered HTML through the tier-1 pipeline. A missing install
+// keeps the clear "not installed" error.
 
 const (
 	urlRequestTimeout = 20 * time.Second
@@ -746,8 +750,116 @@ func fetchJina(ctx context.Context, target string) (tierResult, error) {
 	return res, nil
 }
 
-func browserTier(_ context.Context, _ string) (string, error) {
+// browserNames is the tier-3 discovery order: the chrome-headless-shell
+// research pick first (lowest RAM, smallest install), then full
+// Chrome/Chromium as the documented fallback for pages needing //chrome
+// features. Each resolves through the shared bin-dir-then-PATH resolver.
+var browserNames = []string{"chrome-headless-shell", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"}
+
+// browserBinary finds the tier-3 browser. WICK_CHROME_BIN names the exact
+// binary (the operator full-Chrome fallback path, and the test seam);
+// otherwise the research order above resolves through the shared resolver.
+// A miss keeps the clear "not installed" error tier 3 always returned.
+func browserBinary() (string, error) {
+	if p := strings.TrimSpace(os.Getenv("WICK_CHROME_BIN")); p != "" {
+		if isExecutable(p) {
+			return p, nil
+		}
+		return "", fmt.Errorf("browser tier (tier 3) not installed: WICK_CHROME_BIN=%q is not executable; install chrome-headless-shell with `wick-pig deps`", p)
+	}
+	for _, name := range browserNames {
+		if p, err := ResolveBinary(name); err == nil {
+			return p, nil
+		}
+	}
 	return "", fmt.Errorf("browser tier (tier 3) not installed: no stealth browser is configured yet; the page is out of reach")
+}
+
+// cappedWriter streams command output through the shared body cap instead of
+// buffering it unbounded.
+type cappedWriter struct {
+	buf  bytes.Buffer
+	cap  int64
+	over bool
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if int64(c.buf.Len()) > c.cap {
+		c.over = true
+		return len(p), nil
+	}
+	room := c.cap + 1 - int64(c.buf.Len())
+	if int64(len(p)) > room {
+		c.over = true
+		c.buf.Write(p[:room])
+		return len(p), nil
+	}
+	c.buf.Write(p)
+	return len(p), nil
+}
+
+// browserTier renders target through the tier-3 browser and returns the
+// rendered HTML. The same safety rules as tiers 1-2 apply: the address
+// block is checked before launch, the run keeps the shared timeout, and
+// the body keeps the shared cap. The browser fetches directly (no third
+// party), so credentialed and token-like URLs are safe here, unlike at
+// Jina. Per-request launch keeps no resident browser: tier 3 fires rarely,
+// one page at a time, and there is no daemon to leak.
+func browserTier(ctx context.Context, target string) (string, bool, error) {
+	if err := checkURLAllowed(target); err != nil {
+		return "", false, err
+	}
+	bin, err := browserBinary()
+	if err != nil {
+		return "", false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, urlTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin,
+		"--headless", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
+		"--dump-dom", "--virtual-time-budget=8000", target)
+	var stdout, stderr cappedWriter
+	stdout.cap = urlBodyCap()
+	stderr.cap = 4096
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded || isTimeoutErr(err) {
+			return "", false, fmt.Errorf("browser tier (tier 3) timed out after %v", urlTimeout())
+		}
+		tail := strings.TrimSpace(stderr.buf.String())
+		if len(tail) > 500 {
+			tail = tail[len(tail)-500:]
+		}
+		if tail != "" {
+			tail = ": " + tail
+		}
+		return "", false, fmt.Errorf("browser tier (tier 3) failed: %v%s", err, tail)
+	}
+	body := stdout.buf.String()
+	if int64(len(body)) > urlBodyCap() {
+		body = body[:urlBodyCap()]
+		stdout.over = true
+	}
+	if strings.TrimSpace(body) == "" {
+		return "", false, fmt.Errorf("browser tier (tier 3) returned an empty page")
+	}
+	return body, stdout.over, nil
+}
+
+// renderBrowserTier answers from the tier-3 browser: rendered HTML through
+// the shared tier-1 shaping, so headers, selectors and overflow handling
+// stay identical except the tier name.
+func renderBrowserTier(ctx context.Context, root, fetchURL string, notes []string, sel []lineRange, offset, limit int) (string, error) {
+	rendered, over, err := browserTier(ctx, fetchURL)
+	if err != nil {
+		return "", err
+	}
+	converted, ct := convertTier1(rendered, "text/html")
+	if over {
+		notes = append(notes, fmt.Sprintf("body capped near %dMB", urlBodyCap()>>20))
+	}
+	return renderURL(root, fetchURL, converted, ct, "tier3 (browser)", notes, sel, offset, limit)
 }
 
 func needsTierEscalation(status int, converted string, timedOut bool) (string, bool) {
@@ -819,7 +931,7 @@ func readURLCtx(ctx context.Context, root, target string, offset, limit int) (st
 					return "", fmt.Errorf("request timed out after %v", urlTimeout())
 				}
 				if skipJina != "" {
-					return tier3Error(fetchURL, "tier 1 timed out; "+skipJina, notes)
+					return tier3Error(ctx, root, fetchURL, "tier 1 timed out; "+skipJina, notes, selRanges, offset, limit)
 				}
 				return escalateToJina(ctx, root, fetchURL, "tier 1 timed out", notes, selRanges, offset, limit)
 			}
@@ -831,14 +943,14 @@ func readURLCtx(ctx context.Context, root, target string, offset, limit int) (st
 		if isPDFOrOfficeContentType(res.ctype) {
 			notes = append(notes, "tier 1 served "+baseContentType(res.ctype)+", converting via jina")
 			if skipJina != "" {
-				return tier3Error(fetchURL, "tier 1 served "+baseContentType(res.ctype)+"; "+skipJina, notes)
+				return tier3Error(ctx, root, fetchURL, "tier 1 served "+baseContentType(res.ctype)+"; "+skipJina, notes, selRanges, offset, limit)
 			}
 			return escalateToJina(ctx, root, fetchURL, "tier 1 served "+baseContentType(res.ctype), notes, selRanges, offset, limit)
 		}
 		if res.status != http.StatusOK {
 			if reason, ok := needsTierEscalation(res.status, res.body, false); ok {
 				if skipJina != "" {
-					return tier3Error(fetchURL, "tier 1 "+reason+"; "+skipJina, notes)
+					return tier3Error(ctx, root, fetchURL, "tier 1 "+reason+"; "+skipJina, notes, selRanges, offset, limit)
 				}
 				return escalateToJina(ctx, root, fetchURL, "tier 1 "+reason, notes, selRanges, offset, limit)
 			}
@@ -847,7 +959,7 @@ func readURLCtx(ctx context.Context, root, target string, offset, limit int) (st
 		converted, ct := convertTier1(res.body, res.ctype)
 		if reason, ok := needsTierEscalation(res.status, converted, false); ok {
 			if skipJina != "" {
-				return tier3Error(fetchURL, "tier 1 "+reason+"; "+skipJina, notes)
+				return tier3Error(ctx, root, fetchURL, "tier 1 "+reason+"; "+skipJina, notes, selRanges, offset, limit)
 			}
 			return escalateToJina(ctx, root, fetchURL, "tier 1 "+reason, notes, selRanges, offset, limit)
 		}
@@ -862,18 +974,24 @@ func readURLCtx(ctx context.Context, root, target string, offset, limit int) (st
 
 	notes = append(notes, "pdf/office document via jina")
 	if skipJina != "" {
-		return tier3Error(fetchURL, "pdf/office document requires jina; "+skipJina, notes)
+		return tier3Error(ctx, root, fetchURL, "pdf/office document requires jina; "+skipJina, notes, selRanges, offset, limit)
 	}
 	return escalateToJina(ctx, root, fetchURL, "pdf/office document", notes, selRanges, offset, limit)
 }
 
-func tier3Error(fetchURL, reason string, notes []string) (string, error) {
-	_, berr := browserTier(context.Background(), fetchURL)
-	msg := berr.Error() + " (" + reason + ")"
-	if len(notes) > 0 {
-		msg += "; notes: " + strings.Join(notes, "; ")
+// tier3Error answers from the tier-3 browser when it can, and otherwise
+// keeps the clear error naming the missing install and why the earlier
+// tiers gave up.
+func tier3Error(ctx context.Context, root, fetchURL, reason string, notes []string, sel []lineRange, offset, limit int) (string, error) {
+	if out, berr := renderBrowserTier(ctx, root, fetchURL, notes, sel, offset, limit); berr == nil {
+		return out, nil
+	} else {
+		msg := berr.Error() + " (" + reason + ")"
+		if len(notes) > 0 {
+			msg += "; notes: " + strings.Join(notes, "; ")
+		}
+		return "", fmt.Errorf("%s: %s", fetchURL, msg)
 	}
-	return "", fmt.Errorf("%s: %s", fetchURL, msg)
 }
 
 func escalateToJina(ctx context.Context, root, fetchURL, reason string, notes []string, sel []lineRange, offset, limit int) (string, error) {
@@ -881,22 +999,34 @@ func escalateToJina(ctx context.Context, root, fetchURL, reason string, notes []
 	jres, err := fetchJina(ctx, fetchURL)
 	if err != nil {
 		if jres.timedOut {
-			_, berr := browserTier(ctx, fetchURL)
+			out, berr := renderBrowserTier(ctx, root, fetchURL, notes, sel, offset, limit)
+			if berr == nil {
+				return out, nil
+			}
 			return "", fmt.Errorf("%s: jina timed out; %s (%s)", fetchURL, berr.Error(), strings.Join(notes, "; "))
 		}
-		_, berr := browserTier(ctx, fetchURL)
+		out, berr := renderBrowserTier(ctx, root, fetchURL, notes, sel, offset, limit)
+		if berr == nil {
+			return out, nil
+		}
 		return "", fmt.Errorf("%s: jina fetch failed (%v); %s (%s)", fetchURL, err, berr.Error(), strings.Join(notes, "; "))
 	}
 	if jres.status != http.StatusOK {
 		if _, ok := needsTierEscalation(jres.status, jres.body, false); ok {
-			_, berr := browserTier(ctx, fetchURL)
+			out, berr := renderBrowserTier(ctx, root, fetchURL, notes, sel, offset, limit)
+			if berr == nil {
+				return out, nil
+			}
 			return "", fmt.Errorf("%s: jina HTTP %d; %s (%s)", fetchURL, jres.status, berr.Error(), strings.Join(notes, "; "))
 		}
 		return "", fmt.Errorf("%s: jina HTTP %d", fetchURL, jres.status)
 	}
 	body := strings.TrimSpace(jres.body)
 	if reason, ok := needsTierEscalation(jres.status, body, false); ok {
-		_, berr := browserTier(ctx, fetchURL)
+		out, berr := renderBrowserTier(ctx, root, fetchURL, notes, sel, offset, limit)
+		if berr == nil {
+			return out, nil
+		}
 		return "", fmt.Errorf("%s: jina %s; %s (%s)", fetchURL, reason, berr.Error(), strings.Join(notes, "; "))
 	}
 	if jinaKey() != "" {

@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -469,6 +471,7 @@ func TestReadURLCredentialsSkipJina(t *testing.T) {
 }
 
 func TestReadURLTokenParamsSkipJina(t *testing.T) {
+	t.Setenv("WICK_CHROME_BIN", filepath.Join(t.TempDir(), "no-such-browser"))
 	allowLocal(t)
 	jf := startJinaFake(t, 200, "must not be used")
 	t.Setenv("JINA_API_KEY", "")
@@ -574,6 +577,7 @@ func TestReadURLLargePageUsesOverflowStore(t *testing.T) {
 
 func TestReadURLTier3NotInstalled(t *testing.T) {
 	allowLocal(t)
+	t.Setenv("WICK_CHROME_BIN", filepath.Join(t.TempDir(), "no-such-browser"))
 	_ = startJinaFake(t, 503, "jina down")
 	t.Setenv("JINA_API_KEY", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -718,4 +722,152 @@ func TestReadURLLargePageWithSelectorAnswersInline(t *testing.T) {
 	}
 	mustContain(t, out, "tier1", "ctx:", "stored as", "overflow-line-340", "overflow-line-342")
 	mustNotContain(t, out, "overflow-line-100", "head (")
+}
+
+// startBrowserFake installs a fake chrome-headless-shell: a script that
+// records its arguments and prints the canned body, so tier 3 is exercised
+// through the public read contract without a real browser.
+func startBrowserFake(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	bodyFile := filepath.Join(dir, "body.html")
+	if err := os.WriteFile(bodyFile, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "chrome-headless-shell")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\ncat " + bodyFile + "\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_CHROME_BIN", bin)
+	return argsFile
+}
+
+func TestReadURLTier3BrowserRendersThinPage(t *testing.T) {
+	allowLocal(t)
+	jf := startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	argsFile := startBrowserFake(t, `<html><body><h1>Rendered headline here</h1><p>`+strings.Repeat("Browser rendered words with plenty of descriptive text to be long. ", 6)+`</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><head><title>App</title></head><body><div id="app"></div></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/app")
+	if err != nil {
+		t.Fatalf("thin page via browser: %v", err)
+	}
+	mustContain(t, out, "tier3", "Rendered headline here", "untrusted content")
+	if jf.count() != 1 {
+		t.Errorf("jina hits = %d, want 1", jf.count())
+	}
+	rawArgs, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("browser fake never ran: %v", err)
+	}
+	if !strings.Contains(string(rawArgs), srv.URL+"/app") {
+		t.Errorf("browser got args %q, want the page URL", string(rawArgs))
+	}
+}
+
+func TestReadURLTier3BrowserRendersChallengePage(t *testing.T) {
+	allowLocal(t)
+	jf := startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	startBrowserFake(t, `<html><body><h1>Real article text</h1><p>`+strings.Repeat("Human readable article words with plenty of descriptive text. ", 6)+`</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><h1>Checking your browser</h1><p>Just a moment, please verify you are human with this captcha cloudflare challenge page and more text to be long.</p></body></html>`))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/gated")
+	if err != nil {
+		t.Fatalf("challenge via browser: %v", err)
+	}
+	mustContain(t, out, "tier3", "Real article text")
+	if jf.count() != 1 {
+		t.Errorf("jina hits = %d, want 1", jf.count())
+	}
+}
+
+func TestReadURLTier3BlockedAddressNeverLaunchesBrowser(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 200, "must not be used")
+	t.Setenv("JINA_API_KEY", "")
+	argsFile := startBrowserFake(t, "<html><body>must not run</body></html>")
+
+	_, err := readURLPath(t, "http://10.0.0.1/secret")
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("private target must be refused, got %v", err)
+	}
+	if _, serr := os.Stat(argsFile); !os.IsNotExist(serr) {
+		t.Errorf("browser launched for a blocked address")
+	}
+}
+
+func TestReadURLTier3CredentialedPageUsesBrowserNotJina(t *testing.T) {
+	allowLocal(t)
+	jf := startJinaFake(t, 200, "must not be used")
+	t.Setenv("JINA_API_KEY", "")
+	startBrowserFake(t, `<html><body><h1>Secret dashboard page</h1><p>`+strings.Repeat("Authenticated content words with plenty of descriptive text. ", 6)+`</p></body></html>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	withCreds := strings.Replace(srv.URL+"/page?token=secret123", "://", "://user:pass@", 1)
+	out, err := readURLPath(t, withCreds)
+	if err != nil {
+		t.Fatalf("credentialed page via browser: %v", err)
+	}
+	mustContain(t, out, "tier3", "Secret dashboard page", "jina skipped")
+	if jf.count() != 0 {
+		t.Errorf("credentialed escalation must never reach jina: hits = %d", jf.count())
+	}
+}
+
+func TestReadURLTier3Timeout(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	t.Setenv("WICK_URL_TIMEOUT", "200ms")
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "chrome-headless-shell")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_CHROME_BIN", bin)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := readURLPath(t, srv.URL+"/slow")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "timed out") {
+		t.Fatalf("slow browser must time out, got %v", err)
+	}
+}
+
+func TestReadURLTier3OversizeCapped(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	t.Setenv("WICK_URL_MAX_BODY", "200")
+	startBrowserFake(t, "<html><body><p>"+strings.Repeat("browser oversize words ", 100)+"</p></body></html>")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/big")
+	if err != nil {
+		t.Fatalf("oversize browser page: %v", err)
+	}
+	mustContain(t, out, "tier3", "capped")
 }
