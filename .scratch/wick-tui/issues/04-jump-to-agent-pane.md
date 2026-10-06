@@ -4,8 +4,8 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Uses `herdr tab focus` and pane focus through an `Exec` seam
-- [ ] Never closes, moves or splits panes
-- [ ] Test: Enter on an agent sends the right focus calls to a fake `Exec`; a dead pane shows the message
+- [x] Uses `herdr tab focus` and pane focus through an `Exec` seam
+- [x] Never closes, moves or splits panes
+- [x] Test: Enter on an agent sends the right focus calls to a fake `Exec`; a dead pane shows the message
