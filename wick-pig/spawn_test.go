@@ -44,6 +44,13 @@ func spawnTestState(t *testing.T) {
 	pollEvery = 5 * time.Millisecond
 	t.Cleanup(func() { statePath, spawnGap, spawnExec, pollEvery = oldState, oldGap, oldExec, oldPoll })
 	t.Setenv("WICK_MAX_WORKERS", "")
+	// Hermetic panes: the runner itself sits in a herdr pane, so HERDR_* and
+	// WICK_AGENT_ID leak in. A spawn with no parent records none; a test
+	// that wants a parent sets them after this returns.
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("HERDR_WORKSPACE_ID", "")
+	t.Setenv("WICK_AGENT_ID", "")
 	resolverSettings(t, "")
 }
 
@@ -128,14 +135,22 @@ func (s *scoutExec) run(cmd string, args []string, opts ExecOpts) (Result, error
 	return s.g.run(cmd, args, opts)
 }
 
-// One spawn with three scouts launches all three, waits for every one of them,
-// and returns their reports together, in the order they were listed.
+// One spawn with three scouts launches all three and returns at once with
+// them still running, for blocking types as for any other: the reports are
+// not in the reply. When the last scout has submitted, one notice carrying
+// every report, in list order, goes to the parent pane.
 func TestSpawnThreeScoutsReturnsTheirReportsInOrder(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_PANE_ID", "wP")
+	t.Setenv("WICK_AGENT_ID", "parent1")
 	ex := &scoutExec{g: g, writeOn: 3}
 	spawnExec = ex.run
+	oldDeliver := deliverExec
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 
 	spawn, _ := spawnToolForRole(t, "implement")
 	out, err := spawn("/repo", map[string]any{"agents": []any{
@@ -149,15 +164,29 @@ func TestSpawnThreeScoutsReturnsTheirReportsInOrder(t *testing.T) {
 	if ex.launched != 3 {
 		t.Fatalf("launched %d scouts, want 3", ex.launched)
 	}
-	first, second, third := strings.Index(out, "report-1"), strings.Index(out, "report-2"), strings.Index(out, "report-3")
+	for _, want := range []string{"report-1", "report-2", "report-3"} {
+		if strings.Contains(out, want) {
+			t.Errorf("a spawn that never waits must not carry %q in its reply, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "still running") {
+		t.Errorf("the wait bound and its still-running reply are removed, got:\n%s", out)
+	}
+	if !strings.Contains(out, "end your turn") {
+		t.Errorf("the reply must say to end the turn and wait for the notice, got:\n%s", out)
+	}
+	// Spawn-side delivery is dispatched in the background so the reply
+	// returns at once; poll for the grouped notice.
+	notices := waitForPrompts(t, rec, "wP", 1, 2*time.Second)
+	if len(notices) != 1 {
+		t.Fatalf("want exactly one grouped notice, got %d: %v", len(notices), rec.calls)
+	}
+	first, second, third := strings.Index(notices[0], "report-1"), strings.Index(notices[0], "report-2"), strings.Index(notices[0], "report-3")
 	if first < 0 || second < 0 || third < 0 {
-		t.Fatalf("the result must carry every report, got:\n%s", out)
+		t.Fatalf("the grouped notice must carry every report, got:\n%s", notices[0])
 	}
 	if !(first < second && second < third) {
-		t.Errorf("reports must come back in list order, got:\n%s", out)
-	}
-	if strings.Contains(out, "end your turn") {
-		t.Errorf("a spawn of blocking scouts that all submitted must not say to end the turn, got:\n%s", out)
+		t.Errorf("reports must arrive in list order, got:\n%s", notices[0])
 	}
 }
 
@@ -289,6 +318,11 @@ func TestSpawnFindsTheCallersTabFromItsPane(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", caller)
 	ex := &scoutExec{g: g, writeOn: 1}
 	spawnExec = ex.run
+	// The parent is a fake-grid pane, so grouped delivery must not touch the
+	// real herdr, whose w1:pX ids collide with the fake's.
+	oldDeliver := deliverExec
+	deliverExec = (&recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}).run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 
 	spawn, _ := spawnToolForRole(t, "plan")
 	if _, err := spawn("/repo", map[string]any{"agents": []any{
@@ -530,16 +564,24 @@ func (m *mixedExec) run(cmd string, args []string, opts ExecOpts) (Result, error
 	return m.g.run(cmd, args, opts)
 }
 
-// A mixed spawn returns once both scouts have submitted, with the worker
-// reported as started rather than waited on.
+// A mixed spawn returns at once with every agent still running: the scouts
+// as well as the worker are reported as started, and no report is in the
+// reply. The group's single notice waits for the worker too, so with the
+// worker still out no notice goes yet.
 func TestMixedSpawnReturnsScoutsAndStartsTheWorker(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
+	t.Setenv("HERDR_PANE_ID", "wP")
+	t.Setenv("WICK_AGENT_ID", "parent1")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	t.Setenv("WICK_HERDR_REPORT", "/fake/herdr-report")
 	ex := &mixedExec{g: g}
 	spawnExec = ex.run
+	oldDeliver := deliverExec
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "20-x.md")
@@ -558,23 +600,33 @@ func TestMixedSpawnReturnsScoutsAndStartsTheWorker(t *testing.T) {
 	if ex.launched != 2 {
 		t.Fatalf("launched %d scouts, want 2", ex.launched)
 	}
-	first, second := strings.Index(out, "report-1"), strings.Index(out, "report-2")
-	if first < 0 || second < 0 || first > second {
-		t.Errorf("the scouts' reports must come back in list order, got:\n%s", out)
+	for _, want := range []string{"report-1", "report-2"} {
+		if strings.Contains(out, want) {
+			t.Errorf("a spawn that never waits must not carry %q in its reply, got:\n%s", want, out)
+		}
 	}
 	if !strings.Contains(out, "worker 20-x started") {
 		t.Errorf("the worker must be reported as started, got:\n%s", out)
+	}
+	if !strings.Contains(out, "scout") || !strings.Contains(out, "started") {
+		t.Errorf("the scouts must be reported as started, got:\n%s", out)
 	}
 	if w, err := recall("20-x"); err != nil || w.Branch != "implement/20-x" {
 		t.Errorf("the worker entry must create its worktree and branch: %+v err=%v", w, err)
 	}
 	if !strings.Contains(out, "end your turn") {
-		t.Errorf("a mixed spawn that starts a non-blocking worker must say to end the turn, got:\n%s", out)
+		t.Errorf("a mixed spawn must say to end the turn and wait for the notice, got:\n%s", out)
+	}
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt wP ") {
+			t.Errorf("with the worker still out the group must not deliver yet, got %v", rec.calls)
+			break
+		}
 	}
 }
 
-// firstScoutExec launches scouts and submits only the first, so the second
-// outlasts the tool budget and is auto-backgrounded.
+// firstScoutExec launches scouts and submits only the first, so the group
+// waits for the second: no notice goes until it submits too.
 type firstScoutExec struct {
 	g   *fakeGrid
 	mu  sync.Mutex
@@ -599,15 +651,16 @@ func (s *firstScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, 
 	return s.g.run(cmd, args, opts)
 }
 
-// With a budget too short for the second scout, the spawn returns the report
-// already in and a line saying the rest arrive as notices and the caller
-// should end its turn. The late submit is then delivered as a notice, and the
-// parent's pending list clears.
+// A spawn returns at once with the agents still running and no report in the
+// reply; the first submit alone delivers nothing, and the second completes
+// the group, so exactly one notice carrying both results goes to the parent
+// pane. It never tells the caller to call again.
 func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 	spawnTestState(t)
-	oldBudget, oldDeliver := toolBudget, deliverExec
-	toolBudget = 60 * time.Millisecond
-	t.Cleanup(func() { toolBudget, deliverExec = oldBudget, oldDeliver })
+	oldDeliver := deliverExec
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
@@ -623,13 +676,16 @@ func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	if !strings.Contains(out, "report-1") {
-		t.Errorf("the spawn must return the report already in, got:\n%s", out)
+	if strings.Contains(out, "report-1") {
+		t.Errorf("a spawn that never waits must not carry a report in its reply, got:\n%s", out)
 	}
-	if !strings.Contains(out, "still running") || !strings.Contains(out, "end your turn") {
-		t.Errorf("the spawn must say the rest arrive as notices and to end the turn, got:\n%s", out)
+	if !strings.Contains(out, "end your turn") {
+		t.Errorf("the spawn must say to end the turn and wait for the notice, got:\n%s", out)
 	}
-	if strings.Contains(out, "call") {
+	if strings.Contains(out, "still running") {
+		t.Errorf("the still-running reply is removed, got:\n%s", out)
+	}
+	if strings.Contains(out, "call again") || strings.Contains(out, "call spawn") || strings.Contains(out, "call tell") {
 		t.Errorf("no response may say to call again, got:\n%s", out)
 	}
 
@@ -640,20 +696,36 @@ func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 		t.Fatalf("launched %d scouts, want 2", len(ids))
 	}
 	if got := PendingChildren("parent1"); !contains(got, ids[1]) {
-		t.Errorf("the parent's state must list the backgrounded child: %v", got)
+		t.Errorf("the parent must still wait on the second child: %v", got)
+	}
+	var prompted []string
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt wP ") {
+			prompted = append(prompted, strings.Join(c, " "))
+		}
+	}
+	if len(prompted) != 0 {
+		t.Errorf("the first submit alone must deliver nothing, got %v", rec.calls)
 	}
 
-	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
-	deliverExec = rec.run
 	if _, err := submitOnce(t, AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}},
 		ids[1], "answered", "report", "late facts"); err != nil {
 		t.Fatalf("late submit: %v", err)
 	}
-	if len(rec.calls) != 1 || !strings.Contains(strings.Join(rec.calls[0], " "), "agent prompt wP ") {
-		t.Errorf("a backgrounded submit must be delivered as a notice, got %v", rec.calls)
+	prompted = nil
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt wP ") {
+			prompted = append(prompted, strings.Join(c, " "))
+		}
+	}
+	if len(prompted) != 1 {
+		t.Fatalf("the second submit must deliver exactly one grouped notice, got %v", rec.calls)
+	}
+	if !strings.Contains(prompted[0], "report-1") || !strings.Contains(prompted[0], "late facts") {
+		t.Errorf("the grouped notice must carry both results, got:\n%s", prompted[0])
 	}
 	if got := PendingChildren("parent1"); len(got) != 0 {
-		t.Errorf("the pending list must clear once the notice arrives, got %v", got)
+		t.Errorf("the pending list must clear once the group delivers, got %v", got)
 	}
 }
 
@@ -699,14 +771,16 @@ func (s *noneScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, e
 	return s.g.run(cmd, args, opts)
 }
 
-// Two backgrounded children clear from the parent's pending list one at a
-// time, as each submits: the state is derived from the children, so a notice
-// landing in its own wick-mcp process can never leave a delivered child behind.
+// Two group members clear from the parent's pending list one at a time, as
+// each submits, and the group delivers exactly once, after the second: the
+// state is derived from the children, so a notice landing in its own
+// wick-mcp process can never leave a delivered child behind.
 func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 	spawnTestState(t)
-	oldBudget, oldDeliver := toolBudget, deliverExec
-	toolBudget = 30 * time.Millisecond
-	t.Cleanup(func() { toolBudget, deliverExec = oldBudget, oldDeliver })
+	oldDeliver := deliverExec
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
@@ -732,8 +806,6 @@ func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 		t.Fatalf("both children must be pending, got %v", got)
 	}
 
-	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
-	deliverExec = rec.run
 	scout := AgentType{Name: "scout", Blocking: true, Statuses: []string{"answered"}}
 	if _, err := submitOnce(t, scout, ids[0], "answered", "report", "one"); err != nil {
 		t.Fatal(err)
@@ -741,18 +813,35 @@ func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 	if got := PendingChildren("parent1"); len(got) != 1 || got[0] != ids[1] {
 		t.Fatalf("one submit must clear only its own child, got %v", got)
 	}
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt wP ") {
+			t.Fatalf("the first of two submits must deliver nothing, got %v", rec.calls)
+		}
+	}
 	if _, err := submitOnce(t, scout, ids[1], "answered", "report", "two"); err != nil {
 		t.Fatal(err)
 	}
 	if got := PendingChildren("parent1"); len(got) != 0 {
 		t.Errorf("all submitted children must clear, got %v", got)
 	}
+	var prompted []string
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt wP ") {
+			prompted = append(prompted, strings.Join(c, " "))
+		}
+	}
+	if len(prompted) != 1 {
+		t.Fatalf("the second submit must deliver exactly one grouped notice, got %v", rec.calls)
+	}
+	if !strings.Contains(prompted[0], "one") || !strings.Contains(prompted[0], "two") {
+		t.Errorf("the grouped notice must carry both results, got:\n%s", prompted[0])
+	}
 }
 
 // persistentExec is a herdr whose read-only panes answer their prompt and submit
 // through the real submit tool, the way a live scout does. A nudge is that
 // agent's next turn: it submits again, so a spawn that reuses the agent can
-// return the new report. It counts launches and nudges, so a test can tell a
+// join the new group. It counts launches and nudges, so a test can tell a
 // re-prompt from a relaunch.
 type persistentExec struct {
 	g        *fakeGrid
@@ -766,7 +855,6 @@ type persistentExec struct {
 func newPersistentExec(g *fakeGrid) *persistentExec {
 	return &persistentExec{g: g, byPane: map[string]string{}}
 }
-
 func (p *persistentExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" {
 		switch args[1] {
@@ -830,9 +918,10 @@ Answer: {{prompt}}
 }
 
 // A persistent type keeps one agent per parent: re-spawning it re-prompts the
-// live agent with the new prompt instead of launching a second one, and the
-// spawn returns that agent's new report. A top-level session has no agent id,
-// so its own pane is what names the parent.
+// live agent with the new prompt instead of launching a second one. Each
+// spawn returns at once; each turn's report arrives as that spawn's group
+// notice. A top-level session has no agent id, so its own pane is what names
+// the parent.
 func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
@@ -841,12 +930,35 @@ func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "parentPane")
 	ex := newPersistentExec(g)
 	spawnExec = ex.run
+	oldDeliver := deliverExec
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 
 	root := t.TempDir()
 	tool := spawnToolFor(scoutTypeFile(t, root, "true"), []string{"scout"})
 	spawn := func(params map[string]any) (string, error) {
 		raw, _ := json.Marshal(params)
 		return tool.Execute(context.Background(), root, raw)
+	}
+	notices := func() []string {
+		var out []string
+		for _, c := range rec.calls {
+			if strings.Contains(strings.Join(c, " "), "agent prompt ") {
+				out = append(out, strings.Join(c, " "))
+			}
+		}
+		return out
+	}
+	waitNotices := func(want int) []string {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if got := notices(); len(got) >= want {
+				return got
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		return notices()
 	}
 
 	first, err := spawn(map[string]any{"agents": []any{
@@ -855,8 +967,11 @@ func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first spawn: %v", err)
 	}
-	if !strings.Contains(first, "report-1") {
-		t.Fatalf("the first spawn must return the scout's report, got:\n%s", first)
+	if strings.Contains(first, "report-1") {
+		t.Fatalf("a spawn that never waits must not carry the report in its reply, got:\n%s", first)
+	}
+	if got := waitNotices(1); len(got) != 1 || !strings.Contains(got[0], "report-1") {
+		t.Fatalf("the first turn must arrive as one grouped notice, got %v", rec.calls)
 	}
 
 	second, err := spawn(map[string]any{"agents": []any{
@@ -871,8 +986,11 @@ func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	if ex.nudged != 1 {
 		t.Errorf("a persistent type must be re-prompted, nudged %d", ex.nudged)
 	}
-	if !strings.Contains(second, "report-2") {
-		t.Errorf("the second spawn must return the re-prompted agent's new report, got:\n%s", second)
+	if strings.Contains(second, "report-2") {
+		t.Errorf("a spawn that never waits must not carry the new report in its reply, got:\n%s", second)
+	}
+	if got := waitNotices(2); len(got) != 2 || !strings.Contains(got[1], "report-2") {
+		t.Errorf("the re-prompted turn must arrive as its own grouped notice, got %v", rec.calls)
 	}
 
 	// Another session shares the state dir but not the parent: it gets its own
@@ -887,20 +1005,29 @@ func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	if ex.launched != 2 {
 		t.Errorf("another parent must launch its own agent, launched %d", ex.launched)
 	}
-	if !strings.Contains(third, "report-3") {
-		t.Errorf("the other session must get the fresh agent's report, got:\n%s", third)
+	if strings.Contains(third, "report-3") {
+		t.Errorf("a spawn that never waits must not carry the fresh report in its reply, got:\n%s", third)
+	}
+	if got := waitNotices(3); len(got) != 3 || !strings.Contains(got[2], "report-3") {
+		t.Errorf("the other session must get its fresh report as a grouped notice, got %v", rec.calls)
 	}
 }
 
 // A type that is not persistent starts a fresh agent on every spawn: the live
 // agent of the first spawn is left alone and the second spawn launches its own.
+// Each spawn returns at once; each fresh report arrives as its own group notice.
 func TestNonPersistentTypeIsRelaunched(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("WICK_AGENT_ID", "parent1")
+	t.Setenv("HERDR_PANE_ID", "wP")
 	ex := newPersistentExec(g)
 	spawnExec = ex.run
+	oldDeliver := deliverExec
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
+	deliverExec = rec.run
+	t.Cleanup(func() { deliverExec = oldDeliver })
 
 	root := t.TempDir()
 	tool := spawnToolFor(scoutTypeFile(t, root, "false"), []string{"scout"})
@@ -926,8 +1053,12 @@ func TestNonPersistentTypeIsRelaunched(t *testing.T) {
 	if ex.nudged != 0 {
 		t.Errorf("a non-persistent type must not be re-prompted, nudged %d", ex.nudged)
 	}
-	if !strings.Contains(second, "report-2") {
-		t.Errorf("the fresh agent's report must come back, got:\n%s", second)
+	if strings.Contains(second, "report-2") {
+		t.Errorf("a spawn that never waits must not carry the fresh report in its reply, got:\n%s", second)
+	}
+	prompted := waitForPrompts(t, rec, "wP", 2, 2*time.Second)
+	if len(prompted) != 2 || !strings.Contains(prompted[1], "report-2") {
+		t.Errorf("the fresh agent's report must arrive as its own grouped notice, got %v", rec.calls)
 	}
 }
 

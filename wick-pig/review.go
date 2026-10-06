@@ -754,7 +754,9 @@ func gitIn(run Exec, tree string, args ...string) (string, error) {
 // reviewers that still have something to look at. A type that is not persistent
 // is not kept between spawns: its live reviewer is closed and a fresh one takes
 // its place. A dead reviewer is replaced in its slot, briefed with its findings.
-func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID string) (*spawnedAgent, error) {
+// Every reviewer it starts or re-prompts joins groupID, so its submit joins
+// the group's single notice.
+func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID, groupID string) (*spawnedAgent, error) {
 	p.note = note
 	// Two spawns of the same reviewer type for one worktree race: both find
 	// no live reviewer, both start one, and the second record overwrites the
@@ -775,7 +777,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 		if had && prev.agent().alive(run) {
 			if !t.Persistent {
 				closeAgent(run, prev.agent())
-				agent, err := freshReviewer(run, p, t, prev, false, parentPane, parentID)
+				agent, err := freshReviewer(run, p, t, prev, false, parentPane, parentID, groupID)
 				if err != nil {
 					return err
 				}
@@ -796,14 +798,14 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 					return nil
 				}
 			}
-			agent, err := followUpReviewer(run, p, t, prev, parentPane, parentID)
+			agent, err := followUpReviewer(run, p, t, prev, parentPane, parentID, groupID)
 			if err != nil {
 				return err
 			}
 			out = agent
 			return nil
 		}
-		agent, err := freshReviewer(run, p, t, prev, had, parentPane, parentID)
+		agent, err := freshReviewer(run, p, t, prev, had, parentPane, parentID, groupID)
 		if err != nil {
 			return err
 		}
@@ -827,9 +829,9 @@ func reviewerLockKey(tree, typ string) string {
 
 // followUpReviewer re-prompts the live reviewer with only what changed since it
 // last looked: the diff since its commit, the new checks and the worker's note.
-// Its submit for the new turn is what the caller waits on, so the previous one
-// is dropped first.
-func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, parentPane, parentID string) (*spawnedAgent, error) {
+// Its submit for the new turn joins groupID's single notice, so the previous
+// one is dropped first.
+func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, parentPane, parentID, groupID string) (*spawnedAgent, error) {
 	agent := prev.agent()
 	dir := filepath.Join(filepath.Dir(statePath), "reviews")
 	name := filepath.Base(p.tree)
@@ -860,9 +862,9 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	if err := os.WriteFile(promptPath, []byte(followUpPrompt(p, prev, incPath)), 0o644); err != nil {
 		return nil, err
 	}
-	// The previous turn's submit must not satisfy the wait for this one.
+	// The previous turn's submit must not satisfy the group for this one.
 	clearAgentSubmit(prev.SessionID)
-	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID); err != nil {
+	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID, groupID); err != nil {
 		return nil, err
 	}
 	if err := Nudge(run, agent.Pane, fmt.Sprintf("Follow-up review: read %s and follow it.", promptPath)); err != nil {
@@ -876,8 +878,9 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 // freshReviewer launches a reviewer agent of type t in the worker's tab, or in
 // the dead reviewer's slot when one is being replaced. It records the reviewer
 // and its review target before the pane starts, so the agent's submit can find
-// them.
-func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replaced bool, parentPane, parentID string) (*spawnedAgent, error) {
+// them. The reviewer joins groupID, so its submit joins the group's single
+// notice.
+func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replaced bool, parentPane, parentID, groupID string) (*spawnedAgent, error) {
 	// The reviewer resolves its own slot, not the worker's model:
 	// WICK_READONLY_HARNESS is a flag layer, the type's frontmatter the
 	// typeOrSpawn layer, then the slot's settings, then pig.
@@ -910,7 +913,7 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 			}); err != nil {
 				return err
 			}
-			return writeReviewState(id, t.Name, p, parentPane, parentID)
+			return writeReviewState(id, t.Name, p, parentPane, parentID, groupID)
 		})
 	if err != nil {
 		return nil, err
@@ -929,18 +932,16 @@ func reviewSlot(typ string) string {
 
 // writeReviewState records where a reviewer's submit belongs: the worktree, the
 // reviewer type, and the commit the review is tied to, plus the worker's pane
-// and id so an auto-backgrounded reviewer's submit still reaches it. The
-// reviewer process reads it back when it submits, so the verdict lands on the
-// right record even when the spawn auto-backgrounds it. Deliver is cleared so a
-// re-prompt's result returns to the waiting spawn, not as a stale notice;
-// backgroundAgent sets it again only if this spawn runs out of budget.
-func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID string) error {
+// and id and the spawn group it joins, so the submit joins the group's single
+// notice. The reviewer process reads it back when it submits, so the verdict
+// lands on the right record even when the spawn never waits.
+func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, groupID string) error {
 	s, _, err := ReadAgentState(id)
 	if err != nil {
 		return err
 	}
 	s.ID, s.Type = id, typ
-	s.Parent, s.ParentID, s.Deliver = parentPane, parentID, false
+	s.Parent, s.ParentID, s.GroupID, s.Deliver = parentPane, parentID, groupID, true
 	s.Review = &ReviewTarget{Tree: p.tree, Type: typ, Head: p.head, At: p.verdictAt, TreeID: p.treeID, PatchID: p.patchID}
 	return WriteAgentState(s)
 }

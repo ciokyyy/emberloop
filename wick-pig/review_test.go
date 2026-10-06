@@ -352,6 +352,13 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 	t.Cleanup(func() {
 		statePath, spawnGap, pollEvery = old, oldGap, oldPoll
 	})
+	// Hermetic panes: the runner itself sits in a herdr pane, so HERDR_* and
+	// WICK_AGENT_ID leak in from the outside. A review spawn with no parent
+	// pane records none and delivers nowhere; a test that wants a parent
+	// sets them after this returns.
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("WICK_AGENT_ID", "")
 	// Hermetic settings: a missing temp file and no read-only override, so
 	// the reviewers resolve the built-in pig default unless a test says more.
 	resolverSettings(t, "")
@@ -505,9 +512,10 @@ func answers(standards, spec string) func(string, int, string) (string, string) 
 	}
 }
 
-// A worker's spawn of both reviewer types runs the repo checks once, starts both
-// reviewers in the worker's worktree, and returns both reports together. A
-// multi-line findings report comes back intact.
+// A worker's spawn of both reviewer types runs the repo checks once and starts
+// both reviewers in the worker's worktree, returning at once: the verdicts
+// are recorded for the gate, and the reports arrive as the group's single
+// notice, not the reply. A multi-line findings report is recorded intact.
 func TestSpawnReviewersRunsChecksOnceAndReturnsBoth(t *testing.T) {
 	_, tree := reviewRepo(t)
 	writeFile(t, filepath.Join(tree, ".wick", "check"), "echo checking; echo 3 passed\n")
@@ -527,12 +535,14 @@ func TestSpawnReviewersRunsChecksOnceAndReturnsBoth(t *testing.T) {
 	if f.checkRuns != 1 {
 		t.Errorf("the repo check ran %d times, want once", f.checkRuns)
 	}
-	for _, want := range []string{
-		reviewerStandards, reviewerSpec, "submitted (pass)", "submitted (changes)",
-		"a.go:3 major: ticket asks for B\nline two of the finding",
-	} {
+	for _, want := range []string{reviewerStandards, reviewerSpec, "end your turn"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("reply missing %q:\n%s", want, out)
+		}
+	}
+	for _, want := range []string{"submitted (pass)", "submitted (changes)"} {
+		if strings.Contains(out, want) {
+			t.Errorf("a spawn that never waits must not carry %q in its reply, got:\n%s", want, out)
 		}
 	}
 	// Both reviewers run in the worker's worktree.
@@ -550,6 +560,9 @@ func TestSpawnReviewersRunsChecksOnceAndReturnsBoth(t *testing.T) {
 	have := reviewersOf(tree)
 	if have[reviewerStandards].Verdict != verdictPass || have[reviewerSpec].Verdict != verdictChanges {
 		t.Errorf("stored reviewers = %+v", have)
+	}
+	if !strings.Contains(have[reviewerSpec].Findings, "a.go:3 major: ticket asks for B\nline two of the finding") {
+		t.Errorf("the multi-line findings must be recorded intact, got %q", have[reviewerSpec].Findings)
 	}
 }
 

@@ -172,11 +172,33 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 			return "", err
 		}
 	}
-	// An agent whose submit goes to the parent as a notice delivers it now. The
-	// decision is made under the child's own lock, so a spawn that
-	// auto-backgrounds it at the same moment leaves exactly one of them owning
-	// the result. A blocking agent still inside its spawn's budget has no
-	// delivery: the waiting spawn returns it.
+	// A spawn member's submit never delivers alone while its group is still
+	// open: when the last member has submitted, one notice carrying every
+	// result goes to the parent pane. A tell takes over a member's next
+	// submit by clearing Deliver (and leaving the group, so the group does
+	// not wait on it), so a claimed member's result returns to the waiting
+	// tell instead of joining the group. Once the group has delivered, a
+	// later submit (a worker sent back after finish, a stop-gate give-up) is
+	// no longer part of it and is delivered alone, the way an agent outside
+	// any group is.
+	if st, ok, err := ReadAgentState(agentID); err != nil {
+		return "", err
+	} else if ok && st.GroupID != "" {
+		if delivered, err := spawnGroupDelivered(st.GroupID); err != nil {
+			return "", err
+		} else if !delivered {
+			if st.Deliver {
+				if err := maybeDeliverGroup(agentID); err != nil {
+					return "", err
+				}
+			}
+			return fmt.Sprintf("submitted %s; stay available for a follow-up.", status), nil
+		}
+	}
+	// An agent outside any open spawn group whose submit goes to the parent
+	// as a notice delivers it now. The decision is made under the child's
+	// own lock, so a tell that claims it at the same moment leaves exactly
+	// one of them owning the result.
 	if st, deliver, err := submitDelivers(agentID); err != nil {
 		return "", err
 	} else if deliver {

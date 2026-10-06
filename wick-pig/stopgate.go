@@ -301,8 +301,9 @@ func excerpt(text string, fallback func() string) string {
 }
 
 // giveUpWithoutSubmit lets the stop through after the last block and reports
-// the agent to its parent the way a submit would: delivered as a notice for a
-// non-blocking agent, returned by the waiting spawn for a blocking one.
+// the agent to its parent the way a submit would: a member of an open group
+// joins its group's single notice, a member whose group already delivered or
+// any other agent with Deliver set is delivered as an individual notice.
 func giveUpWithoutSubmit(id, excerpt string) error {
 	typ := os.Getenv("WICK_AGENT_TYPE")
 	if typ == "" {
@@ -323,10 +324,20 @@ func giveUpWithoutSubmit(id, excerpt string) error {
 	if err := WriteAgentSubmit(s); err != nil {
 		return err
 	}
+	if st, ok, err := ReadAgentState(id); err != nil {
+		return err
+	} else if ok && st.GroupID != "" {
+		if delivered, err := spawnGroupDelivered(st.GroupID); err != nil {
+			return err
+		} else if !delivered {
+			if st.Deliver {
+				return maybeDeliverGroup(id)
+			}
+			return nil
+		}
+	}
 	// Who owns the result is decided under the child's lock, after the submit
-	// exists, exactly as submitRun does: a spawn that auto-backgrounded the
-	// agent first leaves Deliver set, so the give-up goes out as a notice; one
-	// that runs afterwards sees the submit and leaves it to the waiting spawn.
+	// exists, exactly as submitRun does for an agent outside any open group.
 	st, deliver, err := submitDelivers(id)
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package wick
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -43,6 +44,10 @@ func tellAgent(run Exec, id, text string) (string, error) {
 // tellAgentCtx is tellAgent for a call the harness can cancel: a cancelled wait
 // hands the answer to the notice path like a wait that ran out of budget.
 func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error) {
+	// Each parent action sweeps its stranded groups first, in the
+	// background: a vanished member with no further submit is finalized
+	// after this call ends instead of waiting forever.
+	sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("WICK_AGENT_ID"))
 	st, ok, err := ReadAgentState(id)
 	if err != nil {
 		return "", err
@@ -59,6 +64,12 @@ func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error
 	}
 	if !t.Blocking {
 		if err := Nudge(run, st.Pane, text); err != nil {
+			// The pane may be gone: dispatch the agent's group in the
+			// background, so a vanished member is reported as lost after
+			// this call ends instead of cancelling it.
+			if st.GroupID != "" {
+				dispatchGroupDelivery(st.GroupID)
+			}
 			return "", fmt.Errorf("could not deliver to %s: %w", id, err)
 		}
 		return fmt.Sprintf("delivered to %s. Its result will arrive as a system notice; end your turn.", id), nil
@@ -74,6 +85,12 @@ func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error
 	}
 	if err := Nudge(run, st.Pane, text); err != nil {
 		_ = undo()
+		// The pane may be gone: dispatch the agent's group in the
+		// background, so a vanished member is reported as lost after this
+		// call ends instead of cancelling it.
+		if st.GroupID != "" {
+			dispatchGroupDelivery(st.GroupID)
+		}
 		return "", fmt.Errorf("could not deliver to %s: %w", id, err)
 	}
 
@@ -90,7 +107,6 @@ func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error
 		case <-time.After(pollEvery):
 		}
 	}
-
 	bg, err := backgroundToldAgent(id)
 	if err != nil {
 		return "", err

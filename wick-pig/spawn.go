@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"example.com/wick/tools"
 )
@@ -119,8 +118,9 @@ func spawnDescription(types map[string]AgentType, allowed []string) string {
 		}
 		fmt.Fprintf(&b, "%s — %s", name, types[name].Description)
 	}
-	b.WriteString(". Blocking types return their reports together, in the order given, once all have submitted. " +
-		"A non-blocking type comes back as started at once and reports later as a system notice. " +
+	b.WriteString(". Returns at once with the agents still running, for every type. " +
+		"One notice with every result arrives when the last agent of this call has submitted; after spawn, end your turn and wait for it. " +
+		"A blocking type's result carries its full report, a non-blocking type's a one-line summary. " +
 		"A worktree entry also takes ticket, repo, base, target, harness, model and effort.")
 	return b.String()
 }
@@ -231,21 +231,21 @@ type spawnedAgent struct {
 	Queued bool
 }
 
-// spawnAgents starts every entry, launches spaced as always, then waits at most
-// the tool budget for the blocking ones to submit. Only the blocking entries
-// are waited on; a non-blocking one is reported as started at once. When the
-// budget runs out, the reports already in come back and the rest are
-// backgrounded: their submits are delivered as notices, so the caller never
-// calls the tool again.
+// spawnAgents starts every entry, launches spaced as always, and returns at
+// once with the agents still running, for every type. The results of one
+// call are a group: each member's submit is recorded as it comes, and when
+// the last member has submitted, one notice carrying every result goes to
+// the parent pane. A cancelled call strands nothing: the group is already
+// recorded, so every result still arrives as the group notice.
 func spawnAgents(run Exec, root string, types map[string]AgentType, reqs []spawnRequest) (string, error) {
 	return spawnAgentsCtx(context.Background(), run, root, types, reqs)
 }
 
-// spawnAgentsCtx is spawnAgents for a call the harness can cancel. When ctx
-// ends during the wait, nobody is left to read the result: every blocking agent
-// is handed to the notice path at once, and one that already submitted has its
-// result delivered now, so a cancelled call never strands a finished review.
+// spawnAgentsCtx is spawnAgents for a call the harness can cancel. It never
+// waits: the group is recorded before it returns, so a call cancelled on
+// the way out still completes through its members' submits.
 func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string]AgentType, reqs []spawnRequest) (string, error) {
+	_ = ctx
 	// Reject the whole call before launching anything: a spawn that fails part
 	// way leaves panes a parent never learned the ids of.
 	for _, r := range reqs {
@@ -258,14 +258,23 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	}
 	parentPane := os.Getenv("HERDR_PANE_ID")
 	parentID := os.Getenv("WICK_AGENT_ID")
+	// Each parent action finalizes its stranded groups first: a member whose
+	// pane vanished without any further submit leaves no other trigger, so
+	// the next spawn from the same parent delivers what is already complete.
+	sweepOpenGroups(parentPane, parentID)
+	groupID := newSessionID()
 	agents := make([]*spawnedAgent, 0, len(reqs))
 	// A reviewer spawn shares one packet and one check run across every
 	// reviewer type in the call; it is prepared once, on the first reviewer.
 	var review *reviewPacket
 	// held says, for each reviewer left alone because its pass still stands,
-	// that its answer is in: a worker must never wait for a verdict that is
-	// not coming.
+	// that its answer is in: it was already judged at this exact state, it
+	// is reported here and is not part of the group.
 	var held []string
+	// repeated says, for each reviewer that already judged exactly this
+	// state and asked for changes, that its answer is repeated here and not
+	// re-reviewed: it is not part of the group either.
+	var repeated []string
 	for _, r := range reqs {
 		t := types[r.Type]
 		if t.Checkout == "parent" {
@@ -283,12 +292,26 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			// A reviewer that already passed at the tip is left alone, so a
 			// re-spawn only reaches the reviewers that still have something
 			// to look at.
-			agent, err := launchReviewer(run, review, t, r.Prompt, parentPane, parentID)
+			agent, err := launchReviewer(run, review, t, r.Prompt, parentPane, parentID, groupID)
 			if err != nil {
 				closeSpawned(run, agents)
 				return "", err
 			}
 			if agent != nil {
+				// A reviewer that already judged exactly this state was not
+				// re-prompted: its answer is repeated here and it is not
+				// part of the group. Only that path carries the
+				// already-judged notice; a re-prompted reviewer whose fake
+				// submits synchronously during the launch still joins the
+				// group, even though its new submit is already on disk.
+				if agent.Reused && agent.Notice != "" {
+					if s, ok, _ := ReadAgentSubmit(agent.ID); ok {
+						line := renderSubmit(s)
+						line = agent.Notice + "\n" + line
+						repeated = append(repeated, line)
+						continue
+					}
+				}
 				agents = append(agents, agent)
 			} else {
 				held = append(held, heldPassLine(review, t))
@@ -299,7 +322,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		// the live agent rather than starting a second one.
 		if t.Persistent {
 			if prev, ok := liveAgentFor(run, t, parentID, parentPane, r); ok {
-				agent, err := repromptAgent(run, t, prev, r)
+				agent, err := repromptAgent(run, t, prev, r, groupID)
 				if err != nil {
 					closeSpawned(run, agents)
 					return "", err
@@ -313,7 +336,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			err   error
 		)
 		if t.Checkout == "worktree" {
-			agent, err = launchWorktreeCapped(run, root, t, r, parentID, parentPane)
+			agent, err = launchWorktreeCapped(run, root, t, r, parentID, parentPane, groupID)
 		} else {
 			agent, err = launchScout(run, root, t, r.Prompt)
 		}
@@ -324,13 +347,14 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			return "", err
 		}
 		if agent.Queued {
-			// No pane yet, so no agent state: the drain writes it when the
-			// worker starts. The queue entry already records the parent.
+			// No pane yet, so no agent state: the drain writes it with the
+			// group when the worker starts. The queue entry already records
+			// the parent and the group.
 			agents = append(agents, agent)
 			continue
 		}
-		// The child's own state says where its submit goes: a non-blocking
-		// agent's from the start, a blocking one's once it is backgrounded.
+		// Every member joins the group and delivers through it: its submit
+		// never comes back here, it joins the group's single notice.
 		// A worktree agent's state also carries the ticket it was spawned
 		// from, so finish can mark it done.
 		state := AgentState{
@@ -339,7 +363,8 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			Pane:     agent.Pane,
 			ParentID: parentID,
 			Parent:   parentPane,
-			Deliver:  !t.Blocking,
+			GroupID:  groupID,
+			Deliver:  true,
 		}
 		if t.Checkout == "worktree" {
 			state.Ticket = r.Ticket
@@ -351,60 +376,48 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		agents = append(agents, agent)
 	}
 
-	deadline := time.Now().Add(toolBudget)
 	// Nothing to review, or every reviewer already passed: report that and
 	// start nothing.
 	if review != nil && len(agents) == 0 {
 		if review.noChanges {
 			return "no changes: nothing differs from the base. Nothing to review.", nil
 		}
-		return fmt.Sprintf("every reviewer passed at %s; nothing to review.\n%s", short(review.head), strings.Join(held, "\n")), nil
-	}
-	for {
-		if allSubmitted(agents) || !time.Now().Before(deadline) || ctx.Err() != nil {
-			break
+		out := fmt.Sprintf("every reviewer passed at %s; nothing to review.\n%s", short(review.head), strings.Join(held, "\n"))
+		if len(repeated) > 0 {
+			out += "\n\n" + strings.Join(repeated, "\n\n")
 		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(pollEvery):
-		}
+		return out, nil
 	}
-	if ctx.Err() != nil {
-		for _, a := range agents {
-			if a.Queued {
-				continue
-			}
-			if a.Type.Blocking {
-				handOffToNotices(a.ID)
-			}
+	if len(agents) == 0 {
+		if len(held) > 0 || len(repeated) > 0 {
+			out := strings.Join(append(held, repeated...), "\n\n")
+			return out, nil
 		}
-		return "the call was cancelled; each agent's result will arrive as a system notice.", nil
+		return "", fmt.Errorf("agents is required: give a list of {type, prompt} entries")
 	}
-
-	// Whatever blocking agent is still out became backgrounded: from now on
-	// its submit is delivered to the parent as a notice. backgroundAgent takes
-	// the child's lock and re-checks its submit, so an agent that submitted in
-	// the meantime is returned here instead of being reported twice.
-	var backgrounded []string
+	members := make([]string, 0, len(agents))
 	for _, a := range agents {
-		if a.Queued {
-			continue
-		}
-		if !a.Type.Blocking {
-			continue
-		}
-		bg, err := backgroundAgent(a.ID)
-		if err != nil {
-			closeSpawned(run, agents)
-			return "", err
-		}
-		if bg {
-			backgrounded = append(backgrounded, a.ID)
-		}
+		members = append(members, a.ID)
 	}
-	out := renderSpawn(agents, backgrounded)
+	if err := writeSpawnGroup(spawnGroup{
+		ID: groupID, Parent: parentPane, ParentID: parentID, Members: members,
+	}); err != nil {
+		closeSpawned(run, agents)
+		return "", err
+	}
+	// Members that submitted synchronously during the launch (a fake herdr
+	// answers a reviewer's prompt before the group file exists) already
+	// complete the group: dispatch the notice in the background, through the
+	// notice path, not the reply. Dispatch is asynchronous so the spawn
+	// itself returns at once; the background delivery still holds for an
+	// idle parent. A group that is still waiting simply stays recorded.
+	dispatchGroupDelivery(groupID)
+	out := renderSpawnImmediate(agents)
 	if len(held) > 0 {
 		out += "\n\n" + strings.Join(held, "\n")
+	}
+	if len(repeated) > 0 {
+		out += "\n\n" + strings.Join(repeated, "\n\n")
 	}
 	return out, nil
 }
@@ -456,21 +469,6 @@ func closeSpawned(run Exec, agents []*spawnedAgent) {
 			_, _ = finishWorker(run, id, false, false)
 		}
 	}
-}
-
-func allSubmitted(agents []*spawnedAgent) bool {
-	for _, a := range agents {
-		if a.Queued {
-			continue
-		}
-		if !a.Type.Blocking {
-			continue
-		}
-		if _, ok, _ := ReadAgentSubmit(a.ID); !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // launchScout starts one read-only agent in the caller's tab and leaves it
@@ -589,8 +587,9 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 // so two sessions deciding at the same instant cannot both take the last slot:
 // the check and the launch (or queue) are one critical section. The launch
 // itself runs inside the lock, the way Spawn already holds the workers lock
-// across its own herdr calls.
-func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, parentID, parentPane string) (*spawnedAgent, error) {
+// across its own herdr calls. A queued worker joins groupID, so its submit
+// joins the group's single notice when the drain starts it.
+func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, parentID, parentPane, groupID string) (*spawnedAgent, error) {
 	var out *spawnedAgent
 	err := withFileLock("worker-launch", func() error {
 		if r.Ticket != "" {
@@ -627,7 +626,7 @@ func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, pa
 						ID: id, Type: t.Name, Ticket: r.Ticket, Spec: os.Getenv("WICK_SPEC"),
 						Repo: repo, Base: r.Base, Target: r.Target,
 						Harness: choice.Harness, Model: choice.Model, Effort: choice.Effort,
-						ParentID: parentID, Parent: parentPane,
+						ParentID: parentID, Parent: parentPane, GroupID: groupID,
 					}
 					if err := queueWorker(entry); err != nil {
 						return err
@@ -659,48 +658,30 @@ func renderPrompt(t AgentType, prompt string) string {
 	return strings.TrimSpace(t.Body) + "\n\n" + prompt
 }
 
-// renderSpawn is the spawn result: each non-blocking agent reported as started,
-// each queued worktree agent reported as queued behind the worker cap, each
-// blocking agent's report with it, and a closing line for the callers who
-// must end their turn because a result is still to arrive. A backgrounded
-// agent's result is not repeated here: it arrives as a notice. It never tells
+// renderSpawnImmediate is the spawn reply: every member reported as started
+// (blocking or not: the spawn never waits), each queued worktree agent
+// reported as queued behind the worker cap, each launch notice beside its
+// agent, and a closing line saying one notice with every result arrives and
+// the caller should end its turn. It never carries a report and never tells
 // the caller to call again.
-func renderSpawn(agents []*spawnedAgent, backgrounded []string) string {
+func renderSpawnImmediate(agents []*spawnedAgent) string {
 	var parts []string
-	startedNonBlocking := false
 	for _, a := range agents {
 		if a.Queued {
-			startedNonBlocking = true
 			parts = append(parts, fmt.Sprintf("%s %s queued behind the worker cap (%d max); it starts as earlier workers finish.",
 				a.Type.Name, a.ID, effectiveWorkerCap()))
 			continue
 		}
-		if !a.Type.Blocking {
-			startedNonBlocking = true
-			line := fmt.Sprintf("%s %s started.", a.Type.Name, a.ID)
-			if a.Tab != "" {
-				line = fmt.Sprintf("%s %s started in %s.", a.Type.Name, a.ID, a.Tab)
-			}
-			parts = append(parts, line+a.Warning)
-			continue
+		line := fmt.Sprintf("%s %s started.", a.Type.Name, a.ID)
+		if a.Tab != "" {
+			line = fmt.Sprintf("%s %s started in %s.", a.Type.Name, a.ID, a.Tab)
 		}
-		if contains(backgrounded, a.ID) {
-			continue
+		if a.Notice != "" {
+			line += "\n" + a.Notice
 		}
-		if s, ok, _ := ReadAgentSubmit(a.ID); ok {
-			line := renderSubmit(s)
-			if a.Notice != "" {
-				line = a.Notice + "\n" + line
-			}
-			parts = append(parts, line)
-		}
+		parts = append(parts, line+a.Warning)
 	}
-	if len(backgrounded) > 0 {
-		parts = append(parts, fmt.Sprintf("still running: %s. Their results will arrive as system notices; end your turn.",
-			strings.Join(backgrounded, ", ")))
-	} else if startedNonBlocking {
-		parts = append(parts, "Their results will arrive as system notices; end your turn.")
-	}
+	parts = append(parts, "One notice with every result arrives when the last agent of this call has submitted; after spawn, end your turn and wait for it.")
 	return strings.Join(parts, "\n\n")
 }
 
@@ -761,10 +742,10 @@ func liveFor(s AgentState, typ, parentID, parentPane string, run Exec) bool {
 
 // repromptAgent reuses a live agent of a persistent type instead of starting a
 // new one: it hands the agent the prompt the launch would have given it,
-// forgets the previous turn's submit and points the agent's next result back at
-// the waiting spawn, so the caller waits on the new turn exactly as it would on
-// a fresh launch.
-func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest) (*spawnedAgent, error) {
+// forgets the previous turn's submit and points the agent's next submit at
+// groupID's single notice, so the caller ends its turn exactly as for a
+// fresh launch.
+func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest, groupID string) (*spawnedAgent, error) {
 	promptPath := filepath.Join(readOnlyDir(), s.ID+".prompt")
 	if t.Checkout == "worktree" {
 		// A worktree agent's brief is already on disk, beside the worker store.
@@ -778,7 +759,7 @@ func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest) (*spawne
 		}
 	}
 	clearAgentSubmit(s.ID)
-	s.Deliver = !t.Blocking
+	s.GroupID, s.Deliver = groupID, true
 	if err := WriteAgentState(s); err != nil {
 		return nil, err
 	}

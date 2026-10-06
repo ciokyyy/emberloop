@@ -124,6 +124,9 @@ func TestWorkerGetsItsFullBriefAsTheFirstMessage(t *testing.T) {
 	for _, harness := range []string{"pig", "claude"} {
 		t.Run(harness, func(t *testing.T) {
 			statePath = filepath.Join(t.TempDir(), "workers.json")
+			t.Setenv("HERDR_PANE_ID", "")
+			t.Setenv("HERDR_TAB_ID", "")
+			t.Setenv("WICK_AGENT_ID", "")
 			var launched string
 			var late string
 			base := spawnToolFake()

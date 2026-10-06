@@ -9,8 +9,8 @@ import (
 
 // AgentState is a spawned agent's own small record, kept beside the submit
 // store and found by the agent id. It is what lets an agent's submit find its
-// way home: the parent pane recorded at spawn, and whether this submit goes to
-// the parent as a notice rather than back to a waiting spawn.
+// way home: the parent pane recorded at spawn, the spawn group it belongs
+// to, and whether this submit goes to the parent as a notice.
 type AgentState struct {
 	ID   string `json:"id"`
 	Type string `json:"type,omitempty"`
@@ -25,10 +25,14 @@ type AgentState struct {
 	ParentID string `json:"parent_id,omitempty"`
 	// Parent is the spawning session's herdr pane, where a notice is typed.
 	Parent string `json:"parent_pane,omitempty"`
+	// GroupID is the spawn group the agent belongs to: the results of one
+	// spawn call. A member's submit never delivers alone; when the last
+	// member of the group has submitted, one notice carrying every result
+	// goes to the parent pane.
+	GroupID string `json:"group_id,omitempty"`
 	// Deliver reports that this agent's submit goes to Parent as a notice
-	// rather than back to a waiting spawn. Non-blocking agents start this way;
-	// a blocking agent is switched over when its spawn auto-backgrounds it, or
-	// back when a tell takes over its next submit.
+	// rather than back to a waiting caller. Every spawn member starts this
+	// way, grouped; a tell takes over its next submit by clearing it.
 	Deliver bool `json:"deliver,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
@@ -90,53 +94,15 @@ func ReadAgentState(id string) (AgentState, bool, error) {
 	return s, true, nil
 }
 
-// backgroundAgent switches a child to the notice path, unless it submitted in
-// the meantime. The submit file is written before the child reads its state, so
-// reading the submit and setting Deliver are done together here, under the
-// child's own lock, to leave the child exactly one owner of its result:
-// backgrounded reports true, and a submit that arrived first leaves it false.
-func backgroundAgent(id string) (bool, error) {
-	backgrounded := false
-	err := withFileLock("state-"+id, func() error {
-		if _, ok, err := ReadAgentSubmit(id); err != nil || ok {
-			return err
-		}
-		s, _, err := ReadAgentState(id)
-		if err != nil {
-			return err
-		}
-		s.ID = id
-		s.Deliver = true
-		backgrounded = true
-		return WriteAgentState(s)
-	})
-	return backgrounded, err
-}
-
-// handOffToNotices gives a blocking child's result to the notice path for a
-// caller that has gone: still running, it is backgrounded so its submit is
-// delivered; already submitted and unread, the submit is delivered now.
-func handOffToNotices(id string) {
-	bg, err := backgroundAgent(id)
-	if err != nil || bg {
-		return
-	}
-	s, ok, err := ReadAgentSubmit(id)
-	if err != nil || !ok || !s.ThisTurn {
-		return
-	}
-	if st, ok, _ := ReadAgentState(id); ok {
-		_ = deliverSubmit(s, st)
-	}
-}
-
 // claimNextSubmit takes a blocking child's next submit for a waiting tell: it
-// points the child's result at the caller rather than the notice path, and
+// points the child's result at the caller rather than the notice path, takes
+// the child out of its spawn group so the group completes without it, and
 // clears its last submit's this-turn and give-up flags so only a fresh turn's
-// submit answers the tell. Both writes happen under the child's own lock, so a
-// submit arriving at the same instant is either claimed here or delivered as a
-// notice, never both. It returns an undo, so a tell whose delivery then fails
-// puts the child back rather than leaving its result owned by nobody.
+// submit answers the tell. All writes happen under the child's own lock, so
+// a submit arriving at the same instant is either claimed here or delivered
+// as a notice, never both. It returns an undo, so a tell whose delivery
+// then fails puts the child back rather than leaving its result owned by
+// nobody.
 func claimNextSubmit(id string) (undo func() error, err error) {
 	var (
 		prevState  AgentState
@@ -151,6 +117,7 @@ func claimNextSubmit(id string) (undo func() error, err error) {
 		}
 		s := prevState
 		s.Deliver = false
+		s.GroupID = ""
 		if err := WriteAgentState(s); err != nil {
 			return err
 		}
