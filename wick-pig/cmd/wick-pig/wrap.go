@@ -60,26 +60,26 @@ func runWrap(argv []string, stdin io.Reader, stdout io.Writer) error {
 	if wick.HeaderStripDisabled() {
 		return wick.RunPlainCommand(fs.Arg(0), fs.Args()[1:], nil, stdin, stdout, os.Stderr)
 	}
- 	return wick.WrapChild(wrapCmdConfig(*agent, *agentType, *name, *harness, *session, *dir, *compressCount, settings, stdin, stdout, fs.Arg(0), fs.Args()[1:]))
- }
+	return wick.WrapChild(wrapCmdConfig(*agent, *agentType, *name, *harness, *session, *dir, *compressCount, settings, stdin, stdout, fs.Arg(0), fs.Args()[1:]))
+}
 
- // wrapCmdConfig builds the wrapper config for `wick-pig wrap`: the strip's
- // snapshot source plus the child, with the input queue's control channel
- // served, so tell and the shared delivery path reach the child through the
- // queue instead of herdr send-text.
- func wrapCmdConfig(agent, agentType, name, harness, session, dir string, compressCount int, settings tools.Settings, stdin io.Reader, stdout io.Writer, bin string, args []string) wick.WrapConfig {
- 	return wick.WrapConfig{
- 		Source: wick.HeaderSource{
- 			AgentID: *&agent, AgentType: agentType, AgentName: name,
- 			Harness: harness, SessionID: session, SessionDir: dir,
- 			CompressCount: compressCount,
- 		},
- 		Settings: settings,
- 		Bin:      bin,
- 		Args:     args,
- 		Stdin:    stdin,
- 		Stdout:   stdout,
- 		Stderr:   os.Stderr,
- 		ServeCtrl: true,
- 	}
+// wrapCmdConfig builds the wrapper config for `wick-pig wrap`: the strip's
+// snapshot source plus the child, with the input queue's control channel
+// served, so tell and the shared delivery path reach the child through the
+// queue instead of herdr send-text.
+func wrapCmdConfig(agent, agentType, name, harness, session, dir string, compressCount int, settings tools.Settings, stdin io.Reader, stdout io.Writer, bin string, args []string) wick.WrapConfig {
+	return wick.WrapConfig{
+		Source: wick.HeaderSource{
+			AgentID: *&agent, AgentType: agentType, AgentName: name,
+			Harness: harness, SessionID: session, SessionDir: dir,
+			CompressCount: compressCount,
+		},
+		Settings:  settings,
+		Bin:       bin,
+		Args:      args,
+		Stdin:     stdin,
+		Stdout:    stdout,
+		Stderr:    os.Stderr,
+		ServeCtrl: true,
+	}
 }
