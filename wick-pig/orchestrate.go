@@ -176,6 +176,10 @@ var finishTool = fnTool{
 		"merge": map[string]any{"type": "boolean", "description": "False discards the branch. Defaults to true."},
 	}, "agent"),
 	run: func(_ string, params map[string]any) (string, error) {
+		// Each parent action sweeps its stranded groups first, in the
+		// background: a vanished member with no further submit is finalized
+		// after this call ends instead of waiting forever.
+		sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("WICK_AGENT_ID"))
 		id := str(params, "agent")
 		if id == "" {
 			return "", fmt.Errorf("agent is required")

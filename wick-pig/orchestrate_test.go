@@ -71,6 +71,12 @@ func runSpawnTool(t *testing.T) (string, error) {
 	spawnGap = 0
 	spawnExec = spawnToolFake()
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
+	// Hermetic panes: the runner itself sits in a herdr pane, so a leaked
+	// parent would send the group's post-spawn delivery check at the real
+	// herdr and hang the test waiting for its own pane to go idle.
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("WICK_AGENT_ID", "")
 
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "20-x.md")
@@ -107,15 +113,15 @@ func TestSpawnWorkerOpensTheTicketTab(t *testing.T) {
 	}
 }
 
-// A pig worker without the report extension never registers with herdr, so a
-// parent can never rely on herdr to say it is done. The spawn must say so up
-// front, and name how to fix it, rather than leave the merger guessing.
 func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
 	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	spawnGap = 0
 	spawnExec = spawnToolFake()
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("WICK_AGENT_ID", "")
 
 	// No env var and a fresh HOME: the lookup has nowhere to find the
 	// extension, which is the case ticket 19 hit.
@@ -150,6 +156,9 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	oldState, oldGap, oldExec := statePath, spawnGap, spawnExec
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	spawnGap = 0
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("WICK_AGENT_ID", "")
 	var launched string
 	base := spawnToolFake()
 	spawnExec = func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -159,7 +168,6 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 		return base(cmd, args, o)
 	}
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
-
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "22-x.md")
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {

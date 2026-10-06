@@ -165,6 +165,7 @@ func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 	b.WriteString("\nWhere a skill says /code-review, spawn both of your reviewer types in one spawn call: " +
 		"spawn(agents=[{type: \"reviewer-standards\"}, {type: \"reviewer-spec\"}]). They review this worktree and report pass or changes. " +
 		"The spawn tool is in your tool list: in pig its name is mcp__wick__spawn. Call it directly; do not decide it is missing, and never start reviewers through bash or a second wick-mcp.\n")
+	b.WriteString("\nAfter spawn, end your turn; the result arrives as a system notice.\n")
 	b.WriteString("\nBefore editing, read the AGENTS.md chain from the repo root down to each file you will touch, following each doc's Child DOX Index; the nearest doc is the local contract. " +
 		"After a change that alters purpose, ownership, contracts, structure, workflow, inputs, outputs, or permissions, update the nearest owning AGENTS.md (plus affected parents and children, refreshing indexes) in the same task.\n")
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
@@ -209,10 +210,10 @@ func implementPrompt(run SpecRun) string {
 Read %s and follow it, with these wick adaptations:
 
 - The integration branch is %s. It already exists and is checked out; never switch away from it.
-- An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else. Workers are non-blocking: spawn returns as soon as they start.
+- An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else. Spawn returns at once with the agents still running, for every type.
 - At most %d workers run at once; further workers from one spawn queue and start as earlier ones finish.
-- An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Scouts are blocking, so one spawn returns their reports together; ask several at once when they are independent.
-- After a spawn that starts non-blocking workers, end your turn: each worker's result arrives later as a system notice, and waiting for it only spends tokens.
+- An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Ask several at once when they are independent; their results arrive together.
+- After spawn, end your turn; the result arrives as a system notice. The results of one spawn call arrive as a single notice once every agent of that call has submitted. Waiting for it only spends tokens.
 - The merger subagent is finish(agent=<worker id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
 - Skip the skill's final code-review step: every worker reviewed its own ticket before submitting. Never review a worker yourself.
 - If finish does not merge a worker, tell(agent=<id>, text=<the reason finish gave>) it what failed, and its next submit arrives as a notice. Once it submits, finish it again. If the same worker fails again, leave it, report it, and carry on with every ticket it does not block.

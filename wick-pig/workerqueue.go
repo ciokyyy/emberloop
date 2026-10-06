@@ -25,6 +25,9 @@ type queuedWorker struct {
 	Effort   string `json:"effort,omitempty"`
 	ParentID string `json:"parent_id,omitempty"`
 	Parent   string `json:"parent_pane,omitempty"`
+	// GroupID is the spawn group the queued worker belongs to: when it
+	// starts, its submit joins the group's single notice.
+	GroupID string `json:"group_id,omitempty"`
 }
 
 // workerQueuePath is where queued workers wait, beside the worker store.
@@ -228,9 +231,10 @@ func launchQueuedWorker(run Exec, e queuedWorker) (*spawnedAgent, error) {
 		Pane:     worker.Pane,
 		ParentID: e.ParentID,
 		Parent:   e.Parent,
+		GroupID:  e.GroupID,
 		// No spawn waits on a drained worker: the queuing call already
-		// returned and told its parent to end the turn, so the submit goes
-		// to the parent as a notice whatever the type's blocking says.
+		// returned and told its parent to end the turn, so the submit joins
+		// the queuing call's group notice whatever the type's blocking says.
 		Deliver: true,
 	}
 	if err := WriteAgentState(state); err != nil {

@@ -17,6 +17,11 @@ func workerSession() Session {
 func isolateState(t *testing.T) {
 	t.Helper()
 	statePath = filepath.Join(t.TempDir(), "workers.json")
+	// Hermetic panes: the runner itself sits in a herdr pane, so a leaked
+	// parent would send grouped delivery at the real herdr and hang.
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("WICK_AGENT_ID", "")
 }
 
 func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {

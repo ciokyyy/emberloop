@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The decision is the one place the block/remind/give-up rules live: a submit,
@@ -290,14 +291,17 @@ func TestStopGateGiveUpBecomesTheWaitingSpawnResult(t *testing.T) {
 	}
 }
 
-// A blocking agent that gives up is returned by the waiting spawn as its
-// result, never typed into a pane.
+// A blocking agent that gives up joins its group's single notice, never the
+// spawn reply: the spawn returns at once, and the stopped result arrives as
+// the group notice.
 func TestBlockingGiveUpIsReturnedByTheWaitingSpawn(t *testing.T) {
 	spawnTestState(t)
 	t.Setenv("WICK_AGENT_TYPE", "scout")
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
+	t.Setenv("HERDR_PANE_ID", "wP")
+	t.Setenv("WICK_AGENT_ID", "parent1")
+	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
 	oldDeliver := deliverExec
 	deliverExec = rec.run
 	t.Cleanup(func() { deliverExec = oldDeliver })
@@ -310,17 +314,26 @@ func TestBlockingGiveUpIsReturnedByTheWaitingSpawn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	if !strings.Contains(out, "stopped without submitting: gave up") {
-		t.Errorf("the waiting spawn must return the stopped result, got:\n%s", out)
+	if strings.Contains(out, "stopped without submitting") {
+		t.Errorf("a spawn that never waits must not carry the stopped result in its reply, got:\n%s", out)
 	}
-	if len(rec.calls) != 0 {
-		t.Errorf("a blocking agent's give-up must not be typed, got %v", rec.calls)
+	if !strings.Contains(out, "end your turn") {
+		t.Errorf("the reply must say to end the turn and wait for the notice, got:\n%s", out)
+	}
+	// The give-up happened during the launch, before the group file existed:
+	// the spawn-side dispatch delivers it in the background.
+	prompted := waitForPrompts(t, rec, "wP", 1, 2*time.Second)
+	if len(prompted) != 1 {
+		t.Fatalf("the give-up must arrive as exactly one grouped notice, got %v", rec.calls)
+	}
+	if !strings.Contains(prompted[0], "stopped without submitting: gave up") {
+		t.Errorf("the grouped notice must carry the stopped result, got:\n%s", prompted[0])
 	}
 }
 
 // giveUpExec plays a scout that never submits: the moment its pane starts it
-// writes the stopped result the stop gate gives up with, so the waiting spawn
-// must return that instead of a report.
+// writes the stopped result the stop gate gives up with, so the group's
+// single notice carries that instead of a report.
 type giveUpExec struct{ g *fakeGrid }
 
 func (e giveUpExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
@@ -333,7 +346,7 @@ func (e giveUpExec) run(cmd string, args []string, opts ExecOpts) (Result, error
 	return e.g.run(cmd, args, opts)
 }
 
-// The give-up and a spawn's auto-background decide ownership under the child's
+// The give-up and a tell's auto-background decide ownership under the child's
 // lock: whichever runs first owns the result, so the parent always hears.
 func TestGiveUpOwnershipIsDecidedUnderTheLock(t *testing.T) {
 	deliverTestState(t)
@@ -341,11 +354,11 @@ func TestGiveUpOwnershipIsDecidedUnderTheLock(t *testing.T) {
 	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
 	deliverExec = rec.run
 
-	// The spawn backgrounded the agent first: its give-up goes out as a notice.
+	// The tell backgrounded the agent first: its give-up goes out as a notice.
 	if err := WriteAgentState(AgentState{ID: "a1", Type: "scout", ParentID: "p", Parent: "pP"}); err != nil {
 		t.Fatal(err)
 	}
-	if bg, err := backgroundAgent("a1"); err != nil || !bg {
+	if bg, err := backgroundToldAgent("a1"); err != nil || !bg {
 		t.Fatalf("background: %v bg=%v", err, bg)
 	}
 	if err := giveUpWithoutSubmit("a1", "lost"); err != nil {
@@ -355,7 +368,7 @@ func TestGiveUpOwnershipIsDecidedUnderTheLock(t *testing.T) {
 		t.Fatalf("a backgrounded agent's give-up must be delivered as a notice, got %v", rec.calls)
 	}
 
-	// The give-up wrote first: the waiting spawn owns it, nothing is typed.
+	// The give-up wrote first: the waiting tell owns it, nothing is typed.
 	rec2 := &recorder{reply: func(string, []string) Result { return Result{} }}
 	deliverExec = rec2.run
 	if err := WriteAgentState(AgentState{ID: "a2", Type: "scout", ParentID: "p", Parent: "pP"}); err != nil {
@@ -365,10 +378,10 @@ func TestGiveUpOwnershipIsDecidedUnderTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(rec2.calls) != 0 {
-		t.Fatalf("a waiting spawn's give-up must not be typed, got %v", rec2.calls)
+		t.Fatalf("a waiting tell's give-up must not be typed, got %v", rec2.calls)
 	}
 	if s, ok, _ := ReadAgentSubmit("a2"); !ok || !s.Stopped {
-		t.Errorf("the waiting spawn must find the stopped result: %+v ok=%v", s, ok)
+		t.Errorf("the waiting tell must find the stopped result: %+v ok=%v", s, ok)
 	}
 }
 
