@@ -182,23 +182,14 @@ func (g grepTool) search(ctx context.Context, root, searchRoot string, q grepQue
 	return grepWithGo(ctx, root, searchRoot, q)
 }
 
-// rgPath resolves the ripgrep binary: the wick bin directory first, then
-// PATH. Empty means no ripgrep is installed.
+// rgPath resolves the ripgrep binary through the shared resolver: the wick
+// bin directory first, then PATH. Empty means no ripgrep is installed.
 func rgPath() string {
-	if dir := os.Getenv("WICK_BIN_DIR"); dir != "" {
-		if p := filepath.Join(dir, "rg"); isExecutable(p) {
-			return p
-		}
+	p, err := ResolveBinary("rg")
+	if err != nil {
+		return ""
 	}
-	if home := os.Getenv("HOME"); home != "" {
-		if p := filepath.Join(home, ".wick-pig", "bin", "rg"); isExecutable(p) {
-			return p
-		}
-	}
-	if p, err := exec.LookPath("rg"); err == nil {
-		return p
-	}
-	return ""
+	return p
 }
 
 func isExecutable(path string) bool {

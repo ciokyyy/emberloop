@@ -165,3 +165,12 @@ func TestTuiRefusesArgs(t *testing.T) {
 		t.Errorf("run(tui --bogus) must fail with usage, got %v", err)
 	}
 }
+
+// `wick-pig deps` checks external dependencies. Here its dispatch and usage
+// error are pinned; the installer itself is covered in the wick package. The
+// unknown flag fails before any install or download.
+func TestDepsRefusesUnknownFlags(t *testing.T) {
+	if err := run([]string{"deps", "--bogus"}); err == nil {
+		t.Error("run(deps --bogus) must fail")
+	}
+}

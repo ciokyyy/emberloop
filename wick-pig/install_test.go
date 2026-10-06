@@ -2,6 +2,7 @@ package wick
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,6 +282,10 @@ func installCLIExec(t *testing.T, panes ...string) Exec {
 }
 
 func TestRunInstallRefusesLiveAgentsByName(t *testing.T) {
+	oldDeps := runInstallDeps
+	depsCalls := 0
+	runInstallDeps = func(out io.Writer) error { depsCalls++; return nil }
+	t.Cleanup(func() { runInstallDeps = oldDeps })
 	installTestState(t)
 	oldExec := installExec
 	installExec = installCLIExec(t, "w1:p1")
@@ -298,6 +303,9 @@ func TestRunInstallRefusesLiveAgentsByName(t *testing.T) {
 	if !strings.Contains(err.Error(), "07-foo") {
 		t.Errorf("the refusal must name the live agent, got: %v", err)
 	}
+	if depsCalls != 0 {
+		t.Errorf("a refused install must not reach the deps step, got %d calls", depsCalls)
+	}
 }
 
 func TestRunInstallInstallsCleanlyAndForceWarns(t *testing.T) {
@@ -305,6 +313,10 @@ func TestRunInstallInstallsCleanlyAndForceWarns(t *testing.T) {
 	oldExec := installExec
 	installExec = installCLIExec(t)
 	t.Cleanup(func() { installExec = oldExec })
+	oldDeps := runInstallDeps
+	depsCalls := 0
+	runInstallDeps = func(out io.Writer) error { depsCalls++; return nil }
+	t.Cleanup(func() { runInstallDeps = oldDeps })
 	writeInstallSentinel(t, dir, "wick-pig", "old-pig")
 
 	var out strings.Builder
@@ -330,6 +342,9 @@ func TestRunInstallInstallsCleanlyAndForceWarns(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "running sessions keep the old binary until they restart") {
 		t.Errorf("a forced install must print the stale-session warning, got %q", out.String())
+	}
+	if depsCalls != 2 {
+		t.Errorf("install must run the deps step on each success, got %d calls for 2 installs", depsCalls)
 	}
 }
 

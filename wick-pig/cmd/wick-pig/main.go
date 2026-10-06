@@ -9,6 +9,7 @@
 //	wick-pig exec <launch-file>                                run a launch file the pane typed
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
+//	wick-pig deps                                             check and install external dependencies
 //	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
 //	wick-pig tui                                            open the dashboard in the current pane
@@ -68,6 +69,9 @@ func run(argv []string) error {
 	}
 	if sub == "tui" {
 		return wick.RunTUI(argv)
+	}
+	if sub == "deps" {
+		return wick.RunDeps(argv, os.Stdout)
 	}
 	if sub == "install" {
 		return wick.RunInstall(argv, os.Stdout)
