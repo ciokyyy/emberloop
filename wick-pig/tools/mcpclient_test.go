@@ -285,7 +285,7 @@ func TestMCPServerExitMidCallNamesTheServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = got[0].Execute(context.Background(), t.TempDir(), []byte(`{}`))
-	mustMCPContain(t, err, `mcp server "fake"`)
+	mustMCPContain(t, err, `mcp server "fake"`, "search", "exited")
 }
 
 // A server that exits at once fails listing with an error naming the server.
@@ -396,5 +396,118 @@ func TestMCPRegistrySnapshotSkipsFailedServers(t *testing.T) {
 	}
 	if !strings.Contains(errs[0].Error(), `mcp server "bad"`) {
 		t.Fatalf("errs = %v, want the bad server named", errs)
+	}
+}
+
+// A call the caller abandons fails without touching the server: nothing
+// waits on the child, it stays running, and the client stays usable.
+func TestMCPCallCancelledByCallerLeavesServerRunning(t *testing.T) {
+	reg := shortRegistry(t, mcpfake.Config{
+		Tools: []mcpfake.ToolDef{{Name: "search"}}, HangOn: "call",
+	})
+	got, err := reg.Tools(context.Background(), "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := got[0].Execute(ctx, t.TempDir(), []byte(`{}`))
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		mustMCPContain(t, err, `mcp server "fake"`, "search")
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled call never returned")
+	}
+	reg.mu.Lock()
+	c := reg.clients["fake"]
+	reg.mu.Unlock()
+	c.mu.Lock()
+	cmd, started := c.cmd, c.started
+	c.mu.Unlock()
+	if cmd == nil || cmd.Process == nil || !started {
+		t.Fatal("cancelled call killed or unstarted the server")
+	}
+	if err := killProbe(cmd.Process.Pid, 0); err != nil {
+		t.Fatalf("server child gone after cancel: %v", err)
+	}
+	if _, err := reg.Tools(context.Background(), "fake"); err != nil {
+		t.Fatalf("client unusable after cancel: %v", err)
+	}
+}
+
+// When the server dies mid-session the next use respawns it: the reader's
+// cleanup retires the old spawn and the call goes out on a new child.
+func TestMCPRespawnsAfterServerExit(t *testing.T) {
+	reg := shortRegistry(t, mcpfake.Config{
+		Tools: []mcpfake.ToolDef{{Name: "search"}},
+	})
+	got, err := reg.Tools(context.Background(), "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.mu.Lock()
+	c := reg.clients["fake"]
+	reg.mu.Unlock()
+	c.mu.Lock()
+	old := c.cmd.Process.Pid
+	c.mu.Unlock()
+	if err := syscall.Kill(old, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c.mu.Lock()
+		started := c.started
+		c.mu.Unlock()
+		if !started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dead server was never retired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	text, err := got[0].Execute(context.Background(), t.TempDir(), []byte(`{}`))
+	if err != nil {
+		t.Fatalf("call after respawn: %v", err)
+	}
+	if text != "search({})" {
+		t.Fatalf("call after respawn = %q", text)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cmd == nil || c.cmd.Process.Pid == old {
+		t.Fatal("call after exit did not spawn a new child")
+	}
+}
+
+// Calls after Close fail instead of respawning: the registry stays dead.
+func TestMCPUseAfterCloseFails(t *testing.T) {
+	command, args, env := mcpfake.Helper(t, mcpfake.Config{
+		Tools: []mcpfake.ToolDef{{Name: "search"}},
+	})
+	reg := NewRegistry(map[string]MCPServerSetting{
+		"fake": {Command: command, Args: args, Env: env},
+	})
+	got, err := reg.Tools(context.Background(), "fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.Close()
+	mustMCPContain(t, mustToolsErr(t, reg), `mcp server "fake"`, "closed")
+	_, err = got[0].Execute(context.Background(), t.TempDir(), []byte(`{}`))
+	mustMCPContain(t, err, `mcp server "fake"`, "closed")
+	reg.mu.Lock()
+	c := reg.clients["fake"]
+	reg.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cmd != nil || c.started {
+		t.Fatal("use after Close respawned the server")
 	}
 }

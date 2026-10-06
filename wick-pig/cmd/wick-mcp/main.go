@@ -24,28 +24,42 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run serves the session and returns its exit code. The registry's Close is
+// deferred here, so every MCP server child dies however the session ends:
+// an os.Exit in main would skip it.
+func run() int {
 	role := flag.String("role", wick.RoleFromEnv(), "one of: "+strings.Join(wick.RoleNames(), ", "))
 	flag.Parse()
 
 	if *role == "" {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", wick.MissingRoleError())
-		os.Exit(2)
+		return 2
+	}
+	// The role resolves before any MCP server starts: an unknown role must
+	// not spawn a server per configured entry only to discard them. This
+	// resolution is side-effect free; the MCP listing below re-resolves with
+	// the snapshot included.
+	if _, err := wick.RoleTools(*role); err != nil {
+		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
+		return 2
 	}
 	root, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
-		os.Exit(1)
+		return 1
 	}
 	// The registry holds one client per configured MCP server for this
 	// process. It starts no server until the snapshot lists it; a server that
-	// fails is warned about and skipped. Closing it at exit kills every
-	// server child, on every path below.
+	// fails is warned about and skipped.
 	mcpReg := tools.NewRegistry(tools.EffectiveSettings(root).MCPServers)
 	defer mcpReg.Close()
 	served, err := wick.RoleToolsWithMCP(*role, wick.MCPSnapshot(mcpReg))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
-		os.Exit(2)
+		return 2
 	}
 	// The memory sampler records this session's harness process tree every 5
 	// seconds into the agent's archive log, whether or not the TUI is open.
@@ -81,6 +95,7 @@ func main() {
 	}
 	if serveErr != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", serveErr)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
