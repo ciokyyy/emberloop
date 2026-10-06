@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Each allowed subcommand works against a temporary repository
-- [ ] Every refused subcommand and flag is refused with a clear message, including flag forms like `--output=file` and `-c x=y`
-- [ ] A hostile repository config (an external diff driver, textconv) is never executed
-- [ ] The repository is byte-identical (tree, index, refs) after a run of every allowed command
-- [ ] Repo check passes
+- [x] Each allowed subcommand works against a temporary repository
+- [x] Every refused subcommand and flag is refused with a clear message, including flag forms like `--output=file` and `-c x=y`
+- [x] A hostile repository config (an external diff driver, textconv) is never executed
+- [x] The repository is byte-identical (tree, index, refs) after a run of every allowed command
+- [x] Repo check passes
