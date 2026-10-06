@@ -749,8 +749,10 @@ func gitIn(run Exec, tree string, args ...string) (string, error) {
 // is not kept between spawns: its live reviewer is closed and a fresh one takes
 // its place. A dead reviewer is replaced in its slot, briefed with its findings.
 // Every reviewer it starts or re-prompts joins groupID, so its submit joins
-// the group's single notice.
-func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID, groupID string) (*spawnedAgent, error) {
+// the group's single notice. reindexed dedupes the pre-launch graph re-index
+// by tree across the caller's reviewers; held passes that launch nothing
+// index nothing.
+func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, parentID, groupID string, reindexed map[string]bool) (*spawnedAgent, error) {
 	p.note = note
 	// Two spawns of the same reviewer type for one worktree race: both find
 	// no live reviewer, both start one, and the second record overwrites the
@@ -771,6 +773,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 		if had && prev.agent().alive(run) {
 			if !t.Persistent {
 				closeAgent(run, prev.agent())
+				graphReindexOnce(p.tree, reindexed)
 				agent, err := freshReviewer(run, p, t, prev, false, parentPane, parentID, groupID)
 				if err != nil {
 					return err
@@ -792,6 +795,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 					return nil
 				}
 			}
+			graphReindexOnce(p.tree, reindexed)
 			agent, err := followUpReviewer(run, p, t, prev, parentPane, parentID, groupID)
 			if err != nil {
 				return err
@@ -799,6 +803,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 			out = agent
 			return nil
 		}
+		graphReindexOnce(p.tree, reindexed)
 		agent, err := freshReviewer(run, p, t, prev, had, parentPane, parentID, groupID)
 		if err != nil {
 			return err

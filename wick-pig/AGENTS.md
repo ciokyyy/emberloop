@@ -44,7 +44,11 @@ owns its `_test.go` and the behaviour below):
   refusal wrapper),
   `execute.go` (the per-role execute binding: the role's resolved toolset in
   the stub, the tools-behind-execute description, sandboxed for read-only roles),
-  `mcpclients.go` (the MCP server snapshot behind the same resolution),
+  `mcpclients.go` (the MCP server snapshot behind the same resolution, plus
+  the graph-gated snapshot the tool server serves),
+  `graph.go` (the code graph lifecycle: async worktree index on creation,
+  incremental re-index before reviewer and scout spawns, project delete on
+  worktree drop; best-effort, silent when the graph is off),
   `readonly.go`, `stopgate.go`, `extension.go` (pig extension wiring, brief lines)
 - Fixtures: `testdata/` (child doc)
 

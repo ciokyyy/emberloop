@@ -2,6 +2,7 @@ package wick
 
 import (
 	"context"
+	"encoding/json"
 
 	"example.com/wick/tools"
 )
@@ -16,6 +17,30 @@ func MCPSnapshot(reg *tools.Registry) map[string][]tools.Tool {
 	for _, err := range errs {
 		warnSettingsOnce(err.Error())
 	}
+	return listed
+}
+
+// MCPSnapshotWithGraph snapshots reg and gates the listed graph tools behind
+// the index-status wait for root's project, so the first graph query of the
+// session waits on the worktree index instead of answering from a missing
+// graph. Without a graph server the snapshot is unchanged.
+func MCPSnapshotWithGraph(reg *tools.Registry, root string) map[string][]tools.Tool {
+	listed := MCPSnapshot(reg)
+	call := func(ctx context.Context, tool string, args json.RawMessage) (string, error) {
+		return reg.Call(ctx, tools.GraphServerName, tool, args)
+	}
+	return GateListedGraph(listed, call, root)
+}
+
+// GateListedGraph gates a snapshot's graph tools behind the index-status wait
+// for root's project. Split from MCPSnapshotWithGraph so tests drive it with
+// a recording call.
+func GateListedGraph(listed map[string][]tools.Tool, call tools.GraphStatusCall, root string) map[string][]tools.Tool {
+	graphed, ok := listed[tools.GraphServerName]
+	if !ok || len(graphed) == 0 {
+		return listed
+	}
+	listed[tools.GraphServerName] = tools.GateGraphTools(graphed, call, root, tools.DefaultGraphGateWait)
 	return listed
 }
 

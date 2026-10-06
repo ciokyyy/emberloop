@@ -30,6 +30,10 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 	os.Setenv("HERDR_BIN_PATH", stub)
+	// The code graph lifecycle stays unwired in tests: no Spawn, review or
+	// finish test may spawn a real graph server. Graph tests wire the dial
+	// themselves, per test.
+	graphLifecycleDial = nil
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

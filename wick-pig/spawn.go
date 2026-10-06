@@ -296,6 +296,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	// state and asked for changes, that its answer is repeated here and not
 	// re-reviewed: it is not part of the group either.
 	var repeated []string
+	// reindexed dedupes the pre-spawn graph re-index by root: co-launched
+	// reviewers of one tree share one re-index.
+	reindexed := map[string]bool{}
 	for _, r := range reqs {
 		t := types[r.Type]
 		if t.Checkout == "parent" {
@@ -312,8 +315,10 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			}
 			// A reviewer that already passed at the tip is left alone, so a
 			// re-spawn only reaches the reviewers that still have something
-			// to look at.
-			agent, err := launchReviewer(run, review, t, r.Prompt, parentPane, parentID, groupID)
+			// to look at. The re-index lives inside launchReviewer, at the
+			// points that really launch, so a held pass indexes nothing and
+			// co-launched reviewers share one.
+			agent, err := launchReviewer(run, review, t, r.Prompt, parentPane, parentID, groupID, reindexed)
 			if err != nil {
 				closeSpawned(run, agents)
 				return "", err
@@ -343,6 +348,9 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		// the live agent rather than starting a second one.
 		if t.Persistent {
 			if prev, ok := liveAgentFor(run, t, parentID, parentPane, r); ok {
+				// Same re-index for a re-prompted reviewer or scout: the tree
+				// may have moved since it last looked.
+				graphReindexOnce(root, reindexed)
 				agent, err := repromptAgent(run, t, prev, r, groupID)
 				if err != nil {
 					closeSpawned(run, agents)
@@ -363,6 +371,8 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 				workerGroup[agent.ID] = wgid
 			}
 		} else {
+			// Same re-index for a scout: the graph matches the tree it runs in.
+			graphReindexOnce(root, reindexed)
 			agent, err = launchScout(run, root, t, r.Prompt)
 		}
 		if err != nil {
