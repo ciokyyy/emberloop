@@ -217,9 +217,12 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 	case "pane send-text":
 		p := f.panes[args[2]]
 		prompt := args[3]
-		// A follow-up names a file to read; the agent reads it.
+		// A follow-up used to name a file to read, and the agent read it.
+		// Prompts now arrive as the message itself, so only a word naming a
+		// non-empty file resolves: diff text names /dev/null, which reads as
+		// empty and must not wipe the prompt.
 		for _, w := range strings.Fields(prompt) {
-			if raw, err := os.ReadFile(strings.TrimSuffix(w, ":")); err == nil {
+			if raw, err := os.ReadFile(strings.TrimSuffix(w, ":")); err == nil && len(raw) > 0 {
 				prompt = string(raw)
 			}
 		}

@@ -550,7 +550,8 @@ func PrepareLaunch(harness string, s Session) (Launch, error) {
 	return l, nil
 }
 
-// DeliverLate waits for the agent in pane to be ready, then sends the message.
+// DeliverLate waits for the agent in pane to be ready, then sends the message
+// through the shared DeliverPrompt path.
 func DeliverLate(run Exec, pane, text string) error {
 	if text == "" {
 		return nil
@@ -568,8 +569,7 @@ func DeliverLate(run Exec, pane, text string) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	_, err := herdrJSON(run, []string{"agent", "prompt", pane, text}, 30*time.Second)
-	return err
+	return DeliverPrompt(run, pane, text)
 }
 
 // Registered is the harness registered under name, or nil.
