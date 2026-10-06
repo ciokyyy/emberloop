@@ -422,3 +422,18 @@ func TestExecuteMissingPythonNamesDeps(t *testing.T) {
 		t.Fatalf("a missing python3 must name wick-pig deps, got %v", err)
 	}
 }
+
+// Seam: a tool renamed onto a stub name (search, help, call) does not
+// clobber the stub; it stays reachable through tools.call.
+func TestExecuteStubReservedNames(t *testing.T) {
+	stub, err := buildToolsModule("/tmp/sock", []Tool{fakeExecuteTool{name: "search", result: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(stub, "def search("); n != 1 {
+		t.Fatalf("want only the stub's own search, found %d definitions", n)
+	}
+	if !strings.Contains(stub, "tools.call") {
+		t.Fatalf("the stub must point reserved names at tools.call:\n%s", stub)
+	}
+}
