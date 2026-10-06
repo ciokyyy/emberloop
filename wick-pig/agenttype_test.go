@@ -36,8 +36,8 @@ func TestBuiltinScoutTypeLoads(t *testing.T) {
 		t.Errorf("scout statuses = %q", got)
 	}
 	for _, tool := range scout.Tools {
-		if tool != "read" && tool != "find" && tool != "websearch" {
-			t.Errorf("a none type may only read, find and websearch, scout has %q", tool)
+		if tool != "read" && tool != "find" && tool != "websearch" && tool != "ctx_search" {
+			t.Errorf("a none type may only read, find, websearch and ctx_search, scout has %q", tool)
 		}
 	}
 	if scout.Description == "" || scout.Body == "" {
@@ -62,7 +62,7 @@ func TestBuiltinWorkerTypeLoads(t *testing.T) {
 	if got := strings.Join(worker.Statuses, ","); got != "done,blocked" {
 		t.Errorf("worker statuses = %q, want done,blocked", got)
 	}
-	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background"} {
+	for _, want := range []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search"} {
 		if !contains(worker.Tools, want) {
 			t.Errorf("a worker must be able to %s, tools = %v", want, worker.Tools)
 		}
@@ -105,8 +105,8 @@ func TestBuiltinReviewerTypesLoad(t *testing.T) {
 			t.Errorf("%s statuses = %q, want pass,changes", name, got)
 		}
 		for _, tool := range r.Tools {
-			if tool != "read" && tool != "find" && tool != "websearch" {
-				t.Errorf("%s is read-only, so it may only read, find and websearch, has %q", name, tool)
+			if tool != "read" && tool != "find" && tool != "websearch" && tool != "ctx_search" {
+				t.Errorf("%s is read-only, so it may only read, find, websearch and ctx_search, has %q", name, tool)
 			}
 		}
 		if r.Description == "" || r.Body == "" {

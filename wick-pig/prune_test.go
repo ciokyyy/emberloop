@@ -487,6 +487,48 @@ func TestPruneApplyDeletesUsageRowsAndKeepsSharedOnes(t *testing.T) {
 	}
 }
 
+// Seam (ticket 09): prune deletes a pruned run's overflow blobs and purges
+// expired ones — agent-old's blob goes with old-run, agent-new's stays, and
+// an expired blob of the surviving session is purged too.
+func TestPruneApplyDeletesCtxBlobsAndPurgesExpired(t *testing.T) {
+	pruneFixture(t)
+	oldID := insertPruneCtx(t, "agent-old", "fresh blob body old\n", time.Now().UTC())
+	newID := insertPruneCtx(t, "agent-new", "fresh blob body new\n", time.Now().UTC())
+	expiredID := insertPruneCtx(t, "agent-new", "expired blob body\n", time.Now().UTC().Add(-25*time.Hour))
+
+	if _, err := PruneRuns(pruneDeadExec(t), time.Now().UTC(), PruneOptions{Runs: []string{"old-run"}, Apply: true}); err != nil {
+		t.Fatalf("PruneRuns: %v", err)
+	}
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, ok, _ := statedb.GetCtxBlob(db, oldID); ok {
+		t.Errorf("blob %d of pruned agent-old survived", oldID)
+	}
+	if _, ok, _ := statedb.GetCtxBlob(db, newID); !ok {
+		t.Errorf("blob %d of surviving agent-new is gone", newID)
+	}
+	if _, ok, _ := statedb.GetCtxBlob(db, expiredID); ok {
+		t.Errorf("expired blob %d survived the prune", expiredID)
+	}
+}
+
+func insertPruneCtx(t *testing.T, session, body string, at time.Time) int64 {
+	t.Helper()
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := statedb.InsertCtxBlob(db, statedb.CtxBlob{Session: session, Source: "prune-test", Bytes: body, CreatedAt: at.Unix()}, statedb.ChunkText(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func insertPruneRow(t *testing.T, agent string, input int64) {
 	t.Helper()
 	db, err := statedb.Open(dbPath())

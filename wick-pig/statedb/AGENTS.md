@@ -4,11 +4,13 @@
 
 Wick's SQLite state database: one file (`wick.db`) in the wick state
 directory holding usage rows, the search cache and quota the websearch tool
-fills, and the overflow store a follow-up ticket builds on. Files:
+fills, and the overflow store. Files:
 `statedb.go` (paths, WAL/busy-timeout opens, versioned migrations),
 `search.go` (search cache reads and writes, per-call quota rows, latest
 reported quota), `usage.go` (usage rows, idempotent inserts,
-one-time JSONL import, per-agent delete), `flock.go` (migration file lock).
+one-time JSONL import, per-agent delete), `ctx.go` (overflow store:
+`ctx_blobs` plus the FTS5 porter chunk index, heading-aware chunking, BM25
+search, 24-hour purge, per-session delete), `flock.go` (migration file lock).
 
 ## Ownership
 
@@ -23,11 +25,12 @@ or the tools, so both can import it without a cycle.
   opens serialize on a file lock, so migration runs exactly once.
 - Usage inserts are idempotent by dedupe key (unique index, `INSERT OR
   IGNORE`); a re-tailed line or a re-run import never double counts.
-- `Open` migrates and imports legacy JSONL once (only while the usage table
-  is empty; old files stay until prune); `OpenReadOnly` neither migrates nor
-  writes, for the TUI's polls. `OpenReadOnly` refuses a missing file instead
-  of creating one.
-- FTS5 with the porter tokenizer is proved by test, for the overflow store.
+- `Open` migrates, imports legacy JSONL once (only while the usage table
+  is empty; old files stay until prune), and purges overflow rows older
+  than 24 hours; `OpenReadOnly` neither migrates nor writes, for the TUI's
+  polls. `OpenReadOnly` refuses a missing file instead of creating one.
+- FTS5 with the porter tokenizer is proved by test and carries the overflow
+  chunk index (headings weigh more in BM25 ranking).
 
 ## Work Guidance
 

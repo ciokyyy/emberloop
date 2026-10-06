@@ -23,8 +23,9 @@ import (
 const DBFileName = "wick.db"
 
 // CurrentVersion is the schema Open migrates to. v1 carries the usage table;
-// v2 adds the search cache and quota tables the websearch ticket fills.
-const CurrentVersion = 2
+// v2 adds the search cache and quota tables the websearch ticket fills; v3
+// adds the overflow store (ctx_blobs plus the FTS5 chunk index).
+const CurrentVersion = 3
 
 // BusyTimeoutMillis is how long a writer waits on a locked database before
 // failing: long enough that the TUI's read-only polls and a tailer's inserts
@@ -64,11 +65,12 @@ func writeParams() url.Values {
 }
 
 // Open opens (creating) the database at path, sets WAL mode and the busy
-// timeout, migrates the schema to CurrentVersion, and imports legacy JSONL
-// usage logs sitting beside it. Import runs only while the usage table is
-// empty, and inserts idempotently, so re-opening never double counts.
-// Migration holds a cross-process file lock, so sessions starting
-// together (a tailer, the MCP server, a prune) migrate exactly once.
+// timeout, migrates the schema to CurrentVersion, imports legacy JSONL usage
+// logs sitting beside it, and purges overflow rows older than 24 hours.
+// Import runs only while the usage table is empty, and inserts idempotently,
+// so re-opening never double counts. Migration holds a cross-process file
+// lock, so sessions starting together (a tailer, the MCP server, a prune)
+// migrate exactly once.
 func Open(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -86,6 +88,10 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	if _, err := EnsureImport(db, filepath.Dir(path)); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := PurgeExpiredCtx(db, time.Now().UTC().Unix()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -187,6 +193,11 @@ func Migrate(db *sql.DB) error {
 				return err
 			}
 			v = 2
+		case 2:
+			if err := applyV3(db); err != nil {
+				return err
+			}
+			v = 3
 		default:
 			return fmt.Errorf("statedb: cannot migrate from version %d", v)
 		}

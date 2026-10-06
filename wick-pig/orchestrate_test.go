@@ -34,7 +34,7 @@ func TestReviewRolesServeNothingThatWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, tl := range served {
-			if n := tl.Name(); n != "read" && n != "find" && n != "websearch" {
+			if n := tl.Name(); n != "read" && n != "find" && n != "websearch" && n != "ctx_search" && n != "check" {
 				t.Errorf("%s role serves %s", role, n)
 			}
 		}

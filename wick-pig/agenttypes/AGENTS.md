@@ -15,8 +15,8 @@ spawn which types) lives in `spawn.go` with the main package doc.
 ## Local Contracts
 
 - Type files carry name, description, tools, checkout, blocking, and status
-  shape; reviewer types stay read-only (`read`, `find`, `websearch`) and
-  judge from the review packet.
+  shape; read-only types (reviewers, scout) stay on `read`, `find`,
+  `websearch` and `ctx_search` and judge from the review packet.
 
 ## Work Guidance
 

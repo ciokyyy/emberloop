@@ -33,6 +33,10 @@ func IsRoleSlot(name string) bool {
 // DefaultThreshold is find's passage cutoff when nothing is stored.
 const DefaultThreshold = 0.20
 
+// DefaultOverflowThresholdBytes is the tool-output size above which output is
+// stored in the overflow store instead of entering context: about 8KB.
+const DefaultOverflowThresholdBytes = 8 * 1024
+
 // DefaultMaxWorkers caps how many workers run at once when nothing is stored.
 const DefaultMaxWorkers = 3
 
@@ -102,6 +106,13 @@ type MCPServerSetting struct {
 	Roles     map[string]MCPServerRoleOverride `json:"roles,omitempty"`
 }
 
+// OverflowSettings tunes the overflow store. ThresholdBytes is the output
+// size in bytes above which a tool result is stored with a ctx: handle;
+// zero means the default.
+type OverflowSettings struct {
+	ThresholdBytes int `json:"threshold_bytes,omitempty"`
+}
+
 // Settings are the user's choices that tools read at call time. They live in
 // the user's wick-pig directory, beside the skills, so pig, the MCP server and
 // the TUI all read the same file.
@@ -120,6 +131,8 @@ type Settings struct {
 	Threshold float64 `json:"threshold,omitempty"`
 	// MaxWorkers caps how many workers run at once. Zero means the default.
 	MaxWorkers int `json:"max_workers,omitempty"`
+	// Overflow tunes the overflow store. ThresholdBytes of zero means the default.
+	Overflow OverflowSettings `json:"overflow,omitempty"`
 	// Roles holds one default per launch slot, keyed by slot name.
 	Roles map[string]Role `json:"roles,omitempty"`
 	// Tools tunes native tools by name: enabled, placement, rename and per-role
@@ -133,6 +146,9 @@ type Settings struct {
 	// back and the file can grow without a version bump. Never written from the
 	// struct itself; SaveSettings merges it in.
 	extra map[string]json.RawMessage
+	// overflowExtra holds keys inside the overflow object that wick does not
+	// know yet. SaveSettings merges them back, so new keys survive an old wick.
+	overflowExtra map[string]json.RawMessage
 	// roleExtra holds keys inside a role object that wick does not know yet,
 	// keyed by slot then field. SaveSettings merges it into Roles.
 	roleExtra map[string]map[string]json.RawMessage
@@ -255,6 +271,16 @@ func (s Settings) EffectiveMaxWorkers() int {
 	return DefaultMaxWorkers
 }
 
+// EffectiveOverflowThresholdBytes is the output size in bytes above which a
+// tool result is stored in the overflow store: the stored value, or about
+// 8KB when nothing valid is stored.
+func (s Settings) EffectiveOverflowThresholdBytes() int {
+	if s.Overflow.ThresholdBytes > 0 {
+		return s.Overflow.ThresholdBytes
+	}
+	return DefaultOverflowThresholdBytes
+}
+
 // SettingsPath is where settings are saved. WICK_SETTINGS overrides it for
 // tests and for a second profile.
 func SettingsPath() string {
@@ -273,8 +299,8 @@ func oldSettingsPath() string {
 // LoadSettings reads the file; a missing or unreadable file is the defaults.
 // When WICK_SETTINGS is unset and the new file is absent, the old state-dir
 // file is read instead. WICK_DECISION_MODEL, WICK_FIND_THRESHOLD,
-// WICK_MAX_WORKERS, WICK_SEARCH_PROVIDER and WICK_SEARCH_MODE win over the
-// file.
+// WICK_MAX_WORKERS, WICK_SEARCH_PROVIDER, WICK_SEARCH_MODE and
+// WICK_OVERFLOW_THRESHOLD_BYTES win over the file.
 func LoadSettings() Settings {
 	var s Settings
 	if raw, err := os.ReadFile(SettingsPath()); err == nil {
@@ -306,6 +332,10 @@ func LoadSettings() Settings {
 		s.searchSetting().Mode = m
 		s.setSource("search.mode", "env")
 	}
+	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WICK_OVERFLOW_THRESHOLD_BYTES"))); err == nil && b > 0 {
+		s.Overflow.ThresholdBytes = b
+		s.setSource("overflow.threshold_bytes", "env")
+	}
 	return s
 }
 
@@ -330,6 +360,8 @@ func decodeSettings(raw []byte) Settings {
 		case "decision_model", "threshold", "max_workers":
 		case "search":
 			s.searchExtra = unknownSearchFields(v)
+		case "overflow":
+			s.overflowExtra = unknownOverflowFields(v)
 		case "tools":
 			s.toolExtra = unknownEntryFields(v, []string{"enabled", "placement", "rename", "roles"})
 			s.toolRoleExtra = unknownOverrideFields(v)
@@ -360,6 +392,9 @@ func decodeSettings(raw []byte) Settings {
 	}
 	if s.MaxWorkers != 0 {
 		s.src["max_workers"] = "file"
+	}
+	if s.Overflow.ThresholdBytes != 0 {
+		s.src["overflow.threshold_bytes"] = "file"
 	}
 	for slot, r := range s.Roles {
 		base := "roles." + slot + "."
@@ -614,6 +649,9 @@ func SaveSettings(s Settings) error {
 	if err := mergeSearchExtras(fields, s.searchExtra); err != nil {
 		return err
 	}
+	if err := mergeOverflowExtras(fields, s.overflowExtra); err != nil {
+		return err
+	}
 	if err := mergeEntryExtras(fields, "tools", s.toolExtra); err != nil {
 		return err
 	}
@@ -643,6 +681,51 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	return os.WriteFile(SettingsPath(), append(raw, '\n'), 0o644)
+}
+
+// unknownOverflowFields collects the keys inside the overflow object that are
+// not threshold_bytes, so a save writes them back.
+func unknownOverflowFields(rawOverflow json.RawMessage) map[string]json.RawMessage {
+	var overflowFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawOverflow, &overflowFields); err != nil {
+		return nil
+	}
+	var out map[string]json.RawMessage
+	for k, v := range overflowFields {
+		if strings.ToLower(k) == "threshold_bytes" {
+			continue
+		}
+		if out == nil {
+			out = map[string]json.RawMessage{}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// mergeOverflowExtras writes the unknown fields of the overflow object back
+// into the object already in fields.
+func mergeOverflowExtras(fields map[string]json.RawMessage, overflowExtra map[string]json.RawMessage) error {
+	if len(overflowExtra) == 0 {
+		return nil
+	}
+	overflow := map[string]json.RawMessage{}
+	if raw, ok := fields["overflow"]; ok {
+		if err := json.Unmarshal(raw, &overflow); err != nil {
+			return err
+		}
+	}
+	for k, v := range overflowExtra {
+		if _, ok := overflow[k]; !ok {
+			overflow[k] = v
+		}
+	}
+	raw, err := json.Marshal(overflow)
+	if err != nil {
+		return err
+	}
+	fields["overflow"] = raw
+	return nil
 }
 
 // mergeRoleExtras writes the unknown fields of each role back into the roles
@@ -884,6 +967,7 @@ func MergeSettings(global, project Settings) Settings {
 	out := global
 	out.src = cloneSources(global.src)
 	out.extra = cloneRawMap(global.extra)
+	out.overflowExtra = cloneRawMap(global.overflowExtra)
 	out.roleExtra = cloneNestedRawMap(global.roleExtra)
 	out.toolExtra = cloneNestedRawMap(global.toolExtra)
 	out.mcpExtra = cloneNestedRawMap(global.mcpExtra)
@@ -905,6 +989,10 @@ func MergeSettings(global, project Settings) Settings {
 		out.MaxWorkers = project.MaxWorkers
 		out.src["max_workers"] = "project"
 	}
+	if project.Overflow.ThresholdBytes != 0 && out.src["overflow.threshold_bytes"] != "env" {
+		out.Overflow.ThresholdBytes = project.Overflow.ThresholdBytes
+		out.src["overflow.threshold_bytes"] = "project"
+	}
 	out.Roles = mergeRoles(global.Roles, project.Roles, out.src)
 	out.Tools = mergeTools(global.Tools, project.Tools, out.src)
 	out.MCPServers = mergeMCPServers(global.MCPServers, project.MCPServers, out.src)
@@ -916,6 +1004,12 @@ func MergeSettings(global, project Settings) Settings {
 	out.Graph = mergeGraph(global.Graph, project.Graph, out.src)
 	for k, v := range project.extra {
 		out.extra[k] = v
+	}
+	for k, v := range project.overflowExtra {
+		if out.overflowExtra == nil {
+			out.overflowExtra = map[string]json.RawMessage{}
+		}
+		out.overflowExtra[k] = v
 	}
 	mergeNestedRaw(project.roleExtra, out.roleExtra)
 	mergeNestedRaw(project.toolExtra, out.toolExtra)

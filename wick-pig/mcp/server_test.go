@@ -74,9 +74,9 @@ func TestToolsListMarksExactlyReadFindGrepGitCheckReadOnly(t *testing.T) {
 			marked[name] = true
 		}
 	}
-	want := map[string]bool{"read": true, "find": true, "grep": true, "websearch": true, "git": true, "check": true}
+	want := map[string]bool{"read": true, "find": true, "grep": true, "websearch": true, "git": true, "check": true, "ctx_search": true}
 	if len(marked) != len(want) {
-		t.Fatalf("readOnlyHint on %v, want exactly read, find, grep, websearch, git and check", marked)
+		t.Fatalf("readOnlyHint on %v, want exactly read, find, grep, websearch, git, check and ctx_search", marked)
 	}
 	for name := range want {
 		if !marked[name] {

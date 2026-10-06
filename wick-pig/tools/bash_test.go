@@ -29,10 +29,13 @@ func TestBashTimeoutKillsChildren(t *testing.T) {
 	}
 }
 
-func TestSanitizeStripsAndTruncates(t *testing.T) {
-	got := sanitize("\x1b[31mred\x1b[0m\r\n\n\n\n\nx" + strings.Repeat("y", maxOutputBytes))
-	if strings.Contains(got, "\x1b") || strings.Contains(got, "\r") || !strings.Contains(got, "truncated") {
+func TestSanitizeStripsWithoutTruncating(t *testing.T) {
+	got := sanitize("\x1b[31mred\x1b[0m\r\n\n\n\n\nx" + strings.Repeat("y", 40000))
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\r") || strings.Contains(got, "truncated") {
 		t.Fatalf("got %q...", got[:40])
+	}
+	if len(got) < 40000 {
+		t.Fatalf("sanitize truncated %d bytes; oversize output goes to the overflow store in Execute", len(got))
 	}
 }
 
@@ -50,5 +53,22 @@ func TestRTKRewriteWrapsAKnownCommand(t *testing.T) {
 	}
 	if got := RTKRewrite(t.Context(), "git status"); got != "rtk git status" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Seam: bash uses the overflow store above the threshold instead of
+// truncating: a handle comes back and the full output is pageable.
+func TestBashLargeOutputStoredWithHandle(t *testing.T) {
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	t.Setenv("WICK_OVERFLOW_THRESHOLD_BYTES", "100")
+	out, err := run(t, bashTool{}, t.TempDir(), map[string]any{"command": "seq 1 50"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ctx:") || !strings.Contains(out, "lines") {
+		t.Fatalf("large bash output not stored:\n%s", out)
+	}
+	if strings.Contains(out, "\n25\n") {
+		t.Fatalf("stored summary must not carry the full middle:\n%s", out)
 	}
 }

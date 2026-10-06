@@ -1,7 +1,7 @@
 ---
 name: reviewer-standards
 description: "Review a worker's worktree for correctness and the repo's standards, and submit pass or changes."
-tools: [read, find, websearch]
+tools: [read, find, websearch, ctx_search]
 checkout: parent
 blocking: true
 persistent: true
