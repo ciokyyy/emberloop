@@ -4,13 +4,13 @@
 
 **Blocked by:** 03, 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Output under the threshold is byte-identical to before; over it, a handle and summary are returned
-- [ ] Chunking keeps fenced code blocks whole; line ranges are correct
-- [ ] BM25 ranks an exact-term chunk first; porter stemming matches `caching` and `cached`
-- [ ] `ctx_search` takes several queries, scopes to a handle, and says plainly when nothing matches
-- [ ] `read` of `ctx:<id>:<range>` pages stored output
-- [ ] `bash` and URL `read` use the store above the threshold; ticket 04's file-save path is removed
-- [ ] Purge after 24 hours on open and by `prune`; the threshold setting is honoured
-- [ ] Tests cover the above; repo check passes
+- [x] Output under the threshold is byte-identical to before; over it, a handle and summary are returned
+- [x] Chunking keeps fenced code blocks whole; line ranges are correct
+- [x] BM25 ranks an exact-term chunk first; porter stemming matches `caching` and `cached`
+- [x] `ctx_search` takes several queries, scopes to a handle, and says plainly when nothing matches
+- [x] `read` of `ctx:<id>:<range>` pages stored output
+- [x] `bash` and URL `read` use the store above the threshold; ticket 04's file-save path is removed
+- [x] Purge after 24 hours on open and by `prune`; the threshold setting is honoured
+- [x] Tests cover the above; repo check passes
