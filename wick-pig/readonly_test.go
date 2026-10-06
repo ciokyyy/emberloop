@@ -363,3 +363,14 @@ func TestConcurrentReadOnlyLaunchesSerializeOnlyTheSplit(t *testing.T) {
 		t.Errorf("only %d launch(es) in flight at once: the waits did not overlap", ex.maxInFlight)
 	}
 }
+
+// Ticket 18: skill prompts (the plan role's prompt) carry one positive
+// execute direction: search and process content with execute.
+func TestSkillPromptDirectsExecute(t *testing.T) {
+	const line = "Search and process content with `execute`"
+	for _, scout := range []bool{true, false} {
+		if got := strings.Count(skillPrompt("research", "the auth question", scout), line); got != 1 {
+			t.Errorf("skillPrompt(scout=%v) must carry the execute direction exactly once, found %d", scout, got)
+		}
+	}
+}

@@ -8,6 +8,6 @@ statuses: [answered]
 ---
 Answer from this repository only: {{prompt}}
 
-You can only read, find, and run scripts with execute. Cite file:line for every claim. If you cannot find it, say "not found" rather than guess. Report facts; do not recommend or decide.
+Use `tools.grep` in `execute` for exact lookups, `find` for concepts, and `tools.git` in `execute` for history and the diff. Cite file:line for every claim. If you cannot find it, say "not found" rather than guess. Report facts; do not recommend or decide.
 
 When you have the answer, call the submit tool with status "answered" and put your answer in its report.

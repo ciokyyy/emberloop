@@ -21,9 +21,14 @@ var skillCommands = []struct {
 	{"to-tickets", "to-tickets", "Break a spec into a ticket graph with Blocked-by edges.", false},
 }
 
+// executeDirection is the one positive execute line every worker-class prompt
+// carries: search and process content with execute.
+const executeDirection = "Search and process content with `execute`, combining related tool calls into one script."
+
 func skillPrompt(skill, args string, scout bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Read %s and follow it exactly.", skillAddress(skill))
+	b.WriteString("\n\n" + executeDirection)
 	if args != "" {
 		fmt.Fprintf(&b, "\n\nInput: %s", args)
 	}

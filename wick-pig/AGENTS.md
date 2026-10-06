@@ -38,7 +38,10 @@ owns its `_test.go` and the behaviour below):
   usage and overflow rows as well as files)
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
-  (one role resolution over settings for the main list and execute),
+  (one role resolution over settings for the main list and execute; the served
+  `read` refuses an oversized file with `bash` for roles that serve it and
+  `tools.grep` in `execute` or offset/limit otherwise), `readhint.go` (that
+  refusal wrapper),
   `execute.go` (the per-role execute binding: the role's resolved toolset in
   the stub, the tools-behind-execute description, sandboxed for read-only roles),
   `mcpclients.go` (the MCP server snapshot behind the same resolution),

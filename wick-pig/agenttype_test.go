@@ -284,3 +284,40 @@ func TestReviewerTypesEnforceDox(t *testing.T) {
 		}
 	}
 }
+
+// Ticket 18: reviewer and scout types direct the read-only toolkit in one
+// positive line each: tools.grep for exact lookups, find for concepts,
+// tools.git for history and the diff, and tools.check (reviewers) to verify a
+// worker's claim.
+func TestReviewerAndScoutBodiesDirectToolkit(t *testing.T) {
+	types, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{reviewerStandards, reviewerSpec} {
+		body := types[name].Body
+		for _, want := range []string{"tools.grep", "find", "tools.git", "tools.check"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s body must direct %s, got:\n%s", name, want, body)
+			}
+		}
+		if got := strings.Count(body, "tools.grep"); got != 1 {
+			t.Errorf("%s body must carry the toolkit direction exactly once, found %d:\n%s", name, got, body)
+		}
+		if strings.Contains(body, "You can only read") {
+			t.Errorf("%s body must not prohibit, got:\n%s", name, body)
+		}
+	}
+	scout := types["scout"].Body
+	for _, want := range []string{"tools.grep", "find", "tools.git"} {
+		if !strings.Contains(scout, want) {
+			t.Errorf("scout body must direct %s, got:\n%s", want, scout)
+		}
+	}
+	if strings.Contains(scout, "tools.check") {
+		t.Errorf("scout has no check, so its body must not direct it:\n%s", scout)
+	}
+	if strings.Contains(scout, "You can only read") {
+		t.Errorf("scout body must not prohibit, got:\n%s", scout)
+	}
+}

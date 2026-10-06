@@ -92,6 +92,9 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 		taken[final] = true
 		*where = append(*where, t)
 	}
+	// Ticket 18: the served read refusal names what the caller can use, so
+	// whether the role serves bash is decided once, before the buckets split.
+	hasBash := roleServesBash(role, base, s)
 	wantExecute := false
 	for _, t := range base {
 		// execute is bound after the buckets resolve, carrying this role's
@@ -116,6 +119,11 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 		if rename != "" {
 			final = rename
 			t = tools.Renamed(t, final)
+		}
+		// The refusal of an oversized file names bash for a role that serves it
+		// and tools.grep in execute or read with offset and limit otherwise.
+		if name == "read" {
+			t = readHintTool{inner: t, hasBash: hasBash}
 		}
 		if !enabled {
 			continue

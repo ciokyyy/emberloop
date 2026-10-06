@@ -162,6 +162,7 @@ func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 	for i, s := range workerSkills {
 		fmt.Fprintf(&b, "%d. %s — %s\n", i+1, skillAddress(s.name), s.when)
 	}
+	b.WriteString("\n" + executeDirection + "\n")
 	b.WriteString("\nWhere a skill says /code-review, spawn both of your reviewer types in one spawn call: " +
 		"spawn(agents=[{type: \"reviewer-standards\"}, {type: \"reviewer-spec\"}]). They review this worktree and report pass or changes. " +
 		"The spawn tool is in your tool list: in pig its name is mcp__wick__spawn. Call it directly; do not decide it is missing, and never start reviewers through bash or a second wick-mcp.\n")
