@@ -437,3 +437,48 @@ func TestExecuteStubReservedNames(t *testing.T) {
 		t.Fatalf("the stub must point reserved names at tools.call:\n%s", stub)
 	}
 }
+
+// Seam: a leftover child that inherited the socket does not hang the call:
+// the bridge closes its conns once the script exits.
+func TestExecuteLeftoverChildDoesNotHangTheCall(t *testing.T) {
+	requirePython(t)
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "read-ok"}}, "test execute", false)
+	code := "import os, subprocess\n" +
+		"import tools\n" +
+		"print(tools.read(path=\"x\"))\n" +
+		"os.set_inheritable(tools._sock.fileno(), True)\n" +
+		"subprocess.Popen([\"sleep\", \"30\"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=False)\n" +
+		"print(\"exited\")\n"
+	start := time.Now()
+	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(mustExecuteArgs(t, code)))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Fatalf("the call took %v; a leftover child held the bridge open", elapsed)
+	}
+	if !strings.Contains(out, "read-ok") || !strings.Contains(out, "exited") {
+		t.Fatalf("the script must run to completion: %q", out)
+	}
+}
+
+// Seam: a bridge request over the frame cap fails with the cause, not a bare
+// EOF on the script's side.
+func TestExecuteOversizeRequestFailsClearly(t *testing.T) {
+	requirePython(t)
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "x"}}, "test execute", false)
+	code := "import tools\ntry:\n    tools.read(path=\"" + strings.Repeat("x", 9<<20) + "\")\nexcept tools.ToolError as e:\n    print(\"refused:\", e)\n"
+	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(mustExecuteArgs(t, code)))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out, "refused:") || !strings.Contains(out, "at most") {
+		head := out
+		if len(head) > 300 {
+			head = head[:300]
+		}
+		t.Fatalf("an oversize request must fail naming the cap: len=%d head=%q", len(out), head)
+	}
+}

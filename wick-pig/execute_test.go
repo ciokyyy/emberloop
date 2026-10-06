@@ -206,3 +206,114 @@ func TestReviewExecuteIsSandboxed(t *testing.T) {
 		t.Errorf("the script's own write must not land: %v", err)
 	}
 }
+
+// Seam: sandboxing follows the agent type's checkout, not its name — a
+// custom read-only type is sandboxed, a writing one is not.
+func TestAgentTypeSandboxedByCheckout(t *testing.T) {
+	types := map[string]AgentType{
+		"auditor": {Name: "auditor", Checkout: "none", Tools: []string{"read", "execute"}},
+		"sneaky":  {Name: "sneaky", Checkout: "parent", Tools: []string{"read", "edit", "execute"}},
+		"helper":  {Name: "helper", Checkout: "parent", Tools: []string{"read", "find", "execute"}},
+		"builder": {Name: "builder", Checkout: "worktree", Tools: []string{"read", "execute"}},
+	}
+	for typ, want := range map[string]bool{"auditor": true, "sneaky": false, "helper": true, "builder": false, "missing": false} {
+		if got := agentTypeSandboxed(types, typ); got != want {
+			t.Errorf("agentTypeSandboxed(%q) = %v, want %v", typ, got, want)
+		}
+	}
+	builtins, err := LoadAgentTypes(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for typ, want := range map[string]bool{"scout": true, "reviewer-standards": true, "reviewer-spec": true, "worker": false} {
+		if got := agentTypeSandboxed(builtins, typ); got != want {
+			t.Errorf("agentTypeSandboxed(%q) = %v, want %v", typ, got, want)
+		}
+	}
+}
+
+// Seam: a spawned scout's execute is sandboxed through the agent role: grep
+// and git live only inside it, and the script cannot write.
+func TestScoutAgentExecuteIsSandboxed(t *testing.T) {
+	hermeticSettings(t)
+	t.Setenv("WICK_AGENT_TYPE", "scout")
+	t.Setenv("WICK_AGENT_ID", "s1")
+	if _, err := tools.ResolveBinary("python3"); err != nil {
+		t.Skipf("python3 not installed, skipping execute test: %v", err)
+	}
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	root := t.TempDir()
+	if err := tools.EnsureHealthy(root); err != nil {
+		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
+	}
+	main, execute, err := ResolvedTools("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"grep", "git"} {
+		if containsName(toolNames(main), want) {
+			t.Fatalf("a scout must not serve %q in main: %v", want, toolNames(main))
+		}
+		if !containsName(toolNames(execute), want) {
+			t.Fatalf("a scout must offer %q behind execute: %v", want, toolNames(execute))
+		}
+	}
+	ex := executeToolByName(t, main, "execute")
+	out, err := ex.Execute(context.Background(), root, json.RawMessage(`{"code":"import tools\n`+
+		`print(tools.search(\"grep\"))\n`+
+		`open(\"escape.txt\", \"w\").write(\"no\")\n"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out, "grep(") {
+		t.Errorf("a scout script must see grep: %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "escape.txt")); !os.IsNotExist(err) {
+		t.Errorf("a scout script must not write files: %v", err)
+	}
+}
+
+// mcpListedFake is one tool a configured MCP server lists, carrying its
+// server-side name the way the registry's tools do.
+type mcpListedFake struct {
+	name, original string
+}
+
+func (f mcpListedFake) Name() string        { return f.name }
+func (f mcpListedFake) Description() string { return "fake MCP " + f.name }
+func (f mcpListedFake) Schema() map[string]any {
+	return map[string]any{"type": "object"}
+}
+func (f mcpListedFake) Execute(context.Context, string, json.RawMessage) (string, error) {
+	return "mcp " + f.name, nil
+}
+func (f mcpListedFake) OriginalName() string { return f.original }
+
+// Seam: ticket 16 is native tools only — a configured MCP tool resolves
+// behind execute but stays out of the stub until ticket 17.
+func TestExecuteExcludesMCPToolsUntilTicket17(t *testing.T) {
+	hermeticSettings(t)
+	t.Setenv("WICK_STATE_DIR", t.TempDir())
+	requireExecutePython(t)
+	listed := map[string][]tools.Tool{"gh": {mcpListedFake{name: "gh_search", original: "search_repositories"}}}
+	main, execute, err := ResolvedToolsWithMCP("work", listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsName(toolNames(execute), "gh_search") {
+		t.Fatalf("the MCP tool must still resolve behind execute: %v", toolNames(execute))
+	}
+	ex := executeToolByName(t, main, "execute")
+	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(`{"code":"import tools\n`+
+		`print(tools.search(\"gh\"))\n`+
+		`try:\n    print(tools.call(\"gh_search\"))\nexcept tools.ToolError as e:\n    print(\"refused:\", e)\n"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(out, "gh_search(") {
+		t.Errorf("the stub must not list MCP tools yet: %q", out)
+	}
+	if !strings.Contains(out, "refused:") {
+		t.Errorf("an MCP tool must raise ToolError until ticket 17: %q", out)
+	}
+}

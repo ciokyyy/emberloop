@@ -2,36 +2,85 @@ package wick
 
 import (
 	"os"
-	"strings"
 
 	"example.com/wick/tools"
 )
 
 // executeSandboxed reports whether a role's execute Python runs under the
 // bubblewrap sandbox: the read-only roles review and scout, and spawned
-// agents of the reviewer and scout types. Every other role already holds bash
-// or a worktree, so its script runs directly. implement never reaches execute
-// at all.
+// agents whose type is read-only (a `none` checkout, or a `parent` checkout
+// with no writing tools, judged against the same read-only set that gates
+// `none` types). A custom repo type that can write runs directly, the way a
+// worker does: sandboxing it would break the writes its contract allows.
+// Every other role already holds bash or a worktree, so its script runs
+// directly. implement never reaches execute at all.
 func executeSandboxed(role string) bool {
 	switch role {
 	case "review", "scout":
 		return true
 	case "agent":
 		typ := os.Getenv("WICK_AGENT_TYPE")
-		return typ == "scout" || strings.HasPrefix(typ, "reviewer-")
+		if typ == "" {
+			return false
+		}
+		return agentTypeSandboxed(mustLoadAgentTypes(cwd()), typ)
+	}
+	return false
+}
+
+// agentTypeSandboxed is executeSandboxed for one spawned type: `none`
+// checkouts sandbox, and `parent` checkouts sandbox while every tool they
+// name is read-only by its own marker (`execute` itself is the boundary, so
+// it counts). A type that can write runs directly, the way a worker does:
+// sandboxing it would break the writes its contract allows. An unknown type
+// is not sandboxed, but it also serves no execute: agentTools refuses it
+// before resolution.
+func agentTypeSandboxed(types map[string]AgentType, typ string) bool {
+	t, ok := types[typ]
+	if !ok {
+		return false
+	}
+	if t.Checkout == "none" {
+		return true
+	}
+	if t.Checkout == "parent" {
+		for _, name := range t.Tools {
+			if name == "execute" {
+				continue
+			}
+			resolved := tools.Named(name)
+			if len(resolved) != 1 {
+				return false
+			}
+			ro, ok := resolved[0].(tools.ReadOnly)
+			if !ok || !ro.ReadOnly() {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isMCPTool reports whether t came from a configured MCP server: only those
+// tools implement OriginalName (their server-side name, before any rename).
+// Native renames stay plain Renamed wrappers.
+func isMCPTool(t tools.Tool) bool {
+	if o, ok := t.(interface{ OriginalName() string }); ok {
+		return o.OriginalName() != ""
 	}
 	return false
 }
 
 // boundExecuteTool builds one role's execute tool over its resolved buckets:
-// the script may call exactly the role's resolved toolset minus execute
-// itself and the orchestration tools (NewExecute excludes those), and the
-// description lists the execute bucket by name. Disabled settings serve
-// nothing; a rename serves under the new name; any other placement warns and
-// stays in main, since execute behind execute would be unreachable. taken
-// tracks claimed names so a colliding rename keeps the first, like the rest
-// of the resolution. Ticket 17 adds the resolved MCP tools to the same stub;
-// native tools only here.
+// the script may call exactly the role's resolved native toolset minus
+// execute itself and the orchestration tools (NewExecute excludes those), and
+// the description lists the execute bucket by name. MCP tools stay out until
+// ticket 17 adds them to the stub and the description. Disabled settings
+// serve nothing; a rename serves under the new name; any other placement
+// warns and stays in main, since execute behind execute would be unreachable.
+// taken tracks claimed names so a colliding rename keeps the first, like the
+// rest of the resolution.
 func boundExecuteTool(role string, s tools.Settings, main, execute []tools.Tool, taken map[string]bool, warn func(string)) []tools.Tool {
 	enabled, placement, rename := true, tools.PlacementMain, ""
 	if e, ok := s.Tools["execute"]; ok {
@@ -52,10 +101,17 @@ func boundExecuteTool(role string, s tools.Settings, main, execute []tools.Tool,
 		return nil
 	}
 	taken[final] = true
-	allowed := append(append([]tools.Tool{}, main...), execute...)
+	var allowed []tools.Tool
+	for _, t := range append(append([]tools.Tool{}, main...), execute...) {
+		if !isMCPTool(t) {
+			allowed = append(allowed, t)
+		}
+	}
 	var names []string
 	for _, t := range execute {
-		names = append(names, t.Name())
+		if !isMCPTool(t) {
+			names = append(names, t.Name())
+		}
 	}
 	bound := tools.NewExecute(allowed, tools.ExecuteDescription(names), executeSandboxed(role))
 	if final != "execute" {

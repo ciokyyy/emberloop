@@ -36,8 +36,8 @@ owns its `_test.go` and the behaviour below):
   `.wick/agents` overrides), `transcript.go`, `usage.go` (tailer parsing;
   rows land in `statedb/`), `memory.go`, `archive.go`, `prune.go` (deletes
   usage and overflow rows as well as files)
-- Policy: `roles.go` (no role refuses to start; `work`, `plan`, `review` and
-  `scout` serve `execute`, `implement` does not), `toolresolve.go` (one role
+- Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
+  `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
   resolution over settings for the main list and execute), `execute.go` (the
   per-role execute binding: the role's resolved toolset in the stub, the
   tools-behind-execute description, sandboxed for read-only roles),
