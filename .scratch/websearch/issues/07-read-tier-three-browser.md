@@ -4,8 +4,8 @@
 
 **Blocked by:** 04, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Challenged or JS-only pages are read through the browser
-- [ ] Safety rules (address blocking, size and time caps) apply to the browser path too
-- [ ] Missing install returns the clear error; repo check passes
+- [x] Challenged or JS-only pages are read through the browser
+- [x] Safety rules (address blocking, size and time caps) apply to the browser path too
+- [x] Missing install returns the clear error; repo check passes
