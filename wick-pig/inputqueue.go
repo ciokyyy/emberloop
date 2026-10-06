@@ -137,6 +137,7 @@ func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
 				if errors.Is(err, net.ErrClosed) {
 					return
 				}
+				time.Sleep(50 * time.Millisecond)
 				continue
 			}
 			go serveOne(conn, q)

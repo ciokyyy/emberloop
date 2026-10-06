@@ -78,12 +78,12 @@ owns its `_test.go` and the behaviour below):
   dir, never a per-run CLAUDE_CONFIG_DIR (a fresh one has no login or
   onboarding state) and never the user's saved settings),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
-  builder reading the queued compress mark, the compressing state and the
-  queue pending count),
+  builder reading the queued compress mark and compressing state),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
   pane palette set at start and reset at exit, on signals and across
-  restarts, exit restore, the wrapper queue and pump, sole child-PTY
-  writer, the child's own stderr pipe beside the PTY; the
+  restarts, exit restore, the wrapper queue and pump, sets snapshot pending
+  count from the in-process queue, sole child-PTY writer, the child's own stderr
+  pipe beside the PTY; the
   borderless soft top edge, with the strip-rule setting restoring the drawn
   line), `header_source.go` (strip source from launch env,
   `wrap`/`exec`/top-level wiring, every wrapped launch serves the control

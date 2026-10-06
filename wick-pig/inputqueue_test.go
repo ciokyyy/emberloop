@@ -413,6 +413,7 @@ func TestWrapCtrlEndToEnd(t *testing.T) {
 	var stdout bytes.Buffer
 	cfg := wrapTestConfig(child, &stdout)
 	cfg.ServeCtrl = true
+	cfg.Poll = 5 * time.Millisecond
 	cfg.Source.TranscriptPath = transcript
 	wrapped := make(chan error, 1)
 	go func() { wrapped <- WrapChild(cfg) }()
@@ -424,17 +425,14 @@ func TestWrapCtrlEndToEnd(t *testing.T) {
 	wantBytes := "typed\nsteer it\r"
 	childGot := func() bool { return child.fakeChild.forwardedString() == wantBytes }
 	waitForCond(t, "child bytes", childGot)
-	snap, err := BuildHeaderSnapshot(cfg.Source, cfg.Settings)
-	if err != nil {
+	if _, err := BuildHeaderSnapshot(cfg.Source, cfg.Settings); err != nil {
 		t.Fatalf("BuildHeaderSnapshot: %v", err)
 	}
 	if got := ctrlPending("w1"); got != 1 {
 		t.Fatalf("pending through socket = %d, want 1", got)
 	}
-	snap.Pending = ctrlPending(cfg.Source.AgentID)
-	if plain := stripANSI(renderTrue(snap, 100)); !strings.Contains(plain, "1 pending") {
-		t.Errorf("strip misses the pending count:\n%s", plain)
-	}
+	stdoutHasPending := func() bool { return strings.Contains(stripANSI(stdout.String()), "1 pending") }
+	waitForCond(t, "wrapper strip output shows 1 pending", stdoutHasPending)
 	close(child.release)
 	select {
 	case err := <-wrapped:
