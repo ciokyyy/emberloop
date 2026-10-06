@@ -3,6 +3,7 @@
 //	wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>]  read and save settings
 //	wick-pig settings models [--refresh] [--harness h]    list a harness's models
 //	wick-pig settings role <slot> harness|model|effort <value>   set a launch slot
+//	wick-pig settings tool <name> ... | mcp-server <name> ...    tune tools and MCP servers
 //	wick-pig stop-gate                                         claude Stop hook gate
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
 //	wick-pig exec <launch-file>                                run a launch file the pane typed

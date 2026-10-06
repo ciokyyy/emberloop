@@ -50,43 +50,15 @@ func MissingRoleError() error {
 	return fmt.Errorf("no role set; set WICK_ROLE or --role to one of: %s", strings.Join(RoleNames(), ", "))
 }
 
-// RoleTools returns the tools a role serves, in the role's order. The role
-// "agent" is a spawned agent: its tool set comes from the agent type in the
-// environment, not from the role table. An empty or unknown role is an error
-// naming every valid role.
+// RoleTools returns the tools a role serves in its main list, in the role's
+// order, after settings narrow, rename and place them. It is the main list of
+// ResolvedTools: the MCP server serves exactly this. The role "agent" is a
+// spawned agent: its tool set comes from the agent type in the environment,
+// not from the role table. An empty or unknown role is an error naming every
+// valid role.
 func RoleTools(role string) ([]tools.Tool, error) {
-	if role == "agent" {
-		return agentTools()
-	}
-	names, ok := roles[role]
-	if !ok {
-		if role == "" {
-			return nil, MissingRoleError()
-		}
-		return nil, fmt.Errorf("unknown role %q; choose one of: %s", role, strings.Join(RoleNames(), ", "))
-	}
-	types, err := LoadAgentTypes(cwd())
-	if err != nil {
-		return nil, err
-	}
-	all := append(tools.All(), orchestrationTools(types, spawnableNames(role, types))...)
-	if names == nil {
-		return all, nil
-	}
-	byName := map[string]tools.Tool{}
-	for _, t := range all {
-		byName[t.Name()] = t
-	}
-	out := make([]tools.Tool, 0, len(names))
-	for _, n := range names {
-		if t, ok := byName[n]; ok {
-			if role == "implement" && (n == "edit" || n == "write") {
-				t = tools.Guard(t, tools.ProjectWritePaths)
-			}
-			out = append(out, t)
-		}
-	}
-	return out, nil
+	main, _, err := ResolvedTools(role)
+	return main, err
 }
 
 // RoleFromEnv is the role a launcher chose for this process. wick-pig and

@@ -132,6 +132,7 @@ func TestSessionSnapshotSharesBlobsAcrossSessions(t *testing.T) {
 
 func mustRoleTools(t *testing.T, role string) []tools.Tool {
 	t.Helper()
+	hermeticSettings(t)
 	served, err := RoleTools(role)
 	if err != nil {
 		t.Fatalf("RoleTools(%q): %v", role, err)
