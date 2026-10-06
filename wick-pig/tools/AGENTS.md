@@ -8,7 +8,10 @@ Files: `tool.go` (the `Tool` interface: name,
 schema, execute over a workspace root), `all.go` (the `All()` registry),
 `files.go` (read, edit, write; `read` also pages stored output via `ctx:`
 handles), `readurl.go` (the tiered URL reader `read`
-serves: native fetch, then Jina, then an uninstalled browser tier; oversize
+serves: native fetch, then Jina, then the tier-3 browser
+(`chrome-headless-shell` first, full Chrome/Chromium fallback, per-request
+`--dump-dom` via `WICK_CHROME_BIN` or the shared resolver; rendered HTML
+re-enters the tier-1 shaping; oversize
 bodies go to the overflow store, not a file, while an explicitly narrowed
 view that fits still answers inline),
 `bash.go` (oversize output goes to the overflow store, not truncation),

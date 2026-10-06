@@ -29,7 +29,7 @@ func (readTool) ReadOnly() bool { return true }
 func (readTool) Description() string {
 	return "Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it. " +
 		"Any absolute path works, except credential files. A directory returns a listing, a glob (*.md) the matching paths. wick:// files are plain text: they cannot be edited. " +
-		"Also reads http(s):// and www. links through a tiered reader (native fetch, then Jina, then an uninstalled browser): HTML becomes Markdown, JSON is pretty-printed, " +
+		"Also reads http(s):// and www. links through a tiered reader (native fetch, then Jina, then a headless browser): HTML becomes Markdown, JSON is pretty-printed, " +
 		"text and Markdown pass through; append :N, :N-M, :N+M, comma lists or :raw for line selectors or the unshaped body."
 }
 func (readTool) Schema() map[string]any {
@@ -62,7 +62,7 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 		return readWick(p.Path, p.Offset, p.Limit)
 	}
 	// URLs read through the tiered reader (native, then Jina, then the
-	// uninstalled browser tier). Selectors (:N, :raw) trail the URL.
+	// browser tier). Selectors (:N, :raw) trail the URL.
 	if isURLTarget(p.Path) {
 		return readURL(root, p.Path, p.Offset, p.Limit)
 	}
