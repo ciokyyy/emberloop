@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 
 	"example.com/wick/statedb"
 	"example.com/wick/tools"
@@ -238,6 +239,10 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 	}
 	if cost, ok := agentCost(src.StateDir, src.AgentID); ok {
 		snap.Cost, snap.HasCost = cost, true
+	}
+	snap.Now = time.Now()
+	if src.Harness == "claude" {
+		snap.Usage = ReadClaudeUsage(src.StateDir, snap.Now)
 	}
 	if s.EffectiveCompressModel(src.Harness) == "" {
 		snap.Warning = "no compressModel"

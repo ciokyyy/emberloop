@@ -13,6 +13,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -62,7 +63,9 @@ type HeaderSnapshot struct {
 	TopTools      []ToolSize
 	CompressCount int
 	State         HeaderState
-	Warning       string // non-empty replaces the state pill, e.g. no compressModel
+	Warning       string      // non-empty replaces the state pill, e.g. no compressModel
+	Usage         ClaudeUsage // claude account windows; Has false hides them
+	Now           time.Time   // the clock the reset countdowns read
 }
 
 // HeaderOpts tunes the render: Rows caps the strip height (0 means the
@@ -263,6 +266,7 @@ type cell struct {
 	text string
 	hex  string
 	bold bool
+	raw  bool // text is already styled
 }
 
 // wideSegs is the mockup's row 1 without the bar: chip, ctx label, percent,
@@ -331,6 +335,11 @@ func (h *headerCtx) secondRow(width int) string {
 	pill := h.pill()
 	cells := []cell{{text: "top", hex: h.dim}}
 	plain := lipgloss.Width("top") + lipgloss.Width(pill.text) + 3
+	var lead []cell
+	if u := h.usageCell(); u.text != "" && lipgloss.Width(u.text)+lipgloss.Width(pill.text)+4 <= width {
+		lead = []cell{u}
+		plain += lipgloss.Width(u.text) + 2
+	}
 	for _, ts := range h.snap.TopTools {
 		name := truncateName(ts.Name, 20)
 		size := HumanizeTokens(ts.Bytes)
@@ -341,9 +350,9 @@ func (h *headerCtx) secondRow(width int) string {
 		cells = append(cells, cell{text: name, hex: h.tool}, cell{text: size, hex: h.text})
 	}
 	if len(cells) == 1 {
-		return h.row(width, []cell{pill})
+		return h.row(width, append(lead, pill))
 	}
-	return h.row(width, append(cells, pill))
+	return h.row(width, append(append(lead, cells...), pill))
 }
 
 // narrowRow is the narrow tier: percent and cost beside the state, with the
@@ -414,6 +423,9 @@ func (h *headerCtx) fill(blank string) string {
 }
 
 func (h *headerCtx) style(c cell) string {
+	if c.raw {
+		return c.text
+	}
 	s := h.r.NewStyle().Foreground(lipgloss.Color(c.hex)).Background(lipgloss.Color(h.bg))
 	if c.bold {
 		s = s.Bold(true)
@@ -529,3 +541,42 @@ func hexParts(h string) (int, int, int) {
 func lerp(a, b, t float64) float64 { return a + (b-a)*t }
 
 func roundFloat(f float64) int { return int(f + 0.5) }
+
+// usageCell is the claude account usage, both windows in one cell:
+// `5h ◔ 37% ↻1h40m   7d ◔ 14% ↻4d2h`. The pie fills with the percent and
+// both take the threshold color of the context percent; the reset countdown
+// stays dim. Empty when claude has reported nothing.
+func (h *headerCtx) usageCell() cell {
+	u := h.snap.Usage
+	if !u.Has {
+		return cell{}
+	}
+	now := h.snap.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	part := func(label string, w UsageWindow) string {
+		hex := h.calm
+		switch ThresholdClass(int64(w.Pct)) {
+		case "warm":
+			hex = h.warm
+		case "hot":
+			hex = h.hot
+		}
+		out := h.style(cell{text: label, hex: h.dim}) + h.fill(" ") +
+			h.style(cell{text: usagePie(w.Pct), hex: hex}) + h.fill(" ") +
+			h.style(cell{text: fmt.Sprintf("%d%%", w.Pct), hex: hex, bold: true})
+		if r := usageResetIn(w.ResetsAt, now); r != "" {
+			out += h.fill(" ") + h.style(cell{text: "↻" + r, hex: h.dim})
+		}
+		return out
+	}
+	var parts []string
+	if u.FiveHour.ResetsAt > 0 {
+		parts = append(parts, part("5h", u.FiveHour))
+	}
+	if u.SevenDay.ResetsAt > 0 {
+		parts = append(parts, part("7d", u.SevenDay))
+	}
+	return cell{text: strings.Join(parts, h.fill("   ")), raw: true}
+}

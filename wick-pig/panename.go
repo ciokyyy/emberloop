@@ -72,3 +72,18 @@ func defaultWorkerType(t string) string {
 	}
 	return t
 }
+
+// TopLevelChipName is the strip chip of a top-level session. A typed agent
+// keeps its type's name. An untyped session is the orchestrator only when it
+// runs the implement role, which is how the orchestrator launches; any other
+// role (a bare `wick-pig claude` plans, `--role full` has every tool) shows
+// its own role name, so the chip never claims a job the session does not do.
+func TopLevelChipName(agentType, role string) string {
+	if agentType != "" {
+		return PaneNameForType(agentType)
+	}
+	if role == "" || role == "implement" {
+		return OrchestratorPaneName
+	}
+	return role
+}

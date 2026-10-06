@@ -320,7 +320,7 @@ func (claudeHarness) LastReply(path string) (string, bool) {
 // reminder to every user message, as the caveman plugin does, and turns off
 // the away recap (awaySummaryEnabled; the env var does the same), hides spinner tips and skips the bypass-mode prompt. It is passed
 // inline with --settings, which still applies under --setting-sources "".
-const claudeStopGate = `{"awaySummaryEnabled":false,"spinnerTipsEnabled":false,"skipDangerousModePermissionPrompt":true,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
+const claudeStopGate = `{"awaySummaryEnabled":false,"spinnerTipsEnabled":false,"statusLine":{"type":"command","command":"wick-pig claude-status"},"skipDangerousModePermissionPrompt":true,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
 	`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"wick-pig voice-reminder hook"}]}]}}`
 
 type claudeHarness struct{}
