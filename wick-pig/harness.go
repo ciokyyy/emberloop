@@ -318,9 +318,9 @@ func (claudeHarness) LastReply(path string) (string, bool) {
 // runs wick's shared gate, so a claude agent cannot end a turn without
 // submitting, and a `UserPromptSubmit` hook that adds the register's per-turn
 // reminder to every user message, as the caveman plugin does, and turns off
-// the away recap (awaySummaryEnabled; the env var does the same). It is passed
+// the away recap (awaySummaryEnabled; the env var does the same), hides spinner tips and skips the bypass-mode prompt. It is passed
 // inline with --settings, which still applies under --setting-sources "".
-const claudeStopGate = `{"awaySummaryEnabled":false,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
+const claudeStopGate = `{"awaySummaryEnabled":false,"spinnerTipsEnabled":false,"skipDangerousModePermissionPrompt":true,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
 	`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"wick-pig voice-reminder hook"}]}]}}`
 
 type claudeHarness struct{}
@@ -354,8 +354,10 @@ func (claudeHarness) Command(s Session) (Command, error) {
 		"--strict-mcp-config",
 		"--mcp-config", path, "--system-prompt", systemPrompt,
 		// -p cannot prompt for permission; the served tool set is the policy.
-		"--allowedTools", "mcp__wick",
-		"--disable-slash-commands",
+		// Bypass mode never stops to ask, and replaces the auto mode footer.
+		// Slash commands stay on so /model and /resume work; --tools "" keeps
+		// the Skill tool away from the model.
+		"--allowedTools", "mcp__wick", "--permission-mode", "bypassPermissions",
 	}
 	if s.Headless {
 		args = append(args, "-p", "--no-session-persistence")

@@ -114,7 +114,12 @@ func WrapChild(cfg WrapConfig) error {
 	rows := cfg.Settings.EffectiveStripRows()
 	frame := cfg.Settings.StripFrameEnabled()
 	rule := cfg.Settings.StripRuleEnabled()
-	childW, childH := ChildSize(termW, termH, rows, frame)
+	pad := FitPad(termW, termH, rows, frame, Pad{
+		Left:   cfg.Settings.EffectivePadLeft(),
+		Right:  cfg.Settings.EffectivePadRight(),
+		Bottom: cfg.Settings.EffectivePadBottom(),
+	})
+	childW, childH := ChildSizePad(termW, termH, rows, frame, pad)
 	dark := detectDark(stdout)
 	if cfg.ThemeDark != nil {
 		dark = *cfg.ThemeDark
@@ -133,11 +138,11 @@ func WrapChild(cfg WrapConfig) error {
 		return err
 	}
 	defer child.Close()
-	filter := &wrapFilter{childH: childH, margins: wrapMarginSetup(termW, frame)}
+	filter := &wrapFilter{childH: childH, margins: wrapMarginSetupPad(termW, frame, pad)}
 	w := &wrapper{
 		cfg: cfg, stdin: stdin, stdout: stdout,
 		termW: termW, termH: termH, childW: childW, childH: childH,
-		rows: rows, frame: frame, rule: rule,
+		rows: rows, frame: frame, rule: rule, pad: pad,
 		dark:    dark,
 		profile: detectProfile(stdout),
 		child:   child, snapshot: snapshot, filter: filter,
@@ -237,10 +242,22 @@ func runPlain(cfg WrapConfig, stdin io.Reader, stdout io.Writer) error {
 // constraint) when it is off. A full reset wipes the enable with the
 // margins, so repairs send the whole setup again.
 func wrapMarginSetup(termW int, frame bool) string {
-	if !frame {
+	return wrapMarginSetupPad(termW, frame, Pad{})
+}
+
+// wrapMarginSetupPad is wrapMarginSetup with the padding columns: the child
+// screen starts after the left frame and padding columns and ends before the
+// right ones. Empty when nothing constrains the columns.
+func wrapMarginSetupPad(termW int, frame bool, pad Pad) string {
+	left, right := pad.Left, pad.Right
+	if frame {
+		left++
+		right++
+	}
+	if left == 0 && right == 0 {
 		return ""
 	}
-	return fmt.Sprintf("\x1b[?69h\x1b[2;%ds", termW-1)
+	return fmt.Sprintf("\x1b[?69h\x1b[%d;%ds", left+1, termW-right)
 }
 
 // wrapper holds one wrapped child: its sizes, theme and the last strip it
@@ -256,6 +273,7 @@ type wrapper struct {
 	rows     int
 	frame    bool
 	rule     bool
+	pad      Pad
 	dark     bool
 	profile  termenv.Profile
 	child    wrapPty
@@ -268,12 +286,22 @@ type wrapper struct {
 	closed   bool
 }
 
-// contentW is the strip width: the terminal minus the frame columns.
-func (w *wrapper) contentW() int {
+// sideCols are the columns the strip and the child lose on the left and the
+// right: the frame column (when on) plus the padding.
+func (w *wrapper) sideCols() (left, right int) {
+	left, right = w.pad.Left, w.pad.Right
 	if w.frame {
-		return w.termW - 2
+		left++
+		right++
 	}
-	return w.termW
+	return left, right
+}
+
+// contentW is the strip width: the terminal minus the frame and padding
+// columns.
+func (w *wrapper) contentW() int {
+	l, r := w.sideCols()
+	return w.termW - l - r
 }
 
 // ruleRow is the terminal row of the strip's top rule: the first row past
@@ -296,9 +324,7 @@ func (w *wrapper) init() {
 	// redraws only the cells it changes (claude) would show them through.
 	b.WriteString("\x1b[2J\x1b[H")
 	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
-	if w.frame {
-		b.WriteString(w.filter.marginStr())
-	}
+	b.WriteString(w.filter.marginStr())
 	w.writeLocked(b.String())
 	w.drawFrameLocked()
 	if ok {
@@ -374,10 +400,8 @@ func (w *wrapper) paintLocked(strip string) {
 	w.last = strip
 	var b strings.Builder
 	b.WriteString("\x1b7")
-	col := 1
-	if w.frame {
-		col = 2
-	}
+	col, _ := w.sideCols()
+	col++
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s", w.ruleRow(), col, w.topRule()))
 	for i, line := range strings.Split(strip, "\n") {
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s", w.ruleRow()+1+i, col, line))
@@ -453,7 +477,7 @@ func (w *wrapper) restore() {
 	w.closed = true
 	var b strings.Builder
 	b.WriteString("\x1b[r")
-	if w.frame {
+	if w.filter.marginStr() != "" {
 		b.WriteString("\x1b[?69l")
 	}
 	for r := w.ruleRow(); r <= w.termH; r++ {
@@ -510,14 +534,17 @@ func (w *wrapper) resized(termW, termH int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.termW, w.termH = termW, termH
-	w.childW, w.childH = ChildSize(w.termW, w.termH, w.rows, w.frame)
+	w.pad = FitPad(w.termW, w.termH, w.rows, w.frame, Pad{
+		Left:   w.cfg.Settings.EffectivePadLeft(),
+		Right:  w.cfg.Settings.EffectivePadRight(),
+		Bottom: w.cfg.Settings.EffectivePadBottom(),
+	})
+	w.childW, w.childH = ChildSizePad(w.termW, w.termH, w.rows, w.frame, w.pad)
 	w.child.Resize(w.childW, w.childH)
-	w.filter.setSize(w.childH, wrapMarginSetup(w.termW, w.frame))
+	w.filter.setSize(w.childH, wrapMarginSetupPad(w.termW, w.frame, w.pad))
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
-	if w.frame {
-		b.WriteString(w.filter.marginStr())
-	}
+	b.WriteString(w.filter.marginStr())
 	w.writeLocked(b.String())
 	w.drawFrameLocked()
 	w.last = ""
