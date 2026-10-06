@@ -15,7 +15,7 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|window <model> <n>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
        wick-pig settings search provider|mode <value>
@@ -85,6 +85,14 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 		}
 	case "window":
 		if err := setContextWindow(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "strip-rows":
+		if err := setStripRows(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "strip-frame":
+		if err := setStripFrame(&s, argv[1:]); err != nil {
 			return err
 		}
 	case "role":
@@ -273,6 +281,49 @@ func setContextWindow(s *tools.Settings, argv []string) error {
 		return nil
 	}
 	c.Windows[model] = int64(v)
+	return nil
+}
+
+// setStripRows applies `strip-rows <1|2>` to s: the header strip height.
+// Anything else is an error, so a bad value never lands in the file.
+func setStripRows(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("strip-rows needs 1 or 2\n%s", settingsUsage)
+	}
+	v, err := strconv.Atoi(argv[0])
+	if err != nil || (v != 1 && v != 2) {
+		return fmt.Errorf("strip-rows %q is not 1 or 2\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.StripRows = v
+	return nil
+}
+
+// setStripFrame applies `strip-frame <on|off>` to s: the agent-colored
+// frame beside the agent screen.
+func setStripFrame(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("strip-frame needs on or off\n%s", settingsUsage)
+	}
+	var v bool
+	switch argv[0] {
+	case "on":
+		v = true
+	case "off":
+		v = false
+	default:
+		return fmt.Errorf("strip-frame %q is not on or off\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.StripFrame = &v
 	return nil
 }
 
@@ -805,6 +856,12 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 		fmt.Fprintf(out, "compress-threshold %s: %d (%s)\n",
 			h, s.EffectiveCompressThreshold(h), src)
 	}
+	frame := "on"
+	if !s.StripFrameEnabled() {
+		frame = "off"
+	}
+	fmt.Fprintf(out, "strip-rows: %d (%s)\n", s.EffectiveStripRows(), s.SourceOf("context.strip_rows"))
+	fmt.Fprintf(out, "strip-frame: %s (%s)\n", frame, s.SourceOf("context.strip_frame"))
 	models := s.CompressModels()
 	ordered := make([]string, 0, len(models))
 	for h := range models {

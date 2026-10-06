@@ -122,13 +122,17 @@ type OverflowSettings struct {
 // ContextSettings tunes context tracking and compression. CompressThreshold
 // is the global auto-compress threshold in tokens; HarnessThresholds
 // overrides it per harness; Windows overrides the model window table per
-// model; CompressModels names the summarizer model per harness (unset means
-// compression refuses with a warning, never a silent default). A pointer,
+// model. StripRows is the header strip height (1 or 2, default 2);
+// StripFrame draws the agent-colored frame beside the agent screen (nil
+// means on); CompressModels names the summarizer model per harness (unset
+// means compression refuses with a warning, never a silent default). A pointer,
 // so an unset context stays out of the saved file.
 type ContextSettings struct {
 	CompressThreshold int64             `json:"compress_threshold,omitempty"`
 	HarnessThresholds map[string]int64  `json:"harness_thresholds,omitempty"`
 	Windows           map[string]int64  `json:"windows,omitempty"`
+	StripRows         int               `json:"strip_rows,omitempty"`
+	StripFrame        *bool             `json:"strip_frame,omitempty"`
 	CompressModels    map[string]string `json:"compress_models,omitempty"`
 }
 
@@ -371,9 +375,26 @@ func (s Settings) ContextWindows() map[string]int64 {
 	return out
 }
 
+// EffectiveStripRows is the header strip height in force: 1 or 2, default
+// 2. Anything else reads as the default.
+func (s Settings) EffectiveStripRows() int {
+	if s.Context != nil && (s.Context.StripRows == 1 || s.Context.StripRows == 2) {
+		return s.Context.StripRows
+	}
+	return 2
+}
+
+// StripFrameEnabled says whether the wrapper draws the agent-colored frame
+// beside the agent screen: on unless the setting says otherwise.
+func (s Settings) StripFrameEnabled() bool {
+	if s.Context != nil && s.Context.StripFrame != nil {
+		return *s.Context.StripFrame
+	}
+	return true
+}
+
 // unknownContextFields collects the keys inside the context object that are
-// not compress_threshold, harness_thresholds or windows, so a save writes
-// them back.
+// not the known context settings, so a save writes them back.
 func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage {
 	var contextFields map[string]json.RawMessage
 	if err := json.Unmarshal(rawContext, &contextFields); err != nil {
@@ -382,7 +403,7 @@ func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage
 	var out map[string]json.RawMessage
 	for k, v := range contextFields {
 		switch strings.ToLower(k) {
-		case "compress_threshold", "harness_thresholds", "windows", "compress_models":
+		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "compress_models":
 			continue
 		}
 		if out == nil {
@@ -418,10 +439,9 @@ func mergeContextExtras(fields map[string]json.RawMessage, contextExtra map[stri
 	return nil
 }
 
-// mergeContext folds project context settings over global ones: the
-// threshold wins when set, the per-harness and window maps merge by key
-// with the project winning each key. A value the environment set always
-// wins over the project file.
+// mergeContext folds project context settings over global ones: scalars win
+// when set, maps merge by key with the project winning each key. A value the
+// environment set always wins over the project file.
 func mergeContext(global, project *ContextSettings, src map[string]string) *ContextSettings {
 	var out ContextSettings
 	if global != nil {
@@ -429,6 +449,10 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 		out.HarnessThresholds = cloneInt64Map(global.HarnessThresholds)
 		out.Windows = cloneInt64Map(global.Windows)
 		out.CompressModels = cloneStringMap(global.CompressModels)
+		if global.StripFrame != nil {
+			v := *global.StripFrame
+			out.StripFrame = &v
+		}
 	}
 	if project != nil {
 		if project.CompressThreshold > 0 && src["context.compress_threshold"] != "env" {
@@ -455,6 +479,15 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			out.Windows[m] = w
 			src["context.windows"] = "project"
 		}
+		if project.StripRows != 0 {
+			out.StripRows = project.StripRows
+			src["context.strip_rows"] = "project"
+		}
+		if project.StripFrame != nil {
+			v := *project.StripFrame
+			out.StripFrame = &v
+			src["context.strip_frame"] = "project"
+		}
 		for h, m := range project.CompressModels {
 			if m == "" {
 				continue
@@ -466,7 +499,8 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			src["context.compress_models."+h] = "project"
 		}
 	}
-	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 && len(out.CompressModels) == 0 {
+	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 &&
+		out.StripRows == 0 && out.StripFrame == nil && len(out.CompressModels) == 0 {
 		return nil
 	}
 	return &out
@@ -643,6 +677,12 @@ func decodeSettings(raw []byte) Settings {
 		}
 		if len(s.Context.Windows) > 0 {
 			s.src["context.windows"] = "file"
+		}
+		if s.Context.StripRows != 0 {
+			s.src["context.strip_rows"] = "file"
+		}
+		if s.Context.StripFrame != nil {
+			s.src["context.strip_frame"] = "file"
 		}
 	}
 	markToolSources(&s)
@@ -911,7 +951,7 @@ func SaveSettings(s Settings) error {
 	// A set-but-empty context pointer marshals as {} because omitempty does
 	// not omit structs. Drop the key when nothing context-related is set, so
 	// clearing the last override removes the object instead of leaving {}.
-	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && len(s.Context.CompressModels) == 0 && len(s.contextExtra) == 0 {
+	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && len(s.Context.CompressModels) == 0 && len(s.contextExtra) == 0 {
 		delete(fields, "context")
 	}
 	// A zero graph struct marshals as {} because encoding/json omitempty does

@@ -48,6 +48,15 @@ owns its `_test.go` and the behaviour below):
   formula, outstanding calls, per-tool sizes), `context_parse.go` (the
   per-harness line parsers a new harness registers), `context_window.go`
   (model window table), `context_report.go` (the `wick-pig context` output)
+- Header strip: `header.go` (pure strip render: snapshot and width in,
+  styled string out, Lip Gloss adaptive palette, width tiers),
+  `header_wrap.go` (child size, scroll-region and margin filter, snapshot
+  builder), `header_run.go` (PTY runner: reduced child size, forwarding,
+  repaints, exit restore), `header_source.go` (strip source from launch
+  env, `wrap`/`exec`/top-level wiring); settings carry strip rows, frame
+  and per-harness compress models. `exec`, top-level runs and `wick-pig
+  wrap` put the child on a PTY under the strip; WICK_HEADER_STRIP=0 runs
+  plainly. Pig sessions with the tools debug log stay unwrapped.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served

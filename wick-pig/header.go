@@ -1,0 +1,522 @@
+package wick
+
+// Header strip (ticket 04): every agent pane shows its context use against
+// the window with a gradient bar, an estimated cost, the top tools, the
+// model, the compress count and the state. This file holds the pure render
+// function: a snapshot and a width in, a styled string out. The PTY wrapper
+// that draws it around a live child lives in header_wrap.go; the mockup in
+// .scratch/context-compress/mockup.html is the visual reference.
+
+import (
+	"fmt"
+	"hash/fnv"
+	"io"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+)
+
+// HeaderState is the agent state the strip's pill shows.
+type HeaderState string
+
+const (
+	HeaderWorking     HeaderState = "working"
+	HeaderIdle        HeaderState = "idle"
+	HeaderQueued      HeaderState = "queued"
+	HeaderCompressing HeaderState = "compressing"
+)
+
+// Header tiers: a wide pane shows both rows, a medium pane drops the tools
+// row, a narrow pane keeps only the percent and the cost.
+const (
+	headerTierWide   = "wide"
+	headerTierMedium = "medium"
+	headerTierNarrow = "narrow"
+)
+
+// WideTierMinWidth is the pane width from which the strip shows both rows;
+// MediumTierMinWidth is where it keeps one full row instead of the narrow
+// percent-and-cost line. Below either, or when the numbers do not fit, the
+// layout degrades one step rather than cutting a number in half.
+const (
+	WideTierMinWidth   = 90
+	MediumTierMinWidth = 55
+)
+
+// DefaultStripRows is the strip height in rows when no setting says
+// otherwise: the mockup's two rows.
+const DefaultStripRows = 2
+
+// HeaderSnapshot is everything the strip draws for one agent.
+type HeaderSnapshot struct {
+	AgentID       string // stable identity: the hue hash input
+	AgentType     string // empty for the top-level session: always mauve
+	AgentName     string // the chip: the agent type name, as in the pane name
+	Model         string
+	ContextTokens int64
+	Window        int64
+	Cost          float64 // dashboard-reported sum, rendered as an estimate
+	HasCost       bool
+	TopTools      []ToolSize
+	CompressCount int
+	State         HeaderState
+	Warning       string // non-empty replaces the state pill, e.g. no compressModel
+}
+
+// HeaderOpts tunes the render: Rows caps the strip height (0 means the
+// default two), Dark picks the Mocha or Latte palette, Profile drives Lip
+// Gloss's downgrade to 256 and 16 colors.
+type HeaderOpts struct {
+	Rows    int
+	Dark    bool
+	Profile termenv.Profile
+	Pulse   bool // pulse phase: the compressing pill rests on idle
+}
+
+// headerColor is one adaptive color: the Mocha hex for dark terminals, the
+// Latte hex for light ones.
+type headerColor struct {
+	dark, light string
+}
+
+// The strip palette: Catppuccin Mocha and Latte, from the spec. Threshold
+// colors stay green, yellow and red; no agent hue uses them.
+var (
+	headerStripBg = headerColor{"#181825", "#e6e9ef"}
+	headerText    = headerColor{"#cdd6f4", "#4c4f69"}
+	headerDim     = headerColor{"#6c7086", "#9ca0b0"}
+	headerAccent  = headerColor{"#cba6f7", "#8839ef"}
+	headerCalm    = headerColor{"#a6e3a1", "#40a02b"}
+	headerWarm    = headerColor{"#f9e2af", "#df8e1d"}
+	headerHot     = headerColor{"#f38ba8", "#d20f39"}
+	headerCost    = headerColor{"#fab387", "#fe640b"}
+	headerTool    = headerColor{"#89b4fa", "#1e66f5"}
+	headerIdle    = headerColor{"#94e2d5", "#179299"}
+	headerBarDim  = headerColor{"#313244", "#ccd0da"}
+)
+
+// agentHues is the fixed identity set: mauve first for the orchestrator,
+// then one hue per other agent by hash. Green, yellow and red stay out, so
+// identity never reads as status.
+var agentHues = []headerColor{
+	{"#cba6f7", "#8839ef"}, // mauve: the orchestrator
+	{"#f5c2e7", "#ea76cb"}, // pink
+	{"#b4befe", "#7287fd"}, // lavender
+	{"#74c7ec", "#209fb5"}, // sapphire
+	{"#89dceb", "#04a5e5"}, // sky
+	{"#f2cdcd", "#dd7878"}, // flamingo
+	{"#eba0ac", "#e64553"}, // maroon
+}
+
+// AgentHue picks an agent's stable hue from the identity set: the hash of
+// the agent ID, so it survives restarts and compressions. The orchestrator
+// (and the top-level session, which has no type) is always mauve.
+func AgentHue(agentID, agentType string) (dark, light string) {
+	c := agentHueColor(agentID, agentType)
+	return c.dark, c.light
+}
+
+func agentHueColor(agentID, agentType string) headerColor {
+	if agentType == "" || agentType == "orchestrator" {
+		return agentHues[0]
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(agentID))
+	return agentHues[1+int(h.Sum32()%uint32(len(agentHues)-1))]
+}
+
+// ThresholdClass is the bar color for a context percent: calm below 60%,
+// warm from 60 to 80%, hot above.
+func ThresholdClass(pct int64) string {
+	if pct < 60 {
+		return "calm"
+	}
+	if pct < 80 {
+		return "warm"
+	}
+	return "hot"
+}
+
+// HumanizeTokens rounds a token or byte count for the strip: 142381 reads
+// 142k. Never a raw float, never more precise than the strip needs.
+func HumanizeTokens(n int64) string {
+	if n < 1000 {
+		return strconv.FormatInt(n, 10)
+	}
+	return strconv.FormatInt((n+500)/1000, 10) + "k"
+}
+
+// HeaderTier is the layout tier for a pane width: wide keeps both rows,
+// medium drops the tools row, narrow keeps only percent and cost.
+func HeaderTier(width int) string {
+	if width >= WideTierMinWidth {
+		return headerTierWide
+	}
+	if width >= MediumTierMinWidth {
+		return headerTierMedium
+	}
+	return headerTierNarrow
+}
+
+// headerCtx is the resolved render state: the palette hexes for the theme,
+// the renderer for the profile, and the snapshot numbers.
+type headerCtx struct {
+	r      *lipgloss.Renderer
+	bg     string
+	text   string
+	dim    string
+	accent string
+	calm   string
+	warm   string
+	hot    string
+	cost   string
+	tool   string
+	idle   string
+	barDim string
+	hue    string
+	pulse  bool
+	pct    int64
+	pctHex string
+	snap   HeaderSnapshot
+}
+
+func pick(c headerColor, dark bool) string {
+	if dark {
+		return c.dark
+	}
+	return c.light
+}
+
+// RenderHeader draws the strip: the snapshot at the width, in at most Rows
+// rows (0 means the default two). Narrow panes drop the second row first;
+// Rows 1 forces the single-row layout on any width. The bar flexes to the
+// room the numbers leave; when even the minimum bar leaves no room, the
+// layout degrades one tier rather than cutting a number in half. The output
+// is one or two full-width lines on the strip background.
+func RenderHeader(snap HeaderSnapshot, width int, opts HeaderOpts) string {
+	if width < 1 {
+		width = 1
+	}
+	rows := opts.Rows
+	if rows <= 0 {
+		rows = DefaultStripRows
+	}
+	profile := opts.Profile
+	if profile == termenv.Ascii {
+		profile = termenv.ANSI
+	}
+	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(profile))
+	r.SetColorProfile(profile)
+	h := &headerCtx{
+		r:      r,
+		bg:     pick(headerStripBg, opts.Dark),
+		text:   pick(headerText, opts.Dark),
+		dim:    pick(headerDim, opts.Dark),
+		accent: pick(headerAccent, opts.Dark),
+		calm:   pick(headerCalm, opts.Dark),
+		warm:   pick(headerWarm, opts.Dark),
+		hot:    pick(headerHot, opts.Dark),
+		cost:   pick(headerCost, opts.Dark),
+		tool:   pick(headerTool, opts.Dark),
+		idle:   pick(headerIdle, opts.Dark),
+		barDim: pick(headerBarDim, opts.Dark),
+		hue:    pick(agentHueColor(snap.AgentID, snap.AgentType), opts.Dark),
+		pulse:  opts.Pulse,
+		snap:   snap,
+	}
+	if snap.Window > 0 {
+		h.pct = snap.ContextTokens * 100 / snap.Window
+	}
+	switch ThresholdClass(h.pct) {
+	case "calm":
+		h.pctHex = h.calm
+	case "warm":
+		h.pctHex = h.warm
+	default:
+		h.pctHex = h.hot
+	}
+	tier := HeaderTier(width)
+	if tier == headerTierWide && rows < 2 {
+		tier = headerTierMedium
+	}
+	if tier == headerTierWide {
+		if first, ok := h.barRow(width, h.wideSegs(), nil, 24, 8); ok {
+			return first + "\n" + h.secondRow(width)
+		}
+		tier = headerTierMedium
+	}
+	if tier == headerTierMedium {
+		pill := h.pill()
+		if first, ok := h.barRow(width, h.mediumSegs(), &pill, 16, 6); ok {
+			return first
+		}
+	}
+	return h.narrowRow(width)
+}
+
+// cell is one styled span of a strip row.
+type cell struct {
+	text string
+	hex  string
+	bold bool
+}
+
+// wideSegs is the mockup's row 1 without the bar: chip, ctx label, percent,
+// used against the window, cost, model and compress count. The pill lives on
+// row 2 at this tier.
+func (h *headerCtx) wideSegs() []cell {
+	segs := h.mediumSegs()
+	if h.snap.CompressCount > 0 {
+		segs = append(segs, cell{text: fmt.Sprintf("compressed ×%d", h.snap.CompressCount), hex: h.dim})
+	}
+	return segs
+}
+
+// mediumSegs is row 1 without the bar and without the compress count: the
+// count needs the most room and goes first when space runs short.
+func (h *headerCtx) mediumSegs() []cell {
+	segs := []cell{h.chip(), {text: "ctx", hex: h.hue, bold: true}}
+	segs = append(segs, cell{text: fmt.Sprintf("%d%%", h.pct), hex: h.pctHex, bold: true})
+	used := HumanizeTokens(h.snap.ContextTokens)
+	if h.snap.Window > 0 {
+		used += " / " + HumanizeTokens(h.snap.Window)
+	}
+	segs = append(segs, cell{text: used, hex: h.text})
+	if h.snap.HasCost && h.snap.Cost > 0 {
+		segs = append(segs, cell{text: fmt.Sprintf("~$%.2f", h.snap.Cost), hex: h.cost})
+	}
+	if h.snap.Model != "" {
+		segs = append(segs, cell{text: h.snap.Model, hex: h.accent})
+	}
+	return segs
+}
+
+// barRow builds a row with the gradient bar past the chip and ctx label.
+// The bar takes the room the numbers leave, up to maxBar and down to
+// minBar; pill pins to the right edge when set. It reports false when even
+// the minimum bar leaves no room, so the caller degrades one tier.
+func (h *headerCtx) barRow(width int, segs []cell, pill *cell, maxBar, minBar int) (string, bool) {
+	fixed := 0
+	for _, s := range segs {
+		fixed += lipgloss.Width(s.text)
+	}
+	pw := 0
+	if pill != nil {
+		pw = lipgloss.Width(pill.text) + 1
+	}
+	bar := width - fixed - 2*len(segs) - pw - 1
+	if bar > maxBar {
+		bar = maxBar
+	}
+	if bar < minBar {
+		return "", false
+	}
+	cells := []cell{segs[0], segs[1], {text: h.bar(bar), hex: h.text}}
+	cells = append(cells, segs[2:]...)
+	if pill != nil {
+		cells = append(cells, *pill)
+		return h.row(width, cells), true
+	}
+	return h.styled(width, h.join(cells)), true
+}
+
+// secondRow is the mockup's row 2: the top tools by result size beside the
+// state pill. Tools that do not fit are dropped whole, never cut in half;
+// with no tools the row holds only the pill.
+func (h *headerCtx) secondRow(width int) string {
+	pill := h.pill()
+	cells := []cell{{text: "top", hex: h.dim}}
+	plain := lipgloss.Width("top") + lipgloss.Width(pill.text) + 3
+	for _, ts := range h.snap.TopTools {
+		name := truncateName(ts.Name, 20)
+		size := HumanizeTokens(ts.Bytes)
+		if plain+lipgloss.Width(name)+lipgloss.Width(size)+4 > width {
+			break
+		}
+		plain += lipgloss.Width(name) + lipgloss.Width(size) + 4
+		cells = append(cells, cell{text: name, hex: h.tool}, cell{text: size, hex: h.text})
+	}
+	if len(cells) == 1 {
+		return h.row(width, []cell{pill})
+	}
+	return h.row(width, append(cells, pill))
+}
+
+// narrowRow is the narrow tier: percent and cost beside the state, with the
+// chip when it fits. The cost drops before the percent ever truncates.
+func (h *headerCtx) narrowRow(width int) string {
+	pill := h.pill()
+	pct := cell{text: fmt.Sprintf("%d%%", h.pct), hex: h.pctHex, bold: true}
+	full := []cell{h.chip(), {text: "ctx", hex: h.hue, bold: true}, pct, {text: "·", hex: h.dim}}
+	if h.snap.HasCost && h.snap.Cost > 0 {
+		full = append(full, cell{text: fmt.Sprintf("~$%.2f", h.snap.Cost), hex: h.cost})
+	}
+	if h.fits(width, full, pill, " ") {
+		return h.rowSep(width, append(full, pill), " ")
+	}
+	short := []cell{pct}
+	if h.snap.HasCost && h.snap.Cost > 0 {
+		short = append(short, cell{text: fmt.Sprintf("~$%.2f", h.snap.Cost), hex: h.cost})
+	}
+	return h.rowSep(width, append(short, pill), " ")
+}
+
+func (h *headerCtx) fits(width int, cells []cell, pill cell, sep string) bool {
+	w := lipgloss.Width(pill.text)
+	for _, c := range cells {
+		w += lipgloss.Width(c.text) + len(sep)
+	}
+	return w <= width
+}
+
+// row joins cells with fixed double gaps, pins the last cell (the state
+// pill) to the right edge, and pads the row to the full width on the strip
+// background, so the strip reads as a bar without a border line.
+func (h *headerCtx) row(width int, cells []cell) string {
+	return h.rowSep(width, cells, "  ")
+}
+
+func (h *headerCtx) rowSep(width int, cells []cell, sep string) string {
+	if len(cells) == 0 {
+		return h.styled(width, "")
+	}
+	body := cells[:len(cells)-1]
+	last := cells[len(cells)-1]
+	parts := make([]string, 0, len(body))
+	for _, c := range body {
+		parts = append(parts, h.style(c))
+	}
+	left := strings.Join(parts, sep)
+	gap := width - lipgloss.Width(left) - lipgloss.Width(last.text)
+	if gap < 1 {
+		gap = 1
+	}
+	return h.styled(width, left+strings.Repeat(" ", gap)+h.style(last))
+}
+
+func (h *headerCtx) join(cells []cell) string {
+	parts := make([]string, 0, len(cells))
+	for _, c := range cells {
+		parts = append(parts, h.style(c))
+	}
+	return strings.Join(parts, "  ")
+}
+
+func (h *headerCtx) style(c cell) string {
+	s := h.r.NewStyle().Foreground(lipgloss.Color(c.hex))
+	if c.bold {
+		s = s.Bold(true)
+	}
+	return s.Render(c.text)
+}
+
+func (h *headerCtx) styled(width int, content string) string {
+	return h.r.NewStyle().Background(lipgloss.Color(h.bg)).Foreground(lipgloss.Color(h.text)).Width(width).Render(content)
+}
+
+func (h *headerCtx) chip() cell {
+	name := h.snap.AgentName
+	if name == "" {
+		name = "orchestrator"
+	}
+	return cell{text: name, hex: h.hue, bold: true}
+}
+
+// truncateName bounds a tool name for row 2: names are labels, so shortening
+// one never hides a number.
+func truncateName(name string, max int) string {
+	if lipgloss.Width(name) <= max {
+		return name
+	}
+	runes := []rune(name)
+	if len(runes) <= max {
+		return name
+	}
+	return string(runes[:max-1]) + "…"
+}
+
+// pill is the state field: working, idle, compress queued, compressing, or
+// the warning. A warning always wins over the state.
+func (h *headerCtx) pill() cell {
+	if h.snap.Warning != "" {
+		return cell{text: "⚠ " + h.snap.Warning, hex: h.hot}
+	}
+	switch h.snap.State {
+	case HeaderIdle:
+		return cell{text: "◌ idle", hex: h.idle}
+	case HeaderQueued:
+		return cell{text: "⏳ compress queued", hex: h.idle}
+	case HeaderCompressing:
+		if h.pulse {
+			return cell{text: "⟳ compressing…", hex: h.idle}
+		}
+		return cell{text: "⟳ compressing…", hex: h.accent}
+	default:
+		return cell{text: "● working", hex: h.pctHex}
+	}
+}
+
+// bar draws the gradient bar: each filled cell blends calm to warm to hot
+// by its position; unfilled cells use the dim color. The percent, not the
+// bar, carries the threshold state.
+func (h *headerCtx) bar(n int) string {
+	filled := 0
+	if h.pct > 0 {
+		filled = int((int64(n)*h.pct + 50) / 100)
+		if filled < 1 {
+			filled = 1
+		}
+		if filled > n {
+			filled = n
+		}
+	}
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		hex := h.barDim
+		glyph := "▱"
+		if i < filled {
+			hex = gradientCell(h.calm, h.warm, h.hot, i, n)
+			glyph = "▰"
+		}
+		b.WriteString(h.r.NewStyle().Foreground(lipgloss.Color(hex)).Render(glyph))
+	}
+	return b.String()
+}
+
+// gradientCell blends calm to warm to hot by the cell's position in the bar.
+func gradientCell(calm, warm, hot string, i, n int) string {
+	t := 0.0
+	if n > 1 {
+		t = float64(i) / float64(n-1)
+	}
+	if t < 0.6 {
+		return mixHex(calm, warm, t/0.6)
+	}
+	return mixHex(warm, hot, (t-0.6)/0.4)
+}
+
+func mixHex(a, b string, t float64) string {
+	ar, ag, ab := hexParts(a)
+	br, bg, bb := hexParts(b)
+	return fmt.Sprintf("#%02x%02x%02x",
+		roundFloat(lerp(float64(ar), float64(br), t)),
+		roundFloat(lerp(float64(ag), float64(bg), t)),
+		roundFloat(lerp(float64(ab), float64(bb), t)))
+}
+
+func hexParts(h string) (int, int, int) {
+	h = strings.TrimPrefix(h, "#")
+	if len(h) != 6 {
+		return 0, 0, 0
+	}
+	r, _ := strconv.ParseInt(h[0:2], 16, 0)
+	g, _ := strconv.ParseInt(h[2:4], 16, 0)
+	b, _ := strconv.ParseInt(h[4:6], 16, 0)
+	return int(r), int(g), int(b)
+}
+
+func lerp(a, b, t float64) float64 { return a + (b-a)*t }
+
+func roundFloat(f float64) int { return int(f + 0.5) }

@@ -8,6 +8,7 @@
 //	wick-pig pig-gate <event-json>                             pig extension stop gate
 //	wick-pig voice-reminder [hook]                             per-turn register reminder (pig extension, claude hook)
 //	wick-pig exec <launch-file>                                run a launch file the pane typed
+//	wick-pig wrap --harness h -- <bin> [args...]              run a command under the header strip
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
 //	wick-pig deps                                             check and install external dependencies
@@ -25,7 +26,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"example.com/wick"
@@ -48,6 +48,9 @@ func run(argv []string) error {
 			return fmt.Errorf("usage: wick-pig exec <launch-file>")
 		}
 		return wick.RunExecFile(argv[0])
+	}
+	if sub == "wrap" {
+		return runWrap(argv, os.Stdin, os.Stdout)
 	}
 	if sub == "stop-gate" {
 		return wick.RunStopGate(os.Stdin, os.Stdout)
@@ -199,9 +202,6 @@ func run(argv []string) error {
 	// The agent reads its MCP config at startup, so the file is dead weight
 	// once it exits.
 	defer wick.CleanupSession(s)
-	c := exec.Command(cmd.Bin, cmd.Args...)
-	c.Env = append(os.Environ(), cmd.Env...)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if launch.Late != "" {
 		pane := os.Getenv("HERDR_PANE_ID")
 		if pane == "" {
@@ -224,7 +224,13 @@ func run(argv []string) error {
 			go wick.Supervise(wick.OSExec, h, s, pane, stop)
 		}
 	}
-	err = c.Run()
+	// The top-level session runs under the header strip too: same binary,
+	// argv and env, on a terminal sized for the strip. Without a terminal
+	// (or with the strip disabled) the session runs exactly as before.
+	err = wick.WrapTopLevel(cmd, wick.HeaderSource{
+		AgentID: s.AgentID, AgentType: s.AgentType, AgentName: wick.PaneNameForType(s.AgentType),
+		Harness: choice.Harness, SessionID: s.ID, SessionDir: s.Dir,
+	})
 	if runSlug != "" {
 		_ = wick.FinishRun(runSlug)
 	}
