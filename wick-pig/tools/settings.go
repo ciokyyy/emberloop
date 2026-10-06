@@ -129,7 +129,9 @@ type OverflowSettings struct {
 // overrides it per harness; Windows overrides the model window table per
 // model. StripRows is the header strip height (1 or 2, default 2);
 // StripFrame draws the agent-colored frame beside the agent screen (nil
-// means off); CompressModels names the summarizer model per harness (unset
+// means off); StripRule draws the agent-hue rule line above the strip
+// instead of the soft half-block edge (nil means the soft edge).
+// CompressModels names the summarizer model per harness (unset
 // means compression refuses with a warning, never a silent default).
 // AutoCompress disables the automatic trigger when false (nil means on; the
 // manual key keeps working); CompressCooldown is the tool calls after a
@@ -141,6 +143,7 @@ type ContextSettings struct {
 	Windows           map[string]int64  `json:"windows,omitempty"`
 	StripRows         int               `json:"strip_rows,omitempty"`
 	StripFrame        *bool             `json:"strip_frame,omitempty"`
+	StripRule         *bool             `json:"strip_rule,omitempty"`
 	CompressModels    map[string]string `json:"compress_models,omitempty"`
 	AutoCompress      *bool             `json:"auto_compress,omitempty"`
 	CompressCooldown  int               `json:"compress_cooldown,omitempty"`
@@ -424,6 +427,16 @@ func (s Settings) StripFrameEnabled() bool {
 	return false
 }
 
+// StripRuleEnabled says whether the wrapper draws the agent-hue rule line
+// above the strip: off unless the setting restores it (the borderless look
+// keeps the soft half-block edge, separating areas by tint, not lines).
+func (s Settings) StripRuleEnabled() bool {
+	if s.Context != nil && s.Context.StripRule != nil {
+		return *s.Context.StripRule
+	}
+	return false
+}
+
 // unknownContextFields collects the keys inside the context object that are
 // not the known context settings, so a save writes them back.
 func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage {
@@ -434,7 +447,7 @@ func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage
 	var out map[string]json.RawMessage
 	for k, v := range contextFields {
 		switch strings.ToLower(k) {
-		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "compress_models", "auto_compress", "compress_cooldown":
+		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "strip_rule", "compress_models", "auto_compress", "compress_cooldown":
 			continue
 		}
 		if out == nil {
@@ -484,6 +497,10 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			v := *global.StripFrame
 			out.StripFrame = &v
 		}
+		if global.StripRule != nil {
+			v := *global.StripRule
+			out.StripRule = &v
+		}
 		if global.AutoCompress != nil {
 			v := *global.AutoCompress
 			out.AutoCompress = &v
@@ -523,6 +540,11 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			out.StripFrame = &v
 			src["context.strip_frame"] = "project"
 		}
+		if project.StripRule != nil {
+			v := *project.StripRule
+			out.StripRule = &v
+			src["context.strip_rule"] = "project"
+		}
 		for h, m := range project.CompressModels {
 			if m == "" {
 				continue
@@ -544,7 +566,7 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 		}
 	}
 	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 &&
-		out.StripRows == 0 && out.StripFrame == nil && len(out.CompressModels) == 0 &&
+		out.StripRows == 0 && out.StripFrame == nil && out.StripRule == nil && len(out.CompressModels) == 0 &&
 		out.AutoCompress == nil && out.CompressCooldown == 0 {
 		return nil
 	}
@@ -728,6 +750,9 @@ func decodeSettings(raw []byte) Settings {
 		}
 		if s.Context.StripFrame != nil {
 			s.src["context.strip_frame"] = "file"
+		}
+		if s.Context.StripRule != nil {
+			s.src["context.strip_rule"] = "file"
 		}
 		if s.Context.AutoCompress != nil {
 			s.src["context.auto_compress"] = "file"
@@ -1002,7 +1027,7 @@ func SaveSettings(s Settings) error {
 	// A set-but-empty context pointer marshals as {} because omitempty does
 	// not omit structs. Drop the key when nothing context-related is set, so
 	// clearing the last override removes the object instead of leaving {}.
-	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && len(s.Context.CompressModels) == 0 && s.Context.AutoCompress == nil && s.Context.CompressCooldown == 0 && len(s.contextExtra) == 0 {
+	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && s.Context.StripRule == nil && len(s.Context.CompressModels) == 0 && s.Context.AutoCompress == nil && s.Context.CompressCooldown == 0 && len(s.contextExtra) == 0 {
 		delete(fields, "context")
 	}
 	// A zero graph struct marshals as {} because encoding/json omitempty does

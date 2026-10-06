@@ -15,7 +15,7 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
        wick-pig settings search provider|mode <value>
@@ -93,6 +93,10 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 		}
 	case "strip-frame":
 		if err := setStripFrame(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "strip-rule":
+		if err := setStripRule(&s, argv[1:]); err != nil {
 			return err
 		}
 	case "auto-compress":
@@ -332,6 +336,30 @@ func setStripFrame(s *tools.Settings, argv []string) error {
 		s.Context = c
 	}
 	c.StripFrame = &v
+	return nil
+}
+
+// setStripRule applies `strip-rule <on|off>` to s: the drawn agent-hue rule
+// line above the strip. Off (the default) keeps the soft half-block edge.
+func setStripRule(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("strip-rule needs on or off\n%s", settingsUsage)
+	}
+	var v bool
+	switch argv[0] {
+	case "on":
+		v = true
+	case "off":
+		v = false
+	default:
+		return fmt.Errorf("strip-rule %q is not on or off\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.StripRule = &v
 	return nil
 }
 
@@ -918,6 +946,11 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 	}
 	fmt.Fprintf(out, "strip-rows: %d (%s)\n", s.EffectiveStripRows(), s.SourceOf("context.strip_rows"))
 	fmt.Fprintf(out, "strip-frame: %s (%s)\n", frame, s.SourceOf("context.strip_frame"))
+	rule := "soft"
+	if s.StripRuleEnabled() {
+		rule = "on"
+	}
+	fmt.Fprintf(out, "strip-rule: %s (%s)\n", rule, s.SourceOf("context.strip_rule"))
 	fmt.Fprintf(out, "auto-compress: %s (%s)\n", auto, s.SourceOf("context.auto_compress"))
 	fmt.Fprintf(out, "compress-cooldown: %d (%s)\n", s.EffectiveCompressCooldown(), s.SourceOf("context.compress_cooldown"))
 	models := s.CompressModels()

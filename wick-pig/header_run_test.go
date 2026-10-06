@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"example.com/wick/tools"
+	"github.com/muesli/termenv"
 )
 
 // fakeChild is the test double for the PTY: preloaded child output drains
@@ -271,5 +272,128 @@ func TestAgentReporterTracksState(t *testing.T) {
 	}
 	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The setting restores the drawn rule line: the agent-hue dashes return in
+// place of the soft edge, while the child keeps the full borderless width.
+func TestWrapRuleLineRestored(t *testing.T) {
+	child := &fakeChild{}
+	var stdout bytes.Buffer
+	cfg := wrapTestConfig(child, &stdout)
+	rule := true
+	cfg.Settings = tools.Settings{Context: &tools.ContextSettings{StripRule: &rule}}
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(child.sizes) == 0 || child.sizes[0] != [2]int{100, 21} {
+		t.Errorf("child sizes = %v, want first 100x21", child.sizes)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "─") {
+		t.Error("strip with strip_rule on draws no rule line")
+	}
+	if strings.Contains(got, "▄") {
+		t.Error("strip with strip_rule on keeps the soft edge")
+	}
+}
+
+// The soft edge is a full-width row of lower half blocks in the strip
+// background at every color profile, dark and light: no drawn line survives
+// a downgrade.
+func TestTopRuleSoftEdgeProfiles(t *testing.T) {
+	for _, profile := range []termenv.Profile{termenv.TrueColor, termenv.ANSI256, termenv.ANSI} {
+		for _, dark := range []bool{true, false} {
+			w := &wrapper{
+				cfg:     WrapConfig{Source: HeaderSource{AgentID: "w1", AgentType: "worker"}},
+				termW:   100,
+				childW:  100,
+				dark:    dark,
+				profile: profile,
+			}
+			plain := stripANSI(w.topRule())
+			if want := strings.Repeat("▄", 100); plain != want {
+				t.Errorf("profile %v dark %v soft edge = %q, want %q", profile, dark, plain, want)
+			}
+			if strings.Contains(plain, "─") {
+				t.Errorf("profile %v dark %v soft edge draws a line", profile, dark)
+			}
+		}
+	}
+}
+
+// The strip background sits one step off the pane background, dark and
+// light: mantle against base, so tint — not a line — separates the areas.
+// The dim tone the borders dim to is the surface tone, dark and light.
+// Expected values are the probe (run-borderless.sh Mocha base, the wickb
+// themes' surface0 for dark, Latte surface0 for light); the code reads the
+// strip side of the shared palette in header.go, so drift breaks the test.
+func TestStripBgStandsOffPane(t *testing.T) {
+	for _, tc := range []struct {
+		dark      bool
+		stripBg   string
+		paneBg    string
+		surfaceBg string
+	}{
+		{true, "#181825", "#1e1e2e", "#313244"},
+		{false, "#e6e9ef", "#eff1f5", "#ccd0da"},
+	} {
+		if got := pick(headerStripBg, tc.dark); got != tc.stripBg {
+			t.Errorf("dark %v strip bg = %s, want %s", tc.dark, got, tc.stripBg)
+		}
+		if tc.stripBg == tc.paneBg {
+			t.Errorf("dark %v strip bg matches the pane bg %s, want one step off", tc.dark, tc.paneBg)
+		}
+		if got := pick(headerBarDim, tc.dark); got != tc.surfaceBg {
+			t.Errorf("dark %v surface tone = %s, want probe surface0 %s", tc.dark, got, tc.surfaceBg)
+		}
+	}
+}
+
+// A resize keeps the borderless geometry: the child is re-sized to the full
+// width minus nothing and the strip height, the filter learns the new
+// height, and the repaint keeps the soft edge with no margins.
+func TestWrapperResizeKeepsBorderlessSize(t *testing.T) {
+	child := &fakeChild{}
+	var stdout bytes.Buffer
+	w := &wrapper{
+		cfg:     wrapTestConfig(child, &stdout),
+		stdout:  &stdout,
+		termW:   100,
+		termH:   24,
+		childW:  100,
+		childH:  21,
+		rows:    2,
+		dark:    true,
+		profile: termenv.TrueColor,
+		child:   child,
+		snapshot: func(HeaderSource, tools.Settings) (HeaderSnapshot, error) {
+			return HeaderSnapshot{AgentName: "implementer", State: HeaderWorking}, nil
+		},
+		filter: &wrapFilter{childH: 21},
+	}
+	w.resized(80, 20)
+	if len(child.sizes) == 0 || child.sizes[len(child.sizes)-1] != [2]int{80, 17} {
+		t.Errorf("child sizes = %v, want last 80x17", child.sizes)
+	}
+	out, _ := w.filter.push([]byte("\x1b[19;1H"))
+	if s := string(out); s != "\x1b[17;1H" {
+		t.Errorf("post-resize clamp = %q, want row 17", s)
+	}
+	// Leaving alt-screen after the resize still repaints the soft strip
+	// behind it, with no line and no margins.
+	if _, repaint := w.filter.push([]byte("\x1b[?1049h")); repaint {
+		t.Error("alt-screen entry asks for a repaint")
+	}
+	if _, repaint := w.filter.push([]byte("\x1b[?1049l")); !repaint {
+		t.Error("alt-screen exit after resize does not repaint the strip")
+	}
+	w.forced()
+	got := stdout.String()
+	if !strings.Contains(got, "▄") {
+		t.Error("post-resize repaint loses the soft edge")
+	}
+	if strings.Contains(got, "─") || strings.Contains(got, "\x1b[?69h") {
+		t.Errorf("post-resize repaint restores a line or margins:\n%q", got)
 	}
 }

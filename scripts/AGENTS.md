@@ -4,8 +4,10 @@
 
 Live probes that only mean something against running agents: the herdr
 report lifecycle and idle checks, the read-precedence comparison, the
-tell-worker proofs (live and mid-turn), and the header-strip spike (claude
-and pig usable under the wrapper). Each script names its prerequisites
+tell-worker proofs (live and mid-turn), the header-strip spike (claude
+and pig usable under the wrapper), and the borderless-look probe (the
+tinted-block strip with the wickb themes, plus the restored rule and
+frame for comparison). Each script names its prerequisites
 in its header comment.
 
 ## Ownership
