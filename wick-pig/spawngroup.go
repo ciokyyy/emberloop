@@ -124,17 +124,19 @@ func isPaneLost(run Exec, pane string) bool {
 	return paneNotFound(res)
 }
 
-// parentIdle reports whether the parent pane is idle: herdr's agent wait for
-// it returns at once. A pane herdr no longer knows counts as idle, so the
-// delivery that follows drops the notice the way any notice to a gone
-// session drops. Any other failure (a timeout: the agent is still working)
-// counts as busy.
+// parentIdle reports whether the parent pane can take typed text: herdr's
+// agent wait for idle or done returns at once. Herdr reports a pane whose
+// agent finished a turn but is not focused as done, not idle, and such a
+// pane is not running a tool call, so a notice typed into it cancels nothing.
+// A pane herdr no longer knows counts as idle, so the delivery that follows
+// drops the notice the way any notice to a gone session drops. Any other
+// failure (a timeout: the agent is still working) counts as busy.
 func parentIdle(run Exec, parent string) bool {
 	if parent == "" {
 		return true
 	}
 	ms := strconv.Itoa(int(groupIdleProbeTimeout / time.Millisecond))
-	res, err := run(herdrBin(), []string{"agent", "wait", parent, "--until", "idle", "--timeout", ms}, ExecOpts{Timeout: groupIdleProbeTimeout + 5*time.Second})
+	res, err := run(herdrBin(), []string{"agent", "wait", parent, "--until", "idle", "--until", "done", "--timeout", ms}, ExecOpts{Timeout: groupIdleProbeTimeout + 5*time.Second})
 	if err != nil {
 		return false
 	}
