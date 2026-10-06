@@ -548,11 +548,14 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 			return fmt.Errorf("could not launch worker in %s: %.200s", w.Pane, res.Stderr)
 		}
 
+		// The pane carries the agent type's readable name, so the herdr
+		// sidebar names every worker implementer. A rename that fails is
+		// silent: the name is cosmetic and never fails the spawn.
+		renamePane(run, w.Pane, PaneNameForType(defaultWorkerType(in.AgentType)))
 		if err := DeliverLate(run, w.Pane, in.Late); err != nil {
 			undo()
 			return err
 		}
-
 		store[id] = *w
 		if err := save(store); err != nil {
 			undo()

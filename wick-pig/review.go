@@ -790,6 +790,7 @@ func launchReviewer(run Exec, p *reviewPacket, t AgentType, note, parentPane, pa
 			if prev.Verdict != "" && p.note == "" && samePassState(prev, p) {
 				if s, ok, _ := ReadAgentSubmit(prev.SessionID); ok && s.Status == prev.Verdict {
 					agent := prev.agent()
+					renamePane(run, agent.Pane, AgentPaneName(t))
 					out = &spawnedAgent{ID: prev.SessionID, Type: t, Pane: agent.Pane, Tab: agent.Tab, Reused: true,
 						Notice: "(this reviewer already judged exactly this state; its answer is repeated, not re-reviewed)"}
 					return nil
@@ -881,6 +882,9 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 	if err := writeReviewState(prev.SessionID, t.Name, p, parentPane, parentID, groupID, agent.Pane, agent.Tab); err != nil {
 		return nil, err
 	}
+	// The reused pane keeps the reviewer's name, so a stale name never
+	// lingers. Silent when the rename fails.
+	renamePane(run, agent.Pane, AgentPaneName(t))
 	if err := DeliverPrompt(run, agent.Pane, text); err != nil {
 		return nil, err
 	}

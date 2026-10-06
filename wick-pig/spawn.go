@@ -829,6 +829,9 @@ func repromptAgent(run Exec, t AgentType, s AgentState, r spawnRequest, groupID 
 	if err := WriteAgentState(s); err != nil {
 		return nil, err
 	}
+	// The reused pane keeps the agent's name, so a stale name never
+	// lingers. Silent when the rename fails.
+	renamePane(run, s.Pane, AgentPaneName(t))
 	if err := DeliverPrompt(run, s.Pane, prompt); err != nil {
 		return nil, err
 	}
