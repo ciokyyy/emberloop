@@ -217,7 +217,9 @@ func PruneRuns(run Exec, now time.Time, opts PruneOptions) (PruneResult, error) 
 			}
 		}
 	}
-	if err := deletePruneUsageRows(droppedAgents); err != nil {
+	purged, err := deletePruneUsageRows(droppedAgents)
+	plan.CtxPurged = purged
+	if err != nil {
 		errs = append(errs, err)
 	}
 	for _, name := range blobNames {
@@ -518,45 +520,40 @@ func deletePruneRun(slug string) error {
 // only to pruned runs: their usage rows (the database form of the usage logs
 // removed above) and their overflow-store blobs (scoped to the session, which
 // is the agent id). It also purges overflow rows older than 24 hours, so a
-// prune collects expired blobs even when their sessions survive. Agents
-// shared with a kept run never reach here. A state with no database yet (no
-// usage ever tailed) is nothing to delete, not an error.
-func deletePruneUsageRows(agents []string) error {
+// prune collects expired blobs even when their sessions survive, and reports
+// how many expired rows went. Agents shared with a kept run never reach
+// here. A state with no database yet (no usage ever tailed) is nothing to
+// delete, not an error.
+func deletePruneUsageRows(agents []string) (int64, error) {
+	purged := countExpiredCtxRows()
 	if _, err := os.Stat(dbPath()); os.IsNotExist(err) {
-		return nil
+		return 0, nil
 	}
 	db, err := statedb.Open(dbPath())
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer db.Close()
 	if _, err := statedb.PurgeExpiredCtx(db, time.Now().UTC().Unix()); err != nil {
-		return err
+		return 0, err
 	}
 	if len(agents) == 0 {
-		return nil
+		return purged, nil
 	}
 	if _, err := statedb.DeleteUsageForAgents(db, agents); err != nil {
-		return err
+		return purged, err
 	}
 	_, err = statedb.DeleteCtxForSessions(db, agents)
-	return err
+	return purged, err
 }
 
 // purgeExpiredCtxRows purges overflow-store rows older than 24 hours,
 // returning how many went. A state with no database yet is nothing to purge,
-// not an error. The due count is read first over a read-only handle: the
-// migrating open below purges as a side effect, so counting after it would
-// always report zero.
+// not an error.
 func purgeExpiredCtxRows() (int64, error) {
+	due := countExpiredCtxRows()
 	if _, err := os.Stat(dbPath()); os.IsNotExist(err) {
 		return 0, nil
-	}
-	var due int64
-	if ro, err := statedb.OpenReadOnly(dbPath()); err == nil {
-		_ = ro.QueryRow(`SELECT COUNT(*) FROM ctx_blobs WHERE created_at <= ?`,
-			time.Now().UTC().Unix()-statedb.CtxTTLSeconds).Scan(&due)
-		_ = ro.Close()
 	}
 	db, err := statedb.Open(dbPath())
 	if err != nil {
@@ -567,6 +564,21 @@ func purgeExpiredCtxRows() (int64, error) {
 		return 0, err
 	}
 	return due, nil
+}
+
+// countExpiredCtxRows counts overflow-store rows older than 24 hours over a
+// read-only handle. It runs before the migrating open: that open purges as a
+// side effect, so counting after it would always report zero.
+func countExpiredCtxRows() int64 {
+	ro, err := statedb.OpenReadOnly(dbPath())
+	if err != nil {
+		return 0
+	}
+	defer ro.Close()
+	var n int64
+	_ = ro.QueryRow(`SELECT COUNT(*) FROM ctx_blobs WHERE created_at <= ?`,
+		time.Now().UTC().Unix()-statedb.CtxTTLSeconds).Scan(&n)
+	return n
 }
 
 // ParseOlderThan parses an --older-than age: a Go duration (72h, 15m) or a

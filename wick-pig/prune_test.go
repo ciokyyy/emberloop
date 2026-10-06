@@ -523,8 +523,12 @@ func TestPruneApplyDeletesCtxBlobsAndPurgesExpired(t *testing.T) {
 	newID := insertPruneCtx(t, "agent-new", "fresh blob body new\n", time.Now().UTC())
 	expiredID := insertPruneCtx(t, "agent-new", "expired blob body\n", time.Now().UTC().Add(-25*time.Hour))
 
-	if _, err := PruneRuns(pruneDeadExec(t), time.Now().UTC(), PruneOptions{Runs: []string{"old-run"}, Apply: true}); err != nil {
+	res, err := PruneRuns(pruneDeadExec(t), time.Now().UTC(), PruneOptions{Runs: []string{"old-run"}, Apply: true})
+	if err != nil {
 		t.Fatalf("PruneRuns: %v", err)
+	}
+	if res.CtxPurged != 1 {
+		t.Errorf("prune purged %d expired rows, want 1: %+v", res.CtxPurged, res)
 	}
 	db, err := statedb.Open(dbPath())
 	if err != nil {

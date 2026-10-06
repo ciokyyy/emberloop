@@ -993,7 +993,12 @@ func MergeSettings(global, project Settings) Settings {
 	}
 	if project.Overflow != nil && project.Overflow.ThresholdBytes != 0 && out.src["overflow.threshold_bytes"] != "env" {
 		if out.Overflow == nil {
+			// A copy, never the caller's struct: MergeSettings must not
+			// mutate the global settings through the shared pointer.
 			out.Overflow = &OverflowSettings{}
+		} else {
+			v := *out.Overflow
+			out.Overflow = &v
 		}
 		out.Overflow.ThresholdBytes = project.Overflow.ThresholdBytes
 		out.src["overflow.threshold_bytes"] = "project"
