@@ -222,3 +222,46 @@ func TestResolveBinaryMissingNamesDeps(t *testing.T) {
 		t.Fatalf("err = %v, want the typed error naming wick-pig deps", err)
 	}
 }
+
+func TestSandboxRejectsOverlappingBridge(t *testing.T) {
+	requireBwrap(t)
+	worktree := t.TempDir()
+	inside := filepath.Join(worktree, "sub")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"same":   worktree,
+		"inside": inside,
+		"above":  filepath.Dir(worktree),
+	}
+	for name, bridge := range cases {
+		_, err := RunSandbox(context.Background(),
+			SandboxConfig{Worktree: worktree, BridgeDir: bridge, Timeout: 30 * time.Second},
+			"bash", "-c", "exit 0")
+		if err == nil || !strings.Contains(err.Error(), "overlap") {
+			t.Errorf("%s bridge: err = %v, want the overlap refusal", name, err)
+		}
+	}
+}
+
+func TestSandboxRejectsBadBridge(t *testing.T) {
+	requireBwrap(t)
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	_, err := RunSandbox(context.Background(),
+		SandboxConfig{Worktree: t.TempDir(), BridgeDir: missing, Timeout: 30 * time.Second},
+		"bash", "-c", "exit 0")
+	if err == nil || !strings.Contains(err.Error(), "bridge") {
+		t.Errorf("missing bridge: err = %v, want the bridge error, not bwrap's exit 1", err)
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = RunSandbox(context.Background(),
+		SandboxConfig{Worktree: t.TempDir(), BridgeDir: file, Timeout: 30 * time.Second},
+		"bash", "-c", "exit 0")
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("file bridge: err = %v, want the not-a-directory error", err)
+	}
+}
