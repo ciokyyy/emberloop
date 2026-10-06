@@ -317,9 +317,10 @@ func (claudeHarness) LastReply(path string) (string, bool) {
 // claudeStopGate is the settings claude is launched with: a `Stop` hook that
 // runs wick's shared gate, so a claude agent cannot end a turn without
 // submitting, and a `UserPromptSubmit` hook that adds the register's per-turn
-// reminder to every user message, as the caveman plugin does. It is passed
+// reminder to every user message, as the caveman plugin does, and turns off
+// the away recap (awaySummaryEnabled; the env var does the same). It is passed
 // inline with --settings, which still applies under --setting-sources "".
-const claudeStopGate = `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
+const claudeStopGate = `{"awaySummaryEnabled":false,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"wick-pig stop-gate"}]}],` +
 	`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"wick-pig voice-reminder hook"}]}]}}`
 
 type claudeHarness struct{}
@@ -376,6 +377,7 @@ func (claudeHarness) Command(s Session) (Command, error) {
 		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
 		"CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 		"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0",
+		"CLAUDE_CODE_ENABLE_AWAY_SUMMARY=0",
 		"DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1")}, nil
 }
 
