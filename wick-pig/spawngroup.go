@@ -80,10 +80,12 @@ func readSpawnGroup(id string) (spawnGroup, bool, error) {
 // member's result, in spawn order, inside a single system notice. A member
 // that submitted contributes its report (renderSubmit: a full report for a
 // blocking type, a one-line summary for a non-blocking one); a member whose
-// pane vanished contributes a lost line, so the group always completes.
-func groupNoticeText(g spawnGroup, submits map[string]AgentSubmit, lost map[string]string) string {
+// pane vanished contributes a lost line, and a member whose last turn ended
+// in a provider error contributes a stopped-with-error line, so the group
+// always completes.
+func groupNoticeText(g spawnGroup, submits map[string]AgentSubmit, lost map[string]string, errored map[string]string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<system-notice> spawn complete (%d of %d agents). Resume your work using the results below.\n", len(submits)+len(lost), len(g.Members))
+	fmt.Fprintf(&b, "<system-notice> spawn complete (%d of %d agents). Resume your work using the results below.\n", len(submits)+len(lost)+len(errored), len(g.Members))
 	for i, id := range g.Members {
 		if i > 0 {
 			b.WriteString("\n---\n")
@@ -91,6 +93,8 @@ func groupNoticeText(g spawnGroup, submits map[string]AgentSubmit, lost map[stri
 		if s, ok := submits[id]; ok {
 			b.WriteString(renderSubmit(s))
 		} else if line, ok := lost[id]; ok {
+			b.WriteString(line)
+		} else if line, ok := errored[id]; ok {
 			b.WriteString(line)
 		}
 	}
@@ -104,6 +108,19 @@ func lostLine(id, typ string) string {
 		typ = "agent"
 	}
 	return fmt.Sprintf("%s %s lost: its pane is gone before it could submit.", typ, id)
+}
+
+// errorLine reports a member whose last turn ended in a provider error, naming
+// the agent and the error.
+func errorLine(id, typ, detail string) string {
+	if typ == "" {
+		typ = "agent"
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	if detail == "" {
+		detail = "unknown error"
+	}
+	return fmt.Sprintf("%s %s stopped with error: %s", typ, id, detail)
 }
 
 // isPaneLost reports whether pane is gone from herdr: a pane herdr no longer
@@ -202,12 +219,12 @@ func spawnGroupDelivered(groupID string) (bool, error) {
 }
 
 // deliverGroupIfComplete delivers the grouped notice for groupID when every
-// remaining member has submitted or is lost. A member's submit calls it
-// synchronously: the child's submit waits for the parent to go idle (held,
-// then delivered anyway with a warning past the bound). Every other caller
-// dispatches it asynchronously (dispatchGroupDelivery), because those callers
-// run inside the parent's own tool call: waiting there would stall the call,
-// and typing there would cancel it.
+// remaining member has submitted, is lost, or is errored. A member's submit
+// calls it synchronously: the child's submit waits for the parent to go idle
+// (held, then delivered anyway with a warning past the bound). Every other
+// caller dispatches it asynchronously (dispatchGroupDelivery), because those
+// callers run inside the parent's own tool call: waiting there would stall
+// the call, and typing there would cancel it.
 func deliverGroupIfComplete(groupID string) error {
 	var deliverErr error
 	err := withFileLock("group-"+groupID, func() error {
@@ -217,6 +234,7 @@ func deliverGroupIfComplete(groupID string) error {
 		}
 		submits := map[string]AgentSubmit{}
 		lost := map[string]string{}
+		errored := map[string]string{}
 		remaining := 0
 		for _, mid := range g.Members {
 			mst, mok, err := ReadAgentState(mid)
@@ -237,6 +255,10 @@ func deliverGroupIfComplete(groupID string) error {
 				submits[mid] = s
 				continue
 			}
+			if mok && mst.Errored {
+				errored[mid] = errorLine(mid, mst.Type, mst.ErrorDetail)
+				continue
+			}
 			if !mok || mst.Pane == "" {
 				// No state yet: a queued worker that has not started.
 				// The group waits for it.
@@ -253,7 +275,7 @@ func deliverGroupIfComplete(groupID string) error {
 			g.Delivered = true
 			return writeSpawnGroup(g)
 		}
-		notice := groupNoticeText(g, submits, lost)
+		notice := groupNoticeText(g, submits, lost, errored)
 		idle := waitForParentIdle(deliverExec, g.Parent)
 		if !idle {
 			notice = "<system-notice> warning: the parent was busy for a long time; delivering anyway. The result that follows may have interrupted a tool call.</system-notice>\n" + notice
@@ -263,7 +285,7 @@ func deliverGroupIfComplete(groupID string) error {
 			if err := writeSpawnGroup(g); err != nil {
 				return err
 			}
-			closeGroupScouts(deliverExec, submits, lost)
+			closeGroupScouts(deliverExec, submits, lost, errored)
 			return nil
 		}
 		if err := deliverToParent(AgentState{Parent: g.Parent}, notice); err != nil {
@@ -274,7 +296,7 @@ func deliverGroupIfComplete(groupID string) error {
 		if err := writeSpawnGroup(g); err != nil {
 			return err
 		}
-		closeGroupScouts(deliverExec, submits, lost)
+		closeGroupScouts(deliverExec, submits, lost, errored)
 		return nil
 	})
 	if deliverErr != nil {
@@ -285,15 +307,18 @@ func deliverGroupIfComplete(groupID string) error {
 
 // closeGroupScouts closes every scout whose result the group just delivered,
 // and cleans up its launch file. Workers own worktrees and reviewers stay
-// open; only scouts close. Lost members have no pane left, but their launch
-// file still goes, so a vanished pane leaves nothing behind. It runs inside
-// the group's lock, so concurrent submits for one group cannot interleave
-// closes with the delivery they belong to.
-func closeGroupScouts(run Exec, submits map[string]AgentSubmit, lost map[string]string) {
+// open; only scouts close. Lost and errored members have no live turn left,
+// but their launch file still goes, so a vanished pane leaves nothing behind.
+// It runs inside the group's lock, so concurrent submits for one group cannot
+// interleave closes with the delivery they belong to.
+func closeGroupScouts(run Exec, submits map[string]AgentSubmit, lost map[string]string, errored map[string]string) {
 	for id := range submits {
 		closeDeliveredScout(run, id)
 	}
 	for id := range lost {
+		closeDeliveredScout(run, id)
+	}
+	for id := range errored {
 		closeDeliveredScout(run, id)
 	}
 }

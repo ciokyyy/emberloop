@@ -194,9 +194,9 @@ func TestPigGateRemindsPinsThenGivesUpWithANotice(t *testing.T) {
 	}
 }
 
-// The gate is asked once per settle attempt, and a submit recorded this turn
-// or a turn that ended in a provider error settles at once, with nothing
-// delivered.
+// The gate is asked once per settle attempt: a submit recorded this turn
+// settles at once with nothing delivered, and a turn that ended in a provider
+// error settles at once with a stopped-with-error notice to the parent.
 func TestPigGateLetsASubmitAndAProviderErrorThrough(t *testing.T) {
 	rec := spawnAgent(t, true)
 	if err := WriteAgentSubmit(AgentSubmit{AgentID: "w1", Type: "worker", Status: "done", Summary: "shipped", ThisTurn: true}); err != nil {
@@ -205,11 +205,25 @@ func TestPigGateLetsASubmitAndAProviderErrorThrough(t *testing.T) {
 	if got := askPigGate(t, `{"fresh":true}`); got.Outcome != pigGateAllow {
 		t.Errorf("a submit this turn must allow the settle, got %q", got.Outcome)
 	}
-	if got := askPigGate(t, `{"fresh":true,"failed":true}`); got.Outcome != pigGateAllow {
+	if len(rec.calls) != 0 {
+		t.Errorf("an allowed submit must deliver nothing, got %v", rec.calls)
+	}
+	if got := askPigGate(t, `{"fresh":true,"failed":true,"error":"provider blew up"}`); got.Outcome != pigGateAllow {
 		t.Errorf("a provider error must allow the settle, got %q", got.Outcome)
 	}
-	if len(rec.calls) != 0 {
-		t.Errorf("an allowed settle must deliver nothing, got %v", rec.calls)
+	var noticed []string
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt ") {
+			noticed = append(noticed, strings.Join(c, " "))
+		}
+	}
+	if len(noticed) != 1 {
+		t.Fatalf("a provider error must deliver one error notice, got %v", rec.calls)
+	}
+	for _, want := range []string{"w1", "stopped with error", "provider blew up"} {
+		if !strings.Contains(noticed[0], want) {
+			t.Errorf("the error notice must contain %q, got:\n%s", want, noticed[0])
+		}
 	}
 }
 
@@ -401,7 +415,8 @@ func TestStopGateAllowsASubmitAndConsumesIt(t *testing.T) {
 	}
 }
 
-// No output and nothing delivered when the turn ended in a provider error.
+// A turn that ends in a provider error allows the stop and notifies the parent
+// with the agent id and the error, instead of an allow with no message.
 func TestStopGateLetsAProviderErrorThrough(t *testing.T) {
 	rec := spawnAgent(t, true)
 	path := filepath.Join(t.TempDir(), "session.jsonl")
@@ -413,8 +428,19 @@ func TestStopGateLetsAProviderErrorThrough(t *testing.T) {
 	if strings.TrimSpace(out) != "" {
 		t.Errorf("a provider error must allow the stop, got %q", out)
 	}
-	if len(rec.calls) != 0 {
-		t.Errorf("a provider error must deliver nothing, got %v", rec.calls)
+	var noticed []string
+	for _, c := range rec.calls {
+		if strings.Contains(strings.Join(c, " "), "agent prompt ") {
+			noticed = append(noticed, strings.Join(c, " "))
+		}
+	}
+	if len(noticed) != 1 {
+		t.Fatalf("a provider error must deliver one error notice, got %v", rec.calls)
+	}
+	for _, want := range []string{"w1", "stopped with error", "provider blew up"} {
+		if !strings.Contains(noticed[0], want) {
+			t.Errorf("the error notice must contain %q, got:\n%s", want, noticed[0])
+		}
 	}
 }
 

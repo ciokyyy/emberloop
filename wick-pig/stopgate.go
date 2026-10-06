@@ -137,11 +137,13 @@ func RunStopGate(in io.Reader, out io.Writer) error {
 		return nil
 	}
 	failed := false
+	failedDetail := ""
 	if hook.TranscriptPath != "" {
-		state, _ := (claudeHarness{}).TurnState(hook.TranscriptPath)
-		failed = state == TurnFailed
+		if state, detail := (claudeHarness{}).TurnState(hook.TranscriptPath); state == TurnFailed {
+			failed, failedDetail = true, detail
+		}
 	}
-	d, err := GateStop(id, !hook.StopHookActive, failed, (claudeHarness{}).Gate().CanPin(),
+	d, err := GateStop(id, !hook.StopHookActive, failed, failedDetail, (claudeHarness{}).Gate().CanPin(),
 		func() string { return stopExcerpt(hook) })
 	if err != nil {
 		return err
@@ -158,10 +160,12 @@ func RunStopGate(in io.Reader, out io.Writer) error {
 
 // PigGateInput is one settle attempt as the pig extension reports it: whether a
 // new turn began since the last attempt, whether the turn ended in a provider
-// error, and the last message of the turn, which a give-up quotes.
+// error with its text, and the last message of the turn, which a give-up
+// quotes.
 type PigGateInput struct {
 	Fresh       bool   `json:"fresh"`
 	Failed      bool   `json:"failed"`
+	Error       string `json:"error,omitempty"`
 	LastMessage string `json:"last_message"`
 }
 
@@ -201,7 +205,7 @@ func RunPigGate(event string, out io.Writer) error {
 	if id == "" {
 		return json.NewEncoder(out).Encode(PigGateDecision{Outcome: pigGateAllow})
 	}
-	d, err := GateStop(id, in.Fresh, in.Failed, (pigHarness{}).Gate().CanPin(),
+	d, err := GateStop(id, in.Fresh, in.Failed, in.Error, (pigHarness{}).Gate().CanPin(),
 		func() string { return excerpt(in.LastMessage, nil) })
 	if err != nil {
 		return err
@@ -225,16 +229,25 @@ func pigDecision(d GateDecision) PigGateDecision {
 }
 
 // GateStop asks the shared decision for one agent at one attempted stop and
-// applies the shared bookkeeping: a fresh turn starts the count over, the
-// attempt count is stored, and a give-up is recorded and, for a non-blocking
-// agent, delivered as a notice. lastMessage is read only on a give-up. The
-// caller enforces what the decision leaves: claude writes block JSON, pig
-// continues the agent.
-func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) (GateDecision, error) {
+// applies the shared bookkeeping: a fresh turn starts the count over and clears
+// the previous failed-turn mark, a failed turn is recorded and reported to the
+// parent with a stopped-with-error notice, the dead-child sweep runs before a
+// pending allow, the attempt count is stored, and a give-up is recorded and,
+// for a non-blocking agent, delivered as a notice. lastMessage is read only
+// on a give-up. The caller enforces what the decision leaves: claude writes
+// block JSON, pig continues the agent.
+func GateStop(id string, fresh, failed bool, failedDetail string, canPin bool, lastMessage func() string) (GateDecision, error) {
 	// stop_hook_active false is a fresh turn (a tell, a delivered notice), so
-	// the attempt count starts over.
+	// the attempt count starts over and the previous turn's failure stops
+	// counting as the last turn.
 	if fresh {
 		if err := writeGateBlocked(id, 0); err != nil {
+			return GateDecision{}, err
+		}
+		clearChildError(id)
+	}
+	if failed {
+		if err := reportTurnError(id, failedDetail); err != nil {
 			return GateDecision{}, err
 		}
 	}
@@ -245,6 +258,14 @@ func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) 
 		submitted = s.ThisTurn
 	}
 	blocked := readGateBlocked(id)
+	// Before allowing because children are pending, run the dead-child sweep,
+	// so a stranded group is finalised when the parent stops and a worker with
+	// only dead children is blocked and nudged to submit instead of stopping
+	// text-only with nobody told. The group sweep dispatches in the background
+	// (it holds for an idle parent); the individual sweep reports synchronously
+	// and exactly once, so what is left after it is what the gate decides on.
+	sweepOpenGroups("", id)
+	sweepDeadChildren(id)
 	d := DecideGate(GateInput{
 		Submitted: submitted,
 		Blocked:   blocked,
@@ -255,9 +276,14 @@ func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) 
 	switch d.Outcome {
 	case GateAllow:
 		// The submit that allowed this stop belongs to this turn only; clear it
-		// so the next turn's first stop blocks afresh.
+		// so the next turn's first stop blocks afresh. A failed turn stays
+		// marked errored until the next fresh turn; any other allow clears the
+		// transient mark, since the last turn did not end in an error.
 		if err := ClearAgentSubmitThisTurn(id); err != nil {
 			return d, err
+		}
+		if !failed {
+			clearChildError(id)
 		}
 		return d, writeGateBlocked(id, 0)
 	case GateGiveUp:
@@ -268,6 +294,52 @@ func GateStop(id string, fresh, failed, canPin bool, lastMessage func() string) 
 	default:
 		return d, writeGateBlocked(id, blocked+1)
 	}
+}
+
+// reportTurnError records a turn that ended in a provider error and reports it
+// to the parent with a stopped-with-error notice naming the agent and the
+// error, instead of an allow with no message. A member of an open group joins
+// the group's single notice through the errored mark and a background dispatch;
+// any other agent with a parent pane gets one individual notice, exactly once
+// per detail. A blocking agent a tell is waiting on (Deliver cleared) records
+// the error as its stopped result instead, so the waiting tell returns it
+// rather than having a notice typed into the parent's running tool call.
+func reportTurnError(id, detail string) error {
+	st, ok, err := ReadAgentState(id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		st = AgentState{ID: id}
+	}
+	if st.GroupID != "" {
+		if delivered, err := spawnGroupDelivered(st.GroupID); err == nil && !delivered {
+			if setChildErrored(id, detail) {
+				dispatchGroupDelivery(st.GroupID)
+			}
+			return nil
+		}
+	}
+	if st.Deliver && st.Parent != "" {
+		if setChildErrored(id, detail) {
+			return deliverToParent(st, errorNotice(st.Type, id, detail))
+		}
+		return nil
+	}
+	// A waiting tell owns the next result: record the error where the tell
+	// polls, the way the stop gate's give-up does.
+	s := AgentSubmit{
+		AgentID: id,
+		Type:    st.Type,
+		Status:  "stopped",
+		Report:  "stopped with error: " + strings.Join(strings.Fields(detail), " "),
+		Stopped: true,
+		At:      time.Now().UTC().Format(time.RFC3339),
+	}
+	if strings.TrimSpace(detail) == "" {
+		s.Report = "stopped with error: unknown error"
+	}
+	return WriteAgentSubmit(s)
 }
 
 // stopExcerpt is the agent's last message, one flattened line and bounded, for
