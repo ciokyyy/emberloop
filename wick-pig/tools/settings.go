@@ -44,6 +44,11 @@ const DefaultMaxWorkers = 3
 // session compresses when nothing is stored: the ticket's 200k.
 const DefaultCompressThreshold = 200000
 
+// DefaultCompressCooldown is the tool calls after a compress during which a
+// second auto-compress is refused, when nothing is stored: a bad run cannot
+// compress repeatedly, but a real session passes it quickly.
+const DefaultCompressCooldown = 5
+
 // PlacementMain serves a tool in the top-level tool list; PlacementExecute
 // serves it only inside the execute tool.
 const (
@@ -125,8 +130,11 @@ type OverflowSettings struct {
 // model. StripRows is the header strip height (1 or 2, default 2);
 // StripFrame draws the agent-colored frame beside the agent screen (nil
 // means on); CompressModels names the summarizer model per harness (unset
-// means compression refuses with a warning, never a silent default). A pointer,
-// so an unset context stays out of the saved file.
+// means compression refuses with a warning, never a silent default).
+// AutoCompress disables the automatic trigger when false (nil means on; the
+// manual key keeps working); CompressCooldown is the tool calls after a
+// compress that block a second auto-compress (zero means the default). A
+// pointer, so an unset context stays out of the saved file.
 type ContextSettings struct {
 	CompressThreshold int64             `json:"compress_threshold,omitempty"`
 	HarnessThresholds map[string]int64  `json:"harness_thresholds,omitempty"`
@@ -134,6 +142,8 @@ type ContextSettings struct {
 	StripRows         int               `json:"strip_rows,omitempty"`
 	StripFrame        *bool             `json:"strip_frame,omitempty"`
 	CompressModels    map[string]string `json:"compress_models,omitempty"`
+	AutoCompress      *bool             `json:"auto_compress,omitempty"`
+	CompressCooldown  int               `json:"compress_cooldown,omitempty"`
 }
 
 // Settings are the user's choices that tools read at call time. They live in
@@ -351,6 +361,26 @@ func (s Settings) EffectiveCompressModel(harness string) string {
 	return ""
 }
 
+// EffectiveAutoCompress is the automatic trigger in force: on unless the
+// file says otherwise. Off stops auto-compress only; the manual key keeps
+// working.
+func (s Settings) EffectiveAutoCompress() bool {
+	if s.Context != nil && s.Context.AutoCompress != nil {
+		return *s.Context.AutoCompress
+	}
+	return true
+}
+
+// EffectiveCompressCooldown is the tool calls after a compress that block a
+// second auto-compress, in force: the stored value, or the default when
+// nothing positive is stored.
+func (s Settings) EffectiveCompressCooldown() int {
+	if s.Context != nil && s.Context.CompressCooldown > 0 {
+		return s.Context.CompressCooldown
+	}
+	return DefaultCompressCooldown
+}
+
 // CompressModels is the summarizer model per harness. The map is a copy:
 // the caller cannot mutate the settings through it.
 func (s Settings) CompressModels() map[string]string {
@@ -403,7 +433,7 @@ func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage
 	var out map[string]json.RawMessage
 	for k, v := range contextFields {
 		switch strings.ToLower(k) {
-		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "compress_models":
+		case "compress_threshold", "harness_thresholds", "windows", "strip_rows", "strip_frame", "compress_models", "auto_compress", "compress_cooldown":
 			continue
 		}
 		if out == nil {
@@ -453,6 +483,10 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			v := *global.StripFrame
 			out.StripFrame = &v
 		}
+		if global.AutoCompress != nil {
+			v := *global.AutoCompress
+			out.AutoCompress = &v
+		}
 	}
 	if project != nil {
 		if project.CompressThreshold > 0 && src["context.compress_threshold"] != "env" {
@@ -498,9 +532,19 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			out.CompressModels[h] = m
 			src["context.compress_models."+h] = "project"
 		}
+		if project.AutoCompress != nil {
+			v := *project.AutoCompress
+			out.AutoCompress = &v
+			src["context.auto_compress"] = "project"
+		}
+		if project.CompressCooldown > 0 {
+			out.CompressCooldown = project.CompressCooldown
+			src["context.compress_cooldown"] = "project"
+		}
 	}
 	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 &&
-		out.StripRows == 0 && out.StripFrame == nil && len(out.CompressModels) == 0 {
+		out.StripRows == 0 && out.StripFrame == nil && len(out.CompressModels) == 0 &&
+		out.AutoCompress == nil && out.CompressCooldown == 0 {
 		return nil
 	}
 	return &out
@@ -683,6 +727,12 @@ func decodeSettings(raw []byte) Settings {
 		}
 		if s.Context.StripFrame != nil {
 			s.src["context.strip_frame"] = "file"
+		}
+		if s.Context.AutoCompress != nil {
+			s.src["context.auto_compress"] = "file"
+		}
+		if s.Context.CompressCooldown != 0 {
+			s.src["context.compress_cooldown"] = "file"
 		}
 	}
 	markToolSources(&s)
@@ -951,7 +1001,7 @@ func SaveSettings(s Settings) error {
 	// A set-but-empty context pointer marshals as {} because omitempty does
 	// not omit structs. Drop the key when nothing context-related is set, so
 	// clearing the last override removes the object instead of leaving {}.
-	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && len(s.Context.CompressModels) == 0 && len(s.contextExtra) == 0 {
+	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && s.Context.StripRows == 0 && s.Context.StripFrame == nil && len(s.Context.CompressModels) == 0 && s.Context.AutoCompress == nil && s.Context.CompressCooldown == 0 && len(s.contextExtra) == 0 {
 		delete(fields, "context")
 	}
 	// A zero graph struct marshals as {} because encoding/json omitempty does

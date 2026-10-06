@@ -165,3 +165,29 @@ func TestUnknownHarnessFails(t *testing.T) {
 		t.Error("an unknown harness must fail, not print zeros")
 	}
 }
+
+// CompletedCalls counts finished tool calls (one per result), the cooldown's
+// input: the pig fixture answers three calls, the claude fixture two.
+func TestCompletedCallsCountsResults(t *testing.T) {
+	snap, err := SummarizeContext("pig", strings.NewReader(readContextFixture(t, "context-pig.jsonl")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.CompletedCalls != 3 {
+		t.Errorf("pig completed = %d, want 3", snap.CompletedCalls)
+	}
+	snap, err = SummarizeContext("claude", strings.NewReader(readContextFixture(t, "context-claude.jsonl")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.CompletedCalls != 2 {
+		t.Errorf("claude completed = %d, want 2", snap.CompletedCalls)
+	}
+	snap, err = SummarizeContext("pig", strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.CompletedCalls != 0 {
+		t.Errorf("empty completed = %d, want 0", snap.CompletedCalls)
+	}
+}

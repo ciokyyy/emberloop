@@ -170,3 +170,83 @@ func TestCompressModelRoundTrip(t *testing.T) {
 		t.Errorf("round trip compress model = %q, want pig-cheap", got)
 	}
 }
+
+// Seam: auto-compress guards — the disable switch (default on, manual still
+// works) and the cooldown in tool calls after a compress (default 5).
+// Expected values come from the ticket, never the implementation.
+func TestAutoCompressDefaultsOn(t *testing.T) {
+	s := writeContextSettings(t, `{}`)
+	if !s.EffectiveAutoCompress() {
+		t.Error("default auto-compress is off, want on")
+	}
+}
+
+func TestAutoCompressDisableSwitch(t *testing.T) {
+	s := writeContextSettings(t, `{"context":{"auto_compress":false}}`)
+	if s.EffectiveAutoCompress() {
+		t.Error("auto_compress false reads on, want off")
+	}
+	s = writeContextSettings(t, `{"context":{"auto_compress":true}}`)
+	if !s.EffectiveAutoCompress() {
+		t.Error("auto_compress true reads off, want on")
+	}
+}
+
+func TestCompressCooldownDefaultsTo5Calls(t *testing.T) {
+	s := writeContextSettings(t, `{}`)
+	if got := s.EffectiveCompressCooldown(); got != 5 {
+		t.Errorf("default cooldown = %d, want 5", got)
+	}
+}
+
+func TestCompressCooldownFromFile(t *testing.T) {
+	s := writeContextSettings(t, `{"context":{"compress_cooldown":3}}`)
+	if got := s.EffectiveCompressCooldown(); got != 3 {
+		t.Errorf("cooldown = %d, want 3", got)
+	}
+}
+
+func TestCompressCooldownNonPositiveMeansDefault(t *testing.T) {
+	s := writeContextSettings(t, `{"context":{"compress_cooldown":0}}`)
+	if got := s.EffectiveCompressCooldown(); got != 5 {
+		t.Errorf("zero cooldown = %d, want 5", got)
+	}
+}
+
+func TestAutoCompressRoundTrip(t *testing.T) {
+	s := writeContextSettings(t, `{"context":{"auto_compress":false,"compress_cooldown":3}}`)
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	back := LoadSettings()
+	if back.EffectiveAutoCompress() {
+		t.Error("round trip auto-compress is on, want off")
+	}
+	if got := back.EffectiveCompressCooldown(); got != 3 {
+		t.Errorf("round trip cooldown = %d, want 3", got)
+	}
+}
+
+func TestAutoCompressProjectMerges(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(t.TempDir(), "settings.json")
+	settingsEnv(t, global)
+	t.Setenv("WICK_COMPRESS_THRESHOLD", "")
+	if err := os.WriteFile(global, []byte(`{"context":{"auto_compress":false,"compress_cooldown":9}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(dir, ".wick-pig")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "settings.json"), []byte(`{"context":{"auto_compress":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := EffectiveSettings(dir)
+	if !s.EffectiveAutoCompress() {
+		t.Error("merged auto-compress is off, want the project's true")
+	}
+	if got := s.EffectiveCompressCooldown(); got != 9 {
+		t.Errorf("merged cooldown = %d, want the global 9", got)
+	}
+}

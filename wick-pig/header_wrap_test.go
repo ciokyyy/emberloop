@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"example.com/wick/statedb"
 	"example.com/wick/tools"
@@ -180,5 +181,62 @@ func TestBuildHeaderSnapshotWarnsWithoutCompressModel(t *testing.T) {
 	}
 	if snap.HasCost {
 		t.Error("missing database reports a cost")
+	}
+}
+
+// While a compress runs the strip shows `compressing…` instead of the
+// working state, so the user knows why the agent paused. A missing model
+func TestBuildHeaderSnapshotShowsCompressing(t *testing.T) {
+	isolateState(t)
+	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", Compressing: true, CompressingSince: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	settings := tools.Settings{Context: &tools.ContextSettings{
+		CompressModels: map[string]string{"pig": "cheap-long"},
+	}}
+	src := HeaderSource{
+		AgentID: "w1", AgentType: "worker", AgentName: "worker",
+		Harness: "pig", TranscriptPath: filepath.Join(t.TempDir(), "missing.jsonl"),
+		StateDir: t.TempDir(),
+	}
+	snap, err := BuildHeaderSnapshot(src, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != HeaderCompressing {
+		t.Errorf("state = %q, want compressing", snap.State)
+	}
+	if plain := stripANSI(renderTrue(snap, 100)); !strings.Contains(plain, "compressing…") {
+		t.Errorf("strip misses the compressing state:\n%s", plain)
+	}
+	if snap.Warning != "" {
+		t.Errorf("warning = %q, want empty with a compress model set", snap.Warning)
+	}
+}
+
+// A stale mark from a crashed owner reads as absent: the strip shows the
+// working state, never a stuck `compressing…`.
+func TestBuildHeaderSnapshotIgnoresStaleCompressing(t *testing.T) {
+	isolateState(t)
+	oldStale := autoCompressStaleAfter
+	autoCompressStaleAfter = 50 * time.Millisecond
+	defer func() { autoCompressStaleAfter = oldStale }()
+	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", Compressing: true, CompressingSince: time.Now().Add(-time.Hour).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	settings := tools.Settings{Context: &tools.ContextSettings{
+		CompressModels: map[string]string{"pig": "cheap-long"},
+	}}
+	src := HeaderSource{
+		AgentID: "w1", AgentType: "worker", AgentName: "worker",
+		Harness: "pig", TranscriptPath: filepath.Join(t.TempDir(), "missing.jsonl"),
+		StateDir: t.TempDir(),
+	}
+	snap, err := BuildHeaderSnapshot(src, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State == HeaderCompressing {
+		t.Error("stale mark still reads as compressing")
 	}
 }

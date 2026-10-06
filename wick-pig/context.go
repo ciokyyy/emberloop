@@ -9,18 +9,20 @@ import (
 // ContextSnapshot is what the context core reports for one session's
 // transcript: the current context size under the shared formula, the
 // model of the latest request, how many tool calls still wait for a
-// result, and result sizes per tool name with the top three split out.
+// result, how many finished (one per result: the auto-compress cooldown's
+// input), and result sizes per tool name with the top three split out.
 // Sizes are bytes of result text.
 type ContextSnapshot struct {
-	Model         string
-	Input         int64
-	Output        int64
-	CacheRead     int64
-	CacheWrite    int64
-	ContextTokens int64
-	Outstanding   int
-	ToolBytes     map[string]int64
-	TopTools      []ToolSize
+	Model          string
+	Input          int64
+	Output         int64
+	CacheRead      int64
+	CacheWrite     int64
+	ContextTokens  int64
+	Outstanding    int
+	CompletedCalls int
+	ToolBytes      map[string]int64
+	TopTools       []ToolSize
 }
 
 // ToolSize is one tool's total result bytes.
@@ -70,7 +72,11 @@ func SummarizeContext(harness string, r io.Reader) (ContextSnapshot, error) {
 			} else {
 				delete(pending, res.ID)
 			}
-			if res.ID == "" || name == "" {
+			if res.ID == "" {
+				continue
+			}
+			snap.CompletedCalls++
+			if name == "" {
 				continue
 			}
 			snap.ToolBytes[name] += res.Bytes

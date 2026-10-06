@@ -70,3 +70,47 @@ func TestSettingsCompressModel(t *testing.T) {
 		t.Fatal("an unknown harness should be an error")
 	}
 }
+
+// `settings auto-compress` flips the automatic trigger; anything but on or
+// off is an error. Off stops auto-compress only: the manual key keeps
+// working.
+func TestSettingsAutoCompress(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"auto-compress", "off"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if tools.LoadSettings().EffectiveAutoCompress() {
+		t.Fatal("saved auto-compress is on, want off")
+	}
+	if !strings.Contains(out.String(), "auto-compress: off") {
+		t.Fatalf("output %q does not confirm the switch", out.String())
+	}
+	if err := runSettings([]string{"auto-compress", "maybe"}, &out, noModels); err == nil {
+		t.Fatal("auto-compress maybe should be an error")
+	}
+}
+
+// `settings compress-cooldown` sets the tool calls after a compress that
+// block a second auto-compress; anything but a whole number above zero is
+// an error that saves nothing.
+func TestSettingsCompressCooldown(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"compress-cooldown", "3"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().EffectiveCompressCooldown(); got != 3 {
+		t.Fatalf("saved cooldown = %d, want 3", got)
+	}
+	if !strings.Contains(out.String(), "compress-cooldown: 3") {
+		t.Fatalf("output %q does not confirm the cooldown", out.String())
+	}
+	p := settingsFile(t)
+	if err := runSettings([]string{"compress-cooldown", "0"}, &out, noModels); err == nil {
+		t.Fatal("compress-cooldown 0 should be an error")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected compress-cooldown must not be saved")
+	}
+}

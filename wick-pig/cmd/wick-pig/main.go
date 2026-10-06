@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"example.com/wick"
+	"example.com/wick/tools"
 )
 
 func main() {
@@ -239,6 +240,12 @@ func run(argv []string) error {
 		if h := wick.Registered(choice.Harness); h != nil {
 			go wick.Supervise(wick.OSExec, h, s, pane, stop)
 		}
+		// The orchestrator supervises its workers' context: a pane past its
+		// threshold compresses on its own at a tool-call boundary or at
+		// idle, never during a running tool call.
+		go wick.SuperviseAutoCompress(wick.OSExec, func() tools.Settings {
+			return tools.EffectiveSettings(cwd)
+		}, stop)
 	}
 	// The top-level session runs under the header strip too: same binary,
 	// argv and env, on a terminal sized for the strip. Without a terminal
