@@ -4,10 +4,10 @@
 
 **Blocked by:** 03 One reviewer per worktree and type (both change the review code)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A prompt for a tree whose diff covers every changed file states matching counts
-- [ ] A prompt where the diff covers fewer files than the tree flags the mismatch (test)
-- [ ] Spec story 25
+- [x] A prompt for a tree whose diff covers every changed file states matching counts
+- [x] A prompt where the diff covers fewer files than the tree flags the mismatch (test)
+- [x] Spec story 25
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
