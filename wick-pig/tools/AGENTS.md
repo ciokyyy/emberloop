@@ -36,9 +36,9 @@ plain command or JSON name map, one `{args}` slot, metacharacters refused),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools,
 mcp_servers, search and graph maps, the per-server summary, the search
-defaults, the overflow and context thresholds, the model window overrides
-(covered by `context_test.go`), and their merge), `rename.go` (serve a tool
-under a new name, forwarding its MCP markers),
+defaults, the overflow and context thresholds, the model window overrides,
+the per-harness compress models (covered by `context_test.go`), and their
+merge), `rename.go` (serve a tool under a new name, forwarding its MCP markers),
 `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `wick-pig deps` error), `mcpclient.go` (the stdio JSON-RPC client

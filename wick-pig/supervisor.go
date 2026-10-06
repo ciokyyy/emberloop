@@ -109,6 +109,9 @@ func RestartPane(run Exec, req PaneRestart, launchFor func(newSessionID string) 
 		CleanupSession(sess)
 		return "", fmt.Errorf("herdr pane run %s failed: %s", req.Pane, firstLine(res.Stderr, res.Stdout))
 	}
+	// The pane keeps its agent across the handoff, so it keeps its name too:
+	// re-assert it for the agent's type. Silent by contract, never blocking.
+	reassertPaneName(run, req.AgentID, req.Pane)
 	// The agent reads its MCP config at startup; the launch file stays for
 	// the pane's `wick-pig exec` to consume.
 	cleanupMCP(sess)
@@ -164,4 +167,16 @@ func recordPaneRestart(agentID, pane, next string) error {
 		return err
 	}
 	return pointWorkerAtSession(agentID, next)
+}
+
+// reassertPaneName names pane for the agent's type after a restart. A pane
+// keeps its agent across a handoff, so the name never goes stale. No state
+// or no type (the top-level session names its own pane at startup) renames
+// nothing; a failed rename is silent and never blocks.
+func reassertPaneName(run Exec, agentID, pane string) {
+	s, ok, err := ReadAgentState(agentID)
+	if err != nil || !ok || s.Type == "" {
+		return
+	}
+	renamePane(run, pane, PaneNameForType(s.Type))
 }
