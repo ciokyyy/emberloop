@@ -4,10 +4,10 @@
 
 **Blocked by:** 16 The repo has its DOX tree
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Worker brief and reviewer types carry the read-before-edit and update-after rules (brief and type tests)
-- [ ] A reviewer fixture where a contract changed and no doc did produces the flag
-- [ ] Spec stories 18, 19, 20
+- [x] Worker brief and reviewer types carry the read-before-edit and update-after rules (brief and type tests)
+- [x] A reviewer fixture where a contract changed and no doc did produces the flag
+- [x] Spec stories 18, 19, 20
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
