@@ -172,6 +172,11 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 		CompressCount: src.CompressCount,
 	}
 	path := resolveTranscript(src)
+	// No transcript yet means no turn has started: the agent is waiting for
+	// its first message, not working. herdr's wait for idle depends on it.
+	if path == "" {
+		snap.State = HeaderIdle
+	}
 	if h := Registered(src.Harness); h != nil && path != "" {
 		if state, _ := h.TurnState(path); state == TurnDone || state == TurnFailed {
 			snap.State = HeaderIdle
