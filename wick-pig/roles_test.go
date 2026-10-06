@@ -253,3 +253,35 @@ func TestEveryReadingRoleServesWebsearch(t *testing.T) {
 		}
 	}
 }
+
+// Ticket 18: one test per role asserting its served tool list (the main list
+// the MCP server serves) and its execute-reachable tools, in serve order,
+// under default settings. review and scout read, find and execute (with
+// websearch and ctx_search riding with read); work, plan and full add
+// execute to their file tools; implement never gets execute.
+func TestRoleToolsetsPerRole(t *testing.T) {
+	hermeticSettings(t)
+	cases := []struct {
+		role          string
+		main, execute []string
+	}{
+		{"implement", []string{"read", "edit", "write", "find", "websearch", "ctx_search", "spawn", "finish", "tell"}, []string{}},
+		{"review", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
+		{"scout", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"grep", "git"}},
+		{"work", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
+		{"plan", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}, []string{"check", "grep", "git"}},
+		{"full", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "finish", "tell", "execute"}, []string{"grep", "git", "check"}},
+	}
+	for _, tc := range cases {
+		main, execute, err := ResolvedTools(tc.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := toolNames(main); !equalNames(got, tc.main) {
+			t.Errorf("%s main = %v, want %v", tc.role, got, tc.main)
+		}
+		if got := toolNames(execute); !equalNames(got, tc.execute) {
+			t.Errorf("%s execute = %v, want %v", tc.role, got, tc.execute)
+		}
+	}
+}

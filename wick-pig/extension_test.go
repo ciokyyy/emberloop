@@ -301,3 +301,18 @@ func TestBriefCarriesDoxReadAndUpdateRules(t *testing.T) {
 		t.Errorf("the chain must be read before editing:\n%s", text)
 	}
 }
+
+// Ticket 18: the worker brief carries one positive execute direction: search
+// and process content with execute.
+func TestBriefDirectsExecute(t *testing.T) {
+	t.Setenv("WICK_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := readFile(t, path)
+	const line = "Search and process content with `execute`"
+	if got := strings.Count(text, line); got != 1 {
+		t.Errorf("brief must carry the execute direction exactly once, found %d:\n%s", got, text)
+	}
+}
