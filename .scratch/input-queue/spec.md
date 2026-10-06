@@ -26,6 +26,7 @@ The process that owns the agent child (the wrapper from the header-strip ticket)
 - **Order.** The user's own submitted message goes before pending injections. After a compress restart the queue and the row draft survive, and the handoff goes ahead of everything.
 - **Visibility.** The strip shows pending count and mode: `N pending`, `raw`, `raw, N queued`, alongside the existing `compress queued` and `compressing` states.
 - **Borderless look.** Areas are separated by background tint, not lines. The agent-colored frame columns are off by default (the setting stays). The strip's top edge is a soft row of lower half blocks in the strip background instead of a rule line. The generated claude and pig themes set border and rule tokens to the surface tone. Agent identity stays in the name chip and ctx label. The frame default and the soft edge already shipped; the themed borders are ticket 08.
+- **Styled strip.** After the borderless look, the strip is restyled as colored segments in the manner of omp's status line: icon per segment, symbol preset (`nerd`, `unicode` default, `ascii`), separator choice, rounded caps in `nerd`, segment colors from named palette tokens. Default stays `unicode` so a terminal with no Nerd Font is correct. Ticket 10.
 - **Theme.** One palette source drives the strip and the agents. Catppuccin Mocha for dark, Latte for light, the strip's table. Wick launches claude with a generated custom theme and pig with a generated theme file, both per run, never touching the user's saved selection. The wrapper also sets the pane's default foreground and background, cursor and 16 ANSI colors with OSC 4, 10, 11 and 12 at start and resets them on exit. Verified live in herdr: the pane background and the agents' colors follow. Not verified: Latte, and what other terminals do.
 
 ## User Stories
@@ -61,6 +62,9 @@ The process that owns the agent child (the wrapper from the header-strip ticket)
 29. As a maintainer, I want a fallback to the herdr delivery path when no wrapper runs, so that nothing breaks during rollout.
 30. As a user, I want areas separated by tint instead of drawn lines, so that the pane looks calm and uniform.
 31. As a user, I want the agent's own input box and rules dimmed to the surface tone, so that they stop competing with the strip.
+32. As a user, I want the strip to show icons and colored segments, so that I read its stats at a glance.
+33. As a user, I want to choose the symbol preset and separator, so that the strip looks right in my terminal and font.
+34. As a user, I want rounded caps and a clean look with a Nerd Font and a safe plain look without one, so that I never see broken glyphs.
 
 ## Implementation Decisions
 
