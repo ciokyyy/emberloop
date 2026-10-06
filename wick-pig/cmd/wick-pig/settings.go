@@ -15,7 +15,7 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|window <model> <n>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
        wick-pig settings search provider|mode <value>
@@ -75,6 +75,14 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 			return fmt.Errorf("max-workers %q is not a whole number above zero\n%s", argv[1], settingsUsage)
 		}
 		s.MaxWorkers = v
+	case "compress-threshold":
+		if err := setCompressThreshold(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "window":
+		if err := setContextWindow(&s, argv[1:]); err != nil {
+			return err
+		}
 	case "role":
 		warn, err := setRole(&s, argv[1:], models)
 		if err != nil {
@@ -168,6 +176,69 @@ func printModels(out io.Writer, harness string, list []wick.Model) {
 		}
 		fmt.Fprintln(out)
 	}
+}
+
+// setCompressThreshold applies `compress-threshold [harness] <tokens>`
+// to s: one argument sets the global threshold, two set a per-harness
+// override. Tokens are whole numbers above zero.
+func setCompressThreshold(s *tools.Settings, argv []string) error {
+	harness, value := "", ""
+	switch len(argv) {
+	case 1:
+		value = argv[0]
+	case 2:
+		harness, value = argv[0], argv[1]
+		if wick.Registered(harness) == nil {
+			return fmt.Errorf("unknown harness %q (have %s)\n%s", harness, strings.Join(wick.HarnessNames(), ", "), settingsUsage)
+		}
+	default:
+		return fmt.Errorf("compress-threshold needs [harness] and tokens\n%s", settingsUsage)
+	}
+	v, err := strconv.Atoi(value)
+	if err != nil || v <= 0 {
+		return fmt.Errorf("compress-threshold %q is not a whole number above zero\n%s", value, settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	if harness == "" {
+		c.CompressThreshold = int64(v)
+		return nil
+	}
+	if c.HarnessThresholds == nil {
+		c.HarnessThresholds = map[string]int64{}
+	}
+	c.HarnessThresholds[harness] = int64(v)
+	return nil
+}
+
+// setContextWindow applies `window <model> <tokens>` to s: the window
+// override for one model. Zero tokens clears the override.
+func setContextWindow(s *tools.Settings, argv []string) error {
+	if len(argv) != 2 {
+		return fmt.Errorf("window needs a model and tokens\n%s", settingsUsage)
+	}
+	model, value := argv[0], argv[1]
+	v, err := strconv.Atoi(value)
+	if err != nil || v < 0 {
+		return fmt.Errorf("window %q is not a whole number\n%s", value, settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	if c.Windows == nil {
+		c.Windows = map[string]int64{}
+	}
+	if v == 0 {
+		delete(c.Windows, model)
+		return nil
+	}
+	c.Windows[model] = int64(v)
+	return nil
 }
 
 // setRole applies `role <slot> harness|model|effort <value>` to s. A harness
@@ -660,6 +731,7 @@ func printSettings(out io.Writer, s tools.Settings) {
 	fmt.Fprintf(out, "decision-model: %s (%s)\n", orDefault(s.DecisionModel, systemone.JevModelPinned), s.SourceOf("decision_model"))
 	fmt.Fprintf(out, "threshold: %g (%s)\n", orDefault(s.Threshold, defaultThreshold), s.SourceOf("threshold"))
 	fmt.Fprintf(out, "max-workers: %d (%s)\n", s.EffectiveMaxWorkers(), maxWorkersSource(s))
+	printContextSettings(out, s)
 	fmt.Fprintf(out, "search: provider %s (%s), mode %s (%s)\n",
 		s.EffectiveSearchProvider(), s.SourceOf("search.provider"),
 		s.EffectiveSearchMode(), s.SourceOf("search.mode"))
@@ -673,6 +745,37 @@ func printSettings(out io.Writer, s tools.Settings) {
 	}
 	printToolSettings(out, s)
 	printMCPServers(out, s)
+}
+
+// printContextSettings shows the compress threshold in force and the
+// model window overrides. s is the effective settings, so a project value
+// prints with a project source.
+func printContextSettings(out io.Writer, s tools.Settings) {
+	fmt.Fprintf(out, "compress-threshold: %d (%s)\n",
+		s.EffectiveCompressThreshold(""), s.SourceOf("context.compress_threshold"))
+	harnesses := make([]string, 0)
+	if s.Context != nil {
+		for h := range s.Context.HarnessThresholds {
+			harnesses = append(harnesses, h)
+		}
+	}
+	sort.Strings(harnesses)
+	for _, h := range harnesses {
+		fmt.Fprintf(out, "compress-threshold %s: %d (%s)\n",
+			h, s.EffectiveCompressThreshold(h), s.SourceOf("context.harness_thresholds."+h))
+	}
+	windows := s.ContextWindows()
+	if len(windows) == 0 {
+		return
+	}
+	models := make([]string, 0, len(windows))
+	for m := range windows {
+		models = append(models, m)
+	}
+	sort.Strings(models)
+	for _, m := range models {
+		fmt.Fprintf(out, "window %s: %d (%s)\n", m, windows[m], s.SourceOf("context.windows"))
+	}
 }
 
 // printToolSettings shows one line per tuned tool with its effective values,

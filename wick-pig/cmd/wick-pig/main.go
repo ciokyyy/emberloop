@@ -11,6 +11,7 @@
 //	wick-pig skills install                                    fill the skill library
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
 //	wick-pig deps                                             check and install external dependencies
+//	wick-pig context [--harness h] [--dir d] <session-id>   print one session’s context numbers
 //	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
 //	wick-pig tui                                            open the dashboard in the current pane
@@ -61,6 +62,9 @@ func run(argv []string) error {
 	}
 	if sub == "settings" {
 		return runSettings(argv, os.Stdout, cachedModels)
+	}
+	if sub == "context" {
+		return runContext(argv, os.Stdout)
 	}
 	if sub == "retry" {
 		if len(argv) != 1 {

@@ -40,6 +40,10 @@ const DefaultOverflowThresholdBytes = 8 * 1024
 // DefaultMaxWorkers caps how many workers run at once when nothing is stored.
 const DefaultMaxWorkers = 3
 
+// DefaultCompressThreshold is the context size in tokens past which a
+// session compresses when nothing is stored: the ticket's 200k.
+const DefaultCompressThreshold = 200000
+
 // PlacementMain serves a tool in the top-level tool list; PlacementExecute
 // serves it only inside the execute tool.
 const (
@@ -115,6 +119,16 @@ type OverflowSettings struct {
 	ThresholdBytes int `json:"threshold_bytes,omitempty"`
 }
 
+// ContextSettings tunes context tracking and compression. CompressThreshold
+// is the global auto-compress threshold in tokens; HarnessThresholds
+// overrides it per harness; Windows overrides the model window table per
+// model. A pointer, so an unset context stays out of the saved file.
+type ContextSettings struct {
+	CompressThreshold int64            `json:"compress_threshold,omitempty"`
+	HarnessThresholds map[string]int64 `json:"harness_thresholds,omitempty"`
+	Windows           map[string]int64 `json:"windows,omitempty"`
+}
+
 // Settings are the user's choices that tools read at call time. They live in
 // the user's wick-pig directory, beside the skills, so pig, the MCP server and
 // the TUI all read the same file.
@@ -137,6 +151,9 @@ type Settings struct {
 	// ThresholdBytes of zero means the default too. A pointer, so an unset
 	// overflow stays out of the saved file entirely.
 	Overflow *OverflowSettings `json:"overflow,omitempty"`
+	// Context tunes the compress threshold and the model window table. Nil
+	// means the defaults.
+	Context *ContextSettings `json:"context,omitempty"`
 	// Roles holds one default per launch slot, keyed by slot name.
 	Roles map[string]Role `json:"roles,omitempty"`
 	// Tools tunes native tools by name: enabled, placement, rename and per-role
@@ -159,6 +176,9 @@ type Settings struct {
 	// searchExtra holds keys inside the search object that wick does not know
 	// yet. SaveSettings merges it back, so new search keys survive an old wick.
 	searchExtra map[string]json.RawMessage
+	// contextExtra holds keys inside the context object that wick does not
+	// know yet. SaveSettings merges them back, so new keys survive an old wick.
+	contextExtra map[string]json.RawMessage
 	// toolExtra holds unknown fields inside a tools entry, keyed by tool then
 	// field; mcpExtra the same for an mcp_servers entry. toolRoleExtra holds
 	// unknown fields inside a tool's per-role override, keyed by tool, role
@@ -285,6 +305,150 @@ func (s Settings) EffectiveOverflowThresholdBytes() int {
 	return DefaultOverflowThresholdBytes
 }
 
+// contextSetting returns the context object, creating it when absent, so an
+// edit never dereferences a nil pointer.
+func (s *Settings) contextSetting() *ContextSettings {
+	if s.Context == nil {
+		s.Context = &ContextSettings{}
+	}
+	return s.Context
+}
+
+// EffectiveCompressThreshold is the auto-compress threshold in force for a
+// harness: the per-harness override, else the global value, else 200k. A
+// non-positive value anywhere reads as the default.
+func (s Settings) EffectiveCompressThreshold(harness string) int64 {
+	if s.Context != nil {
+		// The environment names one global value; it wins over every file
+		// layer, including a per-harness override.
+		if s.Context.CompressThreshold > 0 && s.src["context.compress_threshold"] == "env" {
+			return s.Context.CompressThreshold
+		}
+		if v := s.Context.HarnessThresholds[harness]; v > 0 {
+			return v
+		}
+		if s.Context.CompressThreshold > 0 {
+			return s.Context.CompressThreshold
+		}
+	}
+	return DefaultCompressThreshold
+}
+
+// ContextWindows is the model window overrides in force, window tokens by
+// model. The map is a copy: the caller cannot mutate the settings through it.
+func (s Settings) ContextWindows() map[string]int64 {
+	out := map[string]int64{}
+	if s.Context != nil {
+		for m, w := range s.Context.Windows {
+			out[m] = w
+		}
+	}
+	return out
+}
+
+// unknownContextFields collects the keys inside the context object that are
+// not compress_threshold, harness_thresholds or windows, so a save writes
+// them back.
+func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage {
+	var contextFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawContext, &contextFields); err != nil {
+		return nil
+	}
+	var out map[string]json.RawMessage
+	for k, v := range contextFields {
+		switch strings.ToLower(k) {
+		case "compress_threshold", "harness_thresholds", "windows":
+			continue
+		}
+		if out == nil {
+			out = map[string]json.RawMessage{}
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// mergeContextExtras writes the unknown fields of the context object back
+// into the object already in fields.
+func mergeContextExtras(fields map[string]json.RawMessage, contextExtra map[string]json.RawMessage) error {
+	if len(contextExtra) == 0 {
+		return nil
+	}
+	context := map[string]json.RawMessage{}
+	if raw, ok := fields["context"]; ok {
+		if err := json.Unmarshal(raw, &context); err != nil {
+			return err
+		}
+	}
+	for k, v := range contextExtra {
+		if _, ok := context[k]; !ok {
+			context[k] = v
+		}
+	}
+	raw, err := json.Marshal(context)
+	if err != nil {
+		return err
+	}
+	fields["context"] = raw
+	return nil
+}
+
+// mergeContext folds project context settings over global ones: the
+// threshold wins when set, the per-harness and window maps merge by key
+// with the project winning each key. A value the environment set always
+// wins over the project file.
+func mergeContext(global, project *ContextSettings, src map[string]string) *ContextSettings {
+	var out ContextSettings
+	if global != nil {
+		out = *global
+		out.HarnessThresholds = cloneInt64Map(global.HarnessThresholds)
+		out.Windows = cloneInt64Map(global.Windows)
+	}
+	if project != nil {
+		if project.CompressThreshold > 0 && src["context.compress_threshold"] != "env" {
+			out.CompressThreshold = project.CompressThreshold
+			src["context.compress_threshold"] = "project"
+		}
+		for h, v := range project.HarnessThresholds {
+			if v <= 0 || src["context.harness_thresholds."+h] == "env" {
+				continue
+			}
+			if out.HarnessThresholds == nil {
+				out.HarnessThresholds = map[string]int64{}
+			}
+			out.HarnessThresholds[h] = v
+			src["context.harness_thresholds."+h] = "project"
+		}
+		for m, w := range project.Windows {
+			if w <= 0 {
+				continue
+			}
+			if out.Windows == nil {
+				out.Windows = map[string]int64{}
+			}
+			out.Windows[m] = w
+			src["context.windows"] = "project"
+		}
+	}
+	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 {
+		return nil
+	}
+	return &out
+}
+
+// cloneInt64Map copies a string-to-int64 map, so a merge never shares the
+// map with its inputs.
+func cloneInt64Map(m map[string]int64) map[string]int64 {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]int64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 // SettingsPath is where settings are saved. WICK_SETTINGS overrides it for
 // tests and for a second profile.
 func SettingsPath() string {
@@ -340,6 +504,10 @@ func LoadSettings() Settings {
 		s.Overflow = &OverflowSettings{ThresholdBytes: b}
 		s.setSource("overflow.threshold_bytes", "env")
 	}
+	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("WICK_COMPRESS_THRESHOLD"))); err == nil && b > 0 {
+		s.contextSetting().CompressThreshold = int64(b)
+		s.setSource("context.compress_threshold", "env")
+	}
 	return s
 }
 
@@ -366,6 +534,8 @@ func decodeSettings(raw []byte) Settings {
 			s.searchExtra = unknownSearchFields(v)
 		case "overflow":
 			s.overflowExtra = unknownOverflowFields(v)
+		case "context":
+			s.contextExtra = unknownContextFields(v)
 		case "tools":
 			s.toolExtra = unknownEntryFields(v, []string{"enabled", "placement", "rename", "roles"})
 			s.toolRoleExtra = unknownOverrideFields(v)
@@ -410,6 +580,17 @@ func decodeSettings(raw []byte) Settings {
 		}
 		if r.Effort != "" {
 			s.src[base+"effort"] = "file"
+		}
+	}
+	if s.Context != nil {
+		if s.Context.CompressThreshold != 0 {
+			s.src["context.compress_threshold"] = "file"
+		}
+		for h := range s.Context.HarnessThresholds {
+			s.src["context.harness_thresholds."+h] = "file"
+		}
+		if len(s.Context.Windows) > 0 {
+			s.src["context.windows"] = "file"
 		}
 	}
 	markToolSources(&s)
@@ -657,6 +838,9 @@ func SaveSettings(s Settings) error {
 	if err := mergeOverflowExtras(fields, s.overflowExtra); err != nil {
 		return err
 	}
+	if err := mergeContextExtras(fields, s.contextExtra); err != nil {
+		return err
+	}
 	if err := mergeEntryExtras(fields, "tools", s.toolExtra); err != nil {
 		return err
 	}
@@ -671,6 +855,12 @@ func SaveSettings(s Settings) error {
 	}
 	if err := mergeGraphExtras(fields, s.graphExtra); err != nil {
 		return err
+	}
+	// A set-but-empty context pointer marshals as {} because omitempty does
+	// not omit structs. Drop the key when nothing context-related is set, so
+	// clearing the last override removes the object instead of leaving {}.
+	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && len(s.contextExtra) == 0 {
+		delete(fields, "context")
 	}
 	// A zero graph struct marshals as {} because encoding/json omitempty does
 	// not omit structs. Drop the key when nothing graph-related is set, so
@@ -973,6 +1163,7 @@ func MergeSettings(global, project Settings) Settings {
 	out.src = cloneSources(global.src)
 	out.extra = cloneRawMap(global.extra)
 	out.overflowExtra = cloneRawMap(global.overflowExtra)
+	out.contextExtra = cloneRawMap(global.contextExtra)
 	out.roleExtra = cloneNestedRawMap(global.roleExtra)
 	out.toolExtra = cloneNestedRawMap(global.toolExtra)
 	out.mcpExtra = cloneNestedRawMap(global.mcpExtra)
@@ -1006,6 +1197,7 @@ func MergeSettings(global, project Settings) Settings {
 		out.Overflow.ThresholdBytes = project.Overflow.ThresholdBytes
 		out.src["overflow.threshold_bytes"] = "project"
 	}
+	out.Context = mergeContext(global.Context, project.Context, out.src)
 	out.Roles = mergeRoles(global.Roles, project.Roles, out.src)
 	out.Tools = mergeTools(global.Tools, project.Tools, out.src)
 	out.MCPServers = mergeMCPServers(global.MCPServers, project.MCPServers, out.src)
@@ -1017,6 +1209,12 @@ func MergeSettings(global, project Settings) Settings {
 	out.Graph = mergeGraph(global.Graph, project.Graph, out.src)
 	for k, v := range project.extra {
 		out.extra[k] = v
+	}
+	for k, v := range project.contextExtra {
+		if out.contextExtra == nil {
+			out.contextExtra = map[string]json.RawMessage{}
+		}
+		out.contextExtra[k] = v
 	}
 	for k, v := range project.overflowExtra {
 		if out.overflowExtra == nil {

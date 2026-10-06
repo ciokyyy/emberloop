@@ -20,6 +20,10 @@ func newSessionID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
+// FindSession returns the transcript under root whose file name carries id.
+// It is the lookup the context command resolves a session through.
+func FindSession(root, id string) string { return findSession(root, id) }
+
 // findSession returns the transcript under root whose file name carries id.
 func findSession(root, id string) string {
 	var found string
