@@ -126,3 +126,23 @@ func TestSettingsWindowClearRemovesTheObject(t *testing.T) {
 		t.Errorf("cleared settings %s still hold context", raw)
 	}
 }
+
+// An env global wins over a file per-harness override, and the printout
+// labels the winning value as env on every line.
+func TestSettingsPrintLabelsEnvWin(t *testing.T) {
+	settingsFile(t)
+	t.Setenv("WICK_COMPRESS_THRESHOLD", "50000")
+	var b strings.Builder
+	if err := runSettings([]string{"compress-threshold", "pig", "300000"}, &b, nil); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := runSettings(nil, &out, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"compress-threshold: 50000 (env)", "compress-threshold pig: 50000 (env)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("settings print %q lacks %q", out.String(), want)
+		}
+	}
+}
