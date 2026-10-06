@@ -4,9 +4,9 @@
 
 **Blocked by:** 16
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A test per role asserts its served tool list (main list) and its `execute`-reachable tools
-- [ ] The oversize `read` message is correct for a role with bash and one without
-- [ ] The prompt lines exist exactly once per role, in positive wording
-- [ ] Agent-type files list `execute`; repo check passes
+- [x] A test per role asserts its served tool list (main list) and its `execute`-reachable tools
+- [x] The oversize `read` message is correct for a role with bash and one without
+- [x] The prompt lines exist exactly once per role, in positive wording
+- [x] Agent-type files list `execute`; repo check passes
