@@ -42,7 +42,12 @@ func spawnTestState(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	spawnGap = 0
 	pollEvery = 5 * time.Millisecond
-	t.Cleanup(func() { statePath, spawnGap, spawnExec, pollEvery = oldState, oldGap, oldExec, oldPoll })
+	t.Cleanup(func() {
+		// A group delivery dispatched in the background writes into the state
+		// directory: let it end before the directory goes away.
+		waitForDeliveries(3 * time.Second)
+		statePath, spawnGap, spawnExec, pollEvery = oldState, oldGap, oldExec, oldPoll
+	})
 	t.Setenv("WICK_MAX_WORKERS", "")
 	// Hermetic panes: the runner itself sits in a herdr pane, so HERDR_* and
 	// WICK_AGENT_ID leak in. A spawn with no parent records none; a test

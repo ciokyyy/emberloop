@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -331,9 +332,32 @@ func closeGroupScouts(run Exec, submits map[string]AgentSubmit, lost map[string]
 // delivery still holds for the parent to go idle (warning past the bound),
 // so the hold rule is kept; only the triggering call returns at once.
 func dispatchGroupDelivery(groupID string) {
+	pendingDeliveries.Add(1)
 	go func() {
+		defer pendingDeliveries.Done()
 		_ = deliverGroupIfComplete(groupID)
 	}()
+}
+
+// pendingDeliveries counts background group deliveries still running, so a
+// test can wait for them before it swaps or removes the state directory they
+// write into.
+var pendingDeliveries sync.WaitGroup
+
+// waitForDeliveries blocks until every background delivery has ended or the
+// bound passes, whichever comes first, and says whether they all ended.
+func waitForDeliveries(bound time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		pendingDeliveries.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(bound):
+		return false
+	}
 }
 
 // sweepOpenGroups dispatches a background delivery for every undelivered
