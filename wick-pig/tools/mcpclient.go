@@ -31,6 +31,8 @@ const (
 	DefaultMCPInitTimeout = 30 * time.Second
 	// DefaultMCPCallTimeout bounds one tool call, matching bash's default.
 	DefaultMCPCallTimeout = 120 * time.Second
+	// mcpStderrTailBytes bounds the server stderr kept for error messages.
+	mcpStderrTailBytes = 4096
 )
 
 // mcpRequest is one JSON-RPC frame. A nil ID is a notification and is never
@@ -43,8 +45,10 @@ type mcpRequest struct {
 }
 
 // mcpResponse is the matching reply. Exactly one of Result and Error is set.
+// A frame carrying a Method is a server-initiated request, never a reply.
 type mcpResponse struct {
 	ID     *int64          `json:"id"`
+	Method string          `json:"method,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *mcpError       `json:"error,omitempty"`
 }
@@ -75,6 +79,12 @@ type remoteTool struct {
 // Client runs one configured MCP server as a child process and calls its
 // tools. It is safe for concurrent use: calls take ids from an atomic
 // counter and a reader goroutine delivers replies by id.
+//
+// The mutex guards process state, never a network wait: the handshake runs
+// without it, so a dying server fails the handshake through failAll instead
+// of deadlocking against it. Every spawn tags a generation, so a stale
+// reader or a late failure from a retired server can never touch its
+// replacement.
 type Client struct {
 	name string
 	cfg  MCPServerSetting
@@ -87,6 +97,8 @@ type Client struct {
 	writeMu     sync.Mutex
 	started     bool
 	closed      bool
+	starting    chan struct{}
+	generation  int64
 
 	nextID  int64
 	pendMu  sync.Mutex
@@ -94,6 +106,9 @@ type Client struct {
 
 	listed    bool
 	listCache []remoteTool
+
+	tailMu sync.Mutex
+	tail   []byte
 }
 
 // newClient holds cfg without starting anything: the process spawns on the
@@ -117,31 +132,51 @@ func (c *Client) setTimeouts(init, call time.Duration) {
 }
 
 // ensureStarted spawns the server and runs the initialize handshake when it
-// is not running. A failure kills any half-started child and leaves the
+// is not running. Concurrent callers wait on the in-flight spawn instead of
+// starting twice. A failure kills any half-started child and leaves the
 // client unstarted, so the next use retries with a fresh process.
 func (c *Client) ensureStarted(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return fmt.Errorf("mcp server %q: client is closed", c.name)
-	}
-	if c.started {
-		return nil
-	}
-	if err := c.startLocked(ctx); err != nil {
-		c.killLocked()
+	for {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return fmt.Errorf("mcp server %q: client is closed", c.name)
+		}
+		if c.started {
+			c.mu.Unlock()
+			return nil
+		}
+		if c.starting != nil {
+			wait := c.starting
+			c.mu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return fmt.Errorf("mcp server %q: waiting for server startup: %w", c.name, ctx.Err())
+			}
+		}
+		c.starting = make(chan struct{})
+		c.mu.Unlock()
+		err := c.spawn(ctx)
+		c.mu.Lock()
+		close(c.starting)
+		c.starting = nil
+		c.mu.Unlock()
 		return err
 	}
-	c.started = true
-	return nil
 }
 
-// startLocked spawns the child, starts the reply reader, and runs initialize
-// plus notifications/initialized. The caller kills the child on error.
-func (c *Client) startLocked(ctx context.Context) error {
+// spawn starts the child, launches its readers, and runs initialize plus
+// notifications/initialized. It holds no lock across the handshake, so
+// failAll can retire a dying server while the handshake waits.
+func (c *Client) spawn(ctx context.Context) error {
 	if c.cfg.Command == "" {
 		return fmt.Errorf("mcp server %q: no command configured", c.name)
 	}
+	c.mu.Lock()
+	initTimeout := c.initTimeout
+	c.mu.Unlock()
 	cmd := exec.Command(c.cfg.Command, c.cfg.Args...)
 	cmd.Env = os.Environ()
 	for k, v := range c.cfg.Env {
@@ -150,7 +185,6 @@ func (c *Client) startLocked(ctx context.Context) error {
 	// Own process group, killed as a group: a timeout must reach the
 	// grandchildren too, the way bash does it.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stderr = nil
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("mcp server %q: failed to start %q: %w", c.name, c.cfg.Command, err)
@@ -159,12 +193,21 @@ func (c *Client) startLocked(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("mcp server %q: failed to start %q: %w", c.name, c.cfg.Command, err)
 	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("mcp server %q: failed to start %q: %w", c.name, c.cfg.Command, err)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("mcp server %q: failed to start %q: %w", c.name, c.cfg.Command, err)
 	}
+	c.mu.Lock()
+	c.generation++
+	gen := c.generation
 	c.cmd, c.stdin = cmd, stdin
-	go c.readLoop(stdout)
-	initCtx, cancel := context.WithTimeout(ctx, c.initTimeout)
+	c.mu.Unlock()
+	go c.readLoop(stdout, gen)
+	go c.drainStderr(stderr)
+	initCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
 	var res struct {
 		ProtocolVersion string `json:"protocolVersion"`
@@ -174,12 +217,24 @@ func (c *Client) startLocked(ctx context.Context) error {
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "wick", "version": "1"},
 	}, &res); err != nil {
-		if initCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("mcp server %q: initialize timed out after %s", c.name, c.initTimeout)
+		c.mu.Lock()
+		c.killLocked()
+		c.generation++
+		c.mu.Unlock()
+		if initCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			return fmt.Errorf("mcp server %q: initialize timed out after %s%s", c.name, initTimeout, c.tailSuffix())
 		}
-		return fmt.Errorf("mcp server %q: initialize failed: %w", c.name, err)
+		return fmt.Errorf("mcp server %q: initialize failed: %w%s", c.name, err, c.tailSuffix())
 	}
-	c.notifyLocked("notifications/initialized", nil)
+	c.notify("notifications/initialized", nil)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A Close or failAll may have retired this spawn mid-handshake: never
+	// mark a retired server started, or use would outlive Close.
+	if c.generation != gen || c.closed || c.cmd != cmd {
+		return fmt.Errorf("mcp server %q: server retired during startup", c.name)
+	}
+	c.started = true
 	return nil
 }
 
@@ -195,8 +250,15 @@ func (c *Client) roundTrip(ctx context.Context, method string, params any, out a
 	c.pendMu.Lock()
 	c.pending[id] = ch
 	c.pendMu.Unlock()
+	c.mu.Lock()
+	stdin := c.stdin
+	c.mu.Unlock()
+	if stdin == nil {
+		c.dropPending(id)
+		return fmt.Errorf("mcp server %q: connection closed", c.name)
+	}
 	c.writeMu.Lock()
-	_, werr := c.stdin.Write(append(frame, '\n'))
+	_, werr := stdin.Write(append(frame, '\n'))
 	c.writeMu.Unlock()
 	if werr != nil {
 		c.dropPending(id)
@@ -222,15 +284,21 @@ func (c *Client) roundTrip(ctx context.Context, method string, params any, out a
 	}
 }
 
-// notifyLocked sends a notification: no id, no reply.
-func (c *Client) notifyLocked(method string, params any) {
+// notify sends a notification: no id, no reply.
+func (c *Client) notify(method string, params any) {
 	frame, err := json.Marshal(mcpRequest{JSONRPC: "2.0", Method: method, Params: params})
 	if err != nil {
 		return
 	}
+	c.mu.Lock()
+	stdin := c.stdin
+	c.mu.Unlock()
+	if stdin == nil {
+		return
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	_, _ = c.stdin.Write(append(frame, '\n'))
+	_, _ = stdin.Write(append(frame, '\n'))
 }
 
 // dropPending removes a waiter whose caller went away; a late reply is
@@ -242,9 +310,9 @@ func (c *Client) dropPending(id int64) {
 }
 
 // readLoop delivers replies to their waiters until the server's stdout ends,
-// then fails every waiter with an error naming the server. It also marks the
-// client unstarted, so the next use spawns a fresh server.
-func (c *Client) readLoop(stdout io.Reader) {
+// then retires the server. gen is the spawn this reader belongs to: when a
+// replacement already runs, the cleanup is a no-op.
+func (c *Client) readLoop(stdout io.Reader, gen int64) {
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), mcpMaxFrameBytes)
 	for sc.Scan() {
@@ -256,6 +324,13 @@ func (c *Client) readLoop(stdout io.Reader) {
 		if err := json.Unmarshal(line, &resp); err != nil || resp.ID == nil {
 			continue
 		}
+		if resp.Method != "" {
+			// A server-initiated request is never a reply to one of ours,
+			// and its id may collide with a pending call: it must not
+			// reach a waiter. This client asks nothing of the server, so
+			// there is nothing to answer.
+			continue
+		}
 		c.pendMu.Lock()
 		ch := c.pending[*resp.ID]
 		delete(c.pending, *resp.ID)
@@ -264,25 +339,64 @@ func (c *Client) readLoop(stdout io.Reader) {
 			ch <- mcpCallResult{resp: resp}
 		}
 	}
-	c.failAll(fmt.Errorf("mcp server %q: server exited", c.name))
+	c.failAll(gen, fmt.Errorf("mcp server %q: server exited%s", c.name, c.tailSuffix()))
 }
 
-// failAll ends every waiter with err and marks the client unstarted.
-func (c *Client) failAll(err error) {
+// drainStderr keeps the tail of the server's stderr for error messages. A
+// server that crashes on startup explains itself there.
+func (c *Client) drainStderr(stderr io.Reader) {
+	buf := make([]byte, 512)
+	for {
+		n, err := stderr.Read(buf)
+		if n > 0 {
+			c.tailMu.Lock()
+			c.tail = append(c.tail, buf[:n]...)
+			if len(c.tail) > mcpStderrTailBytes {
+				c.tail = append([]byte(nil), c.tail[len(c.tail)-mcpStderrTailBytes:]...)
+			}
+			c.tailMu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// tailSuffix is the kept stderr, colon-prefixed for appending to an error, or
+// empty when the server said nothing.
+func (c *Client) tailSuffix() string {
+	c.tailMu.Lock()
+	defer c.tailMu.Unlock()
+	if t := bytes.TrimSpace(c.tail); len(t) > 0 {
+		return ": " + string(t)
+	}
+	return ""
+}
+
+// failAll retires one spawn: it kills the child, ends every waiter with err,
+// and unstarts the client so the next use respawns. A generation from a
+// retired spawn is a no-op, so a stale reader can never touch its
+// replacement. The kill comes before the reap: the child may still be alive
+// (a wedged server past its timeout), and waiting on a live child with an
+// open pipe reader would block.
+func (c *Client) failAll(gen int64, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failAllLocked(gen, err)
+}
+
+// failAllLocked is failAll with the mutex held.
+func (c *Client) failAllLocked(gen int64, err error) {
+	if gen != c.generation {
+		return
+	}
+	c.killLocked()
 	c.pendMu.Lock()
 	waiters := c.pending
 	c.pending = map[int64]chan mcpCallResult{}
 	c.pendMu.Unlock()
 	for _, ch := range waiters {
 		ch <- mcpCallResult{err: err}
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.cmd != nil {
-		// The child is gone but not reaped: Wait for it so no zombie
-		// outlives the session.
-		_ = c.cmd.Wait()
-		c.cmd, c.stdin = nil, nil
 	}
 	c.started, c.listed = false, false
 	c.listCache = nil
@@ -300,7 +414,7 @@ func (c *Client) ListTools(ctx context.Context) ([]remoteTool, error) {
 		c.mu.Unlock()
 		return cached, nil
 	}
-	timeout := c.callTimeout
+	gen, timeout := c.generation, c.callTimeout
 	c.mu.Unlock()
 	listCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -315,12 +429,17 @@ func (c *Client) ListTools(ctx context.Context) ([]remoteTool, error) {
 		} `json:"tools"`
 	}
 	if err := c.roundTrip(listCtx, "tools/list", map[string]any{}, &res); err != nil {
-		if listCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("mcp server %q: tools/list timed out after %s", c.name, timeout)
+		if listCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			e := fmt.Errorf("mcp server %q: tools/list timed out after %s", c.name, timeout)
+			c.failAll(gen, e)
+			return nil, e
 		}
-		// The server is gone mid-list: unstart so the next use respawns.
-		c.failAll(fmt.Errorf("mcp server %q: tools/list failed: %w", c.name, err))
-		return nil, fmt.Errorf("mcp server %q: tools/list failed: %w", c.name, err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("mcp server %q: tools/list cancelled: %w", c.name, ctx.Err())
+		}
+		e := fmt.Errorf("mcp server %q: tools/list failed: %v", c.name, err)
+		c.failAll(gen, fmt.Errorf("mcp server %q: connection lost: %v", c.name, err))
+		return nil, e
 	}
 	out := make([]remoteTool, 0, len(res.Tools))
 	for _, tl := range res.Tools {
@@ -337,6 +456,12 @@ func (c *Client) ListTools(ctx context.Context) ([]remoteTool, error) {
 		out = append(out, rt)
 	}
 	c.mu.Lock()
+	// A retire during the list (Close, or a failed concurrent call) drops
+	// the answer instead of caching it onto a dead client.
+	if c.generation != gen || c.closed || !c.started {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("mcp server %q: server retired during tools/list", c.name)
+	}
 	c.listCache = append([]remoteTool(nil), out...)
 	c.listed = true
 	c.mu.Unlock()
@@ -345,13 +470,14 @@ func (c *Client) ListTools(ctx context.Context) ([]remoteTool, error) {
 
 // CallTool calls one tool by its original server-side name. A tool that
 // answers isError, a JSON-RPC error, or nothing within the call timeout is a
-// Go error naming the server and the tool, never a hang.
+// Go error naming the server and the tool, never a hang. A call the caller
+// abandons leaves the server running for the next use.
 func (c *Client) CallTool(ctx context.Context, tool string, args json.RawMessage) (string, error) {
 	if err := c.ensureStarted(ctx); err != nil {
 		return "", err
 	}
 	c.mu.Lock()
-	timeout := c.callTimeout
+	gen, timeout := c.generation, c.callTimeout
 	c.mu.Unlock()
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -373,15 +499,23 @@ func (c *Client) CallTool(ctx context.Context, tool string, args json.RawMessage
 	if err := c.roundTrip(callCtx, "tools/call", map[string]any{
 		"name": tool, "arguments": arguments,
 	}, &res); err != nil {
-		if callCtx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("mcp server %q: tool %q timed out after %s", c.name, tool, timeout)
+		if callCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			e := fmt.Errorf("mcp server %q: tool %q timed out after %s", c.name, tool, timeout)
+			c.failAll(gen, e)
+			return "", e
+		}
+		if ctx.Err() != nil {
+			// The caller went away; the server is untouched and stays
+			// running. In particular nothing here waits on the child.
+			return "", fmt.Errorf("mcp server %q: tool %q cancelled: %w", c.name, tool, ctx.Err())
 		}
 		if re, ok := err.(*mcpError); ok {
+			// The server answered: it is alive, only the tool failed.
 			return "", fmt.Errorf("mcp server %q: tool %q failed: %s", c.name, tool, re)
 		}
-		// The server is gone mid-call: unstart so the next use respawns.
-		c.failAll(fmt.Errorf("mcp server %q: tool %q failed: %w", c.name, tool, err))
-		return "", fmt.Errorf("mcp server %q: tool %q failed: %w", c.name, tool, err)
+		e := fmt.Errorf("mcp server %q: tool %q failed: %v", c.name, tool, err)
+		c.failAll(gen, fmt.Errorf("mcp server %q: connection lost: %v", c.name, err))
+		return "", e
 	}
 	var text string
 	for _, part := range res.Content {
@@ -396,7 +530,8 @@ func (c *Client) CallTool(ctx context.Context, tool string, args json.RawMessage
 }
 
 // killLocked kills the child's process group and reaps it. A nil command is
-// nothing to kill.
+// nothing to kill. The kill comes first: grandchildren may hold the stdio
+// pipes, and reaping before they die would block.
 func (c *Client) killLocked() {
 	if c.cmd == nil || c.cmd.Process == nil {
 		return
@@ -412,21 +547,8 @@ func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
-	c.failAllLocked(fmt.Errorf("mcp server %q: client is closed", c.name))
-	c.killLocked()
-	c.started, c.listed = false, false
-	c.listCache = nil
-}
-
-// failAllLocked ends every waiter with err. The caller holds c.mu.
-func (c *Client) failAllLocked(err error) {
-	c.pendMu.Lock()
-	waiters := c.pending
-	c.pending = map[int64]chan mcpCallResult{}
-	c.pendMu.Unlock()
-	for _, ch := range waiters {
-		ch <- mcpCallResult{err: err}
-	}
+	c.generation++
+	c.failAllLocked(c.generation, fmt.Errorf("mcp server %q: client is closed", c.name))
 }
 
 // mcpTool serves one remote tool as a tools.Tool under its configured name.
