@@ -60,8 +60,9 @@ owns its `_test.go` and the behaviour below):
   styled string out, Lip Gloss adaptive palette, width tiers),
   `theme.go` (the shared palette: Catppuccin Mocha and Latte driving the
   strip, the generated claude and pig themes and the OSC pane colors;
-  per-run launch flags plus a per-run CLAUDE_CONFIG_DIR only, never the
-  user's saved settings),
+  per-run launch flags plus two wick-named claude theme files in its config
+  dir, never a per-run CLAUDE_CONFIG_DIR (a fresh one has no login or
+  onboarding state) and never the user's saved settings),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
   builder reading the queued compress mark and the compressing state),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
@@ -85,7 +86,9 @@ owns its `_test.go` and the behaviour below):
   (one role resolution over settings for the main list and execute; the served
   `read` refuses an oversized file with `bash` for roles that serve it and
   `tools.grep` in `execute` or offset/limit otherwise), `readhint.go` (that
-  refusal wrapper),
+  refusal wrapper), `bashhint.go` (the served `bash` of a role that also
+  serves `execute` appends a filter-in-`execute` tip to a stored oversized
+  output),
   `execute.go` (the per-role execute binding: the role's resolved toolset in
   the stub, the tools-behind-execute description, sandboxed for read-only roles),
   `mcpclients.go` (the MCP server snapshot behind the same resolution, plus
