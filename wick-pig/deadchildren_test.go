@@ -83,8 +83,8 @@ func TestDeadChildYieldsExactlyOneLostNotice(t *testing.T) {
 	if err := WriteAgentState(AgentState{ID: "c1", Type: "scout", Pane: "gone-pane", ParentID: "p", Parent: "pP", Deliver: true}); err != nil {
 		t.Fatal(err)
 	}
-	sweepDeadChildren("p")
-	sweepDeadChildren("p")
+	sweepDeadChildren("", "p")
+	sweepDeadChildren("", "p")
 	var noticed []string
 	for _, c := range rec.calls {
 		if strings.Contains(strings.Join(c, " "), "lost:") {
@@ -240,8 +240,8 @@ func TestDeliveredGroupDeadMemberIsNotReportedTwice(t *testing.T) {
 	if !strings.Contains(got[0], "lost:") || !strings.Contains(got[0], "d2") {
 		t.Fatalf("the group notice must report the dead member as lost, got:\n%s", got[0])
 	}
-	sweepDeadChildren("parent1")
-	sweepDeadChildren("parent1")
+	sweepDeadChildren("", "parent1")
+	sweepDeadChildren("", "parent1")
 	got = promptedCalls(rec, "wP")
 	if len(got) != 1 {
 		t.Fatalf("a delivered group member must never get an individual lost notice, got %v", rec.calls)

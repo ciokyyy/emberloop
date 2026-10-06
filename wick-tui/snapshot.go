@@ -74,6 +74,7 @@ const (
 	TicketInReview         TicketStatus = "in-review"
 	TicketMerged           TicketStatus = "merged"
 	TicketDiscarded        TicketStatus = "discarded"
+	TicketCancelled        TicketStatus = "cancelled"
 	TicketFailed           TicketStatus = "failed"
 )
 
@@ -770,10 +771,10 @@ func specTickets(s *SpecSnap, ctx *agentCtx, submits map[string]submitRecord, te
 }
 
 // deriveTicketStatus is the one function that turns a ticket's signals into
-// its status. Precedence is terminal first: a merged or discarded history
-// outcome wins over everything (the worker is gone). Without a worker the
-// ticket was never started. A worker whose pane is gone failed, even when it
-// submitted — the agent cannot continue. A live worker that submitted reads
+// its status. Precedence is terminal first: a merged, discarded or cancelled
+// history outcome wins over everything (the worker is gone). Without a worker
+// the ticket was never started. A worker whose pane is gone failed, even when
+// it submitted — the agent cannot continue. A live worker that submitted reads
 // submitted done or blocked, waiting for finish. A live worker with reviewer
 // records is in review, carrying the code and spec verdicts ("" while a
 // reviewer is still pending). Otherwise the herdr pane state decides:
@@ -786,6 +787,13 @@ func deriveTicketStatus(hasWorker, paneAlive bool, paneStatus string, submit *su
 		return TicketMerged, "", ""
 	case "discarded":
 		return TicketDiscarded, "", ""
+	case "cancelled":
+		// A respawned ticket has a live worker again: the cancellation no
+		// longer describes it, so the live signals below decide. Merged and
+		// discarded stay terminal: finish deletes the worker entry.
+		if !hasWorker {
+			return TicketCancelled, "", ""
+		}
 	}
 	if !hasWorker {
 		return TicketNotStarted, "", ""
@@ -898,8 +906,8 @@ func loadReviewerRecords(stateDir string) map[string]map[string]reviewerRecord {
 }
 
 // loadTerminalsBySlug collects, per run slug, the last terminal outcome per
-// ticket basename: the last merged or discarded history entry wins, and a
-// kept-only ticket reads as no terminal. Ticket paths match by basename
+// ticket basename: the last merged, discarded or cancelled history entry wins,
+// and a kept-only ticket reads as no terminal. Ticket paths match by basename
 // because the record may hold an absolute path or just the file.
 func loadTerminalsBySlug(stateDir string, byRepo map[string]map[string]*SpecSnap) map[string]map[string]string {
 	slugs := map[string]bool{}
@@ -923,7 +931,7 @@ func loadTerminalsBySlug(stateDir string, byRepo map[string]map[string]*SpecSnap
 				continue
 			}
 			switch e.Outcome {
-			case "merged", "discarded":
+			case "merged", "discarded", "cancelled":
 				if out[slug] == nil {
 					out[slug] = map[string]string{}
 				}

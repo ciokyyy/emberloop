@@ -48,6 +48,7 @@ var (
 	glyphTicketInReview         = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render("◐")
 	glyphTicketMerged           = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("■")
 	glyphTicketDiscarded        = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("□")
+	glyphTicketCancelled        = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("◍")
 	glyphTicketFailed           = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✖")
 	styleRepo                   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleSel                    = lipgloss.NewStyle().Bold(true)
@@ -74,6 +75,8 @@ func ticketGlyph(s TicketStatus) string {
 		return glyphTicketMerged
 	case TicketDiscarded:
 		return glyphTicketDiscarded
+	case TicketCancelled:
+		return glyphTicketCancelled
 	case TicketFailed:
 		return glyphTicketFailed
 	default:

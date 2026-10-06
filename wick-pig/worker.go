@@ -346,6 +346,38 @@ func reusableBranch(run Exec, repo, branch, base string) (bool, error) {
 	return true, nil
 }
 
+// worktreeRegistered reports whether path is a worktree git lists for repo,
+// so a spawn reuses only a real leftover worktree and never a stray
+// directory that happens to sit at the ticket's path.
+func worktreeRegistered(run Exec, repo, path string) (bool, error) {
+	res, err := run("git", []string{"worktree", "list", "--porcelain"},
+		ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+	if err != nil {
+		return false, err
+	}
+	if res.Code != 0 {
+		return false, fmt.Errorf("git worktree list in %s failed: %s", repo, firstLine(res.Stderr, "unknown error"))
+	}
+	want := filepath.Clean(path)
+	wantReal, _ := filepath.EvalSymlinks(want)
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		p, ok := strings.CutPrefix(line, "worktree ")
+		if !ok {
+			continue
+		}
+		got := filepath.Clean(strings.TrimSpace(p))
+		if got == want {
+			return true, nil
+		}
+		// Git prints resolved real paths, so a repo reached through a
+		// symlink never matches lexically: compare resolved sides too.
+		if gotReal, err := filepath.EvalSymlinks(got); err == nil && wantReal != "" && gotReal == wantReal {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Spawn creates a git worktree on branch implement/<id>, opens the ticket's tab
 // in the project workspace, and starts the worker in that tab's root pane.
 func Spawn(run Exec, in SpawnInput) (*Worker, error) {
@@ -385,11 +417,29 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 
 	// finish keeps the implement branch, so a respawn after finish finds it
 	// already there. Reuse it when the base still contains it; refuse when it
-	// carries work the base does not, before anything is created.
+	// carries work the base does not, before anything is created. A worktree
+	// path left by a cancelled worker is reused whole instead: its commits
+	// are the ticket's own work, so the divergence check does not apply —
+	// but only when git lists the path as a worktree of this repo. A stray
+	// directory is refused loudly rather than silently adopted.
 	branch := "implement/" + id
-	reuse, err := reusableBranch(run, repo, branch, base)
-	if err != nil {
-		return nil, err
+	worktreeExisted := false
+	reuse := false
+	if _, err := os.Stat(worktreePath(repo, id)); err == nil {
+		registered, err := worktreeRegistered(run, repo, worktreePath(repo, id))
+		if err != nil {
+			return nil, err
+		}
+		if !registered {
+			return nil, fmt.Errorf("worktree path %s already exists and is not a git worktree of %s; remove it before spawning %q",
+				worktreePath(repo, id), repo, id)
+		}
+		worktreeExisted, reuse = true, true
+	} else {
+		reuse, err = reusableBranch(run, repo, branch, base)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	storeMu.Lock()
@@ -434,28 +484,34 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 
 		// Plain git owns the worktree now, at today's path and branch: herdr is
 		// only tabs and panes, never worktrees. An existing branch is reused with
-		// no -b; -b would fail on a name that is already there.
-		add := []string{"worktree", "add"}
-		if reuse {
-			add = append(add, w.Worktree, w.Branch)
-		} else {
-			add = append(add, "-b", w.Branch, w.Worktree, base)
-		}
-		if res, err := run("git", add, ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
-			return err
-		} else if res.Code != 0 {
-			return fmt.Errorf("git worktree add %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
+		// no -b; -b would fail on a name that is already there. A worktree the
+		// cancelled worker left is reused whole: adding over it would fail.
+		if !worktreeExisted {
+			add := []string{"worktree", "add"}
+			if reuse {
+				add = append(add, w.Worktree, w.Branch)
+			} else {
+				add = append(add, "-b", w.Branch, w.Worktree, base)
+			}
+			if res, err := run("git", add, ExecOpts{Cwd: repo, Timeout: 60 * time.Second}); err != nil {
+				return err
+			} else if res.Code != 0 {
+				return fmt.Errorf("git worktree add %s failed: %s", w.Worktree, firstLine(res.Stderr, "unknown error"))
+			}
 		}
 
 		// Anything that fails from here on has to undo the worktree, and the
 		// branch only when this spawn made it, or the ticket can never be spawned
-		// again. A branch finish kept is left for the next respawn. The tab is
-		// closed only when this spawn created it: an existing one may hold a
-		// previous implementor.
+		// again. A reused worktree and a branch finish kept are left for the
+		// next respawn. The tab is closed only when this spawn created it: an
+		// existing one may hold a previous implementor.
 		tabCreated := false
 		undo := func() {
 			if tabCreated && w.Tab != "" {
 				_, _ = herdrJSON(run, []string{"tab", "close", w.Tab}, 30*time.Second)
+			}
+			if worktreeExisted {
+				return
 			}
 			_, _ = run("git", []string{"worktree", "remove", "--force", w.Worktree}, ExecOpts{Cwd: repo, Timeout: 60 * time.Second})
 			if !reuse {
@@ -508,6 +564,66 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// pruneDeadWorkers cancels workers whose pane was closed by hand: a worker
+// with no submit and a pane herdr no longer knows leaves workers.json, keeps
+// its worktree and branch for a respawn, and records a cancelled history
+// entry. A worker that submitted keeps its entry: its group delivers the
+// result. Only an explicit pane_not_found means dead, the way the cap
+// counts; any other herdr error keeps the worker. Best effort: a store or
+// history failure cancels nothing.
+func pruneDeadWorkers(run Exec) {
+	_ = withFileLock("workers", func() error {
+		store, err := load()
+		if err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(store))
+		for id := range store {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			w, ok := store[id]
+			if !ok {
+				continue
+			}
+			if _, submitted, _ := ReadAgentSubmit(id); submitted {
+				continue
+			}
+			if !isPaneLost(run, w.Pane) {
+				continue
+			}
+			delete(store, id)
+			if err := recordFinish(&w, outcomeCancelled, "", "pane closed manually"); err != nil {
+				store[id] = w
+				continue
+			}
+			detachDeadWorker(id)
+		}
+		return save(store)
+	})
+}
+
+// detachDeadWorker takes a cancelled worker out of its spawn group without a
+// notice, so the dead-child sweep reports it once as an individual: a member
+// that left the group no longer blocks it, and a group with no remaining
+// members is marked delivered.
+func detachDeadWorker(id string) {
+	var groupID string
+	_ = withFileLock("state-"+id, func() error {
+		s, ok, err := ReadAgentState(id)
+		if err != nil || !ok {
+			return err
+		}
+		groupID = s.GroupID
+		s.GroupID = ""
+		return WriteAgentState(s)
+	})
+	if groupID != "" {
+		_ = deliverGroupIfComplete(groupID)
+	}
 }
 
 // ticketTab finds the tab labelled id in workspace, or creates it there with

@@ -310,15 +310,17 @@ func isScoutState(st AgentState) bool {
 	return st.Type == "scout"
 }
 
-// sweepDeadChildren reports every dead child of parentID that has no submit
-// and no live pane, exactly once. Members of any group are skipped: the group
-// reports them in its single notice, exactly once through its delivered flag,
-// whether the group is still open or already delivered. Any other dead child
-// gets the existing lost notice as an individual system notice, then stops
-// counting as pending through the pane check above. It runs synchronously, so
-// the stop gate blocks on what is left after it.
-func sweepDeadChildren(parentID string) {
-	if parentID == "" {
+// sweepDeadChildren reports every dead child of one parent that has no submit
+// and no live pane, exactly once. The parent is named by pane or id: a
+// top-level orchestrator has no agent id, so its children match by its pane.
+// Members of any group are skipped: the group reports them in its single
+// notice, exactly once through its delivered flag, whether the group is still
+// open or already delivered. Any other dead child gets the lost notice as an
+// individual system notice — "pane closed manually" for a worktree agent —
+// then stops counting as pending through the pane check above. It runs
+// synchronously, so the stop gate blocks on what is left after it.
+func sweepDeadChildren(parentPane, parentID string) {
+	if parentPane == "" && parentID == "" {
 		return
 	}
 	entries, err := os.ReadDir(agentStateDir())
@@ -332,7 +334,12 @@ func sweepDeadChildren(parentID string) {
 		id := strings.TrimSuffix(e.Name(), ".json")
 		_ = withFileLock("state-"+id, func() error {
 			s, ok, err := ReadAgentState(id)
-			if err != nil || !ok || s.ParentID != parentID || !s.Deliver || s.LostNotified {
+			if err != nil || !ok || !s.Deliver || s.LostNotified {
+				return nil
+			}
+			mine := parentID != "" && s.ParentID == parentID
+			mine = mine || (parentPane != "" && s.Parent == parentPane)
+			if !mine {
 				return nil
 			}
 			if _, submitted, _ := ReadAgentSubmit(id); submitted {
@@ -351,7 +358,7 @@ func sweepDeadChildren(parentID string) {
 			if err := WriteAgentState(s); err != nil {
 				return nil
 			}
-			_ = deliverToParent(s, lostNotice(s.Type, id))
+			_ = deliverToParent(s, lostNoticeFor(s, id))
 			return nil
 		})
 	}
@@ -362,6 +369,17 @@ func sweepDeadChildren(parentID string) {
 // other individual notice.
 func lostNotice(typ, id string) string {
 	return "<system-notice> " + lostLine(id, typ) + "</system-notice>"
+}
+
+// lostNoticeFor is the individual lost notice for one dead child: a worktree
+// agent carries the ticket it was spawned from, and its pane went away
+// because the user closed it by hand, so its line says so; every other
+// child keeps the existing lost line.
+func lostNoticeFor(s AgentState, id string) string {
+	if s.Ticket != "" {
+		return "<system-notice> " + workerLostLine(id, s.Type) + "</system-notice>"
+	}
+	return lostNotice(s.Type, id)
 }
 
 // errorNotice is the stopped-with-error notice a turn that ends in a provider

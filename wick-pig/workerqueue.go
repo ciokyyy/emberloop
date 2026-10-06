@@ -69,6 +69,21 @@ func effectiveWorkerCap() int {
 	return tools.LoadSettings().EffectiveMaxWorkers()
 }
 
+// liveWorkerCount is the workers that count against the cap: only those
+// whose pane herdr still knows. Only an explicit pane_not_found means dead,
+// the way deliverNotice drops a notice for a session that is gone; any other
+// herdr error counts the worker as alive.
+func liveWorkerCount(store map[string]Worker, run Exec) int {
+	n := 0
+	for _, w := range store {
+		if isPaneLost(run, w.Pane) {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 // queueWorker appends one entry, refusing a duplicate id.
 func queueWorker(entry queuedWorker) error {
 	return withFileLock("worker-queue", func() error {
@@ -110,24 +125,41 @@ func queuedIDs() []string {
 }
 
 // drainWorkerQueue starts queued workers while slots are free. It runs after a
-// finish freed a slot: one slot freed starts at most one queued worker, which
-// keeps the launch serialized with every spawn's own launches under the same
-// worker-launch lock. A launch failure re-queues the entry, except an entry
-// that can never launch (already running, ticket gone), which is dropped.
-// Best effort: a drain that finds no slot or no queue does nothing.
+// finish freed a slot — and after the prune cancelled hand-closed panes, so a
+// freed slot starts a queued worker the same way: one slot starts at most one
+// queued worker, which keeps the launch serialized with every spawn's own
+// launches under the same worker-launch lock. Entries that can never launch
+// (ticket already done, worker already running, ticket gone) are dropped,
+// slot or not; a launch failure re-queues any other entry. Best effort: a
+// drain that finds no slot or no queue does nothing.
 func drainWorkerQueue(run Exec) {
 	_ = withFileLock("worker-launch", func() error {
+		pruneDeadWorkers(run)
+		sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("WICK_AGENT_ID"))
 		var entry queuedWorker
 		_ = withFileLock("worker-queue", func() error {
-			q := loadWorkerQueue()
-			if len(q) == 0 {
-				return nil
-			}
 			store, err := loadWorkersLocked()
 			if err != nil {
 				return nil
 			}
-			if len(store) >= effectiveWorkerCap() {
+			q := loadWorkerQueue()
+			kept := make([]queuedWorker, 0, len(q))
+			for _, e := range q {
+				if _, running := store[e.ID]; running || ticketIsDone(e) {
+					continue
+				}
+				kept = append(kept, e)
+			}
+			if len(kept) != len(q) {
+				if err := saveWorkerQueue(kept); err != nil {
+					return nil
+				}
+				q = kept
+			}
+			if len(q) == 0 {
+				return nil
+			}
+			if liveWorkerCount(store, run) >= effectiveWorkerCap() {
 				return nil
 			}
 			entry = q[0]
@@ -156,6 +188,60 @@ func drainWorkerQueue(run Exec) {
 		_ = agent
 		return nil
 	})
+}
+
+// ticketIsDone reports whether a queued entry's ticket already finished: its
+// file reads Status done, the way completeTicket leaves a merged ticket, or
+// its run history holds a merged or discarded entry for it. A cancelled entry
+// is not done: the ticket waits for a respawn.
+func ticketIsDone(e queuedWorker) bool {
+	if ticketFileDone(e.Ticket) {
+		return true
+	}
+	if e.Spec == "" {
+		return false
+	}
+	entries, err := loadHistory(specSlug(e.Spec))
+	if err != nil {
+		return false
+	}
+	for _, h := range entries {
+		if h.Ticket == "" {
+			continue
+		}
+		if filepath.Base(h.Ticket) != filepath.Base(e.Ticket) {
+			continue
+		}
+		if h.Outcome == outcomeMerged || h.Outcome == outcomeDiscarded {
+			return true
+		}
+	}
+	return false
+}
+
+// ticketFileDone reports whether the ticket file's status line reads done.
+// Only the header field counts, the way tickTicket writes it.
+func ticketFileDone(path string) bool {
+	if path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Status:") && !strings.HasPrefix(trimmed, "**Status:") {
+			continue
+		}
+		if i := strings.Index(line, "Status:"); i >= 0 {
+			value := strings.Trim(line[i+len("Status:"):], " *\t")
+			if strings.EqualFold(strings.TrimSpace(value), "done") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // dropQueuedEntry reports whether a failed queued launch must not be retried:

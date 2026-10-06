@@ -100,6 +100,16 @@ func lostLine(id, typ string) string {
 	return fmt.Sprintf("%s %s lost: its pane is gone before it could submit.", typ, id)
 }
 
+// workerLostLine reports a worktree agent that cannot submit: its pane was
+// closed by hand. It keeps the lost shape, so the sweep's exactly-once rule
+// and the tests that match "lost:" hold.
+func workerLostLine(id, typ string) string {
+	if typ == "" {
+		typ = "agent"
+	}
+	return fmt.Sprintf("%s %s lost: its pane closed manually before it could submit.", typ, id)
+}
+
 // errorLine reports a member whose last turn ended in a provider error, naming
 // the agent and the error.
 func errorLine(id, typ, detail string) string {
@@ -166,7 +176,9 @@ func spawnGroupDelivered(groupID string) (bool, error) {
 }
 
 // deliverGroupIfComplete delivers the grouped notice for groupID when every
-// remaining member has submitted, is lost, or is errored. A member's submit
+// remaining member has submitted, is lost, or is errored — except a dead
+// worktree agent, which the worker prune cancels and the dead-child sweep
+// reports, so the group waits for it. A member's submit
 // calls it synchronously. The notice goes out at once, busy parent or not:
 // herdr queues typed text as steering, and a working agent reads it after its
 // next tool call, so nothing is held and no tool call is cancelled. Every
@@ -212,6 +224,13 @@ func deliverGroupIfComplete(groupID string) error {
 				return nil
 			}
 			if isPaneLost(deliverExec, mst.Pane) {
+				if mst.Ticket != "" {
+					// A dead worktree agent is cancelled by the worker prune
+					// and reported by the dead-child sweep, never here: the
+					// group waits for it, so the parent gets exactly one
+					// notice, worded "pane closed manually".
+					return nil
+				}
 				typ := mst.Type
 				lost[mid] = lostLine(mid, typ)
 				continue
