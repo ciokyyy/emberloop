@@ -268,6 +268,17 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	// the next spawn from the same parent delivers what is already complete.
 	sweepOpenGroups(parentPane, parentID)
 	groupID := newSessionID()
+	// A worktree worker is its own group: its result is delivered the moment
+	// it submits, so the parent merges each ticket as it lands and a freed
+	// slot starts the next queued one, instead of everything waiting for the
+	// slowest worker of the call. Every other agent of the call shares groupID.
+	workerGroup := map[string]string{}
+	groupFor := func(id string) string {
+		if g, ok := workerGroup[id]; ok {
+			return g
+		}
+		return groupID
+	}
 	agents := make([]*spawnedAgent, 0, len(reqs))
 	// A reviewer spawn shares one packet and one check run across every
 	// reviewer type in the call; it is prepared once, on the first reviewer.
@@ -341,7 +352,11 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			err   error
 		)
 		if t.Checkout == "worktree" {
-			agent, err = launchWorktreeCapped(run, root, t, r, parentID, parentPane, groupID)
+			wgid := newSessionID()
+			agent, err = launchWorktreeCapped(run, root, t, r, parentID, parentPane, wgid)
+			if err == nil {
+				workerGroup[agent.ID] = wgid
+			}
 		} else {
 			agent, err = launchScout(run, root, t, r.Prompt)
 		}
@@ -371,7 +386,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			Tab:      agent.Tab,
 			ParentID: parentID,
 			Parent:   parentPane,
-			GroupID:  groupID,
+			GroupID:  groupFor(agent.ID),
 			Deliver:  true,
 		}
 		if t.Checkout == "worktree" {
@@ -405,15 +420,27 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		}
 		return "", fmt.Errorf("agents is required: give a list of {type, prompt} entries")
 	}
-	members := make([]string, 0, len(agents))
+	// One group per worktree worker, one shared group for the rest.
+	var sharedMembers []string
 	for _, a := range agents {
-		members = append(members, a.ID)
+		if wg, ok := workerGroup[a.ID]; ok {
+			if err := writeSpawnGroup(spawnGroup{
+				ID: wg, Parent: parentPane, ParentID: parentID, Members: []string{a.ID},
+			}); err != nil {
+				closeSpawned(run, agents)
+				return "", err
+			}
+			continue
+		}
+		sharedMembers = append(sharedMembers, a.ID)
 	}
-	if err := writeSpawnGroup(spawnGroup{
-		ID: groupID, Parent: parentPane, ParentID: parentID, Members: members,
-	}); err != nil {
-		closeSpawned(run, agents)
-		return "", err
+	if len(sharedMembers) > 0 {
+		if err := writeSpawnGroup(spawnGroup{
+			ID: groupID, Parent: parentPane, ParentID: parentID, Members: sharedMembers,
+		}); err != nil {
+			closeSpawned(run, agents)
+			return "", err
+		}
 	}
 	// Members that submitted synchronously during the launch (a fake herdr
 	// answers a reviewer's prompt before the group file exists) already
@@ -421,7 +448,12 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	// notice path, not the reply. Dispatch is asynchronous so the spawn
 	// itself returns at once; the background delivery still holds for an
 	// idle parent. A group that is still waiting simply stays recorded.
-	dispatchGroupDelivery(groupID)
+	if len(sharedMembers) > 0 {
+		dispatchGroupDelivery(groupID)
+	}
+	for _, wg := range workerGroup {
+		dispatchGroupDelivery(wg)
+	}
 	out := renderSpawnImmediate(agents)
 	if len(held) > 0 {
 		out += "\n\n" + strings.Join(held, "\n")
