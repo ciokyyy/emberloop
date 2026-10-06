@@ -1054,3 +1054,31 @@ func TestBrowserHostBlockRules(t *testing.T) {
 		t.Errorf("allow-loopback must keep private ranges blocked: %s", browserHostBlockRules())
 	}
 }
+
+func TestReadURLTier3ErrorPageRefused(t *testing.T) {
+	allowLocal(t)
+	_ = startJinaFake(t, 503, "jina down")
+	t.Setenv("JINA_API_KEY", "")
+	bin := writeExecFake(t, t.TempDir(), "chrome-headless-shell",
+		"#!/bin/sh\nprintf '%s\\n' '<html><body class=\"main-frame-error\"><div>ERR_NAME_NOT_RESOLVED</div><p>"+strings.Repeat("Navigation error words with plenty of descriptive text. ", 6)+"</p></body></html>'\n")
+	t.Setenv("WICK_CHROME_BIN", bin)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte("denied"))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := readURLPath(t, srv.URL+"/dead")
+	if err == nil || !strings.Contains(err.Error(), "did not load") {
+		t.Fatalf("navigation-error dump must fail, got %v", err)
+	}
+}
+
+func TestIsBrowserErrorPage(t *testing.T) {
+	if !isBrowserErrorPage(`<body class="main-frame-error">ERR_NAME_NOT_RESOLVED</body>`) {
+		t.Errorf("error dump not detected")
+	}
+	if isBrowserErrorPage(`<html><body><p>A page mentioning chromewebdata in prose ` + strings.Repeat("with words ", 20) + `</p></body></html>`) {
+		t.Errorf("prose mentioning chromewebdata must not count as an error dump")
+	}
+}
