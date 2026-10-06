@@ -169,6 +169,18 @@ func TestEachWorkerOfOneSpawnIsItsOwnGroup(t *testing.T) {
 		agents = append(agents, map[string]any{"type": "worker", "ticket": ticket})
 	}
 	spawn, _ := spawnToolForRole(t, "implement")
+	// The groups outlive the call, and the state directory is shared with the
+	// tests that run after this one: remove what this test created so their
+	// dead-child sweeps never see it.
+	t.Cleanup(func() {
+		entries, _ := os.ReadDir(groupDir())
+		for _, e := range entries {
+			g, ok, _ := readSpawnGroup(strings.TrimSuffix(e.Name(), ".json"))
+			if ok && len(g.Members) == 1 && strings.HasPrefix(g.Members[0], "grp-") {
+				os.Remove(filepath.Join(groupDir(), e.Name()))
+			}
+		}
+	})
 	if _, err := spawn(repo, map[string]any{"agents": agents}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
