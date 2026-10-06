@@ -19,8 +19,7 @@
 // nothing. The temp directory and socket are removed after every call, and a
 // timeout kills the whole process group.
 //
-// Test hooks: WICK_PYTHON overrides the python3 path outright, and
-// WICK_EXECUTE_TIMEOUT caps nothing (timeouts come from the call args).
+// Test hooks: WICK_PYTHON overrides the python3 path outright.
 package tools
 
 import (
@@ -29,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -210,7 +210,12 @@ func (e boundExecute) Execute(ctx context.Context, root string, raw json.RawMess
 	defer lis.Close()
 	serveCtx, stopServe := context.WithCancel(ctx)
 	defer stopServe()
+	// Track accepted conns: a leftover child can inherit the socket and hold
+	// its read end open past the script's exit, which would hang wg.Wait on
+	// a Scan that never ends. stopBridge closes every conn, so handlers end.
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	conns := map[net.Conn]struct{}{}
 	go func() {
 		for {
 			conn, err := lis.Accept()
@@ -218,22 +223,44 @@ func (e boundExecute) Execute(ctx context.Context, root string, raw json.RawMess
 				return
 			}
 			wg.Add(1)
+			mu.Lock()
+			conns[conn] = struct{}{}
+			mu.Unlock()
 			go func() {
 				defer wg.Done()
+				defer func() {
+					mu.Lock()
+					delete(conns, conn)
+					mu.Unlock()
+				}()
 				serveExecuteConn(serveCtx, root, e.byName, conn)
 			}()
 		}
 	}()
+	// stopBridge ends the bridge on every path, including the timeout one:
+	// the listener stops accepting, in-flight tools see the cancelled serve
+	// context, open conns close, and only then does the call return.
+	stopBridge := func() {
+		_ = lis.Close()
+		stopServe()
+		mu.Lock()
+		for conn := range conns {
+			_ = conn.Close()
+		}
+		mu.Unlock()
+		wg.Wait()
+	}
 
 	var stdout, stderr string
 	var code int
+	timedOut := false
 	if e.sandboxed {
 		res, serr := RunSandbox(ctx, SandboxConfig{Worktree: root, BridgeDir: dir, Timeout: timeout}, py, "-I", "-c", executeLauncher, dir, mainPath)
 		stdout, stderr = res.Stdout, res.Stderr
 		if ctx.Err() == context.DeadlineExceeded {
-			return executeResult(root, p.Code, p.Intent, stdout, stderr, 0, true, timeout)
-		}
-		if serr != nil {
+			timedOut = true
+		} else if serr != nil {
+			stopBridge()
 			return "", serr
 		}
 		code = res.Code
@@ -251,21 +278,19 @@ func (e boundExecute) Execute(ctx context.Context, root string, raw json.RawMess
 		runErr := cmd.Run()
 		stdout, stderr = outBuf.String(), errBuf.String()
 		if ctx.Err() == context.DeadlineExceeded {
-			return executeResult(root, p.Code, p.Intent, stdout, stderr, 0, true, timeout)
-		}
-		if runErr != nil {
+			timedOut = true
+		} else if runErr != nil {
 			var exit *exec.ExitError
 			if errors.As(runErr, &exit) {
 				code = exit.ExitCode()
 			} else {
+				stopBridge()
 				return "", runErr
 			}
 		}
 	}
-	_ = lis.Close()
-	stopServe()
-	wg.Wait()
-	return executeResult(root, p.Code, p.Intent, stdout, stderr, code, false, timeout)
+	stopBridge()
+	return executeResult(root, p.Code, p.Intent, stdout, stderr, code, timedOut, timeout)
 }
 
 // executeResult formats one run: stdout then stderr (a failing run keeps the
@@ -338,17 +363,61 @@ type executeResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// errBridgeTooLong is the readBridgeLine answer for a line past the frame
+// cap: the line is fully consumed, so the next request still parses.
+var errBridgeTooLong = errors.New("bridge request is over the frame cap")
+
+// readBridgeLine reads one \n-terminated bridge request. A line past
+// executeFrameBytes is discarded to its newline and reported as
+// errBridgeTooLong, keeping the protocol in sync: the script's send
+// completes and its next read gets the size error as a ToolError instead of
+// racing a closed conn. io.EOF ends the conn; a partial tail is ignored.
+func readBridgeLine(r *bufio.Reader) ([]byte, error) {
+	var line []byte
+	tooLong := false
+	for {
+		frag, err := r.ReadSlice('\n')
+		if len(frag) > 0 && !tooLong {
+			if len(line)+len(frag) > executeFrameBytes {
+				tooLong = true
+				line = nil
+			} else {
+				line = append(line, frag...)
+			}
+		}
+		if err == nil {
+			if tooLong {
+				return nil, errBridgeTooLong
+			}
+			return line, nil
+		}
+		if err != bufio.ErrBufferFull {
+			return nil, io.EOF
+		}
+	}
+}
+
 // serveExecuteConn answers one script's bridge calls until it goes away: each
 // line runs the named tool through the role's resolved instance and the reply
 // carries the result string, or the error the script raises as ToolError.
 func serveExecuteConn(ctx context.Context, root string, byName map[string]Tool, conn net.Conn) {
 	defer conn.Close()
-	sc := bufio.NewScanner(conn)
-	sc.Buffer(make([]byte, 0, 64*1024), executeFrameBytes)
+	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
-	for sc.Scan() {
+	for {
+		raw, err := readBridgeLine(r)
+		if err == io.EOF {
+			return
+		}
+		if err == errBridgeTooLong {
+			writeExecuteResponse(w, executeResponse{Error: fmt.Sprintf("bridge request is over the frame cap (at most %d bytes for one JSON line per call)", executeFrameBytes)})
+			continue
+		}
+		if err != nil {
+			return
+		}
 		var req executeRequest
-		if err := json.Unmarshal(sc.Bytes(), &req); err != nil {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			writeExecuteResponse(w, executeResponse{ID: req.ID, Error: fmt.Sprintf("bad bridge request: %v", err)})
 			continue
 		}
