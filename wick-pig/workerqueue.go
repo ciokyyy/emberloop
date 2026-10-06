@@ -229,6 +229,7 @@ func launchQueuedWorker(run Exec, e queuedWorker) (*spawnedAgent, error) {
 		Type:     e.Type,
 		Ticket:   e.Ticket,
 		Pane:     worker.Pane,
+		Tab:      worker.Tab,
 		ParentID: e.ParentID,
 		Parent:   e.Parent,
 		GroupID:  e.GroupID,

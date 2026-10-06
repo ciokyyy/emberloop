@@ -121,6 +121,7 @@ func spawnDescription(types map[string]AgentType, allowed []string) string {
 	b.WriteString(". Returns at once with the agents still running, for every type. " +
 		"One notice with every result arrives when the last agent of this call has submitted; after spawn, end your turn and wait for it. " +
 		"A blocking type's result carries its full report, a non-blocking type's a one-line summary. " +
+		"Each started entry names its agent id and its pane id; tell and finish take either. " +
 		"A worktree entry also takes ticket, repo, base, target, harness, model and effort.")
 	return b.String()
 }
@@ -367,6 +368,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 			ID:       agent.ID,
 			Type:     t.Name,
 			Pane:     agent.Pane,
+			Tab:      agent.Tab,
 			ParentID: parentID,
 			Parent:   parentPane,
 			GroupID:  groupID,
@@ -479,8 +481,8 @@ func closeSpawned(run Exec, agents []*spawnedAgent) {
 	}
 }
 
-// launchScout starts one read-only agent in the caller's tab and leaves it
-// running, so a parent can send it a follow-up.
+// launchScout starts one read-only agent in the caller's tab. Its pane
+// closes as soon as its result is delivered; a follow-up means a new scout.
 func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAgent, error) {
 	// A scout resolves the scout slot: WICK_READONLY_HARNESS is a flag layer,
 	// the type's frontmatter the typeOrSpawn layer, then the slot's settings,
@@ -671,7 +673,8 @@ func renderPrompt(t AgentType, prompt string) string {
 // reported as queued behind the worker cap, each launch notice beside its
 // agent, and a closing line saying one notice with every result arrives and
 // the caller should end its turn. It never carries a report and never tells
-// the caller to call again.
+// the caller to call again. Each started entry names its agent id and its
+// pane id, so the caller can address it either way.
 func renderSpawnImmediate(agents []*spawnedAgent) string {
 	var parts []string
 	for _, a := range agents {
@@ -680,9 +683,9 @@ func renderSpawnImmediate(agents []*spawnedAgent) string {
 				a.Type.Name, a.ID, effectiveWorkerCap()))
 			continue
 		}
-		line := fmt.Sprintf("%s %s started.", a.Type.Name, a.ID)
+		line := fmt.Sprintf("%s %s started (pane %s).", a.Type.Name, a.ID, a.Pane)
 		if a.Tab != "" {
-			line = fmt.Sprintf("%s %s started in %s.", a.Type.Name, a.ID, a.Tab)
+			line = fmt.Sprintf("%s %s started in %s (pane %s).", a.Type.Name, a.ID, a.Tab, a.Pane)
 		}
 		if a.Notice != "" {
 			line += "\n" + a.Notice

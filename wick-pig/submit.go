@@ -115,16 +115,26 @@ func submitToolFor(t AgentType, agentID string) tools.Tool {
 		required = append(required, "summary")
 	}
 	return fnTool{
-		name: "submit",
-		desc: fmt.Sprintf("Report back to your parent. Set status from %s. "+
-			"A blocking type submits a report; a non-blocking one a one-line summary. "+
-			"Stay available afterwards: your parent may send you a follow-up.",
-			strings.Join(t.Statuses, ", ")),
+		name:   "submit",
+		desc:   submitDescription(t),
 		schema: schema(properties, required...),
 		run: func(_ string, params map[string]any) (string, error) {
 			return submitRun(t, agentID, params)
 		},
 	}
+}
+
+// submitDescription is what a spawned agent reads: scouts learn their pane
+// closes once the result is delivered (a follow-up means a new scout),
+// every other type stays available for one.
+func submitDescription(t AgentType) string {
+	base := fmt.Sprintf("Report back to your parent. Set status from %s. "+
+		"A blocking type submits a report; a non-blocking one a one-line summary. ",
+		strings.Join(t.Statuses, ", "))
+	if t.Checkout == "none" {
+		return base + "Your pane closes once your result is delivered; a follow-up means a new scout."
+	}
+	return base + "Stay available afterwards: your parent may send you a follow-up."
 }
 
 // submitRun validates one submit and records it.
@@ -192,7 +202,7 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 					return "", err
 				}
 			}
-			return fmt.Sprintf("submitted %s; stay available for a follow-up.", status), nil
+			return submitAck(t, status), nil
 		}
 	}
 	// An agent outside any open spawn group whose submit goes to the parent
@@ -205,8 +215,18 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 		if err := deliverSubmit(s, st); err != nil {
 			return "", err
 		}
+		closeDeliveredScout(deliverExec, agentID)
 	}
-	return fmt.Sprintf("submitted %s; stay available for a follow-up.", status), nil
+	return submitAck(t, status), nil
+}
+
+// submitAck is what a submit returns: scouts learn their pane closes,
+// every other type stays available for a follow-up.
+func submitAck(t AgentType, status string) string {
+	if t.Checkout == "none" {
+		return fmt.Sprintf("submitted %s; your pane closes once delivered.", status)
+	}
+	return fmt.Sprintf("submitted %s; stay available for a follow-up.", status)
 }
 
 func stringEnum(values []string) []any {

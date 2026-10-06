@@ -258,19 +258,42 @@ func deliverGroupIfComplete(groupID string) error {
 		}
 		if g.Parent == "" {
 			g.Delivered = true
-			return writeSpawnGroup(g)
+			if err := writeSpawnGroup(g); err != nil {
+				return err
+			}
+			closeGroupScouts(deliverExec, submits, lost)
+			return nil
 		}
 		if err := deliverToParent(AgentState{Parent: g.Parent}, notice); err != nil {
 			deliverErr = err
 			return err
 		}
 		g.Delivered = true
-		return writeSpawnGroup(g)
+		if err := writeSpawnGroup(g); err != nil {
+			return err
+		}
+		closeGroupScouts(deliverExec, submits, lost)
+		return nil
 	})
 	if deliverErr != nil {
 		return deliverErr
 	}
 	return err
+}
+
+// closeGroupScouts closes every scout whose result the group just delivered,
+// and cleans up its launch file. Workers own worktrees and reviewers stay
+// open; only scouts close. Lost members have no pane left, but their launch
+// file still goes, so a vanished pane leaves nothing behind. It runs inside
+// the group's lock, so concurrent submits for one group cannot interleave
+// closes with the delivery they belong to.
+func closeGroupScouts(run Exec, submits map[string]AgentSubmit, lost map[string]string) {
+	for id := range submits {
+		closeDeliveredScout(run, id)
+	}
+	for id := range lost {
+		closeDeliveredScout(run, id)
+	}
 }
 
 // dispatchGroupDelivery runs deliverGroupIfComplete in the background and

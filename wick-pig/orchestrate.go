@@ -170,19 +170,20 @@ var finishTool = fnTool{
 	name: "finish",
 	desc: "Take a finished worktree agent: rebase and fast-forward it into its target branch, then drop its worktree and close its reviewers. " +
 		"It merges only once every reviewer type the agent's type requires passed at the agent's tip; merge=false discards it regardless. " +
-		"Works only for a worktree agent.",
+		"Works only for a worktree agent. Give exactly one of agent (agent id) or pane (the herdr pane id).",
 	schema: schema(map[string]any{
-		"agent": map[string]any{"type": "string", "description": "Agent id."},
+		"agent": map[string]any{"type": "string", "description": "Agent id. Exactly one of agent or pane is required."},
+		"pane":  map[string]any{"type": "string", "description": "Herdr pane id. Exactly one of agent or pane is required."},
 		"merge": map[string]any{"type": "boolean", "description": "False discards the branch. Defaults to true."},
-	}, "agent"),
+	}),
 	run: func(_ string, params map[string]any) (string, error) {
 		// Each parent action sweeps its stranded groups first, in the
 		// background: a vanished member with no further submit is finalized
 		// after this call ends instead of waiting forever.
 		sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("WICK_AGENT_ID"))
-		id := str(params, "agent")
-		if id == "" {
-			return "", fmt.Errorf("agent is required")
+		id, err := resolveAgentParam(params, finishExec)
+		if err != nil {
+			return "", err
 		}
 		merge := true
 		if b, ok := params["merge"].(bool); ok {
@@ -200,21 +201,27 @@ var finishTool = fnTool{
 }
 
 // tell messages a running agent in its own input, so a steer reaches the model
-// instead of the shell. It works for any agent id: a non-blocking agent's
-// result comes back later as a notice, a blocking agent's next submit is
-// returned.
+// instead of the shell. It works for any agent, addressed by id or by pane:
+// a non-blocking agent's result comes back later as a notice, a blocking
+// agent's next submit is returned.
 var tellTool = fnTool{
 	name: "tell",
 	desc: "Send a message to a running agent. For a non-blocking agent it returns at once, and the agent's next result arrives as a system notice. " +
-		"For a blocking agent it waits for the agent's next submit and returns it; past the tool budget the agent is backgrounded and the result arrives as a notice.",
+		"For a blocking agent it waits for the agent's next submit and returns it; past the tool budget the agent is backgrounded and the result arrives as a notice. " +
+		"Give exactly one of agent (agent id) or pane (the herdr pane id).",
 	schema: schema(map[string]any{
-		"agent": map[string]any{"type": "string", "description": "Agent id."},
+		"agent": map[string]any{"type": "string", "description": "Agent id. Exactly one of agent or pane is required."},
+		"pane":  map[string]any{"type": "string", "description": "Herdr pane id. Exactly one of agent or pane is required."},
 		"text":  map[string]any{"type": "string", "description": "What to tell it."},
-	}, "agent", "text"),
+	}, "text"),
 	runCtx: func(ctx context.Context, _ string, params map[string]any) (string, error) {
-		id, text := str(params, "agent"), str(params, "text")
-		if id == "" || text == "" {
-			return "", fmt.Errorf("agent and text are required")
+		id, err := resolveAgentParam(params, tellExec)
+		if err != nil {
+			return "", err
+		}
+		text := str(params, "text")
+		if text == "" {
+			return "", fmt.Errorf("text is required")
 		}
 		return tellAgentCtx(ctx, tellExec, id, text)
 	},

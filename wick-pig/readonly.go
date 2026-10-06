@@ -99,6 +99,22 @@ func closeAgent(run Exec, agent readOnlyAgent) {
 	}
 }
 
+// closeDeliveredScout closes a scout's pane after its result reached the
+// parent, and cleans up its launch file. Workers own worktrees (finish
+// drops them) and reviewers stay open for follow-ups; only scouts close
+// here. A missing pane is the wanted end state, not a failure, but the
+// launch file is still removed so a vanished pane leaves nothing behind.
+func closeDeliveredScout(run Exec, agentID string) {
+	st, ok, err := ReadAgentState(agentID)
+	if err != nil || !ok || !isScoutState(st) {
+		return
+	}
+	if st.Pane != "" {
+		closeAgent(run, readOnlyAgent{Pane: st.Pane, Tab: st.Tab})
+	}
+	CleanupSession(Session{ID: agentID})
+}
+
 // readOnlyDir holds read-only agents' prompts and sessions.
 func readOnlyDir() string { return filepath.Join(filepath.Dir(statePath), "readonly") }
 
