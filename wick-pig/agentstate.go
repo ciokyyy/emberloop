@@ -65,6 +65,14 @@ type AgentState struct {
 	// `compressed xN` the header shows. It starts at zero and grows by one
 	// at each supervisor restart, while ID and Pane stay.
 	Compressed int `json:"compressed,omitempty"`
+	// Role is the session role the agent runs as (plan, implement, agent):
+	// the top-level session records its own, so a compress restart rebuilds
+	// the same tool set. Workers restart as agents from their own store.
+	Role string `json:"role,omitempty"`
+	// Cwd is the directory the session runs in: the top-level session
+	// records where wick-pig started, so a compress restart relaunches
+	// there. Workers restart in their worktree from their own store.
+	Cwd string `json:"cwd,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.

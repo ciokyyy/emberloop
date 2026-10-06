@@ -103,63 +103,11 @@ func compressAgentDir(agentID string) string {
 // session, keeps the handoff copy and the old transcript, and hands the
 // finished handoff to the supervisor for a same-pane restart. A refusal or
 // a failed summary returns before anything stops: the old session stays
-// untouched. A non-worker pane is a clear error: only a worker record
-// carries the harness, worktree and launch choice a restart rebuilds.
+// untouched. A press during a running tool call queues to the next boundary
+// with the queue mark set, so the header shows it; see RequestCompress for
+// the key's signal path and CompressPaneWithForce to force past the call.
 func CompressPane(run Exec, pane string, s tools.Settings) (string, error) {
-	agentID, err := resolvePaneToAgent(pane, run)
-	if err != nil {
-		return "", err
-	}
-	store, err := load()
-	if err != nil {
-		return "", err
-	}
-	w, ok := store[agentID]
-	if !ok {
-		return "", fmt.Errorf("pane %q is agent %q, not a worker: manual compress needs a worker", pane, agentID)
-	}
-	h := Registered(w.Harness)
-	if h == nil {
-		return "", fmt.Errorf("unknown harness %q (have %s)", w.Harness, strings.Join(HarnessNames(), ", "))
-	}
-	sessionID := w.SessionID
-	if st, ok, err := ReadAgentState(agentID); err != nil {
-		return "", err
-	} else if ok && st.SessionID != "" {
-		sessionID = st.SessionID
-	}
-	if sessionID == "" {
-		return "", fmt.Errorf("pane %q is agent %q with no session: nothing to compress", pane, agentID)
-	}
-	path := findSession(h.SessionRoot(Session{}), sessionID)
-	if path == "" {
-		return "", fmt.Errorf("no transcript for session %q", sessionID)
-	}
-	snap, err := summarizePath(w.Harness, path)
-	if err != nil {
-		return "", err
-	}
-	// The boundary waits before the summary: a result landing mid-wait
-	// belongs in the handoff, not after it.
-	if err := WaitForToolBoundary(w.Harness, path); err != nil {
-		return "", err
-	}
-	model := s.EffectiveCompressModel(w.Harness)
-	handoff, err := SummarizeSession(run, w.Harness, path, model, ModelWindow(model, s.ContextWindows()))
-	if err != nil {
-		return "", err
-	}
-	handoff = FinishHandoff(handoff, snap.Outstanding > 0)
-	if err := keepCompressCopies(agentID, sessionID, path, handoff); err != nil {
-		return "", err
-	}
-	return RestartPane(run, PaneRestart{
-		Harness:      w.Harness,
-		Pane:         pane,
-		AgentID:      agentID,
-		OldSessionID: sessionID,
-		Handoff:      handoff,
-	}, workerLaunchFor(w, handoff))
+	return CompressPaneWithForce(run, pane, s, false)
 }
 
 // workerLaunchFor rebuilds the worker's launch for the fresh session id

@@ -493,3 +493,77 @@ func TestInstallFailedRenameRestoresWhatItReplaced(t *testing.T) {
 		t.Errorf("a failed swap must leave no temps or backups, dir holds %v", names)
 	}
 }
+
+// Seam (ticket 08): install links the shipped compress plugin — with a
+// manifest dir present the install runs `herdr plugin link` at it through
+// the exec seam.
+func TestInstallLinksHerdrPlugin(t *testing.T) {
+	installTestState(t)
+	src := os.Getenv("WICK_SOURCE_DIR")
+	plugin := t.TempDir()
+	t.Setenv("WICK_HERDR_PLUGIN_DIR", plugin)
+	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"wick\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var linked []string
+	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
+		if cmd == herdrBin() && len(args) == 3 && args[0] == "plugin" && args[1] == "link" {
+			linked = append(linked, args[2])
+			return Result{Code: 0}, nil
+		}
+		return installBuildExec(t, src)(cmd, args, o)
+	}
+	if _, err := InstallBinaries(run, InstallOptions{}); err != nil {
+		t.Fatalf("install with a plugin dir must succeed: %v", err)
+	}
+	if len(linked) != 1 || linked[0] != plugin {
+		t.Errorf("install must link the plugin dir once, got %v", linked)
+	}
+}
+
+// A failed plugin link warns with the manual command instead of failing the
+// install.
+func TestInstallPluginLinkFailureWarns(t *testing.T) {
+	installTestState(t)
+	src := os.Getenv("WICK_SOURCE_DIR")
+	plugin := t.TempDir()
+	t.Setenv("WICK_HERDR_PLUGIN_DIR", plugin)
+	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"wick\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
+		if cmd == herdrBin() && len(args) > 1 && args[0] == "plugin" && args[1] == "link" {
+			return Result{Code: 1, Stderr: "no server"}, nil
+		}
+		return installBuildExec(t, src)(cmd, args, o)
+	}
+	res, err := InstallBinaries(run, InstallOptions{})
+	if err != nil {
+		t.Fatalf("a failed link must not fail the install: %v", err)
+	}
+	if !strings.Contains(res.Warning, "herdr plugin link") {
+		t.Errorf("a failed link must warn with the manual command, got %q", res.Warning)
+	}
+}
+
+// The user-facing install step documents the keybinding line the user adds.
+func TestInstallUsageDocumentsTheKeybinding(t *testing.T) {
+	for _, want := range []string{"[[keys.command]]", "plugin_action", "wick.compress"} {
+		if !strings.Contains(installUsage, want) {
+			t.Errorf("install usage must document %q", want)
+		}
+	}
+}
+
+// Seam (ticket 08): the user's own top-level session never blocks the
+// install — it runs the install itself.
+func TestInstallIgnoresLiveTopLevelSession(t *testing.T) {
+	installTestState(t)
+	src := os.Getenv("WICK_SOURCE_DIR")
+	if err := WriteAgentState(AgentState{ID: "top-1", Type: "orchestrator", Pane: "w1:p1", SessionID: "sess-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InstallBinaries(installBuildExec(t, src, "w1:p1"), InstallOptions{}); err != nil {
+		t.Fatalf("a live top-level session must not block the install: %v", err)
+	}
+}

@@ -17,7 +17,9 @@ var restartBoundaryTimeout = 30 * time.Second
 // child receives as its first message; launchFor must deliver that same text
 // (pig as the launch prompt, claude as Late through DeliverLate), and an
 // empty handoff is refused. SessionDir overrides the transcript root (temp
-// transcripts in tests); empty resolves through the harness.
+// transcripts in tests); empty resolves through the harness. Force skips the
+// boundary wait and restarts past a running tool call: the compress key's
+// second press.
 type PaneRestart struct {
 	Harness      string
 	Pane         string
@@ -25,6 +27,7 @@ type PaneRestart struct {
 	OldSessionID string
 	SessionDir   string
 	Handoff      string
+	Force        bool
 }
 
 // WaitForToolBoundary waits until the transcript at path shows no
@@ -87,7 +90,7 @@ func RestartPane(run Exec, req PaneRestart, launchFor func(newSessionID string) 
 	if Registered(req.Harness) == nil {
 		return "", fmt.Errorf("unknown harness %q", req.Harness)
 	}
-	if req.OldSessionID != "" {
+	if !req.Force && req.OldSessionID != "" {
 		if path := restartTranscriptPath(req.Harness, req.SessionDir, req.OldSessionID); path != "" {
 			if err := WaitForToolBoundary(req.Harness, path); err != nil {
 				return "", err

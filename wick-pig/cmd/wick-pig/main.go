@@ -13,7 +13,8 @@
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
 //	wick-pig deps                                             check and install external dependencies
 //	wick-pig context [--harness h] [--dir d] <session-id>   print one session’s context numbers
-//	wick-pig compress <pane>                             summarize the worker in pane and restart it there
+//	wick-pig compress [--force] <pane>                   summarize the worker in pane and restart it there
+//	wick-pig request-compress <pane>                      the herdr compress key's signal for the focused pane
 //	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
 //	wick-pig tui                                            open the dashboard in the current pane
@@ -72,6 +73,9 @@ func run(argv []string) error {
 	}
 	if sub == "compress" {
 		return runCompress(argv, os.Stdout)
+	}
+	if sub == "request-compress" {
+		return runRequestCompress(argv, os.Stdout)
 	}
 	if sub == "retry" {
 		if len(argv) != 1 {
@@ -212,6 +216,18 @@ func run(argv []string) error {
 				fmt.Fprintln(os.Stderr, "wick-pig:", err)
 			}
 		}()
+	}
+	// The top-level session records its own agent state, so the herdr
+	// compress key reaches it like every spawned pane: the key resolves the
+	// focused pane to this agent and restarts it from this record. Outside
+	// herdr there is no pane and no record. A failed write is silent: the
+	// session runs, only the key stays deaf.
+	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" && !*headless {
+		_ = wick.WriteTopLevelState(wick.TopLevelSession{
+			AgentID: s.AgentID, Pane: pane, Harness: choice.Harness,
+			Model: choice.Model, Effort: choice.Effort, Role: s.Role,
+			Cwd: cwd, SessionID: s.ID,
+		})
 	}
 	// The top-level session names its own pane orchestrator, so the herdr
 	// sidebar names it like every spawned pane. Outside herdr there is no
