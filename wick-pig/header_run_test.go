@@ -340,6 +340,16 @@ func TestAgentReporterTracksState(t *testing.T) {
 	}
 }
 
+func TestAgentReporterCompressFailedReportsIdle(t *testing.T) {
+	var calls []string
+	r := &agentReporter{run: func(a []string) { calls = append(calls, strings.Join(a, " ")) }, pane: "p", label: "x", seq: 10, ready: true}
+	r.report(HeaderWorking)
+	r.report(HeaderCompressFailed)
+	if len(calls) != 2 || !strings.Contains(calls[1], "--state idle") {
+		t.Fatalf("expected HeaderCompressFailed to report idle, got: %v", calls)
+	}
+}
+
 // The setting restores the drawn rule line: the agent-hue dashes return in
 // place of the soft edge, while the child keeps the full borderless width.
 func TestWrapRuleLineRestored(t *testing.T) {

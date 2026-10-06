@@ -451,6 +451,70 @@ func TestAutoFailureBackoff(t *testing.T) {
 	clearAutoFailure("pane-9")
 }
 
+// A refused or failed auto-compress shows `compress failed` state in the
+// strip and records its reason in the agent's state; a later success clears it.
+func TestAutoCompressFailureStateAndRecovery(t *testing.T) {
+	isolateState(t)
+	oldPoll, oldWait := pollEvery, paneStopWait
+	pollEvery, paneStopWait = 5*time.Millisecond, 50*time.Millisecond
+	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
+	writeAutoWorker(t, "w-fail", "pane-fail", "sess-fail", overThresholdIdle())
+	fake := &compressFake{t: t, alive: true, group: 4242, handoff: "no sections here"}
+
+	// 1. Failed auto-compress
+	if _, _, err := MaybeAutoCompress(fake.run, "pane-fail", autoSettings()); err == nil {
+		t.Fatal("bad summary must fail")
+	}
+
+	// 2. Reason is recorded in AgentState
+	st, ok, err := ReadAgentState("w-fail")
+	if err != nil || !ok {
+		t.Fatalf("agent state w-fail not found: %v", err)
+	}
+	if st.CompressFailed == "" {
+		t.Fatal("agent state must record failure reason in CompressFailed")
+	}
+
+	// 3. Strip shows `compress failed`
+	src := HeaderSource{
+		AgentID: "w-fail", AgentType: "worker", AgentName: "worker",
+		Harness: "pig", SessionID: "sess-fail",
+	}
+	snap, err := BuildHeaderSnapshot(src, autoSettings())
+	if err != nil {
+		t.Fatalf("BuildHeaderSnapshot: %v", err)
+	}
+	if snap.State != HeaderCompressFailed {
+		t.Errorf("snap.State = %q, want %q", snap.State, HeaderCompressFailed)
+	}
+	plain := stripANSI(renderTrue(snap, 100))
+	if !strings.Contains(plain, "compress failed") {
+		t.Errorf("strip missing `compress failed` state:\n%s", plain)
+	}
+
+	// 4. Cooldown still parks pane (sweep spends no calls)
+	callCountBefore := fake.pig
+	SweepAutoCompress(fake.run, autoSettings())
+	if fake.pig != callCountBefore {
+		t.Errorf("sweep should skip parked pane during cooldown")
+	}
+
+	// 5. Later success clears failure state
+	clearAutoFailure("pane-fail")
+	fake.handoff = summarizeHandoff
+	if _, ok, err := MaybeAutoCompress(fake.run, "pane-fail", autoSettings()); err != nil || !ok {
+		t.Fatalf("second compress must succeed: ok=%v, err=%v", ok, err)
+	}
+	stAfter, _, _ := ReadAgentState("w-fail")
+	if stAfter.CompressFailed != "" {
+		t.Errorf("success must clear CompressFailed, got %q", stAfter.CompressFailed)
+	}
+	snapAfter, _ := BuildHeaderSnapshot(src, autoSettings())
+	if snapAfter.State == HeaderCompressFailed {
+		t.Errorf("strip must no longer show compress failed after success")
+	}
+}
+
 // A manual compress refuses while a compress owns the pane instead of
 // summarizing twice over the same transcript.
 func TestCompressPaneRefusesWhileCompressing(t *testing.T) {

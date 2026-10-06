@@ -168,6 +168,7 @@ func recordPaneRestart(agentID, pane, next string) error {
 		// child's trace, so a later lost notice never carries a stale exit.
 		s.LaunchedAt = time.Now().UTC().Format(time.RFC3339)
 		s.ExitCode, s.ExitSignal, s.ExitStderr = nil, "", ""
+		s.CompressFailed = ""
 		return WriteAgentState(s)
 	})
 	if err != nil {

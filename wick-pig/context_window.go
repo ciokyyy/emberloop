@@ -19,6 +19,7 @@ var modelWindowFamilies = []struct {
 	prefix string
 	window int64
 }{
+	{"deepseek-v4", 1000000},
 	{"gemini-", 1000000},
 	{"gpt-", 400000},
 	{"claude-opus-", 200000},
@@ -28,6 +29,19 @@ var modelWindowFamilies = []struct {
 	{"sonnet", 200000},
 	{"opus", 200000},
 	{"haiku", 200000},
+}
+
+// cleanModelName strips leading provider paths (any number of segments) and
+// harness prefixes such as antigravity-, lower-casing the remainder for
+// table matching.
+func cleanModelName(model string) string {
+	lower := strings.ToLower(model)
+	if idx := strings.LastIndex(lower, "/"); idx != -1 {
+		lower = lower[idx+1:]
+	}
+	lower = strings.TrimPrefix(lower, "antigravity-")
+	lower = strings.TrimPrefix(lower, "agy-")
+	return lower
 }
 
 // ModelWindow resolves a model's context window in tokens: the settings
@@ -40,10 +54,17 @@ func ModelWindow(model string, overrides map[string]int64) int64 {
 			return window
 		}
 	}
-	lower := strings.ToLower(model)
+	cleaned := cleanModelName(model)
+	if cleaned != strings.ToLower(model) {
+		for name, window := range overrides {
+			if window > 0 && strings.EqualFold(name, cleaned) {
+				return window
+			}
+		}
+	}
 	best := -1
 	for i, fam := range modelWindowFamilies {
-		if strings.HasPrefix(lower, fam.prefix) && (best == -1 || len(fam.prefix) > len(modelWindowFamilies[best].prefix)) {
+		if strings.HasPrefix(cleaned, fam.prefix) && (best == -1 || len(fam.prefix) > len(modelWindowFamilies[best].prefix)) {
 			best = i
 		}
 	}

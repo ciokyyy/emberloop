@@ -27,7 +27,8 @@ owns its `_test.go` and the behaviour below):
   second-press force, top-level fallback, single-flight claim, `request-compress`),
   `autocompress.go` (automatic trigger: threshold decision with cooldown and
   disable switch, concurrent sweep of worker panes and recorded top-level panes, supervisor loop with failure
-  backoff, always-continue handoff),
+  backoff and visible refusal: error recorded in agent state and tools log, strip shows `compress failed: <reason>`,
+  10m cooldown parks pane, later success clears state, always-continue handoff),
   `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
   check), `compress_render.go` (transcript rendered as text in full),
   `commands.go`, `skills.go`, `install.go` (the live-agent gate, top-level
@@ -48,17 +49,20 @@ owns its `_test.go` and the behaviour below):
   `wick-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go` (per-agent record: pane, session, compressed
   count, top-level role and cwd for compress restart, mid-compress claim with
-  stale steal the header shows as `compressing…`), `agenttype.go`
+  stale steal the header shows as `compressing…`, `CompressFailed` reason for refused auto-compress), `agenttype.go`
   (built-in types plus `.wick/agents` overrides), `transcript.go`,
   `usage.go` (tailer parsing; rows land in `statedb/`), `memory.go`,
   `archive.go`, `prune.go` (deletes usage and overflow rows as well as files)
 - Context core: `context.go` (snapshot over a transcript: the shared
   formula, outstanding and finished calls, per-tool sizes), `context_parse.go` (the
-  per-harness line parsers a new harness registers), `context_window.go`
-  (model window table), `context_report.go` (the `wick-pig context` output)
+  per-harness line parsers a new harness registers),
+  `context_window.go` (model window table: strips leading `provider/` paths and harness prefixes like
+  `antigravity-`, case-insensitive longest prefix match with `deepseek-v4` at 1M and `gemini-` at 1M;
+  settings override via `context.windows` / `wick-pig settings window <model> <n>` beats table; unknown models get 200k default),
+  `context_report.go` (the `wick-pig context` output)
 - Header strip: `header.go` (pure strip render: snapshot and width in,
   styled string out, Lip Gloss adaptive palette, width tiers, `N pending`
-  beside the state pill),
+  beside the state pill, `compress failed: <reason>` pill on refusal/error),
   `header_tool.go` (the second row's activity label: the tool running now
   or the last one finished, a glyph and verb per tool in `toolStyles`,
   `N pending` when items wait; an idle agent shows no state word. **A new tool wick serves needs its

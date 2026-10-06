@@ -96,7 +96,7 @@ func (h *headerCtx) activityCell(max int) cell {
 	switch {
 	case h.snap.Warning != "":
 		return h.fit(h.pill(), max)
-	case h.snap.State == HeaderQueued, h.snap.State == HeaderCompressing:
+	case h.snap.State == HeaderQueued, h.snap.State == HeaderCompressing, h.snap.State == HeaderCompressFailed, strings.HasPrefix(string(h.snap.State), "compress failed"):
 		return h.fit(h.pill(), max)
 	case h.snap.State == HeaderIdle:
 		if h.snap.Pending > 0 {

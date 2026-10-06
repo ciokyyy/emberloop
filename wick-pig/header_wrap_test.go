@@ -220,6 +220,34 @@ func TestBuildHeaderSnapshotShowsCompressing(t *testing.T) {
 	}
 }
 
+// An agent whose last auto-compress failed shows `compress failed: <reason>` in
+// the strip until the next attempt or success.
+func TestBuildHeaderSnapshotShowsCompressFailed(t *testing.T) {
+	isolateState(t)
+	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", CompressFailed: "transcript past window"}); err != nil {
+		t.Fatal(err)
+	}
+	settings := tools.Settings{Context: &tools.ContextSettings{
+		CompressModels: map[string]string{"pig": "cheap-long"},
+	}}
+	src := HeaderSource{
+		AgentID: "w1", AgentType: "worker", AgentName: "worker",
+		Harness: "pig", TranscriptPath: filepath.Join(t.TempDir(), "missing.jsonl"),
+		StateDir: t.TempDir(),
+	}
+	snap, err := BuildHeaderSnapshot(src, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != HeaderCompressFailed {
+		t.Errorf("state = %q, want %q", snap.State, HeaderCompressFailed)
+	}
+	plain := stripANSI(renderTrue(snap, 100))
+	if !strings.Contains(plain, "compress failed") {
+		t.Errorf("strip misses the compress failed state:\n%s", plain)
+	}
+}
+
 // A stale mark from a crashed owner reads as absent: the strip shows the
 // working state, never a stuck `compressing…`.
 func TestBuildHeaderSnapshotIgnoresStaleCompressing(t *testing.T) {

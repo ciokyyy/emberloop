@@ -101,6 +101,10 @@ type AgentState struct {
 	// older than the stale threshold as absent, so the header self-heals
 	// and a later compress can steal it.
 	CompressingSince int64 `json:"compressing_since,omitempty"`
+	// CompressFailed is the failure or refusal reason from the last auto-compress
+	// attempt, shown in the header strip as `compress failed: <reason>`. A
+	// successful compress or fresh attempt clears it.
+	CompressFailed string `json:"compress_failed,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.

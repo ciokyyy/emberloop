@@ -146,3 +146,27 @@ func TestSettingsPrintLabelsEnvWin(t *testing.T) {
 		}
 	}
 }
+
+// Document and test context.windows overrides for provider-prefixed and
+// harness-prefixed models so an unlisted model can be configured in settings.
+func TestSettingsWindowOverridesForPrefixModels(t *testing.T) {
+	settingsFile(t)
+	for _, m := range []string{"openrouter/deepseek/deepseek-v4-flash-0731", "antigravity-gemini-3.8-flash"} {
+		var b strings.Builder
+		if err := runSettings([]string{"window", m, "2000000"}, &b, nil); err != nil {
+			t.Fatalf("setting window for %s: %v", m, err)
+		}
+	}
+	var out strings.Builder
+	if err := runSettings(nil, &out, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"window openrouter/deepseek/deepseek-v4-flash-0731: 2000000 (file)",
+		"window antigravity-gemini-3.8-flash: 2000000 (file)",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("settings print lacks %q:\n%s", want, out.String())
+		}
+	}
+}
