@@ -58,15 +58,21 @@ owns its `_test.go` and the behaviour below):
   (model window table), `context_report.go` (the `wick-pig context` output)
 - Header strip: `header.go` (pure strip render: snapshot and width in,
   styled string out, Lip Gloss adaptive palette, width tiers),
+  `theme.go` (the shared palette: Catppuccin Mocha and Latte driving the
+  strip, the generated claude and pig themes and the OSC pane colors;
+  per-run launch flags plus a per-run CLAUDE_CONFIG_DIR only, never the
+  user's saved settings),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
   builder reading the queued compress mark and the compressing state),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
-  exit restore), `header_source.go` (strip source from launch env,
+  pane palette set at start and reset at exit, on signals and across
+  restarts, exit restore), `header_source.go` (strip source from launch env,
   `wrap`/`exec`/top-level wiring); settings carry strip rows, frame,
   per-harness compress models, the auto-compress switch and cooldown. `exec`,
   top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
-  stay unwrapped.
+  stay unwrapped. Generated theme files live under the state dir
+  (`themes/`); golden fixtures are `testdata/theme/`.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
