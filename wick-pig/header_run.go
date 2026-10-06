@@ -403,13 +403,18 @@ func (w *wrapper) pollUsage(done <-chan struct{}) {
 }
 
 // readSnap builds the current strip snapshot outside the lock: transcript
-// and database IO must never hold it while child output waits to write.
+// and database IO must never hold it while child output waits to write. The
+// pending count comes from the wrapper's own queue, never the socket:
+// repaints must not dial the server they serve.
 func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 	snap, err := w.snapshot(w.cfg.Source, w.cfg.Settings)
 	if err != nil {
 		return HeaderSnapshot{}, false
 	}
 	w.usageKey.Store(snap.UsageKey)
+	if w.queue != nil {
+		snap.Pending = w.queue.len()
+	}
 	return snap, true
 }
 
