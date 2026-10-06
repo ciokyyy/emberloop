@@ -60,8 +60,8 @@ owns its `_test.go` and the behaviour below):
   styled string out, Lip Gloss adaptive palette, width tiers, `N pending`
   beside the state pill),
   `header_tool.go` (the second row's activity label: the tool running now
-  or the last one finished, a glyph and verb per tool in `toolStyles`; an
-  idle agent shows no state word. **A new tool wick serves needs its
+  or the last one finished, a glyph and verb per tool in `toolStyles`,
+  `N pending` when items wait; an idle agent shows no state word. **A new tool wick serves needs its
   `toolStyles` entry**: glyph, running verb, done verb. A test lists every
   tool in `tools.All()` plus spawn and submit and fails on a missing entry;
   an unlisted tool still shows, as a bare name), `claude_usage.go` and
