@@ -1,11 +1,13 @@
 package tui
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+
+	"example.com/wick/statedb"
 )
 
 // AgentKind names the role an agent plays on a ticket or a spec. Reviewer
@@ -115,41 +117,12 @@ func (t *Totals) add(a AgentSnap) {
 	}
 }
 
-// usageRow is the slice of a usage-log request or cost row the TUI sums:
-// per-request tokens with the harness-reported cost exactly as reported.
-// Find rows use findRow instead.
-type usageRow struct {
-	Kind         string   `json:"kind"`
-	Input        int64    `json:"input"`
-	Output       int64    `json:"output"`
-	CacheRead    int64    `json:"cacheRead"`
-	CacheWrite   int64    `json:"cacheWrite"`
-	Reasoning    int64    `json:"reasoning"`
-	ReportedCost *float64 `json:"reportedCost"`
-	At           string   `json:"at"`
-	Model        string   `json:"model"`
-}
-
-// findRow is the slice of a kind "find" usage line the TUI counts: one
-// line is one decision-model call, with the endpoint's usage when it
-// returned any. A present usage object with a zero cost still counts as
-// reported — the endpoint's zero is data, not a missing value.
-type findRow struct {
-	Kind       string `json:"kind"`
-	FindCallID string `json:"find_call_id"`
-	Usage      *struct {
-		InputTokens  int64   `json:"input_tokens"`
-		OutputTokens int64   `json:"output_tokens"`
-		Cost         float64 `json:"cost"`
-	} `json:"usage"`
-}
-
 // usageAcc accumulates one agent's usage across incremental reads: request
 // sums grow monotonically, while each claude cost-state snapshot replaces
 // the last. Snapshots are cumulative per-model totals, and every row the
 // core writes for one session shares its start time as At — so timestamps
 // cannot tell snapshots apart. Instead the accumulator keeps the latest
-// cost per model in log order (the log is append-only, so a later row is a
+// cost per model in row order (rows are append-only, so a later row is a
 // newer snapshot) and sums across models: one snapshot with two models
 // sums both rows, while a newer snapshot overwrites its models' costs.
 type usageAcc struct {
@@ -163,20 +136,16 @@ type usageAcc struct {
 	hasFindCost                                     bool
 }
 
-// observe folds one decoded line into the accumulator.
-func (a *usageAcc) observe(line []byte) {
-	var probe struct {
-		Kind string `json:"kind"`
-	}
-	if err := json.Unmarshal(line, &probe); err != nil {
-		return
-	}
-	switch probe.Kind {
-	case "request":
-		var r usageRow
-		if err := json.Unmarshal(line, &r); err != nil {
-			return
-		}
+// observeRow folds one usage-table row into the accumulator, by kind.
+// Request rows sum their tokens with the harness-reported cost exactly as
+// reported; cost rows replace the model's snapshot; find rows count one
+// decision-model call with the endpoint's tokens when it returned any. A
+// present find cost of zero still counts as reported — the endpoint's zero
+// is data, not a missing value. Rows of kinds the TUI does not sum are
+// ignored here.
+func (a *usageAcc) observeRow(r statedb.UsageRow) {
+	switch r.Kind {
+	case statedb.KindRequest:
 		a.input += r.Input
 		a.output += r.Output
 		a.cacheRead += r.CacheRead
@@ -186,11 +155,7 @@ func (a *usageAcc) observe(line []byte) {
 			a.reqCost += *r.ReportedCost
 			a.hasReqCost = true
 		}
-	case "cost":
-		var r usageRow
-		if err := json.Unmarshal(line, &r); err != nil {
-			return
-		}
+	case statedb.KindCost:
 		if r.ReportedCost == nil {
 			return
 		}
@@ -198,16 +163,12 @@ func (a *usageAcc) observe(line []byte) {
 			a.costByModel = map[string]float64{}
 		}
 		a.costByModel[r.Model] = *r.ReportedCost
-	case "find":
-		var r findRow
-		if err := json.Unmarshal(line, &r); err != nil {
-			return
-		}
+	case statedb.KindFind:
 		a.findCalls++
-		if r.Usage != nil {
-			a.findInput += r.Usage.InputTokens
-			a.findOutput += r.Usage.OutputTokens
-			a.findCost += r.Usage.Cost
+		a.findInput += r.Input
+		a.findOutput += r.Output
+		if r.ReportedCost != nil {
+			a.findCost += *r.ReportedCost
 			a.hasFindCost = true
 		}
 	}
@@ -224,56 +185,98 @@ func (a *usageAcc) funds() (input, output, cacheRead, cacheWrite, reasoning int6
 		cost, hasCost, a.findCalls, a.findInput, a.findOutput, a.findCost, a.hasFindCost
 }
 
-// usageCache reads usage logs incrementally: per-file byte offsets kept
-// across calls, so a one-second poll only parses what each agent appended
-// since the last tick. Only complete lines (ending in newline) advance the
-// offset, so a half-written line waits for the next pass. Usage logs are
-// append-only, never rewritten; a file shorter than its offset restarts
-// the accumulation rather than seeking past the new log's start.
+// usageCache reads usage rows incrementally from the state database: the row
+// id high-water mark kept across calls, so a one-second poll only folds what
+// landed since the last tick. Row ids never repeat within one database file,
+// so a pruned row never comes back and a fresh row is never missed; a
+// replaced database file is detected by identity and starts the accumulation
+// over. The zero value reads everything on its first call.
 type usageCache struct {
-	offsets map[string]int64
-	accs    map[string]*usageAcc
+	lastID int64
+	accs   map[string]*usageAcc
+	// dbDev and dbIno identify the database file last read (with dbKnown):
+	// a deleted and recreated database always takes a new identity, so the
+	// next poll restarts even when the new file already holds past the old
+	// high-water mark.
+	dbDev, dbIno uint64
+	dbKnown      bool
 }
 
 func newUsageCache() *usageCache {
-	return &usageCache{offsets: map[string]int64{}, accs: map[string]*usageAcc{}}
+	return &usageCache{accs: map[string]*usageAcc{}}
 }
 
-// totals returns the accumulated sums for one agent, reading whatever the
-// log grew by since the last call.
-func (c *usageCache) totals(stateDir, agentID string) AgentSnap {
-	key := agentID
-	acc := c.accs[key]
-	if acc == nil {
-		acc = &usageAcc{}
-		c.accs[key] = acc
+// noteIdentity records the database file's identity, reporting whether it
+// changed since the last poll. A changed identity means the file was
+// replaced (deleted and recreated), so the caller restarts the accumulation.
+// Identity is unavailable on some filesystems; then it reports false and the
+// maximum-row check covers the common case.
+func (c *usageCache) noteIdentity(info os.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
 	}
-	off := c.offsets[key]
-	path := usageLogPath(stateDir, agentID)
-	f, err := os.Open(path)
+	dev, ino := uint64(st.Dev), st.Ino
+	changed := c.dbKnown && (c.dbDev != dev || c.dbIno != ino)
+	c.dbDev, c.dbIno, c.dbKnown = dev, ino, true
+	return changed
+}
+
+// refresh folds every row past the high-water mark into its agent's
+// accumulator and advances the mark. A state with no database yet (no usage
+// ever recorded) leaves every total empty instead of failing, so a fresh
+// checkout still renders; a transient read failure keeps the last totals and
+// retries on the next tick. A database file replaced since the last poll
+// (deleted and recreated takes a new identity) restarts the accumulation
+// from zero instead of skipping every row, even when the new file already
+// reaches past the old mark; the maximum-row check below stays as the
+// backstop for filesystems where identity is unavailable.
+func (c *usageCache) refresh(stateDir string) {
+	path := statedb.DBPathForDir(stateDir)
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err == nil && c.noteIdentity(info) {
+		c.lastID = 0
+		c.accs = map[string]*usageAcc{}
+	}
+	db, err := statedb.OpenReadOnly(path)
 	if err != nil {
-		return AgentSnap{}
+		return
 	}
-	defer f.Close()
-	if info, err := f.Stat(); err == nil && info.Size() < off {
-		off = 0
-		acc = &usageAcc{}
-		c.accs[key] = acc
+	defer db.Close()
+	maxID, err := statedb.MaxUsageID(db)
+	if err != nil {
+		return
 	}
-	if _, err := f.Seek(off, 0); err != nil {
-		return AgentSnap{}
+	if maxID < c.lastID {
+		c.lastID = 0
+		c.accs = map[string]*usageAcc{}
 	}
-	r := bufio.NewReader(f)
-	pos := off
-	for {
-		chunk, err := r.ReadString('\n')
-		if err != nil {
-			break
+	rows, err := statedb.UsageRowsSince(db, c.lastID)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		acc := c.accs[r.Agent]
+		if acc == nil {
+			acc = &usageAcc{}
+			c.accs[r.Agent] = acc
 		}
-		acc.observe([]byte(chunk))
-		pos += int64(len(chunk))
+		acc.observeRow(r)
+		if r.ID > c.lastID {
+			c.lastID = r.ID
+		}
 	}
-	c.offsets[key] = pos
+}
+
+// totals renders one agent's accumulated sums.
+func (c *usageCache) totals(agentID string) AgentSnap {
+	acc := c.accs[agentID]
+	if acc == nil {
+		return AgentSnap{}
+	}
 	out := AgentSnap{}
 	out.Input, out.Output, out.CacheRead, out.CacheWrite, out.Reasoning,
 		out.Cost, out.HasCost, out.FindCalls, out.FindInput, out.FindOutput,
@@ -317,25 +320,6 @@ func latestRSS(path string) (rss int64, ok bool) {
 	return rows[at], true
 }
 
-// lockFileName mirrors the core's lockName: anything outside [a-zA-Z0-9-_]
-// becomes '-', so the TUI finds the same usage file the core wrote without
-// importing it.
-func lockFileName(key string) string {
-	var b strings.Builder
-	for _, r := range key {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	if b.Len() == 0 {
-		return "lock"
-	}
-	return b.String()
-}
-
 // sanitizeArchive mirrors the core's archive name cleaning: path
 // separators become '-', so run and agent ids map to one directory.
 func sanitizeArchive(s string) string {
@@ -345,11 +329,6 @@ func sanitizeArchive(s string) string {
 		return "session"
 	}
 	return s
-}
-
-// usageLogPath is one agent's usage log beside the worker store.
-func usageLogPath(stateDir, agentID string) string {
-	return filepath.Join(stateDir, "usage", lockFileName(agentID)+".jsonl")
 }
 
 // memoryLogPath is one agent's memory log in the archive under its run.

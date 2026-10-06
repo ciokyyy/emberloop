@@ -42,7 +42,7 @@ Index paths are repo-relative. Every doc below is listed here or in the
 child it belongs to, and every entry must resolve to a file.
 
 - `wick-pig/AGENTS.md` — the main Go package, its file map, and its Go
-  workflow; indexes tools, MCP server, agent types, and test data
+  workflow; indexes tools, MCP server, agent types, state database, and test data
 - `wick-tui/AGENTS.md` — the dashboard module (Runs list, read model, toolkit lock)
 - `herdr-report/AGENTS.md` — the herdr report extension (pig panes as
   addressable agents)

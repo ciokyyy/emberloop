@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"example.com/wick/statedb"
 )
 
 // writeLines writes each string as its own line in path, creating parents.
@@ -59,20 +61,18 @@ func costsFixture(t *testing.T) (stateDir, repo string) {
 		},
 	})
 
-	writeLines(t, filepath.Join(stateDir, "usage", "01-one.jsonl"), []string{
-		`{"agent":"01-one","at":"2026-10-06T10:00:00Z","harness":"pig","provider":"p","model":"opus","input":100,"output":50,"cacheRead":10,"cacheWrite":20,"reasoning":5,"reportedCost":0.01,"kind":"request"}`,
-		`{"agent":"01-one","at":"2026-10-06T10:01:00Z","harness":"pig","provider":"p","model":"opus","input":200,"output":70,"cacheRead":30,"cacheWrite":40,"reasoning":7,"reportedCost":0.02,"kind":"request"}`,
-		`{"agent":"01-one","at":"2026-10-06T10:02:00Z","kind":"find","model":"typesafe/jev-1.13","find_call_id":"f1","questions":2,"usage":{"input_tokens":278,"output_tokens":21,"cost":0.000011676}}`,
-		`{"agent":"01-one","at":"2026-10-06T10:03:00Z","kind":"find","model":"typesafe/jev-1.13","find_call_id":"f2","questions":1}`,
-	})
-	// Cost-state rows carry the session start as At (the core's cost-state
-	// line has no timestamp), so both snapshots share one At: the second
-	// replaces the first per model, and its two models sum.
-	writeLines(t, filepath.Join(stateDir, "usage", "orch.jsonl"), []string{
-		`{"agent":"orch","at":"2026-10-06T10:00:00Z","harness":"claude","provider":"anthropic","model":"claude-opus-5","input":2,"output":474,"cacheRead":0,"cacheWrite":17838,"reasoning":170,"kind":"request"}`,
-		`{"agent":"orch","at":"2026-10-06T09:00:00Z","harness":"claude","provider":"anthropic","model":"claude-opus-5","input":1,"output":10,"cacheRead":0,"cacheWrite":100,"reasoning":0,"reportedCost":1.5,"kind":"cost"}`,
-		`{"agent":"orch","at":"2026-10-06T09:00:00Z","harness":"claude","provider":"anthropic","model":"claude-opus-5","input":2,"output":474,"cacheRead":0,"cacheWrite":17838,"reasoning":170,"reportedCost":5.0,"kind":"cost"}`,
-		`{"agent":"orch","at":"2026-10-06T09:00:00Z","harness":"claude","provider":"anthropic","model":"claude-sonnet-4","input":0,"output":0,"cacheRead":0,"cacheWrite":0,"reasoning":0,"reportedCost":0.07,"kind":"cost"}`,
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "01-one", At: "2026-10-06T10:00:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 100, Output: 50, CacheRead: 10, CacheWrite: 20, Reasoning: 5, ReportedCost: costp(0.01)},
+		{Agent: "01-one", At: "2026-10-06T10:01:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 200, Output: 70, CacheRead: 30, CacheWrite: 40, Reasoning: 7, ReportedCost: costp(0.02)},
+		{Agent: "01-one", At: "2026-10-06T10:02:00Z", Model: "typesafe/jev-1.13", Kind: statedb.KindFind, Input: 278, Output: 21, ReportedCost: costp(0.000011676), FindCallID: "f1", FindQuestions: 2},
+		{Agent: "01-one", At: "2026-10-06T10:03:00Z", Model: "typesafe/jev-1.13", Kind: statedb.KindFind, FindCallID: "f2", FindQuestions: 1},
+		// Cost-state rows carry the session start as At (the core's cost-state
+		// line has no timestamp), so both snapshots share one At: the second
+		// replaces the first per model, and its two models sum.
+		{Agent: "orch", At: "2026-10-06T10:00:00Z", Harness: "claude", Provider: "anthropic", Model: "claude-opus-5", Kind: statedb.KindRequest, Input: 2, Output: 474, CacheWrite: 17838, Reasoning: 170},
+		{Agent: "orch", At: "2026-10-06T09:00:00Z", Harness: "claude", Provider: "anthropic", Model: "claude-opus-5", Kind: statedb.KindCost, Input: 1, Output: 10, CacheWrite: 100, ReportedCost: costp(1.5)},
+		{Agent: "orch", At: "2026-10-06T09:00:00Z", Harness: "claude", Provider: "anthropic", Model: "claude-opus-5", Kind: statedb.KindCost, Input: 2, Output: 474, CacheWrite: 17838, Reasoning: 170, ReportedCost: costp(5.0)},
+		{Agent: "orch", At: "2026-10-06T09:00:00Z", Harness: "claude", Provider: "anthropic", Model: "claude-sonnet-4", Kind: statedb.KindCost, ReportedCost: costp(0.07)},
 	})
 
 	writeLines(t, filepath.Join(stateDir, "archive", "alpha", "01-one", "memory.jsonl"), []string{
@@ -207,8 +207,8 @@ func TestSnapshotMissingCostReadsNoCostReported(t *testing.T) {
 			"harness": "pig", "model": "opus",
 		},
 	})
-	writeLines(t, filepath.Join(stateDir, "usage", "01-one.jsonl"), []string{
-		`{"agent":"01-one","at":"2026-10-06T10:00:00Z","harness":"pig","provider":"p","model":"opus","input":100,"output":50,"cacheRead":0,"cacheWrite":0,"reasoning":0,"kind":"request"}`,
+	writeUsageRows(t, stateDir, []statedb.UsageRow{
+		{Agent: "01-one", At: "2026-10-06T10:00:00Z", Harness: "pig", Provider: "p", Model: "opus", Kind: statedb.KindRequest, Input: 100, Output: 50},
 	})
 
 	snap, err := Snapshot(stateDir, repo, func() (map[string]string, error) {

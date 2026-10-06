@@ -1,15 +1,37 @@
 package tools
 
 import (
-	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 
+	"example.com/wick/statedb"
 	"example.com/wick/tools/systemone"
 )
 
-func TestLogFindCallWritesOneLinePerCall(t *testing.T) {
+// readFindRows returns the agent's find rows from the state database, in row
+// order: LogFindCall writes rows there now, not JSONL lines.
+func readFindRows(t *testing.T, agent string) []statedb.UsageRow {
+	t.Helper()
+	db, err := statedb.Open(statedb.DBPath())
+	if err != nil {
+		t.Fatalf("open state database: %v", err)
+	}
+	defer db.Close()
+	rows, err := statedb.UsageRowsForAgent(db, agent)
+	if err != nil {
+		t.Fatalf("read usage rows: %v", err)
+	}
+	var out []statedb.UsageRow
+	for _, r := range rows {
+		if r.Kind != statedb.KindFind {
+			t.Fatalf("row kind = %q, want find", r.Kind)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func TestLogFindCallWritesOneRowPerCall(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("WICK_STATE_DIR", dir)
 
@@ -26,35 +48,31 @@ func TestLogFindCallWritesOneLinePerCall(t *testing.T) {
 		t.Fatalf("LogFindCall: %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "usage", "agent-1.jsonl"))
-	if err != nil {
-		t.Fatalf("read log: %v", err)
+	rows := readFindRows(t, "agent-1")
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	var line map[string]any
-	if err := json.Unmarshal(raw, &line); err != nil {
-		t.Fatalf("decode log line %q: %v", raw, err)
+	row := rows[0]
+	if row.Agent != "agent-1" || row.Kind != statedb.KindFind {
+		t.Errorf("row identity = %+v", row)
 	}
-	if line["agent"] != "agent-1" || line["kind"] != "find" {
-		t.Errorf("line identity = %v", line)
+	if row.Model != systemone.JevModelPinned || row.FindCallID != "find-abc" {
+		t.Errorf("row attribution = %+v", row)
 	}
-	if line["model"] != systemone.JevModelPinned || line["find_call_id"] != "find-abc" {
-		t.Errorf("line attribution = %v", line)
+	if row.FindQuestions != 16 {
+		t.Errorf("row questions = %d, want 16", row.FindQuestions)
 	}
-	if line["questions"] != float64(16) {
-		t.Errorf("line questions = %v, want 16", line["questions"])
+	if row.Input != 278 || row.Output != 21 {
+		t.Errorf("row usage = %d/%d, want 278/21", row.Input, row.Output)
 	}
-	usage, _ := line["usage"].(map[string]any)
-	if usage["input_tokens"] != float64(278) || usage["output_tokens"] != float64(21) {
-		t.Errorf("line usage = %v", line["usage"])
+	if row.ReportedCost == nil || *row.ReportedCost != 0.000011676 {
+		t.Errorf("row cost = %v, want 0.000011676", row.ReportedCost)
 	}
-	if usage["cost"] != 0.000011676 {
-		t.Errorf("line cost = %v", usage["cost"])
+	if row.Generation != "gen-dec-1" || row.Provider != "TypeSafe" {
+		t.Errorf("row provenance = %+v", row)
 	}
-	if line["generation"] != "gen-dec-1" || line["provider"] != "TypeSafe" {
-		t.Errorf("line provenance = %v", line)
-	}
-	if line["at"] == nil || line["at"] == "" {
-		t.Errorf("line has no timestamp: %v", line)
+	if row.At == "" {
+		t.Errorf("row has no timestamp: %+v", row)
 	}
 }
 
@@ -65,19 +83,16 @@ func TestLogFindCallWithoutUsageStillLogsTheCall(t *testing.T) {
 	if err := LogFindCall(FindUsage{Agent: "agent-2", Model: "m", FindCallID: "f", Questions: 3}); err != nil {
 		t.Fatalf("LogFindCall: %v", err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "usage", "agent-2.jsonl"))
-	if err != nil {
-		t.Fatalf("read log: %v", err)
+	rows := readFindRows(t, "agent-2")
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	var line map[string]any
-	if err := json.Unmarshal(raw, &line); err != nil {
-		t.Fatalf("decode %q: %v", raw, err)
+	row := rows[0]
+	if row.ReportedCost != nil {
+		t.Errorf("row carries cost = %v, want none", *row.ReportedCost)
 	}
-	if _, ok := line["usage"]; ok {
-		t.Errorf("line carries usage = %v, want none", line["usage"])
-	}
-	if line["agent"] != "agent-2" || line["kind"] != "find" {
-		t.Errorf("line = %v", line)
+	if row.Agent != "agent-2" || row.Kind != statedb.KindFind {
+		t.Errorf("row = %+v", row)
 	}
 }
 

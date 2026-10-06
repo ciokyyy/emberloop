@@ -44,8 +44,9 @@ func run(argv []string) error {
 		}
 		current = tui.CurrentRepo(execRunner, cwd)
 	}
-	// One Reader across ticks: usage logs are read from per-file offsets,
-	// so the one-second poll only parses what each agent appended.
+	// One Reader across ticks: usage rows are read from the state database
+	// past the row-id high-water mark, so the one-second poll only folds
+	// what landed since the last tick.
 	reader := new(tui.Reader)
 	load := func() (tui.Snap, error) {
 		return reader.Snapshot(dir, current, tui.HerdrPanes(execRunner))

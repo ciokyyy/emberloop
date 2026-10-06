@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"example.com/wick/statedb"
 )
 
 // Seam 1: usage parsers — one transcript line in, zero or more normalized
@@ -251,23 +253,25 @@ func appendLines(t *testing.T, path, content string) {
 
 func readUsageLog(t *testing.T, agent string) []UsageRecord {
 	t.Helper()
-	raw, err := os.ReadFile(UsageLogPath(agent))
-	if os.IsNotExist(err) {
-		return nil
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		t.Fatalf("open state database at %s: %v", dbPath(), err)
 	}
+	defer db.Close()
+	rows, err := statedb.UsageRowsForAgent(db, agent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out []UsageRecord
-	for _, l := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(l) == "" {
-			continue
-		}
-		var r UsageRecord
-		if err := json.Unmarshal([]byte(l), &r); err != nil {
-			t.Fatalf("log line is not a record: %v in %q", err, l)
-		}
-		out = append(out, r)
+	for _, r := range rows {
+		out = append(out, UsageRecord{
+			Agent: r.Agent, At: r.At, Harness: r.Harness,
+			Provider: r.Provider, Model: r.Model,
+			Input: r.Input, Output: r.Output,
+			CacheRead: r.CacheRead, CacheWrite: r.CacheWrite,
+			Reasoning: r.Reasoning, ReportedCost: r.ReportedCost,
+			Kind: r.Kind,
+		})
 	}
 	return out
 }
@@ -353,6 +357,31 @@ func TestTailUsageDedupesClaudeBlocksAcrossPasses(t *testing.T) {
 	got := readUsageLog(t, "w1")
 	if len(got) != 2 || got[0].Kind != "request" || got[1].Kind != "cost" {
 		t.Fatalf("log = %+v, want one request row and one cost row", got)
+	}
+}
+
+// Two agents tailing identical line ids (the same pig message id, or two
+// byte-identical claude cost-state snapshots) must each keep their row: the
+// tailer's seen lists are per-agent, so the database keys must be too, or the
+// second agent's row vanishes under the global unique index.
+func TestTailUsageScopesDedupeKeysPerAgent(t *testing.T) {
+	isolateState(t)
+	dir := t.TempDir()
+	ta := filepath.Join(dir, "a.jsonl")
+	tb := filepath.Join(dir, "b.jsonl")
+	writeLines(t, ta, pigLine("same-id", 10))
+	writeLines(t, tb, pigLine("same-id", 10))
+	if n, err := TailUsage(ta, "agent-a", "pig"); n != 1 || err != nil {
+		t.Fatalf("first agent tail = %d, %v; want 1, nil", n, err)
+	}
+	if n, err := TailUsage(tb, "agent-b", "pig"); n != 1 || err != nil {
+		t.Fatalf("second agent with identical line ids = %d, %v; want 1, nil (keys must be agent-scoped)", n, err)
+	}
+	if got := readUsageLog(t, "agent-a"); len(got) != 1 || got[0].Input != 10 {
+		t.Fatalf("agent-a log = %+v, want its 10-token request", got)
+	}
+	if got := readUsageLog(t, "agent-b"); len(got) != 1 || got[0].Input != 10 {
+		t.Fatalf("agent-b log = %+v, want its 10-token request", got)
 	}
 }
 
@@ -513,12 +542,11 @@ func TestTailUsageHonoursWickStateDir(t *testing.T) {
 	if n, err := TailUsage(transcript, "w1", "pig"); n != 1 || err != nil {
 		t.Fatalf("tail = %d, %v; want 1, nil", n, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "usage", "w1.jsonl"))
-	if err != nil {
-		t.Fatalf("log must land under WICK_STATE_DIR: %v", err)
+	got := readUsageLog(t, "w1")
+	if len(got) != 1 || got[0].Input != 5 {
+		t.Fatalf("database under WICK_STATE_DIR holds %+v, want the tailed request", got)
 	}
-	var rec UsageRecord
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &rec); err != nil || rec.Input != 5 {
-		t.Errorf("log line = %q, want the tailed request", raw)
+	if _, err := os.Stat(filepath.Join(dir, "usage", "w1.jsonl")); !os.IsNotExist(err) {
+		t.Errorf("no per-agent JSONL may be written: stat err = %v", err)
 	}
 }

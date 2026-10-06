@@ -152,16 +152,16 @@ type historyEntry struct {
 	Outcome string `json:"outcome"`
 }
 
-// Reader polls the read model incrementally: usage logs are read from
-// per-file offsets kept across calls (see usageCache), so a one-second
-// poll only parses what each agent appended since the last tick. The zero
-// value reads everything on its first call. The live binary holds one
-// Reader across ticks; Snapshot is the one-shot form — a fresh Reader per
-// call — which is what tests assert totals through.
+// Reader polls the read model incrementally: usage rows are read from the
+// state database past the row-id high-water mark kept across calls (see
+// usageCache), so a one-second poll only folds what landed since the last
+// tick. The zero value reads everything on its first call. The live binary
+// holds one Reader across ticks; Snapshot is the one-shot form — a fresh
+// Reader per call — which is what tests assert totals through.
 //
 // The live program drives loads from bubbletea Cmd goroutines, where a
 // tick can start the next load while the last still runs: the mutex
-// serializes overlapping Snapshots so the offsets never race.
+// serializes overlapping Snapshots so the high-water mark never races.
 type Reader struct {
 	mu    sync.Mutex
 	cache *usageCache
@@ -180,8 +180,8 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 	return new(Reader).Snapshot(stateDir, currentRepo, herdr)
 }
 
-// Snapshot reads through the Reader's usage offsets, accumulating new log
-// lines into the running per-agent totals without double-counting.
+// Snapshot reads through the Reader's row-id high-water mark, accumulating
+// new usage rows into the running per-agent totals without double-counting.
 func (r *Reader) Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -278,6 +278,9 @@ func snapshotRead(stateDir, currentRepo string, herdr Herdr, cache *usageCache) 
 	reviewers := loadReviewerRecords(stateDir)
 	scouts := loadScouts(stateDir)
 	terminals := loadTerminalsBySlug(stateDir, byRepo)
+	// One database read per Snapshot: usage rows past the high-water mark
+	// fold into the running per-agent totals before any agent row renders.
+	cache.refresh(stateDir)
 	var machineRSS int64
 	for _, specs := range byRepo {
 		for slug, s := range specs {
@@ -589,7 +592,7 @@ func loadScouts(stateDir string) map[string]scoutRecord {
 // the latest memory sample under the spec's run, and the herdr status of
 // its pane (a pane missing from the live map is gone, never running).
 func fillAgent(ctx *agentCtx, id string, base AgentSnap) AgentSnap {
-	funds := ctx.cache.totals(ctx.stateDir, id)
+	funds := ctx.cache.totals(id)
 	base.ID = id
 	base.Input, base.Output, base.CacheRead, base.CacheWrite, base.Reasoning = funds.Input, funds.Output, funds.CacheRead, funds.CacheWrite, funds.Reasoning
 	base.Cost, base.HasCost = funds.Cost, funds.HasCost

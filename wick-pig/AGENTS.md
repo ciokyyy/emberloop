@@ -10,8 +10,8 @@ here and covers this module including `tools/`, `mcp/`, and `cmd/`.
 ## Ownership
 
 Owns every `.go` file directly in this directory plus `cmd/` (the two
-entry points). `tools/`, `mcp/`, `agenttypes/`, and `testdata/` are
-separate durable boundaries with their own docs. File map (non-test file
+entry points). `tools/`, `mcp/`, `agenttypes/`, `statedb/`, and `testdata/`
+are separate durable boundaries with their own docs. File map (non-test file
 owns its `_test.go` and the behaviour below):
 
 - Sessions and harnesses: `harness.go` (pig/claude commands, system prompt),
@@ -30,8 +30,9 @@ owns its `_test.go` and the behaviour below):
   CLI) and `cmd/wick-mcp/main.go` (tool server); `tui.go` execs the installed
   `wick-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go`, `agenttype.go` (built-in types plus
-  `.wick/agents` overrides), `transcript.go`, `usage.go`, `memory.go`,
-  `archive.go`, `prune.go`
+  `.wick/agents` overrides), `transcript.go`, `usage.go` (tailer parsing;
+  rows land in `statedb/`), `memory.go`, `archive.go`, `prune.go` (deletes
+  usage rows as well as files)
 - Policy: `roles.go` (no role refuses to start), `readonly.go`,
   `stopgate.go`, `extension.go` (pig extension wiring, brief lines)
 - Fixtures: `testdata/` (child doc)
@@ -64,4 +65,5 @@ owns its `_test.go` and the behaviour below):
 - `wick-pig/mcp/AGENTS.md` — the MCP server transport over those tools
 - `wick-pig/agenttypes/AGENTS.md` — the built-in worker, reviewer, and
   scout types
+- `wick-pig/statedb/AGENTS.md` — the SQLite state database both hosts share
 - `wick-pig/testdata/AGENTS.md` — captured fixtures tests parse
