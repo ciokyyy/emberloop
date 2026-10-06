@@ -302,7 +302,7 @@ func TestRequestCompressCoversClaude(t *testing.T) {
 	if err := save(map[string]Worker{"c1": {ID: "c1", Pane: "pane-c", Harness: "claude", Worktree: t.TempDir(), SessionID: oldID, AgentType: "worker"}}); err != nil {
 		t.Fatal(err)
 	}
-	fake := &compressFake{t: t, alive: false, group: 0, handoff: summarizeHandoff}
+	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	next, err := RequestCompress(fake.run, "pane-c", compressSettings())
 	if err != nil {
 		t.Fatalf("claude request: %v", err)
@@ -381,7 +381,7 @@ func TestTopLevelStateSupersedesSamePane(t *testing.T) {
 	if CompressQueued("top-1") {
 		t.Error("the earlier run's queue mark must go")
 	}
-	fake := &compressFake{t: t, alive: false, group: 0}
+	fake := &compressFake{t: t, alive: true, group: 4242}
 	got, err := resolvePaneToAgent("top-pane", fake.run)
 	if err != nil {
 		t.Fatalf("one record must resolve: %v", err)
