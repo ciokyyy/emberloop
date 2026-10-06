@@ -209,6 +209,10 @@ func run(argv []string) error {
 			}
 		}()
 	}
+	// The top-level session names its own pane orchestrator, so the herdr
+	// sidebar names it like every spawned pane. Outside herdr there is no
+	// pane and the call does nothing; a failed rename is silent.
+	wick.NameOrchestratorPane(wick.OSExec)
 	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" && !*headless {
 		stop := make(chan struct{})
 		defer close(stop)

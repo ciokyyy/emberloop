@@ -215,6 +215,10 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 	if res, err := run(herdrBin(), []string{"pane", "run", pane, launch.Line}, ExecOpts{Timeout: 15 * time.Second}); err != nil || res.Code != 0 {
 		return fail(fmt.Errorf("herdr pane run failed: %v %s", err, firstLine(res.Stderr, res.Stdout)))
 	}
+	// The pane carries the agent type's readable name; a session with no
+	// type (a one-shot read-only run) names its pane scout. A rename that
+	// fails is silent: the name is cosmetic and never fails the launch.
+	renamePane(run, pane, placedPaneName(sess))
 	if err := DeliverLate(run, pane, launch.Late); err != nil {
 		return fail(err)
 	}

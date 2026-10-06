@@ -25,8 +25,9 @@ owns its `_test.go` and the behaviour below):
 - Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),
   `workerqueue.go` (worker-cap queue and drain), `grid.go`, `tile.go`,
-  `background.go`, `orchestrate.go` (the spawn/finish/tell orchestration
-  tools)
+  `panename.go` (herdr pane names per agent type; the header strip ticket
+  reads the same mapping for its name chip), `background.go`,
+  `orchestrate.go` (the spawn/finish/tell orchestration tools)
 - Review and merge: `review.go` (packet, pass record), `submit.go`,
   `tell.go`, `deliver.go`, `integration.go`, `run.go`, `history.go`
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
