@@ -61,6 +61,10 @@ type AgentState struct {
 	// (usage rows, submits, gate state, pane mapping) is keyed by. A new
 	// child always gets a fresh UUID, never a reused id.
 	SessionID string `json:"session_id,omitempty"`
+	// Compressed counts how many handoffs this agent went through: the
+	// `compressed xN` the header shows. It starts at zero and grows by one
+	// at each supervisor restart, while ID and Pane stay.
+	Compressed int `json:"compressed,omitempty"`
 	// Review, on a reviewer agent, is where its submit belongs: the worktree,
 	// the reviewer type, and the commit the review is tied to. A non-reviewer
 	// has none, and its submit is just recorded.
@@ -129,7 +133,18 @@ func RotateAgentSession(id string) (string, error) {
 	}
 	// The worker record names its harness session too: a failed save
 	// reports, so the caller never sees success with the record stale.
-	if err := withFileLock("workers", func() error {
+	if err := pointWorkerAtSession(id, next); err != nil {
+		return "", err
+	}
+	return next, nil
+}
+
+// pointWorkerAtSession moves a worker record to the harness session its agent
+// restarted on. A non-worker id is nothing to move, not a failure. It shares
+// the workers-locked read-modify-write with RotateAgentSession and the
+// supervisor's record, so the two rotations cannot drift.
+func pointWorkerAtSession(id, next string) error {
+	return withFileLock("workers", func() error {
 		store, err := load()
 		if err != nil {
 			return err
@@ -140,10 +155,7 @@ func RotateAgentSession(id string) (string, error) {
 			return save(store)
 		}
 		return nil
-	}); err != nil {
-		return "", err
-	}
-	return next, nil
+	})
 }
 
 // ReadAgentState returns an agent's state, and false when there is none.

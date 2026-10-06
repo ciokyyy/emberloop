@@ -18,7 +18,9 @@ owns its `_test.go` and the behaviour below):
   `voice.go` + `caveman/SKILL.md` (the register: the caveman plugin skill, byte
   for byte, at ultra; plus the per-turn reminder, `wick-pig voice-reminder`),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
-  (pane launch text), `commands.go`, `skills.go`, `install.go` (the live-agent
+  (pane launch text), `supervisor.go` (compress restart in the same pane:
+  boundary wait, child stop, handoff relaunch, session rotation with the
+  compressed count), `commands.go`, `skills.go`, `install.go` (the live-agent
   gate, ending with the deps step), `deps.go` (the `wick-pig deps` installer)
 - Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),
