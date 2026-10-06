@@ -43,8 +43,9 @@ import (
 // real package install or download.
 
 // GraphBinaryName is the code graph binary ticket 19 installs and ticket 20
-// serves. Its own `install` command never runs.
-const GraphBinaryName = "codebase-memory-mcp"
+// serves: one string, owned by the tools package that resolves it. Its own
+// `install` command never runs.
+const GraphBinaryName = tools.GraphBinaryName
 
 // DefaultGraphVersion pins the graph release deps installs. Bump with the
 // upstream release; tests override it with DepsConfig.GraphVersion.

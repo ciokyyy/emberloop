@@ -21,12 +21,13 @@ func ResolvedTools(role string) (main, execute []tools.Tool, err error) {
 }
 
 // ResolvedToolsWithMCP resolves a role with an explicit MCP tool listing,
+// with the graph server synthesized in when it is enabled and installed.
 func ResolvedToolsWithMCP(role string, mcp map[string][]tools.Tool) (main, execute []tools.Tool, err error) {
 	base, err := baseToolsFor(role)
 	if err != nil {
 		return nil, nil, err
 	}
-	main, execute = resolveRoleTools(role, base, mcp, tools.EffectiveSettings(cwd()), warnSettingsOnce)
+	main, execute = resolveRoleTools(role, base, mcp, tools.WithGraphServer(tools.EffectiveSettings(cwd())), warnSettingsOnce)
 	return main, execute, nil
 }
 

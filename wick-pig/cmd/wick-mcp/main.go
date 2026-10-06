@@ -52,11 +52,12 @@ func run() int {
 		return 1
 	}
 	// The registry holds one client per configured MCP server for this
-	// process. It starts no server until the snapshot lists it; a server that
-	// fails is warned about and skipped.
-	mcpReg := tools.NewRegistry(tools.EffectiveSettings(root).MCPServers)
+	// process, plus the synthesized graph server when it is enabled and
+	// installed. It starts no server until the snapshot lists it; a server
+	// that fails is warned about and skipped.
+	mcpReg := tools.NewRegistry(tools.WithGraphServer(tools.EffectiveSettings(root)).MCPServers)
 	defer mcpReg.Close()
-	served, err := wick.RoleToolsWithMCP(*role, wick.MCPSnapshot(mcpReg))
+	served, err := wick.RoleToolsWithMCP(*role, wick.MCPSnapshotWithGraph(mcpReg, root))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
 		return 2

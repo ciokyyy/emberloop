@@ -563,6 +563,10 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	}); err != nil {
 		return nil, err
 	}
+	// The worktree exists now: index it for the code graph in the background.
+	// Best-effort and silent when the graph is off: reviewers re-index before
+	// they spawn, so a missed creation index still converges.
+	graphIndexWorktreeAsync(out.Worktree)
 	return out, nil
 }
 
@@ -1019,6 +1023,9 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 		} else if res.Code != 0 {
 			return fmt.Errorf("git worktree remove %s failed: %s", w.Worktree, gitFullText(res.Stderr, "unknown error"))
 		}
+		// The worktree is gone: drop its code graph project too. Best-effort:
+		// a failed delete is logged and never fails the finish.
+		graphDeleteForWorktree(w.Worktree)
 		// The worker's per-session files go with it: the MCP config and the
 		// launch file `wick-pig exec` read at startup. Either is already gone when
 		// the agent consumed it; what remains is the backup for a launch that

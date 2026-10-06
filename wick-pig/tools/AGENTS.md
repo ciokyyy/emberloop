@@ -41,7 +41,10 @@ under a new name, forwarding its MCP markers),
 `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `wick-pig deps` error), `mcpclient.go` (the stdio JSON-RPC client
-and per-process server registry behind the same resolution), `systemone/`
+and per-process server registry behind the same resolution), `graph.go` (the
+graph server synthesis: path-slug projects, binary resolution, the exposed
+tool include over the hidden management set, per-role placement, and the
+first-query index-status gate), `systemone/`
 (the decisions-model client the find cascade asks), and `mcpfake/` (the fake
 MCP server the client, execute and graph tests spawn).
 
@@ -85,6 +88,12 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 - Binaries resolve from the wick bin directory first, then PATH, through the
   shared resolver the installer, grep, the sandbox runner, execute and the
   graph use.
+- The graph is optional: `graph.enabled: false` or a missing binary exposes
+  nothing and errors nothing. When present it serves only the five exposed
+  tools (`search_graph`, `trace_path`, `get_code_snippet`, `get_file_outline`,
+  `get_architecture`), in main for `review` and `scout` and behind `execute`
+  for every other role; the index management tools and `detect_changes`
+  never serve.
 - `check` shares its timeout (3 minutes), 60-line tail and status strings
   between the tool and the harness spawn-time run; the map's `default`, or
   its first name when no default exists, is what the spawn run executes.
