@@ -195,6 +195,13 @@ func TestGitRefusesDangerousFlags(t *testing.T) {
 		{"log", "--format=%G"},
 		{"log", "--pretty=format:%G %s"},
 		{"show", "--form=%s %G", "HEAD"},
+		// --text is exact only on diff, log, show and grep: on blame
+		// and cat-file it abbreviates --textconv (verified: `cat-file
+		// --text` parses as `--textconv`), and the tool's own
+		// --no-textconv comes first, so it would be overridden.
+		{"blame", "--text", "a.txt"},
+		{"cat-file", "--text", "HEAD"},
+		{"status", "--text"},
 	} {
 		_, err := run(t, gitTool{}, dir, map[string]any{"args": args})
 		if err == nil {
@@ -214,10 +221,15 @@ func TestGitKeepsLegitimateFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"log", "--oneline", "--graph", "--decorate"},
 		{"log", "--stat", "HEAD"},
-		// --text is an exact option (binary as text), not textconv.
+		// --text is an exact option (binary as text) on diff, log,
+		// show and grep only.
 		{"log", "--text", "--oneline"},
 		{"diff", "--text"},
 		{"grep", "--text", "hello"},
+		{"show", "--text", "HEAD"},
+		// -O is an orderfile on diff, log and show.
+		{"diff", "-O" + os.DevNull},
+		{"log", "-O" + os.DevNull, "--oneline"},
 		// Formats without %G never touch gpg.
 		{"log", "--format=%h %s"},
 		{"log", "--pretty=format:%h"},

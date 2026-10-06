@@ -186,21 +186,33 @@ func (gitTool) Execute(ctx context.Context, root string, raw json.RawMessage) (s
 
 // gitSafeExactLongs are legitimate long flags that prefix-match a refused
 // one but resolve to themselves: git prefers the exact match, so `--text`
-// (treat binary as text, on diff, log, show and grep) never reaches
-// textconv. They skip the prefix refusal below.
+// (treat binary as text) never reaches textconv. The exemption is
+// subcommand-aware (see gitTextExactSubs): blame and cat-file have no
+// exact `--text`, so there it is the textconv abbreviation and stays
+// refused (verified: `cat-file --text` parses as `--textconv`).
 var gitSafeExactLongs = map[string]bool{"text": true}
 
-// refusedGitFlag reports the first refused flag in args, or "". `-c` is
-// refused as its own argument (the `git -c key=value ...` form), and
-// grep's `-O` pager in any single-dash bundle containing `O` (`-O`,
-// `-Oless`, `-iOless`), since git parses bundles letter by letter. A
-// double-dash flag is refused when its name (before any `=`) is a
-// refused flag or a prefix of one (`--out`, `--ext-d`, `--upl`), because
-// git parses unambiguous abbreviations as the full flag. A `--format`
-// or `--pretty` value containing `%G` is refused: formatting a signature
-// runs the repo's gpg.program even without `--show-signature`. Scanning
-// stops at `--`: past it every argument is a path or pattern to git too.
+// gitTextExactSubs are the subcommands with an exact `--text` option:
+// diff, log, show and grep. Everywhere else the exemption does not
+// apply.
+var gitTextExactSubs = map[string]bool{"diff": true, "log": true, "show": true, "grep": true}
+
+// refusedGitFlag reports the first refused flag in args, or "". args[0]
+// is the subcommand: grep's `-O` pager is refused in any single-dash
+// bundle containing `O` (`-O`, `-Oless`, `-iOless`), while diff, log and
+// show legitimately use `-O<orderfile>` and keep it. `-c` is refused as
+// its own argument (the `git -c key=value ...` form). A double-dash flag
+// is refused when its name (before any `=`) is a refused flag or a prefix
+// of one (`--out`, `--ext-d`, `--upl`), because git parses unambiguous
+// abbreviations as the full flag. A `--format` or `--pretty` value
+// containing `%G` is refused: formatting a signature runs the repo's
+// gpg.program even without `--show-signature`. Scanning stops at `--`:
+// past it every argument is a path or pattern to git too.
 func refusedGitFlag(args []string) string {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
 	for _, a := range args {
 		if a == "--" {
 			break
@@ -209,7 +221,7 @@ func refusedGitFlag(args []string) string {
 			return a
 		}
 		if len(a) > 1 && a[0] == '-' && a[1] != '-' {
-			if strings.ContainsRune(a[1:], 'O') {
+			if sub == "grep" && strings.ContainsRune(a[1:], 'O') {
 				return a
 			}
 			continue
@@ -224,7 +236,7 @@ func refusedGitFlag(args []string) string {
 		if name == "" {
 			continue
 		}
-		if gitSafeExactLongs[name] {
+		if gitSafeExactLongs[name] && gitTextExactSubs[sub] {
 			continue
 		}
 		for _, f := range gitRefusedLongs {
