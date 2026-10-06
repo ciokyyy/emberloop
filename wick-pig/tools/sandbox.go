@@ -36,15 +36,22 @@ const (
 	sandboxProbeTimeout   = 30 * time.Second
 )
 
-// SandboxUnavailableError reports that the sandbox cannot be used: bwrap
-// is missing or its self-test failed. The message names `wick-pig deps`,
-// the command that installs and verifies it.
+// SandboxUnavailableError reports that a wick dependency cannot be used:
+// bwrap is missing or the sandbox failed its self-test. The message names
+// `wick-pig deps`, the command that installs and verifies it. Binary names
+// the missing binary, and is empty when the sandbox itself failed, so the
+// same type serves the other tools that share ResolveBinary.
 type SandboxUnavailableError struct {
+	Binary string
 	Reason string
 }
 
 func (e *SandboxUnavailableError) Error() string {
-	return fmt.Sprintf("sandbox unavailable (%s); run wick-pig deps to install it", e.Reason)
+	what := "sandbox"
+	if e.Binary != "" {
+		what = e.Binary
+	}
+	return fmt.Sprintf("%s unavailable (%s); run wick-pig deps to install it", what, e.Reason)
 }
 
 // IsSandboxUnavailable reports whether err is a *SandboxUnavailableError.
@@ -80,7 +87,7 @@ func ResolveBinary(name string) (string, error) {
 	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
-	return "", &SandboxUnavailableError{Reason: fmt.Sprintf("%s not found in %s or PATH", name, BinDir())}
+	return "", &SandboxUnavailableError{Binary: name, Reason: fmt.Sprintf("not found in %s or PATH", BinDir())}
 }
 
 // resolveBwrap is ResolveBinary("bwrap") with the WICK_BWRAP test
@@ -91,7 +98,7 @@ func resolveBwrap() (string, error) {
 		if isExecutable(p) {
 			return p, nil
 		}
-		return "", &SandboxUnavailableError{Reason: fmt.Sprintf("WICK_BWRAP=%q is not executable", p)}
+		return "", &SandboxUnavailableError{Binary: "bwrap", Reason: fmt.Sprintf("WICK_BWRAP=%q is not executable", p)}
 	}
 	return ResolveBinary("bwrap")
 }
@@ -102,7 +109,7 @@ type SandboxConfig struct {
 	Worktree string
 	// BridgeDir is the one read-write bind, holding the caller's socket
 	// and generated files. Empty means no writable bind. It must not be
-	// the worktree or inside it.
+	// the worktree, inside it, or above it.
 	BridgeDir string
 	// Timeout caps the run; zero is the 120s default, capped at 600s.
 	Timeout time.Duration
@@ -163,8 +170,17 @@ func sandboxArgs(cfg SandboxConfig, env []string, command string, args []string)
 		if err != nil {
 			return nil, err
 		}
-		if bridge == wt || strings.HasPrefix(bridge, wt+string(filepath.Separator)) {
-			return nil, fmt.Errorf("sandbox bridge %q must not be the worktree or inside it", cfg.BridgeDir)
+		sep := string(filepath.Separator)
+		if bridge == wt || strings.HasPrefix(bridge, wt+sep) || strings.HasPrefix(wt, bridge+sep) {
+			return nil, fmt.Errorf("sandbox bridge %q must not overlap the worktree", cfg.BridgeDir)
+		}
+		// A missing bridge fails bwrap setup with a plain exit 1, which
+		// reads as the command's own failure. Catch it here instead, so
+		// a caller typo is an error, not a result.
+		if info, err := os.Stat(bridge); err != nil {
+			return nil, fmt.Errorf("sandbox bridge %q: %w", cfg.BridgeDir, err)
+		} else if !info.IsDir() {
+			return nil, fmt.Errorf("sandbox bridge %q is not a directory", cfg.BridgeDir)
 		}
 		argv = append(argv, "--bind", bridge, bridge)
 	}
@@ -251,10 +267,19 @@ func EnsureHealthy(worktree string) error {
 // runSelfTest executes the probe inside bwrap directly, bypassing
 // EnsureHealthy: it is the check, not a caller of it.
 func runSelfTest(bwrap, worktree string) error {
+	// The outside probe targets the host home directory: unlike /etc it
+	// is host-writable, so the probe proves the read-only bind instead
+	// of passing vacuously. It falls back to /etc only when HOME is
+	// unset. Either way a leaked probe is removed on the success branch,
+	// and the name is unique per run.
+	outside := os.Getenv("HOME")
+	if outside == "" {
+		outside = "/etc"
+	}
 	script := `set -u
 in="$1/.wick-sandbox-selftest.$$-$RANDOM"
 if touch "$in" 2>/dev/null; then rm -f "$in"; exit 10; fi
-out="/etc/wick-sandbox-selftest.$$-$RANDOM"
+out="$2/wick-sandbox-selftest.$$-$RANDOM"
 if touch "$out" 2>/dev/null; then rm -f "$out"; exit 11; fi
 if (exec 3<>/dev/tcp/127.0.0.1/9) 2>/dev/null; then exit 12; fi
 exit 0`
@@ -267,7 +292,7 @@ exit 0`
 		return err
 	}
 	argv, err := sandboxArgs(SandboxConfig{Worktree: worktree}, env, bash,
-		[]string{"-c", script, "selftest", worktree})
+		[]string{"-c", script, "selftest", worktree, outside})
 	if err != nil {
 		return err
 	}
