@@ -16,3 +16,5 @@
 - [ ] The chosen pure-Go driver supports FTS5 (a test creates an FTS5 virtual table with the porter tokenizer, so a driver without it fails loudly); ticket 09 builds on this
 - [ ] `wick-tui`'s usage reading uses the database read-only; its tests pass against a fixture database
 - [ ] Workers, runs and the archive stay in their JSON files; repo check passes
+
+**Prior attempt:** an earlier worker finished this ticket and it passed both reviewers at an older base, but the run was stopped before it merged. Its commit is preserved on branch `archive/websearch-03-sqlite` (one commit on top of the integration branch). Start by cherry-picking it onto your branch, run the repo check, and fix what fails or is stale against the current integration tip, instead of reimplementing. Reviews run fresh on the resulting tip as for any ticket.
