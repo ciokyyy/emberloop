@@ -19,8 +19,13 @@ owns its `_test.go` and the behaviour below):
   for byte, at ultra; plus the per-turn reminder, `wick-pig voice-reminder`),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
   (pane launch text), `supervisor.go` (compress restart in the same pane:
-  boundary wait, child stop, handoff relaunch, session rotation with the
-  compressed count), `commands.go`, `skills.go`, `install.go` (the live-agent
+  boundary wait, child stop, handoff relaunch, pane-name re-assertion,
+  session rotation with the compressed count), `compress.go` (manual compress:
+  pig one-off summary, handoff and transcript copies, same-pane restart
+  through the supervisor),
+  `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
+  check), `compress_render.go` (transcript rendered as text in full),
+  `commands.go`, `skills.go`, `install.go` (the live-agent
   gate, ending with the deps step), `deps.go` (the `wick-pig deps` installer)
 - Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),

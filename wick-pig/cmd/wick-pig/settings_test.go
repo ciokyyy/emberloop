@@ -828,3 +828,42 @@ func TestSettingsSetsMCPServerSummary(t *testing.T) {
 		t.Fatalf("empty summary must clear: %q", got)
 	}
 }
+
+// Seam: settings CLI — compress-model names the summarizer per harness, the
+// printout shows it, and a model whose window cannot hold the threshold is
+// refused.
+func TestSettingsSetsCompressModel(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"compress-model", "pig", "pig-cheap"}, &out, noModels); err != nil {
+		t.Fatalf("compress-model: %v", err)
+	}
+	if got := tools.LoadSettings().EffectiveCompressModel("pig"); got != "pig-cheap" {
+		t.Fatalf("saved compress model = %q, want pig-cheap", got)
+	}
+	if !strings.Contains(out.String(), "compress-model pig: pig-cheap") {
+		t.Errorf("printout lacks the model line, got:\n%s", out.String())
+	}
+}
+
+func TestSettingsRejectsCompressModelForUnknownHarness(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"compress-model", "nope", "m"}, &out, noModels); err == nil {
+		t.Fatal("unknown harness must fail")
+	}
+}
+
+func TestSettingsRefusesCompressModelWithTooSmallAWindow(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"window", "tiny-model", "1000"}, &out, noModels); err != nil {
+		t.Fatalf("window: %v", err)
+	}
+	if err := runSettings([]string{"compress-model", "pig", "tiny-model"}, &out, noModels); err == nil {
+		t.Fatal("a compress model whose window cannot hold the threshold must fail")
+	}
+	if got := tools.LoadSettings().EffectiveCompressModel("pig"); got != "" {
+		t.Errorf("refused model must not save, got %q", got)
+	}
+}

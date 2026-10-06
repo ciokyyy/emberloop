@@ -68,6 +68,7 @@ type restartFake struct {
 	ran       []string
 	prompted  []string
 	closed    []string
+	renamed   []string
 	runErr    bool
 	promptErr bool
 	typeErr   bool
@@ -110,6 +111,9 @@ func (f *restartFake) run(cmd string, args []string, _ ExecOpts) (Result, error)
 		return Result{Stdout: "{}"}, nil
 	case "pane close", "tab close":
 		f.closed = append(f.closed, args[0]+" "+args[1])
+		return Result{Stdout: "{}"}, nil
+	case "pane rename":
+		f.renamed = append(f.renamed, args[2]+"="+args[3])
 		return Result{Stdout: "{}"}, nil
 	case "pane send-text":
 		if f.typeErr {
@@ -536,5 +540,31 @@ func TestRestartKeepsSubmitOnTheAgent(t *testing.T) {
 	sub, ok, err := ReadAgentSubmit("ws")
 	if err != nil || !ok || sub.Report != "r" {
 		t.Errorf("restart must keep the submit on the agent: %+v %v %v", sub, ok, err)
+	}
+}
+
+// A restart re-asserts the pane name for the agent's type, so the herdr
+// sidebar agrees with the header strip chip after every handoff.
+func TestRestartReassertsPaneName(t *testing.T) {
+	isolateState(t)
+	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
+	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 2*time.Second
+	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
+	dir := t.TempDir()
+	oldID := "sess-rename"
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__wick__read")+pigResultLine("r1", "call_1", "mcp__wick__read", "ok"))
+	if err := WriteAgentState(AgentState{ID: "wn", Type: "worker", Pane: "pane-n", SessionID: oldID}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &restartFake{t: t, alive: true, group: 4242}
+	if _, err := RestartPane(fake.run, PaneRestart{Harness: "pig", Pane: "pane-n", AgentID: "wn", OldSessionID: oldID, SessionDir: dir, Handoff: "h"}, func(id string) (Session, Launch, error) {
+		sess := Session{Role: "agent", Cwd: dir, Label: "wn", AgentID: "wn", ID: id, Prompt: "h"}
+		launch, err := PrepareLaunch("pig", sess)
+		return sess, launch, err
+	}); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if len(fake.renamed) != 1 || fake.renamed[0] != "pane-n=implementer" {
+		t.Errorf("restart must rename the pane for the agent type, got %v", fake.renamed)
 	}
 }

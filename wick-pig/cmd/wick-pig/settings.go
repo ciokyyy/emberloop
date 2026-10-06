@@ -15,7 +15,7 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|window <model> <n>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|window <model> <n>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
        wick-pig settings search provider|mode <value>
@@ -77,6 +77,10 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 		s.MaxWorkers = v
 	case "compress-threshold":
 		if err := setCompressThreshold(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "compress-model":
+		if err := setCompressModel(&s, argv[1:]); err != nil {
 			return err
 		}
 	case "window":
@@ -211,6 +215,37 @@ func setCompressThreshold(s *tools.Settings, argv []string) error {
 		c.HarnessThresholds = map[string]int64{}
 	}
 	c.HarnessThresholds[harness] = int64(v)
+	return nil
+}
+
+// setCompressModel applies `compress-model <harness> <model>` to s: the
+// summarizer model for one harness. The model's window must hold the
+// harness's compress threshold, or the setting is refused and nothing saves.
+func setCompressModel(s *tools.Settings, argv []string) error {
+	if len(argv) != 2 {
+		return fmt.Errorf("compress-model needs a harness and a model\n%s", settingsUsage)
+	}
+	harness, model := argv[0], argv[1]
+	if wick.Registered(harness) == nil {
+		return fmt.Errorf("unknown harness %q (have %s)\n%s", harness, strings.Join(wick.HarnessNames(), ", "), settingsUsage)
+	}
+	if strings.TrimSpace(model) == "" {
+		return fmt.Errorf("compress-model needs a model\n%s", settingsUsage)
+	}
+	window := wick.ModelWindow(model, s.ContextWindows())
+	threshold := s.EffectiveCompressThreshold(harness)
+	if window < threshold {
+		return fmt.Errorf("compress-model %q window %d cannot hold the %d %s threshold; raise the window first\n%s", model, window, threshold, harness, settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	if c.CompressModels == nil {
+		c.CompressModels = map[string]string{}
+	}
+	c.CompressModels[harness] = model
 	return nil
 }
 
@@ -770,16 +805,26 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 		fmt.Fprintf(out, "compress-threshold %s: %d (%s)\n",
 			h, s.EffectiveCompressThreshold(h), src)
 	}
+	models := s.CompressModels()
+	ordered := make([]string, 0, len(models))
+	for h := range models {
+		ordered = append(ordered, h)
+	}
+	sort.Strings(ordered)
+	for _, h := range ordered {
+		fmt.Fprintf(out, "compress-model %s: %s (%s)\n",
+			h, models[h], s.SourceOf("context.compress_models."+h))
+	}
 	windows := s.ContextWindows()
 	if len(windows) == 0 {
 		return
 	}
-	models := make([]string, 0, len(windows))
+	names := make([]string, 0, len(windows))
 	for m := range windows {
-		models = append(models, m)
+		names = append(names, m)
 	}
-	sort.Strings(models)
-	for _, m := range models {
+	sort.Strings(names)
+	for _, m := range names {
 		fmt.Fprintf(out, "window %s: %d (%s)\n", m, windows[m], s.SourceOf("context.windows"))
 	}
 }

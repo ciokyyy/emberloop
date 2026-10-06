@@ -12,6 +12,7 @@
 //	wick-pig install [--force]                               rebuild and install the wick binaries (refuses while agents are live)
 //	wick-pig deps                                             check and install external dependencies
 //	wick-pig context [--harness h] [--dir d] <session-id>   print one session’s context numbers
+//	wick-pig compress <pane>                             summarize the worker in pane and restart it there
 //	wick-pig stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
 //	wick-pig tui                                            open the dashboard in the current pane
@@ -65,6 +66,9 @@ func run(argv []string) error {
 	}
 	if sub == "context" {
 		return runContext(argv, os.Stdout)
+	}
+	if sub == "compress" {
+		return runCompress(argv, os.Stdout)
 	}
 	if sub == "retry" {
 		if len(argv) != 1 {

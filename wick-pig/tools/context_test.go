@@ -137,3 +137,36 @@ func TestNegativeProjectValuesAreIgnored(t *testing.T) {
 		t.Errorf("merged windows = %+v, want only a:1", w)
 	}
 }
+
+// Seam: compress model — one model per harness names the summarizer. Unset
+// means compression refuses; the header warns instead of defaulting.
+func TestCompressModelUnsetByDefault(t *testing.T) {
+	s := writeContextSettings(t, `{}`)
+	if got := s.EffectiveCompressModel("pig"); got != "" {
+		t.Errorf("default compress model = %q, want unset", got)
+	}
+}
+
+func TestCompressModelPerHarness(t *testing.T) {
+	s := writeContextSettings(t, `{"context":{"compress_models":{"pig":"pig-cheap","claude":"claude-cheap"}}}`)
+	if got := s.EffectiveCompressModel("pig"); got != "pig-cheap" {
+		t.Errorf("pig compress model = %q, want pig-cheap", got)
+	}
+	if got := s.EffectiveCompressModel("claude"); got != "claude-cheap" {
+		t.Errorf("claude compress model = %q, want claude-cheap", got)
+	}
+	if got := s.EffectiveCompressModel("unknown-harness"); got != "" {
+		t.Errorf("unknown harness compress model = %q, want unset", got)
+	}
+}
+
+func TestCompressModelRoundTrip(t *testing.T) {
+	s := writeContextSettings(t, `{"context":{"compress_models":{"pig":"pig-cheap"}}}`)
+	if err := SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	back := LoadSettings()
+	if got := back.EffectiveCompressModel("pig"); got != "pig-cheap" {
+		t.Errorf("round trip compress model = %q, want pig-cheap", got)
+	}
+}

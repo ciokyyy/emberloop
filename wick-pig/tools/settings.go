@@ -122,11 +122,14 @@ type OverflowSettings struct {
 // ContextSettings tunes context tracking and compression. CompressThreshold
 // is the global auto-compress threshold in tokens; HarnessThresholds
 // overrides it per harness; Windows overrides the model window table per
-// model. A pointer, so an unset context stays out of the saved file.
+// model; CompressModels names the summarizer model per harness (unset means
+// compression refuses with a warning, never a silent default). A pointer,
+// so an unset context stays out of the saved file.
 type ContextSettings struct {
-	CompressThreshold int64            `json:"compress_threshold,omitempty"`
-	HarnessThresholds map[string]int64 `json:"harness_thresholds,omitempty"`
-	Windows           map[string]int64 `json:"windows,omitempty"`
+	CompressThreshold int64             `json:"compress_threshold,omitempty"`
+	HarnessThresholds map[string]int64  `json:"harness_thresholds,omitempty"`
+	Windows           map[string]int64  `json:"windows,omitempty"`
+	CompressModels    map[string]string `json:"compress_models,omitempty"`
 }
 
 // Settings are the user's choices that tools read at call time. They live in
@@ -334,6 +337,28 @@ func (s Settings) EffectiveCompressThreshold(harness string) int64 {
 	return DefaultCompressThreshold
 }
 
+// EffectiveCompressModel is the summarizer model in force for a harness:
+// the per-harness value, or "" when none is set. Empty means compression
+// refuses and the header warns; there is no default.
+func (s Settings) EffectiveCompressModel(harness string) string {
+	if s.Context != nil {
+		return s.Context.CompressModels[harness]
+	}
+	return ""
+}
+
+// CompressModels is the summarizer model per harness. The map is a copy:
+// the caller cannot mutate the settings through it.
+func (s Settings) CompressModels() map[string]string {
+	out := map[string]string{}
+	if s.Context != nil {
+		for h, m := range s.Context.CompressModels {
+			out[h] = m
+		}
+	}
+	return out
+}
+
 // ContextWindows is the model window overrides in force, window tokens by
 // model. The map is a copy: the caller cannot mutate the settings through it.
 func (s Settings) ContextWindows() map[string]int64 {
@@ -357,7 +382,7 @@ func unknownContextFields(rawContext json.RawMessage) map[string]json.RawMessage
 	var out map[string]json.RawMessage
 	for k, v := range contextFields {
 		switch strings.ToLower(k) {
-		case "compress_threshold", "harness_thresholds", "windows":
+		case "compress_threshold", "harness_thresholds", "windows", "compress_models":
 			continue
 		}
 		if out == nil {
@@ -403,6 +428,7 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 		out = *global
 		out.HarnessThresholds = cloneInt64Map(global.HarnessThresholds)
 		out.Windows = cloneInt64Map(global.Windows)
+		out.CompressModels = cloneStringMap(global.CompressModels)
 	}
 	if project != nil {
 		if project.CompressThreshold > 0 && src["context.compress_threshold"] != "env" {
@@ -429,11 +455,34 @@ func mergeContext(global, project *ContextSettings, src map[string]string) *Cont
 			out.Windows[m] = w
 			src["context.windows"] = "project"
 		}
+		for h, m := range project.CompressModels {
+			if m == "" {
+				continue
+			}
+			if out.CompressModels == nil {
+				out.CompressModels = map[string]string{}
+			}
+			out.CompressModels[h] = m
+			src["context.compress_models."+h] = "project"
+		}
 	}
-	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 {
+	if out.CompressThreshold == 0 && len(out.HarnessThresholds) == 0 && len(out.Windows) == 0 && len(out.CompressModels) == 0 {
 		return nil
 	}
 	return &out
+}
+
+// cloneStringMap copies a string-to-string map, so a merge never shares the
+// map with its inputs.
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // cloneInt64Map copies a string-to-int64 map, so a merge never shares the
@@ -588,6 +637,9 @@ func decodeSettings(raw []byte) Settings {
 		}
 		for h := range s.Context.HarnessThresholds {
 			s.src["context.harness_thresholds."+h] = "file"
+		}
+		for h := range s.Context.CompressModels {
+			s.src["context.compress_models."+h] = "file"
 		}
 		if len(s.Context.Windows) > 0 {
 			s.src["context.windows"] = "file"
@@ -859,7 +911,7 @@ func SaveSettings(s Settings) error {
 	// A set-but-empty context pointer marshals as {} because omitempty does
 	// not omit structs. Drop the key when nothing context-related is set, so
 	// clearing the last override removes the object instead of leaving {}.
-	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && len(s.contextExtra) == 0 {
+	if s.Context != nil && s.Context.CompressThreshold == 0 && len(s.Context.HarnessThresholds) == 0 && len(s.Context.Windows) == 0 && len(s.Context.CompressModels) == 0 && len(s.contextExtra) == 0 {
 		delete(fields, "context")
 	}
 	// A zero graph struct marshals as {} because encoding/json omitempty does
