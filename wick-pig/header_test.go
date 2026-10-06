@@ -182,8 +182,9 @@ func TestRenderHeaderWarning(t *testing.T) {
 // agent shows no state word at all.
 func TestRenderHeaderStates(t *testing.T) {
 	for state, want := range map[HeaderState]string{
-		HeaderCompressing: "compressing…",
-		HeaderQueued:      "compress queued",
+		HeaderCompressing:    "compressing…",
+		HeaderQueued:         "compress queued",
+		HeaderCompressFailed: "compress failed",
 	} {
 		snap := wideSnapshot()
 		snap.State = state
@@ -233,5 +234,24 @@ func TestRenderHeaderLight(t *testing.T) {
 	}
 	if !strings.Contains(out, "38;2") {
 		t.Error("light truecolor strip has no styled output at all")
+	}
+}
+
+// A Gemini worker with 228k tokens shows ~22% against the 1M window, not 114%.
+func TestRenderHeaderGeminiWindowAt228k(t *testing.T) {
+	snap := wideSnapshot()
+	snap.Model = "antigravity-gemini-3.8-flash"
+	snap.ContextTokens = 228364
+	snap.Window = ModelWindow(snap.Model, nil)
+	out := renderTrue(snap, 100)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "22%") {
+		t.Errorf("expected 22%% for 228k/1M, got:\n%s", plain)
+	}
+	if strings.Contains(plain, "114%") {
+		t.Errorf("strip must not show 114%%, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "1000k") {
+		t.Errorf("strip must show 1000k window, got:\n%s", plain)
 	}
 }

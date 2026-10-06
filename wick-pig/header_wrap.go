@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"example.com/wick/statedb"
@@ -260,8 +261,13 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 		snap.State = HeaderQueued
 	}
 	if src.AgentID != "" {
-		if st, ok, _ := ReadAgentState(src.AgentID); ok && compressingLive(st) {
-			snap.State = HeaderCompressing
+		if st, ok, _ := ReadAgentState(src.AgentID); ok {
+			if compressingLive(st) {
+				snap.State = HeaderCompressing
+			} else if st.CompressFailed != "" {
+				snap.State = HeaderCompressFailed
+				snap.CompressFailed = shortCompressReason(st.CompressFailed)
+			}
 		}
 	}
 	return snap, nil
@@ -311,4 +317,40 @@ func agentCost(stateDir, agentID string) (float64, bool) {
 		total += c
 	}
 	return total, hasCost
+}
+
+// shortCompressReason condenses an auto-compress error or refusal into a brief
+// pill description.
+func shortCompressReason(s string) string {
+	msg := strings.TrimSpace(s)
+	if msg == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(msg, "past") && strings.Contains(msg, "window"):
+		return "past window"
+	case strings.Contains(msg, "no compressModel"):
+		return "no compressModel"
+	case strings.HasPrefix(msg, "summarizer failed:"):
+		sub := strings.TrimSpace(strings.TrimPrefix(msg, "summarizer failed:"))
+		if len(sub) > 0 && len(sub) <= 25 {
+			return sub
+		}
+		return "summarizer error"
+	case strings.HasPrefix(msg, "summarizer:"):
+		sub := strings.TrimSpace(strings.TrimPrefix(msg, "summarizer:"))
+		if len(sub) > 0 && len(sub) <= 25 {
+			return sub
+		}
+		return "summarizer error"
+	case strings.HasPrefix(msg, "restart:"):
+		return "restart error"
+	default:
+		first := strings.Split(msg, "\n")[0]
+		first = strings.TrimSpace(first)
+		if len(first) > 25 {
+			return first[:22] + "…"
+		}
+		return first
+	}
 }

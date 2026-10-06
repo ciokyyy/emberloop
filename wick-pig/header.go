@@ -23,10 +23,11 @@ import (
 type HeaderState string
 
 const (
-	HeaderWorking     HeaderState = "working"
-	HeaderIdle        HeaderState = "idle"
-	HeaderQueued      HeaderState = "queued"
-	HeaderCompressing HeaderState = "compressing"
+	HeaderWorking        HeaderState = "working"
+	HeaderIdle           HeaderState = "idle"
+	HeaderQueued         HeaderState = "queued"
+	HeaderCompressing    HeaderState = "compressing"
+	HeaderCompressFailed HeaderState = "compress failed"
 )
 
 // Header tiers: a wide pane shows both rows, a medium pane drops the tools
@@ -52,24 +53,25 @@ const DefaultStripRows = 2
 
 // HeaderSnapshot is everything the strip draws for one agent.
 type HeaderSnapshot struct {
-	AgentID       string // stable identity: the hue hash input
-	AgentType     string // empty for the top-level session: always mauve
-	AgentName     string // the chip: the agent type name, as in the pane name
-	Model         string
-	ContextTokens int64
-	Window        int64
-	Cost          float64 // dashboard-reported sum, rendered as an estimate
-	HasCost       bool
-	TopTools      []ToolSize
-	CompressCount int
-	Pending       int // prompts waiting in the wrapper's queue: hidden at 0
-	State         HeaderState
-	Warning       string    // non-empty replaces the state pill, e.g. no compressModel
-	Usage         UsageSet  // the account's usage windows; Has false hides them
-	UsageKey      string    // which account Usage is; empty for none
-	Running       ToolCall  // the tool running now, empty when none
-	Last          ToolCall  // the last finished tool, with its result size
-	Now           time.Time // the clock the reset countdowns read
+	AgentID        string // stable identity: the hue hash input
+	AgentType      string // empty for the top-level session: always mauve
+	AgentName      string // the chip: the agent type name, as in the pane name
+	Model          string
+	ContextTokens  int64
+	Window         int64
+	Cost           float64 // dashboard-reported sum, rendered as an estimate
+	HasCost        bool
+	TopTools       []ToolSize
+	CompressCount  int
+	Pending        int // prompts waiting in the wrapper's queue: hidden at 0
+	State          HeaderState
+	CompressFailed string    // non-empty shows "compress failed: <reason>" in the pill
+	Warning        string    // non-empty replaces the state pill, e.g. no compressModel
+	Usage          UsageSet  // the account's usage windows; Has false hides them
+	UsageKey       string    // which account Usage is; empty for none
+	Running        ToolCall  // the tool running now, empty when none
+	Last           ToolCall  // the last finished tool, with its result size
+	Now            time.Time // the clock the reset countdowns read
 }
 
 // HeaderOpts tunes the render: Rows caps the strip height (0 means the
@@ -467,16 +469,24 @@ func (h *headerCtx) pill() cell {
 
 // stateCell is the pill's state text and color without the queue count.
 func (h *headerCtx) stateCell() (string, string) {
-	switch h.snap.State {
-	case HeaderIdle:
+	switch {
+	case h.snap.State == HeaderIdle:
 		return "◌ idle", h.idle
-	case HeaderQueued:
+	case h.snap.State == HeaderQueued:
 		return "⏳ compress queued", h.idle
-	case HeaderCompressing:
+	case h.snap.State == HeaderCompressing:
 		if h.pulse {
 			return "⟳ compressing…", h.idle
 		}
 		return "⟳ compressing…", h.accent
+	case h.snap.State == HeaderCompressFailed || strings.HasPrefix(string(h.snap.State), "compress failed"):
+		text := "compress failed"
+		if h.snap.CompressFailed != "" {
+			text = "compress failed: " + h.snap.CompressFailed
+		} else if strings.HasPrefix(string(h.snap.State), "compress failed: ") {
+			text = string(h.snap.State)
+		}
+		return "⚠ " + text, h.hot
 	default:
 		return "● working", h.pctHex
 	}

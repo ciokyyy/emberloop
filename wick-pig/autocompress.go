@@ -1,6 +1,9 @@
 package wick
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -47,6 +50,45 @@ func clearAutoFailure(pane string) {
 	autoFailMu.Lock()
 	defer autoFailMu.Unlock()
 	delete(autoFailedAt, pane)
+}
+
+// recordAutoCompressFailure marks the pane for the failure cooldown and records
+// the failure reason on the agent state and tools log.
+func recordAutoCompressFailure(pane, agentID, sessionID string, err error) {
+	recordAutoFailure(pane)
+	if err == nil {
+		return
+	}
+	reason := err.Error()
+	if agentID != "" {
+		_ = withFileLock("state-"+agentID, func() error {
+			st, ok, rerr := ReadAgentState(agentID)
+			if rerr != nil || !ok {
+				return rerr
+			}
+			st.CompressFailed = reason
+			return WriteAgentState(st)
+		})
+	}
+	if sessionID != "" {
+		appendToolsLog(sessionID, "auto-compress failed: "+reason)
+	}
+}
+
+// appendToolsLog appends a stamped line to the session's tools debug log.
+func appendToolsLog(sessionID, msg string) {
+	if sessionID == "" {
+		return
+	}
+	dir := filepath.Join(filepath.Dir(statePath), "debug")
+	_ = os.MkdirAll(dir, 0o700)
+	f, err := os.OpenFile(filepath.Join(dir, sessionID+".tools.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	line := fmt.Sprintf("[%s] %s\n", time.Now().UTC().Format("2006-01-02 15:04:05.000"), msg)
+	_, _ = f.WriteString(line)
 }
 
 // AutoDecision is what the automatic trigger says about one session: whether
@@ -138,6 +180,17 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 		return "", false, nil
 	}
 	defer SetAgentCompressing(agentID, false) //nolint:errcheck
+	_ = withFileLock("state-"+agentID, func() error {
+		st, ok, rerr := ReadAgentState(agentID)
+		if rerr != nil || !ok {
+			return rerr
+		}
+		if st.CompressFailed != "" {
+			st.CompressFailed = ""
+			return WriteAgentState(st)
+		}
+		return nil
+	})
 	// The decision ran before the claim: a winner that finished in between
 	// rotated the session, so this snapshot is stale. A rotated session
 	// compresses once; the fresh session decides on its own transcript.
@@ -150,12 +203,12 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 	}
 	handoff, err := SummarizeSession(run, tgt.harness, path, model, ModelWindow(model, s.ContextWindows()))
 	if err != nil {
-		recordAutoFailure(pane)
+		recordAutoCompressFailure(pane, agentID, sessionID, err)
 		return "", false, err
 	}
 	handoff = FinishHandoff(handoff, true)
 	if err := keepCompressCopies(agentID, sessionID, path, handoff); err != nil {
-		recordAutoFailure(pane)
+		recordAutoCompressFailure(pane, agentID, sessionID, err)
 		return "", false, err
 	}
 	next, err := RestartPane(run, PaneRestart{
@@ -166,10 +219,23 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 		Handoff:      handoff,
 	}, tgt.launchFor(handoff))
 	if err != nil {
-		recordAutoFailure(pane)
+		recordAutoCompressFailure(pane, agentID, sessionID, err)
 		return "", false, err
 	}
 	clearAutoFailure(pane)
+	if agentID != "" {
+		_ = withFileLock("state-"+agentID, func() error {
+			st, ok, rerr := ReadAgentState(agentID)
+			if rerr != nil || !ok {
+				return rerr
+			}
+			if st.CompressFailed != "" {
+				st.CompressFailed = ""
+				return WriteAgentState(st)
+			}
+			return nil
+		})
+	}
 	return next, true, nil
 }
 

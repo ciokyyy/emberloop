@@ -198,6 +198,31 @@ func TestSummarizeRefusesOversizeInput(t *testing.T) {
 	}
 }
 
+// A 228k transcript passes the 1M window check for deepseek-v4 and reaches
+// fake exec.
+func TestSummarize228kTranscriptWithOpenRouterDeepSeek(t *testing.T) {
+	isolateState(t)
+	long := strings.Repeat("x", 912000) // ~228k tokens rendered
+	path := filepath.Join(t.TempDir(), "sess.jsonl")
+	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__wick__bash")+pigResultLine("r1", "call_1", "mcp__wick__bash", long))
+	fake := &summarizeFake{handoff: summarizeHandoff}
+	model := "openrouter/deepseek/deepseek-v4-flash-0731"
+	window := ModelWindow(model, nil)
+	if window != 1000000 {
+		t.Fatalf("ModelWindow(%q) = %d, want 1000000", model, window)
+	}
+	handoff, err := SummarizeSession(fake.run, "pig", path, model, window)
+	if err != nil {
+		t.Fatalf("SummarizeSession failed: %v", err)
+	}
+	if handoff != strings.TrimSpace(summarizeHandoff) {
+		t.Errorf("got handoff %q, want %q", handoff, strings.TrimSpace(summarizeHandoff))
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected fake exec to be called once, got %d", len(fake.calls))
+	}
+}
+
 // A failed or empty summary never reaches the swap: the error reports and
 // the old session stays untouched.
 func TestSummarizeFailureKeepsOldSession(t *testing.T) {
