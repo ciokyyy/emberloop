@@ -133,22 +133,30 @@ func RunExecFile(path string) error {
 		return fmt.Errorf("launch file %s names no binary", path)
 	}
 	if log, name := openToolsLog(cmd); log != nil {
-		// The tools log needs the child's raw stderr, which a PTY would
-		// merge into stdout: debug sessions run unwrapped, exactly as
-		// before, and keep the strip off. This process stays the parent,
-		// so a bad exit still lands in the agent's state with its tail.
+		// A pig session keeps both the tools log and the strip: stdin
+		// and stdout stay on the PTY under the strip while the child's
+		// stderr keeps its own pipe to the log, one stamped line at a
+		// time. With the strip off the child runs unwrapped, exactly as
+		// before. Either way this process stays the parent, so a bad
+		// exit still lands in the agent's state with its tail.
 		defer log.Close()
-		c := exec.Command(cmd.Bin, cmd.Args...)
-		c.Env = append(append(os.Environ(), cmd.Env...), "PIG_DEBUG_TOOLS=1")
-		c.Stdin, c.Stdout = os.Stdin, os.Stdout
 		stderr, tail := TeeStderr(&stampWriter{w: log, label: name})
-		c.Stderr = stderr
-		err = c.Run()
-		if exit, ok := ChildExitOf(err); ok {
-			exit.Stderr = tail()
-			_ = RecordChildExit(agentIDFromEnv(cmd.Env), exit)
+		record := func(err error) error {
+			if exit, ok := ChildExitOf(err); ok {
+				exit.Stderr = tail()
+				_ = RecordChildExit(agentIDFromEnv(cmd.Env), exit)
+			}
+			return err
 		}
-		return err
+		if HeaderStripDisabled() {
+			c := exec.Command(cmd.Bin, cmd.Args...)
+			c.Env = append(append(os.Environ(), cmd.Env...), "PIG_DEBUG_TOOLS=1")
+			c.Stdin, c.Stdout = os.Stdin, os.Stdout
+			c.Stderr = stderr
+			return record(c.Run())
+		}
+		cmd.Env = append(cmd.Env, "PIG_DEBUG_TOOLS=1")
+		return record(WrapLaunchWithChildStderr(cmd, stderr))
 	}
 	// The strip wrapper runs the child: a bad exit still lands in the
 	// agent's state, without a stderr tail the PTY owns.
@@ -257,9 +265,10 @@ func openToolsLog(cmd Command) (*os.File, string) {
 }
 
 // stampWriter writes pig's stderr to the tools log one line at a time, each
-// line led by the time it arrived, since pig's own lines carry none.
+// line led by the time it arrived, since pig's own lines carry none. It
+// takes any sink, so the wrapper's stderr seam tests it without a file.
 type stampWriter struct {
-	w     *os.File
+	w     io.Writer
 	label string
 	part  []byte
 }

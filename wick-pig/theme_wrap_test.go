@@ -7,6 +7,7 @@ package wick
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +52,7 @@ func TestWrapPigThemeFlags(t *testing.T) {
 	var stdout bytes.Buffer
 	var gotArgs []string
 	cfg := themeWrapConfig(child, &stdout, "pig", []string{"--session-id", "s"}, true, t.TempDir())
-	cfg.Start = func(bin string, args, env []string, w, h int) (wrapPty, func() error, error) {
+	cfg.Start = func(bin string, args, env []string, w, h int, stderr io.Writer) (wrapPty, func() error, error) {
 		gotArgs = append([]string{}, args...)
 		child.Resize(w, h)
 		return child, func() error { return nil }, nil
@@ -142,7 +143,7 @@ func TestWrapClaudeThemeResolves(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	cfg := themeWrapConfig(child, &stdout, "claude", []string{"--settings", `{"hooks":{}}`}, true, t.TempDir())
 	cfg.Source.Harness = "claude"
-	cfg.Start = func(bin string, args, env []string, w, h int) (wrapPty, func() error, error) {
+	cfg.Start = func(bin string, args, env []string, w, h int, stderr io.Writer) (wrapPty, func() error, error) {
 		gotArgs, gotEnv = append([]string{}, args...), append([]string{}, env...)
 		child.Resize(w, h)
 		return child, func() error { return nil }, nil

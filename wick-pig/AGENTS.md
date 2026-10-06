@@ -67,20 +67,16 @@ owns its `_test.go` and the behaviour below):
   builder reading the queued compress mark and the compressing state),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
   pane palette set at start and reset at exit, on signals and across
-  restarts, exit restore), `header_source.go` (strip source from launch env,
-  `wrap`/`exec`/top-level wiring); settings carry strip rows, frame,
+  restarts, exit restore, the child's own stderr pipe beside the PTY; the
+  borderless soft top edge, with the strip-rule setting restoring the drawn
+  line), `header_source.go` (strip source from launch env,
+  `wrap`/`exec`/top-level wiring); settings carry strip rows, frame, rule,
   per-harness compress models, the auto-compress switch and cooldown. `exec`,
-
-  `header_run.go` (PTY runner: reduced child size, forwarding, resizes,
-  repaints, exit restore; the borderless soft top edge, with the strip-rule
-  setting restoring the drawn line), `header_source.go` (strip source from
-  launch env, `wrap`/`exec`/top-level wiring); settings carry strip rows,
-  frame, rule, per-harness compress models, the auto-compress switch and
-  cooldown. `exec`,
   top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
-  stay unwrapped. Generated theme files live under the state dir
-  (`themes/`); golden fixtures are `testdata/theme/`.
+  keep the strip: stdin and stdout stay on the PTY while stderr keeps its
+  own pipe to the log, one stamped line at a time. Generated theme files
+  live under the state dir (`themes/`); golden fixtures are `testdata/theme/`.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
