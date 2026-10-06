@@ -63,10 +63,10 @@ func TestFitPadShrinksNarrowTerminals(t *testing.T) {
 }
 
 func TestWrapMarginSetupPad(t *testing.T) {
-	if got := wrapMarginSetupPad(100, false, Pad{Left: 4, Right: 4}); got != "\x1b[?69h\x1b[5;96s" {
+	if got := wrapMarginSetupPad(100, false, Pad{Left: 4, Right: 4}); got != "\x1b[?69h\x1b[5;96s\x1b[?6h" {
 		t.Errorf("margins = %q", got)
 	}
-	if got := wrapMarginSetupPad(100, true, Pad{Left: 4, Right: 4}); got != "\x1b[?69h\x1b[6;95s" {
+	if got := wrapMarginSetupPad(100, true, Pad{Left: 4, Right: 4}); got != "\x1b[?69h\x1b[6;95s\x1b[?6h" {
 		t.Errorf("framed margins = %q", got)
 	}
 	if got := wrapMarginSetupPad(100, false, Pad{}); got != "" {

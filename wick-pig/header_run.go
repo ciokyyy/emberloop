@@ -257,7 +257,10 @@ func wrapMarginSetupPad(termW int, frame bool, pad Pad) string {
 	if left == 0 && right == 0 {
 		return ""
 	}
-	return fmt.Sprintf("\x1b[?69h\x1b[%d;%ds", left+1, termW-right)
+	// Origin mode (?6) makes absolute cursor addresses relative to the
+	// margins, so a child that positions with CUP (pig) lands inside the
+	// padding like one that moves relatively (claude).
+	return fmt.Sprintf("\x1b[?69h\x1b[%d;%ds\x1b[?6h", left+1, termW-right)
 }
 
 // wrapper holds one wrapped child: its sizes, theme and the last strip it
@@ -420,7 +423,7 @@ func (w *wrapper) paintLocked(strip string) {
 	}
 	w.last = strip
 	var b strings.Builder
-	b.WriteString("\x1b7")
+	b.WriteString("\x1b7\x1b[?6l")
 	col, _ := w.sideCols()
 	col++
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s", w.ruleRow(), col, w.topRule()))
@@ -490,7 +493,7 @@ func (w *wrapper) drawFrameLocked() {
 		return
 	}
 	var b strings.Builder
-	b.WriteString("\x1b7")
+	b.WriteString("\x1b7\x1b[?6l")
 	for r := 1; r <= w.termH; r++ {
 		b.WriteString(fmt.Sprintf("\x1b[%d;1H%s\x1b[%d;%dH%s", r, w.edge(), r, w.termW, w.edge()))
 	}
@@ -523,7 +526,7 @@ func (w *wrapper) restore() {
 	var b strings.Builder
 	b.WriteString("\x1b[r")
 	if w.filter.marginStr() != "" {
-		b.WriteString("\x1b[?69l")
+		b.WriteString("\x1b[?6l\x1b[?69l")
 	}
 	for r := w.ruleRow(); r <= w.termH; r++ {
 		b.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2K", r))
