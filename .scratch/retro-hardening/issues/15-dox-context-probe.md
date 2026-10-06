@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The ticket records, for each harness, which of AGENTS.md and CLAUDE.md load, with evidence
-- [ ] A CLAUDE.md importing the root AGENTS.md exists once the root file does
-- [ ] The worker brief carries the read-the-root-doc line only where a harness needs it (brief test)
-- [ ] Spec story 21
+- [x] The ticket records, for each harness, which of AGENTS.md and CLAUDE.md load, with evidence
+- [x] A CLAUDE.md importing the root AGENTS.md exists once the root file does
+- [x] The worker brief carries the read-the-root-doc line only where a harness needs it (brief test)
+- [x] Spec story 21
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
  ## Probe finding (recorded 2026-10-05, static probe — no live pig/claude started, per Hard limits)

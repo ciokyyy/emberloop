@@ -4,12 +4,12 @@
 
 **Blocked by:** 15 Know which context files each harness loads
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Root AGENTS.md is the DOX contract, a preamble and a complete child index
-- [ ] Every durable boundary named in the ticket has a child doc in the framework's shape
-- [ ] The index test passes, and fails when an entry or a child is removed
-- [ ] No rule is duplicated across docs; Verification sections name only existing checks
-- [ ] Spec stories 16, 17, 22, 23
+- [x] Root AGENTS.md is the DOX contract, a preamble and a complete child index
+- [x] Every durable boundary named in the ticket has a child doc in the framework's shape
+- [x] The index test passes, and fails when an entry or a child is removed
+- [x] No rule is duplicated across docs; Verification sections name only existing checks
+- [x] Spec stories 16, 17, 22, 23
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.

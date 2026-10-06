@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A helper runs several real processes that spawn and finish workers at once against a fake herdr, and the test fails on the unfixed code (record the failure in the ticket)
 - [x] After the fix no entry is lost and no reader ever sees a partial store

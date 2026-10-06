@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A server started before its binary changed adds the stale line to its next reply (test)
-- [ ] An unchanged server's replies are unchanged
-- [ ] Spec story 43
+- [x] A server started before its binary changed adds the stale line to its next reply (test)
+- [x] An unchanged server's replies are unchanged
+- [x] Spec story 43
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.

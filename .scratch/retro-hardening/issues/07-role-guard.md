@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] No role: non-zero exit and a message naming the roles
-- [ ] Explicit full role serves every tool
-- [ ] Every launch path and the live scripts still work (their tests pass)
-- [ ] Spec stories 7, 8, 9
+- [x] No role: non-zero exit and a message naming the roles
+- [x] Explicit full role serves every tool
+- [x] Every launch path and the live scripts still work (their tests pass)
+- [x] Spec stories 7, 8, 9
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.

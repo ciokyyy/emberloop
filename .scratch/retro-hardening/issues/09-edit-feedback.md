@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The edit reply includes the changed region with context
-- [ ] A patch that deletes far more than it adds is flagged in the reply
-- [ ] Existing edit behaviour, tags and tests are unchanged
-- [ ] Spec stories 14 and 15
+- [x] The edit reply includes the changed region with context
+- [x] A patch that deletes far more than it adds is flagged in the reply
+- [x] Existing edit behaviour, tags and tests are unchanged
+- [x] Spec stories 14 and 15
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.

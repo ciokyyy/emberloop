@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] With a live agent in the stores and the fake multiplexer, install exits non-zero, names the agent and replaces nothing
-- [ ] With none it installs
-- [ ] Force installs and prints the warning
-- [ ] Spec stories 40, 41, 42
+- [x] With a live agent in the stores and the fake multiplexer, install exits non-zero, names the agent and replaces nothing
+- [x] With none it installs
+- [x] Force installs and prints the warning
+- [x] Spec stories 40, 41, 42
 
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
