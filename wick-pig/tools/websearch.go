@@ -840,8 +840,9 @@ func singleLine(s string) string {
 	return s
 }
 
-// answer came from (remaining and reset, cost), joined when several
-// providers answered. A provider whose latest rows report nothing
+// latestQuotaText is the footer's quota note: the latest reported quota per
+// provider the answer came from (remaining and reset, cost), joined when
+// several providers answered. A provider whose latest rows report nothing
 // contributes nothing, so a headerless failure never hides the last known
 // quota.
 func latestQuotaText(providers []string) string {
