@@ -487,6 +487,33 @@ func TestPruneApplyDeletesUsageRowsAndKeepsSharedOnes(t *testing.T) {
 	}
 }
 
+// Seam (ticket 09): an applied prune with no run selected still collects
+// expired overflow rows.
+func TestPruneApplyWithNoRunsStillPurgesExpired(t *testing.T) {
+	pruneFixture(t)
+	freshID := insertPruneCtx(t, "agent-new", "fresh blob body\n", time.Now().UTC())
+	expiredID := insertPruneCtx(t, "agent-new", "expired blob body\n", time.Now().UTC().Add(-25*time.Hour))
+
+	res, err := PruneRuns(pruneDeadExec(t), time.Now().UTC(), PruneOptions{Runs: []string{"no-such-run"}, Apply: true})
+	if err != nil {
+		t.Fatalf("PruneRuns: %v", err)
+	}
+	if !res.Applied || res.CtxPurged != 1 {
+		t.Errorf("applied empty prune purged %d rows, want 1: %+v", res.CtxPurged, res)
+	}
+	db, err := statedb.Open(dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, ok, _ := statedb.GetCtxBlob(db, expiredID); ok {
+		t.Errorf("expired blob %d survived an applied prune", expiredID)
+	}
+	if _, ok, _ := statedb.GetCtxBlob(db, freshID); !ok {
+		t.Errorf("fresh blob %d is gone after an applied prune", freshID)
+	}
+}
+
 // Seam (ticket 09): prune deletes a pruned run's overflow blobs and purges
 // expired ones — agent-old's blob goes with old-run, agent-new's stays, and
 // an expired blob of the surviving session is purged too.

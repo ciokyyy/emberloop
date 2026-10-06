@@ -2,12 +2,33 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"example.com/wick/statedb"
 )
+
+// openCtxDB opens the state database for overflow reads. Both tools here are
+// read-only, so a read-only handle is preferred: it never migrates, imports
+// or purges and never blocks a writer. It falls back to a migrating open
+// only when the file is missing or predates the overflow store.
+//
+// Handles are bearer references into this shared database: any session
+// holding a ctx: handle can read it. The session column attributes storage
+// so prune can drop a run's blobs; it is not an access boundary.
+func openCtxDB() (*sql.DB, error) {
+	path := statedb.DBPath()
+	if ro, err := statedb.OpenReadOnly(path); err == nil {
+		var n int
+		if cerr := ro.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='ctx_blobs'`).Scan(&n); cerr == nil && n == 1 {
+			return ro, nil
+		}
+		_ = ro.Close()
+	}
+	return statedb.Open(path)
+}
 
 // ctx_search rifles through stored tool output: BM25-ranked snippets over
 // the overflow store's FTS5 chunk index. Every role that can read serves it.
@@ -56,7 +77,7 @@ func (ctxSearchTool) Execute(_ context.Context, root string, args json.RawMessag
 		}
 		scope = &id
 	}
-	db, err := statedb.Open(statedb.DBPath())
+	db, err := openCtxDB()
 	if err != nil {
 		return "", err
 	}
@@ -90,7 +111,7 @@ func readCtxHandle(path string, offset, limit int) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("invalid ctx handle %q: want ctx:<id> or ctx:<id>:<start>-<end>", path)
 	}
-	db, err := statedb.Open(statedb.DBPath())
+	db, err := openCtxDB()
 	if err != nil {
 		return "", err
 	}

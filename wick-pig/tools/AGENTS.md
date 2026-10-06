@@ -9,7 +9,8 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 `files.go` (read, edit, write; `read` also pages stored output via `ctx:`
 handles), `readurl.go` (the tiered URL reader `read`
 serves: native fetch, then Jina, then an uninstalled browser tier; oversize
-bodies go to the overflow store, not a file),
+bodies go to the overflow store, not a file, while an explicitly narrowed
+view that fits still answers inline),
 `bash.go` (oversize output goes to the overflow store, not truncation),
 `overflow.go` (the shared store-or-passthrough helper over
 `overflow.threshold_bytes`, head/tail summary, searchable terms, `intent`
