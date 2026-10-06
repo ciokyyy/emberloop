@@ -93,18 +93,36 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 		}
 		return s
 	}
+	// Candidate roots are every normalized record repo plus the current
+	// checkout. A run homes to the deepest root containing its spec file,
+	// so a record launched from a subdirectory still groups with its
+	// checkout no matter which repo is current.
+	roots := map[string]bool{}
 	for _, r := range runs {
-		repo := normalizeRepo(r.Repo)
-		if repo == "" {
-			repo = current
+		if nr := normalizeRepo(r.Repo); nr != "" {
+			roots[nr] = true
 		}
-		// Run records store implement's cwd, which may be a subdirectory or
-		// a symlinked path of the checkout; the spec file always sits under
-		// the repo root, so it decides the grouping.
-		if current != "" && specUnderRepo(r.Spec, current) {
-			repo = current
+	}
+	if current != "" {
+		roots[current] = true
+	}
+	repoOf := func(r runRecord) string {
+		best := ""
+		for root := range roots {
+			if specUnderRepo(r.Spec, root) && len(root) > len(best) {
+				best = root
+			}
 		}
-		s := ensure(repo, r.Slug)
+		if best != "" {
+			return best
+		}
+		if nr := normalizeRepo(r.Repo); nr != "" {
+			return nr
+		}
+		return current
+	}
+	for _, r := range runs {
+		s := ensure(repoOf(r), r.Slug)
 		s.Spec, s.Branch = r.Spec, r.Branch
 		s.HasRun = true
 		s.Running = r.Pane != "" && live[r.Pane]

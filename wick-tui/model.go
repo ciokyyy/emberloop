@@ -104,16 +104,18 @@ func progressPercent(merged, total int) float64 {
 // bubblezone regions; double-click detection stays ours — the last click's
 // zone and time are recorded for the tickets that open detail views.
 type Model struct {
-	load      Loader
-	snap      Snap
-	list      list.Model
-	zone      *zone.Manager
-	tab       Tab
-	width     int
-	height    int
-	lastClick time.Time
-	lastZone  string
-	err       error
+	load                Loader
+	snap                Snap
+	list                list.Model
+	zone                *zone.Manager
+	tab                 Tab
+	width               int
+	height              int
+	lastClick           time.Time
+	lastZone            string
+	pendingSelect       string
+	reselectAfterFilter bool
+	err                 error
 }
 
 // NewModel builds the dashboard over load. The list starts 80x20; the first
@@ -171,6 +173,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.err = msg.err
 		return m, nil
+	case list.FilterMatchesMsg:
+		lm, cmd := m.list.Update(msg)
+		m.list = lm
+		if m.reselectAfterFilter {
+			m.reselectAfterFilter = false
+			m.restoreSelection()
+		}
+		return m, cmd
 	case tea.MouseMsg:
 		if m.tab == tabRuns && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 			m.click(msg)
@@ -218,8 +228,10 @@ func (m *Model) click(msg tea.MouseMsg) {
 // rebuildItems flattens the snapshot into list rows, keeping the selected
 // spec when it still exists. It returns SetItems' command: with a filter
 // applied the filtered rows recompute asynchronously, and dropping it
-// blanks the list until the next keystroke. Selection restores by visible
-// index, the space Select moves in.
+// blanks the list until the next keystroke. The selection restores by
+// visible index, the space Select moves in — immediately when unfiltered,
+// or when the recompute's FilterMatchesMsg arrives while filtered, because
+// the visible rows are empty until then.
 func (m *Model) rebuildItems() tea.Cmd {
 	var items []list.Item
 	for _, r := range m.snap.Repos {
@@ -227,20 +239,32 @@ func (m *Model) rebuildItems() tea.Cmd {
 			items = append(items, specItem{repo: r.Path, spec: s, showRepo: i == 0})
 		}
 	}
-	selected := ""
+	m.pendingSelect = ""
 	if item, ok := m.list.SelectedItem().(specItem); ok {
-		selected = item.zoneID()
+		m.pendingSelect = item.zoneID()
 	}
 	cmd := m.list.SetItems(items)
-	if selected != "" {
-		for i, item := range m.list.VisibleItems() {
-			if si, ok := item.(specItem); ok && si.zoneID() == selected {
-				m.list.Select(i)
-				break
-			}
-		}
+	m.reselectAfterFilter = m.list.FilterState() != list.Unfiltered && m.pendingSelect != ""
+	if !m.reselectAfterFilter {
+		m.restoreSelection()
 	}
 	return cmd
+}
+
+// restoreSelection selects the stashed spec when it is visible, then drops
+// the stash either way: one restore per reload, never a fight with the
+// user's own cursor moves or filter typing.
+func (m *Model) restoreSelection() {
+	if m.pendingSelect == "" {
+		return
+	}
+	for i, item := range m.list.VisibleItems() {
+		if si, ok := item.(specItem); ok && si.zoneID() == m.pendingSelect {
+			m.list.Select(i)
+			break
+		}
+	}
+	m.pendingSelect = ""
 }
 
 // View renders the tab bar, a help line, and the active tab, with every row
