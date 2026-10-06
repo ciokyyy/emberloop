@@ -451,6 +451,13 @@ func isPythonIdent(name string) bool {
 	return true
 }
 
+// executeStubReserved are the module-level names the generated stub defines
+// itself: a tool renamed to one of these stays reachable through tools.call
+// and search/help instead of clobbering the stub.
+var executeStubReserved = map[string]bool{
+	"ToolError": true, "call": true, "search": true, "help": true,
+}
+
 // buildToolsModule renders the generated `tools` module: the ToolError type,
 // the bridge client, one function per callable tool, and the search/help
 // discovery over the baked specs.
@@ -464,6 +471,10 @@ func buildToolsModule(sockPath string, allowed []Tool) (string, error) {
 		name := t.Name()
 		if !isPythonIdent(name) {
 			fmt.Fprintf(&fns, "# %s is callable only through tools.call(%q, ...): it is not a valid Python name\n", name, name)
+			continue
+		}
+		if executeStubReserved[name] {
+			fmt.Fprintf(&fns, "# %s is callable only through tools.call(%q, ...): the name is taken by the stub\n", name, name)
 			continue
 		}
 		fmt.Fprintf(&fns, "def %s(**kwargs):\n    return _call(%q, kwargs)\n\n", name, name)
