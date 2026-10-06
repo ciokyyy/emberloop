@@ -116,6 +116,16 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 		if best != "" {
 			return best
 		}
+		// No candidate root contains the spec: derive it from the standard
+		// layout itself (<root>/.scratch/<dir>/spec.md), so a repo whose
+		// runs were all recorded from subdirectories still groups. The
+		// .scratch check keeps a stale spec path from homing to a phantom
+		// root; those runs fall through to the recorded repo below.
+		if root := specRepoRoot(r.Spec); root != "" {
+			if fi, err := os.Stat(filepath.Join(root, ".scratch")); err == nil && fi.IsDir() {
+				return normalizeRepo(root)
+			}
+		}
 		if nr := normalizeRepo(r.Repo); nr != "" {
 			return nr
 		}
@@ -175,6 +185,20 @@ func normalizeRepo(p string) string {
 		p = resolved
 	}
 	return filepath.Clean(p)
+}
+
+// specRepoRoot derives the repo root from a spec path in the standard
+// layout: <root>/.scratch/<dir>/spec.md. Anything else returns "", and
+// callers check the root is real before trusting it.
+func specRepoRoot(spec string) string {
+	if filepath.Base(spec) != "spec.md" {
+		return ""
+	}
+	scratch := filepath.Dir(filepath.Dir(spec))
+	if filepath.Base(scratch) != ".scratch" {
+		return ""
+	}
+	return filepath.Dir(scratch)
 }
 
 // specUnderRepo reports whether a spec file sits under a repo root, so a
