@@ -6,15 +6,15 @@ Evidence from the live check: reviewer panes for the code-review slot (harness c
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A claude pane started through the launch file appears in the agent list with its type name within a few seconds of the child starting
-- [ ] Its state follows the transcript: working while a turn runs, idle when it settles, released on exit, crash and signal
-- [ ] The spawn readiness wait succeeds for claude reviewers and scouts; a spawn no longer closes a healthy pane
-- [ ] A pane with a pig child is not reported twice; the extension stays the single reporter for pig
-- [ ] A herdr that is unavailable or rejects the report never stops the child; the failure is logged
-- [ ] Tests through the exec seam with a fake herdr: the exact report and release calls, for a claude child and for a pig child
-- [ ] A live probe in a throwaway pane confirms `herdr agent list`, `agent wait` and `agent prompt` all work on a wrapped claude
-- [ ] Spec: context-compress story 1 and the herdr agent identity rules
+- [x] A claude pane started through the launch file appears in the agent list with its type name within a few seconds of the child starting
+- [x] Its state follows the transcript: working while a turn runs, idle when it settles, released on exit, crash and signal
+- [x] The spawn readiness wait succeeds for claude reviewers and scouts; a spawn no longer closes a healthy pane
+- [x] A pane with a pig child is not reported twice; the extension stays the single reporter for pig
+- [x] A herdr that is unavailable or rejects the report never stops the child; the failure is logged
+- [x] Tests through the exec seam with a fake herdr: the exact report and release calls, for a claude child and for a pig child
+- [x] A live probe in a throwaway pane confirms `herdr agent list`, `agent wait` and `agent prompt` all work on a wrapped claude
+- [x] Spec: context-compress story 1 and the herdr agent identity rules
 
 Spec: `.scratch/context-compress/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.

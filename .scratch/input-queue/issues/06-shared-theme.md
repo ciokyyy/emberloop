@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One palette source feeds the strip, both theme generators and the OSC setter
-- [ ] Generated claude and pig themes match the approved probe look; golden tests compare them to fixtures
-- [ ] Launch uses per-run flags only; saved claude and pig settings are untouched
-- [ ] OSC set at start and reset at exit, including on signal and restart, asserted on a fake terminal stream
-- [ ] A Latte variant exists and is generated from the same source
-- [ ] Spec stories 22, 23, 24, 26
+- [x] One palette source feeds the strip, both theme generators and the OSC setter
+- [x] Generated claude and pig themes match the approved probe look; golden tests compare them to fixtures
+- [x] Launch uses per-run flags only; saved claude and pig settings are untouched
+- [x] OSC set at start and reset at exit, including on signal and restart, asserted on a fake terminal stream
+- [x] A Latte variant exists and is generated from the same source
+- [x] Spec stories 22, 23, 24, 26
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.
