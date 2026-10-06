@@ -401,7 +401,6 @@ func (w *wrapper) pollUsage(done <-chan struct{}) {
 		cancel()
 	}
 }
-
 // readSnap builds the current strip snapshot outside the lock: transcript
 // and database IO must never hold it while child output waits to write. The
 // pending count comes from the wrapper's own queue, never the socket:
