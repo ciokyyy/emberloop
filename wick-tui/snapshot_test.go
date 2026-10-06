@@ -90,13 +90,14 @@ func writeSpec(t *testing.T, repo, slug string, tickets []ticketFile) {
 	}
 }
 
-// liveHerdr is the fake herdr: exactly the panes named alive are running.
+// liveHerdr is the fake herdr: exactly the panes named alive are running,
+// with no agent status. Tests needing working/idle build their own map.
 func liveHerdr(alive ...string) Herdr {
-	set := map[string]bool{}
+	set := map[string]string{}
 	for _, p := range alive {
-		set[p] = true
+		set[p] = ""
 	}
-	return func() (map[string]bool, error) { return set, nil }
+	return func() (map[string]string, error) { return set, nil }
 }
 
 func findSpec(t *testing.T, snap Snap, repo, slug string) SpecSnap {
@@ -348,5 +349,129 @@ func TestSnapshotHomesRunsWithNoRootCandidate(t *testing.T) {
 	}
 	if s := findSpec(t, snap, repoA, "alpha"); !s.HasRun {
 		t.Errorf("alpha must carry its run: %+v", s)
+	}
+}
+
+// Every ticket status from its fixture signals: one spec with ten tickets,
+// each driven by a different combination of worker entries, herdr state,
+// submits, reviewer records and history. The derivation lives in one function
+// inside Snapshot.
+func TestSnapshotTicketsDeriveEveryStatus(t *testing.T) {
+	stateDir := t.TempDir()
+	repo := t.TempDir()
+	tickets := []ticketFile{
+		{"01-notstarted.md", "ready-for-agent"},
+		{"02-working.md", "ready-for-agent"},
+		{"03-retrying.md", "ready-for-agent"},
+		{"04-idle.md", "ready-for-agent"},
+		{"05-submitted-done.md", "ready-for-agent"},
+		{"06-submitted-blocked.md", "ready-for-agent"},
+		{"07-inreview.md", "ready-for-agent"},
+		{"08-merged.md", "ready-for-agent"},
+		{"09-discarded.md", "ready-for-agent"},
+		{"10-failed.md", "ready-for-agent"},
+	}
+	writeSpec(t, repo, "alpha", tickets)
+	specPath := filepath.Join(repo, ".scratch", "alpha", "spec.md")
+	issues := filepath.Join(repo, ".scratch", "alpha", "issues")
+
+	workers := map[string]any{}
+	addWorker := func(id, ticket, pane, worktree string) {
+		workers[id] = map[string]any{
+			"id": id, "ticket": filepath.Join(issues, ticket),
+			"spec": specPath, "repo": repo, "branch": "implement/" + id,
+			"worktree": worktree, "pane": pane,
+			"harness": "pig",
+		}
+	}
+	wt := func(id string) string { return filepath.Join(repo, ".wick-worktrees", id) }
+	addWorker("02-working", "02-working.md", "pane-working", wt("02-working"))
+	addWorker("03-retrying", "03-retrying.md", "pane-retrying", wt("03-retrying"))
+	addWorker("04-idle", "04-idle.md", "pane-idle", wt("04-idle"))
+	addWorker("05-submitted-done", "05-submitted-done.md", "pane-subdone", wt("05-submitted-done"))
+	addWorker("06-submitted-blocked", "06-submitted-blocked.md", "pane-subblocked", wt("06-submitted-blocked"))
+	addWorker("07-inreview", "07-inreview.md", "pane-inreview", wt("07-inreview"))
+	addWorker("10-failed", "10-failed.md", "pane-gone", wt("10-failed"))
+	writeJSON(t, filepath.Join(stateDir, "workers.json"), workers)
+
+	runs := map[string]any{
+		"alpha": map[string]any{
+			"slug": "alpha", "spec": specPath, "repo": repo, "branch": "spec/alpha",
+			"agent_id": "orch-alpha", "pane": "pane-orch", "harness": "pig",
+		},
+	}
+	writeJSON(t, filepath.Join(stateDir, "runs.json"), runs)
+
+	writeJSON(t, filepath.Join(stateDir, "submits", "05-submitted-done.json"), map[string]any{
+		"agent_id": "05-submitted-done", "type": "worker", "status": "done",
+	})
+	writeJSON(t, filepath.Join(stateDir, "submits", "06-submitted-blocked.json"), map[string]any{
+		"agent_id": "06-submitted-blocked", "type": "worker", "status": "blocked",
+	})
+
+	writeJSON(t, filepath.Join(stateDir, "reviewers.json"), map[string]any{
+		filepath.Clean(wt("07-inreview")): map[string]any{
+			"reviewer-standards": map[string]any{"pane": "pane-rs", "session_id": "rs1", "verdict": "pass"},
+			"reviewer-spec":      map[string]any{"pane": "pane-rp", "session_id": "rp1", "verdict": "changes"},
+		},
+	})
+
+	if err := os.MkdirAll(filepath.Join(stateDir, "history"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeJSON(t, filepath.Join(stateDir, "history", "alpha.json"), []any{
+		map[string]any{"ticket": "08-merged.md", "outcome": "merged"},
+		map[string]any{"ticket": "09-discarded.md", "outcome": "discarded"},
+	})
+
+	live := map[string]string{
+		"pane-orch": "working", "pane-working": "working", "pane-retrying": "blocked",
+		"pane-idle": "idle", "pane-subdone": "idle", "pane-subblocked": "idle",
+		"pane-inreview": "working",
+	}
+	herdr := func() (map[string]string, error) { return live, nil }
+
+	snap, err := Snapshot(stateDir, repo, herdr)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	alpha := findSpec(t, snap, repo, "alpha")
+	got := map[string]TicketSnap{}
+	for _, tk := range alpha.Tickets {
+		got[tk.Name] = tk
+	}
+	want := map[string]TicketStatus{
+		"01-notstarted.md": TicketNotStarted, "02-working.md": TicketWorking,
+		"03-retrying.md": TicketRetrying, "04-idle.md": TicketIdle,
+		"05-submitted-done.md": TicketSubmittedDone, "06-submitted-blocked.md": TicketSubmittedBlocked,
+		"07-inreview.md": TicketInReview, "08-merged.md": TicketMerged,
+		"09-discarded.md": TicketDiscarded, "10-failed.md": TicketFailed,
+	}
+	for name, status := range want {
+		tk, ok := got[name]
+		if !ok {
+			t.Errorf("ticket %s missing, got %+v", name, alpha.Tickets)
+			continue
+		}
+		if tk.Status != status {
+			t.Errorf("ticket %s status = %q, want %q", name, tk.Status, status)
+		}
+	}
+	if tk := got["07-inreview.md"]; tk.CodeVerdict != "pass" || tk.SpecVerdict != "changes" {
+		t.Errorf("in-review verdicts = %q/%q, want pass/changes", tk.CodeVerdict, tk.SpecVerdict)
+	}
+}
+
+func writeJSON(t *testing.T, path string, v any) {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

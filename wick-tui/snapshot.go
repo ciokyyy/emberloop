@@ -1,8 +1,8 @@
 // Package tui is the wick dashboard: a bubbletea terminal UI in its own Go
 // module so the core stays dependency-free. The deep module is the Snapshot
-// read model — repos holding their specs, each with run status and ticket
-// progress — which later tickets extend with per-ticket status, agents, cost
-// and memory. The bubbletea model polls Snapshot every second.
+// read model — repos holding their specs, each with run status, ticket
+// progress and per-ticket status — which later tickets extend with agents,
+// cost and memory. The bubbletea model polls Snapshot every second.
 package tui
 
 import (
@@ -13,10 +13,12 @@ import (
 	"strings"
 )
 
-// Herdr is the liveness seam Snapshot reads through: the set of herdr panes
-// still alive. Tests pass a fake; the binary passes one that runs
-// `herdr pane list`. A pane missing from the set is gone, never running.
-type Herdr func() (map[string]bool, error)
+// Herdr is the liveness seam Snapshot reads through: every herdr pane still
+// alive, keyed by pane id with its agent status (`idle`, `working`,
+// `blocked`, `done`, `unknown`, or "" when the list carries none). Tests pass
+// a fake; the binary passes one that runs `herdr pane list`. A pane missing
+// from the map is gone, never running.
+type Herdr func() (map[string]string, error)
 
 // Snap is the Runs tab's read model: every known repo with its specs.
 // Known repos are the run records' repos plus the current repo, current first;
@@ -34,9 +36,10 @@ type RepoSnap struct {
 	Specs []SpecSnap
 }
 
-// SpecSnap is one spec's run status and ticket progress. HasRun says a run
-// record exists; Running says its orchestrator pane is still alive in herdr.
-// Merged/Total is merged tickets over ticket files.
+// SpecSnap is one spec's run status, ticket progress and tickets. HasRun says
+// a run record exists; Running says its orchestrator pane is still alive in
+// herdr. Merged/Total is merged tickets over ticket files. Tickets lists
+// every ticket file with its derived status, in filename order.
 type SpecSnap struct {
 	Slug    string
 	Spec    string
@@ -45,6 +48,59 @@ type SpecSnap struct {
 	Running bool
 	Merged  int
 	Total   int
+	Tickets []TicketSnap
+}
+
+// TicketStatus is one ticket's derived status. The derivation lives in one
+// function, deriveTicketStatus, from worker entries, herdr pane state,
+// submits, reviewer records and history.
+type TicketStatus string
+
+const (
+	TicketNotStarted       TicketStatus = "not-started"
+	TicketWorking          TicketStatus = "working"
+	TicketRetrying         TicketStatus = "retrying"
+	TicketIdle             TicketStatus = "idle"
+	TicketSubmittedDone    TicketStatus = "submitted-done"
+	TicketSubmittedBlocked TicketStatus = "submitted-blocked"
+	TicketInReview         TicketStatus = "in-review"
+	TicketMerged           TicketStatus = "merged"
+	TicketDiscarded        TicketStatus = "discarded"
+	TicketFailed           TicketStatus = "failed"
+)
+
+// TicketSnap is one ticket file with its derived status. CodeVerdict and
+// SpecVerdict carry the reviewers' verdicts while in review (`pass`,
+// `changes`, or "" while pending); they are "" in every other status.
+type TicketSnap struct {
+	Path        string
+	Name        string
+	Status      TicketStatus
+	CodeVerdict string
+	SpecVerdict string
+}
+
+// workerRecord is the slice of workers.json Snapshot needs. The map key is
+// the worker id; Ticket is the ticket file it was spawned from, Spec the
+// spec path, Pane its herdr pane, Worktree its git worktree (the reviewers
+// key). Unknown fields are ignored.
+type workerRecord struct {
+	Ticket   string `json:"ticket"`
+	Spec     string `json:"spec"`
+	Pane     string `json:"pane"`
+	Worktree string `json:"worktree"`
+}
+
+// submitRecord is the slice of a submit file Snapshot needs: the status the
+// agent chose (`done` or `blocked` for a worker).
+type submitRecord struct {
+	Status string `json:"status"`
+}
+
+// reviewerRecord is the slice of reviewers.json Snapshot needs: the verdict
+// the reviewer last submitted (`pass` or `changes`, "" while pending).
+type reviewerRecord struct {
+	Verdict string `json:"verdict"`
 }
 
 // runRecord is the slice of runs.json Snapshot needs. Unknown fields are
@@ -135,7 +191,8 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 		s := ensure(repoOf(r), r.Slug)
 		s.Spec, s.Branch = r.Spec, r.Branch
 		s.HasRun = true
-		s.Running = r.Pane != "" && live[r.Pane]
+		_, alive := live[r.Pane]
+		s.Running = r.Pane != "" && alive
 	}
 	for repo := range byRepo {
 		discoverSpecs(repo, byRepo[repo])
@@ -150,6 +207,15 @@ func Snapshot(stateDir, currentRepo string, herdr Herdr) (Snap, error) {
 		for slug, s := range specs {
 			merged, total := specProgress(s, slug, mergedBySlug)
 			s.Merged, s.Total = merged, total
+		}
+	}
+	workers := loadWorkers(stateDir)
+	submits := loadSubmits(stateDir)
+	reviewers := loadReviewerRecords(stateDir)
+	terminals := loadTerminalsBySlug(stateDir, byRepo)
+	for _, specs := range byRepo {
+		for slug, s := range specs {
+			s.Tickets = specTickets(s, live, workers, submits, reviewers, terminals[slug])
 		}
 	}
 
@@ -368,4 +434,204 @@ func ticketDone(raw string) bool {
 		done = strings.EqualFold(rest, "done")
 	}
 	return done
+}
+
+// Reviewer type names, kept in sync with the core's built-in agent types:
+// the TUI never imports the core, so these are strings, not references.
+const (
+	reviewerStandardsType = "reviewer-standards"
+	reviewerSpecType      = "reviewer-spec"
+)
+
+func specTickets(s *SpecSnap, live map[string]string, workers map[string]workerRecord, submits map[string]submitRecord, reviewers map[string]map[string]reviewerRecord, terminals map[string]string) []TicketSnap {
+	files := ticketFiles(s)
+	out := make([]TicketSnap, 0, len(files))
+	for _, f := range files {
+		base := filepath.Base(f)
+		worker, workerID := workerForTicket(workers, s.Spec, base)
+		var submit *submitRecord
+		var revs map[string]reviewerRecord
+		var paneAlive bool
+		var paneStatus string
+		if worker != nil {
+			if st, ok := live[worker.Pane]; ok {
+				paneAlive, paneStatus = true, st
+			}
+			if sub, ok := submits[workerID]; ok {
+				c := sub
+				submit = &c
+			}
+			if worker.Worktree != "" {
+				revs = reviewers[filepath.Clean(worker.Worktree)]
+			}
+		}
+		status, code, spec := deriveTicketStatus(worker != nil, paneAlive, paneStatus, submit, revs, terminals[base])
+		out = append(out, TicketSnap{Path: f, Name: base, Status: status, CodeVerdict: code, SpecVerdict: spec})
+	}
+	return out
+}
+
+// deriveTicketStatus is the one function that turns a ticket's signals into
+// its status. Precedence is terminal first: a merged or discarded history
+// outcome wins over everything (the worker is gone). Without a worker the
+// ticket was never started. A worker whose pane is gone failed, even when it
+// submitted — the agent cannot continue. A live worker that submitted reads
+// submitted done or blocked, waiting for finish. A live worker with reviewer
+// records is in review, carrying the code and spec verdicts ("" while a
+// reviewer is still pending). Otherwise the herdr pane state decides:
+// working reads working, idle or done reads idle, and anything else alive
+// but unclassifiable (blocked approval UI, unknown, no agent state) reads
+// retrying. A kept history entry is not terminal and is ignored here.
+func deriveTicketStatus(hasWorker, paneAlive bool, paneStatus string, submit *submitRecord, reviewers map[string]reviewerRecord, terminalOutcome string) (TicketStatus, string, string) {
+	switch terminalOutcome {
+	case "merged":
+		return TicketMerged, "", ""
+	case "discarded":
+		return TicketDiscarded, "", ""
+	}
+	if !hasWorker {
+		return TicketNotStarted, "", ""
+	}
+	if !paneAlive {
+		return TicketFailed, "", ""
+	}
+	if submit != nil {
+		if submit.Status == "blocked" {
+			return TicketSubmittedBlocked, "", ""
+		}
+		return TicketSubmittedDone, "", ""
+	}
+	if len(reviewers) > 0 {
+		return TicketInReview, reviewers[reviewerStandardsType].Verdict, reviewers[reviewerSpecType].Verdict
+	}
+	switch paneStatus {
+	case "working":
+		return TicketWorking, "", ""
+	case "idle", "done":
+		return TicketIdle, "", ""
+	default:
+		return TicketRetrying, "", ""
+	}
+}
+
+// workerForTicket finds the worker spawned from one ticket file: the entry
+// whose ticket basename matches and whose spec is the same file (symlinks
+// resolved best-effort, so a record launched from a symlinked checkout still
+// meets its ticket). It returns the entry and its id (the workers.json key,
+// which keys the submit file).
+func workerForTicket(workers map[string]workerRecord, specPath, ticketBase string) (*workerRecord, string) {
+	for id, w := range workers {
+		if filepath.Base(w.Ticket) != ticketBase {
+			continue
+		}
+		if w.Spec != "" && !sameSpecPath(w.Spec, specPath) {
+			continue
+		}
+		c := w
+		return &c, id
+	}
+	return nil, ""
+}
+
+// sameSpecPath reports whether two spec paths name the same file: lexical
+// equality first, then symlink-resolved equality so either side may pass
+// through a symlinked checkout.
+func sameSpecPath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
+}
+
+// loadWorkers reads workers.json keyed by worker id. A missing file is no
+// workers; a corrupt one reads as no workers too, so one bad write shows
+// tickets as not started rather than failing the dashboard.
+func loadWorkers(stateDir string) map[string]workerRecord {
+	raw, err := os.ReadFile(filepath.Join(stateDir, "workers.json"))
+	if err != nil {
+		return nil
+	}
+	var out map[string]workerRecord
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// loadSubmits reads every submit file, keyed by agent id (the file name).
+// Unreadable files are skipped, so one bad submit never fails the read.
+func loadSubmits(stateDir string) map[string]submitRecord {
+	entries, err := os.ReadDir(filepath.Join(stateDir, "submits"))
+	if err != nil {
+		return nil
+	}
+	out := map[string]submitRecord{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(stateDir, "submits", e.Name()))
+		if err != nil {
+			continue
+		}
+		var sub submitRecord
+		if err := json.Unmarshal(raw, &sub); err != nil {
+			continue
+		}
+		out[strings.TrimSuffix(e.Name(), ".json")] = sub
+	}
+	return out
+}
+
+// loadReviewerRecords reads reviewers.json keyed by worktree path. A missing
+// file is no reviewers; a corrupt one reads the same way.
+func loadReviewerRecords(stateDir string) map[string]map[string]reviewerRecord {
+	raw, err := os.ReadFile(filepath.Join(stateDir, "reviewers.json"))
+	if err != nil {
+		return nil
+	}
+	var out map[string]map[string]reviewerRecord
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// loadTerminalsBySlug collects, per run slug, the last terminal outcome per
+// ticket basename: the last merged or discarded history entry wins, and a
+// kept-only ticket reads as no terminal. Ticket paths match by basename
+// because the record may hold an absolute path or just the file.
+func loadTerminalsBySlug(stateDir string, byRepo map[string]map[string]*SpecSnap) map[string]map[string]string {
+	slugs := map[string]bool{}
+	for _, specs := range byRepo {
+		for slug := range specs {
+			slugs[slug] = true
+		}
+	}
+	out := map[string]map[string]string{}
+	for slug := range slugs {
+		raw, err := os.ReadFile(filepath.Join(stateDir, "history", slug+".json"))
+		if err != nil {
+			continue
+		}
+		var entries []historyEntry
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.Ticket == "" {
+				continue
+			}
+			switch e.Outcome {
+			case "merged", "discarded":
+				if out[slug] == nil {
+					out[slug] = map[string]string{}
+				}
+				out[slug][filepath.Base(e.Ticket)] = e.Outcome
+			}
+		}
+	}
+	return out
 }
