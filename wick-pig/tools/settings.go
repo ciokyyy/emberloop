@@ -629,6 +629,12 @@ func SaveSettings(s Settings) error {
 	if err := mergeGraphExtras(fields, s.graphExtra); err != nil {
 		return err
 	}
+	// A zero graph struct marshals as {} because encoding/json omitempty does
+	// not omit structs. Drop the key when nothing graph-related is set, so
+	// files that never had graph stay without it.
+	if s.Graph == (GraphSetting{}) && len(s.graphExtra) == 0 {
+		delete(fields, "graph")
+	}
 	raw, err := json.MarshalIndent(fields, "", "  ")
 	if err != nil {
 		return err
