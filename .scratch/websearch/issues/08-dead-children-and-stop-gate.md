@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A child with no submit and no live pane is not pending and yields exactly one lost notice
-- [ ] A live child that owes a result still lets its parent stop, as today
-- [ ] A turn ending in a provider error notifies the parent with the agent id and the error
-- [ ] The stop gate runs the sweep before allowing on pending children; a worker with only dead children is blocked and nudged to submit
-- [ ] Fake-herdr and agent-state tests cover dead, live and errored cases; repo check passes
+- [x] A child with no submit and no live pane is not pending and yields exactly one lost notice
+- [x] A live child that owes a result still lets its parent stop, as today
+- [x] A turn ending in a provider error notifies the parent with the agent id and the error
+- [x] The stop gate runs the sweep before allowing on pending children; a worker with only dead children is blocked and nudged to submit
+- [x] Fake-herdr and agent-state tests cover dead, live and errored cases; repo check passes
