@@ -58,7 +58,10 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   whose deletions greatly exceed its additions; tag semantics do not change.
 - `read` refuses loopback, private and link-local URL targets on every
   redirect hop, caps the body near 10 MB at 20 s, and never sends
-  credentialed or token-like URLs to Jina.
+  credentialed or token-like URLs to Jina. Tier 3 re-resolves redirects
+  through the same checked client before launch and confines the browser's
+  own resolver with host rules over the IPv4 local ranges; page-script
+  subresource fetches inside the browser see only those rules.
 - `websearch` answers from Brave then Exa under `auto` (a named provider
   never falls back, a bad-query 4xx neither); keys come from
   `BRAVE_API_KEY` and `EXA_API_KEY`, never settings or the database.
