@@ -3,7 +3,8 @@
 ## Purpose
 
 The agent tools both hosts serve: pig through the extension adapter, claude
-through the MCP server. Files: `tool.go` (the `Tool` interface: name,
+through the MCP server.
+Files: `tool.go` (the `Tool` interface: name,
 schema, execute over a workspace root), `all.go` (the `All()` registry),
 `files.go` (read, edit, write), `readurl.go` (the tiered URL reader `read`
 serves: native fetch, then Jina, then an uninstalled browser tier),
@@ -13,7 +14,9 @@ with a Go fallback), `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools and
 mcp_servers maps and their merge), `rename.go` (serve a tool under a new
-name), `usage.go`, and `systemone/` (the
+name), `usage.go`, `sandbox.go` (the bubblewrap
+runner read-only roles use: read-only root, no network, bridge bind,
+self-test, `wick-pig deps` error), and `systemone/` (the
 decisions-model client the find cascade asks).
 
 ## Ownership
@@ -32,6 +35,8 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 - `read` refuses loopback, private and link-local URL targets on every
   redirect hop, caps the body near 10 MB at 20 s, and never sends
   credentialed or token-like URLs to Jina.
+- The sandbox never runs a command unsandboxed: missing bwrap or a failed
+  self-test is a typed error naming `wick-pig deps`.
 
 ## Work Guidance
 
