@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -210,6 +212,16 @@ func ticketZoneID(repo, slug, name string) string {
 
 func (i ticketItem) zoneID() string { return ticketZoneID(i.repo, i.specSlug, i.ticket.Name) }
 
+// agentZoneID names the bubblezone click region of one agent row in an
+// open ticket detail.
+func agentZoneID(repo, slug, ticket, agent string) string {
+	return "agent:" + repo + "\x00" + slug + "\x00" + ticket + "\x00" + agent
+}
+
+// orchZoneID names the bubblezone click region of a spec's orchestrator
+// line over the tickets pane.
+func orchZoneID(repo, slug string) string { return "orch:" + repo + "\x00" + slug }
+
 // ticketDelegate renders ticket rows: the status glyph plus the file name,
 // with the code/spec verdicts while in review. Height is one.
 type ticketDelegate struct {
@@ -259,7 +271,7 @@ type detailSel struct {
 }
 
 // doubleClickWithin is the press gap that turns two single clicks on one
-// ticket row into an open.
+// row into an open or a jump.
 const doubleClickWithin = 500 * time.Millisecond
 
 // Model is the dashboard: a Runs list over the Snapshot read model with the
@@ -267,7 +279,8 @@ const doubleClickWithin = 500 * time.Millisecond
 // Markdown and its agents, plus a Settings placeholder, refreshed every
 // second. Mouse clicks land through bubblezone regions; double-click
 // detection stays ours — the last click's zone and time are recorded for
-// the tickets that open detail views.
+// the rows that open or jump. Enter on an agent jumps to its herdr pane
+// through the jump seam, leaving this program running where it is.
 type Model struct {
 	load                Loader
 	snap                Snap
@@ -288,6 +301,8 @@ type Model struct {
 	agentRows           table.Model
 	err                 error
 	settings            settingsState
+	jump                CommandRunner
+	notice              string
 }
 
 // agentTableWidth is the table's full content width: every column plus
@@ -369,6 +384,12 @@ func NewModel(load Loader) Model {
 // CLIs or state dir unless the caller asks for it.
 func (m *Model) SetSettingsBackend(be SettingsBackend) { m.settings.backend = be }
 
+// SetJumpExec wires the pane-jump seam: Enter on an agent (or a
+// double-click, or Enter on a spec's orchestrator) focuses its herdr tab
+// and pane through this runner. The live binary passes its exec runner;
+// tests pass a fake. Nil runs no jump.
+func (m *Model) SetJumpExec(run CommandRunner) { m.jump = run }
+
 type tickMsg struct{}
 type snapMsg struct{ snap Snap }
 type errMsg struct{ err error }
@@ -394,8 +415,10 @@ func (m Model) Init() tea.Cmd {
 
 // Update drives the dashboard: tab switches tabs, q quits, h/l and arrows
 // switch panes and move through the focused list, enter on a ticket opens
-// its detail and esc leaves it, a left press selects the clicked spec or
-// ticket row, and every tick reloads the snapshot. A herdr failure keeps
+// its detail and enter on a spec jumps to its orchestrator, esc leaves the
+// detail, and a left press selects the clicked row. In the detail up/down
+// and j/k move the agent selection and enter jumps to that agent's herdr
+// pane; every tick reloads the snapshot. A herdr failure keeps
 // the last snapshot and retries on the next tick. On the Settings tab keys
 // and clicks edit through the settings backend (see settings.go); a tick
 // re-reads the file without disturbing an open picker or editor.
@@ -434,6 +457,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			m.notice = ""
 			if m.tab == tabRuns {
 				m.click(msg)
 			} else {
@@ -442,6 +466,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		m.notice = ""
 		if m.detail != nil {
 			return m.updateDetail(msg)
 		}
@@ -458,6 +483,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.tab == tabRuns && m.list.FilterState() != list.Filtering {
 			if msg.Type == tea.KeyEnter && m.focusTickets {
 				m.openDetail()
+				return m, nil
+			}
+			if msg.Type == tea.KeyEnter && !m.focusTickets {
+				m.jumpOrchestrator()
 				return m, nil
 			}
 			if msg.Type == tea.KeyRight {
@@ -495,8 +524,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateDetail drives the open ticket detail: esc goes back to the lists,
-// tab leaves the detail for the other tab, q quits, and every other key
-// scrolls the ticket Markdown.
+// tab leaves the detail for the other tab, q quits, up/down and j/k move
+// the agent selection, enter jumps to the selected agent's herdr pane,
+// and every other key scrolls the ticket Markdown.
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -510,9 +540,31 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyCtrlC:
 		return m, tea.Quit
+	case tea.KeyEnter:
+		m.jumpSelectedAgent()
+		return m, nil
+	case tea.KeyUp:
+		m.agentRows.MoveUp(1)
+		return m, nil
+	case tea.KeyDown:
+		m.agentRows.MoveDown(1)
+		return m, nil
+	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		vp, cmd := m.md.Update(msg)
+		m.md = vp
+		return m, cmd
 	case tea.KeyRunes:
-		if len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
-			return m, tea.Quit
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'q':
+				return m, tea.Quit
+			case 'k':
+				m.agentRows.MoveUp(1)
+				return m, nil
+			case 'j':
+				m.agentRows.MoveDown(1)
+				return m, nil
+			}
 		}
 	}
 	vp, cmd := m.md.Update(msg)
@@ -520,11 +572,71 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// jumpAgent focuses an agent's herdr tab and pane through the jump seam,
+// leaving the TUI running untouched in its own pane. A pane herdr no
+// longer lists sets the gone notice instead of focusing anything.
+func (m *Model) jumpAgent(label, pane string) {
+	if m.jump == nil {
+		return
+	}
+	if err := focusAgentPane(m.jump, pane); err != nil {
+		if errors.Is(err, errPaneGone) {
+			m.notice = label + "'s pane is gone"
+		} else {
+			m.notice = "jump failed: " + err.Error()
+		}
+		return
+	}
+	m.notice = ""
+}
+
+// jumpSelectedAgent jumps to the open detail's highlighted agent row.
+func (m *Model) jumpSelectedAgent() {
+	tk, ok := m.findDetail()
+	if !ok || len(tk.Agents) == 0 {
+		return
+	}
+	cur := m.agentRows.Cursor()
+	if cur < 0 || cur >= len(tk.Agents) {
+		cur = 0
+	}
+	m.jumpAgent("agent "+tk.Agents[cur].ID, tk.Agents[cur].Pane)
+}
+
+// jumpOrchestrator jumps to the selected spec's orchestrator, if its run
+// has one. A spec with no run has no orchestrator and jumps nowhere.
+func (m *Model) jumpOrchestrator() {
+	item, ok := m.list.SelectedItem().(specItem)
+	if !ok || item.spec.Orchestrator == nil {
+		return
+	}
+	m.jumpAgent("orchestrator", item.spec.Orchestrator.Pane)
+}
+
 // click selects the ticket row whose bubblezone region holds the press, else
 // the spec row, focusing the clicked pane. A second press on the same
-// ticket row within the double-click window opens its detail instead.
+// ticket row within the double-click window opens its detail instead. An
+// open detail routes to its agent rows instead: a press selects the row
+// and a second press jumps to that agent's pane. A press on the selected
+// spec's orchestrator line selects the spec, and a second press jumps to
+// the orchestrator's pane.
 func (m *Model) click(msg tea.MouseMsg) {
 	now := time.Now()
+	if m.detail != nil {
+		m.clickDetailAgent(msg, now)
+		return
+	}
+	if item, ok := m.list.SelectedItem().(specItem); ok && item.spec.Orchestrator != nil {
+		zid := orchZoneID(item.repo, item.spec.Slug)
+		if m.zone.Get(zid).InBounds(msg) {
+			m.focusTickets = false
+			if m.lastZone == zid && now.Sub(m.lastClick) < doubleClickWithin {
+				m.jumpAgent("orchestrator", item.spec.Orchestrator.Pane)
+			}
+			m.lastClick, m.lastZone = now, zid
+			return
+		}
+	}
 	for i, item := range m.tickets.VisibleItems() {
 		ti, ok := item.(ticketItem)
 		if !ok {
@@ -550,6 +662,27 @@ func (m *Model) click(msg tea.MouseMsg) {
 			m.list.Select(i)
 			m.syncTickets()
 			m.lastClick, m.lastZone = now, si.zoneID()
+			return
+		}
+	}
+}
+
+// clickDetailAgent selects the agent row whose bubblezone region holds the
+// press; a second press on the same row within the double-click window
+// jumps to that agent's herdr pane instead.
+func (m *Model) clickDetailAgent(msg tea.MouseMsg, now time.Time) {
+	tk, ok := m.findDetail()
+	if !ok {
+		return
+	}
+	for i, a := range tk.Agents {
+		zid := agentZoneID(m.detail.repo, m.detail.slug, tk.Name, a.ID)
+		if m.zone.Get(zid).InBounds(msg) {
+			m.agentRows.SetCursor(i)
+			if m.lastZone == zid && now.Sub(m.lastClick) < doubleClickWithin {
+				m.jumpAgent("agent "+a.ID, a.Pane)
+			}
+			m.lastClick, m.lastZone = now, zid
 			return
 		}
 	}
@@ -617,6 +750,9 @@ func (m *Model) renderDetail() {
 		rows = append(rows, agentRow(a))
 	}
 	m.agentRows.SetRows(rows)
+	if cur := m.agentRows.Cursor(); cur >= len(rows) && len(rows) > 0 {
+		m.agentRows.SetCursor(len(rows) - 1)
+	}
 	m.agentRows.SetHeight(max(2, len(rows)+1))
 	m.sizeDetail()
 	m.md.SetYOffset(min(off, m.maxYOffset()))
@@ -799,15 +935,18 @@ func (m Model) View() string {
 		tabs = "Runs  " + styleTab.Render("Settings")
 	}
 	mem := machineLine(m.snap.MachineRSS)
-	help := styleDim.Render("↑/k ↓/j move • ←/→ or h/l pane • enter detail • click select, double-click open • tab tabs • q quit • 1s refresh • " + mem)
+	help := styleDim.Render("↑/k ↓/j move • ←/→ or h/l pane • enter detail/jump • click select, double-click open • tab tabs • q quit • 1s refresh • " + mem)
 	if m.tab == tabSettings {
 		help = styleDim.Render(m.settingsHelp() + " • " + mem)
 	}
 	if m.detail != nil {
-		help = styleDim.Render("↑↓/j k scroll • esc back • q quit • 1s refresh • " + mem)
+		help = styleDim.Render("↑↓/j k agents • enter jump • pgup/pgdn scroll • esc back • q quit • 1s refresh • " + mem)
 	}
 	if m.err != nil {
 		help = styleDim.Render("refresh failed: " + m.err.Error() + " • retrying")
+	}
+	if m.notice != "" {
+		help = styleDim.Render(m.notice)
 	}
 	var body string
 	switch {
@@ -819,6 +958,7 @@ func (m Model) View() string {
 		right := m.tickets.View()
 		if si, ok := m.list.SelectedItem().(specItem); ok {
 			if line := orchestratorLine(si.spec); line != "" {
+				line = m.zone.Mark(orchZoneID(si.repo, si.spec.Slug), line)
 				right = lipgloss.JoinVertical(lipgloss.Left, line, right)
 			}
 		}
@@ -838,8 +978,27 @@ func (m Model) detailView() string {
 	if title == "" {
 		title = tk.Name
 	}
-	parts := []string{styleSel.Render(title), m.md.View(), m.agentRows.View(), detailTotalsLine(tk.Totals)}
+	parts := []string{styleSel.Render(title), m.md.View(), m.agentTableView(tk), detailTotalsLine(tk.Totals)}
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// agentTableView renders the detail's agent table with one bubblezone click
+// region per agent row. Line zero is the header; the rows after it follow
+// the ticket's agent order, so a press selects and a double-click jumps to
+// the clicked agent.
+func (m Model) agentTableView(tk TicketSnap) string {
+	v := m.agentRows.View()
+	if m.detail == nil || len(tk.Agents) == 0 {
+		return v
+	}
+	lines := strings.Split(v, "\n")
+	for i, a := range tk.Agents {
+		if 1+i >= len(lines) {
+			break
+		}
+		lines[1+i] = m.zone.Mark(agentZoneID(m.detail.repo, m.detail.slug, tk.Name, a.ID), lines[1+i])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func max(a, b int) int {
