@@ -38,9 +38,9 @@ owns its `_test.go` and the behaviour below):
   usage and overflow rows as well as files)
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
-  resolution over settings for the main list and execute), `execute.go` (the
-  per-role execute binding: the role's resolved toolset in the stub, the
-  tools-behind-execute description, sandboxed for read-only roles),
+  (one role resolution over settings for the main list and execute),
+  `execute.go` (the per-role execute binding: the role's resolved toolset in
+  the stub, the tools-behind-execute description, sandboxed for read-only roles),
   `mcpclients.go` (the MCP server snapshot behind the same resolution),
   `readonly.go`, `stopgate.go`, `extension.go` (pig extension wiring, brief lines)
 - Fixtures: `testdata/` (child doc)
