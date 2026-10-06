@@ -40,8 +40,8 @@ owns its `_test.go` and the behaviour below):
 ## Local Contracts
 
 - Every operation runs through the `Exec` seam (`exec.go`) so tests use a
-  fake exec and temp directories; no test touches the network, the real
-  home, or a live agent or harness.
+  fake exec and temp directories; no test touches the real home, a live
+  agent or harness, or the network beyond loopback `httptest` servers.
 - A wick MCP server with no role refuses to start; the full tool set needs
   an explicit full role.
 - The tree stays gofmt-clean; formatting is a check result, never a

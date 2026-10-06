@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,15 @@ import (
 	"testing"
 	"time"
 )
+
+func parseIPForTest(t *testing.T, s string) net.IP {
+	t.Helper()
+	ip := net.ParseIP(s)
+	if ip == nil {
+		t.Fatalf("bad test ip %q", s)
+	}
+	return ip
+}
 
 // Filler keeps every test body above the 100-non-whitespace thin-page line,
 // so Tier 1 success tests do not escalate by accident.
@@ -551,8 +561,11 @@ func TestReadURLTruncationOverflowFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("overflow file: %v", err)
 	}
-	if !strings.Contains(string(data), "overflow-line-350") || !strings.Contains(string(data), "overflow-line-001") {
-		t.Errorf("overflow file must hold the full body, got %d bytes", len(data))
+	if !strings.Contains(string(data), "overflow-line-350") {
+		t.Errorf("overflow file must hold the remainder (line 350), got %d bytes", len(data))
+	}
+	if strings.Contains(string(data), "overflow-line-001") {
+		t.Errorf("overflow file must hold only the remainder past line 300, not the shown head")
 	}
 }
 
@@ -622,5 +635,57 @@ func TestPeelURLSelectors(t *testing.T) {
 		if c.repaired != "" && normalizeURLTarget(c.in) != c.repaired {
 			t.Errorf("normalize(%q) = %q, want %q", c.in, normalizeURLTarget(c.in), c.repaired)
 		}
+	}
+}
+func TestJinaDefaultEndpoint(t *testing.T) {
+	t.Setenv("WICK_JINA_ENDPOINT", "")
+	if got := jinaBase(); got != "https://r.jina.ai/" {
+		t.Fatalf("jinaBase() = %q, want the public reader", got)
+	}
+	if got, want := jinaRequestURL("https://example.com/page"), "https://r.jina.ai/https://example.com/page"; got != want {
+		t.Fatalf("jinaRequestURL = %q, want %q", got, want)
+	}
+	t.Setenv("WICK_JINA_ENDPOINT", "http://127.0.0.1:9999/custom/")
+	if got, want := jinaRequestURL("https://example.com/page"), "http://127.0.0.1:9999/custom/https://example.com/page"; got != want {
+		t.Fatalf("jinaRequestURL with override = %q, want %q", got, want)
+	}
+}
+
+func TestReadURLRawPDFSuffixReturnsRaw(t *testing.T) {
+	allowLocal(t)
+	jf := startJinaFake(t, 200, jinaLong("must not be used"))
+	t.Setenv("JINA_API_KEY", "")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte(longBody("%PDF-1.4 raw bytes with plenty of extra words to be long enough for raw\n")))
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := readURLPath(t, srv.URL+"/paper.pdf:raw")
+	if err != nil {
+		t.Fatalf("raw pdf: %v", err)
+	}
+	mustContain(t, out, "tier1", "%PDF-1.4")
+	if jf.count() != 0 {
+		t.Errorf(":raw must never escalate, even for pdf suffixes: jina hits = %d", jf.count())
+	}
+}
+
+func TestRemoteIPBlocked(t *testing.T) {
+	t.Setenv("WICK_URL_ALLOW_LOOPBACK", "")
+	for _, ip := range []string{"127.0.0.1", "::1", "10.0.0.1", "192.168.1.1", "169.254.169.254", "0.0.0.0"} {
+		if reason := remoteIPBlocked(parseIPForTest(t, ip)); reason == "" {
+			t.Errorf("remoteIPBlocked(%s) = allowed, want refused", ip)
+		}
+	}
+	if reason := remoteIPBlocked(parseIPForTest(t, "8.8.8.8")); reason != "" {
+		t.Errorf("remoteIPBlocked(8.8.8.8) = %q, want allowed", reason)
+	}
+	t.Setenv("WICK_URL_ALLOW_LOOPBACK", "1")
+	if reason := remoteIPBlocked(parseIPForTest(t, "127.0.0.1")); reason != "" {
+		t.Errorf("loopback with allow flag = %q, want allowed", reason)
+	}
+	if reason := remoteIPBlocked(parseIPForTest(t, "10.0.0.1")); reason == "" {
+		t.Errorf("private with allow-loopback flag must still be refused")
 	}
 }
