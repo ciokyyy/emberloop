@@ -1,6 +1,9 @@
 package wick
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,5 +108,22 @@ func TestTopLevelChipName(t *testing.T) {
 		if got := TopLevelChipName(c.typ, c.role); got != c.want {
 			t.Errorf("TopLevelChipName(%q, %q) = %q, want %q", c.typ, c.role, got, c.want)
 		}
+	}
+}
+
+func TestStatusLineStoresLiveTranscriptForResume(t *testing.T) {
+	dir := t.TempDir()
+	tr := filepath.Join(dir, "resumed.jsonl")
+	if err := os.WriteFile(tr, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_AGENT_ID", "a1")
+	in := `{"session_id":"s2","transcript_path":` + strconv.Quote(tr) + `}`
+	if err := RunClaudeStatus(strings.NewReader(in), dir); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveTranscript(HeaderSource{Harness: "claude", AgentID: "a1", SessionID: "s1", StateDir: dir})
+	if got != tr {
+		t.Fatalf("got %q, want %q", got, tr)
 	}
 }

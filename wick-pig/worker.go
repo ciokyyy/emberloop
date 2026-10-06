@@ -497,8 +497,17 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 		if old, exists := store[id]; exists {
 			// A record whose worktree is gone is left over from a cleanup done
 			// outside finish; it must not block the id for ever.
+			// A record whose pane is gone, even one that submitted, belongs to
+			// a worker that can no longer act: its pane died with the herdr
+			// workspace or was closed by hand. The respawn takes the id over,
+			// reusing the worktree and branch with the work already on them.
 			if _, err := os.Stat(old.Worktree); err == nil {
-				return fmt.Errorf("worker %q already exists", id)
+				if !paneDead(run, old.Pane, old.Started) {
+					return fmt.Errorf("worker %q already exists", id)
+				}
+				_ = recordFinish(&old, outcomeCancelled, "", "pane gone; respawned")
+				detachDeadWorker(id)
+				clearAgentSubmit(id)
 			}
 			delete(store, id)
 		}

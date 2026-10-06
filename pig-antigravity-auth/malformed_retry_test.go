@@ -205,3 +205,44 @@ func TestSessionCompleteOnlyOnSuccess(t *testing.T) {
 		t.Errorf("failed attempts must not mark the session complete")
 	}
 }
+
+func TestThoughtOnlyStopIsRetryableError(t *testing.T) {
+	body := sse(`{"candidates":[{"content":{"parts":[{"thought":true,"text":"planning"}]},"finishReason":"STOP"}]}`)
+	serveSequence(t, []string{body}, nil, nil)
+	opts := map[string]any{"apiKey": `{"token":"tok","projectId":"proj-1"}`, "sessionId": "thought-only-1"}
+	stream := sdk.CreateAssistantMessageEventStream()
+	run(context.Background(), stream, testModel, map[string]any{"messages": []any{}}, opts)
+	evs := collect(t, stream)
+	last := evs[len(evs)-1]
+	if last["type"] != "error" {
+		t.Fatalf("want error, got %v", last["type"])
+	}
+	if m, _ := json.Marshal(last); !strings.Contains(string(m), "server error") {
+		t.Fatalf("error not retryable-worded: %s", m)
+	}
+}
+
+// Pig carries the system prompt and tools on a system message, not on
+// top-level transcript fields.
+func TestSystemMessageFeedsPromptAndTools(t *testing.T) {
+	tr := map[string]any{"messages": []any{
+		map[string]any{"role": "system", "content": "be brief", "toolsAdded": []any{
+			map[string]any{"name": "read", "description": "d", "parameters": map[string]any{"type": "object", "properties": map[string]any{}}},
+			map[string]any{"name": "gone", "description": "d", "parameters": map[string]any{"type": "object", "properties": map[string]any{}}},
+		}},
+		map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "later"}}, "toolsRemoved": []any{map[string]any{"name": "gone"}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "hi"}}},
+	}}
+	env, _ := buildEnvelope(testModel, tr, map[string]any{"sessionId": "sys-1"}, "p")
+	if len(env.Request.Contents) != 1 {
+		t.Fatalf("system message leaked into contents: %v", env.Request.Contents)
+	}
+	b, _ := json.Marshal(env.Request)
+	got := string(b)
+	if !strings.Contains(got, `"name":"read"`) || strings.Contains(got, `"name":"gone"`) {
+		t.Fatalf("tools wrong: %s", got)
+	}
+	if !strings.Contains(got, `be brief\n\nlater`) {
+		t.Fatalf("system prompt missing: %s", got)
+	}
+}

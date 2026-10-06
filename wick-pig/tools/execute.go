@@ -79,7 +79,8 @@ func (executeTool) Description() string {
 	return "Run a Python script (stdlib only) that calls wick tools as functions, so one call replaces many and only what the script prints enters context.\n\n" +
 		"Behind execute: grep, git, check.\n\n" +
 		"import tools\nprint(tools.grep(pattern=\"TODO\"))\n\n" +
-		"tools.search(query) lists matching tools with signatures; tools.help(name) shows one tool. A failing tool call raises tools.ToolError."
+		"tools.search(query) lists matching tools with signatures; tools.help(name) shows one tool. A failing tool call raises tools.ToolError.\n\n" +
+		"Run every Python script here. Never run python or python3 through bash, not even with a heredoc. To change files, use edit, not a script."
 }
 func (executeTool) Schema() map[string]any {
 	return obj(map[string]any{
@@ -194,7 +195,7 @@ func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) stri
 	for _, n := range mainNames {
 		has[n] = true
 	}
-	b.WriteString("Prefer execute over several separate calls when one result feeds the next, when you loop over many items, or when you need only a filtered slice of a big output. Independent single calls are fine as parallel tool calls.\n")
+	b.WriteString("Prefer execute over several separate calls when one result feeds the next, when you loop over many items, or when you need only a filtered slice of a big output. Independent single calls are fine as parallel tool calls.\n\nRun every Python script here. Never run python or python3 through bash, not even with a heredoc: execute has the same subprocess and file access and also reaches the tools. To change files, use edit, not a script.\n")
 	if has["grep"] {
 		b.WriteString("\n# loop: one call, not N\nfor p in [\"TODO\", \"FIXME\"]:\n    print(p, tools.grep(pattern=p, max_results=5))\n")
 	}

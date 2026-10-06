@@ -97,3 +97,32 @@ func TestStripRowsKeepBackgroundBetweenCells(t *testing.T) {
 		}
 	}
 }
+
+// TestStripPlacementWithPadding is the golden for child size and strip
+// placement: the strip starts inside the left padding, spans the terminal
+// minus both side paddings, and sits right under the child with the bottom
+// padding below it.
+func TestStripPlacementWithPadding(t *testing.T) {
+	cases := []struct {
+		name                          string
+		termW, termH                  int
+		pad                           Pad
+		wantW, wantH, wantRule, wantC int
+	}{
+		{"default", 100, 30, Pad{4, 4, 2}, 92, 25, 26, 92},
+		{"zero", 100, 30, Pad{}, 100, 27, 28, 100},
+		{"oversized", 40, 12, Pad{30, 30, 20}, 20, 5, 6, 20},
+	}
+	for _, c := range cases {
+		pad := FitPad(c.termW, c.termH, 2, false, c.pad)
+		cw, ch := ChildSizePad(c.termW, c.termH, 2, false, pad)
+		w := &wrapper{termW: c.termW, termH: c.termH, pad: pad, childW: cw, childH: ch}
+		if cw != c.wantW || ch != c.wantH || w.ruleRow() != c.wantRule || w.contentW() != c.wantC {
+			t.Errorf("%s: pad %+v child %dx%d rule %d content %d, want child %dx%d rule %d content %d",
+				c.name, pad, cw, ch, w.ruleRow(), w.contentW(), c.wantW, c.wantH, c.wantRule, c.wantC)
+		}
+		if l, _ := w.sideCols(); l != pad.Left {
+			t.Errorf("%s: strip starts after %d columns, want %d", c.name, l, pad.Left)
+		}
+	}
+}

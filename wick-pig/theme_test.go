@@ -200,6 +200,23 @@ func TestOSCResetSequence(t *testing.T) {
 	}
 }
 
+// The theme flags land before the "--" that starts the prompt, never after.
+func TestThemeLaunchArgsBeforePrompt(t *testing.T) {
+	got, err := ThemeLaunchArgs("pig", []string{"--session-id", "s", "--", "do it"}, true, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(got)
+	if got[n-2] != "--" || got[n-1] != "do it" {
+		t.Fatalf("prompt not last: %q", got)
+	}
+	for i, a := range got {
+		if (a == "--theme" || a == "--use-theme") && i > n-2 {
+			t.Fatalf("%s after --: %q", a, got)
+		}
+	}
+}
+
 // Launch uses per-run flags only: pig gains --theme/--use-theme pointing at
 // the generated file, claude gains the theme ref inside its launch settings.
 func TestThemeLaunchArgs(t *testing.T) {

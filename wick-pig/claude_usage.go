@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"example.com/wick/statedb"
@@ -44,7 +45,9 @@ func claudeUsagePath(stateDir string) string {
 
 // statusInput is the part of claude's statusline JSON this reads.
 type statusInput struct {
-	RateLimits struct {
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	RateLimits     struct {
 		FiveHour *statusWindow `json:"five_hour"`
 		SevenDay *statusWindow `json:"seven_day"`
 	} `json:"rate_limits"`
@@ -65,6 +68,7 @@ func RunClaudeStatus(in io.Reader, stateDir string) error {
 	if err := json.NewDecoder(in).Decode(&s); err != nil {
 		return nil
 	}
+	storeLiveTranscript(stateDir, os.Getenv("WICK_AGENT_ID"), s.TranscriptPath)
 	if s.RateLimits.FiveHour == nil && s.RateLimits.SevenDay == nil {
 		return nil
 	}
@@ -168,4 +172,54 @@ func (u ClaudeUsage) Set() UsageSet {
 		ws = append(ws, UsageWindow{Label: "wk", Pct: u.SevenDay.Pct, ResetsAt: u.SevenDay.ResetsAt})
 	}
 	return UsageSet{Has: len(ws) > 0, Windows: ws}
+}
+
+// liveTranscriptPath is the pointer file for the transcript an agent's
+// claude is writing right now. A /resume inside a running claude switches
+// to another session id and file, so the id from launch no longer finds the
+// transcript; claude's statusline JSON always names the current one.
+func liveTranscriptPath(stateDir, agentID string) string {
+	if stateDir == "" {
+		stateDir = statedb.StateDir()
+	}
+	return filepath.Join(stateDir, "claude-transcripts", agentID+".path")
+}
+
+// storeLiveTranscript records the transcript path the statusline reports for
+// an agent. It writes only when the path changed and never fails loudly.
+func storeLiveTranscript(stateDir, agentID, transcript string) {
+	if agentID == "" || transcript == "" || strings.ContainsAny(agentID, `/\`) {
+		return
+	}
+	path := liveTranscriptPath(stateDir, agentID)
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == transcript {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+		return
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if os.WriteFile(tmp, []byte(transcript), 0o644) != nil {
+		return
+	}
+	if os.Rename(tmp, path) != nil {
+		_ = os.Remove(tmp)
+	}
+}
+
+// readLiveTranscript is the stored transcript for an agent when the file is
+// still there, else "".
+func readLiveTranscript(stateDir, agentID string) string {
+	if agentID == "" || strings.ContainsAny(agentID, `/\`) {
+		return ""
+	}
+	raw, err := os.ReadFile(liveTranscriptPath(stateDir, agentID))
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimSpace(string(raw))
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
 }
