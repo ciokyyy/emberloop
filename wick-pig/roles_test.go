@@ -10,6 +10,7 @@ import (
 // must not carry the review tools or anything that spawns, merges or reports
 // workers, so the same tool set that plans cannot run an implementation loop.
 func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
+	hermeticSettings(t)
 	served, err := RoleTools("plan")
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +28,7 @@ func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
 // implement delegates and explores; it never runs code or reviews, and its
 // edit and write are limited to the project's listed paths.
 func TestImplementDelegatesAndSpawns(t *testing.T) {
+	hermeticSettings(t)
 	served, err := RoleTools("implement")
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +46,7 @@ func TestImplementDelegatesAndSpawns(t *testing.T) {
 // full stays reachable, but only by asking for it: it is every tool, including
 // the orchestration tools no planning session should hold.
 func TestFullServesEveryTool(t *testing.T) {
+	hermeticSettings(t)
 	served, err := RoleTools("full")
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +122,7 @@ func mustRoleErr(t *testing.T, role string) error {
 // No role serves a wait tool: the parent learns a result arrived instead of
 // blocking on it. tell and finish are what a delegating role gets instead.
 func TestNoRoleServesAWaitTool(t *testing.T) {
+	hermeticSettings(t)
 	removed := []string{"wait_workers", "tell_worker", "finish_worker", "wait"}
 	for _, role := range []string{"implement", "plan", "work", "review", "scout", "full"} {
 		served, err := RoleTools(role)

@@ -131,6 +131,7 @@ func TestTwoSlowCallsFinishInAboutOneCallsTime(t *testing.T) {
 // tools/list offers one spawn tool, described with only the caller's spawnable
 // types, and the scout tool is gone.
 func TestToolsListHasSpawnAndNoScout(t *testing.T) {
+	isolatedSettings(t)
 	served, err := wick.RoleTools("implement")
 	if err != nil {
 		t.Fatal(err)
@@ -310,5 +311,88 @@ func TestCancelledNotificationEndsTheNamedCall(t *testing.T) {
 	body, _ := json.Marshal(replies)
 	if !strings.Contains(string(body), "cancelled") {
 		t.Errorf("want the tool to see its context end, got %s", body)
+	}
+}
+
+// isolatedSettings points both settings layers at missing temp files, so a
+// test asserting an exact tool list never reads the developer's own tools
+// configuration.
+func isolatedSettings(t *testing.T) {
+	t.Helper()
+	t.Setenv("WICK_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("WICK_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("WICK_DECISION_MODEL", "")
+	t.Setenv("WICK_FIND_THRESHOLD", "")
+	t.Setenv("WICK_MAX_WORKERS", "")
+}
+
+// listNames digs the tool names out of a tools/list reply.
+func listNames(t *testing.T, reply map[string]any) []string {
+	t.Helper()
+	var out []string
+	for _, tl := range toolsOf(t, reply) {
+		name, _ := tl["name"].(string)
+		out = append(out, name)
+	}
+	return out
+}
+
+// tools/list serves the resolved main list: a disabled tool is absent and a
+// rename takes effect, matching the resolution the execute stub generator
+// will read for the same settings.
+func TestToolsListServesTheResolvedMainList(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(p, []byte(`{"tools":{"bash":{"enabled":false},"read":{"rename":"rd"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WICK_SETTINGS", p)
+	t.Setenv("WICK_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("WICK_DECISION_MODEL", "")
+	t.Setenv("WICK_FIND_THRESHOLD", "")
+	t.Setenv("WICK_MAX_WORKERS", "")
+	served, err := wick.RoleTools("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replies := serve(t, served, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	if len(replies) != 1 {
+		t.Fatalf("want one reply, got %d", len(replies))
+	}
+	names := listNames(t, replies[0])
+	for _, n := range names {
+		if n == "bash" || n == "read" {
+			t.Fatalf("tools/list serves a disabled or unrenamed tool: %v", names)
+		}
+	}
+	found := false
+	for _, n := range names {
+		if n == "rd" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("tools/list does not serve the renamed read: %v", names)
+	}
+	main, execute, err := wick.ResolvedTools("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mainNames, executeNames []string
+	for _, tl := range main {
+		mainNames = append(mainNames, tl.Name())
+	}
+	for _, tl := range execute {
+		executeNames = append(executeNames, tl.Name())
+	}
+	if len(names) != len(mainNames) {
+		t.Fatalf("tools/list serves %v but resolution lists %v", names, mainNames)
+	}
+	for i := range names {
+		if names[i] != mainNames[i] {
+			t.Fatalf("tools/list serves %v but resolution lists %v", names, mainNames)
+		}
+	}
+	if len(executeNames) != 0 {
+		t.Fatalf("nothing here hides behind execute, got %v", executeNames)
 	}
 }

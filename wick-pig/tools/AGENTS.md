@@ -10,7 +10,9 @@ serves: native fetch, then Jina, then an uninstalled browser tier),
 `bash.go`, `background.go`, `find.go`
 (plus the `cascade.go` ranker), `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
-`credentials.go`, `settings.go`, `usage.go`, and `systemone/` (the
+`credentials.go`, `settings.go` (global and project files, the tools and
+mcp_servers maps and their merge), `rename.go` (serve a tool under a new
+name), `usage.go`, and `systemone/` (the
 decisions-model client the find cascade asks).
 
 ## Ownership

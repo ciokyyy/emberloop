@@ -13,11 +13,14 @@ import (
 )
 
 // settingsFile points the settings store at a temp file and clears the env
-// overrides, so a test reads and writes only what the command wrote.
+// overrides, so a test reads and writes only what the command wrote. The
+// project layer points at a missing file, so the display shows only the test
+// file's own values.
 func settingsFile(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "settings.json")
 	t.Setenv("WICK_SETTINGS", p)
+	t.Setenv("WICK_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
 	t.Setenv("WICK_DECISION_MODEL", "")
 	t.Setenv("WICK_FIND_THRESHOLD", "")
 	t.Setenv("WICK_MAX_WORKERS", "")
@@ -591,5 +594,211 @@ func TestSettingsPrintsMaxWorkersDefault(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "max-workers: 3 (default)") {
 		t.Fatalf("output %q does not show the default cap of three", out.String())
+	}
+}
+
+// `settings tool` tunes one native tool: enabled, placement and rename, plus
+// per-role overrides of enabled and placement.
+func TestSettingsSetsToolFields(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"tool", "bash", "enabled", "false"},
+		{"tool", "bash", "placement", "execute"},
+		{"tool", "bash", "rename", "sh"},
+	} {
+		if err := runSettings(argv, &out, noModels); err != nil {
+			t.Fatalf("%v: %v", argv, err)
+		}
+	}
+	got := tools.LoadSettings().Tools["bash"]
+	if got.Enabled == nil || *got.Enabled {
+		t.Fatalf("bash enabled not saved: %+v", got)
+	}
+	if got.Placement != "execute" || got.Rename != "sh" {
+		t.Fatalf("bash placement/rename not saved: %+v", got)
+	}
+	if !strings.Contains(out.String(), "bash") {
+		t.Fatalf("output %q does not confirm the tool edit", out.String())
+	}
+}
+
+func TestSettingsSetsToolRoleOverrides(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"tool", "bash", "role", "scout", "enabled", "false"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSettings([]string{"tool", "bash", "role", "scout", "placement", "execute"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	ov := tools.LoadSettings().Tools["bash"].Roles["scout"]
+	if ov.Enabled == nil || *ov.Enabled || ov.Placement != "execute" {
+		t.Fatalf("scout override not saved: %+v", ov)
+	}
+}
+
+func TestSettingsRejectsBadToolEdits(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"tool", "bash", "enabled", "soon"},
+		{"tool", "bash", "placement", "sideways"},
+		{"tool", "bash", "colour", "red"},
+		{"tool", "bash", "role", "worker", "enabled", "false"},
+		{"tool", "bash", "role", "scout", "rename", "x"},
+		{"tool", "bash"},
+	} {
+		if err := runSettings(argv, &out, noModels); err == nil {
+			t.Errorf("%v should be an error", argv)
+		} else if !strings.Contains(err.Error(), "usage") {
+			t.Errorf("%v error %q should carry the usage line", argv, err)
+		}
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected tool edit must not be saved")
+	}
+}
+
+// `settings mcp-server` registers and tunes an outside server: command, args,
+// env, placement, include and exclude globs, rename mappings and per-role
+// overrides.
+func TestSettingsSetsMCPServerFields(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"mcp-server", "github", "command", "npx"},
+		{"mcp-server", "github", "args", "-y,github-mcp"},
+		{"mcp-server", "github", "env", "GITHUB_TOKEN=secret"},
+		{"mcp-server", "github", "placement", "execute"},
+		{"mcp-server", "github", "include", "search_*,get_*"},
+		{"mcp-server", "github", "exclude", "delete_*"},
+		{"mcp-server", "github", "rename", "search_repositories=gh_search"},
+		{"mcp-server", "github", "role", "review", "placement", "main"},
+	} {
+		if err := runSettings(argv, &out, noModels); err != nil {
+			t.Fatalf("%v: %v", argv, err)
+		}
+	}
+	got := tools.LoadSettings().MCPServers["github"]
+	if got.Command != "npx" || got.Placement != "execute" {
+		t.Fatalf("server command/placement not saved: %+v", got)
+	}
+	if len(got.Args) != 2 || got.Args[0] != "-y" || got.Env["GITHUB_TOKEN"] != "secret" {
+		t.Fatalf("server args/env not saved: %+v", got)
+	}
+	if len(got.Include) != 2 || len(got.Exclude) != 1 || got.Rename["search_repositories"] != "gh_search" {
+		t.Fatalf("server globs/rename not saved: %+v", got)
+	}
+	if got.Roles["review"].Placement != "main" {
+		t.Fatalf("server role override not saved: %+v", got.Roles)
+	}
+	if !strings.Contains(out.String(), "github") {
+		t.Fatalf("output %q does not confirm the server edit", out.String())
+	}
+}
+
+func TestSettingsRemovesAnMCPServer(t *testing.T) {
+	p := settingsFile(t)
+	// The server carries an unknown field: removing it must drop that too,
+	// or the save resurrects the entry as a command-less server.
+	write(t, p, `{"mcp_servers":{"github":{"command":"npx","future_field":"kept"}}}`)
+	var out bytes.Buffer
+	if err := runSettings([]string{"mcp-server", "remove", "github"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tools.LoadSettings().MCPServers["github"]; ok {
+		t.Fatal("removed server still saved")
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "github") {
+		t.Fatalf("removed server resurrected in the file: %s", raw)
+	}
+	if err := runSettings([]string{"mcp-server", "remove", "github"}, &out, noModels); err == nil {
+		t.Fatal("removing an unknown server should fail")
+	}
+}
+
+func TestSettingsRejectsBadMCPServerEdits(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"mcp-server", "github", "placement", "sideways"},
+		{"mcp-server", "github", "env", "NOEQUALS"},
+		{"mcp-server", "github", "rename", "NOEQUALS"},
+		{"mcp-server", "github", "include", "[unclosed"},
+		{"mcp-server", "github", "role", "worker", "placement", "main"},
+		{"mcp-server", "github"},
+	} {
+		if err := runSettings(argv, &out, noModels); err == nil {
+			t.Errorf("%v should be an error", argv)
+		} else if !strings.Contains(err.Error(), "usage") {
+			t.Errorf("%v error %q should carry the usage line", argv, err)
+		}
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected server edit must not be saved")
+	}
+}
+
+// The bare command shows the new keys with their values and sources.
+func TestSettingsPrintsToolsAndServers(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"tools":{"bash":{"enabled":false,"rename":"sh","roles":{"scout":{"placement":"execute"}}}},"mcp_servers":{"github":{"command":"npx","placement":"execute","rename":{"a":"b"}}}}`)
+	var out bytes.Buffer
+	if err := runSettings(nil, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"bash: enabled false (file)",
+		"rename sh (file)",
+		"scout: enabled false (file), placement execute (file)",
+		"github",
+		`command "npx" (file)`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("settings output does not mention %q:\n%s", want, got)
+		}
+	}
+}
+
+// With nothing stored the new sections read as empty, not missing.
+func TestSettingsPrintsEmptyToolsAndServers(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings(nil, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "tools:") || !strings.Contains(got, "mcp-servers:") {
+		t.Errorf("settings output omits the new sections:\n%s", got)
+	}
+}
+
+// Project values print with a project source, in the slots and the new
+// sections alike.
+func TestSettingsPrintsProjectSources(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"max_workers":5,"roles":{"scout":{"model":"global-m"}}}`)
+	project := filepath.Join(t.TempDir(), "project.json")
+	write(t, project, `{"max_workers":7,"roles":{"scout":{"model":"project-m"}},"tools":{"bash":{"roles":{"scout":{"enabled":false}}}}}`)
+	t.Setenv("WICK_PROJECT_SETTINGS", project)
+	var out bytes.Buffer
+	if err := runSettings(nil, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"max-workers: 7 (project)",
+		"scout: harness pig (default), model project-m (project)",
+		"scout: enabled false (project)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("settings output does not mention %q:\n%s", want, got)
+		}
 	}
 }

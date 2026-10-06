@@ -10,6 +10,7 @@ import (
 // No role serves code_review any more: a worker reviews itself by spawning its
 // reviewer types, and the tool is gone for every session.
 func TestNoRoleServesCodeReview(t *testing.T) {
+	hermeticSettings(t)
 	for _, role := range []string{"work", "full", "review", "scout", "implement", "plan"} {
 		served, err := RoleTools(role)
 		if err != nil {
@@ -26,6 +27,7 @@ func TestNoRoleServesCodeReview(t *testing.T) {
 // The review roles still reach only read and find, and implement still does not
 // hold the old review_worker tool.
 func TestReviewRolesServeNothingThatWrites(t *testing.T) {
+	hermeticSettings(t)
 	for _, role := range []string{"review", "scout"} {
 		served, err := RoleTools(role)
 		if err != nil {

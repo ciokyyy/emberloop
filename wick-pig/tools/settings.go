@@ -36,6 +36,52 @@ const DefaultThreshold = 0.20
 // DefaultMaxWorkers caps how many workers run at once when nothing is stored.
 const DefaultMaxWorkers = 3
 
+// PlacementMain serves a tool in the top-level tool list; PlacementExecute
+// serves it only inside the execute tool.
+const (
+	PlacementMain    = "main"
+	PlacementExecute = "execute"
+)
+
+// ToolRoleOverride overrides a tool entry for one role. Only enabled and
+// placement are per-role; the rename is global to every role.
+type ToolRoleOverride struct {
+	Enabled   *bool  `json:"enabled,omitempty"`
+	Placement string `json:"placement,omitempty"`
+}
+
+// ToolSetting tunes one native tool. Enabled defaults to true when unset;
+// placement defaults to main. Roles overrides enabled and placement per role.
+type ToolSetting struct {
+	Enabled   *bool                       `json:"enabled,omitempty"`
+	Placement string                      `json:"placement,omitempty"`
+	Rename    string                      `json:"rename,omitempty"`
+	Roles     map[string]ToolRoleOverride `json:"roles,omitempty"`
+}
+
+// MCPServerRoleOverride overrides an MCP server entry for one role.
+type MCPServerRoleOverride struct {
+	Enabled   *bool  `json:"enabled,omitempty"`
+	Placement string `json:"placement,omitempty"`
+}
+
+// MCPServerSetting registers one outside MCP server. Include and exclude are
+// glob lists over the server's own tool names (empty include means all;
+// exclude wins); rename maps an original name to the name agents see.
+// Placement defaults to execute; a per-role block overrides enabled and
+// placement for that role. There is no server-level enabled: remove the entry
+// or exclude its tools.
+type MCPServerSetting struct {
+	Command   string                           `json:"command,omitempty"`
+	Args      []string                         `json:"args,omitempty"`
+	Env       map[string]string                `json:"env,omitempty"`
+	Placement string                           `json:"placement,omitempty"`
+	Include   []string                         `json:"include,omitempty"`
+	Exclude   []string                         `json:"exclude,omitempty"`
+	Rename    map[string]string                `json:"rename,omitempty"`
+	Roles     map[string]MCPServerRoleOverride `json:"roles,omitempty"`
+}
+
 // Settings are the user's choices that tools read at call time. They live in
 // the user's wick-pig directory, beside the skills, so pig, the MCP server and
 // the TUI all read the same file.
@@ -51,7 +97,11 @@ type Settings struct {
 	MaxWorkers int `json:"max_workers,omitempty"`
 	// Roles holds one default per launch slot, keyed by slot name.
 	Roles map[string]Role `json:"roles,omitempty"`
-
+	// Tools tunes native tools by name: enabled, placement, rename and per-role
+	// overrides. Absent means the defaults (enabled, main).
+	Tools map[string]ToolSetting `json:"tools,omitempty"`
+	// MCPServers registers outside MCP servers by name.
+	MCPServers map[string]MCPServerSetting `json:"mcp_servers,omitempty"`
 	// extra holds top-level keys wick does not know yet, so a save writes them
 	// back and the file can grow without a version bump. Never written from the
 	// struct itself; SaveSettings merges it in.
@@ -59,6 +109,15 @@ type Settings struct {
 	// roleExtra holds keys inside a role object that wick does not know yet,
 	// keyed by slot then field. SaveSettings merges it into Roles.
 	roleExtra map[string]map[string]json.RawMessage
+	// toolExtra holds unknown fields inside a tools entry, keyed by tool then
+	// field; mcpExtra the same for an mcp_servers entry. toolRoleExtra holds
+	// unknown fields inside a tool's per-role override, keyed by tool, role
+	// then field; mcpRoleExtra the same for a server override. A save writes
+	// them back, so new keys at any level survive an old wick.
+	toolExtra     map[string]map[string]json.RawMessage
+	mcpExtra      map[string]map[string]json.RawMessage
+	toolRoleExtra map[string]map[string]map[string]json.RawMessage
+	mcpRoleExtra  map[string]map[string]map[string]json.RawMessage
 	// src names where a top-level value came from: "file", "env" or "default".
 	// Print uses it to show a value's origin.
 	src map[string]string
@@ -146,6 +205,12 @@ func decodeSettings(raw []byte) Settings {
 		case "roles":
 			s.roleExtra = unknownRoleFields(v)
 		case "decision_model", "threshold", "max_workers":
+		case "tools":
+			s.toolExtra = unknownEntryFields(v, []string{"enabled", "placement", "rename", "roles"})
+			s.toolRoleExtra = unknownOverrideFields(v)
+		case "mcp_servers":
+			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "placement", "include", "exclude", "rename", "roles"})
+			s.mcpRoleExtra = unknownOverrideFields(v)
 		default:
 			s.extra[k] = v
 		}
@@ -161,7 +226,81 @@ func decodeSettings(raw []byte) Settings {
 	if s.MaxWorkers != 0 {
 		s.src["max_workers"] = "file"
 	}
+	for slot, r := range s.Roles {
+		base := "roles." + slot + "."
+		if r.Harness != "" {
+			s.src[base+"harness"] = "file"
+		}
+		if r.Model != "" {
+			s.src[base+"model"] = "file"
+		}
+		if r.Effort != "" {
+			s.src[base+"effort"] = "file"
+		}
+	}
+	markToolSources(&s)
 	return s
+}
+
+// markToolSources records where each tool and server field came from, so the
+// settings command can print a source per value. Keys are dotted paths like
+// "tools.bash.enabled" or "mcp_servers.github.placement".
+func markToolSources(s *Settings) {
+	if len(s.Tools) > 0 {
+		s.src["tools"] = "file"
+	}
+	for name, e := range s.Tools {
+		base := "tools." + name + "."
+		if e.Enabled != nil {
+			s.src[base+"enabled"] = "file"
+		}
+		if e.Placement != "" {
+			s.src[base+"placement"] = "file"
+		}
+		if e.Rename != "" {
+			s.src[base+"rename"] = "file"
+		}
+		for role, ov := range e.Roles {
+			rbase := base + "roles." + role + "."
+			if ov.Enabled != nil {
+				s.src[rbase+"enabled"] = "file"
+			}
+			if ov.Placement != "" {
+				s.src[rbase+"placement"] = "file"
+			}
+		}
+	}
+	if len(s.MCPServers) > 0 {
+		s.src["mcp_servers"] = "file"
+	}
+	for name, e := range s.MCPServers {
+		base := "mcp_servers." + name + "."
+		for _, f := range []struct {
+			key string
+			set bool
+		}{
+			{"command", e.Command != ""},
+			{"args", e.Args != nil},
+			{"env", e.Env != nil},
+			{"placement", e.Placement != ""},
+			{"include", e.Include != nil},
+			{"exclude", e.Exclude != nil},
+			{"rename", e.Rename != nil},
+		} {
+			if f.set {
+				s.src[base+f.key] = "file"
+			}
+		}
+		for role, ov := range e.Roles {
+			rbase := base + "roles." + role + "."
+			if ov.Enabled != nil {
+				s.src[rbase+"enabled"] = "file"
+			}
+			if ov.Placement != "" {
+				s.src[rbase+"placement"] = "file"
+			}
+		}
+	}
 }
 
 // unknownRoleFields collects, per slot, the keys inside a role object that are
@@ -197,8 +336,19 @@ func (s *Settings) setSource(key, where string) {
 	s.src[key] = where
 }
 
+// RemoveMCPServer drops one server registration. Unknown fields ride along,
+// or the next save would resurrect the entry from the extras as a
+// command-less server.
+func (s *Settings) RemoveMCPServer(name string) {
+	delete(s.MCPServers, name)
+	delete(s.mcpExtra, name)
+	delete(s.mcpRoleExtra, name)
+}
+
 // SaveSettings writes the file, creating its directory. Keys wick does not
-// know survive the round trip, at the top level and inside a role object.
+// know survive the round trip, at the top level, inside a role object and
+// inside a tools or mcp_servers entry. It writes the global file: call it
+// with global settings, never merged ones, or project values leak upward.
 func SaveSettings(s Settings) error {
 	known, err := json.Marshal(s)
 	if err != nil {
@@ -214,6 +364,18 @@ func SaveSettings(s Settings) error {
 		}
 	}
 	if err := mergeRoleExtras(fields, s.roleExtra); err != nil {
+		return err
+	}
+	if err := mergeEntryExtras(fields, "tools", s.toolExtra); err != nil {
+		return err
+	}
+	if err := mergeEntryExtras(fields, "mcp_servers", s.mcpExtra); err != nil {
+		return err
+	}
+	if err := mergeOverrideExtras(fields, "tools", s.toolRoleExtra); err != nil {
+		return err
+	}
+	if err := mergeOverrideExtras(fields, "mcp_servers", s.mcpRoleExtra); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(fields, "", "  ")
@@ -254,4 +416,510 @@ func mergeRoleExtras(fields map[string]json.RawMessage, roleExtra map[string]map
 	}
 	fields["roles"] = raw
 	return nil
+}
+
+// unknownEntryFields collects, per entry of a tools or mcp_servers object,
+// the fields that are not in known, so a save writes them back.
+func unknownEntryFields(rawEntries json.RawMessage, known []string) map[string]map[string]json.RawMessage {
+	knownSet := map[string]bool{}
+	for _, k := range known {
+		knownSet[k] = true
+	}
+	var perEntry map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(rawEntries, &perEntry); err != nil {
+		return nil
+	}
+	var out map[string]map[string]json.RawMessage
+	for entry, entryFields := range perEntry {
+		for k, v := range entryFields {
+			if knownSet[strings.ToLower(k)] {
+				continue
+			}
+			if out == nil {
+				out = map[string]map[string]json.RawMessage{}
+			}
+			if out[entry] == nil {
+				out[entry] = map[string]json.RawMessage{}
+			}
+			out[entry][k] = v
+		}
+	}
+	return out
+}
+
+// mergeEntryExtras writes the unknown fields of each tools or mcp_servers
+// entry back into the object already in fields under key.
+func mergeEntryExtras(fields map[string]json.RawMessage, key string, entryExtra map[string]map[string]json.RawMessage) error {
+	if len(entryExtra) == 0 {
+		return nil
+	}
+	entries := map[string]map[string]json.RawMessage{}
+	if raw, ok := fields[key]; ok {
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return err
+		}
+	}
+	for entry, extras := range entryExtra {
+		if entries[entry] == nil {
+			entries[entry] = map[string]json.RawMessage{}
+		}
+		for k, v := range extras {
+			if _, ok := entries[entry][k]; !ok {
+				entries[entry][k] = v
+			}
+		}
+	}
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	fields[key] = raw
+	return nil
+}
+
+// unknownOverrideFields collects, per entry and role of a tools or
+// mcp_servers object, the override fields that are not enabled or placement,
+// so a save writes them back.
+func unknownOverrideFields(rawEntries json.RawMessage) map[string]map[string]map[string]json.RawMessage {
+	var perEntry map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(rawEntries, &perEntry); err != nil {
+		return nil
+	}
+	var out map[string]map[string]map[string]json.RawMessage
+	for entry, entryFields := range perEntry {
+		var rawRoles json.RawMessage
+		for k, v := range entryFields {
+			if strings.ToLower(k) == "roles" {
+				rawRoles = v
+			}
+		}
+		if rawRoles == nil {
+			continue
+		}
+		var perRole map[string]map[string]json.RawMessage
+		if err := json.Unmarshal(rawRoles, &perRole); err != nil {
+			continue
+		}
+		for role, roleFields := range perRole {
+			for k, v := range roleFields {
+				switch strings.ToLower(k) {
+				case "enabled", "placement":
+				default:
+					if out == nil {
+						out = map[string]map[string]map[string]json.RawMessage{}
+					}
+					if out[entry] == nil {
+						out[entry] = map[string]map[string]json.RawMessage{}
+					}
+					if out[entry][role] == nil {
+						out[entry][role] = map[string]json.RawMessage{}
+					}
+					out[entry][role][k] = v
+				}
+			}
+		}
+	}
+	return out
+}
+
+// mergeOverrideExtras writes the unknown fields of each per-role override
+// back into the tools or mcp_servers object already in fields under key.
+func mergeOverrideExtras(fields map[string]json.RawMessage, key string, overrideExtra map[string]map[string]map[string]json.RawMessage) error {
+	if len(overrideExtra) == 0 {
+		return nil
+	}
+	entries := map[string]map[string]json.RawMessage{}
+	if raw, ok := fields[key]; ok {
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return err
+		}
+	}
+	for entry, perRole := range overrideExtra {
+		if entries[entry] == nil {
+			entries[entry] = map[string]json.RawMessage{}
+		}
+		roles := map[string]map[string]json.RawMessage{}
+		if raw, ok := entries[entry]["roles"]; ok {
+			if err := json.Unmarshal(raw, &roles); err != nil {
+				return err
+			}
+		}
+		for role, extras := range perRole {
+			if roles[role] == nil {
+				roles[role] = map[string]json.RawMessage{}
+			}
+			for k, v := range extras {
+				if _, ok := roles[role][k]; !ok {
+					roles[role][k] = v
+				}
+			}
+		}
+		raw, err := json.Marshal(roles)
+		if err != nil {
+			return err
+		}
+		entries[entry]["roles"] = raw
+	}
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	fields[key] = raw
+	return nil
+}
+
+// ProjectSettingsPath is the per-project settings file under root.
+// WICK_PROJECT_SETTINGS overrides it, so tests can point it at a temp file.
+func ProjectSettingsPath(root string) string {
+	if p := os.Getenv("WICK_PROJECT_SETTINGS"); p != "" {
+		return p
+	}
+	return filepath.Join(root, filepath.FromSlash(ProjectSettingsRel))
+}
+
+// LoadProjectSettings reads the per-project file under root. A missing or
+// unreadable file is empty settings: the project layer is optional.
+func LoadProjectSettings(root string) Settings {
+	raw, err := os.ReadFile(ProjectSettingsPath(root))
+	if err != nil {
+		return Settings{}
+	}
+	return decodeSettings(raw)
+}
+
+// EffectiveSettings merges the global file with the project file under root.
+// The project wins field by field and maps merge by key; the process
+// environment still wins over both. SaveSettings writes the global file only,
+// so read the effective settings for serving and the global ones for editing.
+func EffectiveSettings(root string) Settings {
+	return MergeSettings(LoadSettings(), LoadProjectSettings(root))
+}
+
+// MergeSettings folds project over global: scalars and list fields win when
+// set, maps merge by key with the project winning each field, and unknown keys
+// merge by key too. A value the environment set (tracked in the source map)
+// always wins over the project file.
+func MergeSettings(global, project Settings) Settings {
+	out := global
+	out.src = cloneSources(global.src)
+	out.extra = cloneRawMap(global.extra)
+	out.roleExtra = cloneNestedRawMap(global.roleExtra)
+	out.toolExtra = cloneNestedRawMap(global.toolExtra)
+	out.mcpExtra = cloneNestedRawMap(global.mcpExtra)
+	out.toolRoleExtra = cloneDeepNestedRawMap(global.toolRoleExtra)
+	out.mcpRoleExtra = cloneDeepNestedRawMap(global.mcpRoleExtra)
+	if out.src == nil {
+		out.src = map[string]string{}
+	}
+	if project.DecisionModel != "" && out.src["decision_model"] != "env" {
+		out.DecisionModel = project.DecisionModel
+		out.src["decision_model"] = "project"
+	}
+	if project.Threshold != 0 && out.src["threshold"] != "env" {
+		out.Threshold = project.Threshold
+		out.src["threshold"] = "project"
+	}
+	if project.MaxWorkers != 0 && out.src["max_workers"] != "env" {
+		out.MaxWorkers = project.MaxWorkers
+		out.src["max_workers"] = "project"
+	}
+	out.Roles = mergeRoles(global.Roles, project.Roles, out.src)
+	out.Tools = mergeTools(global.Tools, project.Tools, out.src)
+	out.MCPServers = mergeMCPServers(global.MCPServers, project.MCPServers, out.src)
+	for k, v := range project.extra {
+		out.extra[k] = v
+	}
+	mergeNestedRaw(project.roleExtra, out.roleExtra)
+	mergeNestedRaw(project.toolExtra, out.toolExtra)
+	mergeNestedRaw(project.mcpExtra, out.mcpExtra)
+	mergeDeepNestedRaw(project.toolRoleExtra, out.toolRoleExtra)
+	mergeDeepNestedRaw(project.mcpRoleExtra, out.mcpRoleExtra)
+	return out
+}
+
+// mergeRoles folds project slots over global ones, field by field, recording
+// a project source for every field the project set.
+func mergeRoles(global, project map[string]Role, src map[string]string) map[string]Role {
+	if len(global) == 0 && len(project) == 0 {
+		return nil
+	}
+	out := map[string]Role{}
+	for slot, r := range global {
+		out[slot] = r
+	}
+	for slot, p := range project {
+		base := out[slot]
+		if p.Harness != "" {
+			base.Harness = p.Harness
+			src["roles."+slot+".harness"] = "project"
+		}
+		if p.Model != "" {
+			base.Model = p.Model
+			src["roles."+slot+".model"] = "project"
+		}
+		if p.Effort != "" {
+			base.Effort = p.Effort
+			src["roles."+slot+".effort"] = "project"
+		}
+		out[slot] = base
+	}
+	return out
+}
+
+// mergeTools folds project tool entries over global ones by name, then field
+// by field, recording a project source for every field the project set.
+func mergeTools(global, project map[string]ToolSetting, src map[string]string) map[string]ToolSetting {
+	if len(global) == 0 && len(project) == 0 {
+		return nil
+	}
+	out := map[string]ToolSetting{}
+	for name, e := range global {
+		out[name] = cloneToolSetting(e)
+	}
+	for name, p := range project {
+		base := out[name]
+		if base.Roles == nil && len(p.Roles) > 0 {
+			base.Roles = map[string]ToolRoleOverride{}
+		}
+		if p.Enabled != nil {
+			v := *p.Enabled
+			base.Enabled = &v
+			src["tools."+name+".enabled"] = "project"
+		}
+		if p.Placement != "" {
+			base.Placement = p.Placement
+			src["tools."+name+".placement"] = "project"
+		}
+		if p.Rename != "" {
+			base.Rename = p.Rename
+			src["tools."+name+".rename"] = "project"
+		}
+		for role, ov := range p.Roles {
+			rbase := base.Roles[role]
+			if ov.Enabled != nil {
+				v := *ov.Enabled
+				rbase.Enabled = &v
+				src["tools."+name+".roles."+role+".enabled"] = "project"
+			}
+			if ov.Placement != "" {
+				rbase.Placement = ov.Placement
+				src["tools."+name+".roles."+role+".placement"] = "project"
+			}
+			base.Roles[role] = rbase
+		}
+		out[name] = base
+	}
+	if len(out) > 0 && len(project) > 0 {
+		src["tools"] = "project"
+	}
+	return out
+}
+
+// mergeMCPServers folds project server entries over global ones by name.
+// Scalars and lists win wholesale when set; env and rename maps merge by key,
+// where a project entry with an empty value deletes the mapping.
+func mergeMCPServers(global, project map[string]MCPServerSetting, src map[string]string) map[string]MCPServerSetting {
+	if len(global) == 0 && len(project) == 0 {
+		return nil
+	}
+	out := map[string]MCPServerSetting{}
+	for name, e := range global {
+		out[name] = cloneMCPServerSetting(e)
+	}
+	for name, p := range project {
+		base := out[name]
+		if p.Command != "" {
+			base.Command = p.Command
+			src["mcp_servers."+name+".command"] = "project"
+		}
+		if p.Args != nil {
+			base.Args = append([]string(nil), p.Args...)
+			src["mcp_servers."+name+".args"] = "project"
+		}
+		if p.Env != nil {
+			if base.Env == nil {
+				base.Env = map[string]string{}
+			}
+			for k, v := range p.Env {
+				base.Env[k] = v
+			}
+			src["mcp_servers."+name+".env"] = "project"
+		}
+		if p.Placement != "" {
+			base.Placement = p.Placement
+			src["mcp_servers."+name+".placement"] = "project"
+		}
+		if p.Include != nil {
+			base.Include = append([]string(nil), p.Include...)
+			src["mcp_servers."+name+".include"] = "project"
+		}
+		if p.Exclude != nil {
+			base.Exclude = append([]string(nil), p.Exclude...)
+			src["mcp_servers."+name+".exclude"] = "project"
+		}
+		if p.Rename != nil {
+			if base.Rename == nil {
+				base.Rename = map[string]string{}
+			}
+			for k, v := range p.Rename {
+				if v == "" {
+					delete(base.Rename, k)
+				} else {
+					base.Rename[k] = v
+				}
+			}
+			src["mcp_servers."+name+".rename"] = "project"
+		}
+		if base.Roles == nil && len(p.Roles) > 0 {
+			base.Roles = map[string]MCPServerRoleOverride{}
+		}
+		for role, ov := range p.Roles {
+			rbase := base.Roles[role]
+			if ov.Enabled != nil {
+				v := *ov.Enabled
+				rbase.Enabled = &v
+				src["mcp_servers."+name+".roles."+role+".enabled"] = "project"
+			}
+			if ov.Placement != "" {
+				rbase.Placement = ov.Placement
+				src["mcp_servers."+name+".roles."+role+".placement"] = "project"
+			}
+			base.Roles[role] = rbase
+		}
+		out[name] = base
+	}
+	if len(out) > 0 && len(project) > 0 {
+		src["mcp_servers"] = "project"
+	}
+	return out
+}
+
+func cloneToolSetting(e ToolSetting) ToolSetting {
+	out := e
+	if e.Enabled != nil {
+		v := *e.Enabled
+		out.Enabled = &v
+	}
+	if e.Roles != nil {
+		out.Roles = map[string]ToolRoleOverride{}
+		for role, ov := range e.Roles {
+			c := ov
+			if ov.Enabled != nil {
+				v := *ov.Enabled
+				c.Enabled = &v
+			}
+			out.Roles[role] = c
+		}
+	}
+	return out
+}
+
+func cloneMCPServerSetting(e MCPServerSetting) MCPServerSetting {
+	out := e
+	out.Args = append([]string(nil), e.Args...)
+	out.Include = append([]string(nil), e.Include...)
+	out.Exclude = append([]string(nil), e.Exclude...)
+	if e.Env != nil {
+		out.Env = map[string]string{}
+		for k, v := range e.Env {
+			out.Env[k] = v
+		}
+	}
+	if e.Rename != nil {
+		out.Rename = map[string]string{}
+		for k, v := range e.Rename {
+			out.Rename[k] = v
+		}
+	}
+	if e.Roles != nil {
+		out.Roles = map[string]MCPServerRoleOverride{}
+		for role, ov := range e.Roles {
+			c := ov
+			if ov.Enabled != nil {
+				v := *ov.Enabled
+				c.Enabled = &v
+			}
+			out.Roles[role] = c
+		}
+	}
+	return out
+}
+
+func cloneSources(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneRawMap(m map[string]json.RawMessage) map[string]json.RawMessage {
+	if m == nil {
+		return map[string]json.RawMessage{}
+	}
+	out := map[string]json.RawMessage{}
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneNestedRawMap(m map[string]map[string]json.RawMessage) map[string]map[string]json.RawMessage {
+	// Always non-nil: MergeSettings folds project extras into the result, so
+	// a nil map here panics on the first project unknown field.
+	out := map[string]map[string]json.RawMessage{}
+	for k, inner := range m {
+		c := map[string]json.RawMessage{}
+		for f, v := range inner {
+			c[f] = v
+		}
+		out[k] = c
+	}
+	return out
+}
+
+func mergeNestedRaw(from, into map[string]map[string]json.RawMessage) {
+	for k, inner := range from {
+		if into[k] == nil {
+			into[k] = map[string]json.RawMessage{}
+		}
+		for f, v := range inner {
+			into[k][f] = v
+		}
+	}
+}
+
+func cloneDeepNestedRawMap(m map[string]map[string]map[string]json.RawMessage) map[string]map[string]map[string]json.RawMessage {
+	out := map[string]map[string]map[string]json.RawMessage{}
+	for k, mid := range m {
+		c := map[string]map[string]json.RawMessage{}
+		for r, inner := range mid {
+			cc := map[string]json.RawMessage{}
+			for f, v := range inner {
+				cc[f] = v
+			}
+			c[r] = cc
+		}
+		out[k] = c
+	}
+	return out
+}
+
+func mergeDeepNestedRaw(from, into map[string]map[string]map[string]json.RawMessage) {
+	for k, mid := range from {
+		if into[k] == nil {
+			into[k] = map[string]map[string]json.RawMessage{}
+		}
+		for r, inner := range mid {
+			if into[k][r] == nil {
+				into[k][r] = map[string]json.RawMessage{}
+			}
+			for f, v := range inner {
+				into[k][r][f] = v
+			}
+		}
+	}
 }

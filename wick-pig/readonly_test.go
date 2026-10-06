@@ -56,6 +56,7 @@ func fakeHerdr(cmd string, args []string, report string, git Result) Result {
 }
 
 func TestReviewRoleServesOnlyLooking(t *testing.T) {
+	hermeticSettings(t)
 	served, _ := RoleTools("review")
 	for _, tl := range served {
 		if n := tl.Name(); n != "read" && n != "find" {
