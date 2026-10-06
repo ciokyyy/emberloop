@@ -357,3 +357,24 @@ func supersedeTopLevelPane(pane, keep string) error {
 	}
 	return nil
 }
+
+// topLevelPanes lists the herdr panes of the recorded top-level sessions, so
+// the automatic sweep reaches them like worker panes.
+func topLevelPanes() []string {
+	entries, err := os.ReadDir(agentStateDir())
+	if err != nil {
+		return nil
+	}
+	var panes []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		st, ok, err := ReadAgentState(strings.TrimSuffix(e.Name(), ".json"))
+		if err != nil || !ok || st.Type != "orchestrator" || st.Pane == "" || st.SessionID == "" {
+			continue
+		}
+		panes = append(panes, st.Pane)
+	}
+	return panes
+}

@@ -26,7 +26,7 @@ owns its `_test.go` and the behaviour below):
   `compress_request.go` (the herdr key's signal: queue mark at the boundary,
   second-press force, top-level fallback, single-flight claim, `request-compress`),
   `autocompress.go` (automatic trigger: threshold decision with cooldown and
-  disable switch, concurrent worker sweep and supervisor loop with failure
+  disable switch, concurrent sweep of worker panes and recorded top-level panes, supervisor loop with failure
   backoff, always-continue handoff),
   `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
   check), `compress_render.go` (transcript rendered as text in full),

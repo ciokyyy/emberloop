@@ -1,9 +1,7 @@
 package wick
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -85,35 +83,6 @@ func DecideAutoCompress(snap ContextSnapshot, s tools.Settings, harness string, 
 	return AutoDecision{Compress: true, Reason: "over threshold at boundary"}
 }
 
-// autoWorker resolves the worker behind pane the way the manual path does:
-// the agent in the pane, its worker record for the harness and launch, and
-// the harness session the state currently names.
-func autoWorker(run Exec, pane string) (agentID string, w Worker, sessionID string, err error) {
-	agentID, err = resolvePaneToAgent(pane, run)
-	if err != nil {
-		return "", Worker{}, "", err
-	}
-	store, err := load()
-	if err != nil {
-		return "", Worker{}, "", err
-	}
-	w, ok := store[agentID]
-	if !ok {
-		return "", Worker{}, "", fmt.Errorf("pane %q is agent %q, not a worker: auto-compress needs a worker", pane, agentID)
-	}
-	h := Registered(w.Harness)
-	if h == nil {
-		return "", Worker{}, "", fmt.Errorf("unknown harness %q (have %s)", w.Harness, strings.Join(HarnessNames(), ", "))
-	}
-	sessionID = w.SessionID
-	if st, ok, serr := ReadAgentState(agentID); serr != nil {
-		return "", Worker{}, "", serr
-	} else if ok && st.SessionID != "" {
-		sessionID = st.SessionID
-	}
-	return agentID, w, sessionID, nil
-}
-
 // MaybeAutoCompress compresses the worker in pane when the automatic trigger
 // says so, and reports whether it did. Below the threshold, switched off, in
 // cooldown, or with no model set, it returns without touching the pane: the
@@ -126,16 +95,16 @@ func autoWorker(run Exec, pane string) (agentID string, w Worker, sessionID stri
 // restart parks the pane for the failure cooldown instead of spending a
 // model call on every sweep.
 func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, error) {
-	agentID, w, sessionID, err := autoWorker(run, pane)
+	agentID, err := resolvePaneToAgent(pane, run)
 	if err != nil {
 		return "", false, err
 	}
-	h := Registered(w.Harness)
-	path := findSession(h.SessionRoot(Session{}), sessionID)
-	if sessionID == "" || path == "" {
-		return "", false, nil
+	tgt, err := resolveCompressTarget(agentID, pane)
+	if err != nil {
+		return "", false, err
 	}
-	snap, err := summarizePath(w.Harness, path)
+	sessionID, path := tgt.sessionID, tgt.path
+	snap, err := summarizePath(tgt.harness, path)
 	if err != nil {
 		return "", false, err
 	}
@@ -145,22 +114,22 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 	} else if ok {
 		compressed = st.Compressed
 	}
-	if d := DecideAutoCompress(snap, s, w.Harness, compressed); !d.Compress && !d.Wait {
+	if d := DecideAutoCompress(snap, s, tgt.harness, compressed); !d.Compress && !d.Wait {
 		return "", false, nil
 	}
 	// The boundary waits before the summary: a result landing mid-wait
 	// belongs in the handoff, not after it.
-	if err := WaitForToolBoundary(w.Harness, path); err != nil {
+	if err := WaitForToolBoundary(tgt.harness, path); err != nil {
 		return "", false, err
 	}
-	snap, err = summarizePath(w.Harness, path)
+	snap, err = summarizePath(tgt.harness, path)
 	if err != nil {
 		return "", false, err
 	}
-	if d := DecideAutoCompress(snap, s, w.Harness, compressed); !d.Compress {
+	if d := DecideAutoCompress(snap, s, tgt.harness, compressed); !d.Compress {
 		return "", false, nil
 	}
-	model := s.EffectiveCompressModel(w.Harness)
+	model := s.EffectiveCompressModel(tgt.harness)
 	claimed, err := ClaimCompressing(agentID)
 	if err != nil {
 		return "", false, err
@@ -179,7 +148,7 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 	} else if ok && st.SessionID != "" && st.SessionID != sessionID {
 		return "", false, nil
 	}
-	handoff, err := SummarizeSession(run, w.Harness, path, model, ModelWindow(model, s.ContextWindows()))
+	handoff, err := SummarizeSession(run, tgt.harness, path, model, ModelWindow(model, s.ContextWindows()))
 	if err != nil {
 		recordAutoFailure(pane)
 		return "", false, err
@@ -190,12 +159,12 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 		return "", false, err
 	}
 	next, err := RestartPane(run, PaneRestart{
-		Harness:      w.Harness,
+		Harness:      tgt.harness,
 		Pane:         pane,
 		AgentID:      agentID,
 		OldSessionID: sessionID,
 		Handoff:      handoff,
-	}, workerLaunchFor(w, handoff))
+	}, tgt.launchFor(handoff))
 	if err != nil {
 		recordAutoFailure(pane)
 		return "", false, err
@@ -204,7 +173,8 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 	return next, true, nil
 }
 
-// SweepAutoCompress runs one automatic pass over every worker pane: each pane
+// SweepAutoCompress runs one automatic pass over every worker pane and
+// every top-level session pane: each pane
 // past its threshold compresses through MaybeAutoCompress, and the panes
 // that did are returned. Panes compress concurrently, so one pane's boundary
 // wait never holds the rest; the claim keeps two passes off one pane, and a
@@ -216,9 +186,19 @@ func SweepAutoCompress(run Exec, s tools.Settings) []string {
 		return nil
 	}
 	panes := make([]string, 0, len(store))
+	seen := map[string]bool{}
 	for _, w := range store {
-		if w.Pane != "" && !autoFailedRecently(w.Pane) {
+		if w.Pane != "" && !seen[w.Pane] && !autoFailedRecently(w.Pane) {
+			seen[w.Pane] = true
 			panes = append(panes, w.Pane)
+		}
+	}
+	// Top-level sessions are not workers but compress like them: each one
+	// recorded its pane, harness and session at startup.
+	for _, pane := range topLevelPanes() {
+		if !seen[pane] && !autoFailedRecently(pane) {
+			seen[pane] = true
+			panes = append(panes, pane)
 		}
 	}
 	var mu sync.Mutex
