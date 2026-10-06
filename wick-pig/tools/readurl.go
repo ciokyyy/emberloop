@@ -833,9 +833,11 @@ func chromeSandboxArgs() []string {
 
 // isBrowserErrorPage reports a Chrome navigation-error dump: the browser
 // reached no page (blocked address, dead host), so there is no content to
-// shape.
+// shape. The `chrome-error://chromewebdata` URL never appears in --dump-dom
+// output, so match the error frame class plus a network error token instead
+// of the bare "chromewebdata" substring a legit page could mention.
 func isBrowserErrorPage(body string) bool {
-	return strings.Contains(body, "chromewebdata")
+	return strings.Contains(body, "main-frame-error") && strings.Contains(body, "ERR_")
 }
 
 // cappedWriter streams command output through the shared body cap instead of
