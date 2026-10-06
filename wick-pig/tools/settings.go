@@ -93,12 +93,14 @@ type MCPServerRoleOverride struct {
 // glob lists over the server's own tool names (empty include means all;
 // exclude wins); rename maps an original name to the name agents see.
 // Placement defaults to execute; a per-role block overrides enabled and
-// placement for that role. There is no server-level enabled: remove the entry
-// or exclude its tools.
+// placement for that role. Summary is a short human line the execute tool
+// description shows beside the server's tool count. There is no
+// server-level enabled: remove the entry or exclude its tools.
 type MCPServerSetting struct {
 	Command   string                           `json:"command,omitempty"`
 	Args      []string                         `json:"args,omitempty"`
 	Env       map[string]string                `json:"env,omitempty"`
+	Summary   string                           `json:"summary,omitempty"`
 	Placement string                           `json:"placement,omitempty"`
 	Include   []string                         `json:"include,omitempty"`
 	Exclude   []string                         `json:"exclude,omitempty"`
@@ -368,7 +370,7 @@ func decodeSettings(raw []byte) Settings {
 			s.toolExtra = unknownEntryFields(v, []string{"enabled", "placement", "rename", "roles"})
 			s.toolRoleExtra = unknownOverrideFields(v)
 		case "mcp_servers":
-			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "placement", "include", "exclude", "rename", "roles"})
+			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "summary", "placement", "include", "exclude", "rename", "roles"})
 			s.mcpRoleExtra = unknownOverrideFields(v)
 		case "graph":
 			s.graphExtra = unknownGraphFields(v)
@@ -454,6 +456,7 @@ func markToolSources(s *Settings) {
 			{"command", e.Command != ""},
 			{"args", e.Args != nil},
 			{"env", e.Env != nil},
+			{"summary", e.Summary != ""},
 			{"placement", e.Placement != ""},
 			{"include", e.Include != nil},
 			{"exclude", e.Exclude != nil},
@@ -1158,6 +1161,10 @@ func mergeMCPServers(global, project map[string]MCPServerSetting, src map[string
 				base.Env[k] = v
 			}
 			src["mcp_servers."+name+".env"] = "project"
+		}
+		if p.Summary != "" {
+			base.Summary = p.Summary
+			src["mcp_servers."+name+".summary"] = "project"
 		}
 		if p.Placement != "" {
 			base.Placement = p.Placement

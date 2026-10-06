@@ -1,6 +1,4 @@
-// Execute runs a Python script that calls wick's native tools as functions
-// (ticket 16; MCP tools join in ticket 17).
-//
+// Execute runs a Python script that calls wick's native and MCP tools as functions.
 // Each call is a fresh `python3 -I` process with no state kept between calls.
 // Wick creates a private temp directory holding a unix socket and a generated
 // `tools` module, and puts the script beside it so `import tools` resolves
@@ -144,19 +142,44 @@ func (e boundExecute) Schema() map[string]any {
 // carries the paths, so no quoting is needed.
 const executeLauncher = "import sys; sys.path.insert(0, sys.argv[1]); import runpy; runpy.run_path(sys.argv[2], run_name='__main__')"
 
+// MCPServerLine is one MCP server behind execute: its configured name, its
+// short summary from settings, and how many of its tools the stub serves.
+type MCPServerLine struct {
+	Name    string
+	Summary string
+	Tools   int
+}
+
 // ExecuteDescription lists the tools behind execute by name, with the grep
 // example and the search/help/ToolError how-to. names are the execute bucket
-// in serve order; main-list tools callable beside them are named in one line.
-func ExecuteDescription(names []string) string {
+// in serve order; servers adds one line per MCP server behind execute (name,
+// short summary, tool count) and nothing more: never schemas.
+func ExecuteDescription(names []string, servers []MCPServerLine) string {
 	var b strings.Builder
 	b.WriteString("Run a Python script (stdlib only) that calls wick tools as functions, so one call replaces many and only what the script prints enters context.\n\n")
-	if len(names) == 0 {
+	if len(names) == 0 && len(servers) == 0 {
 		b.WriteString("No tools are behind execute for this role.\n")
+	} else if len(names) == 0 {
+		b.WriteString("Behind execute: MCP server tools (see servers below).\n")
 	} else {
-		fmt.Fprintf(&b, "Behind execute: %s.\n\n", strings.Join(names, ", "))
+		fmt.Fprintf(&b, "Behind execute: %s.\n", strings.Join(names, ", "))
+	}
+	if len(servers) > 0 {
+		b.WriteString("\nMCP servers:\n")
+		for _, s := range servers {
+			summary := ""
+			if first, _, _ := strings.Cut(s.Summary, "\n"); strings.TrimSpace(first) != "" {
+				summary = strings.TrimSpace(first) + ": "
+			}
+			unit := "tools"
+			if s.Tools == 1 {
+				unit = "tool"
+			}
+			fmt.Fprintf(&b, "- %q: %s%d %s\n", s.Name, summary, s.Tools, unit)
+		}
 	}
 
-	b.WriteString("import tools\nprint(tools.grep(pattern=\"TODO\"))\n\n")
+	b.WriteString("\nimport tools\nprint(tools.grep(pattern=\"TODO\"))\n\n")
 	b.WriteString("tools.search(query) lists matching tools with signatures; tools.help(name) shows one tool. " +
 		"A failing tool call raises tools.ToolError: catch it or the traceback comes back.")
 	return b.String()
@@ -527,17 +550,35 @@ var executeStubReserved = map[string]bool{
 	"ToolError": true, "call": true, "search": true, "help": true,
 }
 
+// mcpServerOf names the configured MCP server a tool was listed from, or ""
+// for a native tool. Renamed wrappers forward it, so a rename keeps the
+// tools.<server>.<name> namespace.
+func mcpServerOf(t Tool) string {
+	if s, ok := t.(interface{ MCPServer() string }); ok {
+		return s.MCPServer()
+	}
+	return ""
+}
+
 // buildToolsModule renders the generated `tools` module: the ToolError type,
-// the bridge client, one function per callable tool, and the search/help
-// discovery over the baked specs.
+// the bridge client, one function per callable tool, one namespace object per
+// MCP server (`tools.<server>.<name>` calling the same configured name), and
+// the search/help discovery over the baked specs. A server whose name is not
+// a valid Python name, or one taken by the stub or a tool, serves its tools
+// top-level only, with a comment saying so.
 func buildToolsModule(sockPath string, allowed []Tool) (string, error) {
 	specRaw, err := json.Marshal(executeSpecs(allowed))
 	if err != nil {
 		return "", err
 	}
+	taken := map[string]bool{}
+	for name := range executeStubReserved {
+		taken[name] = true
+	}
 	var fns strings.Builder
 	for _, t := range allowed {
 		name := t.Name()
+		taken[name] = true
 		if !isPythonIdent(name) {
 			fmt.Fprintf(&fns, "# %s is callable only through tools.call(%q, ...): it is not a valid Python name\n", name, name)
 			continue
@@ -548,6 +589,11 @@ func buildToolsModule(sockPath string, allowed []Tool) (string, error) {
 		}
 		fmt.Fprintf(&fns, "def %s(**kwargs):\n    return _call(%q, kwargs)\n\n", name, name)
 	}
+	namespaces, aliases := buildMCPNamespaces(allowed, taken)
+	aliasRaw, err := json.Marshal(aliases)
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf(`"""Wick native tools as functions: one call replaces many tool turns."""
 import json as _json
 import socket as _socket
@@ -557,6 +603,7 @@ class ToolError(Exception):
 
 _SOCKET_PATH = %q
 _SPECS = _json.loads(%q)
+_ALIASES = _json.loads(%q)
 
 _sock = None
 _reader = None
@@ -602,15 +649,34 @@ def __getattr__(name):
     return _missing
 
 %s
+class _ServerNamespace:
+    """One MCP server's tools: every attribute calls the configured name."""
+    def __init__(self, server):
+        object.__setattr__(self, "_server", server)
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        def _method(**kwargs):
+            return _call(name, kwargs)
+        return _method
+
+%s
 def search(query):
     """List the available tools matching query, with signatures."""
     q = (query or "").lower()
     out = []
+    shown = set()
     for name in sorted(_SPECS):
         spec = _SPECS[name]
         if q in name.lower() or q in spec["desc"].lower():
             first = spec["desc"].split("\n")[0]
             out.append("%%s%%s: %%s" %% (name, spec["sig"][len(name):], first))
+            shown.add(name)
+    for alias in sorted(_ALIASES):
+        if q and q in alias.lower() and _ALIASES[alias] in _SPECS and _ALIASES[alias] not in shown:
+            spec = _SPECS[_ALIASES[alias]]
+            first = spec["desc"].split("\n")[0]
+            out.append("%%s (see %%s): %%s" %% (alias, _ALIASES[alias], first))
     if not out:
         out.append("no tools match %%r; available: %%s" %% (query, ", ".join(sorted(_SPECS))))
     return "\n".join(out)
@@ -618,8 +684,65 @@ def search(query):
 def help(name):
     """Show one tool's signature and description."""
     spec = _SPECS.get(name)
+    if spec is None and name in _ALIASES:
+        name = _ALIASES[name]
+        spec = _SPECS.get(name)
     if spec is None:
         return "unknown tool %%r; available: %%s" %% (name, ", ".join(sorted(_SPECS)))
     return "%%s%%s:\n%%s" %% (name, spec["sig"][len(name):], spec["desc"])
-`, sockPath, string(specRaw), fns.String()), nil
+`, sockPath, string(specRaw), string(aliasRaw), fns.String(), namespaces.String()), nil
+}
+
+// buildMCPNamespaces renders one namespace object per MCP server behind
+// execute, with one method per ident-safe tool calling its configured name.
+// It returns the rendered block and the server-qualified alias map
+// ("server.name" to configured name) the stub's help resolves. taken holds
+// every module-level name already defined, so a server taking one is skipped
+// with a comment instead of clobbering the stub.
+func buildMCPNamespaces(allowed []Tool, taken map[string]bool) (strings.Builder, map[string]string) {
+	var b strings.Builder
+	aliases := map[string]string{}
+	byServer := map[string][]Tool{}
+	var servers []string
+	for _, t := range allowed {
+		server := mcpServerOf(t)
+		if server == "" {
+			continue
+		}
+		if _, ok := byServer[server]; !ok {
+			servers = append(servers, server)
+		}
+		byServer[server] = append(byServer[server], t)
+	}
+	sort.Strings(servers)
+	for _, server := range servers {
+		for _, t := range byServer[server] {
+			aliases[server+"."+t.Name()] = t.Name()
+		}
+		if !isPythonIdent(server) {
+			fmt.Fprintf(&b, "# server %q has no tools.<server> namespace: it is not a valid Python name\n", server)
+			continue
+		}
+		if taken[server] {
+			fmt.Fprintf(&b, "# server %q has no tools.<server> namespace: the name is taken by the stub\n", server)
+			continue
+		}
+		taken[server] = true
+		fmt.Fprintf(&b, "class _mcp_%s(_ServerNamespace):\n", server)
+		fmt.Fprintf(&b, "    \"\"\"MCP server %q: one method per tool.\"\"\"\n", server)
+		seen := map[string]bool{}
+		for _, t := range byServer[server] {
+			name := t.Name()
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			if !isPythonIdent(name) || name == "call" {
+				continue
+			}
+			fmt.Fprintf(&b, "    def %s(self, **kwargs):\n        return _call(%q, kwargs)\n\n", name, name)
+		}
+		fmt.Fprintf(&b, "%s = _mcp_%s(%q)\n\n", server, server, server)
+	}
+	return b, aliases
 }

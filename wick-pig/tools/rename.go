@@ -20,3 +20,22 @@ func (r renamed) ReadOnly() bool {
 	}
 	return false
 }
+
+// OriginalName is the inner tool's server-side name, or "" for a native
+// tool: the execute stub and the role resolution read the original through
+// a rename instead of losing the MCP marker.
+func (r renamed) OriginalName() string {
+	if o, ok := r.Tool.(interface{ OriginalName() string }); ok {
+		return o.OriginalName()
+	}
+	return ""
+}
+
+// MCPServer is the inner tool's configured MCP server, or "" for a native
+// tool: a renamed MCP tool keeps its tools.<server>.<name> namespace.
+func (r renamed) MCPServer() string {
+	if s, ok := r.Tool.(interface{ MCPServer() string }); ok {
+		return s.MCPServer()
+	}
+	return ""
+}
