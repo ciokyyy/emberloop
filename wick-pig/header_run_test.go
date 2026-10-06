@@ -363,7 +363,8 @@ func TestWrapRuleLineRestored(t *testing.T) {
 	}
 }
 
-// The soft edge is a full-width row of lower half blocks in the strip
+// The soft edge is a full-width row of lower half blocks, rounded at both
+// ends by quadrant glyphs, in the strip
 // background at every color profile, dark and light: no drawn line survives
 // a downgrade.
 func TestTopRuleSoftEdgeProfiles(t *testing.T) {
@@ -377,7 +378,7 @@ func TestTopRuleSoftEdgeProfiles(t *testing.T) {
 				profile: profile,
 			}
 			plain := stripANSI(w.topRule())
-			if want := strings.Repeat("▄", 100); plain != want {
+			if want := "▟" + strings.Repeat("▄", 98) + "▙"; plain != want {
 				t.Errorf("profile %v dark %v soft edge = %q, want %q", profile, dark, plain, want)
 			}
 			if strings.Contains(plain, "─") {

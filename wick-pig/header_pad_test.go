@@ -4,6 +4,8 @@ package wick
 // Empty settings mean two columns left/right and one row at the bottom;
 // explicit zero restores the edge-to-edge layout.
 import (
+	"github.com/muesli/termenv"
+	"strings"
 	"testing"
 
 	"example.com/wick/tools"
@@ -69,5 +71,29 @@ func TestWrapMarginSetupPad(t *testing.T) {
 	}
 	if got := wrapMarginSetupPad(100, false, Pad{}); got != "" {
 		t.Errorf("zero pad margins = %q, want none", got)
+	}
+}
+
+func TestBottomEdgeIsRounded(t *testing.T) {
+	w := &wrapper{termW: 40, dark: true, profile: termenv.TrueColor}
+	if got := stripANSI(w.bottomEdge()); got != "▜"+strings.Repeat("▀", 38)+"▛" {
+		t.Errorf("bottom edge = %q", got)
+	}
+}
+
+func TestStripRowsKeepBackgroundBetweenCells(t *testing.T) {
+	out := RenderHeader(HeaderSnapshot{AgentName: "implementer", State: HeaderIdle, Window: 1000, ContextTokens: 100},
+		60, HeaderOpts{Rows: 2, Dark: true, Profile: termenv.TrueColor})
+	bg := "48;2;" // truecolor background code
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, bg) {
+			t.Errorf("row without background: %q", line)
+		}
+		// every reset must be followed by a background set, never a bare gap
+		for _, seg := range strings.Split(line, "\x1b[0m")[1:] {
+			if seg != "" && !strings.HasPrefix(seg, "\x1b[") {
+				t.Errorf("unstyled text after reset: %q", seg)
+			}
+		}
 	}
 }

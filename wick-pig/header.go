@@ -390,12 +390,12 @@ func (h *headerCtx) rowSep(width int, cells []cell, sep string) string {
 	for _, c := range body {
 		parts = append(parts, h.style(c))
 	}
-	left := strings.Join(parts, sep)
+	left := strings.Join(parts, h.fill(sep))
 	gap := width - lipgloss.Width(left) - lipgloss.Width(last.text)
 	if gap < 1 {
 		gap = 1
 	}
-	return h.styled(width, left+strings.Repeat(" ", gap)+h.style(last))
+	return h.styled(width, left+h.fill(strings.Repeat(" ", gap))+h.style(last))
 }
 
 func (h *headerCtx) join(cells []cell) string {
@@ -403,11 +403,18 @@ func (h *headerCtx) join(cells []cell) string {
 	for _, c := range cells {
 		parts = append(parts, h.style(c))
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, h.fill("  "))
+}
+
+// fill is blank space on the strip background. Every cell resets its own
+// colors, so the gaps between cells must carry the background themselves or
+// the strip shows through patchy.
+func (h *headerCtx) fill(blank string) string {
+	return h.r.NewStyle().Background(lipgloss.Color(h.bg)).Render(blank)
 }
 
 func (h *headerCtx) style(c cell) string {
-	s := h.r.NewStyle().Foreground(lipgloss.Color(c.hex))
+	s := h.r.NewStyle().Foreground(lipgloss.Color(c.hex)).Background(lipgloss.Color(h.bg))
 	if c.bold {
 		s = s.Bold(true)
 	}
@@ -482,7 +489,7 @@ func (h *headerCtx) bar(n int) string {
 			hex = gradientCell(h.calm, h.warm, h.hot, i, n)
 			glyph = "▰"
 		}
-		b.WriteString(h.r.NewStyle().Foreground(lipgloss.Color(hex)).Render(glyph))
+		b.WriteString(h.r.NewStyle().Foreground(lipgloss.Color(hex)).Background(lipgloss.Color(h.bg)).Render(glyph))
 	}
 	return b.String()
 }
