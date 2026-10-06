@@ -38,7 +38,10 @@ While specs are being implemented I can't see, in one place, which specs are run
 
 ## Implementation Decisions
 
-- Own module beside the core and herdr-report, so the core module stays dependency-free. Dependencies: bubbletea, lipgloss, bubbles, glamour. `wick-pig tui` execs the TUI binary (or the TUI binary is installed beside it; decided in the first ticket).
+ - Own module beside the core and herdr-report, so the core module stays dependency-free. Base deps: bubbletea, lipgloss, bubbles, glamour. `wick-pig tui` execs the TUI binary (or the TUI binary is installed beside it; decided in the first ticket).
+ - UI toolkit (fits spec directly): bubbles/list + bubbles/viewport for runs/tickets list and scrollable ticket Markdown; bubbles/table for agent rows (harness, model, tokens, cost, RSS); bubbles/textinput for free-text model id in Settings; bubbles/progress for merged/total bar; charmbracelet/huh for Settings forms/select pickers (harness → model → effort, embeds in bubbletea); lipgloss/tree (lipgloss ≥0.12) for spec → ticket → agent tree rendering.
+ - Mouse via lrstanley/bubblezone named click regions (single-click select, double-click open; double-click detection stays ours — track last click time + zone). Polling via tea.Tick every second, no extra dep.
+ - Version lock: pick bubbletea v1 vs v2 up front (charm.land/... paths, changed mouse/key message types in v2); bubblezone and some bubbles components lag one major behind — run `go list -m -versions` before locking. Explicitly skipped: ntcharts (Stats later), evertras/bubble-table (only if bubbles/table falls short), tview/gocui/ratatui ports (different paradigm, don't mix).
 - A read model is the deep module: `Snapshot(stateDir, herdr) → []Repo{Specs{Run, Tickets{Status, Agents{harness, model, status, tokens, cost, rss}}}}`. It reads run records, worker entries, ticket history, reviewer records, submits, usage logs and the latest memory samples from the run-records spec, and spec directories on disk. Ticket status derivation from those signals lives here, in one function.
 - Specs with no run are discovered from known repos' spec directories (repos taken from run records plus the current repo).
 - Usage logs are read incrementally with per-file offsets so polling every second stays cheap.

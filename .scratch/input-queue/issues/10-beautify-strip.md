@@ -6,7 +6,9 @@ Reference: omp's theme and status-line system. Its docs describe symbol presets 
 
 **Blocked by:** 06-shared-theme, 08-borderless-look
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent (restart on the current strip; the earlier attempt `116b6ee` on `implement/10-beautify-strip` is stale)
+
+**Current strip (supersedes "the current look" above):** The spec branch strip already has rounded top and bottom edges, inner padding, background between cells (`0b7c03c`), pane padding (ticket 12), a running-tool label (`header_tool.go`), usage on the right for claude, opencode Go and Antigravity (`a5d954a`, `15a1a69`), no idle word, and a top-level chip. `unicode` must reproduce this look, not the older one. Keep those segments: tool label and right-side usage become segments of the new row. Do not rewrite what works: extend `header.go` rendering with presets, separators and tokens. The branch `116b6ee` branched before these changes and conflicts in `header.go`, `header_run.go`, `tools/settings.go` and `wick-pig/AGENTS.md`; reuse its `strip_symbols.go`, codepoint table and tests where they fit, and start from `spec/input-queue`, not from that branch.
 
 - [ ] Strip renders as styled segments with an icon per segment in the `nerd` preset, and a readable text label per segment in `unicode` and `ascii`
 - [ ] Symbol preset and separator are settings; the default stays `unicode` so a terminal without a Nerd Font looks right
