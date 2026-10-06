@@ -160,6 +160,7 @@ func TestGitRefusesDangerousFlags(t *testing.T) {
 	dir := gitRepo(t)
 	for _, args := range [][]string{
 		{"-c", "user.name=evil", "log", "--oneline"},
+		{"branch", "-c", "old", "new"},
 		{"log", "--output=/tmp/out"},
 		{"log", "--output", "/tmp/out"},
 		{"diff", "--ext-diff"},
@@ -178,17 +179,22 @@ func TestGitRefusesDangerousFlags(t *testing.T) {
 		{"grep", "--textc", "hello"},
 		{"log", "--upl=x"},
 		{"log", "--upload"},
-		// grep's pager runs an agent-chosen command.
+		// grep's pager runs an agent-chosen command, in any bundle.
 		{"grep", "-O", "less", "hello"},
 		{"grep", "-Oless", "hello"},
+		{"grep", "-iOless", "hello"},
 		{"grep", "--open-files-in-pager=less", "hello"},
 		{"grep", "--open=less", "hello"},
 		// cat-file's filters run the repo's drivers.
 		{"cat-file", "--filters", "HEAD"},
 		{"cat-file", "--filt", "HEAD"},
-		// --show-signature runs the repo's gpg.program.
+		// --show-signature runs the repo's gpg.program, and so does
+		// formatting a signature out of --format/--pretty.
 		{"log", "--show-signature"},
 		{"show", "--show-s", "HEAD"},
+		{"log", "--format=%G"},
+		{"log", "--pretty=format:%G %s"},
+		{"show", "--form=%s %G", "HEAD"},
 	} {
 		_, err := run(t, gitTool{}, dir, map[string]any{"args": args})
 		if err == nil {
@@ -208,6 +214,15 @@ func TestGitKeepsLegitimateFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"log", "--oneline", "--graph", "--decorate"},
 		{"log", "--stat", "HEAD"},
+		// --text is an exact option (binary as text), not textconv.
+		{"log", "--text", "--oneline"},
+		{"diff", "--text"},
+		{"grep", "--text", "hello"},
+		// Formats without %G never touch gpg.
+		{"log", "--format=%h %s"},
+		{"log", "--pretty=format:%h"},
+		// %G as a search pattern is not a format.
+		{"grep", "%G"},
 		{"diff", "--cached", "--stat", "--name-only"},
 		{"ls-files", "--exclude-standard", "--stage"},
 		{"grep", "-i", "-n", "hello"},
@@ -225,6 +240,7 @@ func TestGitKeepsLegitimateFlags(t *testing.T) {
 		}
 	}
 }
+
 func TestGitBranchAndTagNeedAListFlag(t *testing.T) {
 	dir := gitRepo(t)
 	for _, args := range [][]string{
@@ -256,9 +272,8 @@ func TestGitBranchAndTagNeedAListFlag(t *testing.T) {
 		{"branch", "-ad"},
 		{"branch", "-aD", "main"},
 		{"branch", "-dr"},
-		{"branch", "--del", "main"},
-		{"branch", "--dele", "main"},
-		{"branch", "--d", "main"},
+		// Copy bundles the same way (`-ac` is `-a -c`).
+		{"branch", "-ac", "old", "new"},
 		{"tag", "-d", "v1.0"},
 		{"tag", "-a", "v2.0", "-m", "msg"},
 		{"tag", "-s", "v2.0", "-m", "msg"},
