@@ -34,7 +34,8 @@ owns its `_test.go` and the behaviour below):
   rows land in `statedb/`), `memory.go`, `archive.go`, `prune.go` (deletes
   usage rows as well as files)
 - Policy: `roles.go` (no role refuses to start), `toolresolve.go` (one role
-  resolution over settings for the main list and execute), `readonly.go`,
+  resolution over settings for the main list and execute), `mcpclients.go`
+  (the MCP server snapshot behind the same resolution), `readonly.go`,
   `stopgate.go`, `extension.go` (pig extension wiring, brief lines)
 - Fixtures: `testdata/` (child doc)
 

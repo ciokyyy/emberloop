@@ -22,12 +22,14 @@ named checks from `.wick/check`: plain command or JSON name map, one
 mcp_servers maps, the search defaults and their merge), `rename.go` (serve a
 tool under a new name), `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
-self-test, `wick-pig deps` error), and `systemone/` (the
-decisions-model client the find cascade asks).
+self-test, `wick-pig deps` error), `mcpclient.go` (the stdio JSON-RPC client
+and per-process server registry behind the same resolution), and `systemone/`
+(the decisions-model client the find cascade asks) and `mcpfake/` (the fake
+MCP server the client, execute and graph tests spawn).
 
 ## Ownership
 
-Owns this directory and `systemone/`. The interface (`tool.go`) is owned
+Owns this directory and `systemone/` and `mcpfake/`. The interface (`tool.go`) is owned
 here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 
 ## Local Contracts

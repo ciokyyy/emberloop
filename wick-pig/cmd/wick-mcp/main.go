@@ -20,6 +20,7 @@ import (
 
 	"example.com/wick"
 	"example.com/wick/mcp"
+	"example.com/wick/tools"
 )
 
 func main() {
@@ -30,15 +31,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", wick.MissingRoleError())
 		os.Exit(2)
 	}
-	served, err := wick.RoleTools(*role)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
-		os.Exit(2)
-	}
 	root, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
 		os.Exit(1)
+	}
+	// The registry holds one client per configured MCP server for this
+	// process. It starts no server until the snapshot lists it; a server that
+	// fails is warned about and skipped. Closing it at exit kills every
+	// server child, on every path below.
+	mcpReg := tools.NewRegistry(tools.EffectiveSettings(root).MCPServers)
+	defer mcpReg.Close()
+	served, err := wick.RoleToolsWithMCP(*role, wick.MCPSnapshot(mcpReg))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "wick-mcp:", err)
+		os.Exit(2)
 	}
 	// The memory sampler records this session's harness process tree every 5
 	// seconds into the agent's archive log, whether or not the TUI is open.
