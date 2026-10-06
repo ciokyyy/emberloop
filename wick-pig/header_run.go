@@ -341,17 +341,13 @@ func (w *wrapper) paintLocked(strip string) {
 	w.writeLocked(b.String())
 }
 
-// topRule is the strip's top rule in the agent hue: one full-width line
-// above the content rows, on the strip background.
+// topRule is the strip's top edge: a full-width row of lower half blocks in
+// the strip background, so the strip reads as a tinted block with a soft
+// edge and no drawn line. The agent hue stays in the name chip and ctx label.
 func (w *wrapper) topRule() string {
 	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(w.profile))
 	r.SetColorProfile(w.profile)
-	pair := agentHueColor(w.cfg.Source.AgentID, w.cfg.Source.AgentType)
-	hex := pair.dark
-	if !w.dark {
-		hex = pair.light
-	}
-	return r.NewStyle().Foreground(lipgloss.Color(hex)).Background(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("─", w.contentW()))
+	return r.NewStyle().Foreground(lipgloss.Color(w.stripBg())).Width(w.contentW()).Render(strings.Repeat("\u2584", w.contentW()))
 }
 
 func (w *wrapper) stripBg() string {

@@ -37,9 +37,9 @@ func TestStripRowsClamp(t *testing.T) {
 	}
 }
 
-func TestStripFrameDefaultsOn(t *testing.T) {
-	if s := writeContextSettings(t, `{}`); !s.StripFrameEnabled() {
-		t.Error("default frame is off, want on")
+func TestStripFrameDefaultsOff(t *testing.T) {
+	if s := writeContextSettings(t, `{}`); s.StripFrameEnabled() {
+		t.Error("default frame is on, want off")
 	}
 	if s := writeContextSettings(t, `{"context":{"strip_frame":false}}`); s.StripFrameEnabled() {
 		t.Error("strip_frame false reads as on")

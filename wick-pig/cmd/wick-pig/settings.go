@@ -912,9 +912,9 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 	if !s.EffectiveAutoCompress() {
 		auto = "off"
 	}
-	frame := "on"
-	if !s.StripFrameEnabled() {
-		frame = "off"
+	frame := "off"
+	if s.StripFrameEnabled() {
+		frame = "on"
 	}
 	fmt.Fprintf(out, "strip-rows: %d (%s)\n", s.EffectiveStripRows(), s.SourceOf("context.strip_rows"))
 	fmt.Fprintf(out, "strip-frame: %s (%s)\n", frame, s.SourceOf("context.strip_frame"))

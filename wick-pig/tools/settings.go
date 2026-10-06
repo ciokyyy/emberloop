@@ -129,7 +129,7 @@ type OverflowSettings struct {
 // overrides it per harness; Windows overrides the model window table per
 // model. StripRows is the header strip height (1 or 2, default 2);
 // StripFrame draws the agent-colored frame beside the agent screen (nil
-// means on); CompressModels names the summarizer model per harness (unset
+// means off); CompressModels names the summarizer model per harness (unset
 // means compression refuses with a warning, never a silent default).
 // AutoCompress disables the automatic trigger when false (nil means on; the
 // manual key keeps working); CompressCooldown is the tool calls after a
@@ -415,12 +415,13 @@ func (s Settings) EffectiveStripRows() int {
 }
 
 // StripFrameEnabled says whether the wrapper draws the agent-colored frame
-// beside the agent screen: on unless the setting says otherwise.
+// beside the agent screen: off unless the setting says otherwise (the
+// borderless look separates areas by background tint, not lines).
 func (s Settings) StripFrameEnabled() bool {
 	if s.Context != nil && s.Context.StripFrame != nil {
 		return *s.Context.StripFrame
 	}
-	return true
+	return false
 }
 
 // unknownContextFields collects the keys inside the context object that are
