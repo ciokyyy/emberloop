@@ -9,7 +9,7 @@ import (
 // so tests drive Snapshot's liveness without a multiplexer.
 
 func cannedPanes() []byte {
-	return []byte(`{"result":{"panes":[{"pane_id":"w1:alive"},{"pane_id":"w1:busy"}]}}`)
+	return []byte(`{"result":{"panes":[{"pane_id":"w1:alive","agent_status":"working"},{"pane_id":"w1:busy","agent_status":"idle"}]}}`)
 }
 
 func TestHerdrPanesListsLivePanes(t *testing.T) {
@@ -24,7 +24,10 @@ func TestHerdrPanesListsLivePanes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HerdrPanes: %v", err)
 	}
-	if !live["w1:alive"] || !live["w1:busy"] || live["w1:dead"] {
+	if live["w1:alive"] != "working" || live["w1:busy"] != "idle" {
+		t.Fatalf("live = %v, want working and idle statuses", live)
+	}
+	if _, ok := live["w1:dead"]; ok {
 		t.Fatalf("live = %v, want alive and busy only", live)
 	}
 }

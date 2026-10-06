@@ -20,12 +20,13 @@ func herdrBin() string {
 	return "herdr"
 }
 
-// HerdrPanes returns the liveness seam Snapshot reads: the set of herdr pane
-// ids still alive, from `herdr pane list`. A failure is returned — Snapshot
-// keeps the last tree and retries — never an empty set that would read every
-// run as ended.
+// HerdrPanes returns the liveness seam Snapshot reads: every herdr pane still
+// alive, keyed by pane id with its agent status, from `herdr pane list`. A
+// pane without an agent status reads as "" (alive, no state). A failure is
+// returned — Snapshot keeps the last tree and retries — never an empty set
+// that would read every run as ended.
 func HerdrPanes(run CommandRunner) Herdr {
-	return func() (map[string]bool, error) {
+	return func() (map[string]string, error) {
 		raw, err := run(herdrBin(), "pane", "list")
 		if err != nil {
 			return nil, err
@@ -34,15 +35,16 @@ func HerdrPanes(run CommandRunner) Herdr {
 			Result struct {
 				Panes []struct {
 					PaneID string `json:"pane_id"`
+					Status string `json:"agent_status"`
 				} `json:"panes"`
 			} `json:"result"`
 		}
 		if err := json.Unmarshal(raw, &reply); err != nil {
 			return nil, fmt.Errorf("herdr pane list returned non-JSON: %.200s", strings.TrimSpace(string(raw)))
 		}
-		out := map[string]bool{}
+		out := map[string]string{}
 		for _, p := range reply.Result.Panes {
-			out[p.PaneID] = true
+			out[p.PaneID] = p.Status
 		}
 		return out, nil
 	}

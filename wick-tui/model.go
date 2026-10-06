@@ -28,16 +28,52 @@ type Loader func() (Snap, error)
 // pollEvery is the live-refresh interval both tabs share.
 const pollEvery = time.Second
 
-// Status glyphs and colours, defined once here in the view layer. Later
-// tickets add the per-ticket glyphs beside these.
+// Status glyphs and colours, defined once here in the view layer: the spec
+// running/ended glyphs beside every per-ticket glyph.
 var (
-	glyphRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("●")
-	glyphEnded   = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("○")
-	styleRepo    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleSel     = lipgloss.NewStyle().Bold(true)
-	styleTab     = lipgloss.NewStyle().Bold(true).Underline(true)
-	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	glyphRunning                = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("●")
+	glyphEnded                  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("○")
+	glyphTicketNotStarted       = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("○")
+	glyphTicketWorking          = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("●")
+	glyphTicketRetrying         = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("↻")
+	glyphTicketIdle             = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Render("◌")
+	glyphTicketSubmittedDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render("✓")
+	glyphTicketSubmittedBlocked = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✗")
+	glyphTicketInReview         = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render("◐")
+	glyphTicketMerged           = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("■")
+	glyphTicketDiscarded        = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("□")
+	glyphTicketFailed           = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("✖")
+	styleRepo                   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleSel                    = lipgloss.NewStyle().Bold(true)
+	styleTab                    = lipgloss.NewStyle().Bold(true).Underline(true)
+	styleDim                    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
+
+// ticketGlyph is the one place a ticket status becomes its glyph.
+func ticketGlyph(s TicketStatus) string {
+	switch s {
+	case TicketWorking:
+		return glyphTicketWorking
+	case TicketRetrying:
+		return glyphTicketRetrying
+	case TicketIdle:
+		return glyphTicketIdle
+	case TicketSubmittedDone:
+		return glyphTicketSubmittedDone
+	case TicketSubmittedBlocked:
+		return glyphTicketSubmittedBlocked
+	case TicketInReview:
+		return glyphTicketInReview
+	case TicketMerged:
+		return glyphTicketMerged
+	case TicketDiscarded:
+		return glyphTicketDiscarded
+	case TicketFailed:
+		return glyphTicketFailed
+	default:
+		return glyphTicketNotStarted
+	}
+}
 
 // specItem is one row of the Runs list: a spec with its repo, flattened so
 // the list stays one-dimensional. showRepo renders the repo header above the
@@ -91,6 +127,58 @@ func (d specDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	fmt.Fprint(w, d.zone.Mark(si.zoneID(), head+"\n"+row))
 }
 
+// ticketItem is one row of the tickets pane: a ticket of the selected spec.
+// The repo and spec slug join the zone id because two specs can carry the
+// same ticket file name.
+type ticketItem struct {
+	repo     string
+	specSlug string
+	ticket   TicketSnap
+}
+
+// FilterValue matches the ticket file name. Filtering stays disabled on the
+// tickets list; the method only satisfies list.Item.
+func (i ticketItem) FilterValue() string { return i.ticket.Name }
+
+// ticketZoneID names the bubblezone click region of a ticket row.
+func ticketZoneID(repo, slug, name string) string {
+	return "ticket:" + repo + "\x00" + slug + "\x00" + name
+}
+
+func (i ticketItem) zoneID() string { return ticketZoneID(i.repo, i.specSlug, i.ticket.Name) }
+
+// ticketDelegate renders ticket rows: the status glyph plus the file name,
+// with the code/spec verdicts while in review. Height is one.
+type ticketDelegate struct {
+	zone *zone.Manager
+}
+
+func (d ticketDelegate) Height() int                         { return 1 }
+func (d ticketDelegate) Spacing() int                        { return 0 }
+func (d ticketDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+
+func (d ticketDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	ti, ok := item.(ticketItem)
+	if !ok {
+		return
+	}
+	row := fmt.Sprintf("%s %s", ticketGlyph(ti.ticket.Status), ti.ticket.Name)
+	if ti.ticket.Status == TicketInReview {
+		code, spec := ti.ticket.CodeVerdict, ti.ticket.SpecVerdict
+		if code == "" {
+			code = "…"
+		}
+		if spec == "" {
+			spec = "…"
+		}
+		row += fmt.Sprintf(" [%s/%s]", code, spec)
+	}
+	if index == m.Index() {
+		row = styleSel.Render(row)
+	}
+	fmt.Fprint(w, d.zone.Mark(ti.zoneID(), row))
+}
+
 // progressPercent is the merged/total fraction one row's bar shows.
 func progressPercent(merged, total int) float64 {
 	if total <= 0 {
@@ -99,14 +187,18 @@ func progressPercent(merged, total int) float64 {
 	return float64(merged) / float64(total)
 }
 
-// Model is the dashboard: a Runs list over the Snapshot read model plus a
-// Settings placeholder, refreshed every second. Mouse clicks land through
-// bubblezone regions; double-click detection stays ours — the last click's
-// zone and time are recorded for the tickets that open detail views.
+// Model is the dashboard: a Runs list over the Snapshot read model with the
+// selected spec's tickets beside it, plus a Settings placeholder, refreshed
+// every second. Mouse clicks land through bubblezone regions; double-click
+// detection stays ours — the last click's zone and time are recorded for the
+// tickets that open detail views.
 type Model struct {
 	load                Loader
 	snap                Snap
 	list                list.Model
+	tickets             list.Model
+	focusTickets        bool
+	pendingTicket       string
 	zone                *zone.Manager
 	tab                 Tab
 	width               int
@@ -118,8 +210,8 @@ type Model struct {
 	err                 error
 }
 
-// NewModel builds the dashboard over load. The list starts 80x20; the first
-// WindowSizeMsg resizes it.
+// NewModel builds the dashboard over load. Both lists start 80x20 and 40x20;
+// the first WindowSizeMsg resizes them side by side.
 func NewModel(load Loader) Model {
 	zm := zone.New()
 	bar := progress.New(progress.WithWidth(12), progress.WithoutPercentage())
@@ -129,7 +221,13 @@ func NewModel(load Loader) Model {
 	l.SetShowPagination(false)
 	l.SetShowHelp(false)
 	l.SetFilteringEnabled(true)
-	return Model{load: load, list: l, zone: zm, width: 80, height: 24}
+	tl := list.New(nil, ticketDelegate{zone: zm}, 40, 20)
+	tl.SetShowTitle(false)
+	tl.SetShowStatusBar(false)
+	tl.SetShowPagination(false)
+	tl.SetShowHelp(false)
+	tl.SetFilteringEnabled(false)
+	return Model{load: load, list: l, tickets: tl, zone: zm, width: 80, height: 24}
 }
 
 type tickMsg struct{}
@@ -155,21 +253,25 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadCmd(), tickCmd())
 }
 
-// Update drives the dashboard: tab switches tabs, q quits, arrows and vim
-// keys move through the list, a left press selects the clicked spec row, and
-// every tick reloads the snapshot. A herdr failure keeps the last snapshot
-// and retries on the next tick.
+// Update drives the dashboard: tab switches tabs, q quits, h/l and arrows
+// switch panes and move through the focused list, a left press selects the
+// clicked spec or ticket row, and every tick reloads the snapshot. A herdr
+// failure keeps the last snapshot and retries on the next tick.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list.SetSize(max(1, msg.Width), max(1, msg.Height-2))
+		half := max(20, msg.Width/2)
+		m.list.SetSize(half, max(1, msg.Height-2))
+		m.tickets.SetSize(max(1, msg.Width-half), max(1, msg.Height-2))
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.loadCmd(), tickCmd())
 	case snapMsg:
 		m.snap, m.err = msg.snap, nil
-		return m, m.rebuildItems()
+		cmd := m.rebuildItems()
+		m.syncTickets()
+		return m, cmd
 	case errMsg:
 		m.err = msg.err
 		return m, nil
@@ -180,6 +282,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reselectAfterFilter = false
 			m.restoreSelection()
 		}
+		m.syncTickets()
 		return m, cmd
 	case tea.MouseMsg:
 		if m.tab == tabRuns && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
@@ -200,25 +303,66 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.tab == tabRuns && m.list.FilterState() != list.Filtering {
+			if msg.Type == tea.KeyRight {
+				m.focusTickets = true
+				return m, nil
+			}
+			if msg.Type == tea.KeyLeft {
+				m.focusTickets = false
+				return m, nil
+			}
+			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
+				switch msg.Runes[0] {
+				case 'l':
+					m.focusTickets = true
+					return m, nil
+				case 'h':
+					m.focusTickets = false
+					return m, nil
+				}
+			}
+		}
 	}
 	if m.tab == tabRuns {
+		if m.focusTickets {
+			tl, cmd := m.tickets.Update(msg)
+			m.tickets = tl
+			return m, cmd
+		}
 		lm, cmd := m.list.Update(msg)
 		m.list = lm
+		m.syncTickets()
 		return m, cmd
 	}
 	return m, nil
 }
 
-// click selects the spec row whose bubblezone region holds the press, and
-// records the click for the double-click detection later tickets add.
+// click selects the ticket row whose bubblezone region holds the press, else
+// the spec row, focusing the clicked pane. It records the click for the
+// double-click detection the ticket detail ticket adds.
 func (m *Model) click(msg tea.MouseMsg) {
+	for i, item := range m.tickets.VisibleItems() {
+		ti, ok := item.(ticketItem)
+		if !ok {
+			continue
+		}
+		if m.zone.Get(ti.zoneID()).InBounds(msg) {
+			m.focusTickets = true
+			m.tickets.Select(i)
+			m.lastClick, m.lastZone = time.Now(), ti.zoneID()
+			return
+		}
+	}
 	for i, item := range m.list.VisibleItems() {
 		si, ok := item.(specItem)
 		if !ok {
 			continue
 		}
 		if m.zone.Get(si.zoneID()).InBounds(msg) {
+			m.focusTickets = false
 			m.list.Select(i)
+			m.syncTickets()
 			m.lastClick, m.lastZone = time.Now(), si.zoneID()
 			return
 		}
@@ -267,8 +411,43 @@ func (m *Model) restoreSelection() {
 	m.pendingSelect = ""
 }
 
+// syncTickets rebuilds the tickets pane from the selected spec, keeping the
+// selected ticket when it is still there. A spec change resets to its first
+// ticket: the old ticket id is simply not in the new rows.
+func (m *Model) syncTickets() {
+	m.pendingTicket = ""
+	if item, ok := m.tickets.SelectedItem().(ticketItem); ok {
+		m.pendingTicket = item.zoneID()
+	}
+	var items []list.Item
+	if si, ok := m.list.SelectedItem().(specItem); ok {
+		for _, tk := range si.spec.Tickets {
+			items = append(items, ticketItem{repo: si.repo, specSlug: si.spec.Slug, ticket: tk})
+		}
+	}
+	m.tickets.SetItems(items)
+	m.restoreTicket()
+}
+
+// restoreTicket selects the stashed ticket when it is visible, then drops
+// the stash either way: one restore per sync, never a fight with the user's
+// own cursor moves.
+func (m *Model) restoreTicket() {
+	if m.pendingTicket == "" {
+		return
+	}
+	for i, item := range m.tickets.VisibleItems() {
+		if ti, ok := item.(ticketItem); ok && ti.zoneID() == m.pendingTicket {
+			m.tickets.Select(i)
+			break
+		}
+	}
+	m.pendingTicket = ""
+}
+
 // View renders the tab bar, a help line, and the active tab, with every row
-// wrapped in its bubblezone click region.
+// wrapped in its bubblezone click region. Runs shows the specs on the left
+// and the selected spec's tickets on the right.
 func (m Model) View() string {
 	tabs := "Runs  Settings"
 	if m.tab == tabRuns {
@@ -276,13 +455,13 @@ func (m Model) View() string {
 	} else {
 		tabs = "Runs  " + styleTab.Render("Settings")
 	}
-	help := styleDim.Render("↑/k ↓/j move • click select • tab tabs • q quit • 1s refresh")
+	help := styleDim.Render("↑/k ↓/j move • ←/→ or h/l pane • click select • tab tabs • q quit • 1s refresh")
 	if m.err != nil {
 		help = styleDim.Render("refresh failed: " + m.err.Error() + " • retrying")
 	}
 	var body string
 	if m.tab == tabRuns {
-		body = m.list.View()
+		body = lipgloss.JoinHorizontal(lipgloss.Top, m.list.View(), m.tickets.View())
 	} else {
 		body = "Settings — the role defaults editor arrives in its own ticket."
 	}

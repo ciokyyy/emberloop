@@ -2,11 +2,12 @@
 
 ## Purpose
 
-The wick dashboard: `wick-pig tui` opens it in the current pane. The Runs
-tab lists specs grouped by repo (current first), each with running/ended
-status and merged/total progress, refreshed every second. Later tickets add
-the tickets pane, ticket detail (agents, tokens, cost, memory), pane jumping
-and the Settings tab.
+ The wick dashboard: `wick-pig tui` opens it in the current pane. The Runs
+ tab lists specs grouped by repo (current first), each with running/ended
+ status and merged/total progress, with the selected spec's tickets beside
+ them carrying a derived status glyph each, refreshed every second. Later
+ tickets add ticket detail (agents, tokens, cost, memory), pane jumping and
+ the Settings tab.
 
 ## Ownership
 

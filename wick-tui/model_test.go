@@ -305,3 +305,121 @@ func TestModelPollInsertsRowUnderActiveFilterKeepsSelection(t *testing.T) {
 		t.Fatalf("selection after poll = %q, want gamma kept by identity, not row 0", got)
 	}
 }
+
+// cannedTicketsSnapshot is a Runs tree with tickets: alpha carries two
+// tickets (working, merged), beta one (not started).
+func cannedTicketsSnapshot(repoA, repoB string) Snap {
+	snap := cannedSnapshot(repoA, repoB)
+	snap.Repos[0].Specs[0].Tickets = []TicketSnap{
+		{Path: repoA + "/.scratch/alpha/issues/01-one.md", Name: "01-one.md", Status: TicketWorking},
+		{Path: repoA + "/.scratch/alpha/issues/02-two.md", Name: "02-two.md", Status: TicketMerged},
+	}
+	snap.Repos[0].Specs[1].Tickets = []TicketSnap{
+		{Path: repoA + "/.scratch/beta/issues/01-only.md", Name: "01-only.md", Status: TicketNotStarted},
+	}
+	return snap
+}
+
+func selectedTicket(m Model) string {
+	item, ok := m.tickets.SelectedItem().(ticketItem)
+	if !ok {
+		return ""
+	}
+	return item.ticket.Name
+}
+
+func TestModelTicketsPaneShowsSelectedSpecTickets(t *testing.T) {
+	snap := cannedTicketsSnapshot("/repo-a", "/repo-b")
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	if len(m.tickets.Items()) != 2 {
+		t.Fatalf("tickets = %d, want alpha's 2", len(m.tickets.Items()))
+	}
+	if got := selectedTicket(m); got != "01-one.md" {
+		t.Fatalf("ticket selection = %q, want 01-one.md", got)
+	}
+}
+
+func TestModelTicketKeyboardMovesSelection(t *testing.T) {
+	snap := cannedTicketsSnapshot("/repo-a", "/repo-b")
+	var calls int
+	m := loadModel(t, &snap, &calls)
+
+	m, _ = pressKey(m, "l")
+	if !m.focusTickets {
+		t.Fatal("after l the tickets pane must have focus")
+	}
+	m, _ = pressKey(m, "j")
+	if got := selectedTicket(m); got != "02-two.md" {
+		t.Fatalf("after j ticket = %q, want 02-two.md", got)
+	}
+	m, _ = pressKey(m, "k")
+	if got := selectedTicket(m); got != "01-one.md" {
+		t.Fatalf("after k ticket = %q, want 01-one.md", got)
+	}
+	m, _ = pressKey(m, "h")
+	if m.focusTickets {
+		t.Fatal("after h the specs pane must have focus")
+	}
+}
+
+func TestModelSpecSelectionDrivesTickets(t *testing.T) {
+	snap := cannedTicketsSnapshot("/repo-a", "/repo-b")
+	var calls int
+	m := loadModel(t, &snap, &calls)
+
+	m, _ = pressKey(m, "j")
+	if got := selectedSlug(m); got != "beta" {
+		t.Fatalf("spec = %q, want beta", got)
+	}
+	if len(m.tickets.Items()) != 1 {
+		t.Fatalf("tickets = %d, want beta's 1", len(m.tickets.Items()))
+	}
+	if got := selectedTicket(m); got != "01-only.md" {
+		t.Fatalf("ticket = %q, want beta's 01-only.md", got)
+	}
+}
+
+func TestModelTicketClickSelects(t *testing.T) {
+	snap := cannedTicketsSnapshot("/repo-a", "/repo-b")
+	var calls int
+	m := loadModel(t, &snap, &calls)
+
+	_ = m.View()
+	x, y := waitZone(t, m, ticketZoneID("/repo-a", "alpha", "02-two.md"))
+	updated, _ := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = updated.(Model)
+	if got := selectedTicket(m); got != "02-two.md" {
+		t.Fatalf("after click ticket = %q, want 02-two.md", got)
+	}
+	if !m.focusTickets {
+		t.Fatal("clicking a ticket must focus the tickets pane")
+	}
+}
+
+// The tickets pane renders every ticket name with its status glyph: an
+// in-review ticket carries its code/spec verdicts in the row, and every
+// status maps to its own glyph.
+func TestModelTicketsViewShowsNamesAndVerdicts(t *testing.T) {
+	snap := cannedSnapshot("/repo-a", "/repo-b")
+	snap.Repos[0].Specs[0].Tickets = []TicketSnap{
+		{Path: "/repo-a/.scratch/alpha/issues/01.md", Name: "01.md", Status: TicketNotStarted},
+		{Path: "/repo-a/.scratch/alpha/issues/02.md", Name: "02.md", Status: TicketWorking},
+		{Path: "/repo-a/.scratch/alpha/issues/03.md", Name: "03.md", Status: TicketRetrying},
+		{Path: "/repo-a/.scratch/alpha/issues/04.md", Name: "04.md", Status: TicketIdle},
+		{Path: "/repo-a/.scratch/alpha/issues/05.md", Name: "05.md", Status: TicketSubmittedDone},
+		{Path: "/repo-a/.scratch/alpha/issues/06.md", Name: "06.md", Status: TicketSubmittedBlocked},
+		{Path: "/repo-a/.scratch/alpha/issues/07.md", Name: "07.md", Status: TicketInReview, CodeVerdict: "pass", SpecVerdict: "changes"},
+		{Path: "/repo-a/.scratch/alpha/issues/08.md", Name: "08.md", Status: TicketMerged},
+		{Path: "/repo-a/.scratch/alpha/issues/09.md", Name: "09.md", Status: TicketDiscarded},
+		{Path: "/repo-a/.scratch/alpha/issues/10.md", Name: "10.md", Status: TicketFailed},
+	}
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	view := m.View()
+	for _, want := range []string{"01.md", "10.md", "[pass/changes]", "○", "●", "↻", "◌", "✓", "✗", "◐", "■", "□", "✖"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view must contain %q, got:\n%s", want, view)
+		}
+	}
+}
