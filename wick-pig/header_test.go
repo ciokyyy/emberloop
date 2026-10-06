@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/muesli/termenv"
 )
@@ -33,6 +34,11 @@ func wideSnapshot() HeaderSnapshot {
 		},
 		CompressCount: 2,
 		State:         HeaderWorking,
+		Running:       ToolCall{Name: "mcp__wick__read", Arg: "/home/dev/wick-pig/header.go"},
+		Now:           time.Unix(0, 0),
+		Usage: UsageSet{Has: true, Windows: []UsageWindow{
+			{Label: "5h", Pct: 37, ResetsAt: 6000}, {Label: "wk", Pct: 14, ResetsAt: 4 * 86400},
+		}},
 	}
 }
 
@@ -41,14 +47,15 @@ func renderTrue(snap HeaderSnapshot, width int) string {
 }
 
 // The wide tier shows the mockup's two rows: context against the window
-// with the bar, cost, model and compress count, then the top tools.
+// with the bar, cost, model and compress count, then the running tool on
+// the left and the account usage on the right.
 func TestRenderHeaderWide(t *testing.T) {
 	rows := strings.Split(strings.TrimRight(renderTrue(wideSnapshot(), 100), "\n"), "\n")
 	if len(rows) != 2 {
 		t.Fatalf("wide strip is %d rows, want 2:\n%s", len(rows), renderTrue(wideSnapshot(), 100))
 	}
 	plain := stripANSI(strings.Join(rows, "\n"))
-	for _, want := range []string{"orchestrator", "ctx", "71%", "142k", "200k", "~$1.82", "opus", "×2", "working", "bash", "read", "grep"} {
+	for _, want := range []string{"orchestrator", "ctx", "71%", "142k", "200k", "~$1.82", "opus", "×2", "reading", "wick-pig/header.go", "5h ◔ 37% ↻1h40m", "wk ◔ 14% ↻4d0h"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("wide strip misses %q:\n%s", want, plain)
 		}
@@ -171,18 +178,33 @@ func TestRenderHeaderWarning(t *testing.T) {
 	}
 }
 
-// The compressing, queued and idle states each render their own pill.
+// The compressing and queued states each render their own pill; an idle
+// agent shows no state word at all.
 func TestRenderHeaderStates(t *testing.T) {
 	for state, want := range map[HeaderState]string{
 		HeaderCompressing: "compressing…",
 		HeaderQueued:      "compress queued",
-		HeaderIdle:        "idle",
 	} {
 		snap := wideSnapshot()
 		snap.State = state
 		if plain := stripANSI(renderTrue(snap, 100)); !strings.Contains(plain, want) {
 			t.Errorf("state %q renders without %q:\n%s", state, want, plain)
 		}
+	}
+}
+
+func TestRenderHeaderIdleShowsNoStateWord(t *testing.T) {
+	snap := wideSnapshot()
+	snap.State = HeaderIdle
+	snap.Running = ToolCall{}
+	plain := stripANSI(renderTrue(snap, 100))
+	for _, bad := range []string{"idle", "working", "reading"} {
+		if strings.Contains(plain, bad) {
+			t.Errorf("idle strip shows %q:\n%s", bad, plain)
+		}
+	}
+	if !strings.Contains(plain, "5h") {
+		t.Errorf("idle strip dropped the usage:\n%s", plain)
 	}
 }
 
@@ -204,7 +226,7 @@ func TestRenderHeaderDowngrade(t *testing.T) {
 func TestRenderHeaderLight(t *testing.T) {
 	out := RenderHeader(wideSnapshot(), 100, HeaderOpts{Dark: false, Profile: termenv.TrueColor})
 	plain := stripANSI(out)
-	for _, want := range []string{"71%", "142k", "~$1.82", "working"} {
+	for _, want := range []string{"71%", "142k", "~$1.82", "reading"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("light strip misses %q:\n%s", want, plain)
 		}

@@ -96,6 +96,7 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 	// Ticket 18: the served read refusal names what the caller can use, so
 	// whether the role serves bash is decided once, before the buckets split.
 	hasBash := roleServesBash(role, base, s)
+	hasExecute := roleServesExecute(role, base, s)
 	wantExecute := false
 	for _, t := range base {
 		// execute is bound after the buckets resolve, carrying this role's
@@ -125,6 +126,11 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 		// and tools.grep in execute or read with offset and limit otherwise.
 		if name == "read" {
 			t = readHintTool{inner: t, hasBash: hasBash}
+		}
+		// A stored bash output tells a role that also serves execute to
+		// filter in a script next time; bash behind execute needs no tip.
+		if name == "bash" && hasExecute && placement == tools.PlacementMain {
+			t = bashHintTool{inner: t}
 		}
 		if !enabled {
 			continue

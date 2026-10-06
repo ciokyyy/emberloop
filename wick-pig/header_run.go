@@ -17,6 +17,7 @@ package wick
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -162,6 +164,9 @@ func WrapChild(cfg WrapConfig) error {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go watchWrapSignals(sigs, done, func() { w.write(ThemeResetSequence()) }, func(s os.Signal) { resignalSelf(s, sigs) })
 	go w.forwardInput()
+	if cfg.Snapshot == nil {
+		go w.pollUsage(done)
+	}
 	if f, ok := stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		go w.watchResize(done)
 	}
@@ -283,6 +288,7 @@ type wrapper struct {
 	snapshot func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
 	filter   *wrapFilter
 	reporter *agentReporter
+	usageKey atomic.Value // string: the account the strip's usage reads
 	mu       sync.Mutex
 	last     string
 	phase    bool
@@ -335,6 +341,34 @@ func (w *wrapper) init() {
 	}
 }
 
+// usagePollEvery is how often a pane asks whether its account's usage cache
+// is due for a refresh; the cache's own age, shared by every pane, decides
+// whether a request goes out.
+const usagePollEvery = 30 * time.Second
+
+// pollUsage keeps the usage cache of this pane's account fresh. The account
+// is known only once a transcript names the provider, so it re-reads the key
+// every round.
+func (w *wrapper) pollUsage(done <-chan struct{}) {
+	wait := 3 * time.Second
+	for {
+		select {
+		case <-done:
+			return
+		case <-time.After(wait):
+		}
+		key, _ := w.usageKey.Load().(string)
+		if key == "" {
+			wait = 3 * time.Second // no transcript names the account yet
+			continue
+		}
+		wait = usagePollEvery
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		_ = RefreshUsage(ctx, w.cfg.Source.StateDir, key, time.Now())
+		cancel()
+	}
+}
+
 // readSnap builds the current strip snapshot outside the lock: transcript
 // and database IO must never hold it while child output waits to write.
 func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
@@ -342,6 +376,7 @@ func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 	if err != nil {
 		return HeaderSnapshot{}, false
 	}
+	w.usageKey.Store(snap.UsageKey)
 	return snap, true
 }
 

@@ -10,6 +10,7 @@ import (
 type ContextCall struct {
 	ID   string
 	Name string
+	Arg  string // the argument worth showing: a path, command, pattern or agent types
 }
 
 // ContextResult is one tool result a transcript line carries, with its
@@ -23,6 +24,7 @@ type ContextResult struct {
 // RequestUsage is one request's token breakdown with the model that ran
 // it: the shared formula's input for that transcript line.
 type RequestUsage struct {
+	Provider   string // pig only: the model provider of the request
 	Model      string
 	Input      int64
 	Output     int64
@@ -116,10 +118,11 @@ func (pigContextParser) ParseLine(line string) ContextEvents {
 				CacheWrite int64 `json:"cacheWrite"`
 			} `json:"usage"`
 			Content []struct {
-				Type string `json:"type"`
-				ID   string `json:"id"`
-				Name string `json:"name"`
-				Text string `json:"text"`
+				Type string         `json:"type"`
+				ID   string         `json:"id"`
+				Name string         `json:"name"`
+				Text string         `json:"text"`
+				Args map[string]any `json:"arguments"`
 			} `json:"content"`
 		} `json:"message"`
 	}
@@ -130,13 +133,13 @@ func (pigContextParser) ParseLine(line string) ContextEvents {
 	var out ContextEvents
 	if m.Role == "assistant" {
 		if m.Usage != nil {
-			out.Usage = &RequestUsage{Model: m.Model,
+			out.Usage = &RequestUsage{Provider: m.Provider, Model: m.Model,
 				Input: m.Usage.Input, Output: m.Usage.Output,
 				CacheRead: m.Usage.CacheRead, CacheWrite: m.Usage.CacheWrite}
 		}
 		for _, b := range m.Content {
 			if b.Type == "toolCall" {
-				out.Calls = append(out.Calls, ContextCall{ID: b.ID, Name: b.Name})
+				out.Calls = append(out.Calls, ContextCall{ID: b.ID, Name: b.Name, Arg: callArg(b.Args)})
 			}
 		}
 		return out
@@ -172,12 +175,13 @@ func (claudeContextParser) ParseLine(line string) ContextEvents {
 				CacheWrite int64 `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 			Content []struct {
-				Type    string `json:"type"`
-				ID      string `json:"id"`
-				Name    string `json:"name"`
-				ToolUse string `json:"tool_use_id"`
-				Content any    `json:"content"`
-				Text    string `json:"text"`
+				Type    string         `json:"type"`
+				ID      string         `json:"id"`
+				Name    string         `json:"name"`
+				ToolUse string         `json:"tool_use_id"`
+				Content any            `json:"content"`
+				Text    string         `json:"text"`
+				Input   map[string]any `json:"input"`
 			} `json:"content"`
 		} `json:"message"`
 	}
@@ -195,7 +199,7 @@ func (claudeContextParser) ParseLine(line string) ContextEvents {
 		switch b.Type {
 		case "tool_use":
 			if rec.Message.Role == "assistant" {
-				out.Calls = append(out.Calls, ContextCall{ID: b.ID, Name: b.Name})
+				out.Calls = append(out.Calls, ContextCall{ID: b.ID, Name: b.Name, Arg: callArg(b.Input)})
 			}
 		case "tool_result":
 			out.Results = append(out.Results, ContextResult{ID: b.ToolUse, Bytes: claudeResultSize(b.Content)})
@@ -222,4 +226,27 @@ func claudeResultSize(content any) int64 {
 		return textSize(parts)
 	}
 	return 0
+}
+
+// callArg picks the one argument of a tool call worth showing in the strip:
+// the first of a path, command, pattern, query or url, or the types of the
+// agents a spawn starts. Empty when the call has none.
+func callArg(args map[string]any) string {
+	for _, k := range []string{"path", "file_path", "command", "pattern", "query", "url", "prompt"} {
+		if v, ok := args[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	if list, ok := args["agents"].([]any); ok {
+		var types []string
+		for _, a := range list {
+			if m, _ := a.(map[string]any); m != nil {
+				if t, _ := m["type"].(string); t != "" {
+					types = append(types, t)
+				}
+			}
+		}
+		return strings.Join(types, ", ")
+	}
+	return ""
 }

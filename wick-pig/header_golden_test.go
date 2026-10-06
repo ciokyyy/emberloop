@@ -7,12 +7,12 @@ import (
 )
 
 // Golden layout for the wide tier: the exact two rows for the mockup's
-// numbers (142k of 200k at 71%, ~$1.82, opus, compressed twice, bash/read/
-// grep on top). Locks the layout the substring tests only probe.
+// numbers (142k of 200k at 71%, ~$1.82, opus, compressed twice, reading a file
+// on the left, the 5h and weekly usage on the right). Locks the layout the substring tests only probe.
 func TestRenderHeaderWideGolden(t *testing.T) {
 	out := stripANSI(renderTrue(wideSnapshot(), 100))
 	want := `orchestrator  ctx  ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱  71%  142k / 200k  ~$1.82  opus  compressed ×2          
-top  bash  31k  read  22k  grep  9k                                                        ● working`
+▤ reading wick-pig/header.go                                        5h ◔ 37% ↻1h40m   wk ◔ 14% ↻4d0h`
 	if out != want {
 		t.Errorf("wide golden differs:\ngot:\n%q\nwant:\n%q", out, want)
 	}

@@ -68,8 +68,11 @@ func newAgentReporter(cfg WrapConfig) *agentReporter {
 	if run == nil {
 		run = runHerdr
 	}
+	// A typed agent reports under its type's readable name. A top-level
+	// session stays "claude": its strip chip names its role, but herdr
+	// recognizes the agent by the harness name.
 	label := cfg.Source.AgentName
-	if label == "" {
+	if label == "" || cfg.Source.AgentType == "" {
 		label = "claude"
 	}
 	return &agentReporter{

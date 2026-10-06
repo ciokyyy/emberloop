@@ -70,19 +70,19 @@ func TestSecondRowShowsClaudeUsage(t *testing.T) {
 	snap := HeaderSnapshot{
 		AgentName: "implementer", State: HeaderIdle, Window: 1000, ContextTokens: 100,
 		Now:   time.Unix(0, 0),
-		Usage: ClaudeUsage{Has: true, FiveHour: UsageWindow{Pct: 37, ResetsAt: 6000}, SevenDay: UsageWindow{Pct: 92, ResetsAt: 4 * 86400}},
+		Usage: ClaudeUsage{Has: true, FiveHour: UsageWindow{Pct: 37, ResetsAt: 6000}, SevenDay: UsageWindow{Pct: 92, ResetsAt: 4 * 86400}}.Set(),
 	}
 	out := stripANSI(RenderHeader(snap, 120, HeaderOpts{Rows: 2, Dark: true, Profile: termenv.TrueColor}))
 	rows := strings.Split(out, "\n")
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d", len(rows))
 	}
-	for _, want := range []string{"5h ◔ 37% ↻1h40m", "7d ● 92% ↻4d0h"} {
+	for _, want := range []string{"5h ◔ 37% ↻1h40m", "wk ● 92% ↻4d0h"} {
 		if !strings.Contains(rows[1], want) {
 			t.Errorf("second row misses %q: %q", want, rows[1])
 		}
 	}
-	snap.Usage.Has = false
+	snap.Usage = UsageSet{}
 	if out := stripANSI(RenderHeader(snap, 120, HeaderOpts{Rows: 2, Dark: true, Profile: termenv.TrueColor})); strings.Contains(out, "5h") {
 		t.Error("usage shown with none reported")
 	}

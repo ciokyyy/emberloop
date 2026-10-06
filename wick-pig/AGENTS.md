@@ -58,6 +58,19 @@ owns its `_test.go` and the behaviour below):
   (model window table), `context_report.go` (the `wick-pig context` output)
 - Header strip: `header.go` (pure strip render: snapshot and width in,
   styled string out, Lip Gloss adaptive palette, width tiers),
+  `header_tool.go` (the second row's activity label: the tool running now
+  or the last one finished, a glyph and verb per tool in `toolStyles`; an
+  idle agent shows no state word. **A new tool wick serves needs its
+  `toolStyles` entry**: glyph, running verb, done verb. A test lists every
+  tool in `tools.All()` plus spawn and submit and fails on a missing entry;
+  an unlisted tool still shows, as a bare name), `claude_usage.go` and
+  `usage_providers.go` (the usage windows pinned right on the second row:
+  claude pushes its 5h and weekly windows through the statusline command
+  `wick-pig claude-status`; the opencode Go plan and Antigravity are polled
+  from their usage endpoints with pig's stored login, one fetch per 90 s
+  per account across all panes, cached as `usage-<key>.json` in the state
+  dir. A new provider adds a key in `UsageKeyFor` and a fetcher in
+  `RefreshUsage`),
   `theme.go` (the shared palette: Catppuccin Mocha and Latte driving the
   strip, the generated claude and pig themes and the OSC pane colors;
   per-run launch flags plus two wick-named claude theme files in its config

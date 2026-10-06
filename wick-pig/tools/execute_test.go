@@ -188,10 +188,30 @@ func TestExecuteSearchAndHelp(t *testing.T) {
 // Seam: the description lists the tools behind execute by name and carries a
 // tools.grep example.
 func TestExecuteDescriptionListsTools(t *testing.T) {
-	desc := ExecuteDescription([]string{"grep", "git", "check"}, nil)
-	for _, want := range []string{"grep", "git", "check", "tools.grep"} {
+	desc := ExecuteDescription([]string{"grep", "git", "check"}, []string{"bash", "read"}, nil)
+	for _, want := range []string{"grep", "git", "check", "tools.grep", "Also callable", "bash", "read"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("execute description must name %q:\n%s", want, desc)
+		}
+	}
+}
+
+// Seam: the when-to-use guidance is always there; an example appears only for
+// a tool the role can call.
+func TestExecuteDescriptionExamplesFollowTheToolList(t *testing.T) {
+	full := ExecuteDescription([]string{"grep"}, []string{"bash"}, nil)
+	for _, want := range []string{"Prefer execute", "loop: one call", "filter: print only the answer"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("description must carry %q:\n%s", want, full)
+		}
+	}
+	scout := ExecuteDescription([]string{"git"}, nil, nil)
+	if !strings.Contains(scout, "Prefer execute") {
+		t.Fatalf("guidance must not depend on the tool list:\n%s", scout)
+	}
+	for _, bad := range []string{"tools.bash(", "max_results=5"} {
+		if strings.Contains(scout, bad) {
+			t.Fatalf("a role without that tool must not see %q:\n%s", bad, scout)
 		}
 	}
 }

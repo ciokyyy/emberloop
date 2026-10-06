@@ -102,7 +102,7 @@ func TestExecuteScriptCallsMCPToolThroughNamespace(t *testing.T) {
 // Seam: the description carries one line per MCP server (name, summary,
 // count) and no schemas.
 func TestExecuteDescriptionListsMCPServers(t *testing.T) {
-	desc := ExecuteDescription([]string{"grep"}, []MCPServerLine{
+	desc := ExecuteDescription([]string{"grep"}, nil, []MCPServerLine{
 		{Name: "gh", Summary: "GitHub search", Tools: 2},
 		{Name: "zz", Tools: 1},
 	})
