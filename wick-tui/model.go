@@ -208,6 +208,7 @@ type Model struct {
 	pendingSelect       string
 	reselectAfterFilter bool
 	err                 error
+	settings            settingsState
 }
 
 // NewModel builds the dashboard over load. Both lists start 80x20 and 40x20;
@@ -229,6 +230,12 @@ func NewModel(load Loader) Model {
 	tl.SetFilteringEnabled(false)
 	return Model{load: load, list: l, tickets: tl, zone: zm, width: 80, height: 24}
 }
+
+// SetSettingsBackend wires the Settings tab's seam. The live binary passes
+// LiveBackend; tests pass a stub. It lives outside NewModel so unit tests
+// stay hermetic: nothing here may touch the real settings file, harness
+// CLIs or state dir unless the caller asks for it.
+func (m *Model) SetSettingsBackend(be SettingsBackend) { m.settings.backend = be }
 
 type tickMsg struct{}
 type snapMsg struct{ snap Snap }
@@ -256,7 +263,10 @@ func (m Model) Init() tea.Cmd {
 // Update drives the dashboard: tab switches tabs, q quits, h/l and arrows
 // switch panes and move through the focused list, a left press selects the
 // clicked spec or ticket row, and every tick reloads the snapshot. A herdr
-// failure keeps the last snapshot and retries on the next tick.
+// failure keeps the last snapshot and retries on the next tick. On the
+// Settings tab keys and clicks edit through the settings backend (see
+// settings.go); a tick re-reads the file without disturbing an open picker
+// or editor.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -271,10 +281,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.snap, m.err = msg.snap, nil
 		cmd := m.rebuildItems()
 		m.syncTickets()
+		m.reloadSettingsValues()
 		return m, cmd
 	case errMsg:
 		m.err = msg.err
 		return m, nil
+	case settingsRefreshMsg:
+		return m.updateSettings(msg)
 	case list.FilterMatchesMsg:
 		lm, cmd := m.list.Update(msg)
 		m.list = lm
@@ -285,23 +298,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncTickets()
 		return m, cmd
 	case tea.MouseMsg:
-		if m.tab == tabRuns && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			m.click(msg)
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if m.tab == tabRuns {
+				m.click(msg)
+			} else {
+				return m.updateSettings(msg)
+			}
 		}
 		return m, nil
 	case tea.KeyMsg:
-		if msg.Type == tea.KeyTab && m.list.FilterState() != list.Filtering {
+		if msg.Type == tea.KeyTab && m.list.FilterState() != list.Filtering && !m.settings.capturing() {
 			m.tab = (m.tab + 1) % 2
+			if m.tab == tabSettings {
+				m.loadSettingsTab()
+			}
 			return m, nil
 		}
 		if m.tab == tabSettings {
-			if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
-				return m, tea.Quit
-			}
-			if msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyEsc {
-				return m, tea.Quit
-			}
-			return m, nil
+			return m.updateSettings(msg)
 		}
 		if m.tab == tabRuns && m.list.FilterState() != list.Filtering {
 			if msg.Type == tea.KeyRight {
@@ -456,6 +470,9 @@ func (m Model) View() string {
 		tabs = "Runs  " + styleTab.Render("Settings")
 	}
 	help := styleDim.Render("↑/k ↓/j move • ←/→ or h/l pane • click select • tab tabs • q quit • 1s refresh")
+	if m.tab == tabSettings {
+		help = styleDim.Render(m.settingsHelp())
+	}
 	if m.err != nil {
 		help = styleDim.Render("refresh failed: " + m.err.Error() + " • retrying")
 	}
@@ -463,7 +480,7 @@ func (m Model) View() string {
 	if m.tab == tabRuns {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, m.list.View(), m.tickets.View())
 	} else {
-		body = "Settings — the role defaults editor arrives in its own ticket."
+		body = m.viewSettings()
 	}
 	return m.zone.Scan(tabs + "\n" + help + "\n" + body)
 }

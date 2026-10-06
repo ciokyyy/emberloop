@@ -556,3 +556,28 @@ func TestHarnessCommandCarriesThePromptExactlyOnce(t *testing.T) {
 		}
 	}
 }
+
+// ArchiveSize covers the archive and blob store for the dashboard's Settings
+// tab: an empty state reads zero, and every file under both directories
+// counts.
+func TestArchiveSizeCoversArchiveAndBlobs(t *testing.T) {
+	isolateState(t)
+	if got := ArchiveSize(); got != 0 {
+		t.Fatalf("empty state ArchiveSize = %d, want 0", got)
+	}
+	writeSized := func(path string, n int) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Repeat("x", n)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSized(filepath.Join(archiveRoot(), "spec-a", "w1", "transcript.jsonl"), 100)
+	writeSized(filepath.Join(archiveRoot(), "spec-a", "w1", "session.json"), 50)
+	writeSized(filepath.Join(blobDir(), "abc123"), 25)
+	if got, want := ArchiveSize(), int64(175); got != want {
+		t.Fatalf("ArchiveSize = %d, want %d", got, want)
+	}
+}

@@ -2,19 +2,24 @@
 
 ## Purpose
 
- The wick dashboard: `wick-pig tui` opens it in the current pane. The Runs
- tab lists specs grouped by repo (current first), each with running/ended
- status and merged/total progress, with the selected spec's tickets beside
- them carrying a derived status glyph each, refreshed every second. Later
- tickets add ticket detail (agents, tokens, cost, memory), pane jumping and
- the Settings tab.
+The wick dashboard: `wick-pig tui` opens it in the current pane. The Runs
+tab lists specs grouped by repo (current first), each with running/ended
+status and merged/total progress, with the selected spec's tickets beside
+them carrying a derived status glyph each, refreshed every second. The
+Settings tab edits the role slots, decision model and threshold through the
+global settings load/save functions, with model choices from each harness's
+cached `Models()` and the archive size beside them. Later tickets add
+ticket detail (agents, tokens, cost, memory) and pane jumping.
 
 ## Ownership
 
 Owns this directory as a separate Go module (`snapshot.go` and its test,
-`model.go` and its test, `herdr.go` and its test, `cmd/wick-tui/main.go`).
-Ticket status derivation lives in `Snapshot`; status glyphs and colours live
-in `model.go`'s view layer.
+`model.go` and its test, `herdr.go` and its test, `settings.go` and its
+test, `cmd/wick-tui/main.go`). Ticket status derivation lives in `Snapshot`;
+status glyphs and colours live in `model.go`'s view layer. The Settings tab
+edits through the `SettingsBackend` seam: the live backend calls the core's
+settings load/save, harness `Models()` cache and archive size (this module
+may import the core; never the reverse).
 
 ## Local Contracts
 
@@ -30,16 +35,19 @@ in `model.go`'s view layer.
   free-text model id, progress for the merged/total bar), lipgloss v1.1.0
   (styling, tree for spec → ticket → agent), bubblezone v1.0.0 (named click
   regions; double-click detection stays ours — last click zone plus time).
-  huh v1.0.0 (Settings forms) and glamour v1.0.0 (ticket Markdown) join with
-  their tickets. Skipped: ntcharts, evertras/bubble-table, tview/gocui/
-  ratatui ports.
+  No huh: the Settings tab hand-rolls its rows on textinput and bubblezone
+  so keys, clicks and `r` share the tab's Update loop. glamour v1.0.0
+  (ticket Markdown) joins with its ticket. Skipped: ntcharts,
+  evertras/bubble-table, tview/gocui/ratatui ports.
 
 ## Work Guidance
 
 - Build and test from this directory: `go build ./...`, `go vet ./...`,
   `go test ./...`. Never launch the binary from a test: drive the model
   through the `Loader` seam and liveness through the `Herdr` and
-  `CommandRunner` seams with fixture state dirs.
+  `CommandRunner` seams with fixture state dirs; drive Settings edits
+  through the `SettingsBackend` seam with the shared load/save pointed at
+  a temp file and stubbed model lists.
 - Behavioural change needs a test through `Snapshot` or model messages, not
   internals; expected values come from the fixture, never recomputed the way
   the code does.
