@@ -22,8 +22,9 @@ import (
 // UsageWindow is one rate-limit window: percent used and when it resets
 // (unix seconds).
 type UsageWindow struct {
-	Pct      int   `json:"pct"`
-	ResetsAt int64 `json:"resets_at"`
+	Label    string `json:"label,omitempty"`
+	Pct      int    `json:"pct"`
+	ResetsAt int64  `json:"resets_at"`
 }
 
 // ClaudeUsage is the account's two windows. Has is false until claude has
@@ -151,4 +152,20 @@ func usagePie(pct int) string {
 		return "◕"
 	}
 	return "●"
+}
+
+// Set is the two windows as the strip's generic usage view: 5h then wk. A
+// window claude has not reported yet is left out.
+func (u ClaudeUsage) Set() UsageSet {
+	if !u.Has {
+		return UsageSet{}
+	}
+	var ws []UsageWindow
+	if u.FiveHour.ResetsAt > 0 {
+		ws = append(ws, UsageWindow{Label: "5h", Pct: u.FiveHour.Pct, ResetsAt: u.FiveHour.ResetsAt})
+	}
+	if u.SevenDay.ResetsAt > 0 {
+		ws = append(ws, UsageWindow{Label: "wk", Pct: u.SevenDay.Pct, ResetsAt: u.SevenDay.ResetsAt})
+	}
+	return UsageSet{Has: len(ws) > 0, Windows: ws}
 }

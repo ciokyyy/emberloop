@@ -63,9 +63,12 @@ type HeaderSnapshot struct {
 	TopTools      []ToolSize
 	CompressCount int
 	State         HeaderState
-	Warning       string      // non-empty replaces the state pill, e.g. no compressModel
-	Usage         ClaudeUsage // claude account windows; Has false hides them
-	Now           time.Time   // the clock the reset countdowns read
+	Warning       string    // non-empty replaces the state pill, e.g. no compressModel
+	Usage         UsageSet  // the account's usage windows; Has false hides them
+	UsageKey      string    // which account Usage is; empty for none
+	Running       ToolCall  // the tool running now, empty when none
+	Last          ToolCall  // the last finished tool, with its result size
+	Now           time.Time // the clock the reset countdowns read
 }
 
 // HeaderOpts tunes the render: Rows caps the strip height (0 means the
@@ -328,31 +331,19 @@ func (h *headerCtx) barRow(width int, segs []cell, pill *cell, maxBar, minBar in
 	return h.styled(width, h.join(cells)), true
 }
 
-// secondRow is the mockup's row 2: the top tools by result size beside the
-// state pill. Tools that do not fit are dropped whole, never cut in half;
-// with no tools the row holds only the pill.
+// secondRow is the strip's second line: what the agent is doing on the left
+// (the tool running now, or the last one finished), the account usage pinned
+// right. An idle agent shows no state word; compress and warnings still do.
 func (h *headerCtx) secondRow(width int) string {
-	pill := h.pill()
-	cells := []cell{{text: "top", hex: h.dim}}
-	plain := lipgloss.Width("top") + lipgloss.Width(pill.text) + 3
-	var lead []cell
-	if u := h.usageCell(); u.text != "" && lipgloss.Width(u.text)+lipgloss.Width(pill.text)+4 <= width {
-		lead = []cell{u}
-		plain += lipgloss.Width(u.text) + 2
+	right := h.usageCell()
+	room := width
+	if right.text != "" {
+		room = width - lipgloss.Width(right.text) - 3
 	}
-	for _, ts := range h.snap.TopTools {
-		name := truncateName(ts.Name, 20)
-		size := HumanizeTokens(ts.Bytes)
-		if plain+lipgloss.Width(name)+lipgloss.Width(size)+4 > width {
-			break
-		}
-		plain += lipgloss.Width(name) + lipgloss.Width(size) + 4
-		cells = append(cells, cell{text: name, hex: h.tool}, cell{text: size, hex: h.text})
+	if room < 1 {
+		room, right = width, cell{}
 	}
-	if len(cells) == 1 {
-		return h.row(width, append(lead, pill))
-	}
-	return h.row(width, append(append(lead, cells...), pill))
+	return h.splitRow(width, h.activityCell(room), right)
 }
 
 // narrowRow is the narrow tier: percent and cost beside the state, with the
@@ -542,10 +533,10 @@ func lerp(a, b, t float64) float64 { return a + (b-a)*t }
 
 func roundFloat(f float64) int { return int(f + 0.5) }
 
-// usageCell is the claude account usage, both windows in one cell:
-// `5h ◔ 37% ↻1h40m   7d ◔ 14% ↻4d2h`. The pie fills with the percent and
-// both take the threshold color of the context percent; the reset countdown
-// stays dim. Empty when claude has reported nothing.
+// usageCell is the account usage, every window in one cell:
+// `5h ◔ 37% ↻1h40m   wk ◔ 14% ↻4d2h`. The pie fills with the percent and
+// takes the threshold color of the context percent; the reset countdown
+// stays dim. Empty when the account has reported nothing.
 func (h *headerCtx) usageCell() cell {
 	u := h.snap.Usage
 	if !u.Has {
@@ -555,7 +546,8 @@ func (h *headerCtx) usageCell() cell {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	part := func(label string, w UsageWindow) string {
+	var parts []string
+	for _, w := range u.Windows {
 		hex := h.calm
 		switch ThresholdClass(int64(w.Pct)) {
 		case "warm":
@@ -563,20 +555,13 @@ func (h *headerCtx) usageCell() cell {
 		case "hot":
 			hex = h.hot
 		}
-		out := h.style(cell{text: label, hex: h.dim}) + h.fill(" ") +
+		out := h.style(cell{text: w.Label, hex: h.dim}) + h.fill(" ") +
 			h.style(cell{text: usagePie(w.Pct), hex: hex}) + h.fill(" ") +
 			h.style(cell{text: fmt.Sprintf("%d%%", w.Pct), hex: hex, bold: true})
 		if r := usageResetIn(w.ResetsAt, now); r != "" {
 			out += h.fill(" ") + h.style(cell{text: "↻" + r, hex: h.dim})
 		}
-		return out
-	}
-	var parts []string
-	if u.FiveHour.ResetsAt > 0 {
-		parts = append(parts, part("5h", u.FiveHour))
-	}
-	if u.SevenDay.ResetsAt > 0 {
-		parts = append(parts, part("7d", u.SevenDay))
+		parts = append(parts, out)
 	}
 	return cell{text: strings.Join(parts, h.fill("   ")), raw: true}
 }

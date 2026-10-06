@@ -212,6 +212,7 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 		CompressCount: src.CompressCount,
 	}
 	path := resolveTranscript(src)
+	provider := ""
 	// No transcript yet means no turn has started: the agent is waiting for
 	// its first message, not working. herdr's wait for idle depends on it.
 	if path == "" {
@@ -234,6 +235,8 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 			snap.Model = core.Model
 			snap.ContextTokens = core.ContextTokens
 			snap.TopTools = core.TopTools
+			snap.Running, snap.Last = core.Running, core.Last
+			provider = core.Provider
 			snap.Window = SnapshotWindow(core, s)
 		}
 	}
@@ -241,9 +244,8 @@ func BuildHeaderSnapshot(src HeaderSource, s tools.Settings) (HeaderSnapshot, er
 		snap.Cost, snap.HasCost = cost, true
 	}
 	snap.Now = time.Now()
-	if src.Harness == "claude" {
-		snap.Usage = ReadClaudeUsage(src.StateDir, snap.Now)
-	}
+	snap.UsageKey = UsageKeyFor(src.Harness, provider, snap.Model)
+	snap.Usage = ReadUsage(src.StateDir, snap.UsageKey, snap.Now)
 	if s.EffectiveCompressModel(src.Harness) == "" {
 		snap.Warning = "no compressModel"
 	}

@@ -107,6 +107,10 @@ var executeExcluded = map[string]bool{
 	"execute": true, "spawn": true, "finish": true, "tell": true, "submit": true,
 }
 
+// ExecuteExcluded reports whether name is an orchestration tool that never
+// reaches a script.
+func ExecuteExcluded(name string) bool { return executeExcluded[name] }
+
 // NewExecute builds the execute tool for one role: allowed is the role's
 // resolved toolset (both buckets, renames applied) and only what is not
 // excluded stays callable. desc is served as the description; empty means the
@@ -154,7 +158,7 @@ type MCPServerLine struct {
 // example and the search/help/ToolError how-to. names are the execute bucket
 // in serve order; servers adds one line per MCP server behind execute (name,
 // short summary, tool count) and nothing more: never schemas.
-func ExecuteDescription(names []string, servers []MCPServerLine) string {
+func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) string {
 	var b strings.Builder
 	b.WriteString("Run a Python script (stdlib only) that calls wick tools as functions, so one call replaces many and only what the script prints enters context.\n\n")
 	if len(names) == 0 && len(servers) == 0 {
@@ -180,6 +184,24 @@ func ExecuteDescription(names []string, servers []MCPServerLine) string {
 	}
 
 	b.WriteString("\nimport tools\nprint(tools.grep(pattern=\"TODO\"))\n\n")
+	if len(mainNames) > 0 {
+		fmt.Fprintf(&b, "Also callable as tools.<name>(...): %s (these are served as separate tools; call them here to batch).\n\n", strings.Join(mainNames, ", "))
+	}
+	has := map[string]bool{}
+	for _, n := range names {
+		has[n] = true
+	}
+	for _, n := range mainNames {
+		has[n] = true
+	}
+	b.WriteString("Prefer execute over several separate calls when one result feeds the next, when you loop over many items, or when you need only a filtered slice of a big output. Independent single calls are fine as parallel tool calls.\n")
+	if has["grep"] {
+		b.WriteString("\n# loop: one call, not N\nfor p in [\"TODO\", \"FIXME\"]:\n    print(p, tools.grep(pattern=p, max_results=5))\n")
+	}
+	if has["bash"] {
+		b.WriteString("\n# filter: print only the answer\nout = tools.bash(command=\"go test ./... 2>&1\")\nprint([l for l in out.splitlines() if \"FAIL\" in l])\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("tools.search(query) lists matching tools with signatures; tools.help(name) shows one tool. " +
 		"A failing tool call raises tools.ToolError: catch it or the traceback comes back.")
 	return b.String()

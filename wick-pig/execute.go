@@ -112,14 +112,29 @@ func boundExecuteTool(role string, s tools.Settings, main, execute []tools.Tool,
 		warnf(warn, "settings rename %q collides with a served tool; keeping the first", final)
 		return nil
 	}
-	allowed := append(append([]tools.Tool{}, main...), execute...)
+	// A script calls the plain bash: the filter-in-execute tip is for the
+	// caller outside execute.
+	var allowed []tools.Tool
+	for _, t := range main {
+		if h, ok := t.(bashHintTool); ok {
+			t = h.inner
+		}
+		allowed = append(allowed, t)
+	}
+	allowed = append(allowed, execute...)
 	var names []string
 	for _, t := range execute {
 		if !isMCPTool(t) {
 			names = append(names, t.Name())
 		}
 	}
-	bound := tools.NewExecute(allowed, tools.ExecuteDescription(names, mcpServerLines(s, execute)), executeSandboxed(role))
+	var mainNames []string
+	for _, t := range main {
+		if !isMCPTool(t) && !tools.ExecuteExcluded(t.Name()) {
+			mainNames = append(mainNames, t.Name())
+		}
+	}
+	bound := tools.NewExecute(allowed, tools.ExecuteDescription(names, mainNames, mcpServerLines(s, execute)), executeSandboxed(role))
 	if final != "execute" {
 		bound = tools.Renamed(bound, final)
 	}
