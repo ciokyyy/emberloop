@@ -5,6 +5,7 @@ package wick
 // user's session share one path.
 
 import (
+	"io"
 	"os"
 	"strings"
 
@@ -41,21 +42,36 @@ func LaunchStripSource(cmd Command) HeaderSource {
 }
 
 // WrapLaunch runs a launch command under the header strip: same binary,
-// argv and env, on a terminal sized for the strip. Without a terminal, or
-// with the strip disabled, the command runs plainly exactly as before.
-func WrapLaunch(cmd Command) error {
+// argv and env, on a terminal sized for the strip, with the child's stderr
+// merged into the terminal. Without a terminal, or with the strip disabled,
+// the command runs plainly exactly as before.
+func WrapLaunch(cmd Command) error { return WrapLaunchWithChildStderr(cmd, nil) }
+
+// WrapLaunchWithChildStderr runs a launch command under the header strip
+// with the child's stderr on its own pipe: stdin and stdout stay on the
+// PTY, so the strip is drawn, while stderr streams to childStderr (the
+// pig tools log). A nil childStderr merges stderr into the PTY, as
+// WrapLaunch does. Without a terminal, or with the strip disabled, the
+// command runs plainly with childStderr as its error sink. Stderr stays
+// unset, so wrapper warnings never land in the child's log.
+func WrapLaunchWithChildStderr(cmd Command, childStderr io.Writer) error {
 	if HeaderStripDisabled() {
-		return RunPlainCommand(cmd.Bin, cmd.Args, cmd.Env, os.Stdin, os.Stdout, os.Stderr)
+		stderr := childStderr
+		if stderr == nil {
+			stderr = os.Stderr
+		}
+		return RunPlainCommand(cmd.Bin, cmd.Args, cmd.Env, os.Stdin, os.Stdout, stderr)
 	}
 	cwd, _ := os.Getwd()
 	return WrapChild(WrapConfig{
-		Source:   LaunchStripSource(cmd),
-		Settings: tools.EffectiveSettings(cwd),
-		Bin:      cmd.Bin,
-		Args:     cmd.Args,
-		Env:      cmd.Env,
-		Stdin:    os.Stdin,
-		Stdout:   os.Stdout,
+		Source:      LaunchStripSource(cmd),
+		Settings:    tools.EffectiveSettings(cwd),
+		Bin:         cmd.Bin,
+		Args:        cmd.Args,
+		Env:         cmd.Env,
+		Stdin:       os.Stdin,
+		Stdout:      os.Stdout,
+		ChildStderr: childStderr,
 	})
 }
 
