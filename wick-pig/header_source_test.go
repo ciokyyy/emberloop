@@ -1,6 +1,10 @@
 package wick
 
-import "testing"
+import (
+	"testing"
+
+	"example.com/wick/tools"
+)
 
 // The strip source for a launched agent comes from the launch command's own
 // environment: the identity the harness command already carries. The chip
@@ -32,5 +36,18 @@ func TestLaunchStripSourceBare(t *testing.T) {
 	src := LaunchStripSource(Command{Bin: "pig", Env: []string{"WICK_HARNESS=pig"}})
 	if src.AgentName != "" || src.Harness != "pig" {
 		t.Errorf("bare source = %+v, want empty name with pig", src)
+	}
+}
+
+// Every wrapped launch serves the control channel: without it tell and the
+// shared delivery path would fall back to herdr send-text.
+func TestWrapConfigServesCtrl(t *testing.T) {
+	cmd := Command{Bin: "pig", Args: []string{"a"}, Env: []string{"WICK_AGENT_ID=w1"}}
+	cfg := wrapConfigFor(cmd, LaunchStripSource(cmd), tools.Settings{})
+	if !cfg.ServeCtrl {
+		t.Error("wrapped launches must serve the control channel")
+	}
+	if cfg.Bin != "pig" || cfg.Source.AgentID != "w1" {
+		t.Errorf("launch config lost the command or identity: %+v", cfg)
 	}
 }

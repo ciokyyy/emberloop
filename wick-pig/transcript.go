@@ -103,6 +103,37 @@ func lastTurn(path string, classify func(rec map[string]any) (state, detail stri
 	return state, detail
 }
 
+// agentForPane finds the agent that runs in pane from its record, without
+// asking herdr: the socket's presence below says whether its wrapper runs.
+func agentForPane(pane string) (string, bool) {
+	entries, err := os.ReadDir(agentStateDir())
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if st, ok, err := ReadAgentState(id); err == nil && ok && st.Pane == pane {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// deliverViaWrapper tries the agent's wrapper channel: a wrapped agent's
+// prompt arrives through its queue, never through herdr send-text. A
+// missing agent record or a failed channel round trip falls back to herdr.
+func deliverViaWrapper(pane, text string) bool {
+	id, ok := agentForPane(pane)
+	if !ok {
+		return false
+	}
+	_, err := ctrlEnqueue(id, QueueKindSteer, text, "deliver")
+	return err == nil
+}
+
 // DeliverPrompt sends text to the agent in pane as the message itself, so the
 // agent spends no turn reading a file. It is the one shared prompt-delivery
 // path: steering, reviewer follow-ups, late first messages and (later)
@@ -111,6 +142,9 @@ func lastTurn(path string, classify func(rec map[string]any) (state, detail stri
 // ("not an active named agent") and the text is typed into the pane instead.
 // Typed text is one line: a newline would submit the message half-written.
 func DeliverPrompt(run Exec, pane, text string) error {
+	if deliverViaWrapper(pane, text) {
+		return nil
+	}
 	if res, err := run(herdrBin(), []string{"agent", "prompt", pane, text}, ExecOpts{Timeout: 30 * time.Second}); err == nil && res.Code == 0 {
 		return nil
 	}

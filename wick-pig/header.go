@@ -62,6 +62,7 @@ type HeaderSnapshot struct {
 	HasCost       bool
 	TopTools      []ToolSize
 	CompressCount int
+	Pending       int // prompts waiting in the wrapper's queue: hidden at 0
 	State         HeaderState
 	Warning       string    // non-empty replaces the state pill, e.g. no compressModel
 	Usage         UsageSet  // the account's usage windows; Has false hides them
@@ -450,23 +451,34 @@ func truncateName(name string, max int) string {
 }
 
 // pill is the state field: working, idle, compress queued, compressing, or
-// the warning. A warning always wins over the state.
+// the warning. A warning always wins over the state, never over the queue
+// count: a waiting input queue appends `N pending` to either, so the strip
+// shows it until the queue drains.
 func (h *headerCtx) pill() cell {
+	text, hex := h.stateCell()
 	if h.snap.Warning != "" {
-		return cell{text: "⚠ " + h.snap.Warning, hex: h.hot}
+		text, hex = "⚠ "+h.snap.Warning, h.hot
 	}
+	if h.snap.Pending > 0 {
+		text += " · " + strconv.Itoa(h.snap.Pending) + " pending"
+	}
+	return cell{text: text, hex: hex}
+}
+
+// stateCell is the pill's state text and color without the queue count.
+func (h *headerCtx) stateCell() (string, string) {
 	switch h.snap.State {
 	case HeaderIdle:
-		return cell{text: "◌ idle", hex: h.idle}
+		return "◌ idle", h.idle
 	case HeaderQueued:
-		return cell{text: "⏳ compress queued", hex: h.idle}
+		return "⏳ compress queued", h.idle
 	case HeaderCompressing:
 		if h.pulse {
-			return cell{text: "⟳ compressing…", hex: h.idle}
+			return "⟳ compressing…", h.idle
 		}
-		return cell{text: "⟳ compressing…", hex: h.accent}
+		return "⟳ compressing…", h.accent
 	default:
-		return cell{text: "● working", hex: h.pctHex}
+		return "● working", h.pctHex
 	}
 }
 
