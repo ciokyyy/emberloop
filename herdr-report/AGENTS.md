@@ -27,7 +27,7 @@ their tests). Agent identity and naming here; review and merge policy in
 
 ## Verification
 
-No check; the repo check covers `wick-pig/` only.
+ No check; the repo check covers `wick-pig/` and `wick-tui/`.
 
 ## Child DOX Index
 

@@ -43,11 +43,11 @@ in `model.go`'s view layer.
   internals; expected values come from the fixture, never recomputed the way
   the code does.
 
-## Verification
+ ## Verification
 
-`cd wick-tui && go vet ./... && go test ./...`. The repo check covers
-`wick-pig/` only.
+ `cd wick-tui && go vet ./... && go test ./...`. The repo check
+ (`.wick/check`) runs this module and `wick-pig/`.
 
-## Child DOX Index
+ ## Child DOX Index
 
-No child docs.
+ No child docs.

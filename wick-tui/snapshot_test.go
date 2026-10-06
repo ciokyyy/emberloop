@@ -262,3 +262,53 @@ func TestSnapshotGroupsASubdirectoryRunWithItsCheckout(t *testing.T) {
 		t.Errorf("specs = %+v, want alpha and my-spec once each", snap.Repos[0].Specs)
 	}
 }
+
+// Re-homing is not current-repo-only: a run launched from a subdirectory of
+// a repo groups with that repo's root even when another repo is current, so
+// no spec lists twice.
+func TestSnapshotRehomesSubdirectoryRunsOfOtherRepos(t *testing.T) {
+	stateDir := t.TempDir()
+	repoA := t.TempDir()
+	repoC := t.TempDir()
+	writeSpec(t, repoA, "alpha", []ticketFile{{"01-one.md", "ready-for-agent"}})
+	writeSpec(t, repoA, "beta", []ticketFile{{"01-one.md", "ready-for-agent"}})
+	sub := filepath.Join(repoA, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runs := map[string]any{
+		"alpha": map[string]any{
+			"slug": "alpha", "spec": filepath.Join(repoA, ".scratch", "alpha", "spec.md"),
+			"repo": repoA, "branch": "spec/alpha",
+			"agent_id": "o1", "pane": "w1:alive", "harness": "pig",
+		},
+		"beta": map[string]any{
+			"slug": "beta", "spec": filepath.Join(repoA, ".scratch", "beta", "spec.md"),
+			"repo": sub, "branch": "spec/beta",
+			"agent_id": "o2", "pane": "w1:alive", "harness": "pig",
+		},
+	}
+	raw, _ := json.Marshal(runs)
+	if err := os.WriteFile(filepath.Join(stateDir, "runs.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := Snapshot(stateDir, repoC, liveHerdr("w1:alive"))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Repos) != 2 {
+		t.Fatalf("repos = %+v, want repoA and the current repo", snap.Repos)
+	}
+	if snap.Repos[0].Path != repoC {
+		t.Errorf("first repo = %q, want current repo %q", snap.Repos[0].Path, repoC)
+	}
+	if got := len(snap.Repos[1].Specs); got != 2 {
+		t.Fatalf("repoA specs = %+v, want alpha and beta once each", snap.Repos[1].Specs)
+	}
+	for _, slug := range []string{"alpha", "beta"} {
+		if s := findSpec(t, snap, repoA, slug); !s.HasRun {
+			t.Errorf("%s must carry its run: %+v", slug, s)
+		}
+	}
+}

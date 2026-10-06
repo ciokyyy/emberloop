@@ -258,4 +258,50 @@ func TestModelPollingWhileFilteredKeepsTheFilter(t *testing.T) {
 	if got := selectedSlug(m); got != "beta" {
 		t.Fatalf("selection after poll = %q, want beta", got)
 	}
+
+}
+
+// typeFilter applies a list filter the way the runtime does: every
+// keystroke's recompute command runs, and the last one populates the rows
+// before enter accepts them.
+func typeFilter(m Model, query string) Model {
+	var cmd tea.Cmd
+	m, _ = pressKey(m, "/")
+	for i, r := range query {
+		if i == len(query)-1 {
+			m, cmd = pressKey(m, string(r))
+			m = runCmds(m, cmd)
+		} else {
+			m, _ = pressKey(m, string(r))
+		}
+	}
+	m, cmd = pressKey(m, "enter")
+	return runCmds(m, cmd)
+}
+
+// A poll that inserts a matching row under an active filter keeps the
+// selection on the same spec by identity, not by row index.
+func TestModelPollInsertsRowUnderActiveFilterKeepsSelection(t *testing.T) {
+	snap := cannedSnapshot("/repo-a", "/repo-b")
+	var calls int
+	m := loadModel(t, &snap, &calls)
+	m = typeFilter(m, "gamm")
+	if got := selectedSlug(m); got != "gamma" {
+		t.Fatalf("filtered selection = %q, want gamma", got)
+	}
+
+	// gamma-0 sorts before gamma and matches the same filter.
+	snap.Repos[1].Specs = append([]SpecSnap{
+		{Slug: "gamma-0", Spec: "/repo-b/.scratch/gamma-0/spec.md", Branch: "spec/gamma-0", Total: 1},
+	}, snap.Repos[1].Specs...)
+	updated, cmd := m.Update(tickMsg{})
+	m = updated.(Model)
+	m = runCmds(m, cmd)
+	visible := m.list.VisibleItems()
+	if len(visible) != 2 {
+		t.Fatalf("visible after poll = %d, want gamma-0 and gamma", len(visible))
+	}
+	if got := selectedSlug(m); got != "gamma" {
+		t.Fatalf("selection after poll = %q, want gamma kept by identity, not row 0", got)
+	}
 }
