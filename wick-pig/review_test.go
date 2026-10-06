@@ -931,7 +931,7 @@ requires_review: [reviewer-spec]
 {{prompt}}
 `)
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
-	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, tip, tip, "", ""); err != nil {
+	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, tip, tip, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Finish(osExec, "07-x", true)
@@ -941,7 +941,7 @@ requires_review: [reviewer-spec]
 	if res.Merged {
 		t.Fatalf("the standards reviewer passed but the worker type requires only the spec reviewer, so it must wait: %+v", res)
 	}
-	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, tip, tip, "", ""); err != nil {
+	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, tip, tip, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	res, err = Finish(osExec, "07-x", true)
@@ -976,7 +976,7 @@ func passReviews(t *testing.T, tree, tip string) {
 	t.Helper()
 	w := workerAt(tree)
 	for _, typ := range requiredReviewers(w) {
-		if err := mergeReviewerVerdict(tree, typ, verdictPass, tip, tip, "", ""); err != nil {
+		if err := mergeReviewerVerdict(tree, typ, verdictPass, tip, tip, "", "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1255,6 +1255,112 @@ func TestReviewSpawnAfterARebaseShowsOnlyTheWorkersChange(t *testing.T) {
 	}
 }
 
+// A pass survives a clean rebase onto an unrelated merged change: the second
+// spawn reports nothing to review, starts no new review, and the gate accepts
+// the old pass.
+func TestPassSurvivesCleanRebase(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "other.go"), "package other\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "another ticket merged")
+	gitOut(t, tree, "rebase", "-q", "main")
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "nothing to review") && !strings.Contains(out, "every reviewer passed") {
+		t.Errorf("a clean rebase must keep the pass, got:\n%s", out)
+	}
+	for _, typ := range defaultReviewers {
+		if turns := f.paneOf(t, typ).turns; turns != 1 {
+			t.Errorf("%s turns = %d, want 1: no re-review after a clean rebase", typ, turns)
+		}
+	}
+	if res, err := Finish(f.run, "07-x", true); err != nil || !res.Merged {
+		t.Fatalf("the gate must accept a pass that survived a clean rebase: %+v %v", res, err)
+	}
+}
+
+// A rebase that changes the worker's own change makes the pass stale: the
+// reviewers are asked again and the gate refuses the old pass.
+func TestPassStaleAfterContentChangingRebase(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "other.go"), "package other\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "another ticket merged")
+	gitOut(t, tree, "rebase", "-q", "main")
+	writeFile(t, filepath.Join(tree, "a.go"), "package a\n\nfunc A() {}\n\nfunc C() {}\n")
+	gitOut(t, tree, "add", ".")
+	gitOut(t, tree, "commit", "-qm", "change the worker's own change")
+	if res, _ := Finish(f.run, "07-x", true); res.Merged || !strings.Contains(res.Detail, "not at the tip") {
+		t.Fatalf("a content-changing rebase must make the pass stale: %+v", res)
+	}
+	f.answer = answers("pass", "pass")
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "nothing to review") {
+		t.Errorf("changed content must be reviewed again, got:\n%s", out)
+	}
+	// The standards reviewer re-reviews the changed patch; the spec reviewer's
+	// pass holds by type, so it stays on its first turn.
+	if turns := f.paneOf(t, reviewerStandards).turns; turns != 2 {
+		t.Errorf("standards turns = %d, want 2: a changed patch is re-reviewed", turns)
+	}
+	if turns := f.paneOf(t, reviewerSpec).turns; turns != 1 {
+		t.Errorf("spec turns = %d, want 1: its pass holds by type", turns)
+	}
+}
+
+// A rebase that conflicts and is resolved with different content makes the
+// pass stale: the change identity differs, so the gate refuses the old pass
+// and the reviewers judge again.
+func TestPassStaleAfterConflictingRebase(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	f := newFakeReviewers(answers("pass", "pass"))
+	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
+		t.Fatal(err)
+	}
+	// Another ticket changes the same function on main, so rebasing conflicts.
+	writeFile(t, filepath.Join(repo, "a.go"), "package a\n\nfunc A() { // other }\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "another ticket changes A")
+	if res, err := osExec("git", []string{"rebase", "main"}, ExecOpts{Cwd: tree}); err != nil || res.Code == 0 {
+		t.Fatalf("want the rebase to conflict, got code %d err %v", res.Code, err)
+	}
+	// Resolve with different content than the reviewers passed.
+	writeFile(t, filepath.Join(tree, "a.go"), "package a\n\nfunc A() {}\n\n// resolved conflict\n")
+	if res, err := osExec("git", []string{"add", "-A"}, ExecOpts{Cwd: tree}); err != nil || res.Code != 0 {
+		t.Fatalf("git add: %+v %v", res, err)
+	}
+	if res, err := osExec("git", []string{"rebase", "--continue"}, ExecOpts{Cwd: tree, Env: []string{"GIT_EDITOR=true"}}); err != nil || res.Code != 0 {
+		t.Fatalf("git rebase --continue: %+v %v", res, err)
+	}
+	if res, _ := Finish(f.run, "07-x", true); res.Merged || !strings.Contains(res.Detail, "not at the tip") {
+		t.Fatalf("a conflicting rebase must make the pass stale: %+v", res)
+	}
+	f.answer = answers("pass", "pass")
+	out, err := reviewSpawn(t, f, tree, bothReviewers()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "nothing to review") {
+		t.Errorf("resolved content must be reviewed again, got:\n%s", out)
+	}
+	if turns := f.paneOf(t, reviewerStandards).turns; turns != 2 {
+		t.Errorf("standards turns = %d, want 2: a conflicted patch is re-reviewed", turns)
+	}
+}
+
 // Both reviewers dead at once: each replacement finds a free slot, and the
 // review completes rather than failing on a source pane that is gone too. The
 // spec reviewer is only replaced when its verdict is not a pass, so its first
@@ -1308,10 +1414,10 @@ func TestSpecPassHoldsWhileOnlyStandardsIsReprompted(t *testing.T) {
 		t.Errorf("the reply must not carry a report from the spec reviewer: %s", out)
 	}
 	tip := gitOut(t, tree, "rev-parse", "HEAD")
-	if why := reviewGate(tree, tip, "", defaultReviewers, passHolds(repo)); why != "" {
+	if why := reviewGate(tree, tip, "", "", defaultReviewers, passHolds(repo)); why != "" {
 		t.Errorf("a held spec pass and a tip standards pass must open the gate, got %q", why)
 	}
-	if why := reviewGate(tree, tip, "", defaultReviewers, nil); !strings.Contains(why, reviewerSpec) {
+	if why := reviewGate(tree, tip, "", "", defaultReviewers, nil); !strings.Contains(why, reviewerSpec) {
 		t.Errorf("without a holding type the older spec pass is stale, got %q", why)
 	}
 }

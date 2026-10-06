@@ -47,6 +47,9 @@ type ReviewTarget struct {
 	// TreeID is the git tree of the exact content the reviewer judged,
 	// uncommitted and new files included.
 	TreeID string `json:"tree_id,omitempty"`
+	// PatchID is the hash of the worker's own diff from its base at the same
+	// moment, so a clean rebase keeps the pass.
+	PatchID string `json:"patch_id,omitempty"`
 }
 
 // agentStateDir holds one file per spawned agent.
