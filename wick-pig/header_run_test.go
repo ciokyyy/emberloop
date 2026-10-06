@@ -73,13 +73,78 @@ func wrapTestConfig(child *fakeChild, stdout *bytes.Buffer) WrapConfig {
 		TermW:    100,
 		TermH:    24,
 		Poll:     time.Hour,
-		Start: func(bin string, args, env []string, w, h int) (wrapPty, func() error, error) {
+		Start: func(bin string, args, env []string, w, h int, stderr io.Writer) (wrapPty, func() error, error) {
 			child.Resize(w, h)
 			return child, func() error { return nil }, nil
 		},
 		Snapshot: func(HeaderSource, tools.Settings) (HeaderSnapshot, error) {
 			return HeaderSnapshot{AgentName: "implementer", State: HeaderWorking}, nil
 		},
+	}
+}
+
+// A pig child under the strip keeps its own stderr: with ChildStderr set the
+// fake writes its errors there while its terminal output stays on the PTY,
+// the strip still paints, and the log receives each raw line stamped.
+func TestWrapPipesChildStderrToLog(t *testing.T) {
+	child := &fakeChild{pending: []byte("hello")}
+	var stdout, log bytes.Buffer
+	cfg := wrapTestConfig(child, &stdout)
+	stderr, tail := TeeStderr(&stampWriter{w: &log, label: "s"})
+	cfg.ChildStderr = stderr
+	cfg.Start = func(bin string, args, env []string, w, h int, stderr io.Writer) (wrapPty, func() error, error) {
+		child.Resize(w, h)
+		if stderr == nil {
+			t.Error("a wrapped child with ChildStderr set must get its own stderr pipe")
+		} else {
+			_, _ = io.WriteString(stderr, "openai.Stream: sending 8 tools (tools=8)\nopenai.Stream: sending 7 tools (tools=7)\n")
+		}
+		return child, func() error { return nil }, nil
+	}
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "tools=8") || !strings.Contains(lines[1], "tools=7") {
+		t.Errorf("stderr lines must reach the log one at a time, got %q", log.String())
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "20") || !strings.Contains(line, "Z ") {
+			t.Errorf("each log line must lead with a timestamp, got %q", line)
+		}
+	}
+	if got := tail(); !strings.Contains(got, "tools=8") {
+		t.Errorf("the stderr tail must keep the child's lines, got %q", got)
+	}
+	out := stdout.String()
+	for _, want := range []string{"hello", "implementer"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("terminal misses %q:\n%q", want, out)
+		}
+	}
+}
+
+// Without a terminal the child runs plainly with ChildStderr as its sink.
+// Stderr keeps wrapper warnings only, never the child's lines.
+func TestWrapPlainPrefersChildStderr(t *testing.T) {
+	var stdout, childLog, wrapperLog bytes.Buffer
+	cfg := WrapConfig{
+		Source:      HeaderSource{AgentID: "w1", AgentType: "worker", AgentName: "implementer", Harness: "pig"},
+		Settings:    tools.Settings{},
+		Bin:         "sh",
+		Args:        []string{"-c", "echo oops >&2"},
+		Stdout:      &stdout,
+		Stderr:      &wrapperLog,
+		ChildStderr: &childLog,
+	}
+	if err := WrapChild(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(childLog.String(), "oops") {
+		t.Errorf("child stderr must reach ChildStderr, got %q", childLog.String())
+	}
+	if wrapperLog.Len() != 0 {
+		t.Errorf("child stderr must not reach Stderr, got %q", wrapperLog.String())
 	}
 }
 
