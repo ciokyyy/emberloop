@@ -70,14 +70,6 @@ func BinDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".wick-pig", "bin")
 }
 
-func isExecutable(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return info.Mode().Perm()&0o111 != 0
-}
-
 // ResolveBinary finds name in the wick bin directory first, then on PATH.
 // A miss is a *SandboxUnavailableError naming `wick-pig deps`.
 func ResolveBinary(name string) (string, error) {
