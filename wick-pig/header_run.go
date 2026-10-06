@@ -6,12 +6,14 @@ package wick
 // the reserved rows. The child sees a normal terminal: scrolling stays
 // inside its rows through a scroll region the filter repairs after every
 // reset, and columns stay inside the frame through left/right margins the
-// filter repairs after the resets that wipe them.
+// filter repairs after the resets that wipe them. The shared theme
+// (ticket 06) reaches the pane the same way: the wrapper sets the pane
+// palette at start and resets it on exit, on signals and across restarts
+// (each restart is a new WrapChild, so it sets again).
 //
-// Signal note: SIGTERM or SIGHUP on wick-pig ends the process without the
-// exit restore below or the raw-mode restore. The owner of the process
-// lifetime (herdr, the user's shell) handles those; the wrapper restores
-// the terminal on every return path of its own.
+// Signal note: SIGINT, SIGTERM or SIGHUP on wick-pig reset the pane palette
+// and re-raise to the default disposition, so the process still exits with
+// the signal. A relaunch after a compress restart sets the palette again.
 
 import (
 	"bytes"
@@ -20,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -44,17 +47,19 @@ type wrapPty interface {
 
 // WrapConfig runs one child under the strip.
 type WrapConfig struct {
-	Source   HeaderSource
-	Settings tools.Settings
-	Bin      string
-	Args     []string
-	Env      []string
-	Stdin    io.Reader // default os.Stdin
-	Stdout   io.Writer // default os.Stdout
-	Stderr   io.Writer // plain-fallback error sink; default os.Stderr
-	TermW    int       // terminal width; 0 detects from Stdout
-	TermH    int       // terminal height; 0 detects from Stdout
-	Poll     time.Duration
+	Source    HeaderSource
+	Settings  tools.Settings
+	Bin       string
+	Args      []string
+	Env       []string
+	Stdin     io.Reader // default os.Stdin
+	Stdout    io.Writer // default os.Stdout
+	Stderr    io.Writer // plain-fallback error sink; default os.Stderr
+	TermW     int       // terminal width; 0 detects from Stdout
+	TermH     int       // terminal height; 0 detects from Stdout
+	Poll      time.Duration
+	ThemeDir  string // generated theme files; default wick's state dir
+	ThemeDark *bool  // variant override; default detects from Stdout
 	// Start launches the child on a terminal of the size; the default
 	// starts a real PTY. Wait reaps the child and reports its exit.
 	Start    func(bin string, args, env []string, w, h int) (child wrapPty, wait func() error, err error)
@@ -96,6 +101,11 @@ func WrapChild(cfg WrapConfig) error {
 	rows := cfg.Settings.EffectiveStripRows()
 	frame := cfg.Settings.StripFrameEnabled()
 	childW, childH := ChildSize(termW, termH, rows, frame)
+	dark := detectDark(stdout)
+	if cfg.ThemeDark != nil {
+		dark = *cfg.ThemeDark
+	}
+	bin, args := themedChildCommand(cfg, dark)
 	start := cfg.Start
 	if start == nil {
 		start = realStart
@@ -104,7 +114,7 @@ func WrapChild(cfg WrapConfig) error {
 	if snapshot == nil {
 		snapshot = BuildHeaderSnapshot
 	}
-	child, wait, err := start(cfg.Bin, cfg.Args, cfg.Env, childW, childH)
+	child, wait, err := start(bin, args, cfg.Env, childW, childH)
 	if err != nil {
 		return err
 	}
@@ -114,18 +124,16 @@ func WrapChild(cfg WrapConfig) error {
 		cfg: cfg, stdin: stdin, stdout: stdout,
 		termW: termW, termH: termH, childW: childW, childH: childH,
 		rows: rows, frame: frame,
-		dark:    detectDark(stdout),
+		dark:    dark,
 		profile: detectProfile(stdout),
 		child:   child, snapshot: snapshot, filter: filter,
-	}
-	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) && cfg.Start == nil {
-		if state, err := term.MakeRaw(int(f.Fd())); err == nil {
-			defer term.Restore(int(f.Fd()), state)
-		}
 	}
 	w.init()
 	done := make(chan struct{})
 	defer close(done)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go watchWrapSignals(sigs, done, func() { w.write(ThemeResetSequence()) }, func(s os.Signal) { resignalSelf(s, sigs) })
 	go w.forwardInput()
 	if f, ok := stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		go w.watchResize(done)
@@ -243,14 +251,17 @@ func (w *wrapper) contentW() int {
 // the child area.
 func (w *wrapper) ruleRow() int { return w.childH + 1 }
 
-// init claims the strip rows: the scroll region and the column margins end
-// above them, the frame goes up, and the first snapshot paints
-// immediately.
+// init claims the strip rows and sets the pane palette: the scroll region
+// and the column margins end above the strip rows, the frame goes up, the
+// OSC palette lands first so the child paints into themed colors, and the
+// first snapshot paints immediately.
+
 func (w *wrapper) init() {
 	snap, ok := w.readSnap()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	var b strings.Builder
+	b.WriteString(ThemeSetSequence(w.dark))
 	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
 	if w.frame {
 		b.WriteString(w.filter.marginStr())
@@ -386,9 +397,11 @@ func (w *wrapper) edge() string {
 }
 
 // restore hands the terminal back: the scroll region and the margins go
-// back to full-screen, the strip rows are cleared, and the cursor lands on
-// the bottom row. Every return path after the read loop runs through here,
-// so the user's shell never inherits a broken region.
+// back to full-screen, the strip rows are cleared, the cursor lands on
+// the bottom row, and the pane palette resets to the terminal's own. Every
+// return path after the read loop runs through here, so the user's shell
+// never inherits a broken region or a recolored terminal.
+
 func (w *wrapper) restore() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -402,6 +415,7 @@ func (w *wrapper) restore() {
 		b.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2K", r))
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", w.termH))
+	b.WriteString(ThemeResetSequence())
 	w.writeLocked(b.String())
 }
 
@@ -608,6 +622,62 @@ func realStart(bin string, args, env []string, w, h int) (wrapPty, func() error,
 		return nil, nil, err
 	}
 	return &ptyChild{f: f}, cmd.Wait, nil
+}
+
+// themedChildCommand adds the per-run theme flags when the child is the
+// harness binary itself (wrap passes the harness through): pig gains its
+// theme file, claude its theme reference in the launch settings. Any other
+// binary runs untouched, and a theme failure runs the child unthemed rather
+// than refusing the session.
+func themedChildCommand(cfg WrapConfig, dark bool) (string, []string) {
+	if cfg.Source.Harness == "" || filepath.Base(cfg.Bin) != cfg.Source.Harness {
+		return cfg.Bin, cfg.Args
+	}
+	if Registered(cfg.Source.Harness) == nil {
+		return cfg.Bin, cfg.Args
+	}
+	args, err := ThemeLaunchArgs(cfg.Source.Harness, cfg.Args, dark, cfg.ThemeDir)
+	if err != nil {
+		stderr := cfg.Stderr
+		if stderr == nil {
+			stderr = os.Stderr
+		}
+		fmt.Fprintf(stderr, "wick-pig: theme disabled: %v\n", err)
+		return cfg.Bin, cfg.Args
+	}
+	return cfg.Bin, args
+}
+
+// watchWrapSignals resets the pane palette on SIGINT, SIGTERM and SIGHUP,
+// then re-raises through resignal so the process still exits with the
+// signal. The reset travels the locked writer, so it never interleaves a
+// strip repaint. A test feeds its own channel; production passes the real
+// signal channel.
+func watchWrapSignals(ch <-chan os.Signal, done <-chan struct{}, reset func(), resignal func(os.Signal)) {
+	for {
+		select {
+		case <-done:
+			return
+		case s, ok := <-ch:
+			if !ok {
+				return
+			}
+			reset()
+			resignal(s)
+			return
+		}
+	}
+}
+
+// resignalSelf restores the default disposition and delivers the signal to
+// this process again: the exit still reads as the signal, after the palette
+// reset above already landed.
+func resignalSelf(s os.Signal, ch chan os.Signal) {
+	signal.Stop(ch)
+	signal.Reset(s)
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		_ = p.Signal(s)
+	}
 }
 
 // ptyChild adapts a PTY master to the runner's surface.

@@ -4,9 +4,10 @@
 
 Captured fixtures tests parse instead of calling the network: `agy/`
 (transcripts, stream captures, hook payloads, `models.txt` from the agy
-probe) and `usage/` (pig and claude usage logs plus the `context-*.jsonl`
-context-core transcripts with tool calls and results). `agy/README.md`
-records what each capture answers.
+probe), `usage/` (pig and claude usage logs plus the `context-*.jsonl`
+context-core transcripts with tool calls and results), and `theme/` (the
+generated claude and pig themes, Mocha and Latte, byte-compared by the
+theme golden tests). `agy/README.md` records what each capture answers.
 
 ## Ownership
 
