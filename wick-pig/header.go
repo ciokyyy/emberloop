@@ -81,33 +81,35 @@ type headerColor struct {
 	dark, light string
 }
 
-// The strip palette: Catppuccin Mocha and Latte, from the spec. Threshold
-// colors stay green, yellow and red; no agent hue uses them.
+// The strip palette reads the shared theme source (theme.go): Catppuccin
+// Mocha and Latte, one definition for the strip, the generators and the
+// OSC setter. Threshold colors stay green, yellow and red; no agent hue
+// uses them.
 var (
-	headerStripBg = headerColor{"#181825", "#e6e9ef"}
-	headerText    = headerColor{"#cdd6f4", "#4c4f69"}
-	headerDim     = headerColor{"#6c7086", "#9ca0b0"}
-	headerAccent  = headerColor{"#cba6f7", "#8839ef"}
-	headerCalm    = headerColor{"#a6e3a1", "#40a02b"}
-	headerWarm    = headerColor{"#f9e2af", "#df8e1d"}
-	headerHot     = headerColor{"#f38ba8", "#d20f39"}
-	headerCost    = headerColor{"#fab387", "#fe640b"}
-	headerTool    = headerColor{"#89b4fa", "#1e66f5"}
-	headerIdle    = headerColor{"#94e2d5", "#179299"}
-	headerBarDim  = headerColor{"#313244", "#ccd0da"}
+	headerStripBg = headerColor{WickMocha().StripBg, WickLatte().StripBg}
+	headerText    = headerColor{WickMocha().Text, WickLatte().Text}
+	headerDim     = headerColor{WickMocha().Dim, WickLatte().Dim}
+	headerAccent  = headerColor{WickMocha().Accent, WickLatte().Accent}
+	headerCalm    = headerColor{WickMocha().Calm, WickLatte().Calm}
+	headerWarm    = headerColor{WickMocha().Warm, WickLatte().Warm}
+	headerHot     = headerColor{WickMocha().Hot, WickLatte().Hot}
+	headerCost    = headerColor{WickMocha().Cost, WickLatte().Cost}
+	headerTool    = headerColor{WickMocha().Tool, WickLatte().Tool}
+	headerIdle    = headerColor{WickMocha().Idle, WickLatte().Idle}
+	headerBarDim  = headerColor{WickMocha().BarDim, WickLatte().BarDim}
 )
 
-// agentHues is the fixed identity set: mauve first for the orchestrator,
-// then one hue per other agent by hash. Green, yellow and red stay out, so
-// identity never reads as status.
+// agentHues is the fixed identity set from the shared palette: mauve first
+// for the orchestrator, then one hue per other agent by hash. Green, yellow
+// and red stay out, so identity never reads as status.
 var agentHues = []headerColor{
-	{"#cba6f7", "#8839ef"}, // mauve: the orchestrator
-	{"#f5c2e7", "#ea76cb"}, // pink
-	{"#b4befe", "#7287fd"}, // lavender
-	{"#74c7ec", "#209fb5"}, // sapphire
-	{"#89dceb", "#04a5e5"}, // sky
-	{"#f2cdcd", "#dd7878"}, // flamingo
-	{"#eba0ac", "#e64553"}, // maroon
+	{WickMocha().Hues[0].Dark, WickMocha().Hues[0].Light}, // mauve: the orchestrator
+	{WickMocha().Hues[1].Dark, WickMocha().Hues[1].Light}, // pink
+	{WickMocha().Hues[2].Dark, WickMocha().Hues[2].Light}, // lavender
+	{WickMocha().Hues[3].Dark, WickMocha().Hues[3].Light}, // sapphire
+	{WickMocha().Hues[4].Dark, WickMocha().Hues[4].Light}, // sky
+	{WickMocha().Hues[5].Dark, WickMocha().Hues[5].Light}, // flamingo
+	{WickMocha().Hues[6].Dark, WickMocha().Hues[6].Light}, // maroon
 }
 
 // AgentHue picks an agent's stable hue from the identity set: the hash of
