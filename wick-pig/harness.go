@@ -20,7 +20,7 @@ const systemPrompt = "Your file and shell tools are wick's: read, find, edit, wr
 	"Skills are listed by reading wick://" + skillsNamespace + "; when the user asks for one by name " +
 	"(grill, research, wayfinder, tdd, to-spec), read the matching skill and follow it exactly. " +
 	"When a spawn starts agents, end your turn: one notice with every result arrives when the last agent of that call has submitted." +
-	"\n\n" + voiceRegister
+	" " + voiceRegister
 
 // Session is everything an adapter needs to start one agent.
 type Session struct {
