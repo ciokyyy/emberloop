@@ -47,22 +47,30 @@ type wrapPty interface {
 
 // WrapConfig runs one child under the strip.
 type WrapConfig struct {
-	Source    HeaderSource
-	Settings  tools.Settings
-	Bin       string
-	Args      []string
-	Env       []string
-	Stdin     io.Reader // default os.Stdin
-	Stdout    io.Writer // default os.Stdout
-	Stderr    io.Writer // plain-fallback error sink; default os.Stderr
-	TermW     int       // terminal width; 0 detects from Stdout
-	TermH     int       // terminal height; 0 detects from Stdout
-	Poll      time.Duration
-	ThemeDir  string // generated theme files; default wick's state dir
-	ThemeDark *bool  // variant override; default detects from Stdout
-	// Start launches the child on a terminal of the size; the default
-	// starts a real PTY. Wait reaps the child and reports its exit.
-	Start    func(bin string, args, env []string, w, h int) (child wrapPty, wait func() error, err error)
+	Source   HeaderSource
+	Settings tools.Settings
+	Bin      string
+	Args     []string
+	Env      []string
+	Stdin    io.Reader // default os.Stdin
+	Stdout   io.Writer // default os.Stdout
+	Stderr   io.Writer // plain-fallback error sink; default os.Stderr
+	// ChildStderr is the wrapped child's stderr sink: stdin and stdout
+	// stay on the PTY under the strip while stderr keeps its own pipe
+	// here. Nil merges stderr into the PTY, as before. The plain
+	// fallback reads it first, so headless pig sessions still log;
+	// wrapper warnings keep Stderr.
+	ChildStderr io.Writer
+	TermW       int // terminal width; 0 detects from Stdout
+	TermH       int // terminal height; 0 detects from Stdout
+	Poll        time.Duration
+	ThemeDir    string // generated theme files; default wick's state dir
+	ThemeDark   *bool  // variant override; default detects from Stdout
+	// Start launches the child on a terminal of the size, with its
+	// stderr on the pipe when non-nil and merged into the terminal
+	// when nil; the default starts a real PTY. Wait reaps the child
+	// and reports its exit.
+	Start    func(bin string, args, env []string, w, h int, stderr io.Writer) (child wrapPty, wait func() error, err error)
 	Snapshot func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
 	// Report runs one herdr command that reports a claude child as an agent;
 	// the default runs herdr. PaneID names the pane; the default reads
@@ -120,7 +128,7 @@ func WrapChild(cfg WrapConfig) error {
 	if snapshot == nil {
 		snapshot = BuildHeaderSnapshot
 	}
-	child, wait, err := start(bin, args, themeEnv, childW, childH)
+	child, wait, err := start(bin, args, themeEnv, childW, childH, cfg.ChildStderr)
 	if err != nil {
 		return err
 	}
@@ -211,9 +219,13 @@ func RunPlainCommand(bin string, args, env []string, stdin io.Reader, stdout, st
 }
 
 // runPlain runs the child without a strip: no terminal means no reserved
-// rows, so the child inherits the stdio directly.
+// rows, so the child inherits the stdio directly. A set ChildStderr stays
+// the child's sink, so headless pig sessions still reach the tools log.
 func runPlain(cfg WrapConfig, stdin io.Reader, stdout io.Writer) error {
-	stderr := cfg.Stderr
+	stderr := cfg.ChildStderr
+	if stderr == nil {
+		stderr = cfg.Stderr
+	}
 	if stderr == nil {
 		stderr = os.Stderr
 	}
@@ -651,10 +663,18 @@ func detectProfile(stdout io.Writer) termenv.Profile {
 	return termenv.TrueColor
 }
 
-// realStart launches the child on a real PTY at the size.
-func realStart(bin string, args, env []string, w, h int) (wrapPty, func() error, error) {
+// realStart launches the child on a real PTY at the size. Stdin and stdout
+// stay on the terminal; a non-nil stderr keeps its own pipe instead of
+// merging into the PTY, so the tools log still reads raw stderr under the
+// strip. StartWithAttrs only assigns the terminal where the command left
+// the stream unset, so a preset stderr survives while stdin and stdout
+// take the slave.
+func realStart(bin string, args, env []string, w, h int, stderr io.Writer) (wrapPty, func() error, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(), env...)
+	if stderr != nil {
+		cmd.Stderr = stderr
+	}
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(h), Cols: uint16(w)})
 	if err != nil {
 		return nil, nil, err

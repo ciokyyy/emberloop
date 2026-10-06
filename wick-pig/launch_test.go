@@ -375,6 +375,35 @@ func TestPigSessionLogsToolCountsPerRequest(t *testing.T) {
 	}
 }
 
+// With the strip off, a pig session still logs its tool counts: the two
+// switches stay independent.
+func TestPigToolsLogWithoutStrip(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "pig")
+	script := "#!/bin/sh\n" +
+		"if [ \"$PIG_DEBUG_TOOLS\" = 1 ]; then echo 'openai.Stream: sending 8 tools (tools=8)' >&2; fi\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	isolateState(t)
+	t.Setenv("WICK_HEADER_STRIP", "0")
+	cmd := Command{Bin: fake, Env: []string{"WICK_SESSION_ID=nostrip"}}
+	path, err := writeLaunch(Session{ID: "nostrip"}, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunExecFile(path); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(statePath), "debug", "nostrip.tools.log"))
+	if err != nil {
+		t.Fatalf("WICK_HEADER_STRIP=0 must keep the tools log: %v", err)
+	}
+	if !strings.Contains(string(raw), "tools=8") {
+		t.Errorf("log must hold the child's line, got %q", raw)
+	}
+}
+
 // The launcher is the agent's parent: when the child exits badly it records
 // the exit in the agent's state, so a crash leaves a trace instead of a bare
 // shell. Under the header strip the wrapper owns the terminal, so only the
@@ -401,9 +430,10 @@ func TestExecRecordsChildExitInAgentState(t *testing.T) {
 	}
 }
 
-// A debug session runs unwrapped with the child's raw stderr, so its trace
-// keeps the last lines too. The pig-named script takes the tools-log path
-// without needing a real pig binary.
+// A pig session keeps the child's stderr on its own pipe under the strip and
+// on the process's stderr without it, so either way its trace keeps the last
+// lines too. The pig-named script takes the tools-log path without needing a
+// real pig binary.
 func TestExecRecordsChildStderrUnwrapped(t *testing.T) {
 	isolateState(t)
 	dir := t.TempDir()
