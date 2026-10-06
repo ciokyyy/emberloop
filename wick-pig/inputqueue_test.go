@@ -511,3 +511,31 @@ func TestQueueGateSteerAndQueueKinds(t *testing.T) {
 		t.Error("queue should pass when turn is done")
 	}
 }
+
+// Enter never rides in the same write as the text: a TUI that reads a long
+// burst as a paste would swallow it and leave the message unsent. The text
+// goes first, then Enter alone, after the settle pause.
+func TestPumpSendsEnterInItsOwnWrite(t *testing.T) {
+	old := submitSettle
+	submitSettle = 20 * time.Millisecond
+	defer func() { submitSettle = old }()
+	var writes []string
+	var stamps []time.Time
+	p := newQueuePump(newInputQueue(), pumpGates{
+		gate: func(QueueKind) bool { return true },
+		write: func(b []byte) error {
+			writes = append(writes, string(b))
+			stamps = append(stamps, time.Now())
+			return nil
+		},
+		now: time.Now,
+	})
+	p.enqueue(QueueKindSteer, "a long\nmessage", "tell")
+	p.step()
+	if len(writes) != 2 || writes[0] != "a long message" || writes[1] != "\r" {
+		t.Fatalf("writes = %q, want the line then a lone Enter", writes)
+	}
+	if gap := stamps[1].Sub(stamps[0]); gap < 15*time.Millisecond {
+		t.Errorf("Enter followed the text after %v, want the settle pause", gap)
+	}
+}
