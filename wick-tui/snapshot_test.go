@@ -475,3 +475,61 @@ func writeJSON(t *testing.T, path string, v any) {
 		t.Fatal(err)
 	}
 }
+
+// A ticket whose worker's pane was closed by hand shows cancelled: its
+// history holds a cancelled entry and its worker entry is gone.
+func TestCancelledTicketShowsCancelledStatus(t *testing.T) {
+	stateDir := t.TempDir()
+	repo := t.TempDir()
+	writeSpec(t, repo, "alpha", []ticketFile{{"11-cancelled.md", "ready-for-agent"}})
+	writeJSON(t, filepath.Join(stateDir, "history", "alpha.json"), []any{
+		map[string]any{
+			"ticket":  filepath.Join(repo, ".scratch", "alpha", "issues", "11-cancelled.md"),
+			"outcome": "cancelled", "detail": "pane closed manually",
+			"branch": "implement/11-cancelled", "worker": "11-cancelled",
+		},
+	})
+	snap, err := Snapshot(stateDir, repo, liveHerdr())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	alpha := findSpec(t, snap, repo, "alpha")
+	if len(alpha.Tickets) != 1 {
+		t.Fatalf("tickets = %+v, want one", alpha.Tickets)
+	}
+	if got := alpha.Tickets[0].Status; got != TicketCancelled {
+		t.Errorf("cancelled ticket status = %q, want %q", got, TicketCancelled)
+	}
+}
+
+// A cancelled ticket that was respawned follows its live worker, not its
+// history: the cancellation loses to a running worker entry.
+func TestRespawnedTicketBeatsCancelledHistory(t *testing.T) {
+	stateDir := t.TempDir()
+	repo := t.TempDir()
+	writeSpec(t, repo, "alpha", []ticketFile{{"11-cancelled.md", "ready-for-agent"}})
+	specPath := filepath.Join(repo, ".scratch", "alpha", "spec.md")
+	issues := filepath.Join(repo, ".scratch", "alpha", "issues")
+	writeJSON(t, filepath.Join(stateDir, "history", "alpha.json"), []any{
+		map[string]any{
+			"ticket": filepath.Join(issues, "11-cancelled.md"), "outcome": "cancelled",
+		},
+	})
+	writeJSON(t, filepath.Join(stateDir, "workers.json"), map[string]any{
+		"11-cancelled": map[string]any{
+			"id": "11-cancelled", "ticket": filepath.Join(issues, "11-cancelled.md"),
+			"spec": specPath, "pane": "pane-live", "worktree": "/tmp/wt",
+		},
+	})
+	snap, err := Snapshot(stateDir, repo, liveHerdr("pane-live"))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	alpha := findSpec(t, snap, repo, "alpha")
+	if len(alpha.Tickets) != 1 {
+		t.Fatalf("tickets = %+v, want one", alpha.Tickets)
+	}
+	if got := alpha.Tickets[0].Status; got == TicketCancelled {
+		t.Errorf("a respawned ticket must follow its live worker, got %q", got)
+	}
+}

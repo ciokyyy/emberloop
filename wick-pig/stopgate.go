@@ -265,7 +265,7 @@ func GateStop(id string, fresh, failed bool, failedDetail string, canPin bool, l
 	// (it holds for an idle parent); the individual sweep reports synchronously
 	// and exactly once, so what is left after it is what the gate decides on.
 	sweepOpenGroups("", id)
-	sweepDeadChildren(id)
+	sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), id)
 	d := DecideGate(GateInput{
 		Submitted: submitted,
 		Blocked:   blocked,

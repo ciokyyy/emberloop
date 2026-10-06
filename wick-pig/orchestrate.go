@@ -179,8 +179,10 @@ var finishTool = fnTool{
 	run: func(_ string, params map[string]any) (string, error) {
 		// Each parent action sweeps its stranded groups first, in the
 		// background: a vanished member with no further submit is finalized
-		// after this call ends instead of waiting forever.
+		// after this call ends instead of waiting forever. The dead-child sweep
+		// runs beside it, so a cancelled worker is reported here too.
 		sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("WICK_AGENT_ID"))
+		sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("WICK_AGENT_ID"))
 		id, err := resolveAgentParam(params, finishExec)
 		if err != nil {
 			return "", err

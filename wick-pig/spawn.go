@@ -266,7 +266,12 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 	// Each parent action finalizes its stranded groups first: a member whose
 	// pane vanished without any further submit leaves no other trigger, so
 	// the next spawn from the same parent delivers what is already complete.
+	// The prune runs here too, before any cap is read: a hand-closed worker
+	// pane frees its slot, and the sweep after it reports the cancelled
+	// worker to this parent through the dead-child sweep.
 	sweepOpenGroups(parentPane, parentID)
+	pruneDeadWorkers(run)
+	sweepDeadChildren(parentPane, parentID)
 	groupID := newSessionID()
 	// A worktree worker is its own group: its result is delivered the moment
 	// it submits, so the parent merges each ticket as it lands and a freed
@@ -634,6 +639,9 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, parentID, parentPane, groupID string) (*spawnedAgent, error) {
 	var out *spawnedAgent
 	err := withFileLock("worker-launch", func() error {
+		// A hand-closed pane frees its slot here, before the cap is read: the
+		// prune cancels it, and the count below sees only live panes.
+		pruneDeadWorkers(run)
 		if r.Ticket != "" {
 			id := WorkerID(r.Ticket)
 			store, err := loadWorkersLocked()
@@ -653,7 +661,7 @@ func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, pa
 				if queued {
 					return fmt.Errorf("worker %q is already queued", id)
 				}
-				if len(store) >= effectiveWorkerCap() {
+				if liveWorkerCount(store, run) >= effectiveWorkerCap() {
 					repo := r.Repo
 					if repo == "" {
 						repo = root

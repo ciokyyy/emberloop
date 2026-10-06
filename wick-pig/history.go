@@ -14,13 +14,15 @@ import (
 // Finish writes the entry before deleting the worker entry, copying the
 // reviewer verdicts in before the reviewers are forgotten.
 
-// The outcomes a finish call records: merged or discarded (the worker entry
-// is deleted after), or kept (a refused merge — the worker stays, and the
-// entry says why).
+// The outcomes a history entry records: merged or discarded (the worker entry
+// is deleted after), kept (a refused merge — the worker stays, and the
+// entry says why), or cancelled (the worker's pane was closed by hand — the
+// entry is gone but its worktree and branch stay for a respawn).
 const (
 	outcomeMerged    = "merged"
 	outcomeDiscarded = "discarded"
 	outcomeKept      = "kept"
+	outcomeCancelled = "cancelled"
 )
 
 // ReviewVerdict is one reviewer's verdict as it stood at finish: what it
