@@ -172,6 +172,8 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 	// The decision ran before the claim: a winner that finished in between
 	// rotated the session, so this snapshot is stale. A rotated session
 	// compresses once; the fresh session decides on its own transcript.
+	// The re-read runs under our live claim, so no later winner slips
+	// between this check and the summary.
 	if st, ok, serr := ReadAgentState(agentID); serr != nil {
 		return "", false, serr
 	} else if ok && st.SessionID != "" && st.SessionID != sessionID {
