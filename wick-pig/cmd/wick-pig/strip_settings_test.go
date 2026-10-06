@@ -133,3 +133,57 @@ func TestSettingsCompressCooldown(t *testing.T) {
 		t.Fatal("a rejected compress-cooldown must not be saved")
 	}
 }
+
+// `settings strip-symbols` picks the strip glyph set; anything but nerd,
+// unicode or ascii is an error that saves nothing.
+func TestSettingsStripSymbols(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"strip-symbols", "nerd"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().EffectiveStripSymbols(); got != tools.StripSymbolsNerd {
+		t.Fatalf("saved strip symbols = %q, want nerd", got)
+	}
+	if !strings.Contains(out.String(), "strip-symbols: nerd") {
+		t.Fatalf("output %q does not confirm the glyph set", out.String())
+	}
+}
+
+func TestSettingsStripSymbolsRejectsOther(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"strip-symbols", "emoji"}, &out, noModels); err == nil {
+		t.Fatal("strip-symbols emoji should be an error")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("rejected strip-symbols must not save")
+	}
+}
+
+// `settings strip-separator` picks the between-segment separator; anything
+// outside the six is an error that saves nothing.
+func TestSettingsStripSeparator(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"strip-separator", "rounded"}, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if got := tools.LoadSettings().EffectiveStripSeparator(); got != tools.StripSeparatorRounded {
+		t.Fatalf("saved strip separator = %q, want rounded", got)
+	}
+	if !strings.Contains(out.String(), "strip-separator: rounded") {
+		t.Fatalf("output %q does not confirm the separator", out.String())
+	}
+}
+
+func TestSettingsStripSeparatorRejectsOther(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	if err := runSettings([]string{"strip-separator", "arrow"}, &out, noModels); err == nil {
+		t.Fatal("strip-separator arrow should be an error")
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("rejected strip-separator must not save")
+	}
+}

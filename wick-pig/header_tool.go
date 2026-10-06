@@ -7,6 +7,8 @@ package wick
 
 import (
 	"strconv"
+
+	"example.com/wick/tools"
 	"strings"
 	"unicode/utf8"
 
@@ -122,6 +124,13 @@ func (h *headerCtx) activityCell(max int) cell {
 // activity styles one label and cuts its argument so the whole fits max
 // columns.
 func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) cell {
+	if h.symbols == tools.StripSymbolsASCII {
+		if icon == "◐" {
+			icon = "*"
+		} else {
+			icon = ">"
+		}
+	}
 	fixed := len([]rune(icon)) + 1 + len([]rune(verb))
 	if size != "" {
 		fixed += 3 + len(size)
@@ -135,6 +144,9 @@ func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) c
 			arg = ""
 		} else {
 			arg = shortArg(arg, room)
+			if h.symbols == tools.StripSymbolsASCII {
+				arg = strings.ReplaceAll(arg, "…", "...")
+			}
 		}
 	}
 	iconHex, verbHex, argHex := h.dim, h.dim, h.dim
@@ -146,10 +158,18 @@ func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) c
 		out += h.fill(" ") + h.style(cell{text: arg, hex: argHex})
 	}
 	if size != "" {
-		out += h.fill(" ") + h.style(cell{text: "· " + size, hex: h.dim})
+		dot := "· "
+		if h.symbols == tools.StripSymbolsASCII {
+			dot = "- "
+		}
+		out += h.fill(" ") + h.style(cell{text: dot + size, hex: h.dim})
 	}
 	if h.snap.Pending > 0 {
-		out += h.fill(" ") + h.style(cell{text: "· " + strconv.Itoa(h.snap.Pending) + " pending", hex: h.dim})
+		dot := "· "
+		if h.symbols == tools.StripSymbolsASCII {
+			dot = "- "
+		}
+		out += h.fill(" ") + h.style(cell{text: dot + strconv.Itoa(h.snap.Pending) + " pending", hex: h.dim})
 	}
 	return cell{text: out, raw: true}
 }
@@ -158,7 +178,15 @@ func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) c
 func (h *headerCtx) fit(c cell, max int) cell {
 	if max > 0 && utf8.RuneCountInString(c.text) > max {
 		r := []rune(c.text)
-		c.text = string(r[:max-1]) + "…"
+		ell := "…"
+		if h.symbols == tools.StripSymbolsASCII {
+			ell = "..."
+		}
+		if max <= len([]rune(ell)) {
+			c.text = string(r[:max])
+		} else {
+			c.text = string(r[:max-len([]rune(ell))]) + ell
+		}
 	}
 	return c
 }

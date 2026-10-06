@@ -65,7 +65,7 @@ func TestStripRuleDefaultsSoft(t *testing.T) {
 }
 
 func TestStripSettingsRoundTrip(t *testing.T) {
-	s := writeContextSettings(t, `{"context":{"strip_rows":1,"strip_frame":false,"strip_rule":true,"compress_models":{"pig":"m"}}}`)
+	s := writeContextSettings(t, `{"context":{"strip_rows":1,"strip_frame":false,"strip_rule":true,"strip_symbols":"nerd","strip_separator":"pipe","compress_models":{"pig":"m"}}}`)
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +78,12 @@ func TestStripSettingsRoundTrip(t *testing.T) {
 	}
 	if !back.StripRuleEnabled() {
 		t.Error("round trip rule is soft, want the rule line")
+	}
+	if got := back.EffectiveStripSymbols(); got != StripSymbolsNerd {
+		t.Errorf("round trip symbols = %q, want nerd", got)
+	}
+	if got := back.EffectiveStripSeparator(); got != StripSeparatorPipe {
+		t.Errorf("round trip separator = %q, want pipe", got)
 	}
 	if got := back.EffectiveCompressModel("pig"); got != "m" {
 		t.Errorf("round trip compress model = %q, want m", got)
@@ -120,3 +126,84 @@ func TestStripProjectMerges(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// Seam: strip symbol preset and separator (ticket 10).
+func TestStripSymbolsDefaultsUnicode(t *testing.T) {
+	if got := writeContextSettings(t, `{}`).EffectiveStripSymbols(); got != StripSymbolsUnicode {
+		t.Errorf("default strip symbols = %q, want %q", got, StripSymbolsUnicode)
+	}
+}
+func TestStripSymbolsPresets(t *testing.T) {
+	for _, want := range []string{StripSymbolsNerd, StripSymbolsUnicode, StripSymbolsASCII} {
+		s := writeContextSettings(t, `{"context":{"strip_symbols":`+strconv.Quote(want)+`}}`)
+		if got := s.EffectiveStripSymbols(); got != want {
+			t.Errorf("strip symbols = %q, want %q", got, want)
+		}
+	}
+}
+func TestStripSymbolsUnknownReadsDefault(t *testing.T) {
+	for _, raw := range []string{"", "emoji", "nerd-font"} {
+		s := writeContextSettings(t, `{"context":{"strip_symbols":`+strconv.Quote(raw)+`}}`)
+		if got := s.EffectiveStripSymbols(); got != StripSymbolsUnicode {
+			t.Errorf("strip symbols %q reads as %q, want default %q", raw, got, StripSymbolsUnicode)
+		}
+	}
+	s := writeContextSettings(t, `{"context":{"strip_symbols":"Nerd "}}`)
+	if got := s.EffectiveStripSymbols(); got != StripSymbolsNerd {
+		t.Errorf("strip symbols %q reads as %q, want %q", "Nerd ", got, StripSymbolsNerd)
+	}
+}
+func TestStripSeparatorDefaultsNone(t *testing.T) {
+	if got := writeContextSettings(t, `{}`).EffectiveStripSeparator(); got != StripSeparatorNone {
+		t.Errorf("default strip separator = %q, want %q", got, StripSeparatorNone)
+	}
+}
+func TestStripSeparatorValues(t *testing.T) {
+	for _, want := range []string{StripSeparatorPowerline, StripSeparatorPowerlineThin, StripSeparatorRounded, StripSeparatorSlash, StripSeparatorPipe, StripSeparatorNone} {
+		s := writeContextSettings(t, `{"context":{"strip_separator":`+strconv.Quote(want)+`}}`)
+		if got := s.EffectiveStripSeparator(); got != want {
+			t.Errorf("strip separator = %q, want %q", got, want)
+		}
+	}
+}
+func TestStripSeparatorUnknownReadsDefault(t *testing.T) {
+	for _, raw := range []string{"", "arrow", "chevron"} {
+		s := writeContextSettings(t, `{"context":{"strip_separator":`+strconv.Quote(raw)+`}}`)
+		if got := s.EffectiveStripSeparator(); got != StripSeparatorNone {
+			t.Errorf("strip separator %q reads as %q, want default %q", raw, got, StripSeparatorNone)
+		}
+	}
+	s := writeContextSettings(t, `{"context":{"strip_separator":"Powerline-Thin "}}`)
+	if got := s.EffectiveStripSeparator(); got != StripSeparatorPowerlineThin {
+		t.Errorf("strip separator reads as %q, want %q", got, StripSeparatorPowerlineThin)
+	}
+}
+func TestStripSymbolsProjectMerges(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(t.TempDir(), "settings.json")
+	settingsEnv(t, global)
+	t.Setenv("WICK_COMPRESS_THRESHOLD", "")
+	if err := os.WriteFile(global, []byte(`{"context":{"strip_symbols":"ascii","strip_separator":"slash"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(dir, ".wick-pig")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "settings.json"), []byte(`{"context":{"strip_separator":"pipe"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := EffectiveSettings(dir)
+	if got := s.EffectiveStripSymbols(); got != StripSymbolsASCII {
+		t.Errorf("merged symbols = %q, want global ascii kept", got)
+	}
+	if got := s.EffectiveStripSeparator(); got != StripSeparatorPipe {
+		t.Errorf("merged separator = %q, want project pipe", got)
+	}
+	if got := s.SourceOf("context.strip_symbols"); got != "file" {
+		t.Errorf("symbols source = %q, want file", got)
+	}
+	if got := s.SourceOf("context.strip_separator"); got != "project" {
+		t.Errorf("separator source = %q, want project", got)
+	}
+}

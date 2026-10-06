@@ -15,7 +15,7 @@ import (
 	"example.com/wick/tools/systemone"
 )
 
-const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>]
+const settingsUsage = `usage: wick-pig settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>|strip-symbols <nerd|unicode|ascii>|strip-separator <powerline|powerline-thin|rounded|slash|pipe|none>]
        wick-pig settings models [--refresh] [--harness h]
        wick-pig settings role <slot> harness|model|effort <value>
        wick-pig settings search provider|mode <value>
@@ -97,6 +97,14 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 		}
 	case "strip-rule":
 		if err := setStripRule(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "strip-symbols":
+		if err := setStripSymbols(&s, argv[1:]); err != nil {
+			return err
+		}
+	case "strip-separator":
+		if err := setStripSeparator(&s, argv[1:]); err != nil {
 			return err
 		}
 	case "auto-compress":
@@ -360,6 +368,48 @@ func setStripRule(s *tools.Settings, argv []string) error {
 		s.Context = c
 	}
 	c.StripRule = &v
+	return nil
+}
+
+// setStripSymbols applies `strip-symbols <nerd|unicode|ascii>` to s: the
+// strip glyph set. Unicode (the default) needs no Nerd Font.
+func setStripSymbols(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("strip-symbols needs nerd, unicode or ascii\n%s", settingsUsage)
+	}
+	v := tools.NormalizeStripSymbols(argv[0])
+	switch v {
+	case tools.StripSymbolsNerd, tools.StripSymbolsUnicode, tools.StripSymbolsASCII:
+	default:
+		return fmt.Errorf("strip-symbols %q is not nerd, unicode or ascii\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.StripSymbols = v
+	return nil
+}
+
+// setStripSeparator applies `strip-separator <...>` to s: the
+// between-segment separator. None (the default) keeps the current spacing.
+func setStripSeparator(s *tools.Settings, argv []string) error {
+	if len(argv) != 1 {
+		return fmt.Errorf("strip-separator needs powerline, powerline-thin, rounded, slash, pipe or none\n%s", settingsUsage)
+	}
+	v := tools.NormalizeStripSeparator(argv[0])
+	switch v {
+	case tools.StripSeparatorPowerline, tools.StripSeparatorPowerlineThin, tools.StripSeparatorRounded, tools.StripSeparatorSlash, tools.StripSeparatorPipe, tools.StripSeparatorNone:
+	default:
+		return fmt.Errorf("strip-separator %q is not powerline, powerline-thin, rounded, slash, pipe or none\n%s", argv[0], settingsUsage)
+	}
+	c := s.Context
+	if c == nil {
+		c = &tools.ContextSettings{}
+		s.Context = c
+	}
+	c.StripSeparator = v
 	return nil
 }
 
@@ -951,6 +1001,8 @@ func printContextSettings(out io.Writer, s tools.Settings) {
 		rule = "on"
 	}
 	fmt.Fprintf(out, "strip-rule: %s (%s)\n", rule, s.SourceOf("context.strip_rule"))
+	fmt.Fprintf(out, "strip-symbols: %s (%s)\n", s.EffectiveStripSymbols(), s.SourceOf("context.strip_symbols"))
+	fmt.Fprintf(out, "strip-separator: %s (%s)\n", s.EffectiveStripSeparator(), s.SourceOf("context.strip_separator"))
 	fmt.Fprintf(out, "auto-compress: %s (%s)\n", auto, s.SourceOf("context.auto_compress"))
 	fmt.Fprintf(out, "compress-cooldown: %d (%s)\n", s.EffectiveCompressCooldown(), s.SourceOf("context.compress_cooldown"))
 	models := s.CompressModels()

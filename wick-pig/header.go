@@ -17,6 +17,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	"example.com/wick/tools"
 )
 
 // HeaderState is the agent state the strip's pill shows.
@@ -76,12 +78,17 @@ type HeaderSnapshot struct {
 
 // HeaderOpts tunes the render: Rows caps the strip height (0 means the
 // default two), Dark picks the Mocha or Latte palette, Profile drives Lip
-// Gloss's downgrade to 256 and 16 colors.
+// Gloss's downgrade to 256 and 16 colors. Symbols picks the glyph set
+// (nerd, unicode default, ascii) and Separator the between-segment
+// separator (powerline, powerline-thin, rounded, slash, pipe, none
+// default); unknown values read as the defaults.
 type HeaderOpts struct {
-	Rows    int
-	Dark    bool
-	Profile termenv.Profile
-	Pulse   bool // pulse phase: the compressing pill rests on idle
+	Rows      int
+	Dark      bool
+	Profile   termenv.Profile
+	Pulse     bool // pulse phase: the compressing pill rests on idle
+	Symbols   string
+	Separator string
 }
 
 // headerColor is one adaptive color: the Mocha hex for dark terminals, the
@@ -172,25 +179,33 @@ func HeaderTier(width int) string {
 }
 
 // headerCtx is the resolved render state: the palette hexes for the theme,
-// the renderer for the profile, and the snapshot numbers.
+// the renderer for the profile, and the snapshot numbers. Segment colors
+// map to named palette tokens: model reads the accent, the used-against-
+// window numbers the text, cost the cost token, tools the tool token, the
+// ctx label the agent hue, the state the threshold or idle token, and the
+// separator the dim token — all from the one palette source, so a theme
+// change recolors the strip with claude, pig and the pane.
 type headerCtx struct {
-	r      *lipgloss.Renderer
-	bg     string
-	text   string
-	dim    string
-	accent string
-	calm   string
-	warm   string
-	hot    string
-	cost   string
-	tool   string
-	idle   string
-	barDim string
-	hue    string
-	pulse  bool
-	pct    int64
-	pctHex string
-	snap   HeaderSnapshot
+	r        *lipgloss.Renderer
+	bg       string
+	text     string
+	dim      string
+	accent   string
+	calm     string
+	warm     string
+	hot      string
+	cost     string
+	tool     string
+	idle     string
+	barDim   string
+	hue      string
+	pulse    bool
+	pct      int64
+	pctHex   string
+	snap     HeaderSnapshot
+	symbols  string
+	sepGlyph string
+	seph     string
 }
 
 func pick(c headerColor, dark bool) string {
@@ -198,6 +213,63 @@ func pick(c headerColor, dark bool) string {
 		return c.dark
 	}
 	return c.light
+}
+
+// stripSymbols normalizes a glyph set name: nerd, unicode or ascii,
+// defaulting to unicode so a terminal without a Nerd Font looks right.
+func stripSymbols(v string) string {
+	switch tools.NormalizeStripSymbols(v) {
+	case tools.StripSymbolsNerd, tools.StripSymbolsUnicode, tools.StripSymbolsASCII:
+		return tools.NormalizeStripSymbols(v)
+	}
+	return tools.StripSymbolsUnicode
+}
+
+// stripSeparator normalizes a separator name, defaulting to none (the
+// current spaced look).
+func stripSeparator(v string) string {
+	switch tools.NormalizeStripSeparator(v) {
+	case tools.StripSeparatorPowerline, tools.StripSeparatorPowerlineThin, tools.StripSeparatorRounded, tools.StripSeparatorSlash, tools.StripSeparatorPipe, tools.StripSeparatorNone:
+		return tools.NormalizeStripSeparator(v)
+	}
+	return tools.StripSeparatorNone
+}
+
+// gapWidth is the cell width of the between-segment gap on bar rows: the
+// current double space when no separator is set, the styled glyph with a
+// space each side otherwise.
+func (h *headerCtx) gapWidth() int {
+	if h.sepGlyph == "" {
+		return 2
+	}
+	return 2 + lipgloss.Width(h.sepGlyph)
+}
+
+// ngapWidth is the gap width on narrow rows, which join with one space
+// today instead of two.
+func (h *headerCtx) ngapWidth() int {
+	if h.sepGlyph == "" {
+		return 1
+	}
+	return 2 + lipgloss.Width(h.sepGlyph)
+}
+
+// gap joins bar-row cells: the current double space, or the separator
+// glyph in the separator token color with a space each side.
+func (h *headerCtx) gap() string {
+	if h.sepGlyph == "" {
+		return h.fill("  ")
+	}
+	return h.fill(" ") + h.style(cell{text: h.sepGlyph, hex: h.seph}) + h.fill(" ")
+}
+
+// ngap joins narrow-row cells: the current single space, or the separator
+// glyph with a space each side.
+func (h *headerCtx) ngap() string {
+	if h.sepGlyph == "" {
+		return h.fill(" ")
+	}
+	return h.fill(" ") + h.style(cell{text: h.sepGlyph, hex: h.seph}) + h.fill(" ")
 }
 
 // RenderHeader draws the strip: the snapshot at the width, in at most Rows
@@ -221,21 +293,24 @@ func RenderHeader(snap HeaderSnapshot, width int, opts HeaderOpts) string {
 	r := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(profile))
 	r.SetColorProfile(profile)
 	h := &headerCtx{
-		r:      r,
-		bg:     pick(headerStripBg, opts.Dark),
-		text:   pick(headerText, opts.Dark),
-		dim:    pick(headerDim, opts.Dark),
-		accent: pick(headerAccent, opts.Dark),
-		calm:   pick(headerCalm, opts.Dark),
-		warm:   pick(headerWarm, opts.Dark),
-		hot:    pick(headerHot, opts.Dark),
-		cost:   pick(headerCost, opts.Dark),
-		tool:   pick(headerTool, opts.Dark),
-		idle:   pick(headerIdle, opts.Dark),
-		barDim: pick(headerBarDim, opts.Dark),
-		hue:    pick(agentHueColor(snap.AgentID, snap.AgentType), opts.Dark),
-		pulse:  opts.Pulse,
-		snap:   snap,
+		r:        r,
+		bg:       pick(headerStripBg, opts.Dark),
+		text:     pick(headerText, opts.Dark),
+		dim:      pick(headerDim, opts.Dark),
+		accent:   pick(headerAccent, opts.Dark),
+		calm:     pick(headerCalm, opts.Dark),
+		warm:     pick(headerWarm, opts.Dark),
+		hot:      pick(headerHot, opts.Dark),
+		cost:     pick(headerCost, opts.Dark),
+		tool:     pick(headerTool, opts.Dark),
+		idle:     pick(headerIdle, opts.Dark),
+		barDim:   pick(headerBarDim, opts.Dark),
+		hue:      pick(agentHueColor(snap.AgentID, snap.AgentType), opts.Dark),
+		pulse:    opts.Pulse,
+		snap:     snap,
+		symbols:  stripSymbols(opts.Symbols),
+		sepGlyph: StripSeparatorGlyph(stripSymbols(opts.Symbols), stripSeparator(opts.Separator)),
+		seph:     pick(headerDim, opts.Dark),
 	}
 	if snap.Window > 0 {
 		h.pct = snap.ContextTokens * 100 / snap.Window
@@ -281,26 +356,35 @@ type cell struct {
 func (h *headerCtx) wideSegs() []cell {
 	segs := h.mediumSegs()
 	if h.snap.CompressCount > 0 {
-		segs = append(segs, cell{text: fmt.Sprintf("compressed ×%d", h.snap.CompressCount), hex: h.dim})
+		segs = append(segs, cell{text: stripIcon(h.symbols, "compress", h.compressText()), hex: h.dim})
 	}
 	return segs
+}
+
+// compressText is the compress count label: the ascii preset spells the
+// times sign with an x, so the preset stays pure ASCII.
+func (h *headerCtx) compressText() string {
+	if h.symbols == tools.StripSymbolsASCII {
+		return fmt.Sprintf("compressed x%d", h.snap.CompressCount)
+	}
+	return fmt.Sprintf("compressed ×%d", h.snap.CompressCount)
 }
 
 // mediumSegs is row 1 without the bar and without the compress count: the
 // count needs the most room and goes first when space runs short.
 func (h *headerCtx) mediumSegs() []cell {
-	segs := []cell{h.chip(), {text: "ctx", hex: h.hue, bold: true}}
+	segs := []cell{h.chip(), {text: stripIcon(h.symbols, "ctx", "ctx"), hex: h.hue, bold: true}}
 	segs = append(segs, cell{text: fmt.Sprintf("%d%%", h.pct), hex: h.pctHex, bold: true})
 	used := HumanizeTokens(h.snap.ContextTokens)
 	if h.snap.Window > 0 {
 		used += " / " + HumanizeTokens(h.snap.Window)
 	}
-	segs = append(segs, cell{text: used, hex: h.text})
+	segs = append(segs, cell{text: stripIcon(h.symbols, "tokens", used), hex: h.text})
 	if h.snap.HasCost && h.snap.Cost > 0 {
-		segs = append(segs, cell{text: fmt.Sprintf("~$%.2f", h.snap.Cost), hex: h.cost})
+		segs = append(segs, cell{text: stripIcon(h.symbols, "cost", fmt.Sprintf("~$%.2f", h.snap.Cost)), hex: h.cost})
 	}
 	if h.snap.Model != "" {
-		segs = append(segs, cell{text: h.snap.Model, hex: h.accent})
+		segs = append(segs, cell{text: stripIcon(h.symbols, "model", h.snap.Model), hex: h.accent})
 	}
 	return segs
 }
@@ -318,7 +402,7 @@ func (h *headerCtx) barRow(width int, segs []cell, pill *cell, maxBar, minBar in
 	if pill != nil {
 		pw = lipgloss.Width(pill.text) + 1
 	}
-	bar := width - fixed - 2*len(segs) - pw - 1
+	bar := width - fixed - h.gapWidth()*len(segs) - pw - 1
 	if bar > maxBar {
 		bar = maxBar
 	}
@@ -350,37 +434,60 @@ func (h *headerCtx) secondRow(width int) string {
 }
 
 // narrowRow is the narrow tier: percent and cost beside the state, with the
-// chip when it fits. The cost drops before the percent ever truncates.
+// chip when it fits. Segments drop whole in a fixed order — chip and ctx
+// label first, then the cost — and the percent and the state always remain,
+// so a glyph is never split and the row never overflows.
 func (h *headerCtx) narrowRow(width int) string {
 	pill := h.pill()
 	pct := cell{text: fmt.Sprintf("%d%%", h.pct), hex: h.pctHex, bold: true}
-	full := []cell{h.chip(), {text: "ctx", hex: h.hue, bold: true}, pct, {text: "·", hex: h.dim}}
-	if h.snap.HasCost && h.snap.Cost > 0 {
-		full = append(full, cell{text: fmt.Sprintf("~$%.2f", h.snap.Cost), hex: h.cost})
+	cost := cell{text: stripIcon(h.symbols, "cost", h.costText()), hex: h.cost}
+	full := []cell{h.chip(), {text: stripIcon(h.symbols, "ctx", "ctx"), hex: h.hue, bold: true}, pct}
+	if h.sepGlyph == "" {
+		dot := "·"
+		if h.symbols == tools.StripSymbolsASCII {
+			dot = "-"
+		}
+		full = append(full, cell{text: dot, hex: h.dim})
 	}
-	if h.fits(width, full, pill, " ") {
-		return h.rowSep(width, append(full, pill), " ")
+	if h.snap.HasCost && h.snap.Cost > 0 {
+		full = append(full, cost)
+	}
+	if h.fits(width, full, pill) {
+		return h.rowSep(width, append(full, pill), h.ngap())
 	}
 	short := []cell{pct}
 	if h.snap.HasCost && h.snap.Cost > 0 {
-		short = append(short, cell{text: fmt.Sprintf("~$%.2f", h.snap.Cost), hex: h.cost})
+		short = append(short, cost)
+		if h.fits(width, short, pill) {
+			return h.rowSep(width, append(short, pill), h.ngap())
+		}
+		short = short[:1]
 	}
-	return h.rowSep(width, append(short, pill), " ")
+	if h.fits(width, short, pill) {
+		return h.rowSep(width, append(short, pill), h.ngap())
+	}
+	return h.rowSep(width, []cell{pill}, h.ngap())
 }
 
-func (h *headerCtx) fits(width int, cells []cell, pill cell, sep string) bool {
+func (h *headerCtx) costText() string {
+	return fmt.Sprintf("~$%.2f", h.snap.Cost)
+}
+
+func (h *headerCtx) fits(width int, cells []cell, pill cell) bool {
 	w := lipgloss.Width(pill.text)
 	for _, c := range cells {
-		w += lipgloss.Width(c.text) + len(sep)
+		w += lipgloss.Width(c.text) + h.ngapWidth()
 	}
 	return w <= width
 }
 
-// row joins cells with fixed double gaps, pins the last cell (the state
-// pill) to the right edge, and pads the row to the full width on the strip
-// background, so the strip reads as a bar without a border line.
+// row joins cells with the between-segment gap, pins the last cell (the
+// state pill) to the right edge, and pads the row to the full width on the
+// strip background, so the strip reads as a bar without a border line.
+// Narrow rows join with the narrow gap instead; both read as the current
+// spacing when no separator is set.
 func (h *headerCtx) row(width int, cells []cell) string {
-	return h.rowSep(width, cells, "  ")
+	return h.rowSep(width, cells, h.gap())
 }
 
 func (h *headerCtx) rowSep(width int, cells []cell, sep string) string {
@@ -406,7 +513,7 @@ func (h *headerCtx) join(cells []cell) string {
 	for _, c := range cells {
 		parts = append(parts, h.style(c))
 	}
-	return strings.Join(parts, h.fill("  "))
+	return strings.Join(parts, h.gap())
 }
 
 // fill is blank space on the strip background. Every cell resets its own
@@ -436,12 +543,20 @@ func (h *headerCtx) chip() cell {
 	if name == "" {
 		name = "orchestrator"
 	}
+	if left, right := StripCaps(h.symbols); left != "" {
+		return cell{text: left + StripNerdIcons["agent"] + " " + name + " " + right, hex: h.hue, bold: true}
+	}
 	return cell{text: name, hex: h.hue, bold: true}
 }
 
 // truncateName bounds a tool name for row 2: names are labels, so shortening
-// one never hides a number.
+// one never hides a number. The ascii preset ends the cut with three dots
+// instead of an ellipsis, so the preset stays pure ASCII.
 func truncateName(name string, max int) string {
+	return truncateNamePreset(name, max, false)
+}
+
+func truncateNamePreset(name string, max int, ascii bool) string {
 	if lipgloss.Width(name) <= max {
 		return name
 	}
@@ -449,51 +564,73 @@ func truncateName(name string, max int) string {
 	if len(runes) <= max {
 		return name
 	}
+	if ascii {
+		return string(runes[:max-3]) + "..."
+	}
 	return string(runes[:max-1]) + "…"
 }
 
 // pill is the state field: working, idle, compress queued, compressing, or
 // the warning. A warning always wins over the state, never over the queue
 // count: a waiting input queue appends `N pending` to either, so the strip
-// shows it until the queue drains.
+// shows it until the queue drains. Nerd wraps the icon and label in rounded
+// caps; unicode keeps the plain symbols; ascii is labels only.
 func (h *headerCtx) pill() cell {
-	text, hex := h.stateCell()
-	if h.snap.Warning != "" {
-		text, hex = "⚠ "+h.snap.Warning, h.hot
-	}
+	icon, label, hex := h.pillParts()
 	if h.snap.Pending > 0 {
-		text += " · " + strconv.Itoa(h.snap.Pending) + " pending"
+		dot := "·"
+		if h.symbols == tools.StripSymbolsASCII {
+			dot = "-"
+		}
+		label += " " + dot + " " + strconv.Itoa(h.snap.Pending) + " pending"
 	}
-	return cell{text: text, hex: hex}
+	if h.symbols == tools.StripSymbolsNerd {
+		left, right := StripCaps(h.symbols)
+		return cell{text: left + StripNerdIcons[icon] + " " + label + " " + right, hex: hex}
+	}
+	if h.symbols == tools.StripSymbolsASCII {
+		return cell{text: strings.ReplaceAll(label, "…", "..."), hex: hex}
+	}
+	prefix := map[string]string{"working": "● ", "idle": "◌ ", "queued": "⏳ ", "sync": "⟳ ", "warning": "⚠ "}[icon]
+	return cell{text: prefix + label, hex: hex}
 }
 
-// stateCell is the pill's state text and color without the queue count.
-func (h *headerCtx) stateCell() (string, string) {
-	switch {
-	case h.snap.State == HeaderIdle:
-		return "◌ idle", h.idle
-	case h.snap.State == HeaderQueued:
-		return "⏳ compress queued", h.idle
-	case h.snap.State == HeaderCompressing:
+// pillParts is the state content without preset dressing: the nerd icon
+// name, the plain label and the palette token color.
+func (h *headerCtx) pillParts() (icon, label, hex string) {
+	if h.snap.Warning != "" {
+		return "warning", h.snap.Warning, h.hot
+	}
+	switch h.snap.State {
+	case HeaderIdle:
+		return "idle", "idle", h.idle
+	case HeaderQueued:
+		return "queued", "compress queued", h.idle
+	case HeaderCompressing:
 		if h.pulse {
-			return "⟳ compressing…", h.idle
+			return "sync", "compressing…", h.idle
 		}
-		return "⟳ compressing…", h.accent
-	case h.snap.State == HeaderCompressFailed:
+		return "sync", "compressing…", h.accent
+	case HeaderCompressFailed:
 		text := "compress failed"
 		if h.snap.CompressFailed != "" {
 			text = "compress failed: " + h.snap.CompressFailed
 		}
-		return "⚠ " + text, h.hot
+		return "warning", text, h.hot
 	default:
-		return "● working", h.pctHex
+		return "working", "working", h.pctHex
 	}
 }
 
 // bar draws the gradient bar: each filled cell blends calm to warm to hot
 // by its position; unfilled cells use the dim color. The percent, not the
-// bar, carries the threshold state.
+// bar, carries the threshold state. The ascii preset draws with number
+// signs and dashes, so the preset stays pure ASCII.
 func (h *headerCtx) bar(n int) string {
+	fillGlyph, emptyGlyph := "▰", "▱"
+	if h.symbols == tools.StripSymbolsASCII {
+		fillGlyph, emptyGlyph = "#", "-"
+	}
 	filled := 0
 	if h.pct > 0 {
 		filled = int((int64(n)*h.pct + 50) / 100)
@@ -507,10 +644,10 @@ func (h *headerCtx) bar(n int) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {
 		hex := h.barDim
-		glyph := "▱"
+		glyph := emptyGlyph
 		if i < filled {
 			hex = gradientCell(h.calm, h.warm, h.hot, i, n)
-			glyph = "▰"
+			glyph = fillGlyph
 		}
 		b.WriteString(h.r.NewStyle().Foreground(lipgloss.Color(hex)).Background(lipgloss.Color(h.bg)).Render(glyph))
 	}
@@ -575,11 +712,17 @@ func (h *headerCtx) usageCell() cell {
 		case "hot":
 			hex = h.hot
 		}
+		pie := usagePie(w.Pct)
+		resetPrefix := "↻"
+		if h.symbols == tools.StripSymbolsASCII {
+			pie = "*"
+			resetPrefix = "~"
+		}
 		out := h.style(cell{text: w.Label, hex: h.dim}) + h.fill(" ") +
-			h.style(cell{text: usagePie(w.Pct), hex: hex}) + h.fill(" ") +
+			h.style(cell{text: pie, hex: hex}) + h.fill(" ") +
 			h.style(cell{text: fmt.Sprintf("%d%%", w.Pct), hex: hex, bold: true})
 		if r := usageResetIn(w.ResetsAt, now); r != "" {
-			out += h.fill(" ") + h.style(cell{text: "↻" + r, hex: h.dim})
+			out += h.fill(" ") + h.style(cell{text: resetPrefix + r, hex: h.dim})
 		}
 		parts = append(parts, out)
 	}

@@ -10,15 +10,35 @@ Reference: omp's theme and status-line system. Its docs describe symbol presets 
 
 **Current strip (supersedes "the current look" above):** The spec branch strip already has rounded top and bottom edges, inner padding, background between cells (`0b7c03c`), pane padding (ticket 12), a running-tool label (`header_tool.go`), usage on the right for claude, opencode Go and Antigravity (`a5d954a`, `15a1a69`), no idle word, and a top-level chip. `unicode` must reproduce this look, not the older one. Keep those segments: tool label and right-side usage become segments of the new row. Do not rewrite what works: extend `header.go` rendering with presets, separators and tokens. The branch `116b6ee` branched before these changes and conflicts in `header.go`, `header_run.go`, `tools/settings.go` and `wick-pig/AGENTS.md`; reuse its `strip_symbols.go`, codepoint table and tests where they fit, and start from `spec/input-queue`, not from that branch.
 
-- [ ] Strip renders as styled segments with an icon per segment in the `nerd` preset, and a readable text label per segment in `unicode` and `ascii`
-- [ ] Symbol preset and separator are settings; the default stays `unicode` so a terminal without a Nerd Font looks right
-- [ ] Rounded caps on the agent chip and state field in `nerd`; a half-block or plain edge in the other presets
-- [ ] Segment color tokens come from the shared palette, in dark and light, and follow the generated themes
-- [ ] Narrow width drops segments in a fixed order, tested at each tier, with no split glyph and no overflow
-- [ ] All Nerd Font codepoints are Nerd Fonts v3 and listed in one table with a test that pins them
-- [ ] Golden tests per preset, separator, width tier and color profile (truecolor, 256, 16)
+- [x] Strip renders as styled segments with an icon per segment in the `nerd` preset, and a readable text label per segment in `unicode` and `ascii`
+- [x] Symbol preset and separator are settings; the default stays `unicode` so a terminal without a Nerd Font looks right
+- [x] Rounded caps on the agent chip and state field in `nerd`; a half-block or plain edge in the other presets
+- [x] Segment color tokens come from the shared palette, in dark and light, and follow the generated themes
+- [x] Narrow width drops segments in a fixed order, tested at each tier, with no split glyph and no overflow
+- [x] All Nerd Font codepoints are Nerd Fonts v3 and listed in one table with a test that pins them
+- [x] Golden tests per preset, separator, width tier and color profile (truecolor, 256, 16)
 - [ ] Live probe in a herdr pane for each preset with the installed Nerd Font, findings recorded in this ticket
-- [ ] The strip height stays at the configured rows and the child size is unchanged
-- [ ] Spec stories 32, 33, 34
+- [x] The strip height stays at the configured rows and the child size is unchanged
+- [x] Spec stories 32, 33, 34
+
+## Live-probe result (implement/10-beautify-strip)
+
+Automated part done; herdr-pane visual pass still manual
+(`scripts/strip-look.sh`; scripts never run inside ticket work).
+
+- Codepoint coverage: all 21 nerd codepoints (12 FA icons, 3 powerline
+  separators, 2 rounded caps, plus pipe/arrow fallbacks) resolve in the
+  installed Meslo Nerd Font (`fc-match` charset check: 13554 codepoints,
+  zero missing). No Material Design icon is used, dodging the stale
+  legacy-range trap: FA lives at U+ED00-U+F2FF and powerline extras at
+  U+E0B0-U+E0D7 in v3.
+- Offline renders (71% ctx fixture, separator powerline): nerd shows
+  capped chip/pill with one icon per segment; unicode shows plain labels
+  with ▶ gaps; ascii is pure high-byte-free labels with > gaps. Narrow
+  widths keep percent and state, dropping chip, cost, model, tools and
+  compress count whole in that order.
+- Manual remainder: run `scripts/strip-look.sh <pane>` once per preset
+  with the Nerd Font active and confirm no box glyphs, then check the
+  box above.
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.
