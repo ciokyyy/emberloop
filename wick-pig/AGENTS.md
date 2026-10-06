@@ -36,6 +36,10 @@ owns its `_test.go` and the behaviour below):
   `.wick/agents` overrides), `transcript.go`, `usage.go` (tailer parsing;
   rows land in `statedb/`), `memory.go`, `archive.go`, `prune.go` (deletes
   usage and overflow rows as well as files)
+- Context core: `context.go` (snapshot over a transcript: the shared
+  formula, outstanding calls, per-tool sizes), `context_parse.go` (the
+  per-harness line parsers a new harness registers), `context_window.go`
+  (model window table), `context_report.go` (the `wick-pig context` output)
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
