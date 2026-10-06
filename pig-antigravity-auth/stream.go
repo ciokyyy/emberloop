@@ -21,6 +21,36 @@ const (
 	trailingUsageTTL = time.Second
 )
 
+// Malformed-call retry: a turn ending in MALFORMED_FUNCTION_CALL (or an
+// equivalent invalid-tool-call reason) with nothing emitted is re-sent.
+const (
+	malformedMaxAttempts = 3
+	malformedBackoffBase = 100 * time.Millisecond
+)
+
+// isMalformedFinishReason reports the invalid-tool-call finish reasons that
+// merit a retry. MALFORMED_FUNCTION_CALL is the observed value; the generic
+// match covers the equivalent INVALID_/MALFORMED_ TOOL_/FUNCTION_ variants.
+func isMalformedFinishReason(reason string) bool {
+	u := strings.ToUpper(strings.TrimSpace(reason))
+	if u == "" {
+		return false
+	}
+	if u == "MALFORMED_FUNCTION_CALL" {
+		return true
+	}
+	invalid := strings.Contains(u, "MALFORMED") || strings.Contains(u, "INVALID")
+	call := strings.Contains(u, "FUNCTION") || strings.Contains(u, "TOOL") || strings.Contains(u, "CALL")
+	return invalid && call
+}
+
+func malformedError(reason, finishMessage string) error {
+	if msg := strings.TrimSpace(finishMessage); msg != "" {
+		return fmt.Errorf("Antigravity returned a malformed function call (%s): %s", reason, msg)
+	}
+	return fmt.Errorf("Antigravity returned a malformed function call (%s)", reason)
+}
+
 var sessions = newSessionStore()
 
 // ---- request ----
@@ -108,7 +138,8 @@ type chunk struct {
 		Content struct {
 			Parts []part `json:"parts"`
 		} `json:"content"`
-		FinishReason string `json:"finishReason"`
+		FinishReason  string `json:"finishReason"`
+		FinishMessage string `json:"finishMessage"`
 	} `json:"candidates"`
 	Usage *struct {
 		Prompt   *int `json:"promptTokenCount"`
@@ -350,192 +381,222 @@ func run(ctx context.Context, stream *sdk.ModelEventStream, model, transcript, o
 		fail(errors.New("missing Antigravity OAuth access token"))
 		return
 	}
-	env, key := buildEnvelope(model, transcript, options, project)
-	body, err := json.Marshal(env)
-	if err != nil {
-		fail(err)
-		return
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cloudCodeBase+"/v1internal:streamGenerateContent?alt=sse", bytes.NewReader(body))
-	if err != nil {
-		fail(err)
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", harnessUserAgent())
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		fail(err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		fail(fmt.Errorf("Antigravity request failed: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(b))))
-		return
-	}
-
-	chunks, errc := make(chan chunk), make(chan error, 1)
-	go readSSE(resp.Body, chunks, errc)
-
-	var textIdx, thinkIdx = -1, -1
-	var pendingSig, terminalReason string
-	terminal := false
 	gptOSS := strings.Contains(strings.ToLower(msg.model), "gpt-oss")
-	var trailing <-chan time.Time
 
-	endBlock := func(idx *int, kind, endType string) {
-		if *idx == -1 {
+	for attempt := 0; attempt < malformedMaxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				fail(errors.New("Request was aborted"))
+				return
+			case <-time.After(malformedBackoffBase * time.Duration(attempt)):
+			}
+		}
+		env, key := buildEnvelope(model, transcript, options, project)
+		body, err := json.Marshal(env)
+		if err != nil {
+			fail(err)
 			return
 		}
-		push(map[string]any{"type": endType, "contentIndex": *idx, "content": msg.blocks[*idx].text, "partial": msg.snapshot()})
-		*idx = -1
-	}
-	closeText := func() { endBlock(&textIdx, "text", "text_end") }
-	closeThink := func() { endBlock(&thinkIdx, "thinking", "thinking_end") }
-
-loop:
-	for {
-		var c chunk
-		var ok bool
-		select {
-		case <-ctx.Done():
-			fail(errors.New("Request was aborted"))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, cloudCodeBase+"/v1internal:streamGenerateContent?alt=sse", bytes.NewReader(body))
+		if err != nil {
+			fail(err)
 			return
-		case <-trailing:
-			break loop
-		case c, ok = <-chunks:
-			if !ok {
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", harnessUserAgent())
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			fail(fmt.Errorf("Antigravity request failed: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(b))))
+			return
+		}
+
+		chunks, errc := make(chan chunk), make(chan error, 1)
+		go readSSE(resp.Body, chunks, errc)
+
+		var textIdx, thinkIdx = -1, -1
+		var pendingSig, terminalReason, terminalFinishMessage string
+		terminal := false
+		var trailing <-chan time.Time
+
+		endBlock := func(idx *int, kind, endType string) {
+			if *idx == -1 {
+				return
+			}
+			push(map[string]any{"type": endType, "contentIndex": *idx, "content": msg.blocks[*idx].text, "partial": msg.snapshot()})
+			*idx = -1
+		}
+		closeText := func() { endBlock(&textIdx, "text", "text_end") }
+		closeThink := func() { endBlock(&thinkIdx, "thinking", "thinking_end") }
+
+	loop:
+		for {
+			var c chunk
+			var ok bool
+			select {
+			case <-ctx.Done():
+				resp.Body.Close()
+				fail(errors.New("Request was aborted"))
+				return
+			case <-trailing:
 				break loop
+			case c, ok = <-chunks:
+				if !ok {
+					break loop
+				}
 			}
-		}
-		if f := embeddedFailure(c); f != "" {
-			fail(errors.New(f))
-			return
-		}
-		msg.applyUsage(c)
-		if terminal {
-			if c.Usage != nil {
-				break
+			if f := embeddedFailure(c); f != "" {
+				resp.Body.Close()
+				fail(errors.New(f))
+				return
 			}
-			continue
-		}
-		if len(c.Candidates) == 0 {
-			continue
-		}
-		cand := c.Candidates[0]
-		for _, p := range cand.Content.Parts {
-			if !p.Thought && p.FunctionCall == nil && p.Text == "" && p.ThoughtSignature != "" {
-				if textIdx != -1 {
-					msg.blocks[textIdx].sig = p.ThoughtSignature
-				} else {
-					pendingSig = p.ThoughtSignature
+			msg.applyUsage(c)
+			if terminal {
+				if c.Usage != nil {
+					break
 				}
 				continue
 			}
-			if p.Thought && p.Text == "" && p.ThoughtSignature != "" {
-				pendingSig = p.ThoughtSignature
-			}
-			if fc := p.FunctionCall; fc != nil {
-				closeText()
-				closeThink()
-				sig := p.ThoughtSignature
-				if sig == "" {
-					sig = pendingSig
-				}
-				pendingSig = ""
-				id := fc.ID
-				if id == "" {
-					id = "call_" + uuid4()
-				}
-				args := fc.Args
-				if args == nil {
-					args = map[string]any{}
-				}
-				b := &block{kind: "toolCall", id: id, name: fc.Name, args: args, sig: sig}
-				msg.blocks = append(msg.blocks, b)
-				idx := len(msg.blocks) - 1
-				push(map[string]any{"type": "toolcall_start", "contentIndex": idx, "partial": msg.snapshot()})
-				push(map[string]any{"type": "toolcall_end", "contentIndex": idx, "toolCall": msg.toolCall(b), "partial": msg.snapshot()})
-				msg.stopReason = "toolUse"
+			if len(c.Candidates) == 0 {
 				continue
 			}
-			if p.Thought {
-				if p.Text == "" {
+			cand := c.Candidates[0]
+			for _, p := range cand.Content.Parts {
+				if !p.Thought && p.FunctionCall == nil && p.Text == "" && p.ThoughtSignature != "" {
+					if textIdx != -1 {
+						msg.blocks[textIdx].sig = p.ThoughtSignature
+					} else {
+						pendingSig = p.ThoughtSignature
+					}
 					continue
 				}
-				closeText()
-				if thinkIdx == -1 {
-					msg.blocks = append(msg.blocks, &block{kind: "thinking", sig: p.ThoughtSignature})
-					thinkIdx = len(msg.blocks) - 1
-					push(map[string]any{"type": "thinking_start", "contentIndex": thinkIdx, "partial": msg.snapshot()})
+				if p.Thought && p.Text == "" && p.ThoughtSignature != "" {
+					pendingSig = p.ThoughtSignature
 				}
-				b := msg.blocks[thinkIdx]
-				b.text += p.Text
-				if p.ThoughtSignature != "" {
-					b.sig = p.ThoughtSignature
-				}
-				push(map[string]any{"type": "thinking_delta", "contentIndex": thinkIdx, "delta": p.Text, "partial": msg.snapshot()})
-				continue
-			}
-			if p.Text != "" {
-				closeThink()
-				if textIdx == -1 {
+				if fc := p.FunctionCall; fc != nil {
+					closeText()
+					closeThink()
 					sig := p.ThoughtSignature
 					if sig == "" {
 						sig = pendingSig
 					}
 					pendingSig = ""
-					msg.blocks = append(msg.blocks, &block{kind: "text", sig: sig})
-					textIdx = len(msg.blocks) - 1
-					push(map[string]any{"type": "text_start", "contentIndex": textIdx, "partial": msg.snapshot()})
+					id := fc.ID
+					if id == "" {
+						id = "call_" + uuid4()
+					}
+					args := fc.Args
+					if args == nil {
+						args = map[string]any{}
+					}
+					b := &block{kind: "toolCall", id: id, name: fc.Name, args: args, sig: sig}
+					msg.blocks = append(msg.blocks, b)
+					idx := len(msg.blocks) - 1
+					push(map[string]any{"type": "toolcall_start", "contentIndex": idx, "partial": msg.snapshot()})
+					push(map[string]any{"type": "toolcall_end", "contentIndex": idx, "toolCall": msg.toolCall(b), "partial": msg.snapshot()})
+					msg.stopReason = "toolUse"
+					continue
 				}
-				b := msg.blocks[textIdx]
-				b.text += p.Text
-				if p.ThoughtSignature != "" {
-					b.sig = p.ThoughtSignature
+				if p.Thought {
+					if p.Text == "" {
+						continue
+					}
+					closeText()
+					if thinkIdx == -1 {
+						msg.blocks = append(msg.blocks, &block{kind: "thinking", sig: p.ThoughtSignature})
+						thinkIdx = len(msg.blocks) - 1
+						push(map[string]any{"type": "thinking_start", "contentIndex": thinkIdx, "partial": msg.snapshot()})
+					}
+					b := msg.blocks[thinkIdx]
+					b.text += p.Text
+					if p.ThoughtSignature != "" {
+						b.sig = p.ThoughtSignature
+					}
+					push(map[string]any{"type": "thinking_delta", "contentIndex": thinkIdx, "delta": p.Text, "partial": msg.snapshot()})
+					continue
 				}
-				push(map[string]any{"type": "text_delta", "contentIndex": textIdx, "delta": p.Text, "partial": msg.snapshot()})
+				if p.Text != "" {
+					closeThink()
+					if textIdx == -1 {
+						sig := p.ThoughtSignature
+						if sig == "" {
+							sig = pendingSig
+						}
+						pendingSig = ""
+						msg.blocks = append(msg.blocks, &block{kind: "text", sig: sig})
+						textIdx = len(msg.blocks) - 1
+						push(map[string]any{"type": "text_start", "contentIndex": textIdx, "partial": msg.snapshot()})
+					}
+					b := msg.blocks[textIdx]
+					b.text += p.Text
+					if p.ThoughtSignature != "" {
+						b.sig = p.ThoughtSignature
+					}
+					push(map[string]any{"type": "text_delta", "contentIndex": textIdx, "delta": p.Text, "partial": msg.snapshot()})
+				}
+			}
+			if cand.FinishReason != "" {
+				closeText()
+				closeThink()
+				if msg.stopReason != "toolUse" && cand.FinishReason == "MAX_TOKENS" {
+					msg.stopReason = "length"
+				}
+				terminal, terminalReason, terminalFinishMessage = true, cand.FinishReason, cand.FinishMessage
+				if gptOSS && c.Usage == nil {
+					// gpt-oss reports usage in a trailing chunk; wait briefly for it.
+					trailing = time.After(trailingUsageTTL)
+					continue
+				}
+				break
 			}
 		}
-		if cand.FinishReason != "" {
-			closeText()
-			closeThink()
-			if msg.stopReason != "toolUse" && cand.FinishReason == "MAX_TOKENS" {
-				msg.stopReason = "length"
+		select {
+		case err := <-errc:
+			if !terminal {
+				resp.Body.Close()
+				fail(err)
+				return
 			}
-			terminal, terminalReason = true, cand.FinishReason
-			if gptOSS && c.Usage == nil {
-				// gpt-oss reports usage in a trailing chunk; wait briefly for it.
-				trailing = time.After(trailingUsageTTL)
-				continue
-			}
-			break
+		default:
 		}
-	}
-	select {
-	case err := <-errc:
-		if !terminal {
-			fail(err)
+		if ctx.Err() != nil {
+			resp.Body.Close()
+			fail(errors.New("Request was aborted"))
 			return
 		}
-	default:
-	}
-	if ctx.Err() != nil {
-		fail(errors.New("Request was aborted"))
+		if !terminal {
+			resp.Body.Close()
+			fail(errors.New("Antigravity stream ended without a terminal candidate response"))
+			return
+		}
+		if len(msg.blocks) == 0 && isMalformedFinishReason(terminalReason) {
+			resp.Body.Close()
+			if attempt+1 < malformedMaxAttempts {
+				// Drop the discarded attempt's usage: the winning attempt
+				// reports its own counters via applyUsage.
+				msg.input, msg.output, msg.cacheRead = 0, 0, 0
+				continue
+			}
+			fail(malformedError(terminalReason, terminalFinishMessage))
+			return
+		}
+		if len(msg.blocks) == 0 {
+			resp.Body.Close()
+			fail(fmt.Errorf("Antigravity returned an empty response (%s)", terminalReason))
+			return
+		}
+		resp.Body.Close()
+		if msg.stopReason == "stop" || msg.stopReason == "length" {
+			sessions.complete(key)
+		}
+		push(map[string]any{"type": "done", "reason": msg.stopReason, "message": msg.snapshot()})
 		return
 	}
-	if !terminal {
-		fail(errors.New("Antigravity stream ended without a terminal candidate response"))
-		return
-	}
-	if len(msg.blocks) == 0 {
-		fail(fmt.Errorf("Antigravity returned an empty response (%s)", terminalReason))
-		return
-	}
-	if msg.stopReason == "stop" || msg.stopReason == "length" {
-		sessions.complete(key)
-	}
-	push(map[string]any{"type": "done", "reason": msg.stopReason, "message": msg.snapshot()})
 }
