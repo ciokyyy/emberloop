@@ -130,12 +130,16 @@ func TestWrapRestartResetsThenSets(t *testing.T) {
 	}
 }
 
-// A claude child launches with the theme ref in its settings plus a per-run
-// CLAUDE_CONFIG_DIR whose themes/ holds the resolving slug file.
+// A claude child launches with the theme ref in its settings and no
+// CLAUDE_CONFIG_DIR override (a fresh config dir has no login or onboarding
+// state); the resolving slug file lands in the user's own config dir.
 func TestWrapClaudeThemeResolves(t *testing.T) {
 	child := &fakeChild{}
 	var stdout bytes.Buffer
 	var gotArgs, gotEnv []string
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	cfg := themeWrapConfig(child, &stdout, "claude", []string{"--settings", `{"hooks":{}}`}, true, t.TempDir())
 	cfg.Source.Harness = "claude"
 	cfg.Start = func(bin string, args, env []string, w, h int) (wrapPty, func() error, error) {
@@ -159,15 +163,12 @@ func TestWrapClaudeThemeResolves(t *testing.T) {
 	if ref != "custom:wick-mocha" {
 		t.Errorf("claude theme ref = %q, want custom:wick-mocha", ref)
 	}
-	cfgDir := ""
 	for _, e := range gotEnv {
 		if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
-			cfgDir = strings.TrimPrefix(e, "CLAUDE_CONFIG_DIR=")
+			t.Fatalf("claude child gets a per-run %s: it would lose login and onboarding state", e)
 		}
 	}
-	if cfgDir == "" {
-		t.Fatal("claude child misses per-run CLAUDE_CONFIG_DIR")
-	}
+	cfgDir := filepath.Join(home, ".claude")
 	slug := strings.TrimPrefix(ref, "custom:")
 	b, err := os.ReadFile(filepath.Join(cfgDir, "themes", slug+".json"))
 	if err != nil {

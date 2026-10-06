@@ -664,7 +664,7 @@ func realStart(bin string, args, env []string, w, h int) (wrapPty, func() error,
 // themedChildCommand adds the per-run theme launch when the child is the
 // harness binary itself (wrap passes the harness through): pig gains its
 // theme file in the args, claude its theme reference in the launch settings
-// plus a per-run CLAUDE_CONFIG_DIR in the env. Any other binary runs
+// plus two wick-named theme files in its config directory. Any other binary runs
 // untouched, and a theme failure runs the child unthemed rather than
 // refusing the session.
 func themedChildCommand(cfg WrapConfig, dark bool) (string, []string, []string) {

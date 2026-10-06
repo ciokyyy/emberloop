@@ -7,7 +7,7 @@ package wick
 // header.go, and the generators and the OSC setter assemble from the same
 // struct, so no consumer keeps an independent hex table. Generated files
 // live under wick's state dir and reach the child only through per-run
-// launch flags (and, for claude, a per-run CLAUDE_CONFIG_DIR), so the
+// launch flags (and, for claude, two wick-named theme files in its config dir), so the
 // user's saved theme choice is never changed. Mocha is live-verified in
 // herdr; Latte is generated from the same source and is not verified.
 
@@ -538,20 +538,50 @@ func ThemeLaunchArgs(harness string, args []string, dark bool, themeDir string) 
 	}
 }
 
-// ThemeLaunchEnv returns the extra child environment for the harness theme:
-// claude gets a per-run CLAUDE_CONFIG_DIR whose themes/ holds the generated
-// slug files, so custom:<slug> resolves with no user file touched. Pig
-// needs none: its theme travels in the args.
+// claudeConfigRoot is the config directory the user's claude reads: the
+// CLAUDE_CONFIG_DIR already in the environment, else ~/.claude.
+func claudeConfigRoot() string {
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(os.Getenv("HOME"), ".claude")
+}
+
+// InstallClaudeThemes writes the generated claude themes into <root>/themes
+// under wick's own slug names, where Claude Code resolves custom:<slug>.
+// This adds two files and changes nothing else: the theme choice travels in
+// the launch settings, and the user's saved selection stays untouched. A
+// per-run CLAUDE_CONFIG_DIR is not an option: a fresh config directory has
+// no login and no onboarding state, so every claude agent would stop at the
+// first-run dialogs instead of working.
+func InstallClaudeThemes(root string) error {
+	dir := filepath.Join(root, "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, dark := range []bool{true, false} {
+		cj, err := ClaudeThemeJSON(dark)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, ThemeName(dark)+".json"), []byte(cj), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ThemeLaunchEnv installs the claude theme files and returns the extra
+// child environment for the harness theme: none. Claude resolves the theme
+// reference from the user's own config directory, so the child keeps its
+// login and onboarding state. Pig needs none either: its theme travels in
+// the args.
 func ThemeLaunchEnv(harness string, dark bool, themeDir string) ([]string, error) {
-	_ = dark
+	_, _ = dark, themeDir
 	if harness != "claude" {
 		return nil, nil
 	}
-	dir, err := ClaudeConfigDir(themeDir)
-	if err != nil {
-		return nil, err
-	}
-	return []string{"CLAUDE_CONFIG_DIR=" + dir}, nil
+	return nil, InstallClaudeThemes(claudeConfigRoot())
 }
 
 // mergeClaudeTheme sets the theme reference in a claude --settings JSON
