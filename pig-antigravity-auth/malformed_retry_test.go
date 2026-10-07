@@ -246,3 +246,33 @@ func TestSystemMessageFeedsPromptAndTools(t *testing.T) {
 		t.Fatalf("system prompt missing: %s", got)
 	}
 }
+
+// A worker that just called spawn (or tell, finish) ends its turn on purpose
+// and waits for the notice: a thinking-only stop right after one is a normal
+// end of turn, not a retryable error. Any other tool result still errors.
+func TestThoughtOnlyStopAfterSpawnResultIsNormalEnd(t *testing.T) {
+	body := sse(`{"candidates":[{"content":{"parts":[{"thought":true,"text":"waiting for the notice"}]},"finishReason":"STOP"}]}`)
+	for _, c := range []struct {
+		tool    string
+		wantErr bool
+	}{
+		{"mcp__wick__spawn", false},
+		{"mcp__wick__tell", false},
+		{"mcp__wick__finish", false},
+		{"mcp__wick__execute", true},
+	} {
+		serveSequence(t, []string{body}, nil, nil)
+		tr := map[string]any{"messages": []any{
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "go"}}},
+			map[string]any{"role": "toolResult", "toolCallId": "c1", "toolName": c.tool, "content": []any{map[string]any{"type": "text", "text": "started"}}},
+		}}
+		opts := map[string]any{"apiKey": `{"token":"tok","projectId":"proj-1"}`, "sessionId": "thought-after-" + c.tool}
+		stream := sdk.CreateAssistantMessageEventStream()
+		run(context.Background(), stream, testModel, tr, opts)
+		evs := collect(t, stream)
+		last := evs[len(evs)-1]
+		if got := last["type"] == "error"; got != c.wantErr {
+			t.Errorf("after %s: final event %v, want error=%v", c.tool, last["type"], c.wantErr)
+		}
+	}
+}

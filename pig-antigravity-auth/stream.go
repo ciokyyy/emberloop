@@ -268,6 +268,23 @@ type message struct {
 	ts                   int64
 }
 
+// noticeTools are the wick tools after which a worker ends its turn on
+// purpose: spawn, tell and finish return at once and the outcome arrives as
+// a system notice. A turn that ends with only a thinking block right after
+// one is the agent waiting, not a silent stop.
+var noticeTools = map[string]bool{"mcp__wick__spawn": true, "mcp__wick__tell": true, "mcp__wick__finish": true}
+
+// endsWaitingForNotice reports whether the transcript's last message is the
+// result of one of noticeTools, so an output-less stop is the intended wait.
+func endsWaitingForNotice(transcript map[string]any) bool {
+	msgs := sliceOf(transcript["messages"])
+	if len(msgs) == 0 {
+		return false
+	}
+	last := asMap(msgs[len(msgs)-1])
+	return asStr(last["role"]) == "toolResult" && noticeTools[asStr(last["toolName"])]
+}
+
 // hasOutput reports whether the turn carries text or a tool call, not only
 // thinking.
 func (m *message) hasOutput() bool {
@@ -605,7 +622,7 @@ func run(ctx context.Context, stream *sdk.ModelEventStream, model, transcript, o
 			return
 		}
 		resp.Body.Close()
-		if msg.stopReason == "stop" && !msg.hasOutput() {
+		if msg.stopReason == "stop" && !msg.hasOutput() && !endsWaitingForNotice(transcript) {
 			// Thinking only, no text and no tool call: the turn would end
 			// silently and the worker would stop without a submit. omp raises
 			// the same case as an error. The wording matches pig's retryable
