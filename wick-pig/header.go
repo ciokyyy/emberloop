@@ -65,7 +65,8 @@ type HeaderSnapshot struct {
 	HasCost        bool
 	TopTools       []ToolSize
 	CompressCount  int
-	Pending        int // prompts waiting in the wrapper's queue: hidden at 0
+	Pending        int  // prompts waiting in the wrapper's queue: hidden at 0
+	Raw            bool // raw passthrough mode: the keyboard goes to the child
 	State          HeaderState
 	CompressFailed string    // non-empty shows "compress failed: <reason>" in the pill
 	Warning        string    // non-empty replaces the state pill, e.g. no compressModel
@@ -549,14 +550,27 @@ func (h *headerCtx) chip() cell {
 	return cell{text: name, hex: h.hue, bold: true}
 }
 
-// pill is the state field: working, idle, compress queued, compressing, or
-// the warning. A warning always wins over the state, never over the queue
+// pill is the state field: working, idle, compress queued, compressing, raw,
+// or the warning. A warning always wins over the state, never over the queue
 // count: a waiting input queue appends `N pending` to either, so the strip
-// shows it until the queue drains. Nerd wraps the icon and label in rounded
-// caps; unicode keeps the plain symbols; ascii is labels only.
+// shows it until the queue drains. In raw mode the pill reads `raw`, or
+// `raw, N queued` while items wait, except compress states win: a queued or
+// running compress keeps its own pill so the reason stays visible. Nerd wraps
+// the icon and label in rounded caps; unicode keeps the plain symbols; ascii
+// is labels only.
 func (h *headerCtx) pill() cell {
 	icon, label, hex := h.pillParts()
-	if h.snap.Pending > 0 {
+	rawMode := h.snap.Raw && h.snap.Warning == "" &&
+		h.snap.State != HeaderQueued && h.snap.State != HeaderCompressing &&
+		h.snap.State != HeaderCompressFailed
+	if rawMode {
+		label = "raw"
+		icon = "raw"
+		hex = h.idle
+		if h.snap.Pending > 0 {
+			label = "raw, " + strconv.Itoa(h.snap.Pending) + " queued"
+		}
+	} else if h.snap.Pending > 0 {
 		dot := "·"
 		if h.symbols == tools.StripSymbolsASCII {
 			dot = "-"
@@ -579,7 +593,7 @@ func (h *headerCtx) pill() cell {
 		}
 		return cell{text: b.String(), hex: hex}
 	}
-	prefix := map[string]string{"working": "● ", "idle": "◌ ", "queued": "⏳ ", "sync": "⟳ ", "warning": "⚠ "}[icon]
+	prefix := map[string]string{"working": "● ", "idle": "◌ ", "queued": "⏳ ", "sync": "⟳ ", "warning": "⚠ ", "raw": "⌨ "}[icon]
 	return cell{text: prefix + label, hex: hex}
 }
 

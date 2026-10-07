@@ -28,6 +28,7 @@ func TestStripNerdCodepointsPinned(t *testing.T) {
 		"queued":   "", // U+F017 fa-clock
 		"sync":     "", // U+F021 fa-sync
 		"warning":  "", // U+F071 fa-warning
+		"raw":      "", // U+F11C fa-keyboard
 	}
 	table := StripNerdIconTable()
 	if len(table) != len(want) {

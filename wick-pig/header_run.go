@@ -167,6 +167,7 @@ func WrapChild(cfg WrapConfig) error {
 		if cfg.Clock != nil {
 			w.inputRow.now = cfg.Clock
 		}
+		w.raw = newRawMode(cfg.Source.Harness, cfg.Clock)
 	}
 	w.syncMouseLocked()
 	defer w.reporter.release()
@@ -176,8 +177,11 @@ func WrapChild(cfg WrapConfig) error {
 		_, err := w.writeChild(b)
 		return err
 	}, func() bool {
-		if w.inputRow != nil {
-			return w.inputRow.hasDraft()
+		if w.inputRow != nil && w.inputRow.hasDraft() {
+			return true
+		}
+		if w.raw != nil && w.raw.isEnabled() && w.raw.dirty() {
+			return true
 		}
 		return false
 	}, cfg.Clock)
@@ -339,6 +343,7 @@ type wrapper struct {
 	lastPlain []string
 	usageKey  atomic.Value // string: the account the strip's usage reads
 	inputRow  *inputRow
+	raw       *rawMode
 	queue     *inputQueue
 	pump      *queuePump
 	childMu   sync.Mutex
@@ -360,12 +365,19 @@ func (w *wrapper) ruleRow() int {
 	return w.childH + 1
 }
 
-// paintRowLocked paints the input row at inputRowRow.
+// paintRowLocked paints the input row at inputRowRow. In raw mode the row
+// area shows the passthrough hint instead of the editor, so the user knows
+// where keys go and how to return.
 func (w *wrapper) paintRowLocked() {
 	if w.closed || w.inputRow == nil {
 		return
 	}
-	rendered := w.inputRow.render(w.contentW(), w.dark, w.profile)
+	var rendered string
+	if w.raw != nil && w.raw.isEnabled() {
+		rendered = renderRawHint(w.contentW(), w.dark, w.profile)
+	} else {
+		rendered = w.inputRow.render(w.contentW(), w.dark, w.profile)
+	}
 	col, _ := w.sideCols()
 	col++
 	var b strings.Builder
@@ -454,7 +466,8 @@ func (w *wrapper) pollUsage(done <-chan struct{}) {
 // readSnap builds the current strip snapshot outside the lock: transcript
 // and database IO must never hold it while child output waits to write. The
 // pending count comes from the wrapper's own queue, never the socket:
-// repaints must not dial the server they serve.
+// repaints must not dial the server they serve. Raw mode travels the same
+// way, so the strip shows `raw` without a socket round trip.
 func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 	snap, err := w.snapshot(w.cfg.Source, w.cfg.Settings)
 	if err != nil {
@@ -463,6 +476,9 @@ func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 	w.usageKey.Store(snap.UsageKey)
 	if w.queue != nil {
 		snap.Pending = w.queue.len()
+	}
+	if w.raw != nil && w.raw.isEnabled() {
+		snap.Raw = true
 	}
 	return snap, true
 }
@@ -695,6 +711,15 @@ func (w *wrapper) checkStaleAndStep() {
 	if w.inputRow != nil && w.inputRow.checkStale() {
 		w.paintRowLocked()
 	}
+	// The stale clear holds w.mu across the check, the write and the flag
+	// reset, so a keystroke cannot land between them: forwardInput needs
+	// w.mu before it touches the child or the flag.
+	if w.raw != nil && w.raw.isEnabled() && w.raw.stale() && w.raw.canClear() {
+		if seq, ok := rawClearSequence(w.cfg.Source.Harness); ok {
+			_, _ = w.writeChild(seq)
+			w.raw.wickClear()
+		}
+	}
 	w.mu.Unlock()
 	w.pump.step()
 }
@@ -706,7 +731,8 @@ func isMouseSequence(p []byte) bool {
 // forwardInput copies typed input to the child until stdin ends or a write
 // fails. In input-row mode (top-level sessions) normal typing feeds the row
 // editor instead; submits enqueue into the queue and interrupts forward
-// directly.
+// directly. The toggle key switches between the row and raw passthrough; in
+// raw mode bytes forward untouched and fold into the dirty flag.
 func (w *wrapper) forwardInput() {
 	buf := make([]byte, 32*1024)
 	for {
@@ -716,6 +742,20 @@ func (w *wrapper) forwardInput() {
 			in := w.mouse.translate(buf[:n])
 			if len(in) > 0 {
 				if w.inputRow != nil && !isMouseSequence(in) {
+					if isRawToggle(in) {
+						w.toggleRawLocked()
+						w.mu.Unlock()
+						go w.repaint()
+						continue
+					}
+					if w.raw != nil && w.raw.isEnabled() {
+						w.raw.observeForward(in)
+						w.mu.Unlock()
+						if _, werr := w.writeChild(in); werr != nil {
+							return
+						}
+						continue
+					}
 					w.handleRowInputLocked(in)
 					w.mu.Unlock()
 					continue
@@ -732,6 +772,18 @@ func (w *wrapper) forwardInput() {
 			return
 		}
 	}
+}
+
+// toggleRawLocked flips raw passthrough and repaints the row hint. The strip
+// repaint follows on the poll tick and on the async repaint the caller
+// triggers after unlocking. The caller holds w.mu.
+func (w *wrapper) toggleRawLocked() {
+	if w.raw == nil {
+		return
+	}
+	w.raw.toggle()
+	w.paintRowLocked()
+	w.last = ""
 }
 
 func (w *wrapper) handleRowInputLocked(in []byte) {

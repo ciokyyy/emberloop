@@ -35,6 +35,7 @@ var StripNerdIcons = map[string]string{
 	"queued":   "", // U+F017 fa-clock: the compress-queued state
 	"sync":     "", // U+F021 fa-sync: the compressing state
 	"warning":  "", // U+F071 fa-warning: the warning pill
+	"raw":      "", // U+F11C fa-keyboard: raw passthrough mode
 }
 
 // StripNerdIconTable returns the nerd glyph table copy: callers never mutate
