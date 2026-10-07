@@ -631,3 +631,48 @@ func TestRestartPaneUsesWrapperChannelWhenAlive(t *testing.T) {
 		t.Errorf("after wrapped restart = %+v, want session %q compressed 1", s, next)
 	}
 }
+
+// A restart the wrapper refuses leaves the pane untouched: no new session,
+// no count, nothing queued, no pane run.
+func TestRestartPaneFailureLeavesStateUntouched(t *testing.T) {
+	isolateState(t)
+	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
+	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 2*time.Second
+	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
+	dir := t.TempDir()
+	oldID := "sess-old-refused"
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__wick__bash")+pigResultLine("r1", "call_1", "mcp__wick__bash", "ok"))
+	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", SessionID: oldID}); err != nil {
+		t.Fatal(err)
+	}
+	q := newInputQueue()
+	stop, err := serveCtrlRestart("w1", q, func(r ctrlRestart) (int, error) {
+		return 0, fmt.Errorf("restart refused")
+	})
+	if err != nil {
+		t.Fatalf("serveCtrlRestart: %v", err)
+	}
+	defer stop()
+	fake := &restartFake{t: t, alive: true, group: 4242}
+	launchFor := func(newID string) (Session, Launch, error) {
+		sess := Session{Role: "agent", Cwd: dir, Label: "w1", AgentID: "w1", ID: newID, Prompt: "handoff"}
+		launch, err := PrepareLaunch("pig", sess)
+		return sess, launch, err
+	}
+	if next, err := RestartPane(fake.run, PaneRestart{Harness: "pig", Pane: "pane-1", AgentID: "w1", OldSessionID: oldID, SessionDir: dir, Handoff: "handoff"}, launchFor); err == nil || next != "" {
+		t.Fatalf("refused restart = %q, %v; want empty plus the refusal", next, err)
+	}
+	if len(fake.ran) != 0 {
+		t.Errorf("a refused wrapped restart must not pane-run, ran %d", len(fake.ran))
+	}
+	if got := q.len(); got != 0 {
+		t.Errorf("a refused restart queued %d items, want none", got)
+	}
+	s, ok, err := ReadAgentState("w1")
+	if err != nil || !ok {
+		t.Fatalf("ReadAgentState: %v %v", ok, err)
+	}
+	if s.SessionID != oldID || s.Compressed != 0 {
+		t.Errorf("after a refused restart = %+v, want session %q compressed 0", s, oldID)
+	}
+}

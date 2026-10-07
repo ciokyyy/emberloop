@@ -692,10 +692,6 @@ func (w *wrapper) restore() {
 	w.writeLocked(b.String())
 }
 
-// writeChild is the wrapper's only write to the child PTY: typed input and
-// queued prompts serialize here, so injected text never interleaves a
-// half-typed line.
-
 // makePump delivers the wrapper's queue to its child on the production
 // gates: a steer at the tool boundary, a queued message at turn end, held
 // while the row holds a draft or raw mode is dirty, accepted only when the
@@ -782,13 +778,6 @@ func (w *wrapper) currentReporter() *agentReporter {
 	return w.reporter
 }
 
-// currentPump steps the current child's queue.
-func (w *wrapper) currentPump() *queuePump {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.pump
-}
-
 // onRestartRequest runs one channel restart: the supervisor's handoff for a
 // compress restart. The wrapper stays up and swaps only its child.
 func (w *wrapper) onRestartRequest(r ctrlRestart) (int, error) {
@@ -830,7 +819,7 @@ func (w *wrapper) restartChild(bin string, args, env []string, src HeaderSource,
 		return err
 	}
 	w.mu.Lock()
-	old, oldReporter, oldPump := w.child, w.reporter, w.pump
+	old, oldReporter, oldPump, oldWait := w.child, w.reporter, w.pump, w.wait
 	w.child, w.wait = child, wait
 	w.gen++
 	w.cfg.Source = src
@@ -843,15 +832,22 @@ func (w *wrapper) restartChild(bin string, args, env []string, src HeaderSource,
 	b.WriteString(ThemeSetSequence(w.dark))
 	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
 	b.WriteString(w.filter.marginStr())
+	w.writeLocked(b.String())
+	rep := w.reporter
 	w.mu.Unlock()
 	_ = old.Close()
+	// The old child is closed; reap it beside the loop, so no zombie waits
+	// for the wrapper's exit.
+	if oldWait != nil {
+		go func() { _ = oldWait() }()
+	}
 	// The swapped-out pump retires: a step captured before the swap stays
 	// quiet, so the head cannot go out twice to the new child.
 	oldPump.stop()
 	if oldReporter != nil {
 		oldReporter.release()
 	}
-	w.reporter.report(HeaderIdle)
+	rep.report(HeaderIdle)
 	// The snapshot reads transcripts and the database, so it runs outside the
 	// lock; the paint forces, since the pending count moved.
 	if snap, ok := w.readSnap(); ok {
@@ -866,6 +862,9 @@ func (w *wrapper) restartChild(bin string, args, env []string, src HeaderSource,
 	return nil
 }
 
+// writeChild is the wrapper's only write to the child PTY: typed input and
+// queued prompts serialize here, so injected text never interleaves a
+// half-typed line.
 func (w *wrapper) writeChild(p []byte) (int, error) {
 	w.childMu.Lock()
 	defer w.childMu.Unlock()

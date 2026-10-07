@@ -61,10 +61,6 @@ type inputQueue struct {
 
 func newInputQueue() *inputQueue { return &inputQueue{} }
 
-// enqueue appends or inserts one item and reports the pending count. Text is
-// collapsed to a single line on the way in, so delivery and acceptance agree
-// on what the child receives. User messages (Source == "user") go behind the
-// restart handoff and before pending injections.
 // enqueueHandoff pins one restart handoff ahead of everything waiting, in
 // arrival order among handoffs. The restart resets the pump first, so no
 // item is mid-flight to the new child when this lands.
@@ -80,6 +76,10 @@ func (q *inputQueue) enqueueHandoff(text string) int {
 	return len(q.items)
 }
 
+// enqueue appends or inserts one item and reports the pending count. Text is
+// collapsed to a single line on the way in, so delivery and acceptance agree
+// on what the child receives. User messages (Source == "user") go behind the
+// restart handoff and before pending injections.
 func (q *inputQueue) enqueue(kind QueueKind, text, source string) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
