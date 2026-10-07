@@ -7,12 +7,12 @@ package wick
 
 import (
 	"strconv"
-
-	"example.com/wick/tools"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"example.com/wick/tools"
 )
 
 // toolStyle is how one tool reads: its glyph, the verb while it runs and the
@@ -55,6 +55,10 @@ func bareToolName(name string) string {
 // shortArg trims a tool argument to fit a strip: a path keeps its last two
 // parts, anything else its first line, all cut to max runes with an ellipsis.
 func shortArg(arg string, max int) string {
+	return shortArgEllipsis(arg, max, "…")
+}
+
+func shortArgEllipsis(arg string, max int, ell string) string {
 	arg = strings.TrimSpace(arg)
 	if i := strings.IndexByte(arg, '\n'); i >= 0 {
 		arg = arg[:i]
@@ -68,9 +72,14 @@ func shortArg(arg string, max int) string {
 	if max < 1 {
 		return ""
 	}
+	ellRunes := len([]rune(ell))
 	if utf8.RuneCountInString(arg) > max {
 		r := []rune(arg)
-		arg = string(r[:max-1]) + "…"
+		if max <= ellRunes {
+			arg = string(r[:max])
+		} else {
+			arg = string(r[:max-ellRunes]) + ell
+		}
 	}
 	return arg
 }
@@ -140,13 +149,14 @@ func (h *headerCtx) activity(icon, verb, arg, size string, live bool, max int) c
 	}
 	if arg != "" {
 		room := max - fixed - 1
-		if room < 4 {
+		ell := "…"
+		if h.symbols == tools.StripSymbolsASCII {
+			ell = "..."
+		}
+		if room < len([]rune(ell))+1 {
 			arg = ""
 		} else {
-			arg = shortArg(arg, room)
-			if h.symbols == tools.StripSymbolsASCII {
-				arg = strings.ReplaceAll(arg, "…", "...")
-			}
+			arg = shortArgEllipsis(arg, room, ell)
 		}
 	}
 	iconHex, verbHex, argHex := h.dim, h.dim, h.dim

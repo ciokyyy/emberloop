@@ -549,27 +549,6 @@ func (h *headerCtx) chip() cell {
 	return cell{text: name, hex: h.hue, bold: true}
 }
 
-// truncateName bounds a tool name for row 2: names are labels, so shortening
-// one never hides a number. The ascii preset ends the cut with three dots
-// instead of an ellipsis, so the preset stays pure ASCII.
-func truncateName(name string, max int) string {
-	return truncateNamePreset(name, max, false)
-}
-
-func truncateNamePreset(name string, max int, ascii bool) string {
-	if lipgloss.Width(name) <= max {
-		return name
-	}
-	runes := []rune(name)
-	if len(runes) <= max {
-		return name
-	}
-	if ascii {
-		return string(runes[:max-3]) + "..."
-	}
-	return string(runes[:max-1]) + "…"
-}
-
 // pill is the state field: working, idle, compress queued, compressing, or
 // the warning. A warning always wins over the state, never over the queue
 // count: a waiting input queue appends `N pending` to either, so the strip
@@ -589,7 +568,16 @@ func (h *headerCtx) pill() cell {
 		return cell{text: left + StripNerdIcons[icon] + " " + label + " " + right, hex: hex}
 	}
 	if h.symbols == tools.StripSymbolsASCII {
-		return cell{text: strings.ReplaceAll(label, "…", "..."), hex: hex}
+		label = strings.ReplaceAll(label, "…", "...")
+		var b strings.Builder
+		for _, r := range label {
+			if r <= 127 {
+				b.WriteRune(r)
+			} else {
+				b.WriteRune('?')
+			}
+		}
+		return cell{text: b.String(), hex: hex}
 	}
 	prefix := map[string]string{"working": "● ", "idle": "◌ ", "queued": "⏳ ", "sync": "⟳ ", "warning": "⚠ "}[icon]
 	return cell{text: prefix + label, hex: hex}

@@ -33,6 +33,14 @@ func TestShortArgCuts(t *testing.T) {
 		t.Errorf("shortArg = %q", got)
 	}
 }
+func TestShortArgEllipsis(t *testing.T) {
+	if got := shortArgEllipsis("abcdefghij", 5, "..."); got != "ab..." {
+		t.Errorf("shortArgEllipsis = %q, want %q", got, "ab...")
+	}
+	if got := shortArgEllipsis("abc", 5, "..."); got != "abc" {
+		t.Errorf("shortArgEllipsis short = %q", got)
+	}
+}
 
 // Every tool wick serves needs a strip label: a glyph and a verb pair in
 // toolStyles. A new tool without one would show as a bare name.
