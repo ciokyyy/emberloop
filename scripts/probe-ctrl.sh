@@ -2,8 +2,8 @@
 # Control-channel helper for the ticket 07 live probe
 # (scripts/input-queue-probe.sh): one round trip to a wrapped agent's unix
 # socket. Matches wick-pig/inputqueue.go: JSON {"op":...} in, JSON
-# {ok,error,pending} out; socket name sanitized like lockName over the id's
-# UTF-8 bytes, with the FNV-1a hash fallback past 100 bytes.
+# {ok,error,pending} out; socket name sanitized like lockName (one dash
+# per rejected character), with the FNV-1a hash fallback past 100 bytes.
 #
 # Usage: probe-ctrl.sh <agent-id> <pending|steer|queue> [text]
 # Prints `OK pending=N` or `FAIL - <reason>`. Never runs in the automated
@@ -21,10 +21,9 @@ import json, os, socket
 agent = os.environ["AGENT_ID"]
 op = os.environ["OP"]
 text = os.environ["TEXT"]
+name = "".join(c if (c.isascii() and (c.isalnum() or c in "-_")) else "-"
+               for c in agent) or "lock"
 raw = agent.encode("utf-8")
-name = "".join(chr(b) if (0x30 <= b <= 0x39 or 0x41 <= b <= 0x5A
-                or 0x61 <= b <= 0x7A or b in (0x2D, 0x5F)) else "-"
-               for b in raw) or "lock"
 path = os.path.join(os.path.expanduser("~"), ".pig", "state",
                     "wick", "agents", f"ctrl-{name}.sock")
 if len(path) > 100:
