@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
@@ -42,6 +43,7 @@ type inputRow struct {
 	now           func() time.Time
 	pasting       bool
 	pasteBuf      bytes.Buffer
+	pending       []byte // incomplete escape sequence held for the next chunk
 }
 
 func newInputRow() *inputRow {
@@ -99,12 +101,17 @@ func (r *inputRow) insertRunes(runes []rune) {
 	r.cursor += len(runes)
 }
 
+// handleInput feeds one stdin chunk to the row. The decoder splits the chunk
+// into keys; the first key that triggers an action ends the chunk.
 func (r *inputRow) handleInput(p []byte) (rowAction, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.lastKeystroke = r.timeNow()
+	return r.feed(p)
+}
 
+func (r *inputRow) feed(p []byte) (rowAction, string) {
 	// Bracketed paste handling
 	if r.pasting {
 		if idx := bytes.Index(p, []byte("\x1b[201~")); idx >= 0 {
@@ -113,107 +120,116 @@ func (r *inputRow) handleInput(p []byte) (rowAction, string) {
 			r.pasteBuf.Reset()
 			r.pasting = false
 			r.insertRunes([]rune(pasted))
-			// Handle any trailing bytes after the paste marker
-			if rest := p[idx+len("\x1b[201~"):]; len(rest) > 0 {
-				r.mu.Unlock()
-				act, text := r.handleInput(rest)
-				r.mu.Lock()
-				return act, text
-			}
-			return rowActionNone, ""
+			return r.feed(p[idx+len("\x1b[201~"):])
 		}
 		r.pasteBuf.Write(p)
 		return rowActionNone, ""
 	}
 
+	if len(r.pending) > 0 {
+		p = append(r.pending, p...)
+		r.pending = nil
+	}
+
 	if idx := bytes.Index(p, []byte("\x1b[200~")); idx >= 0 {
-		// Insert any prefix before paste start
-		if idx > 0 {
-			r.insertRunes([]rune(string(p[:idx])))
-		}
+		r.feed(p[:idx])
 		after := p[idx+len("\x1b[200~"):]
 		if endIdx := bytes.Index(after, []byte("\x1b[201~")); endIdx >= 0 {
 			// Entire bracketed paste within one chunk
-			pasted := string(after[:endIdx])
-			r.insertRunes([]rune(pasted))
-			if rest := after[endIdx+len("\x1b[201~"):]; len(rest) > 0 {
-				r.mu.Unlock()
-				act, text := r.handleInput(rest)
-				r.mu.Lock()
-				return act, text
-			}
-			return rowActionNone, ""
+			r.insertRunes([]rune(string(after[:endIdx])))
+			return r.feed(after[endIdx+len("\x1b[201~"):])
 		}
 		r.pasting = true
 		r.pasteBuf.Write(after)
 		return rowActionNone, ""
 	}
 
-	s := string(p)
-
-	// Trailing Alt+Enter with preceding text: e.g. "my text\x1b\r"
-	if strings.HasSuffix(s, "\x1b\r") && len(s) > 2 {
-		r.insertRunes([]rune(strings.TrimSuffix(s, "\x1b\r")))
-		s = "\x1b\r"
-	}
-
-	// Trailing Enter with preceding text: e.g. "my text\r" or "my text\r\n"
-	if (strings.HasSuffix(s, "\r") || strings.HasSuffix(s, "\r\n")) && !strings.HasPrefix(s, "\x1b") {
-		trimmed := strings.TrimSuffix(strings.TrimSuffix(s, "\r\n"), "\r")
-		if len(trimmed) > 0 {
-			r.insertRunes([]rune(trimmed))
-			s = "\r"
+	for len(p) > 0 {
+		key, n, complete := nextKey(p)
+		if !complete {
+			// A sequence split across reads: keep it for the next chunk.
+			r.pending = append([]byte(nil), p...)
+			break
+		}
+		p = p[n:]
+		if act, text := r.handleKey(key); act != rowActionNone {
+			return act, text
 		}
 	}
-	// Ctrl+C interrupt
-	if s == "\x03" {
+	return rowActionNone, ""
+}
+
+// resetDraft clears the buffer and history position.
+func (r *inputRow) resetDraft() {
+	r.buf = nil
+	r.cursor = 0
+	r.historyIdx = -1
+	r.savedDraft = ""
+}
+
+// wordLeft returns the start of the word before the cursor.
+func (r *inputRow) wordLeft() int {
+	i := r.cursor
+	for i > 0 && unicode.IsSpace(r.buf[i-1]) {
+		i--
+	}
+	for i > 0 && !unicode.IsSpace(r.buf[i-1]) {
+		i--
+	}
+	return i
+}
+
+// wordRight returns the end of the word after the cursor.
+func (r *inputRow) wordRight() int {
+	i := r.cursor
+	for i < len(r.buf) && unicode.IsSpace(r.buf[i]) {
+		i++
+	}
+	for i < len(r.buf) && !unicode.IsSpace(r.buf[i]) {
+		i++
+	}
+	return i
+}
+
+func (r *inputRow) deleteRange(from, to int) {
+	if from >= to {
+		return
+	}
+	r.buf = append(r.buf[:from:from], r.buf[to:]...)
+	r.cursor = from
+}
+
+// handleKey acts on one canonical key from the decoder.
+func (r *inputRow) handleKey(s string) (rowAction, string) {
+	switch s {
+	case "":
+		return rowActionNone, ""
+	case "\x03": // Ctrl+C interrupt
 		r.buf = nil
 		r.cursor = 0
 		r.historyIdx = -1
 		return rowActionInterrupt, ""
-	}
-
-	// Esc interrupt
-	if s == "\x1b" {
+	case "\x1b": // Esc interrupt
 		return rowActionEsc, ""
-	}
-
-	// Alt+Enter (queue)
-	if s == "\x1b\r" || s == "\x1b\n" || s == "\x1b[13;3u" || s == "\x1b[27;3;13~" {
+	case "\x1b\r", "\x1b\n": // Alt+Enter (queue)
 		text := strings.TrimSpace(string(r.buf))
 		if text == "" {
 			return rowActionNone, ""
 		}
 		r.history = append(r.history, text)
-		r.buf = nil
-		r.cursor = 0
-		r.historyIdx = -1
-		r.savedDraft = ""
+		r.resetDraft()
 		return rowActionQueue, text
-	}
-
-	// Shift+Enter (insert newline)
-	if s == "\x1b[13;2u" || s == "\x1b[27;2;13~" || s == "\n" {
+	case "\n": // Shift+Enter (insert newline)
 		r.insertRunes([]rune{'\n'})
-		return rowActionNone, ""
-	}
-
-	// Enter (submit as steer)
-	if s == "\r" || s == "\r\n" || s == "\x1b[13;1u" || s == "\x1b[13u" {
+	case "\r": // Enter (submit as steer)
 		text := strings.TrimSpace(string(r.buf))
 		if text == "" {
 			return rowActionNone, ""
 		}
 		r.history = append(r.history, text)
-		r.buf = nil
-		r.cursor = 0
-		r.historyIdx = -1
-		r.savedDraft = ""
+		r.resetDraft()
 		return rowActionSubmit, text
-	}
-
-	// Up arrow (history recall)
-	if s == "\x1b[A" || s == "\x1bOA" {
+	case "\x1b[A": // Up arrow (history recall)
 		if len(r.history) > 0 {
 			if r.historyIdx == -1 {
 				r.savedDraft = string(r.buf)
@@ -224,85 +240,55 @@ func (r *inputRow) handleInput(p []byte) (rowAction, string) {
 			r.buf = []rune(r.history[r.historyIdx])
 			r.cursor = len(r.buf)
 		}
-		return rowActionNone, ""
-	}
-
-	// Down arrow (history forward)
-	if s == "\x1b[B" || s == "\x1bOB" {
+	case "\x1b[B": // Down arrow (history forward)
 		if r.historyIdx >= 0 {
 			r.historyIdx++
 			if r.historyIdx < len(r.history) {
 				r.buf = []rune(r.history[r.historyIdx])
-				r.cursor = len(r.buf)
 			} else {
 				r.historyIdx = -1
 				r.buf = []rune(r.savedDraft)
-				r.cursor = len(r.buf)
 			}
+			r.cursor = len(r.buf)
 		}
-		return rowActionNone, ""
-	}
-
-	// Left arrow
-	if s == "\x1b[D" || s == "\x1bOD" {
+	case "\x1b[D": // Left arrow
 		if r.cursor > 0 {
 			r.cursor--
 		}
-		return rowActionNone, ""
-	}
-
-	// Right arrow
-	if s == "\x1b[C" || s == "\x1bOC" {
+	case "\x1b[C": // Right arrow
 		if r.cursor < len(r.buf) {
 			r.cursor++
 		}
-		return rowActionNone, ""
-	}
-
-	// Home / Ctrl+A
-	if s == "\x1b[H" || s == "\x1b[1~" || s == "\x01" {
+	case "\x1bb": // Ctrl/Alt+Left, Alt+B
+		r.cursor = r.wordLeft()
+	case "\x1bf": // Ctrl/Alt+Right, Alt+F
+		r.cursor = r.wordRight()
+	case "\x1b[H", "\x01": // Home / Ctrl+A
 		r.cursor = 0
-		return rowActionNone, ""
-	}
-
-	// End / Ctrl+E
-	if s == "\x1b[F" || s == "\x1b[4~" || s == "\x05" {
+	case "\x1b[F", "\x05": // End / Ctrl+E
 		r.cursor = len(r.buf)
-		return rowActionNone, ""
-	}
-
-	// Backspace
-	if s == "\x7f" || s == "\x08" {
+	case "\x7f", "\x08": // Backspace
 		if r.cursor > 0 {
-			r.buf = append(r.buf[:r.cursor-1], r.buf[r.cursor:]...)
-			r.cursor--
+			r.deleteRange(r.cursor-1, r.cursor)
 		}
-		return rowActionNone, ""
-	}
-
-	// Delete
-	if s == "\x1b[3~" {
+	case "\x17", "\x1b\x7f": // Ctrl+W, Ctrl/Alt+Backspace (delete previous word)
+		r.deleteRange(r.wordLeft(), r.cursor)
+	case "\x1b[3~": // Delete
 		if r.cursor < len(r.buf) {
-			r.buf = append(r.buf[:r.cursor], r.buf[r.cursor+1:]...)
+			r.deleteRange(r.cursor, r.cursor+1)
 		}
-		return rowActionNone, ""
-	}
-
-	// Ctrl+U (clear draft)
-	if s == "\x15" {
+	case "\x1bd": // Ctrl/Alt+Delete, Alt+D (delete next word)
+		r.deleteRange(r.cursor, r.wordRight())
+	case "\x15": // Ctrl+U (clear draft)
 		r.buf = nil
 		r.cursor = 0
-		return rowActionNone, ""
-	}
-
-	// Regular text insertion: filter out non-printable control characters
-	var runes []rune
-	for _, rn := range s {
-		if rn >= 32 || rn == '\t' || rn == '\n' {
-			runes = append(runes, rn)
+	default:
+		// Printable text only. Unhandled control bytes and Alt chords are
+		// dropped, never typed into the row.
+		if first, _ := utf8.DecodeRuneInString(s); first >= 32 && first != 0x7f || first == '\t' {
+			r.insertRunes([]rune(s))
 		}
 	}
-	r.insertRunes(runes)
 	return rowActionNone, ""
 }
 
@@ -323,11 +309,19 @@ func (r *inputRow) render(width int, dark bool, profile termenv.Profile) string 
 	textStyle := renderer.NewStyle().Foreground(lipgloss.Color(pal.Text))
 	bgStyle := renderer.NewStyle().Background(lipgloss.Color(pal.StripBg))
 
-	// Display newlines in single row as ↵
-	displayBuf := strings.ReplaceAll(string(r.buf), "\n", " ↵ ")
+	// Display newlines in single row as ↵. The cursor draws as one reversed
+	// cell: the rune under it, or a space at the end of the draft.
+	cursor := min(max(r.cursor, 0), len(r.buf))
+	before := strings.ReplaceAll(string(r.buf[:cursor]), "\n", " ↵ ")
+	under, after := " ", ""
+	if cursor < len(r.buf) {
+		under = strings.ReplaceAll(string(r.buf[cursor]), "\n", "↵")
+		after = strings.ReplaceAll(string(r.buf[cursor+1:]), "\n", " ↵ ")
+	}
+	cursorStyle := renderer.NewStyle().Foreground(lipgloss.Color(pal.Text)).Reverse(true)
 
-	content := promptStyle.Render("❯ ") + textStyle.Render(displayBuf)
-	contentLen := utf8.RuneCountInString("❯ ") + utf8.RuneCountInString(displayBuf)
+	content := promptStyle.Render("❯ ") + textStyle.Render(before) + cursorStyle.Render(under) + textStyle.Render(after)
+	contentLen := utf8.RuneCountInString("❯ " + before + under + after)
 	if pad := width - contentLen; pad > 0 {
 		content += strings.Repeat(" ", pad)
 	}

@@ -92,16 +92,16 @@ func rawClearSequence(harness string) ([]byte, bool) {
 
 // isRawToggle says whether one input chunk is the mode toggle key.
 func isRawToggle(p []byte) bool {
-	return len(p) == 1 && p[0] == rawToggleByte
+	key, ok := singleKey(p)
+	return ok && key == string(rune(rawToggleByte))
 }
 
 // isRawReset says whether one forwarded chunk resets the dirty flag: a bare
-// Enter or Ctrl+C. A wick clear resets through wickClear.
+// Enter or Ctrl+C, as a legacy byte or a CSI-u report. A wick clear resets
+// through wickClear.
 func isRawReset(p []byte) bool {
-	if len(p) == 1 && (p[0] == '\r' || p[0] == 0x03) {
-		return true
-	}
-	return false
+	key, ok := singleKey(p)
+	return ok && (key == "\r" || key == "\x03")
 }
 
 // rawMode tracks one wrapper's raw dirty flag and last keystroke time. The
