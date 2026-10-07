@@ -171,6 +171,12 @@ func WrapChild(cfg WrapConfig) error {
 			w.inputRow.now = cfg.Clock
 		}
 		w.raw = newRawMode(cfg.Source.Harness, cfg.Clock)
+	} else {
+		// No input row: typing goes straight to the child. Raw tracking
+		// stays on so injections hold while the box is dirty and a 10 s
+		// stale draft is cleared before delivery.
+		w.raw = newRawMode(cfg.Source.Harness, cfg.Clock)
+		w.raw.enabled = true
 	}
 	w.syncMouseLocked()
 	defer w.releaseReporter()
@@ -488,7 +494,7 @@ func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
 	if w.queue != nil {
 		snap.Pending = w.queue.len()
 	}
-	if w.raw != nil && w.raw.isEnabled() {
+	if w.inputRow != nil && w.raw != nil && w.raw.isEnabled() {
 		snap.Raw = true
 	}
 	return snap, true
@@ -941,6 +947,9 @@ func (w *wrapper) forwardInput() {
 					w.handleRowInputLocked(in)
 					w.mu.Unlock()
 					continue
+				}
+				if w.inputRow == nil && w.raw != nil && !isMouseSequence(in) {
+					w.raw.observeForward(in)
 				}
 				w.mu.Unlock()
 				if _, werr := w.writeChild(in); werr != nil {
