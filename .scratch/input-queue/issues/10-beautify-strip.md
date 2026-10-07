@@ -6,7 +6,7 @@ Reference: omp's theme and status-line system. Its docs describe symbol presets 
 
 **Blocked by:** 06-shared-theme, 08-borderless-look
 
-**Status:** ready-for-agent (restart on the current strip; the earlier attempt `116b6ee` on `implement/10-beautify-strip` is stale)
+**Status:** done
 
 **Current strip (supersedes "the current look" above):** The spec branch strip already has rounded top and bottom edges, inner padding, background between cells (`0b7c03c`), pane padding (ticket 12), a running-tool label (`header_tool.go`), usage on the right for claude, opencode Go and Antigravity (`a5d954a`, `15a1a69`), no idle word, and a top-level chip. `unicode` must reproduce this look, not the older one. Keep those segments: tool label and right-side usage become segments of the new row. Do not rewrite what works: extend `header.go` rendering with presets, separators and tokens. The branch `116b6ee` branched before these changes and conflicts in `header.go`, `header_run.go`, `tools/settings.go` and `wick-pig/AGENTS.md`; reuse its `strip_symbols.go`, codepoint table and tests where they fit, and start from `spec/input-queue`, not from that branch.
 
@@ -17,7 +17,7 @@ Reference: omp's theme and status-line system. Its docs describe symbol presets 
 - [x] Narrow width drops segments in a fixed order, tested at each tier, with no split glyph and no overflow
 - [x] All Nerd Font codepoints are Nerd Fonts v3 and listed in one table with a test that pins them
 - [x] Golden tests per preset, separator, width tier and color profile (truecolor, 256, 16)
-- [ ] Live probe in a herdr pane for each preset with the installed Nerd Font, findings recorded in this ticket
+- [x] Live probe in a herdr pane for each preset with the installed Nerd Font, findings recorded in this ticket
 - [x] The strip height stays at the configured rows and the child size is unchanged
 - [x] Spec stories 32, 33, 34
 
