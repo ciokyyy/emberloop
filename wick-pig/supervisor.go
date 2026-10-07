@@ -202,9 +202,10 @@ func reassertPaneName(run Exec, agentID, pane string) {
 // survive. The new child starts prompt-free — the handoff reaches it through
 // the same queue, pinned ahead of everything and accepted when the new
 // session's transcript shows its turn. No pane stop, no pane run, no late
-// delivery: the pane never notices the swap. A launchFor error leaves the
-// pane untouched; once the state records the new session, a later error
-// still returns its id the way the pane-run path does.
+// delivery: the pane never notices the swap. The state records the new
+// session only after the wrapper answers: a refused restart leaves the pane
+// exactly where it was, while a later record error still returns the new id
+// the wrapper already runs.
 func restartWrapped(req PaneRestart, launchFor func(newSessionID string) (Session, Launch, error)) (string, error) {
 	next := newSessionID()
 	sess, _, err := launchFor(next)
@@ -220,17 +221,21 @@ func restartWrapped(req PaneRestart, launchFor func(newSessionID string) (Sessio
 		CleanupSession(sess)
 		return "", err
 	}
-	// The child is live on next from here: record first, so a restart-send
-	// error still leaves the state on the session the wrapper runs.
-	if err := recordPaneRestart(req.AgentID, req.Pane, next); err != nil {
-		CleanupSession(sess)
-		return next, err
+	// The wrapper counts this handoff next: a missing state starts one.
+	count := 1
+	if st, ok, _ := ReadAgentState(req.AgentID); ok {
+		count = st.Compressed + 1
 	}
-	st, _, _ := ReadAgentState(req.AgentID)
 	if _, err := ctrlRestartAgent(req.AgentID, ctrlRestart{
-		Handoff: req.Handoff, SessionID: next, CompressCount: st.Compressed,
+		Handoff: req.Handoff, SessionID: next, CompressCount: count,
 		Bin: cmd.Bin, Args: cmd.Args, Env: cmd.Env,
 	}); err != nil {
+		CleanupSession(sess)
+		return "", err
+	}
+	// The wrapper runs the new child from here: record it, so a record error
+	// still returns the id the pane runs on.
+	if err := recordPaneRestart(req.AgentID, req.Pane, next); err != nil {
 		CleanupSession(sess)
 		return next, err
 	}

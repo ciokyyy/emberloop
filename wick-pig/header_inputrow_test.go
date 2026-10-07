@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -575,6 +576,8 @@ func TestRestartKeepsRawModeAndDirty(t *testing.T) {
 		raw:      raw,
 	}
 	newChild := &fakeChild{}
+	var waited atomic.Bool
+	w.wait = func() error { waited.Store(true); return nil }
 	w.cfg.Start = func(bin string, args, env []string, cw, ch int, stderr io.Writer) (wrapPty, func() error, error) {
 		return newChild, func() error { return nil }, nil
 	}
@@ -600,6 +603,7 @@ func TestRestartKeepsRawModeAndDirty(t *testing.T) {
 	if !oldChild.closed {
 		t.Error("restart left the old child open")
 	}
+	waitForCond(t, "old child reaped", waited.Load)
 	if w.cfg.Source.SessionID != "s2" {
 		t.Errorf("source session = %q, want s2", w.cfg.Source.SessionID)
 	}
