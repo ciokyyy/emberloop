@@ -4,6 +4,10 @@ emberloop runs parallel implement-and-review loops for coding agents inside [her
 
 Every agent runs in a herdr pane under a two-row status strip that shows model, context use, cost, running tool, queue and usage windows.
 
+<p align="center">
+  <img src="docs/architecture.png" alt="emberloop run: orchestrator spawns a worker per ticket, two reviewers and a vet-and-test gate decide the merge into the spec branch" width="900">
+</p>
+
 ## Install
 
 You need Go 1.26 or newer and `git`, `curl`. Run the installer from a clone:
@@ -81,54 +85,30 @@ flowchart LR
 
 The orchestrator reads a spec, spawns workers, and waits for notices. Each worker implements one ticket in `.emberloop-worktrees/<ticket>` and submits `done` or `blocked`. Two reviewers, one for the spec and one for the repository's standards, keep their context across passes. A ticket merges only when the gate and both reviewers pass; findings go back to the same worker.
 
-```mermaid
-sequenceDiagram
-    participant O as Orchestrator
-    participant W as Worker
-    participant R as Reviewers
-    participant G as Gate
-    O->>W: spawn(ticket, worktree)
-    W->>W: implement, tdd, check
-    W->>O: submit(done)
-    O->>R: spawn(review packet)
-    R-->>O: pass or findings
-    alt findings
-        O->>W: tell(findings)
-        W->>O: submit(done)
-    else both pass
-        O->>G: finish(ticket)
-        G->>G: vet and test
-        G-->>O: merged
-    end
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/sequence-dark.png">
+    <img src="docs/sequence-light.png" alt="Sequence of one ticket: spawn, implement, review, fix loop, gate, merge" width="900">
+  </picture>
+</p>
+
+## Ticket lifecycle
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/lifecycle-dark.png">
+    <img src="docs/lifecycle-light.png" alt="Ticket lifecycle from spawned to merged, with rework loop" width="900">
+  </picture>
+</p>
 
 ## Components
 
-```mermaid
-flowchart TB
-    subgraph herdr
-        P1["pane: orchestrator"]
-        P2["pane: worker"]
-        PL["plugin: emberloop.compress"]
-    end
-    subgraph "emberloop module"
-        CLI["emberloop<br/>CLI + header strip"]
-        MCP["emberloop-mcp<br/>tools over MCP"]
-        DB[("SQLite state<br/>usage, agents")]
-    end
-    TUI["emberloop-tui<br/>dashboard"]
-    REP["herdr-report<br/>pig extension"]
-    GRAPH["codebase-memory-mcp<br/>optional"]
-    P1 --- CLI
-    P2 --- CLI
-    CLI -->|"launches"| H["pig / claude"]
-    H -->|"MCP"| MCP
-    MCP --> DB
-    MCP -.-> GRAPH
-    TUI --> DB
-    REP -->|"pane state"| herdr
-    PL -->|"request-compress"| CLI
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/components-dark.png">
+    <img src="docs/components-light.png" alt="emberloop components: CLI, agent, MCP server, SQLite state, worktrees, herdr, dashboard" width="900">
+  </picture>
+</p>
 
 | Directory | Contents |
 |---|---|
