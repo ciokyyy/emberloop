@@ -220,6 +220,10 @@ type Settings struct {
 	Tools map[string]ToolSetting `json:"tools,omitempty"`
 	// MCPServers registers outside MCP servers by name.
 	MCPServers map[string]MCPServerSetting `json:"mcp_servers,omitempty"`
+	// Macros holds the row's own commands in file order: each a name, a kind
+	// (prompt template or built-in action) and a template with {{args}}.
+	// Nil means no user macros; /compress still ships as a built-in.
+	Macros []MacroSetting `json:"macros,omitempty"`
 	// Graph tunes the optional code graph binary.
 	Graph GraphSetting `json:"graph,omitempty"`
 	// extra holds top-level keys wick does not know yet, so a save writes them
@@ -831,6 +835,9 @@ func decodeSettings(raw []byte) Settings {
 		case "tools":
 			s.toolExtra = unknownEntryFields(v, []string{"enabled", "placement", "rename", "roles"})
 			s.toolRoleExtra = unknownOverrideFields(v)
+		case "macros":
+			// Known key decoded into the struct by encoding/json: nothing to
+			// keep for the next save.
 		case "mcp_servers":
 			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "summary", "placement", "include", "exclude", "rename", "roles"})
 			s.mcpRoleExtra = unknownOverrideFields(v)
@@ -908,6 +915,9 @@ func decodeSettings(raw []byte) Settings {
 		if s.Context.CompressCooldown != 0 {
 			s.src["context.compress_cooldown"] = "file"
 		}
+	}
+	if len(s.Macros) > 0 {
+		s.src["macros"] = "file"
 	}
 	markToolSources(&s)
 	return s
@@ -1515,6 +1525,7 @@ func MergeSettings(global, project Settings) Settings {
 	}
 	out.Context = mergeContext(global.Context, project.Context, out.src)
 	out.Roles = mergeRoles(global.Roles, project.Roles, out.src)
+	out.Macros = mergeMacros(global.Macros, project.Macros, out.src)
 	out.Tools = mergeTools(global.Tools, project.Tools, out.src)
 	out.MCPServers = mergeMCPServers(global.MCPServers, project.MCPServers, out.src)
 	out.Search = mergeSearch(global.Search, project.Search, out.src)
@@ -1594,6 +1605,24 @@ func mergeRoles(global, project map[string]Role, src map[string]string) map[stri
 		}
 		out[slot] = base
 	}
+	return out
+}
+
+// mergeMacros folds the project macros over the global ones: the project
+// list wins wholesale when set, like other list fields. A copy, so the
+// caller cannot mutate the settings through it.
+func mergeMacros(global, project []MacroSetting, src map[string]string) []MacroSetting {
+	if len(project) > 0 {
+		out := make([]MacroSetting, len(project))
+		copy(out, project)
+		src["macros"] = "project"
+		return out
+	}
+	if len(global) == 0 {
+		return nil
+	}
+	out := make([]MacroSetting, len(global))
+	copy(out, global)
 	return out
 }
 

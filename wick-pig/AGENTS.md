@@ -108,8 +108,10 @@ owns its `_test.go` and the behaviour below):
   injections held while the row holds a draft or raw mode is dirty, unix-socket channel named by
   agent id, pump with transcript acceptance and head retry, DeliverPrompt
   in `transcript.go` tries the channel first with the herdr path as
-  fallback); settings carry strip rows, frame, rule,
-  symbols and separator, per-harness compress models, the auto-compress switch and cooldown. `exec`,
+  fallback), `macro.go` (row macro dispatch: prompt templates expand into the
+  queue like typed text, unknown slash text stays a message, `/compress` runs
+  the compress request through `CompressRun` for any harness); settings carry strip rows, frame, rule,
+  symbols and separator, macros, per-harness compress models, the auto-compress switch and cooldown. `exec`,
   top-level runs and `wick-pig wrap` put the child on a PTY under the strip;
   WICK_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
   keep the strip: stdin and stdout stay on the PTY while stderr keeps its
