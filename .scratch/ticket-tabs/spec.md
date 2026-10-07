@@ -4,7 +4,7 @@ Status: ready-for-agent
 
 ## Problem Statement
 
-When wick spawns a worker, it creates the worktree with `herdr worktree create`. herdr then opens a separate workspace for that worktree, and the sidebar shows it, but clicking it shows an empty terminal. The worker is not running there: in run-tab mode wick splits it into the shared run tab, so the worktree workspace's own pane only exists to keep the workspace alive.
+When emberloop spawns a worker, it creates the worktree with `herdr worktree create`. herdr then opens a separate workspace for that worktree, and the sidebar shows it, but clicking it shows an empty terminal. The worker is not running there: in run-tab mode emberloop splits it into the shared run tab, so the worktree workspace's own pane only exists to keep the workspace alive.
 
 Agents are also hard to find and badly laid out:
 
@@ -37,10 +37,10 @@ Worktrees are created and removed with plain `git worktree`. herdr is only used 
 15. As an orchestrator, I want my own pane to count toward my tab's 9, with overflow scouts going to a `scouts` tab, so that my tab stays readable.
 16. As an orchestrator, I want reviewers for different tickets to launch in parallel, so that a multi-ticket run isn't slowed by one global split lock.
 17. As an orchestrator, I want splits inside one tab to stay serialized, so that two concurrent launches never split a half-built layout.
-18. As a user, I want worktrees created with plain `git worktree add` on branch `implement/<id>` at `.wick-worktrees/<id>` from the resolved base SHA, so that worktrees behave like normal git worktrees.
+18. As a user, I want worktrees created with plain `git worktree add` on branch `implement/<id>` at `.emberloop-worktrees/<id>` from the resolved base SHA, so that worktrees behave like normal git worktrees.
 19. As a user, I want finishing or discarding a ticket to close its tab and any overflow tabs (reviewers go with them) and remove the worktree with `git worktree remove --force`, so that nothing is left in herdr or on disk.
 20. As a user, I want the `implement/<id>` branch kept after finish until it is merged, as it is today, so that the merge flow doesn't change.
-21. As a user, I want a failed spawn to undo itself (remove the git worktree and branch, and close the tab if wick created it), so that the ticket can be spawned again.
+21. As a user, I want a failed spawn to undo itself (remove the git worktree and branch, and close the tab if emberloop created it), so that the ticket can be spawned again.
 22. As a maintainer, I want the shared run-tab mode (`RunTab`/`Anchor`) removed, so that there is one layout to maintain.
 23. As a maintainer, I want every `herdr worktree create/remove` call removed, so that herdr is used for tabs and panes only.
 
@@ -56,7 +56,7 @@ Worktrees are created and removed with plain `git worktree`. herdr is only used 
 - **Split lock is per tab.** The process-wide split mutex becomes one lock per tab id. Splits in different tabs run at the same time, while splits in one tab are serialized. Overflow tab creation happens under the full tab's lock.
 - **Removed.** The run-tab mode (`RunTab`, `Anchor` and the worker split into the run tab), every `herdr worktree create/remove` call, and keeping the worktree workspace's root pane alive.
 - **No migration.** Workers created under the old layout are not supported. In-flight workers are finished before switching.
-- **Tabs are owned by wick.** The user does not close them by hand, so nothing tries to recover a missing tab.
+- **Tabs are owned by emberloop.** The user does not close them by hand, so nothing tries to recover a missing tab.
 
 ## Testing Decisions
 

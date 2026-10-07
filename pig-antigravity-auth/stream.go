@@ -268,11 +268,11 @@ type message struct {
 	ts                   int64
 }
 
-// noticeTools are the wick tools after which a worker ends its turn on
+// noticeTools are the emberloop tools after which a worker ends its turn on
 // purpose: spawn, tell and finish return at once and the outcome arrives as
 // a system notice. A turn that ends with only a thinking block right after
 // one is the agent waiting, not a silent stop.
-var noticeTools = map[string]bool{"mcp__wick__spawn": true, "mcp__wick__tell": true, "mcp__wick__finish": true}
+var noticeTools = map[string]bool{"mcp__emberloop__spawn": true, "mcp__emberloop__tell": true, "mcp__emberloop__finish": true}
 
 // endsWaitingForNotice reports whether the transcript's last message is the
 // result of one of noticeTools, so an output-less stop is the intended wait.

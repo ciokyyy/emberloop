@@ -4,24 +4,24 @@
 # agent. This checks the narrower claim that it DOES reach a worker mid-turn.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-WICK=/home/cioky/Projects/wick-simple/wick-pig
-REPORT=/home/cioky/Projects/wick-simple/herdr-report
-DIR=/tmp/wick-tell2
+EMBERLOOP=/home/cioky/Projects/emberloop/emberloop
+REPORT=/home/cioky/Projects/emberloop/herdr-report
+DIR=/tmp/emberloop-tell2
 
-rm -rf "$DIR" ~/.pig/state/wick; mkdir -p "$DIR/.scratch/tell/issues"
+rm -rf "$DIR" ~/.pig/state/emberloop; mkdir -p "$DIR/.scratch/tell/issues"
 printf 'alpha\nbeta\n' > "$DIR/app.txt"
 cat > "$DIR/.scratch/tell/issues/01-slow.md" <<'TICKET'
 Work slowly and carefully. Before changing anything, re-read app.txt five times
 with a short pause between each. Then change line 1 from alpha to GAMMA.
 TICKET
 git -C "$DIR" init -q
-git -C "$DIR" -c user.email=w@x -c user.name=wick add -A >/dev/null
-git -C "$DIR" -c user.email=w@x -c user.name=wick commit -qm base
+git -C "$DIR" -c user.email=w@x -c user.name=emberloop add -A >/dev/null
+git -C "$DIR" -c user.email=w@x -c user.name=emberloop commit -qm base
 
-cd "$DIR" && timeout 600 env WICK_HERDR_REPORT="$REPORT" \
-  pig --no-skills -e "$WICK" -p '
+cd "$DIR" && timeout 600 env EMBERLOOP_HERDR_REPORT="$REPORT" \
+  pig --no-skills -e "$EMBERLOOP" -p '
 Do these in order, no other tool calls:
-1. spawn with agents=[{"type": "worker", "ticket": "/tmp/wick-tell2/.scratch/tell/issues/01-slow.md", "repo": "/tmp/wick-tell2"}].
+1. spawn with agents=[{"type": "worker", "ticket": "/tmp/emberloop-tell2/.scratch/tell/issues/01-slow.md", "repo": "/tmp/emberloop-tell2"}].
 2. bash with command "sleep 25", so the worker is in its turn, not done.
 3. tell with agent set to the id the spawn returned, and text:
    "Stop the current task. Create a file named TELLMARKER.txt containing exactly marker-received, commit it, then stop."
@@ -42,4 +42,4 @@ for w in $(herdr workspace list 2>/dev/null | python3 -c "
 import sys,json
 for w in json.load(sys.stdin)['result']['workspaces']:
     if w['workspace_id']!='wY': print(w['workspace_id'])"); do herdr workspace close "$w" >/dev/null 2>&1; done
-rm -rf "$DIR" ~/.pig/state/wick
+rm -rf "$DIR" ~/.pig/state/emberloop

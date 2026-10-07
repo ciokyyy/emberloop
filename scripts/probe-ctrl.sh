@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Control-channel helper for the ticket 07 live probe
 # (scripts/input-queue-probe.sh): one round trip to a wrapped agent's unix
-# socket. Matches wick-pig/inputqueue.go: JSON {"op":...} in, JSON
+# socket. Matches emberloop/inputqueue.go: JSON {"op":...} in, JSON
 # {ok,error,pending} out; socket name sanitized like lockName (one dash
 # per rejected character), with the FNV-1a hash fallback past 100 bytes.
 #
@@ -25,7 +25,7 @@ name = "".join(c if (c.isascii() and (c.isalnum() or c in "-_")) else "-"
                for c in agent) or "lock"
 raw = agent.encode("utf-8")
 path = os.path.join(os.path.expanduser("~"), ".pig", "state",
-                    "wick", "agents", f"ctrl-{name}.sock")
+                    "emberloop", "agents", f"ctrl-{name}.sock")
 if len(path) > 100:
     h = 14695981039346656037
     for b in raw:

@@ -3,7 +3,7 @@
 **What to build:** Three gaps left by the ticket-tabs run, fixed together.
 
 - **Respawn lands in the right pane.** When a ticket is re-spawned while its tab is still open, the implementor goes into the tab's root pane, found by its grid slot (slot 1). Today it goes into whichever pane herdr happens to list first, which can be a reviewer. Whatever still runs in that pane is stopped before the launch, so the launch line is never typed into a live agent.
-- **Respawn after finish works.** `finish` keeps the `implement/<id>` branch. When that branch already exists at spawn, wick reuses it with `git worktree add <path> <branch>` (no `-b`), provided it is at or behind the requested base. A branch with commits the base doesn't have makes spawn fail with a clear error naming the branch. Today `git worktree add -b` fails because the branch already exists.
+- **Respawn after finish works.** `finish` keeps the `implement/<id>` branch. When that branch already exists at spawn, emberloop reuses it with `git worktree add <path> <branch>` (no `-b`), provided it is at or behind the requested base. A branch with commits the base doesn't have makes spawn fail with a clear error naming the branch. Today `git worktree add -b` fails because the branch already exists.
 - **`background` panes use the grid.** The `background` tool places its pane through the shared grid into the caller's tab, with the `scouts` overflow, instead of `pane split --current --direction down`.
 
 The slot-1 case raised by ticket 03 (a dead reviewer in slot 1 of a fresh overflow tab falls back to a free slot) is left as it is, because two reviewers never reach it.
@@ -21,8 +21,8 @@ The slot-1 case raised by ticket 03 (a dead reviewer in slot 1 of a fresh overfl
 ## Hard limits (this ticket is built by the tool it changes)
 
 - Spec: `.scratch/submit-results/spec.md`. Read it for the decisions this ticket implements.
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, `~/.agents`, `~/.wick-pig`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig, claude or bunx inside the work. Tests use a fake exec and temp dirs, never the network or the real home.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, `~/.agents`, `~/.emberloop`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig, claude or bunx inside the work. Tests use a fake exec and temp dirs, never the network or the real home.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go vet ./...` and `go test -skip TestLive ./...` green.

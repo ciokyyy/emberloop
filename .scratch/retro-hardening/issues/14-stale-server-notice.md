@@ -1,6 +1,6 @@
-# 14: A wick process says when its binary was replaced
+# 14: A emberloop process says when its binary was replaced
 
-**What to build:** A wick MCP server records its own binary's identity at start and, on a call, adds a line to its reply when the installed binary has changed since. It does not restart itself, because a restart would drop state; the install gate prevents the situation and this makes a stale orchestrator visible when it happens anyway.
+**What to build:** A emberloop MCP server records its own binary's identity at start and, on a call, adds a line to its reply when the installed binary has changed since. It does not restart itself, because a restart would drop state; the install gate prevents the situation and this makes a stale orchestrator visible when it happens anyway.
 
 **Blocked by:** None (can start immediately)
 

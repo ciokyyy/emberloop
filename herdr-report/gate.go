@@ -11,25 +11,25 @@ import (
 )
 
 // The stop gate. A spawned pig agent cannot settle without calling submit: on
-// every agent_before_settle the extension asks wick's shared decision and, on
+// every agent_before_settle the extension asks emberloop's shared decision and, on
 // a block, keeps the agent running with the reminder instead of letting it
 // settle. On the attempt the decision pins, the next provider request forces
 // the submit tool — the pin pig can do at the API level and claude cannot. The
 // decision itself, including the "stopped without submitting" notice, lives in
-// `wick-pig pig-gate`, so every harness follows one set of rules.
+// `emberloop pig-gate`, so every harness follows one set of rules.
 const (
 	gateOutcomeBlock = "block"
 	gateOutcomePin   = "pin"
 	// gateCustomType labels the custom message the reminder rides in, so a
 	// reader can tell the gate's message from one the user wrote.
-	gateCustomType = "wick-stop-gate"
-	// submitSegment is the last `__`-separated segment of wick's submit tool,
+	gateCustomType = "emberloop-stop-gate"
+	// submitSegment is the last `__`-separated segment of emberloop's submit tool,
 	// which providers list as `mcp__<server>__submit`.
 	submitSegment = "submit"
 )
 
-// gateInput is one settle attempt, the JSON `wick-pig pig-gate` reads. It
-// mirrors wick.PigGateInput, which is the same contract on the other side of
+// gateInput is one settle attempt, the JSON `emberloop pig-gate` reads. It
+// mirrors emberloop.PigGateInput, which is the same contract on the other side of
 // the process boundary: fresh, failed, the provider error text, and the last
 // message the give-up quotes.
 type gateInput struct {
@@ -39,7 +39,7 @@ type gateInput struct {
 	LastMessage string `json:"last_message"`
 }
 
-// gateDecision is what `wick-pig pig-gate` answers.
+// gateDecision is what `emberloop pig-gate` answers.
 type gateDecision struct {
 	Outcome  string `json:"outcome"`
 	Reminder string `json:"reminder,omitempty"`
@@ -52,8 +52,8 @@ type eventRegistrar interface {
 	OnEvent(event string, handler sdk.EventFunc) func()
 }
 
-// gateRunner asks wick's decision for one settle attempt. It is a type, not a
-// call, so a test answers for it instead of running wick-pig.
+// gateRunner asks emberloop's decision for one settle attempt. It is a type, not a
+// call, so a test answers for it instead of running emberloop.
 type gateRunner func(ctx sdk.Context, event string) (string, error)
 
 // gate is the whole gate half of the extension: the next settle's freshness,
@@ -161,8 +161,8 @@ func continueWith(reminder string) map[string]any {
 	}
 }
 
-// execGate is the real gateRunner: it asks `wick-pig pig-gate`, the way the
-// claude Stop hook asks `wick-pig stop-gate`. The event is one argv, so no
+// execGate is the real gateRunner: it asks `emberloop pig-gate`, the way the
+// claude Stop hook asks `emberloop stop-gate`. The event is one argv, so no
 // shell sees it.
 func execGate(ctx sdk.Context, event string) (string, error) {
 	res, err := ctx.Exec(gateBin(), []string{"pig-gate", event})
@@ -178,13 +178,13 @@ func execGate(ctx sdk.Context, event string) (string, error) {
 	return res.Stdout, nil
 }
 
-// gateBin is the wick-pig that answers the gate, found on PATH as claude's
+// gateBin is the emberloop that answers the gate, found on PATH as claude's
 // hook finds it. The env var names a whole executable.
 func gateBin() string {
-	if bin := os.Getenv("WICK_PIG_BIN"); bin != "" {
+	if bin := os.Getenv("EMBERLOOP_PIG_BIN"); bin != "" {
 		return bin
 	}
-	return "wick-pig"
+	return "emberloop"
 }
 
 // lastAssistantText is the text of the turn's final assistant message, which a
@@ -247,7 +247,7 @@ func messageText(content any) string {
 	return ""
 }
 
-// submitToolName finds wick's submit tool in the provider's own tool list, so
+// submitToolName finds emberloop's submit tool in the provider's own tool list, so
 // the pin names the tool exactly as the model knows it. A body with no such
 // tool yields "" and the pin is skipped rather than guessed.
 func submitToolName(payload map[string]any) string {

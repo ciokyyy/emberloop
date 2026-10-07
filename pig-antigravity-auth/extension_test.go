@@ -93,10 +93,11 @@ func TestConvertMessagesToolRoundTrip(t *testing.T) {
 
 func TestAuthorizeURLAndCallback(t *testing.T) {
 	p := newPKCE()
-	u, state := authorizeURL(p)
+	c := oauthClient{ID: "test-id", Secret: "test-secret"}
+	u, state := authorizeURL(c, p)
 	parsed, _ := url.Parse(u)
 	q := parsed.Query()
-	if q.Get("client_id") != clientID || q.Get("code_challenge_method") != "S256" || q.Get("access_type") != "offline" {
+	if q.Get("client_id") != c.ID || q.Get("code_challenge_method") != "S256" || q.Get("access_type") != "offline" {
 		t.Errorf("bad authorize url: %s", u)
 	}
 	v, err := verifierFromState(state)
@@ -113,6 +114,8 @@ func TestAuthorizeURLAndCallback(t *testing.T) {
 }
 
 func TestRefreshKeepsProjectAndRefreshToken(t *testing.T) {
+	t.Setenv(envClientID, "test-id")
+	t.Setenv(envClientSecret, "test-secret")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "R" {

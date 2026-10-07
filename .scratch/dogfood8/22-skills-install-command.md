@@ -1,4 +1,4 @@
-# wick-pig skills install
+# emberloop skills install
 
 Type: build
 Status: open
@@ -6,7 +6,7 @@ Blocked by: nothing
 
 ## What
 
-`wick-pig skills install` fills the library `skillsRoot()/matt-pocock` from `mattpocock/skills` using the `skills` CLI. That CLI only installs into agent dirs, so run it in a temp git repo and move the result:
+`emberloop skills install` fills the library `skillsRoot()/matt-pocock` from `mattpocock/skills` using the `skills` CLI. That CLI only installs into agent dirs, so run it in a temp git repo and move the result:
 
     in a temp dir, git init it
     run: bunx skills@latest add mattpocock/skills --skill '*' --agent universal --copy -y
@@ -15,7 +15,7 @@ Blocked by: nothing
     keep skills-lock.json beside it
     remove the temp dir
 
-`skillsRoot()` is `$WICK_SKILLS_DIR` when set, else `~/.wick-pig/skills`. `skillsDir()` in `extension.go` becomes `skillsRoot()/matt-pocock`, so `skillPath` follows. Wire the subcommand in `cmd/wick-pig/main.go` beside `settings` and `retry`.
+`skillsRoot()` is `$EMBERLOOP_SKILLS_DIR` when set, else `~/.emberloop/skills`. `skillsDir()` in `extension.go` becomes `skillsRoot()/matt-pocock`, so `skillPath` follows. Wire the subcommand in `cmd/emberloop/main.go` beside `settings` and `retry`.
 
 ## Done when
 
@@ -26,8 +26,8 @@ Blocked by: nothing
 
 ## Hard limits (this ticket is built by the tool it changes)
 
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, `~/.agents`, `~/.wick-pig`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig, claude or bunx inside the work. Tests use a fake exec and temp dirs, never the network or the real home.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, `~/.agents`, `~/.emberloop`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig, claude or bunx inside the work. Tests use a fake exec and temp dirs, never the network or the real home.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go test -skip TestLive ./...` green.

@@ -1,6 +1,6 @@
 # 06: Claude, pig and the pane follow the strip's palette
 
-**What to build:** One palette definition (Catppuccin Mocha and Latte, adaptive) drives the strip, a generated claude custom theme, a generated pig theme file, and the pane's own colors. Wick launches claude with the generated theme through its launch settings and pig with its theme-file and use-theme options, so the user's saved theme choice is never changed. At start the wrapper sets the pane's default foreground, background, cursor and 16 ANSI colors with OSC 4, 10, 11 and 12, and resets them on exit, on signals and across supervisor restarts. A probe in the spec's `theme/` directory shows the target look. Mocha is live-verified in herdr; Latte is not.
+**What to build:** One palette definition (Catppuccin Mocha and Latte, adaptive) drives the strip, a generated claude custom theme, a generated pig theme file, and the pane's own colors. Emberloop launches claude with the generated theme through its launch settings and pig with its theme-file and use-theme options, so the user's saved theme choice is never changed. At start the wrapper sets the pane's default foreground, background, cursor and 16 ANSI colors with OSC 4, 10, 11 and 12, and resets them on exit, on signals and across supervisor restarts. A probe in the spec's `theme/` directory shows the target look. Mocha is live-verified in herdr; Latte is not.
 
 **Blocked by:** None (can start immediately)
 

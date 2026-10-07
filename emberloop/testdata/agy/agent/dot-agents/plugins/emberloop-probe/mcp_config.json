@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "emberloop-probe": {
+      "command": "<ABS path to testdata/agy/mcp-shim/mcp-shim.sh>",
+      "args": [],
+      "env": {
+        "PROBE_SECRET": "QUASAR-9"
+      }
+    }
+  }
+}

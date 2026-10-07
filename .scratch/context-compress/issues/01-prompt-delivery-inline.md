@@ -1,6 +1,6 @@
 # 01: Prompts reach agents as message text
 
-**What to build:** Every steering and follow-up prompt wick sends to a running agent arrives as the message itself, so the agent spends no turn reading a file. This covers reviewer follow-up reviews and steering of an already running agent. A single shared delivery helper sends the text; compress, late prompts and these cases all use it. The incremental review diff goes inline in the follow-up, always, with no size cap and no path. The prompt and brief files are still written, but only as archive copies; no message tells an agent to read them.
+**What to build:** Every steering and follow-up prompt emberloop sends to a running agent arrives as the message itself, so the agent spends no turn reading a file. This covers reviewer follow-up reviews and steering of an already running agent. A single shared delivery helper sends the text; compress, late prompts and these cases all use it. The incremental review diff goes inline in the follow-up, always, with no size cap and no path. The prompt and brief files are still written, but only as archive copies; no message tells an agent to read them.
 
 **Blocked by:** None (can start immediately)
 

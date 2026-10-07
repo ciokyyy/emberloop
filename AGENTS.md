@@ -1,16 +1,16 @@
-# AGENTS.md — wick
+# AGENTS.md — emberloop
 
-Project preamble: wick is a harness extension for running parallel agent
+Project preamble: emberloop is a harness extension for running parallel agent
 implement/review loops. Pig and claude sessions spawn workers in git
 worktrees, judge them with persistent reviewers, and merge through a gate
-(`finish`). The main Go package is `wick-pig/`; `wick-tui/` is the dashboard
+(`finish`). The main Go package is `emberloop/`; `emberloop-tui/` is the dashboard
 module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
-extensions, and `herdr-wick/` is the herdr compress plugin; `scripts/` holds
+extensions, and `herdr-emberloop/` is the herdr compress plugin; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
 live
 probes that need running agents; `.scratch/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
-`CLAUDE.md`, which imports this file. The repo check is `.wick/check`
-(`cd wick-pig && go vet ./... && go test -skip TestLive ./... && cd ../wick-tui && go vet ./... && go test ./...`).
+`CLAUDE.md`, which imports this file. The repo check is `.emberloop/check`
+(`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../emberloop-tui && go vet ./... && go test ./... && cd ../installer && go vet ./... && go test ./...`).
 
 ## DOX contract
 
@@ -42,13 +42,14 @@ run's spec and tickets. Claude sessions read the same source through
 Index paths are repo-relative. Every doc below is listed here or in the
 child it belongs to, and every entry must resolve to a file.
 
-- `wick-pig/AGENTS.md` — the main Go package, its file map, and its Go
+- `emberloop/AGENTS.md` — the main Go package, its file map, and its Go
   workflow; indexes tools, MCP server, agent types, state database, and test data
-- `wick-tui/AGENTS.md` — the dashboard module (Runs list, read model, toolkit lock)
+- `emberloop-tui/AGENTS.md` — the dashboard module (Runs list, read model, toolkit lock)
 - `herdr-report/AGENTS.md` — the herdr report extension (pig panes as
   addressable agents)
-- `herdr-wick/AGENTS.md` — the herdr compress plugin (one key compresses
+- `herdr-emberloop/AGENTS.md` — the herdr compress plugin (one key compresses
   the focused pane)
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
+- `installer/AGENTS.md` — the install TUI and its config merges
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
 - `.scratch/retro-hardening/AGENTS.md` — the spec and ticket area for this run

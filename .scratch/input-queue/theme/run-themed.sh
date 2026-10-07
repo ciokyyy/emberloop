@@ -5,5 +5,5 @@ printf '\e]11;#1e1e2e\a\e]10;#cdd6f4\a\e]12;#f5e0dc\a'
 for i in "${!pal[@]}"; do printf '\e]4;%d;#%s\a' "$i" "${pal[$i]}"; done
 reset(){ printf '\e]111\a\e]110\a\e]112\a\e]104\a'; }
 trap reset EXIT
-if [ "$1" = pig ]; then pig --theme /tmp/inprobe/pigtheme --use-theme wick
-else claude --settings '{"theme":"custom:wick"}'; fi
+if [ "$1" = pig ]; then pig --theme /tmp/inprobe/pigtheme --use-theme emberloop
+else claude --settings '{"theme":"custom:emberloop"}'; fi

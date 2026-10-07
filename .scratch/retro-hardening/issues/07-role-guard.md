@@ -1,6 +1,6 @@
-# 07: A wick MCP server with no role refuses to start
+# 07: A emberloop MCP server with no role refuses to start
 
-**What to build:** Started with no role, a wick MCP server exits with a message naming the roles; the full tool set is still available when asked for explicitly, by role flag or environment value. The live scripts and the debugging path are updated to ask for it. The pig and claude harnesses always set a role, so launches are unchanged. Nothing outside a harness can reach spawn, finish or tell by starting a server by hand.
+**What to build:** Started with no role, a emberloop MCP server exits with a message naming the roles; the full tool set is still available when asked for explicitly, by role flag or environment value. The live scripts and the debugging path are updated to ask for it. The pig and claude harnesses always set a role, so launches are unchanged. Nothing outside a harness can reach spawn, finish or tell by starting a server by hand.
 
 **Blocked by:** None (can start immediately)
 

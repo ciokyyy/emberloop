@@ -19,11 +19,8 @@ import (
 	sdk "github.com/MichaelKinsy/PiG/extensions/sdk"
 )
 
-// The Antigravity OAuth application is Google's own public desktop client: the
-// id and secret ship inside the Antigravity IDE and agy CLI.
+// The client id and secret come from client.go, not from source.
 const (
-	clientID     = "REDACTED"
-	clientSecret = "REDACTED"
 	redirectURI  = "http://localhost:51121/oauth-callback"
 	authURL      = "https://accounts.google.com/o/oauth2/v2/auth"
 
@@ -66,11 +63,11 @@ func newPKCE() pkce {
 
 // authorizeURL builds the consent URL. The PKCE verifier travels in state, as
 // in the pi extension, so the pasted callback is enough to finish the login.
-func authorizeURL(p pkce) (string, string) {
+func authorizeURL(c oauthClient, p pkce) (string, string) {
 	st, _ := json.Marshal(map[string]string{"verifier": p.verifier, "projectId": ""})
 	state := base64.RawURLEncoding.EncodeToString(st)
 	q := url.Values{}
-	q.Set("client_id", clientID)
+	q.Set("client_id", c.ID)
 	q.Set("response_type", "code")
 	q.Set("redirect_uri", redirectURI)
 	q.Set("scope", strings.Join(scopes, " "))
@@ -145,10 +142,10 @@ func expiry(start time.Time, expiresIn int64) int64 {
 	return start.Add(time.Duration(expiresIn) * time.Second).Add(-expirySkew).UnixMilli()
 }
 
-func exchangeCode(ctx context.Context, code, verifier string) (sdk.OAuthCredentials, error) {
+func exchangeCode(ctx context.Context, c oauthClient, code, verifier string) (sdk.OAuthCredentials, error) {
 	start := time.Now()
 	tr, err := postToken(ctx, url.Values{
-		"client_id": {clientID}, "client_secret": {clientSecret}, "code": {code},
+		"client_id": {c.ID}, "client_secret": {c.Secret}, "code": {code},
 		"grant_type": {"authorization_code"}, "redirect_uri": {redirectURI}, "code_verifier": {verifier},
 	})
 	if err != nil {
@@ -162,9 +159,13 @@ func exchangeCode(ctx context.Context, code, verifier string) (sdk.OAuthCredenti
 
 // refreshCredentials keeps the project id: refresh responses do not carry it.
 func refreshCredentials(ctx context.Context, c sdk.OAuthCredentials) (sdk.OAuthCredentials, error) {
+	client, err := loadClient()
+	if err != nil {
+		return c, err
+	}
 	start := time.Now()
 	tr, err := postToken(ctx, url.Values{
-		"grant_type": {"refresh_token"}, "refresh_token": {c.Refresh}, "client_id": {clientID}, "client_secret": {clientSecret},
+		"grant_type": {"refresh_token"}, "refresh_token": {c.Refresh}, "client_id": {client.ID}, "client_secret": {client.Secret},
 	})
 	if err != nil {
 		return c, fmt.Errorf("antigravity token refresh: %w", err)
@@ -332,8 +333,14 @@ func discoverProject(ctx context.Context, token string, progress func(string)) (
 // bare code) back, exchange it and resolve the project.
 func login(cb *sdk.OAuthLoginCallbacks) (sdk.OAuthCredentials, error) {
 	ctx := context.Background()
+	client, err := ensureClient(func(msg string) (string, error) {
+		return cb.OnPrompt(sdk.OAuthPrompt{Message: msg})
+	})
+	if err != nil {
+		return sdk.OAuthCredentials{}, err
+	}
 	p := newPKCE()
-	u, state := authorizeURL(p)
+	u, state := authorizeURL(client, p)
 	cb.OnAuth(sdk.OAuthAuthInfo{URL: u, Instructions: "Sign in, then paste the localhost callback URL (or the code) here. The browser page will fail to load; that is expected."})
 	input, err := cb.OnPrompt(sdk.OAuthPrompt{Message: "Paste the Antigravity OAuth callback URL or code:"})
 	if err != nil {
@@ -344,7 +351,7 @@ func login(cb *sdk.OAuthLoginCallbacks) (sdk.OAuthCredentials, error) {
 	if err != nil {
 		return sdk.OAuthCredentials{}, err
 	}
-	creds, err := exchangeCode(ctx, code, verifier)
+	creds, err := exchangeCode(ctx, client, code, verifier)
 	if err != nil {
 		return sdk.OAuthCredentials{}, fmt.Errorf("antigravity oauth exchange failed: %w", err)
 	}

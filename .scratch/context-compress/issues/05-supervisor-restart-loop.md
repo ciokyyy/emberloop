@@ -1,6 +1,6 @@
 # 05: An agent restarts in the same pane with a handoff
 
-**What to build:** The process that owns each agent child (the top-level `wick-pig` command for the user's session, the launch executor for spawned panes) becomes a supervisor loop. On a compress signal it waits until every outstanding tool call has its result, stops the child, starts a new child in the same pane with the supplied handoff text as the first message, and records the new session ID. The pane never closes. The agent keeps its agent ID, and the state tracks a `compressed xN` count. The handoff here is plain input to the loop, so this slice is testable with a fixed handoff.
+**What to build:** The process that owns each agent child (the top-level `emberloop` command for the user's session, the launch executor for spawned panes) becomes a supervisor loop. On a compress signal it waits until every outstanding tool call has its result, stops the child, starts a new child in the same pane with the supplied handoff text as the first message, and records the new session ID. The pane never closes. The agent keeps its agent ID, and the state tracks a `compressed xN` count. The handoff here is plain input to the loop, so this slice is testable with a fixed handoff.
 
 **Blocked by:** 01-prompt-delivery-inline, 02-context-core, 03-session-identity
 

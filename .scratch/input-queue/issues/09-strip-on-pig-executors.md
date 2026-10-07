@@ -11,7 +11,7 @@ Evidence from the live check: the orchestrator pane shows the strip; the two pig
 - [x] A pig worker, reviewer and scout launched through the launch file show the strip, with the name chip of their type
 - [x] The tools log still receives pig's raw stderr, one stamped line at a time
 - [x] A pig child that exits badly records its exit and stderr tail as before
-- [x] `WICK_PIG_TOOLS_LOG=0` and `WICK_HEADER_STRIP=0` still switch each feature off independently
+- [x] `EMBERLOOP_PIG_TOOLS_LOG=0` and `EMBERLOOP_HEADER_STRIP=0` still switch each feature off independently
 - [ ] Claude workers and reviewers show the strip, confirmed in a live pane
 - [x] Tests through the wrapper's exec seam with a fake child that writes to stderr: the strip is painted and the stderr lines reach the log
 - [x] Spec: context-compress story 1 (every agent pane shows the header strip)

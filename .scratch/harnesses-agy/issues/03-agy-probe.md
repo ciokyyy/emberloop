@@ -2,7 +2,7 @@
 
 **What to build:** A written record, in this ticket, of how the installed `agy` behaves, with captured output saved as test fixtures. The grill found these in the binary and its changelog but could not run them (the service returned 503 on eligibility). Answer each:
 
-Probed 2026-10-05 with `agy` 1.2.17 (live service; 503s came and went — every error below with zero usage spent no quota). Fixtures: `wick-pig/testdata/agy/` (README maps files to questions). TDD note: this ticket writes no code, so there are no seams to agree; the seams (harness transcript parsing, `Models()` grouping, usage records) are tested by tickets 04/07 against these fixtures.
+Probed 2026-10-05 with `agy` 1.2.17 (live service; 503s came and went — every error below with zero usage spent no quota). Fixtures: `emberloop/testdata/agy/` (README maps files to questions). TDD note: this ticket writes no code, so there are no seams to agree; the seams (harness transcript parsing, `Models()` grouping, usage records) are tested by tickets 04/07 against these fixtures.
 
 ## 1. `--agent` does NOT accept a path outside the workspace
 
@@ -10,7 +10,7 @@ Probed 2026-10-05 with `agy` 1.2.17 (live service; 503s came and went — every 
 - `--agent mywrap` with `.agents/agents/mywrap/agent.md` in the worktree DOES load: reply `PROBE-ZEBRA-42` (system prompt from the file), `input_tokens` 1441.
 - The agent file needs `name:`, `mainAgent: true`, and the system prompt as the H1 body (`# Agent System Instructions` works; without `name` the file is ignored and the default agent runs).
 - `--add-dir /tmp/agy-probe/outside` + `--agent mywrap` hung past 90 s (killed); not pursued.
-- **Spec fallback CONFIRMED and REQUIRED: generate the agent under the worktree's `.agents/agents/wick-<role>/` and exclude it via the repo's local git exclude. `~/.wick-pig/agy/` as an `--agent` path does not work.**
+- **Spec fallback CONFIRMED and REQUIRED: generate the agent under the worktree's `.agents/agents/emberloop-<role>/` and exclude it via the repo's local git exclude. `~/.emberloop/agy/` as an `--agent` path does not work.**
 
 ## 2. `excludeDefaultComponents` + `inheritCustomizations: false` strips everything
 
@@ -21,11 +21,11 @@ Probed 2026-10-05 with `agy` 1.2.17 (live service; 503s came and went — every 
 
 ## 3. One MCP server via a workspace plugin; system prompt is the H1 body
 
-- Agent-level `mcpServers:` in frontmatter BREAKS loading (falls back to default). The working path: workspace plugin `.agents/plugins/<name>/{plugin.json,mcp_config.json}` with `{"mcpServers": {"wick-probe": {command, args, env}}}` (same shape as global `mcp_config.json`, verified via `agy mcp add --env`), plus `inheritMcp: false` (drops global servers) and agent `plugins: [<ABSOLUTE path to the plugin dir>]`.
+- Agent-level `mcpServers:` in frontmatter BREAKS loading (falls back to default). The working path: workspace plugin `.agents/plugins/<name>/{plugin.json,mcp_config.json}` with `{"mcpServers": {"emberloop-probe": {command, args, env}}}` (same shape as global `mcp_config.json`, verified via `agy mcp add --env`), plus `inheritMcp: false` (drops global servers) and agent `plugins: [<ABSOLUTE path to the plugin dir>]`.
 - Bare names, agent-relative (`../plugins/...`) and workspace-relative (`.agents/plugins/...`) plugin refs all fail in `-p` runs: `Cannot resolve agent-relative path ...: AgentBasePath is not set` (agent still loads, plugin never attaches). Absolute paths attach.
 - `env` reaches the server process (spy log: `ENV: PROBE_SECRET=QUASAR-9`; tool call returned `SECRET-IS-QUASAR-9`).
 - System prompt = the Markdown H1 body after frontmatter.
-- MCP tools surface as `call_mcp_tool` (+ `list_resources`, `read_resource`), regardless of the `tools` filter; call shape is `{ServerName, ToolName, Arguments}`. **ServerName is namespaced `<plugin>_<server>`** (`wick-probe_wick-probe`); the bare config name errors. `enabledTools: ["probe_echo"]` on the server rejects other tools at call time (`tool probe_slow is not enabled for server ...`).
+- MCP tools surface as `call_mcp_tool` (+ `list_resources`, `read_resource`), regardless of the `tools` filter; call shape is `{ServerName, ToolName, Arguments}`. **ServerName is namespaced `<plugin>_<server>`** (`emberloop-probe_emberloop-probe`); the bare config name errors. `enabledTools: ["probe_echo"]` on the server rejects other tools at call time (`tool probe_slow is not enabled for server ...`).
 - Caveat (ticket 04): in ONE interactive session the model claimed `call_mcp_tool` unavailable and confabulated the answer — print vs interactive tool surfacing needs a recheck in the harness live test.
 
 ## 4. `background`: per-tool `toolConfig.<tool>.background`; default already foreground
@@ -80,7 +80,7 @@ Probed 2026-10-05 with `agy` 1.2.17 (live service; 503s came and went — every 
 
 ### Spec changes required
 
-- Fallback 1 (worktree `.agents/agents/wick-<role>/` + git exclude) confirmed REQUIRED (§1). The agent's `plugins` entry must be an ABSOLUTE path (relative plugin refs fail, §3) — ticket 04's generator must write absolute plugin paths even though the agent itself lives in the worktree.
+- Fallback 1 (worktree `.agents/agents/emberloop-<role>/` + git exclude) confirmed REQUIRED (§1). The agent's `plugins` entry must be an ABSOLUTE path (relative plugin refs fail, §3) — ticket 04's generator must write absolute plugin paths even though the agent itself lives in the worktree.
 - Fallback 2 (nudge-and-give-up) NOT needed: `Stop` blocks (§5) — ticket 06 wires the real gate.
 - Effort levels gain `xhigh` (§8).
 - No `--effort` flag alongside a suffixed model id (§8).

@@ -62,11 +62,11 @@ func TestPaneIDRequiresHerdrEnv(t *testing.T) {
 }
 
 func TestLabelFallsBackWhenUnset(t *testing.T) {
-	t.Setenv("WICK_AGENT_LABEL", "")
+	t.Setenv("EMBERLOOP_AGENT_LABEL", "")
 	if got := label(); got != defaultLabel {
 		t.Errorf("label() = %q, want the default %q", got, defaultLabel)
 	}
-	t.Setenv("WICK_AGENT_LABEL", "w01-probe")
+	t.Setenv("EMBERLOOP_AGENT_LABEL", "w01-probe")
 	if got := label(); got != "w01-probe" {
 		t.Errorf("label() = %q, want w01-probe", got)
 	}

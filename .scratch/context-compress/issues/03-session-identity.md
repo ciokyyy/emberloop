@@ -1,6 +1,6 @@
 # 03: An agent keeps its identity across a session restart
 
-**What to build:** Agent state records the harness session ID currently in use, separate from the stable wick agent ID. Transcript lookup, the usage tailer's identity and the reply waiting read that current value. Everything already keyed by agent ID (usage rows, submit marks, gate state, error marks, review state, pane mapping) stays as is. A restart can then give the same agent a new harness session ID without losing any state. The new ID is always a fresh UUID.
+**What to build:** Agent state records the harness session ID currently in use, separate from the stable emberloop agent ID. Transcript lookup, the usage tailer's identity and the reply waiting read that current value. Everything already keyed by agent ID (usage rows, submit marks, gate state, error marks, review state, pane mapping) stays as is. A restart can then give the same agent a new harness session ID without losing any state. The new ID is always a fresh UUID.
 
 **Blocked by:** None (can start immediately)
 

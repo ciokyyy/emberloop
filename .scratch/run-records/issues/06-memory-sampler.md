@@ -1,6 +1,6 @@
 # 06: Memory sampler for harness process trees
 
-**What to build:** Every 5 seconds, each session's own wick process records the RSS of its harness process tree (the harness, `wick-mcp`, and anything they started) per process: `{agent, at, pid, name, rss}`, appended to the agent's memory log in the archive. Samples are written whether or not the TUI is open, and stop when the session ends.
+**What to build:** Every 5 seconds, each session's own emberloop process records the RSS of its harness process tree (the harness, `emberloop-mcp`, and anything they started) per process: `{agent, at, pid, name, rss}`, appended to the agent's memory log in the archive. Samples are written whether or not the TUI is open, and stop when the session ends.
 
 **Blocked by:** 01
 

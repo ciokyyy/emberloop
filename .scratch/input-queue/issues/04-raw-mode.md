@@ -1,8 +1,8 @@
 # 04: Raw mode hands the keyboard to the agent, with injections held
 
-**What to build:** A toggle key switches between the wick row and raw passthrough, so the user can reach an agent's own dialogs and menus. The strip shows `raw` and `raw, N queued`. In raw mode the wrapper keeps a dirty flag: any forwarded byte except a bare Enter sets it, and Enter, Ctrl+C or a wick clear resets it. Injections are held while raw mode is on and the box is dirty. After 10 seconds with no keystroke, wick sends six Ctrl+U to the child, then delivers. A per-harness table holds the clear, newline and interrupt sequences for claude and pig; a harness with no entry never gets a clear and holds while dirty.
+**What to build:** A toggle key switches between the emberloop row and raw passthrough, so the user can reach an agent's own dialogs and menus. The strip shows `raw` and `raw, N queued`. In raw mode the wrapper keeps a dirty flag: any forwarded byte except a bare Enter sets it, and Enter, Ctrl+C or a emberloop clear resets it. Injections are held while raw mode is on and the box is dirty. After 10 seconds with no keystroke, emberloop sends six Ctrl+U to the child, then delivers. A per-harness table holds the clear, newline and interrupt sequences for claude and pig; a harness with no entry never gets a clear and holds while dirty.
 
-**Blocked by:** 02-wick-input-row
+**Blocked by:** 02-emberloop-input-row
 
 **Status:** done
 
