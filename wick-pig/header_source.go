@@ -91,6 +91,6 @@ func WrapTopLevel(cmd Command, src HeaderSource) error {
 	}
 	cwd, _ := os.Getwd()
 	cfg := wrapConfigFor(cmd, src, tools.EffectiveSettings(cwd))
-	cfg.InputRow = true
+	cfg.InputRow = false // input row disabled; code kept (archive/input-row)
 	return WrapChild(cfg)
 }
