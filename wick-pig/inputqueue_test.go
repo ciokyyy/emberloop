@@ -503,6 +503,8 @@ func TestWrapCtrlEndToEnd(t *testing.T) {
 	cfg.ServeCtrl = true
 	cfg.Poll = 5 * time.Millisecond
 	cfg.Source.TranscriptPath = transcript
+	// A bare Enter leaves the child box clean, so the injection goes out.
+	cfg.Stdin = strings.NewReader("\r")
 	wrapped := make(chan error, 1)
 	go func() { wrapped <- WrapChild(cfg) }()
 	socketUp := func() bool { _, err := os.Stat(ctrlSocketPath("w1")); return err == nil }
@@ -510,7 +512,7 @@ func TestWrapCtrlEndToEnd(t *testing.T) {
 	if _, err := ctrlEnqueue("w1", QueueKindSteer, "steer it", "tell"); err != nil {
 		t.Fatalf("ctrlEnqueue: %v", err)
 	}
-	wantBytes := "typed\nsteer it\r"
+	wantBytes := "\rsteer it\r"
 	childGot := func() bool { return child.fakeChild.forwardedString() == wantBytes }
 	waitForCond(t, "child bytes", childGot)
 	if _, err := BuildHeaderSnapshot(cfg.Source, cfg.Settings); err != nil {
@@ -626,4 +628,37 @@ func TestPumpSendsEnterInItsOwnWrite(t *testing.T) {
 	if gap := stamps[1].Sub(stamps[0]); gap < 15*time.Millisecond {
 		t.Errorf("Enter followed the text after %v, want the settle pause", gap)
 	}
+}
+
+// Typing in the child's own box holds injections; once the box sits stale
+// past the timeout the wrapper clears it and delivers.
+func TestWrapHoldsInjectionWhileTyping(t *testing.T) {
+	spawnTestState(t)
+	oldPump := queuePumpEvery
+	queuePumpEvery = 5 * time.Millisecond
+	defer func() { queuePumpEvery = oldPump }()
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "s1.jsonl")
+	if err := os.WriteFile(transcript, []byte(pigAssistantRunning()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := &blockingChild{release: make(chan struct{})}
+	var stdout bytes.Buffer
+	cfg := wrapTestConfig(child, &stdout)
+	cfg.ServeCtrl = true
+	cfg.Poll = 5 * time.Millisecond
+	cfg.Source.TranscriptPath = transcript
+	cfg.Source.Harness = "pig"
+	wrapped := make(chan error, 1)
+	go func() { wrapped <- WrapChild(cfg) }()
+	waitForCond(t, "control socket", func() bool { _, err := os.Stat(ctrlSocketPath("w1")); return err == nil })
+	if _, err := ctrlEnqueue("w1", QueueKindSteer, "steer it", "tell"); err != nil {
+		t.Fatalf("ctrlEnqueue: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := child.fakeChild.forwardedString(); strings.Contains(got, "steer it") {
+		t.Fatalf("injection leaked into a dirty box: %q", got)
+	}
+	close(child.release)
+	<-wrapped
 }
