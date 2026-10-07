@@ -90,6 +90,10 @@ type WrapConfig struct {
 	InputRow bool
 	// Clock injects a fake clock for testing row timeouts and queue pumps.
 	Clock func() time.Time
+	// CompressRun runs the row's /compress macro through the existing
+	// compress request: the wrapped session's own pane, whatever the
+	// harness. Nil runs the real commands; tests set a fake Exec.
+	CompressRun Exec
 }
 
 // DefaultWrapPoll is the snapshot refresh while the child runs: usage rows
@@ -185,6 +189,11 @@ func WrapChild(cfg WrapConfig) error {
 		}
 		return false
 	}, cfg.Clock)
+	// The row runs macros, so a row session reports bad macro settings at
+	// startup: duplicates read as errors, built-in shadows as warnings.
+	if cfg.InputRow {
+		reportMacroValidation(cfg.Stderr, cfg.Settings)
+	}
 	if cfg.ServeCtrl && cfg.Source.AgentID != "" {
 		if stop, err := serveCtrl(cfg.Source.AgentID, w.queue); err == nil {
 			defer stop()
@@ -348,9 +357,13 @@ type wrapper struct {
 	pump      *queuePump
 	childMu   sync.Mutex
 	mu        sync.Mutex
-	last      string
-	phase     bool
-	closed    bool
+	// rowCompressMu guards rowCompressing: two quick /compress submits start
+	// one compress request, and the second warns instead of doubling it.
+	rowCompressMu  sync.Mutex
+	rowCompressing bool
+	last           string
+	phase          bool
+	closed         bool
 }
 
 // inputRowRow is the terminal row of the input row: the first row past the child area.
@@ -792,11 +805,11 @@ func (w *wrapper) handleRowInputLocked(in []byte) {
 	case rowActionNone:
 		w.paintRowLocked()
 	case rowActionSubmit:
-		w.queue.enqueue(QueueKindSteer, text, "user")
+		w.submitRowText(QueueKindSteer, text)
 		w.paintRowLocked()
 		go w.pump.step()
 	case rowActionQueue:
-		w.queue.enqueue(QueueKindQueue, text, "user")
+		w.submitRowText(QueueKindQueue, text)
 		w.paintRowLocked()
 		go w.pump.step()
 	case rowActionInterrupt:
