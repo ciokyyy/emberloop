@@ -75,6 +75,21 @@ func recordAutoCompressFailure(pane, agentID, sessionID string, err error) {
 	}
 }
 
+// clearAgentCompressFailed resets any recorded failure reason on the agent state.
+func clearAgentCompressFailed(agentID string) {
+	if agentID == "" {
+		return
+	}
+	_ = withFileLock("state-"+agentID, func() error {
+		st, ok, err := ReadAgentState(agentID)
+		if err != nil || !ok || st.CompressFailed == "" {
+			return err
+		}
+		st.CompressFailed = ""
+		return WriteAgentState(st)
+	})
+}
+
 // appendToolsLog appends a stamped line to the session's tools debug log.
 func appendToolsLog(sessionID, msg string) {
 	if sessionID == "" {
@@ -180,17 +195,7 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 		return "", false, nil
 	}
 	defer SetAgentCompressing(agentID, false) //nolint:errcheck
-	_ = withFileLock("state-"+agentID, func() error {
-		st, ok, rerr := ReadAgentState(agentID)
-		if rerr != nil || !ok {
-			return rerr
-		}
-		if st.CompressFailed != "" {
-			st.CompressFailed = ""
-			return WriteAgentState(st)
-		}
-		return nil
-	})
+	clearAgentCompressFailed(agentID)
 	// The decision ran before the claim: a winner that finished in between
 	// rotated the session, so this snapshot is stale. A rotated session
 	// compresses once; the fresh session decides on its own transcript.
@@ -223,19 +228,6 @@ func MaybeAutoCompress(run Exec, pane string, s tools.Settings) (string, bool, e
 		return "", false, err
 	}
 	clearAutoFailure(pane)
-	if agentID != "" {
-		_ = withFileLock("state-"+agentID, func() error {
-			st, ok, rerr := ReadAgentState(agentID)
-			if rerr != nil || !ok {
-				return rerr
-			}
-			if st.CompressFailed != "" {
-				st.CompressFailed = ""
-				return WriteAgentState(st)
-			}
-			return nil
-		})
-	}
 	return next, true, nil
 }
 

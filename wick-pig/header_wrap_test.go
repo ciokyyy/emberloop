@@ -286,3 +286,28 @@ func TestSnapshotIsIdleBeforeTheFirstTurn(t *testing.T) {
 		t.Errorf("state before the first turn = %q, want idle", snap.State)
 	}
 }
+
+func TestShortCompressReason(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"transcript is ~228k tokens, past the \"...\" window 200000: compression refused", "past window"},
+		{"no compressModel for harness \"pig\"", "no compressModel"},
+		{"summarizer failed: short error", "short error"},
+		{"summarizer failed: this error message is very long and detailed", "summarizer error"},
+		{"summarizer: timeout", "timeout"},
+		{"summarizer: this error message is very long and detailed", "summarizer error"},
+		{"restart: failed to stop pane", "restart error"},
+		{"short generic error", "short generic error"},
+		{"a very long generic error that exceeds twenty five runes easily", "a very long generic er…"},
+		{"multiline\nsecond line", "multiline"},
+		{"utf8: 日本語のテストメッセージが長すぎる場合であってさらに続く文", "utf8: 日本語のテストメッセージが長すぎ…"},
+	}
+	for _, tc := range cases {
+		if got := shortCompressReason(tc.input); got != tc.want {
+			t.Errorf("shortCompressReason(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
