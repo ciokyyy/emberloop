@@ -4,7 +4,7 @@
 
 **Blocked by:** 01-control-channel-and-queue-core
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Typing in the row never reaches the child until submit
 - [x] A queued wick injection is not delivered while the row has a draft
