@@ -10,15 +10,15 @@ Evidence from the live check: ticket 13's worker (session `ab2572d7`) sat at 228
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `ModelWindow("openrouter/deepseek/deepseek-v4-flash-0731", nil)` and `ModelWindow("antigravity-gemini-3.8-flash", nil)` return 1,000,000
-- [ ] Table test for provider-prefixed, harness-prefixed, upper-case and unknown names; unknown names still return the default
-- [ ] A `context.windows` override beats the table for the exact model name
-- [ ] The strip shows the 1M window for the Gemini worker (about 22% at 228k, not 114%)
-- [ ] A 228k transcript with the compress model above passes the window check in `SummarizeSession` and reaches the summarizer call (fake exec)
-- [ ] A refused or failed auto-compress shows a `compress failed` state in the strip and records its reason; a later success clears it
-- [ ] The failure cooldown still parks the pane; the state text does not trigger new model calls
-- [ ] Docs: `wick-pig/AGENTS.md` names the window rules and the override setting
+- [x] `ModelWindow("openrouter/deepseek/deepseek-v4-flash-0731", nil)` and `ModelWindow("antigravity-gemini-3.8-flash", nil)` return 1,000,000
+- [x] Table test for provider-prefixed, harness-prefixed, upper-case and unknown names; unknown names still return the default
+- [x] A `context.windows` override beats the table for the exact model name
+- [x] The strip shows the 1M window for the Gemini worker (about 22% at 228k, not 114%)
+- [x] A 228k transcript with the compress model above passes the window check in `SummarizeSession` and reaches the summarizer call (fake exec)
+- [x] A refused or failed auto-compress shows a `compress failed` state in the strip and records its reason; a later success clears it
+- [x] The failure cooldown still parks the pane; the state text does not trigger new model calls
+- [x] Docs: `wick-pig/AGENTS.md` names the window rules and the override setting
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section. Context: `.scratch/context-compress/spec.md` (auto-compress).
