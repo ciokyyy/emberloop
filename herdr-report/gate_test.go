@@ -196,7 +196,7 @@ func TestBeforeSettleSettlesOnASubmitAndOnAProviderError(t *testing.T) {
 // A gate that cannot answer must never hold an agent at its settle.
 func TestBeforeSettleSettlesWhenTheDecisionCannotBeAsked(t *testing.T) {
 	g := newGate(func(sdk.Context, string) (string, error) {
-		return "", errors.New("wick-pig pig-gate: not found")
+		return "", errors.New("emberloop pig-gate: not found")
 	})
 	result, err := g.beforeSettle(sdk.Context{}, settleData("completed", "done"))
 	if err != nil || result != nil {
@@ -213,7 +213,7 @@ func TestBeforeProviderRequestPinsSubmitOnThePinnedRequestOnly(t *testing.T) {
 		"messages":   []any{map[string]any{"role": "user", "content": "go"}},
 		"tools": []any{
 			map[string]any{"name": "read", "input_schema": map[string]any{"type": "object"}},
-			map[string]any{"name": "mcp__wick__submit", "input_schema": map[string]any{"type": "object"}},
+			map[string]any{"name": "mcp__emberloop__submit", "input_schema": map[string]any{"type": "object"}},
 		},
 	}
 	g := newGate((&fakeGate{answers: []string{`{"outcome":"pin","reminder":"reminder 3 of 3"}`}}).run)
@@ -242,7 +242,7 @@ func TestBeforeProviderRequestPinsSubmitOnThePinnedRequestOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("the pinned request must replace the payload, got %#v", result)
 	}
-	want := map[string]any{"type": "tool", "name": "mcp__wick__submit"}
+	want := map[string]any{"type": "tool", "name": "mcp__emberloop__submit"}
 	if !reflect.DeepEqual(pinned["tool_choice"], want) {
 		t.Errorf("anthropic tool_choice = %#v, want %#v", pinned["tool_choice"], want)
 	}
@@ -274,10 +274,10 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 			name: "anthropic messages",
 			payload: map[string]any{
 				"messages": []any{},
-				"tools":    []any{map[string]any{"name": "mcp__wick__submit", "input_schema": map[string]any{}}},
+				"tools":    []any{map[string]any{"name": "mcp__emberloop__submit", "input_schema": map[string]any{}}},
 			},
 			key:  "tool_choice",
-			want: map[string]any{"type": "tool", "name": "mcp__wick__submit"},
+			want: map[string]any{"type": "tool", "name": "mcp__emberloop__submit"},
 		},
 		{
 			name: "openai chat",
@@ -285,20 +285,20 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 				"messages": []any{},
 				"tools": []any{map[string]any{
 					"type":     "function",
-					"function": map[string]any{"name": "mcp__wick__submit"},
+					"function": map[string]any{"name": "mcp__emberloop__submit"},
 				}},
 			},
 			key:  "tool_choice",
-			want: map[string]any{"type": "function", "function": map[string]any{"name": "mcp__wick__submit"}},
+			want: map[string]any{"type": "function", "function": map[string]any{"name": "mcp__emberloop__submit"}},
 		},
 		{
 			name: "openai responses",
 			payload: map[string]any{
 				"input": []any{},
-				"tools": []any{map[string]any{"type": "function", "name": "mcp__wick__submit"}},
+				"tools": []any{map[string]any{"type": "function", "name": "mcp__emberloop__submit"}},
 			},
 			key:  "tool_choice",
-			want: map[string]any{"type": "function", "name": "mcp__wick__submit"},
+			want: map[string]any{"type": "function", "name": "mcp__emberloop__submit"},
 		},
 		{
 			name: "gemini",
@@ -306,13 +306,13 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 				"contents":   []any{},
 				"toolConfig": map[string]any{},
 				"tools": []any{map[string]any{"functionDeclarations": []any{
-					map[string]any{"name": "mcp__wick__submit"},
+					map[string]any{"name": "mcp__emberloop__submit"},
 				}}},
 			},
 			key: "toolConfig",
 			want: map[string]any{"functionCallingConfig": map[string]any{
 				"mode":                 "ANY",
-				"allowedFunctionNames": []any{"mcp__wick__submit"},
+				"allowedFunctionNames": []any{"mcp__emberloop__submit"},
 			}},
 		},
 		{
@@ -320,10 +320,10 @@ func TestPinNamesSubmitInEachProvidersShape(t *testing.T) {
 			payload: map[string]any{
 				"messages":   []any{},
 				"toolChoice": "auto",
-				"tools":      []any{map[string]any{"function": map[string]any{"name": "mcp__wick__submit"}}},
+				"tools":      []any{map[string]any{"function": map[string]any{"name": "mcp__emberloop__submit"}}},
 			},
 			key:  "toolChoice",
-			want: map[string]any{"type": "function", "function": map[string]any{"name": "mcp__wick__submit"}},
+			want: map[string]any{"type": "function", "function": map[string]any{"name": "mcp__emberloop__submit"}},
 		},
 	}
 	for _, c := range cases {

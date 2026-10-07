@@ -2,7 +2,7 @@
 
 **What to build:** A claude worker, reviewer or scout started through the launch file registers with herdr as a named agent and reports its state, the way pig panes do through the herdr-report extension. Today it does not: the wrapper is the pane's foreground process, so herdr no longer sees `claude` as the process and never marks the pane an agent. The spawn's readiness wait (`agent wait`) then fails with "agent target <pane> not found" for the whole wait, the spawn gives up and closes the pane, and every review round that uses a claude reviewer fails. The wrapper (or the exec path that starts it) reports the agent to herdr for a claude child: name, working and idle from the existing transcript turn state, and release on exit and on crash. Pig keeps the extension path; nothing is double-reported.
 
-Evidence from the live check: reviewer panes for the code-review slot (harness claude) showed the strip for 20 seconds, never appeared in the agent list, and were closed by wick at the 30 second readiness limit. Pig reviewers in the same run registered fine. The herdr server log shows no agent-change event for the failed panes, and earlier claude panes (before the wrapper) did log one.
+Evidence from the live check: reviewer panes for the code-review slot (harness claude) showed the strip for 20 seconds, never appeared in the agent list, and were closed by emberloop at the 30 second readiness limit. Pig reviewers in the same run registered fine. The herdr server log shows no agent-change event for the failed panes, and earlier claude panes (before the wrapper) did log one.
 
 **Blocked by:** None (can start immediately)
 

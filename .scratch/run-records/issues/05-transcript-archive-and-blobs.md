@@ -1,6 +1,6 @@
 # 05: Transcript archive and prompt/tool-definition blobs
 
-**What to build:** Each agent's harness transcript is copied into wick's archive under its run, kept current while the agent runs and finalised when it settles, so it outlives harness cleanup. At session start, the system prompt, the tool definitions served for its role, and the harness flags are stored once by content hash in a blob store; the session's archive references the hashes.
+**What to build:** Each agent's harness transcript is copied into emberloop's archive under its run, kept current while the agent runs and finalised when it settles, so it outlives harness cleanup. At session start, the system prompt, the tool definitions served for its role, and the harness flags are stored once by content hash in a blob store; the session's archive references the hashes.
 
 **Blocked by:** 01
 
@@ -13,8 +13,8 @@
 
 ## Archive layout (for the stats indexer, ticket 07 prune, TUI)
 
-All paths are siblings of the worker store, under wick's state directory
-(the directory holding `workers.json`). Code: `wick-pig/archive.go`.
+All paths are siblings of the worker store, under emberloop's state directory
+(the directory holding `workers.json`). Code: `emberloop/archive.go`.
 
 ```text
 blobs/<hex>                            one file per distinct content, named for
@@ -45,10 +45,10 @@ archive/<run>/<agent>/usage.jsonl      NOT HERE: the per-agent usage log lives
                                        ticket 03 (`UsageLogPath`, sharing the
                                        file with ticket 04's find lines),
                                        which the stats indexer reads instead.
-- `<run>` is the spec slug (`specSlug` of `WICK_SPEC`), or `"adhoc"` for a
-  session outside any run. `<agent>` is `WICK_AGENT_ID`, sanitised for the
+- `<run>` is the spec slug (`specSlug` of `EMBERLOOP_SPEC`), or `"adhoc"` for a
+  session outside any run. `<agent>` is `EMBERLOOP_AGENT_ID`, sanitised for the
   filesystem (`/` and `\` become `-`, as with launch files). Every session
-  wick launches inside a run inherits the spawner's spec (workers,
+  emberloop launches inside a run inherits the spawner's spec (workers,
   reviewers, scouts, read-only agents), so each agent's transcript and
   session record land under the run they belong to.
 - The blob hash is `sha256:<hex>`; the file is the hex part. Two sessions
@@ -60,14 +60,14 @@ archive/<run>/<agent>/usage.jsonl      NOT HERE: the per-agent usage log lives
   matches what the harness saw. Flags store only the stable launch choice
   (`{harness, model, effort}`), never the prompt, so same-way launches share
   one blob.
-- The copier runs in the session's own wick process (`wick-mcp` attached to
+- The copier runs in the session's own emberloop process (`emberloop-mcp` attached to
   the harness): `SnapshotFromEnv` once at startup, `CopyFromEnv` every
   `archivePoll` (5 s) via `StartArchiveLoop`, plus a final `CopyFromEnv`
   when serving ends (the settled-session final copy). Launches carry the
   identity the session needs to find its own transcript
   (`TranscriptSource`: session id, then agent id as label fallback, across
-  the named harness or all harnesses): `WICK_HARNESS` always, and
-  `WICK_SESSION_ID`, `WICK_SESSION_DIR`, `WICK_MODEL`, `WICK_EFFORT` when
+  the named harness or all harnesses): `EMBERLOOP_HARNESS` always, and
+  `EMBERLOOP_SESSION_ID`, `EMBERLOOP_SESSION_DIR`, `EMBERLOOP_MODEL`, `EMBERLOOP_EFFORT` when
   the session sets them.
 - A missing source (nothing written yet, or harness cleanup) copies nothing
   and keeps the archive; a source shorter than the offset was replaced, so

@@ -2,7 +2,7 @@
 
 **What to build:** Workers are spawned through `spawn`, and their results, along with any blocking result that outlasts the tool budget, reach the parent as system notices in its pane.
 
-- **`worker` type.** wick embeds `worker` (`worktree`, non-blocking, statuses `done`/`blocked`, today's worker brief). `implement` may spawn it. A `worktree` entry takes today's worker fields (ticket, base, target, harness, model), and gets its git worktree, branch and ticket tab exactly as `spawn_worker` did. Non-blocking entries come back as "started" at once, and a mixed call returns once the blocking ones have submitted. `spawn_worker` is removed.
+- **`worker` type.** emberloop embeds `worker` (`worktree`, non-blocking, statuses `done`/`blocked`, today's worker brief). `implement` may spawn it. A `worktree` entry takes today's worker fields (ticket, base, target, harness, model), and gets its git worktree, branch and ticket tab exactly as `spawn_worker` did. Non-blocking entries come back as "started" at once, and a mixed call returns once the blocking ones have submitted. `spawn_worker` is removed.
 - **Parent pane.** At spawn, the spawning session's `HERDR_PANE_ID` is recorded with the agent as its parent pane.
 - **Delivery.** A non-blocking agent's submit is delivered right away into the parent pane through the nudge path: `herdr agent prompt`, falling back to `send-text` + Enter flattened to one line. The message is `<system-notice> <type> <id> submitted (<status>). Resume your work using the result below. ── <id> ── <summary></system-notice>`.
   - Deliveries to one parent pane are serialized with a per-pane lock.
@@ -25,8 +25,8 @@
 ## Hard limits (this ticket is built by the tool it changes)
 
 - Spec: `.scratch/submit-results/spec.md`. Read it for the decisions this ticket implements.
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, `~/.agents`, `~/.wick-pig`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig, claude or bunx inside the work. Tests use a fake exec and temp dirs, never the network or the real home.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, `~/.agents`, `~/.emberloop`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig, claude or bunx inside the work. Tests use a fake exec and temp dirs, never the network or the real home.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go vet ./...` and `go test -skip TestLive ./...` green.

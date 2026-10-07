@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Which `read` runs when wick is loaded: ours, or pig's builtin?
-# Runs the identical prompt twice — once plain pig, once with wick — and diffs
+# Which `read` runs when emberloop is loaded: ours, or pig's builtin?
+# Runs the identical prompt twice — once plain pig, once with emberloop — and diffs
 # what came back. The read outputs differ in shape, so the diff names the winner.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-WICK=/home/cioky/Projects/wick-simple/wick-pig
-DIR=/tmp/wick-verify
+EMBERLOOP=/home/cioky/Projects/emberloop/emberloop
+DIR=/tmp/emberloop-verify
 FILE=$DIR/app.txt
 
 rm -rf "$DIR"; mkdir -p "$DIR"
@@ -13,7 +13,7 @@ printf 'alpha\nbeta\ngamma\n' > "$FILE"
 git -C "$DIR" init -q 2>/dev/null
 git -C "$DIR" add -A >/dev/null 2>&1
 
-PROMPT='Call the read tool with path "/tmp/wick-verify/app.txt". Then reply with the exact tool result verbatim between >>> and <<< markers, and nothing else.'
+PROMPT='Call the read tool with path "/tmp/emberloop-verify/app.txt". Then reply with the exact tool result verbatim between >>> and <<< markers, and nothing else.'
 
 probe() {  # probe <label> <extra pig args...>
   local label=$1; shift
@@ -26,11 +26,11 @@ print(m.group(1).strip() if m else t.strip()[-600:])
 " | sed "s/^/[$label] /"
 }
 
-echo '=== builtin pig (no wick) ==='
+echo '=== builtin pig (no emberloop) ==='
 probe builtin
 echo
-echo '=== wick loaded ==='
-probe wick -e "$WICK"
+echo '=== emberloop loaded ==='
+probe emberloop -e "$EMBERLOOP"
 
 herdr workspace list >/dev/null 2>&1
 rm -rf "$DIR"

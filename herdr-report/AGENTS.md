@@ -6,15 +6,15 @@ A pig extension that teaches herdr a running pig pane is an agent: it
 reports pane state so the pane appears in `herdr agent list` under its own
 name and stays addressable by `herdr agent prompt`. It also carries the stop
 gate (`gate.go`): a spawned agent cannot settle without calling submit, with
-the shared decision living in `wick-pig pig-gate` so every harness follows
+the shared decision living in `emberloop pig-gate` so every harness follows
 one set of rules. `voice.go` adds the register's per-turn reminder to every
-turn (text from `wick-pig voice-reminder`).
+turn (text from `emberloop voice-reminder`).
 
 ## Ownership
 
 Owns this directory as a separate Go module (`extension.go`, `gate.go` and
 their tests). Agent identity and naming here; review and merge policy in
-`wick-pig/`.
+`emberloop/`.
 
 ## Local Contracts
 
@@ -28,7 +28,7 @@ their tests). Agent identity and naming here; review and merge policy in
 
 ## Verification
 
- No check; the repo check covers `wick-pig/` and `wick-tui/`.
+ No check; the repo check covers `emberloop/` and `emberloop-tui/`.
 
 ## Child DOX Index
 

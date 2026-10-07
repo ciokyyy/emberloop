@@ -6,7 +6,7 @@ Blocked by: nothing
 
 ## What
 
-`Spawn` in `wick-pig/worker.go` stores `"base":"HEAD"`. Inside the worker's worktree `HEAD` is the worker's own branch tip, so every later `git diff <base>` (self-review, `review_worker`, finish) is empty once the worker commits.
+`Spawn` in `emberloop/worker.go` stores `"base":"HEAD"`. Inside the worker's worktree `HEAD` is the worker's own branch tip, so every later `git diff <base>` (self-review, `review_worker`, finish) is empty once the worker commits.
 
 ## Done when
 
@@ -16,8 +16,8 @@ Blocked by: nothing
 - A test with a fake exec proves `HEAD` becomes a SHA in the store and in the herdr arguments.
 ## Hard limits (this ticket is built by the tool it changes)
 
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig or claude inside the work.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig or claude inside the work.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go test -skip TestLive ./...` green.

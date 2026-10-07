@@ -2,7 +2,7 @@
 
 **What to build:** When the supervisor restarts the child for compress, the wrapper stays up. The queue, the row draft and history are kept. The handoff is delivered first, ahead of the queue and the user's pending messages. Delivery of the handoff uses the same channel and counts as accepted when the new session shows the turn.
 
-**Blocked by:** 01-control-channel-and-queue-core, 02-wick-input-row
+**Blocked by:** 01-control-channel-and-queue-core, 02-emberloop-input-row
 
 **Status:** done
 

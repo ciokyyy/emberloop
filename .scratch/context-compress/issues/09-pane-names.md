@@ -1,6 +1,6 @@
 # 09: Every pane is named after its agent type
 
-**What to build:** Every pane wick starts carries a readable name in herdr: the agent's type. The names are `orchestrator` for the user's top-level session, `implementer` for workers, `spec-reviewer` and `code-reviewer` for the two reviewers, and `scout` for scouts. Names need not be unique; several implementers can share the name. Wick sets the name when it places the pane and again when a pane is reused or its agent restarts, so a name never goes stale. The top-level session names its own pane at startup when it runs inside herdr. Failures to rename are silent and never block a spawn. The header strip's name chip uses the same type name, so the strip and the herdr sidebar agree.
+**What to build:** Every pane emberloop starts carries a readable name in herdr: the agent's type. The names are `orchestrator` for the user's top-level session, `implementer` for workers, `spec-reviewer` and `code-reviewer` for the two reviewers, and `scout` for scouts. Names need not be unique; several implementers can share the name. Emberloop sets the name when it places the pane and again when a pane is reused or its agent restarts, so a name never goes stale. The top-level session names its own pane at startup when it runs inside herdr. Failures to rename are silent and never block a spawn. The header strip's name chip uses the same type name, so the strip and the herdr sidebar agree.
 
 **Blocked by:** None (can start immediately)
 

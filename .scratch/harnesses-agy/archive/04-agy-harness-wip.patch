@@ -1,16 +1,16 @@
-diff --git a/wick-pig/agy.go b/wick-pig/agy.go
+diff --git a/emberloop/agy.go b/emberloop/agy.go
 new file mode 100644
 index 0000000..a7ccf3b
 --- /dev/null
-+++ b/wick-pig/agy.go
++++ b/emberloop/agy.go
 @@ -0,0 +1,710 @@
-+package wick
++package emberloop
 +
 +// The agy harness runs a session on the agy CLI against the user's
 +// Antigravity subscription. agy only loads a workspace agent by name, so the
 +// harness generates a stripped agent per role and tool set under the
-+// session's own workspace (.agents/agents/wick-*/): no default prompt
-+// sections, no built-in tools, only wick's MCP server, with wick's system
++// session's own workspace (.agents/agents/emberloop-*/): no default prompt
++// sections, no built-in tools, only emberloop's MCP server, with emberloop's system
 +// prompt. The agent and its plugin are content-addressed by role and tool
 +// set, so concurrent sessions sharing them write identical files through an
 +// atomic rename instead of racing. Nothing is written to the user's global
@@ -30,11 +30,11 @@ index 0000000..a7ccf3b
 +	"strings"
 +	"time"
 +
-+	wicktools "example.com/wick/tools"
++	emberlooptools "example.com/emberloop/tools"
 +)
-+// agyBin is the CLI the harness launches. WICK_AGY points a test at a fake.
++// agyBin is the CLI the harness launches. EMBERLOOP_AGY points a test at a fake.
 +func agyBin() string {
-+	if p := os.Getenv("WICK_AGY"); p != "" {
++	if p := os.Getenv("EMBERLOOP_AGY"); p != "" {
 +		return p
 +	}
 +	return "agy"
@@ -59,7 +59,7 @@ index 0000000..a7ccf3b
 +// SessionRoot is where agy writes every session's transcript: one
 +// conversation directory per session under the CLI's data dir. A session's
 +// own conversation id is minted at launch, so TranscriptFor (below) maps a
-+// wick session to its transcript through the per-session log file.
++// emberloop session to its transcript through the per-session log file.
 +func (agyHarness) SessionRoot(Session) string {
 +	home, _ := os.UserHomeDir()
 +	return filepath.Join(home, ".gemini", "antigravity-cli", "brain")
@@ -91,7 +91,7 @@ index 0000000..a7ccf3b
 +	}
 +	env := roleEnv(s)
 +	if s.Label != "" {
-+		env = append(env, "WICK_AGENT_LABEL="+s.Label)
++		env = append(env, "EMBERLOOP_AGENT_LABEL="+s.Label)
 +	}
 +	return Command{Bin: agyBin(), Args: args, Env: env}, nil
 +}
@@ -110,11 +110,11 @@ index 0000000..a7ccf3b
 +	return filepath.Abs(dir)
 +}
 +
-+// agySessionTools is the effective tool set the session's wick-mcp serves,
++// agySessionTools is the effective tool set the session's emberloop-mcp serves,
 +// mirroring RoleTools and agentTools but loading types from the workspace:
 +// the role's tools, or the agent type's tools plus the submit and spawn tools
 +// the runtime adds. The names feed the content-addressed agent name and the
-+// agent's tool docs; wick-mcp itself enforces the set by role.
++// agent's tool docs; emberloop-mcp itself enforces the set by role.
 +func agySessionTools(ws string, s Session) ([]string, error) {
 +	if s.Role == "agent" {
 +		types, err := LoadAgentTypes(ws)
@@ -138,7 +138,7 @@ index 0000000..a7ccf3b
 +		return nil, fmt.Errorf("unknown role %q", s.Role)
 +	}
 +	types := mustLoadAgentTypes(ws)
-+	all := append(wicktools.All(), orchestrationTools(types, spawnableNames(s.Role, types))...)
++	all := append(emberlooptools.All(), orchestrationTools(types, spawnableNames(s.Role, types))...)
 +	if names == nil {
 +		out := make([]string, 0, len(all))
 +		for _, t := range all {
@@ -147,7 +147,7 @@ index 0000000..a7ccf3b
 +		sort.Strings(out)
 +		return out, nil
 +	}
-+	byName := map[string]wicktools.Tool{}
++	byName := map[string]emberlooptools.Tool{}
 +	for _, t := range all {
 +		byName[t.Name()] = t
 +	}
@@ -175,10 +175,10 @@ index 0000000..a7ccf3b
 +	if role == "" {
 +		role = "session"
 +	}
-+	return "wick-" + role + "-" + hex.EncodeToString(sum[:])[:8]
++	return "emberloop-" + role + "-" + hex.EncodeToString(sum[:])[:8]
 +}
 +
-+// ensureAgyAgent writes the session's stripped agent and its wick MCP plugin
++// ensureAgyAgent writes the session's stripped agent and its emberloop MCP plugin
 +// under the workspace and excludes them from git status, returning the agent
 +// name for --agent. Writes are atomic renames of identical files, so
 +// concurrent sessions sharing an agent never race.
@@ -190,30 +190,30 @@ index 0000000..a7ccf3b
 +	name := agyAgentName(s, toolNames)
 +	agentDir := filepath.Join(ws, ".agents", "agents", name)
 +	pluginDir := filepath.Join(ws, ".agents", "plugins", name)
-+	env := map[string]string{"WICK_ROLE": s.Role}
++	env := map[string]string{"EMBERLOOP_ROLE": s.Role}
 +	if s.Role == "agent" {
-+		env["WICK_AGENT_TYPE"] = s.AgentType
++		env["EMBERLOOP_AGENT_TYPE"] = s.AgentType
 +	}
 +	// agy starts MCP servers in the plugin's directory, not the workspace, so
-+	// the server is a generated wrapper that cds back before execing wick-mcp.
++	// the server is a generated wrapper that cds back before execing emberloop-mcp.
 +	// Both paths are absolute: the server must not depend on the PATH or the
 +	// working directory agy hands it.
-+	wrapper := filepath.Join(pluginDir, "wick-mcp.sh")
++	wrapper := filepath.Join(pluginDir, "emberloop-mcp.sh")
 +	wrapperSrc := "#!/bin/sh\n" +
-+		"# Generated by wick-pig: run wick's MCP server in the workspace,\n" +
++		"# Generated by emberloop: run emberloop's MCP server in the workspace,\n" +
 +		"# whatever directory agy starts MCP servers in.\n" +
 +		"cd " + agyShQuote(ws) + " || exit 1\n" +
 +		"exec " + agyShQuote(agyServerCommand()) + " \"$@\"\n"
-+	mcpCfg, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"wick": map[string]any{
++	mcpCfg, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"emberloop": map[string]any{
 +		"command": wrapper, "args": []string{}, "env": env,
 +	}}})
 +	if err != nil {
 +		return "", err
 +	}
-+	serverName := name + "_wick"
++	serverName := name + "_emberloop"
 +	files := map[string][]byte{
 +		filepath.Join(agentDir, "agent.md"):        agyAgentFile(name, s.Role, pluginDir, serverName, toolNames),
-+		filepath.Join(pluginDir, "plugin.json"):   []byte(fmt.Sprintf("{\n  \"name\": %q,\n  \"description\": %q\n}\n", name, "wick MCP tools")),
++		filepath.Join(pluginDir, "plugin.json"):   []byte(fmt.Sprintf("{\n  \"name\": %q,\n  \"description\": %q\n}\n", name, "emberloop MCP tools")),
 +		filepath.Join(pluginDir, "mcp_config.json"): append(mcpCfg, '\n'),
 +	}
 +	for path, data := range files {
@@ -230,13 +230,13 @@ index 0000000..a7ccf3b
 +	return name, nil
 +}
 +
-+// agyServerCommand resolves wick-mcp once, so the plugin's server entry does
++// agyServerCommand resolves emberloop-mcp once, so the plugin's server entry does
 +// not depend on the PATH agy hands MCP servers.
 +func agyServerCommand() string {
-+	if p, err := exec.LookPath("wick-mcp"); err == nil {
++	if p, err := exec.LookPath("emberloop-mcp"); err == nil {
 +		return p
 +	}
-+	return "wick-mcp"
++	return "emberloop-mcp"
 +}
 +
 +// agyShQuote quotes one path for the generated wrapper's POSIX shell.
@@ -244,7 +244,7 @@ index 0000000..a7ccf3b
 +	var b strings.Builder
 +	b.WriteString("---\n")
 +	fmt.Fprintf(&b, "name: %s\n", name)
-+	fmt.Fprintf(&b, "description: %s\n", "wick "+role+" session")
++	fmt.Fprintf(&b, "description: %s\n", "emberloop "+role+" session")
 +	b.WriteString("mainAgent: true\n")
 +	b.WriteString("excludeDefaultComponents: true\n")
 +	b.WriteString("inheritCustomizations: false\n")
@@ -252,12 +252,12 @@ index 0000000..a7ccf3b
 +	b.WriteString("plugins:\n")
 +	fmt.Fprintf(&b, "  - %s\n", pluginDir)
 +	// An empty tools list keeps every built-in out: the agent must not reach
-+	// past wick's role policy. MCP tools surface as call_mcp_tool regardless
-+	// of this filter, and wick-mcp serves only the session's role set.
++	// past emberloop's role policy. MCP tools surface as call_mcp_tool regardless
++	// of this filter, and emberloop-mcp serves only the session's role set.
 +	b.WriteString("tools: []\n")
 +	b.WriteString("---\n")
 +	b.WriteString("\n# Agent System Instructions\n\n")
-+	b.WriteString("Wick's tools are the only tools you may use for file and shell work. They are\n")
++	b.WriteString("Emberloop's tools are the only tools you may use for file and shell work. They are\n")
 +	b.WriteString("served over MCP by the attached, running server. Call them exclusively through\n")
 +	b.WriteString("the `call_mcp_tool` function: it is declared and working, and the server below\n")
 +	b.WriteString("is attached. Never call any other tool for file or shell work; if a task needs\n")
@@ -286,7 +286,7 @@ index 0000000..a7ccf3b
 +	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 +		return err
 +	}
-+	tmp, err := os.CreateTemp(filepath.Dir(path), ".wick.tmp.*")
++	tmp, err := os.CreateTemp(filepath.Dir(path), ".emberloop.tmp.*")
 +	if err != nil {
 +		return err
 +	}
@@ -308,7 +308,7 @@ index 0000000..a7ccf3b
 +}
 +
 +// agyLogPath is where the session's CLI log is written (--log-file): under
-+// wick's state dir, named for the session, so whoever owns the session's
++// emberloop's state dir, named for the session, so whoever owns the session's
 +// lifetime can delete it. The log carries the conversation id agy minted,
 +// which maps the session to its transcript.
 +func agyLogPath(s Session) string {
@@ -328,7 +328,7 @@ index 0000000..a7ccf3b
 +	return models
 +}
 +
-+// sessionKey names one session's files under wick's state dir.
++// sessionKey names one session's files under emberloop's state dir.
 +func sessionKey(s Session) string {
 +	key := s.ID
 +	if key == "" {
@@ -391,13 +391,13 @@ index 0000000..a7ccf3b
 +
 +// agyGitExcludeBlock keeps the generated agents out of git status. The block
 +// is constant, so concurrent rewrites converge on the same file.
-+const agyGitExcludeBlock = "# wick: agy harness sessions (managed by wick-pig; safe to delete)\n" +
-+	".agents/agents/wick-*/\n" +
-+	".agents/plugins/wick-*/\n"
++const agyGitExcludeBlock = "# emberloop: agy harness sessions (managed by emberloop; safe to delete)\n" +
++	".agents/agents/emberloop-*/\n" +
++	".agents/plugins/emberloop-*/\n"
 +
-+// ensureAgyGitExclude appends the wick block to the checkout's local git
++// ensureAgyGitExclude appends the emberloop block to the checkout's local git
 +// exclude file, so generated agents never show in git status. The patterns
-+// are scoped to wick-* names, so a repo's own .agents content is unaffected.
++// are scoped to emberloop-* names, so a repo's own .agents content is unaffected.
 +// The block belongs to the common git dir: git does not honor a linked
 +// worktree's private info/exclude (verified live: the same pattern matches
 +// from the main checkout's exclude and not from the worktree's). Outside a
@@ -418,8 +418,8 @@ index 0000000..a7ccf3b
 +	lines := strings.Split(string(raw), "\n")
 +	keep := lines[:0]
 +	for _, l := range lines {
-+		if l == "" || l == "# wick: agy harness sessions (managed by wick-pig; safe to delete)" ||
-+			l == ".agents/agents/wick-*/" || l == ".agents/plugins/wick-*/" {
++		if l == "" || l == "# emberloop: agy harness sessions (managed by emberloop; safe to delete)" ||
++			l == ".agents/agents/emberloop-*/" || l == ".agents/plugins/emberloop-*/" {
 +			continue
 +		}
 +		keep = append(keep, l)
@@ -714,13 +714,13 @@ index 0000000..a7ccf3b
 +	}
 +	return m[1]
 +}
-diff --git a/wick-pig/agy_test.go b/wick-pig/agy_test.go
+diff --git a/emberloop/agy_test.go b/emberloop/agy_test.go
 new file mode 100644
 index 0000000..36e0cc0
 --- /dev/null
-+++ b/wick-pig/agy_test.go
++++ b/emberloop/agy_test.go
 @@ -0,0 +1,629 @@
-+package wick
++package emberloop
 +
 +import (
 +	"encoding/json"
@@ -735,7 +735,7 @@ index 0000000..36e0cc0
 +// agySession is a worker session rooted in a temp dir, so agent generation and
 +// trust stay out of the real checkout and the real agy config.
 +func agySession(role string) Session {
-+	dir := filepath.Join(os.TempDir(), "wick-agy-test")
++	dir := filepath.Join(os.TempDir(), "emberloop-agy-test")
 +	return Session{Role: role, Cwd: dir, Label: "agy-test", Prompt: "answer"}
 +}
 +
@@ -774,7 +774,7 @@ index 0000000..36e0cc0
 +	if strings.Contains(line, "\n") {
 +		t.Errorf("pane run types one line: %q", line)
 +	}
-+	if !strings.HasPrefix(line, "WICK_ROLE=work ") && !strings.Contains(line, " WICK_ROLE=work ") {
++	if !strings.HasPrefix(line, "EMBERLOOP_ROLE=work ") && !strings.Contains(line, " EMBERLOOP_ROLE=work ") {
 +		t.Errorf("role missing: %q", line)
 +	}
 +	if !strings.HasSuffix(line, `"Read /state/briefs/01-x.md and follow it exactly."`) {
@@ -783,7 +783,7 @@ index 0000000..36e0cc0
 +}
 +// The stripped agent mirrors the stripped-claude test: the --agent flag names
 +// a workspace agent, the definition drops agy's defaults and customizations,
-+// serves only wick's MCP server, and carries wick's system prompt.
++// serves only emberloop's MCP server, and carries emberloop's system prompt.
 +func TestAgyRunsStripped(t *testing.T) {
 +	ws := isolateAgy(t)
 +	cmd, err := BuildCommand("agy", Session{Role: "review", Cwd: ws, Model: "m", Prompt: "p"})
@@ -852,19 +852,19 @@ index 0000000..36e0cc0
 +		t.Fatalf("mcp_config.json is not JSON: %v", err)
 +	}
 +	if len(mcpCfg.MCPServers) != 1 {
-+		t.Fatalf("the agent must serve only wick's MCP server, got %s", mcpRaw)
++		t.Fatalf("the agent must serve only emberloop's MCP server, got %s", mcpRaw)
 +	}
-+	srv := mcpCfg.MCPServers["wick"]
++	srv := mcpCfg.MCPServers["emberloop"]
 +	if srv.Command == "" {
-+		t.Errorf("the one MCP server must be wick's, got %s", mcpRaw)
++		t.Errorf("the one MCP server must be emberloop's, got %s", mcpRaw)
 +	}
-+	if srv.Env["WICK_ROLE"] != "review" {
++	if srv.Env["EMBERLOOP_ROLE"] != "review" {
 +		t.Errorf("the MCP server must carry the session role, got %s", mcpRaw)
 +	}
 +	// The server is the generated wrapper at its absolute path: agy starts
 +	// MCP servers in the plugin directory, so the wrapper cds back to the
-+	// workspace before execing wick-mcp.
-+	wrapper := filepath.Join(pluginLine, "wick-mcp.sh")
++	// workspace before execing emberloop-mcp.
++	wrapper := filepath.Join(pluginLine, "emberloop-mcp.sh")
 +	if srv.Command != wrapper {
 +		t.Errorf("the server command must be the workspace wrapper %s, got %s", wrapper, srv.Command)
 +	}
@@ -875,15 +875,15 @@ index 0000000..36e0cc0
 +	if info, err := os.Stat(wrapper); err != nil || info.Mode()&0o111 == 0 {
 +		t.Errorf("the server wrapper must be executable: %v", err)
 +	}
-+	for _, want := range []string{"cd ", ws, "exec ", "wick-mcp"} {
++	for _, want := range []string{"cd ", ws, "exec ", "emberloop-mcp"} {
 +		if !strings.Contains(string(wrapperSrc), want) {
-+			t.Errorf("the wrapper must cd to the workspace and exec wick-mcp, missing %q in:\n%s", want, wrapperSrc)
++			t.Errorf("the wrapper must cd to the workspace and exec emberloop-mcp, missing %q in:\n%s", want, wrapperSrc)
 +		}
 +	}
-+	// The agent carries the calling convention for wick's tools: agy never
++	// The agent carries the calling convention for emberloop's tools: agy never
 +	// enumerates MCP server names, so without it the model cannot find its
 +	// tools and confabulates instead.
-+	serverName := agent + "_wick"
++	serverName := agent + "_emberloop"
 +	for _, want := range []string{"call_mcp_tool", serverName, "Tools available to this session: find, read"} {
 +		if !strings.Contains(text, want) {
 +			t.Errorf("agent definition missing %q:\n%s", want, text)
@@ -940,7 +940,7 @@ index 0000000..36e0cc0
 +
 +// Building an agy command never touches the user's global agy config, except
 +// for the trust entry Trust owns: the agent, plugin and log live under the
-+// workspace and wick's state dir.
++// workspace and emberloop's state dir.
 +func TestAgyBuildLeavesTheGlobalConfigAlone(t *testing.T) {
 +	ws := isolateAgy(t)
 +	home := os.Getenv("HOME")
@@ -1024,7 +1024,7 @@ index 0000000..36e0cc0
 +	}
 +}
 +// TestAgyAgentsAreExcludedFromGitStatus excludes the generated agents through
-+// the checkout's local git exclude file, scoped to wick-* names so a repo's
++// the checkout's local git exclude file, scoped to emberloop-* names so a repo's
 +// own .agents content still shows.
 +func TestAgyAgentsAreExcludedFromGitStatus(t *testing.T) {
 +	ws := isolateAgy(t)
@@ -1043,7 +1043,7 @@ index 0000000..36e0cc0
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	for _, want := range []string{"# local ignores\n", "result/\n", ".agents/agents/wick-*/", ".agents/plugins/wick-*/"} {
++	for _, want := range []string{"# local ignores\n", "result/\n", ".agents/agents/emberloop-*/", ".agents/plugins/emberloop-*/"} {
 +		if !strings.Contains(string(raw), want) {
 +			t.Errorf("exclude must keep %q, got:\n%s", want, raw)
 +		}
@@ -1052,7 +1052,7 @@ index 0000000..36e0cc0
 +		t.Fatal(err)
 +	}
 +	again, _ := os.ReadFile(exclude)
-+	if strings.Count(string(again), ".agents/agents/wick-*/") != 1 {
++	if strings.Count(string(again), ".agents/agents/emberloop-*/") != 1 {
 +		t.Errorf("the exclude block must not duplicate:\n%s", again)
 +	}
 +}
@@ -1079,7 +1079,7 @@ index 0000000..36e0cc0
 +	if err != nil {
 +		t.Fatalf("exclude must land in the common dir: %v", err)
 +	}
-+	if !strings.Contains(string(raw), ".agents/agents/wick-*/") {
++	if !strings.Contains(string(raw), ".agents/agents/emberloop-*/") {
 +		t.Errorf("exclude block missing:\n%s", raw)
 +	}
 +	if _, err := os.Stat(filepath.Join(private, "info", "exclude")); !os.IsNotExist(err) {
@@ -1170,7 +1170,7 @@ index 0000000..36e0cc0
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	t.Setenv("WICK_AGY", "fake-agy")
++	t.Setenv("EMBERLOOP_AGY", "fake-agy")
 +	var ran string
 +	var args []string
 +	run := func(cmd string, a []string, _ ExecOpts) (Result, error) {
@@ -1312,7 +1312,7 @@ index 0000000..36e0cc0
 +}
 +// TestAgySessionTranscriptMapsTheSessionToItsConversation resolves the
 +// conversation id agy minted from the session's log file, then the
-+// transcript under the brain dir: wick sessions never share agy's id.
++// transcript under the brain dir: emberloop sessions never share agy's id.
 +func TestAgySessionTranscriptMapsTheSessionToItsConversation(t *testing.T) {
 +	home := t.TempDir()
 +	t.Setenv("HOME", home)
@@ -1349,10 +1349,10 @@ index 0000000..36e0cc0
 +		t.Errorf("transcript fallback = %q, want %q", got, simple)
 +	}
 +}
-diff --git a/wick-pig/harness.go b/wick-pig/harness.go
+diff --git a/emberloop/harness.go b/emberloop/harness.go
 index ff56ab5..1713bcc 100644
---- a/wick-pig/harness.go
-+++ b/wick-pig/harness.go
+--- a/emberloop/harness.go
++++ b/emberloop/harness.go
 @@ -95,6 +95,7 @@ func Register(h Harness) { registry[h.Name()] = h }
  func init() {
  	Register(pigHarness{})
@@ -1366,11 +1366,11 @@ index ff56ab5..1713bcc 100644
  }
  
 +// mcpConfigPath is where the MCP config of one claude session is written: under
-+// wick's state dir, named for the session, so whoever owns the session's
++// emberloop's state dir, named for the session, so whoever owns the session's
 +// lifetime can delete it. A temp file outlives every launch that makes one.
 +// mcpConfigPath is where the MCP config of one claude session is written: under
  // mcpConfigPath is where the MCP config of one claude session is written: under
- // wick's state dir, named for the session, so whoever owns the session's
+ // emberloop's state dir, named for the session, so whoever owns the session's
  // lifetime can delete it. A temp file outlives every launch that makes one.
  func mcpConfigPath(s Session) string {
 -	key := s.ID
@@ -1385,16 +1385,16 @@ index ff56ab5..1713bcc 100644
  }
 -
  // CleanupSession removes the per-session files a harness launch left behind:
--// the MCP config claude reads at startup and the launch file `wick-pig exec`
--// reads, both under wick's state dir. Call it when the session ends; a file
--// that is already gone is the wanted end state, not a failure. `wick-pig
+-// the MCP config claude reads at startup and the launch file `emberloop exec`
+-// reads, both under emberloop's state dir. Call it when the session ends; a file
+-// that is already gone is the wanted end state, not a failure. `emberloop
 -// exec` already consumes the launch file once it has read it, so this is the
 -// backup for a launch that never started.
 -func CleanupSession(s Session) { _ = os.Remove(mcpConfigPath(s)); _ = os.Remove(launchPath(s)) }
 +// the MCP config claude reads at startup, the CLI log agy maps its session
-+// through, and the launch file `wick-pig exec` reads, all under wick's state
++// through, and the launch file `emberloop exec` reads, all under emberloop's state
 +// dir. Call it when the session ends; a file that is already gone is the
-+// wanted end state, not a failure. `wick-pig exec` already consumes the
++// wanted end state, not a failure. `emberloop exec` already consumes the
 +// launch file once it has read it, so this is the backup for a launch that
 +// never started. The generated agy agents stay: they are shared by role and
 +// tool set, and excluded from git status.
@@ -1405,14 +1405,14 @@ index ff56ab5..1713bcc 100644
 +}
  
  // cleanupMCP removes only the MCP config, for launches whose launch file the
- // pane's `wick-pig exec` still has to consume: deleting it right after pane
-diff --git a/wick-pig/harness_test.go b/wick-pig/harness_test.go
+ // pane's `emberloop exec` still has to consume: deleting it right after pane
+diff --git a/emberloop/harness_test.go b/emberloop/harness_test.go
 index a1686ca..ebd1c22 100644
---- a/wick-pig/harness_test.go
-+++ b/wick-pig/harness_test.go
+--- a/emberloop/harness_test.go
++++ b/emberloop/harness_test.go
 @@ -22,8 +22,14 @@ func isolateState(t *testing.T) {
  func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
- 	t.Setenv("WICK_SKILLS_DIR", "/skills")
+ 	t.Setenv("EMBERLOOP_SKILLS_DIR", "/skills")
  	isolateState(t)
 +	home := t.TempDir()
 +	t.Setenv("HOME", home)
@@ -1441,7 +1441,7 @@ index a1686ca..ebd1c22 100644
  	isolateState(t)
 +	home := t.TempDir()
 +	t.Setenv("HOME", home)
- 	t.Setenv("WICK_SKILLS_DIR", "/skills")
+ 	t.Setenv("EMBERLOOP_SKILLS_DIR", "/skills")
  	for _, name := range HarnessNames() {
 -		cmd, err := BuildCommand(name, Session{Role: "full"})
 +		ws := t.TempDir()
@@ -1455,57 +1455,57 @@ index a1686ca..ebd1c22 100644
 +			if err != nil {
 +				t.Fatalf("agy: cannot read the generated agent: %v", err)
 +			}
-+			if !strings.Contains(string(raw), "wick://matt-pocock") {
++			if !strings.Contains(string(raw), "emberloop://matt-pocock") {
 +				t.Errorf("agy: the agent's system prompt must name the skill library, got:\n%s", raw)
 +			}
 +			continue
 +		}
- 		if !strings.Contains(cmd.Line(), "wick://matt-pocock") {
+ 		if !strings.Contains(cmd.Line(), "emberloop://matt-pocock") {
  			t.Errorf("%s: the system prompt must name the skill library, got %q", name, cmd.Line())
  		}
-diff --git a/wick-pig/live_test.go b/wick-pig/live_test.go
+diff --git a/emberloop/live_test.go b/emberloop/live_test.go
 index 69aedf9..ce70676 100644
---- a/wick-pig/live_test.go
-+++ b/wick-pig/live_test.go
+--- a/emberloop/live_test.go
++++ b/emberloop/live_test.go
 @@ -8,13 +8,12 @@ import (
  	"time"
  )
  
--// TestLiveReadOnly runs a real reviewer pane. WICK_LIVE=pig|claude, inside herdr.
-+// TestLiveReadOnly runs a real reviewer pane. WICK_LIVE=pig|claude|agy, inside herdr.
+-// TestLiveReadOnly runs a real reviewer pane. EMBERLOOP_LIVE=pig|claude, inside herdr.
++// TestLiveReadOnly runs a real reviewer pane. EMBERLOOP_LIVE=pig|claude|agy, inside herdr.
  func TestLiveReadOnly(t *testing.T) {
- 	h := os.Getenv("WICK_LIVE")
+ 	h := os.Getenv("EMBERLOOP_LIVE")
  	if h == "" {
--		t.Skip("set WICK_LIVE=pig or claude, inside herdr")
-+		t.Skip("set WICK_LIVE=pig, claude or agy, inside herdr")
+-		t.Skip("set EMBERLOOP_LIVE=pig or claude, inside herdr")
++		t.Skip("set EMBERLOOP_LIVE=pig, claude or agy, inside herdr")
  	}
--	t.Setenv("WICK_READONLY_HARNESS", h)
+-	t.Setenv("EMBERLOOP_READONLY_HARNESS", h)
  	statePath = filepath.Join(t.TempDir(), "workers.json")
- 	got, err := ReadOnly(osExec, mustAbs(t, ".."), "", "Use read on wick-pig/go.mod. Reply with only its first line.")
+ 	got, err := ReadOnly(osExec, mustAbs(t, ".."), "", "Use read on emberloop/go.mod. Reply with only its first line.")
  	if err != nil {
 @@ -33,13 +32,14 @@ func mustAbs(t *testing.T, p string) string {
  	return a
  }
  
--// TestLiveModels lists a real harness's models through its CLI. WICK_LIVE=pig
+-// TestLiveModels lists a real harness's models through its CLI. EMBERLOOP_LIVE=pig
 -// or claude. It proves the listing is a real run that answers and exits --
 -// claude's initialize spends no tokens, so this is safe to repeat.
-+// TestLiveModels lists a real harness's models through its CLI. WICK_LIVE=pig,
++// TestLiveModels lists a real harness's models through its CLI. EMBERLOOP_LIVE=pig,
 +// claude or agy. It proves the listing is a real run that answers and exits --
 +// claude's initialize spends no tokens and agy's listing is free, so this is
 +// safe to repeat.
  func TestLiveModels(t *testing.T) {
- 	h := os.Getenv("WICK_LIVE")
+ 	h := os.Getenv("EMBERLOOP_LIVE")
  	if h == "" {
--		t.Skip("set WICK_LIVE=pig or claude")
-+		t.Skip("set WICK_LIVE=pig, claude or agy")
+-		t.Skip("set EMBERLOOP_LIVE=pig or claude")
++		t.Skip("set EMBERLOOP_LIVE=pig, claude or agy")
  	}
  	isolateState(t)
  	list, err := CachedModels(h, osExec, true)
-diff --git a/wick-pig/models.go b/wick-pig/models.go
+diff --git a/emberloop/models.go b/emberloop/models.go
 index 300dc8f..c91026e 100644
---- a/wick-pig/models.go
-+++ b/wick-pig/models.go
+--- a/emberloop/models.go
++++ b/emberloop/models.go
 @@ -16,6 +16,9 @@ type Model struct {
  	ID      string   `json:"id"`
  	Label   string   `json:"label,omitempty"`
@@ -1516,10 +1516,10 @@ index 300dc8f..c91026e 100644
  }
  
  // pigEffortLevels are the thinking levels pig takes. The spec fixes them, so a
-diff --git a/wick-pig/readonly.go b/wick-pig/readonly.go
+diff --git a/emberloop/readonly.go b/emberloop/readonly.go
 index f532d9d..7babe2b 100644
---- a/wick-pig/readonly.go
-+++ b/wick-pig/readonly.go
+--- a/emberloop/readonly.go
++++ b/emberloop/readonly.go
 @@ -207,7 +207,7 @@ func (a readOnlyAgent) reply(run Exec, after int64) (string, error) {
  // transcriptSize is how long the agent's transcript is now; a reply to a
  // message sent after this point is one written past it.
@@ -1537,13 +1537,13 @@ index f532d9d..7babe2b 100644
  // tell sends the agent a follow-up and waits for its reply to it.
  func (a readOnlyAgent) tell(run Exec, text string) (string, error) {
  	size := a.transcriptSize()
-diff --git a/wick-pig/scoutprint_test.go b/wick-pig/scoutprint_test.go
+diff --git a/emberloop/scoutprint_test.go b/emberloop/scoutprint_test.go
 new file mode 100644
 index 0000000..5acd353
 --- /dev/null
-+++ b/wick-pig/scoutprint_test.go
++++ b/emberloop/scoutprint_test.go
 @@ -0,0 +1,36 @@
-+package wick
++package emberloop
 +
 +import (
 +	"fmt"
@@ -1564,7 +1564,7 @@ index 0000000..5acd353
 +		Role:   "review",
 +		Cwd:    cwd,
 +		ID:     newSessionID(),
-+		Prompt: "Use read on wick-pig/go.mod. Reply with only its first line.\n\nYour last message is your answer.",
++		Prompt: "Use read on emberloop/go.mod. Reply with only its first line.\n\nYour last message is your answer.",
 +	}
 +	launch, err := PrepareLaunch("agy", sess)
 +	if err != nil {
@@ -1579,10 +1579,10 @@ index 0000000..5acd353
 +		t.Fatal(err)
 +	}
 +}
-diff --git a/wick-pig/spawn.go b/wick-pig/spawn.go
+diff --git a/emberloop/spawn.go b/emberloop/spawn.go
 index 22c3c26..5d888f6 100644
---- a/wick-pig/spawn.go
-+++ b/wick-pig/spawn.go
+--- a/emberloop/spawn.go
++++ b/emberloop/spawn.go
 @@ -138,7 +138,7 @@ func spawnSchema() map[string]any {
  					"repo":    map[string]any{"type": "string", "description": "worktree type: repo root. Defaults to the session cwd."},
  					"base":    map[string]any{"type": "string", "description": "worktree type: base ref. Defaults to HEAD."},
@@ -1592,10 +1592,10 @@ index 22c3c26..5d888f6 100644
  					"model":   map[string]any{"type": "string", "description": "worktree type: model passed through to the harness."},
  					"effort":  map[string]any{"type": "string", "description": "worktree type: reasoning effort for the harness."},
  				},
-diff --git a/wick-pig/stopgate_test.go b/wick-pig/stopgate_test.go
+diff --git a/emberloop/stopgate_test.go b/emberloop/stopgate_test.go
 index e6f5470..f307e0c 100644
---- a/wick-pig/stopgate_test.go
-+++ b/wick-pig/stopgate_test.go
+--- a/emberloop/stopgate_test.go
++++ b/emberloop/stopgate_test.go
 @@ -73,6 +73,11 @@ func TestHarnessGateCapability(t *testing.T) {
  	if g := Registered("claude").Gate(); g == nil || g.CanPin() {
  		t.Error("claude cannot pin a tool")
@@ -1608,10 +1608,10 @@ index e6f5470..f307e0c 100644
  }
  
  // The excerpt from the hook is preferred; a hook that omits it falls back to
-diff --git a/wick-pig/transcript.go b/wick-pig/transcript.go
+diff --git a/emberloop/transcript.go b/emberloop/transcript.go
 index 0e21ef3..1c696fd 100644
---- a/wick-pig/transcript.go
-+++ b/wick-pig/transcript.go
+--- a/emberloop/transcript.go
++++ b/emberloop/transcript.go
 @@ -33,6 +33,20 @@ func findSession(root, id string) string {
  	return found
  }

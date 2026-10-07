@@ -19,7 +19,7 @@ func (r *voiceRegistrar) OnEvent(event string, h sdk.EventFunc) func() {
 	return func() {}
 }
 
-// Every turn gets wick's reminder as a hidden custom message, asked of wick so
+// Every turn gets emberloop's reminder as a hidden custom message, asked of emberloop so
 // both harnesses read the same words.
 func TestVoiceReminderRidesEveryTurn(t *testing.T) {
 	r := &voiceRegistrar{}
@@ -44,7 +44,7 @@ func TestVoiceReminderRidesEveryTurn(t *testing.T) {
 // A reminder that cannot be had never stops a turn.
 func TestVoiceReminderSkippedWhenUnavailable(t *testing.T) {
 	for name, run := range map[string]voiceRunner{
-		"error": func(sdk.Context) (string, error) { return "", errors.New("no wick-pig") },
+		"error": func(sdk.Context) (string, error) { return "", errors.New("no emberloop") },
 		"empty": func(sdk.Context) (string, error) { return " \n", nil },
 	} {
 		r := &voiceRegistrar{}

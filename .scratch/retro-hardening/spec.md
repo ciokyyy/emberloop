@@ -8,7 +8,7 @@ A retrospective on the run-records implement run found failures that every run w
 
 - `finish` refused a merge because the integration checkout had uncommitted changes, and its error truncated the file list, so the orchestrator could not say why and sat blocked.
 - The repo's check (`go vet`, `go test`) does not run gofmt, and one file has been unformatted since an early ticket. Two workers spent turns deciding whether that was theirs to fix.
-- A wick MCP server started by hand with no role falls back to the full tool set. A worker that believed its `spawn` tool was missing used this to start reviewers outside its own role.
+- A emberloop MCP server started by hand with no role falls back to the full tool set. A worker that believed its `spawn` tool was missing used this to start reviewers outside its own role.
 - Nothing records that a ticket is done: statuses stay `ready-for-agent` and checkboxes stay empty, because the orchestrator cannot edit files and workers cannot safely edit shared status lines.
 - `edit` answers only "updated successfully", so a range edit that swallowed code went unnoticed until the worker re-read the whole file. Failed edits and vet loops cost whole turns.
 - The repo has no `AGENTS.md`. Three workers each re-read the same 18 KB harness file in full, and all six read the whole spec; workers find where things live by reading, not by being told.
@@ -19,9 +19,9 @@ A second look at the live sessions' spawn calls found that **reviews were not ju
 - A pass on a dirty tree is stored as "the commit plus uncommitted", the same string for every dirty state. The memory worker rewrote its code after a first pass, called spawn again, and was told "every reviewer passed at <sha>; nothing to review" in 4 seconds, with nothing re-judged.
 - A follow-up review is given the diff since the reviewer's last commit. When the worker's changes sat uncommitted or the branch moved, that diff was the whole cumulative change again (one reviewer noted it), so follow-ups were neither narrow nor cheap.
 - Blocking spawns stopped waiting at about 4 minutes (213 to 247 seconds in every case) and answered "still running; end your turn". That is the intended hand-off, but it is undocumented and unmeasured, and it explains why some workers looked idle.
-- Spawn calls whose entries omitted `type` were rejected by the tool schema in under a second; that is the schema working, and a model error, not a wick fault.
+- Spawn calls whose entries omitted `type` were rejected by the tool schema in under a second; that is the schema working, and a model error, not a emberloop fault.
 
-A third finding, reported by the user: **when two agents spawn at the same moment, one of the two spawned agents is thrown away.** Reading the code, spawn's shared state is only safe inside one process, and every session runs its own wick MCP process:
+A third finding, reported by the user: **when two agents spawn at the same moment, one of the two spawned agents is thrown away.** Reading the code, spawn's shared state is only safe inside one process, and every session runs its own emberloop MCP process:
 
 - Grid placement (which slot a new pane takes, and creating the overflow tab) is serialised by an in-process lock over an in-memory record. Two processes read the same pane list, choose the same slot, and split the same source pane; one pane then sits outside the grid's record, and a later replace or prune can close it. Two processes can also both create the same overflow tab.
 - The worker store is read, changed and written back under an in-process lock only, and is written in place rather than renamed. A second process can overwrite an entry, and a reader can see a half-written file and treat a worker as unknown (which changes a review's base and tab).
@@ -33,7 +33,7 @@ The exact symptom has not been reproduced; the first ticket reproduces it before
 A fourth finding came from the second retro, on the finished run-records run: **a pass is tied to content, so every rebase invalidates it, and the orchestrator ran a stale tool server.**
 
 - Worker 05 needed six reviewer rounds; four were follow-ups after a rebase onto other tickets' merges, on its own unchanged work. A clean rebase moves the content around the worker's change but leaves the change itself identical.
-- The orchestrator's wick MCP process is long-lived. After the gate was fixed and the binaries rebuilt, it kept the old gate and refused two workers twice each for a bug already fixed; both were merged from outside. Replacing a wick binary under a running harness is what causes this, and also changes tool behaviour mid-session for every other live agent.
+- The orchestrator's emberloop MCP process is long-lived. After the gate was fixed and the binaries rebuilt, it kept the old gate and refused two workers twice each for a bug already fixed; both were merged from outside. Replacing a emberloop binary under a running harness is what causes this, and also changes tool behaviour mid-session for every other live agent.
 
 ## Delivered already (commit 81d72bd)
 
@@ -55,10 +55,10 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 4. As an orchestrator, I want git's own error text passed through whole, so that nothing is truncated that would explain a refusal.
 5. As a user, I want the repo's check to fail on unformatted Go, so that formatting is a result and not a judgement call.
 6. As a worker, I want the whole tree already gofmt-clean, so that a failing format check is always mine to fix.
-7. As a user, I want a wick MCP server with no role to refuse to start, so that no agent can reach spawn, finish or tell by launching one by hand.
-8. As a developer debugging wick, I want an explicit way to ask for the full tool set, so that the live scripts and manual debugging keep working.
+7. As a user, I want a emberloop MCP server with no role to refuse to start, so that no agent can reach spawn, finish or tell by launching one by hand.
+8. As a developer debugging emberloop, I want an explicit way to ask for the full tool set, so that the live scripts and manual debugging keep working.
 9. As a worker, I want the spawn tool to appear in my brief by its real name, so that I never conclude it is missing. (Delivered; keep the brief wording.)
-10. As a user, I want a ticket marked done by wick when its worker merges, so that status never depends on an agent remembering.
+10. As a user, I want a ticket marked done by emberloop when its worker merges, so that status never depends on an agent remembering.
 11. As a user, I want the ticket's checkboxes ticked at the same moment, so that a merged ticket reads as complete; the reviewers' pass is the check.
 12. As a user, I want a worker that is not merged to leave its ticket untouched, so that status tells the truth about the integration branch.
 13. As a user, I want the status change committed on the integration branch right after the merge, so that it never sits as uncommitted noise.
@@ -88,18 +88,18 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 37. As a maintainer, I want a concurrency test across real processes, so that this class of bug cannot return unseen.
 38. As a worker, I want my reviewers' pass to survive a clean rebase onto other merged tickets, so that I am not sent back to review unchanged work.
 39. As an orchestrator, I want a rebase that changes my worker's own change, or conflicts, to invalidate the pass, so that a real change is always reviewed.
-40. As a user, I want installing or updating wick's binaries to refuse while a harness run has live agents, so that no running session changes behaviour under itself.
+40. As a user, I want installing or updating emberloop's binaries to refuse while a harness run has live agents, so that no running session changes behaviour under itself.
 41. As a user, I want that refusal to name the live agents, so that I know what to wait for or stop.
 42. As a user, I want an explicit force option for the rare case, with a warning that live sessions keep the old binary until they restart, so that I can still choose.
-43. As a user, I want a wick process to say when it is older than the installed binary, so that a stale orchestrator is visible, not silent.
+43. As a user, I want a emberloop process to say when it is older than the installed binary, so that a stale orchestrator is visible, not silent.
 44. As a user, I want a cap on how many workers run at once, so that a wide frontier does not overload the model provider.
 
 ## Implementation Decisions
 
 - `finish` checks the integration checkout's working tree before the merge. A dirty path that the incoming change also touches blocks the merge and is named, with the instruction to commit or stash it. Dirty paths elsewhere, including the orchestrator's allowed note and ticket paths, do not block. Whatever git itself reports is passed through whole.
 - The repo's check command gains a formatting check, and the one unformatted file is formatted in the same change, so the check is green when it lands.
-- A wick MCP server started with no role exits with a message naming the roles. The full role is still available when asked for explicitly, by role flag or environment value; the live scripts and the debugging path use it. The pig and claude harnesses always set a role, so launches are unaffected.
-- Ticket completion moves into `finish`. After a successful merge, wick sets the ticket's status line to done, ticks its checkboxes, and commits that on the target branch. The worker entry gains the ticket path it was spawned from, which it already receives. A refused or conflicting merge leaves the ticket untouched. The orchestrator prompt stops asking the orchestrator to do this; the orchestrator's allowed-paths ability stays for specs and notes.
+- A emberloop MCP server started with no role exits with a message naming the roles. The full role is still available when asked for explicitly, by role flag or environment value; the live scripts and the debugging path use it. The pig and claude harnesses always set a role, so launches are unaffected.
+- Ticket completion moves into `finish`. After a successful merge, emberloop sets the ticket's status line to done, ticks its checkboxes, and commits that on the target branch. The worker entry gains the ticket path it was spawned from, which it already receives. A refused or conflicting merge leaves the ticket untouched. The orchestrator prompt stops asking the orchestrator to do this; the orchestrator's allowed-paths ability stays for specs and notes.
 - `edit` returns the changed region with a few lines of context on each side, and flags a patch whose deleted line count greatly exceeds its added count. The patch format and tag semantics do not change.
 - DOX is adopted with the framework's own contract: read the chain before editing, update the closest owning doc and affected parents and children after meaningful change, shape of child docs (purpose, ownership, local contracts, work guidance, verification, child index), concise and operational style. The root `AGENTS.md` is the framework text plus a project preamble and the child index; the tree is built by scanning the repo, not by hand-seeding.
 - Child docs go at each durable boundary: the main Go package, its tools, its MCP server, its built-in agent types and its test data, the herdr report extension, the Antigravity provider extension, the live scripts and the spec and ticket area. The main package's doc carries the file map the retro asked for. Verification in every doc points at the repo's check or says nothing.
@@ -110,12 +110,12 @@ Small mechanical fixes close each failure, and the repo adopts DOX (agent0ai/dox
 - A reviewer's follow-up diff is the difference between the snapshot it last judged and the current one, so it covers new and uncommitted files and shrinks to the real change. If the previous snapshot is gone (a rebase, a gc), the full diff is given and the prompt says so, as now.
 - The reviewer prompt states how many files the diff covers and how many the working tree changed or added; a mismatch is flagged in the prompt, not left for the reviewer to notice.
 - "Nothing to review" compares snapshots, not commits.
-- Concurrency: every piece of spawn state shared between sessions is guarded by a cross-process lock and written atomically, using the lock helper wick already has for agent state and reviewers. That covers grid placement and overflow-tab creation (per tab), the worker store, and the check-then-launch of a reviewer (per worktree and type). The grid's slot record is read under the same lock, from a file, not process memory.
+- Concurrency: every piece of spawn state shared between sessions is guarded by a cross-process lock and written atomically, using the lock helper emberloop already has for agent state and reviewers. That covers grid placement and overflow-tab creation (per tab), the worker store, and the check-then-launch of a reviewer (per worktree and type). The grid's slot record is read under the same lock, from a file, not process memory.
 - The spacing between launches uses a shared timestamp under a lock, so it holds across sessions.
 - The first ticket is a reproduction: concurrent spawns across real processes against a fake herdr, asserting every requested agent exists, owns a distinct pane, and appears in the stores. The fixes follow its failures.
 - A pass is recorded against the patch identity of the worker's own change (its diff from its base, hashed so that it does not depend on where the branch sits), beside the content snapshot. After a clean rebase the identity is the same, so the pass holds; after a conflict, an edit or a different change it differs, so the pass is stale. The gate accepts a pass when either the content or the patch identity matches. This supersedes the rebase handling of follow-up diffs: when only the base moved, the follow-up is the worker's own change against the new base, never the other tickets' work.
-- Wick binaries are installed through one command. It refuses while any agent of a run is live (worker, reviewer or scout panes known to the stores and the terminal multiplexer), names them, and exits without changing anything. A force option installs anyway and prints that running sessions keep the old binary. Nothing replaces a binary any other way.
-- A wick MCP server records its own binary's identity at start and, on a call, notes in its reply when the installed binary has changed since. It does not restart itself: restarting mid-run would drop state, and the install gate is what prevents the situation.
+- Emberloop binaries are installed through one command. It refuses while any agent of a run is live (worker, reviewer or scout panes known to the stores and the terminal multiplexer), names them, and exits without changing anything. A force option installs anyway and prints that running sessions keep the old binary. Nothing replaces a binary any other way.
+- A emberloop MCP server records its own binary's identity at start and, on a call, notes in its reply when the installed binary has changed since. It does not restart itself: restarting mid-run would drop state, and the install gate is what prevents the situation.
 - A setting caps concurrent workers (default three). Further workers from one spawn call start as earlier ones finish, and the call reports which are queued.
 - Spawn never waits. It starts the agents and returns, saying that one notice with every result will arrive and that the caller should end its turn. This applies to every agent type, blocking or not; the blocking flag now only decides whether the notice carries a full report or a one-line summary. The wait loop, the wait bound and the 'still running' reply are removed.
 - Results of one spawn call are a group. Each agent's submit is recorded as it comes; when the last agent of the group has submitted, one notice carrying all the results is delivered to the parent pane. An agent that cannot submit (pane gone) is reported in the group as lost, so the group always completes. A reviewer that is already judged at the exact state (held pass, same content) is reported in the first reply, not started, and is not part of the group.
@@ -157,8 +157,8 @@ Source of the findings: the retro run on the run-records implement session, this
 
 This work is built by the tool it changes, so:
 
-- Edit only files under the main Go package directory and this spec's ticket files. Never touch the installed binaries directory, the home-directory configuration of pig, claude, agents or wick, or the live scripts directory.
+- Edit only files under the main Go package directory and this spec's ticket files. Never touch the installed binaries directory, the home-directory configuration of pig, claude, agents or emberloop, or the live scripts directory.
 - Never install a binary or copy one anywhere. Build and test from the package directory with the build and test commands, skipping live tests.
-- Never run a live test. Never start wick-pig, pig or claude inside the work. Tests use a fake exec and temp directories, never the network or the real home.
+- Never run a live test. Never start emberloop, pig or claude inside the work. Tests use a fake exec and temp directories, never the network or the real home.
 - Servers, watchers and tails go to the background tool, never bash.
 - Keep vet and the test suite green at every commit.

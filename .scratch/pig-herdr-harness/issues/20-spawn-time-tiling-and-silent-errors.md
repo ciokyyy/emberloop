@@ -6,7 +6,7 @@ Blocked by: nothing
 
 ## What
 
-Ticket 19 added `tilePanes` (`wick-pig/tile.go`). Review found three gaps:
+Ticket 19 added `tilePanes` (`emberloop/tile.go`). Review found three gaps:
 
 1. `Spawn` in `worker.go` calls it right after `worktree create`, when the new tab holds one pane, so it always exits at the `len(ids)<2` guard. Spawning several workers never tiles anything.
 2. Both callers discard the error, so a failed tile is silent. The "no divider can move" and "never evened out" returns are untested.
@@ -20,8 +20,8 @@ Ticket 19 added `tilePanes` (`wick-pig/tile.go`). Review found three gaps:
 
 ## Hard limits (this ticket is built by the tool it changes)
 
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig or claude inside the work.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig or claude inside the work.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go test -skip TestLive ./...` green.

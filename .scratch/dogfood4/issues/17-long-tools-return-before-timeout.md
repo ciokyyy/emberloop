@@ -18,8 +18,8 @@ Pig (and claude) abort an MCP tool call at 60s. `wait_workers`, `review_worker` 
 
 ## Hard limits (this ticket is built by the tool it changes)
 
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig or claude inside the work.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig or claude inside the work.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go test -skip TestLive ./...` green.

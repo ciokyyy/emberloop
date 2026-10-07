@@ -4,7 +4,7 @@ Read `.scratch/input-queue/spec.md`, `.scratch/input-queue/research-gate.md` and
 
 Done and merged on this branch: 06-shared-theme, 08-borderless-look, 11-claude-agent-detection-under-wrapper, 12-pane-padding. Do not redo them.
 
-Earlier worker attempts left branches and worktrees (01-control-channel-and-queue-core, 02-wick-input-row, 09-strip-on-pig-executors, 10-beautify-strip) under `.wick-worktrees/`. Read each one (git log, git diff and the check output, read-only) before spawning. Tell the worker for that ticket to continue from that branch when it has real work, and to rebase it onto this branch itself; start fresh only when the branch is empty or broken.
+Earlier worker attempts left branches and worktrees (01-control-channel-and-queue-core, 02-emberloop-input-row, 09-strip-on-pig-executors, 10-beautify-strip) under `.emberloop-worktrees/`. Read each one (git log, git diff and the check output, read-only) before spawning. Tell the worker for that ticket to continue from that branch when it has real work, and to rebase it onto this branch itself; start fresh only when the branch is empty or broken.
 
 Hard rules for you, the orchestrator: you never edit, write or delete a file, you never run git commit, rebase, merge, stash or reset, and you never work inside the main checkout or any worktree yourself. Every code change, rebase and conflict resolution is a worker's job: spawn a worker for it, or tell the existing worker. You read, spawn, tell, finish and report.
 

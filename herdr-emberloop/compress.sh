@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# herdr-emberloop compress action: signal the supervisor for the focused pane.
+#
+# The key binding invokes this action; herdr hands it the focused pane in
+# HERDR_PLUGIN_CONTEXT_JSON. It execs `emberloop request-compress` for that
+# pane, whatever the harness: at a tool boundary the pane compresses at
+# once, during a running tool call the request queues (the header shows
+# `compress queued`) and a second press forces it. EMBERLOOP_PIG_BIN overrides
+# the binary lookup, which is what the signal test uses.
+set -u
+
+pane="$(python3 -c 'import json,os; print(json.loads(os.environ.get("HERDR_PLUGIN_CONTEXT_JSON", "{}")).get("focused_pane_id", ""))' 2>/dev/null)"
+if [ -z "$pane" ]; then
+  echo "emberloop compress: no focused pane in the plugin context" >&2
+  exit 1
+fi
+bin="${EMBERLOOP_PIG_BIN:-emberloop}"
+exec "$bin" request-compress "$pane"

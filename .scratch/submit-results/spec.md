@@ -6,11 +6,11 @@ Status: ready-for-agent
 
 When I run an orchestrator session, the parent spawns workers and then has to block on `wait_workers` to learn what happened. That tool is capped below the harness tool timeout, so the parent calls it again and again: every call costs tokens and a turn, and the tool definition itself costs tokens on every request. `tell_worker` blocks the same way. Detecting "the worker is done" depends on reading each harness's transcript and guessing from the end of a turn, so a worker that stops to think out loud, gets stuck, or simply ends its turn looks the same as one that finished. There is no reliable, compact result: the parent gets whatever the worker said last, however long.
 
-On top of that, every kind of sub-agent is its own hardcoded tool: `spawn_worker`, `scout`, `code_review`, each with its own lifecycle written into wick. Adding a new kind of agent (a security reviewer, a test writer, a docs agent) means writing a new tool. Spawning several agents of different kinds at once means several separate calls, which run in parallel only if the harness happens to batch them.
+On top of that, every kind of sub-agent is its own hardcoded tool: `spawn_worker`, `scout`, `code_review`, each with its own lifecycle written into emberloop. Adding a new kind of agent (a security reviewer, a test writer, a docs agent) means writing a new tool. Spawning several agents of different kinds at once means several separate calls, which run in parallel only if the harness happens to batch them.
 
 ## Solution
 
-There is one `spawn` tool. It takes a list of agents, each with a **type**, and starts them all in parallel. A type is a definition, not code: it declares the agent's tools, its checkout (its own worktree, none, or its parent's worktree), whether spawning it blocks, what statuses it may submit, and what it may spawn itself. wick ships `worker`, `scout`, `reviewer-standards` and `reviewer-spec`, and a repo can add or override types with files. `tell` and `finish` complete the set.
+There is one `spawn` tool. It takes a list of agents, each with a **type**, and starts them all in parallel. A type is a definition, not code: it declares the agent's tools, its checkout (its own worktree, none, or its parent's worktree), whether spawning it blocks, what statuses it may submit, and what it may spawn itself. emberloop ships `worker`, `scout`, `reviewer-standards` and `reviewer-spec`, and a repo can add or override types with files. `tell` and `finish` complete the set.
 
 Every spawned agent reports with a `submit` tool, with a status from its type. Non-blocking types submit a one-line summary; blocking types submit a full report. Each harness has a stop gate that refuses to let an agent stop until it has submitted, as hard as that harness allows. For a **blocking** type (scouts, reviewers), `spawn` returns once every agent in the call has submitted, so a parent can run three scouts in parallel and get all three answers in one result; if they outlast the tool budget, `spawn` returns what is in and the rest arrive as notices. For a **non-blocking** type (workers), `spawn` returns right away, and each submit is delivered straight into the parent's herdr pane as a system notice: the harness's steering takes it mid-turn if the parent is busy, or it starts a turn if the parent is idle. The parent never waits or polls: `wait_workers` is gone, and so is "call again".
 
@@ -37,7 +37,7 @@ Every spawned agent reports with a `submit` tool, with a status from its type. N
 16. As a worker, I want to spawn the reviewer types my type allows, and have them review my worktree, so that my review loop is a normal spawn.
 17. As a worker, I want re-spawning a reviewer type I already have to re-prompt that same reviewer, so that it keeps its context and only re-checks open findings.
 18. As a worker, I want `finish` to require a `pass` at my branch tip from every reviewer type my type requires, so that the review gate still holds.
-19. As a user, I want to add an agent type by dropping a definition file into the repo, so that new kinds of agents need no wick code.
+19. As a user, I want to add an agent type by dropping a definition file into the repo, so that new kinds of agents need no emberloop code.
 20. As a user, I want a repo type with the same name as a built-in one to override it, so that I can tune a built-in type per project.
 21. As a user, I want an invalid type definition reported clearly at startup, naming the file and the problem, so that a typo doesn't fail silently.
 22. As an agent, I want a `submit` tool whose `status` is limited to my type's statuses, with a one-line `summary` of at most ~300 characters if my type is non-blocking or a free `report` if it is blocking, so that reporting back is one explicit act.
@@ -71,11 +71,11 @@ Every spawned agent reports with a `submit` tool, with a status from its type. N
   - optional `harness` and `model` defaults
 
   The body is the agent's brief or prompt template.
-- **Built-in types** are embedded in wick:
+- **Built-in types** are embedded in emberloop:
   - `worker`: `worktree`, non-blocking, statuses `done`/`blocked`, spawns both reviewer types, requires `pass` from both. It replaces `spawn_worker`, and its brief is today's worker brief.
   - `scout`: `none`, blocking, read-only tools, status `answered`. It replaces the `scout` tool.
   - `reviewer-standards` and `reviewer-spec`: `parent`, blocking, persistent, statuses `pass`/`changes`. They replace `code_review`'s two axes.
-- **Repo types** live in `.wick/agents/*.md`. They add new types and override built-ins by `name`. They are loaded and validated at MCP server start, and an invalid file is an error naming the file and field.
+- **Repo types** live in `.emberloop/agents/*.md`. They add new types and override built-ins by `name`. They are loaded and validated at MCP server start, and an invalid file is an error naming the file and field.
 - **Who may spawn what.** A top-level session's role says which types it may spawn (`implement`: worker and scout; `plan`: scout). A spawned agent may spawn its type's `spawns`. `spawn` rejects anything else.
 - **`spawn` tool.** Its argument is a list of `{type, prompt, …}`. For a `worktree` type, the entry also takes the type-specific fields `spawn_worker` takes today (ticket id, base, target, harness, model). Every agent in the list is started in parallel, with launches spaced as today. Blocking agents are awaited together, and their reports are returned in one result in list order. Non-blocking agents are returned as "started" at once. The tool description lists the types the caller may spawn, with their descriptions.
 - **Auto-background** (omp's auto-background). A blocking `spawn` or `tell` waits at most the tool budget (`ToolBudget`, 4 minutes today). When the budget runs out, it returns the reports already in, and says the rest are still running, their results will arrive as notices, and the caller should end its turn. From then on those agents' submits are delivered like non-blocking ones (the report, flattened where the delivery path needs it). This replaces the "still running, call the same tool again" answer everywhere.
@@ -95,10 +95,10 @@ Every spawned agent reports with a `submit` tool, with a status from its type. N
 
   The attempt count resets when a new turn starts, for example after a `tell` follow-up or a delivered notice. On claude, the `Stop` hook input's `stop_hook_active` tells the two apart: false means a fresh turn.
 - **Reminder wording** follows omp's yield reminder. It says the last turn had no submit (reminder n of 3) and that every turn ends with a tool call. It then gives the choices, first applicable first: keep working (the default, not an order to stop); submit a final status only if the work is genuinely complete; submit `blocked` only for a real, nameable blocker. It ends with: never invent a blocker, and never end a turn with text only.
-- **claude gate.** The claude launch passes a `Stop` hook inline through `--settings` (it still applies with `--setting-sources ""`). The hook runs a wick subcommand that reads the hook JSON on stdin, asks the decision, and writes `{"decision":"block","reason":<reminder>}` or nothing. claude cannot pin a tool, so its 3rd block just says it is the last one.
+- **claude gate.** The claude launch passes a `Stop` hook inline through `--settings` (it still applies with `--setting-sources ""`). The hook runs a emberloop subcommand that reads the hook JSON on stdin, asks the decision, and writes `{"decision":"block","reason":<reminder>}` or nothing. claude cannot pin a tool, so its 3rd block just says it is the last one.
 - **pig gate.** The pig agent's extension handles `agent_before_settle`, continuing with the reminder instead of settling. On the 3rd attempt it also handles `before_provider_request` to pin `tool_choice` to `submit`. It asks the same decision.
 - **Harness interface.** A harness provides a gate. pig and claude are the only harnesses and both get one. What to do about a harness that cannot have a gate is decided when such a harness is added.
-- **Parent guidance.** The `spawn` and `tell` results, the orchestrator prompts and the skills wick adapts say to end the turn while non-blocking agents run, because results arrive as messages.
+- **Parent guidance.** The `spawn` and `tell` results, the orchestrator prompts and the skills emberloop adapts say to end the turn while non-blocking agents run, because results arrive as messages.
 - **implement.** `implement` always runs in a herdr pane, and the headless parent path is removed.
 - **Follow-ups from the ticket-tabs run.** These are folded in here, as one ticket:
   - **Respawn pane.** The implementor's pane is found by its grid slot (slot 1, the tab's root), not by taking the first pane herdr lists for the tab. Before relaunching, whatever still runs in that pane is stopped, so the launch line is never typed into a live agent.
@@ -161,11 +161,11 @@ Every spawned agent reports with a `submit` tool, with a status from its type. N
 
 ## Further Notes
 
-- Prior art: oh-my-pi's subagents. Its single `task` tool with markdown agent definitions (frontmatter `name`, `description`, `tools`, `spawns`, `model`, `blocking`; it ships scout, reviewer, security-reviewer and task) is the model for agent types. Its `yield` tool, its reminder ladder (3 reminders, then `tool_choice` pinned to `yield`, skipped after a provider error, then a `SYSTEM WARNING: Subagent exited without calling yield tool after 3 reminders` fallback) and its `<system-notice>` async-result format are the models for `submit`, the gate and the notice. omp delivers in-process at step boundaries, while wick relies on herdr delivery and harness steering.
+- Prior art: oh-my-pi's subagents. Its single `task` tool with markdown agent definitions (frontmatter `name`, `description`, `tools`, `spawns`, `model`, `blocking`; it ships scout, reviewer, security-reviewer and task) is the model for agent types. Its `yield` tool, its reminder ladder (3 reminders, then `tool_choice` pinned to `yield`, skipped after a provider error, then a `SYSTEM WARNING: Subagent exited without calling yield tool after 3 reminders` fallback) and its `<system-notice>` async-result format are the models for `submit`, the gate and the notice. omp delivers in-process at step boundaries, while emberloop relies on herdr delivery and harness steering.
 - Defaults chosen without a grilling round, open to override:
   1. Statuses are defined per type, and the review gate reads reviewer submits.
   2. Reviewers and scouts are blocking. A worker only waits idle on its reviewers when their spawn was auto-backgrounded, and the stop gate allows that.
-  3. Types are built in, and repo files in `.wick/agents/` override them.
+  3. Types are built in, and repo files in `.emberloop/agents/` override them.
   4. Top-level roles still exist and decide what a session may spawn.
 - Decided in the re-review: the summary limit applies only to non-blocking types (blocking types submit a full report); blocking spawns auto-background past the budget instead of asking to be called again; every current harness gets a gate, and harnesses without one are decided when they arrive.
 - This changes the same areas as the ticket-tabs spec (worker spawn, orchestration tools, harness launch, reviewers). Start it only after ticket-tabs has merged and been installed.

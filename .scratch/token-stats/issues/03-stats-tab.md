@@ -2,7 +2,7 @@
 
 **What to build:** A Stats tab in the TUI with a scope selector (global, repo, spec, ticket, agent; opening from a selected spec or ticket pre-sets it) showing: tokens by piece type, per-tool table, the 50 most expensive single items, breakdowns by role, model, model plus effort, and harness. Any row opens the raw content (full prompt, arguments or result) read from the archive. Estimates are visibly marked.
 
-**Blocked by:** 02, wick-tui 03
+**Blocked by:** 02, emberloop-tui 03
 
 **Status:** ready-for-agent
 

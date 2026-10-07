@@ -14,11 +14,11 @@
 Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket implements, and its Hard limits section, which binds you.
  ## Probe finding (recorded 2026-10-05, static probe — no live pig/claude started, per Hard limits)
  
- Method: inspected the commands wick builds for each harness
- (`wick-pig/harness.go`: `pigHarness.Command`, `claudeHarness.Command`) and
+ Method: inspected the commands emberloop builds for each harness
+ (`emberloop/harness.go`: `pigHarness.Command`, `claudeHarness.Command`) and
  the pig harness's own docs (`pig docs`: `config.md` "Context files",
  `commands.md` flags). No agent was launched; the finding rests on which
- flags wick passes and what the docs say those flags leave loaded.
+ flags emberloop passes and what the docs say those flags leave loaded.
  
  ### pig harness (passes `--no-builtin-tools --no-skills`, no `--no-context-files`)
  
@@ -27,7 +27,7 @@ Spec: `.scratch/retro-hardening/spec.md`. Read it for the decisions this ticket 
    and every parent up to the filesystem root; each directory contributes
    the first file that exists in the order `AGENTS.override.md`, `AGENTS.md`,
    `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`. The opt-out is `--no-context-files`
-   (`-nc`), which wick never passes (`harness_test.go`:
+   (`-nc`), which emberloop never passes (`harness_test.go`:
    `TestPigWorkerGetsNoSkillsAndTheReporter` pins the pig command line).
  - `--no-builtin-tools` and `--no-skills` touch tools and skill discovery
    only (`commands.md`); they do not affect context files.

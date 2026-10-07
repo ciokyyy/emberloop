@@ -8,7 +8,7 @@
 
 - [x] Probe result recorded in this ticket
 - [x] Decision client requests usage when supported and returns it with the answers
-- [x] Log lines carry `WICK_AGENT_ID`, kind `find`, model, call count, usage or cost if any
+- [x] Log lines carry `EMBERLOOP_AGENT_ID`, kind `find`, model, call count, usage or cost if any
 - [x] Tests with a fake decision provider, with and without usage
 
 ## Probe result (2026-10-05, live endpoint, `typesafe/jev-1.13`)
@@ -32,5 +32,5 @@ One line per decision call in `<state>/usage/<agent-id>.jsonl`:
 provider?, usage?}` with `usage:{input_tokens, output_tokens, cost?}` verbatim
 from the endpoint. Each line is one call, so call counts come from counting
 lines grouped by `find_call_id`; `questions` is how many decisions that call
-carried. No `WICK_AGENT_ID` means no line (bare runs have nobody to bill).
-`WICK_STATE_DIR` redirects the state dir in tests.
+carried. No `EMBERLOOP_AGENT_ID` means no line (bare runs have nobody to bill).
+`EMBERLOOP_STATE_DIR` redirects the state dir in tests.

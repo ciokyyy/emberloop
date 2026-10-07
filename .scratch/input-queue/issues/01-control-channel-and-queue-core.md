@@ -1,4 +1,4 @@
-# 01: Wick prompts reach a wrapped agent through one queue
+# 01: Emberloop prompts reach a wrapped agent through one queue
 
 **What to build:** The wrapper that owns an agent child also owns a control channel (a unix socket named by agent identity) and a queue, and is the only writer to the child PTY. The shared prompt-delivery helper tries the channel first and falls back to the existing herdr path when no wrapper runs. Each item is a steer (delivered at the next tool boundary) or a queued message (delivered after the turn ends); delivery counts as accepted only when the transcript shows the turn, and an item a startup dialog swallowed stays at the head of the queue. The strip shows `N pending` while items wait. Compress handoffs, reviewer follow-ups, steering and late prompts all use this path.
 

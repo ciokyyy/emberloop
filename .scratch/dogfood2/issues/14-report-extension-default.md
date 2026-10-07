@@ -1,4 +1,4 @@
-# Workers must register with herdr without WICK_HERDR_REPORT
+# Workers must register with herdr without EMBERLOOP_HERDR_REPORT
 
 Type: build
 Status: open
@@ -6,7 +6,7 @@ Blocked by: nothing
 
 ## What
 
-`reportExtension()` in `wick-pig/extension.go` reads only `WICK_HERDR_REPORT`. When it is unset, pig workers launch without `-e herdr-report`, herdr never sees them as agents, their status stays `unknown`, and `wait_workers` never sees one settle.
+`reportExtension()` in `emberloop/extension.go` reads only `EMBERLOOP_HERDR_REPORT`. When it is unset, pig workers launch without `-e herdr-report`, herdr never sees them as agents, their status stays `unknown`, and `wait_workers` never sees one settle.
 
 ## Done when
 
@@ -17,9 +17,9 @@ Blocked by: nothing
 
 ## Hard limits (this ticket is built by the tool it changes)
 
-- Edit only files under `wick-pig/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
-- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `wick-pig/`.
-- Never run a `TestLive*` test. Never start wick-pig, pig or claude inside the work.
+- Edit only files under `emberloop/` (and this ticket's named files). Never touch `~/.local/bin`, `~/.pig`, `~/.claude`, `~/.claude.json`, or `scripts/`.
+- Never run `go install`, never copy binaries anywhere. Build with `go build ./...` and test with `go test -skip TestLive ./...` from `emberloop/`.
+- Never run a `TestLive*` test. Never start emberloop, pig or claude inside the work.
 - Servers, watchers and tails go to the `background` tool, never bash.
 - Keep `go test -skip TestLive ./...` green.
 

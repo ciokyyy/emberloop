@@ -138,7 +138,7 @@ for an occasional single-page fallback inside a Go tool.
 
 ## Integration shape (for ticket 07)
 
-- wick-pig owns one daemon: launch `chrome-headless-shell
+- emberloop owns one daemon: launch `chrome-headless-shell
   --remote-debugging-port=<loopback>` at first tier-3 need (lazy), reuse
   across reads, kill on process exit; per-read opens a fresh CDP
   target/tab, navigates with the existing 20 s timeout, extracts rendered
@@ -155,20 +155,20 @@ for an occasional single-page fallback inside a Go tool.
   with full Chrome/Chromium binary (covers the missing-`//chrome`
   features: extensions, rare UI flows), then the existing clear
   "not installed" error when no binary is present.
-- Install: `wick-pig deps` (ticket 19) fetches the pinned shell from the
-  Chrome-for-Testing JSON API into the wick state dir, prints a proof
+- Install: `emberloop deps` (ticket 19) fetches the pinned shell from the
+  Chrome-for-Testing JSON API into the emberloop state dir, prints a proof
   line, and the tier-3 stub keeps returning the clear error until then.
   Pin the revision (rod does the same by default) so behaviour is
   consistent across machines.
 
 ## Install steps (operator)
 
-1. `wick-pig deps` (after ticket 19 lands) — installs + verifies the
+1. `emberloop deps` (after ticket 19 lands) — installs + verifies the
    pinned `chrome-headless-shell` build. Manual equivalent: download the
    `chrome-headless-shell` asset for the platform from
    `googlechromelabs.github.io/chrome-for-testing` (JSON API) into the
-   wick state dir.
-2. `go get go-rod/rod go-rod/stealth` in `wick-pig` (both MIT).
+   emberloop state dir.
+2. `go get go-rod/rod go-rod/stealth` in `emberloop` (both MIT).
 3. No Python, Node, or 1 GB browser download. Optional: set the full-Chrome
    path for the tier-3 fallback; otherwise the shell alone suffices.
 
@@ -187,7 +187,7 @@ for an occasional single-page fallback inside a Go tool.
 4. Daemon lifecycle: a leaked browser process repeats the known
    orphaned-`chrome-headless-shell` failure (10 GB RAM leak report,
    claude-code #50783). Mitigation: `leakless`-style reaping, kill on
-   wick-mcp exit, and a `deps`/health check that refuses a stale daemon.
+   emberloop-mcp exit, and a `deps`/health check that refuses a stale daemon.
 5. Fingerprint consistency: shell + stock evasions do not rotate
    fingerprints per request (unlike Camoufox/Browserforge profiles);
    high-volume use from one IP will still be rate-limited — out of scope,

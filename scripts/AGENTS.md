@@ -9,7 +9,7 @@ and pig usable under the wrapper), the input-queue probe (row, steer and
 queue delivery, stale clear, raw mode, OSC colors and themes for claude
 and pig, plus the startup-dialog swallow case; injections go through the
 probe-ctrl.sh control-channel helper), the borderless-look probe (the
-tinted-block strip with the wickb themes, plus the restored rule and
+tinted-block strip with the emberloopb themes, plus the restored rule and
 frame for comparison), and the strip-look probe (each symbol preset and
 separator under wrap, with the Nerd Font codepoint check). Each script
 names its prerequisites

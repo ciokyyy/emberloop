@@ -10,7 +10,7 @@ files; the merge gate judges against them.
 ## Ownership
 
 Owns `spec.md` and `issues/` in this directory. Code changes from these
-tickets land in `wick-pig/` and the extension directories, owned by their
+tickets land in `emberloop/` and the extension directories, owned by their
 docs.
 
 ## Local Contracts
