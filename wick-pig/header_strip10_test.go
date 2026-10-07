@@ -180,17 +180,21 @@ func TestRenderStripProfilesPerPreset(t *testing.T) {
 // every tier renders lines that fit the width, with no replacement
 // character and no split glyph.
 func TestRenderStripWidthsNeverOverflow(t *testing.T) {
-	for _, preset := range []string{"nerd", "unicode", "ascii"} {
-		for _, sep := range []string{"powerline", "rounded", "none"} {
-			for _, width := range []int{100, 80, 60, 40, 30, 20} {
-				out := RenderHeader(wideSnapshot(), width, HeaderOpts{Dark: true, Profile: termenv.TrueColor, Symbols: preset, Separator: sep})
-				for _, row := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-					plain := stripANSI(row)
-					if lipgloss.Width(plain) > width {
-						t.Errorf("preset %s sep %s width %d overflows: %q (%d cells)", preset, sep, width, plain, lipgloss.Width(plain))
-					}
-					if strings.ContainsRune(plain, '�') {
-						t.Errorf("preset %s sep %s width %d splits a glyph: %q", preset, sep, width, plain)
+	longArgSnap := wideSnapshot()
+	longArgSnap.Running.Arg = "/very/long/nested/path/to/some/deeply/nested/component/wick/pig/header_tool.go"
+	for _, snap := range []HeaderSnapshot{wideSnapshot(), longArgSnap} {
+		for _, preset := range []string{"nerd", "unicode", "ascii"} {
+			for _, sep := range []string{"powerline", "rounded", "none"} {
+				for _, width := range []int{110, 100, 95, 90, 80, 60, 40, 30, 20} {
+					out := RenderHeader(snap, width, HeaderOpts{Dark: true, Profile: termenv.TrueColor, Symbols: preset, Separator: sep})
+					for _, row := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+						plain := stripANSI(row)
+						if lipgloss.Width(plain) > width {
+							t.Errorf("preset %s sep %s width %d overflows: %q (%d cells)", preset, sep, width, plain, lipgloss.Width(plain))
+						}
+						if strings.ContainsRune(plain, '\uFFFD') {
+							t.Errorf("preset %s sep %s width %d splits a glyph: %q", preset, sep, width, plain)
+						}
 					}
 				}
 			}
