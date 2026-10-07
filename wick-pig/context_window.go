@@ -40,7 +40,6 @@ func cleanModelName(model string) string {
 		lower = lower[idx+1:]
 	}
 	lower = strings.TrimPrefix(lower, "antigravity-")
-	lower = strings.TrimPrefix(lower, "agy-")
 	return lower
 }
 
@@ -55,13 +54,6 @@ func ModelWindow(model string, overrides map[string]int64) int64 {
 		}
 	}
 	cleaned := cleanModelName(model)
-	if cleaned != strings.ToLower(model) {
-		for name, window := range overrides {
-			if window > 0 && strings.EqualFold(name, cleaned) {
-				return window
-			}
-		}
-	}
 	best := -1
 	for i, fam := range modelWindowFamilies {
 		if strings.HasPrefix(cleaned, fam.prefix) && (best == -1 || len(fam.prefix) > len(modelWindowFamilies[best].prefix)) {

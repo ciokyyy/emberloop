@@ -479,12 +479,10 @@ func (h *headerCtx) stateCell() (string, string) {
 			return "⟳ compressing…", h.idle
 		}
 		return "⟳ compressing…", h.accent
-	case h.snap.State == HeaderCompressFailed || strings.HasPrefix(string(h.snap.State), "compress failed"):
+	case h.snap.State == HeaderCompressFailed:
 		text := "compress failed"
 		if h.snap.CompressFailed != "" {
 			text = "compress failed: " + h.snap.CompressFailed
-		} else if strings.HasPrefix(string(h.snap.State), "compress failed: ") {
-			text = string(h.snap.State)
 		}
 		return "⚠ " + text, h.hot
 	default:

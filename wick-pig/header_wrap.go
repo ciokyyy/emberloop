@@ -333,13 +333,15 @@ func shortCompressReason(s string) string {
 		return "no compressModel"
 	case strings.HasPrefix(msg, "summarizer failed:"):
 		sub := strings.TrimSpace(strings.TrimPrefix(msg, "summarizer failed:"))
-		if len(sub) > 0 && len(sub) <= 25 {
+		runes := []rune(sub)
+		if len(runes) > 0 && len(runes) <= 25 {
 			return sub
 		}
 		return "summarizer error"
 	case strings.HasPrefix(msg, "summarizer:"):
 		sub := strings.TrimSpace(strings.TrimPrefix(msg, "summarizer:"))
-		if len(sub) > 0 && len(sub) <= 25 {
+		runes := []rune(sub)
+		if len(runes) > 0 && len(runes) <= 25 {
 			return sub
 		}
 		return "summarizer error"
@@ -348,8 +350,9 @@ func shortCompressReason(s string) string {
 	default:
 		first := strings.Split(msg, "\n")[0]
 		first = strings.TrimSpace(first)
-		if len(first) > 25 {
-			return first[:22] + "…"
+		runes := []rune(first)
+		if len(runes) > 25 {
+			return string(runes[:22]) + "…"
 		}
 		return first
 	}

@@ -27,7 +27,7 @@ owns its `_test.go` and the behaviour below):
   second-press force, top-level fallback, single-flight claim, `request-compress`),
   `autocompress.go` (automatic trigger: threshold decision with cooldown and
   disable switch, concurrent sweep of worker panes and recorded top-level panes, supervisor loop with failure
-  backoff and visible refusal: error recorded in agent state and tools log, strip shows `compress failed: <reason>`,
+  backoff and visible failure: summary and restart errors recorded in agent state and tools log, strip shows `compress failed: <reason>`,
   10m cooldown parks pane, later success clears state, always-continue handoff),
   `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
   check), `compress_render.go` (transcript rendered as text in full),
@@ -82,7 +82,7 @@ owns its `_test.go` and the behaviour below):
   dir, never a per-run CLAUDE_CONFIG_DIR (a fresh one has no login or
   onboarding state) and never the user's saved settings),
   `header_wrap.go` (child size, scroll-region and margin filter, snapshot
-  builder reading the queued compress mark and compressing state),
+  builder reading the queued compress mark, compressing state, and persisted `CompressFailed` reason),
   `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
   pane palette set at start and reset at exit, on signals and across
   restarts, exit restore, the wrapper queue and pump, sets snapshot pending
