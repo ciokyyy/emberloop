@@ -49,7 +49,7 @@ owns its `_test.go` and the behaviour below):
   `wick-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go` (per-agent record: pane, session, compressed
   count, top-level role and cwd for compress restart, mid-compress claim with
-  stale steal the header shows as `compressing…`, `CompressFailed` reason for refused auto-compress), `agenttype.go`
+  stale steal the header shows as `compressing…`, `CompressFailed` reason for failed auto-compress), `agenttype.go`
   (built-in types plus `.wick/agents` overrides), `transcript.go`,
   `usage.go` (tailer parsing; rows land in `statedb/`), `memory.go`,
   `archive.go`, `prune.go` (deletes usage and overflow rows as well as files)
