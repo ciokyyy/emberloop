@@ -83,18 +83,22 @@ owns its `_test.go` and the behaviour below):
   per-run launch flags plus two wick-named claude theme files in its config
   dir, never a per-run CLAUDE_CONFIG_DIR (a fresh one has no login or
   onboarding state) and never the user's saved settings),
-  `header_wrap.go` (child size, scroll-region and margin filter, snapshot
+  `header_wrap.go` (child size, input row height `InputRowHeight`, scroll-region and margin filter, snapshot
   builder reading the queued compress mark, compressing state, and persisted `CompressFailed` reason),
-  `header_run.go` (PTY runner: reduced child size, forwarding, repaints,
-  pane palette set at start and reset at exit, on signals and across
+  `header_run.go` (PTY runner: reduced child size taking into account strip and optional input row,
+  forwarding, repaints, pane palette set at start and reset at exit, on signals and across
   restarts, exit restore, the wrapper queue and pump, sets snapshot pending
   count from the in-process queue, sole child-PTY writer, the child's own stderr
-  pipe beside the PTY; the
-  borderless soft top edge, with the strip-rule setting restoring the drawn
+  pipe beside the PTY; the borderless soft top edge, with the strip-rule setting restoring the drawn
   line), `header_source.go` (strip source from launch env,
   `wrap`/`exec`/top-level wiring, every wrapped launch serves the control
-  channel), `inputqueue.go` (one queue per wrapper: steer at the tool
-  boundary versus queued message at turn end, unix-socket channel named by
+  channel; `WrapTopLevel` enables the input row for top-level sessions),
+  `inputrow.go` (the wick input row editor between child screen and strip for top-level
+  sessions: takes user typing, Enter steer, Alt+Enter queue, Shift+Enter newline,
+  bracketed paste, Up history recall, Ctrl+C / Esc interrupt forwarding, 10 s stale clear),
+  `inputqueue.go` (one queue per wrapper: user submissions prioritized before pending
+  injections in arrival order, steer at tool boundary versus queued message at turn end,
+  injections held while the row holds a draft, unix-socket channel named by
   agent id, pump with transcript acceptance and head retry, DeliverPrompt
   in `transcript.go` tries the channel first with the herdr path as
   fallback); settings carry strip rows, frame, rule,

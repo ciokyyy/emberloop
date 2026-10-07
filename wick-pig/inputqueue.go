@@ -45,24 +45,45 @@ type queueItem struct {
 	Source string
 }
 
-// inputQueue is the wrapper's FIFO of prompts: user messages go first only
-// from ticket 02, the restart handoff pins ahead only from ticket 05, so
-// here enqueue always appends in arrival order.
+// inputQueue is the wrapper's FIFO of prompts: user messages go first before
+// pending injections (ticket 02), preserving arrival order among themselves.
+// The restart handoff pins ahead only from ticket 05.
 type inputQueue struct {
-	mu    sync.Mutex
-	items []queueItem
+	mu       sync.Mutex
+	items    []queueItem
+	inFlight bool
 }
 
 func newInputQueue() *inputQueue { return &inputQueue{} }
 
-// enqueue appends one item and reports the pending count. Text is collapsed
-// to a single line on the way in, so delivery and acceptance agree on what
-// the child receives.
+// enqueue appends or inserts one item and reports the pending count. Text is
+// collapsed to a single line on the way in, so delivery and acceptance agree
+// on what the child receives. User messages (Source == "user") go before
+// pending injections.
 func (q *inputQueue) enqueue(kind QueueKind, text, source string) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.items = append(q.items, queueItem{Kind: kind, Text: collapseLine(text), Source: source})
+	item := queueItem{Kind: kind, Text: collapseLine(text), Source: source}
+	if source == "user" {
+		start := 0
+		if q.inFlight && len(q.items) > 0 {
+			start = 1
+		}
+		idx := start
+		for idx < len(q.items) && q.items[idx].Source == "user" {
+			idx++
+		}
+		q.items = append(q.items[:idx], append([]queueItem{item}, q.items[idx:]...)...)
+	} else {
+		q.items = append(q.items, item)
+	}
 	return len(q.items)
+}
+
+func (q *inputQueue) setInFlight(v bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.inFlight = v
 }
 
 // len reports how many items wait.
@@ -266,6 +287,7 @@ func (q *inputQueue) pop() {
 	defer q.mu.Unlock()
 	if len(q.items) > 0 {
 		q.items = q.items[1:]
+		q.inFlight = false
 	}
 }
 
@@ -278,6 +300,7 @@ type pumpGates struct {
 	countTurns func(text string) int
 	write      func([]byte) error
 	now        func() time.Time
+	hasDraft   func() bool
 }
 
 // queuePump delivers one queue to one child: the head item goes out when
@@ -311,9 +334,13 @@ func (p *queuePump) step() {
 	head, ok := p.q.head()
 	if !ok {
 		p.written = false
+		p.q.setInFlight(false)
 		return
 	}
 	if !p.written {
+		if head.Source != "user" && p.gates.hasDraft != nil && p.gates.hasDraft() {
+			return
+		}
 		if !p.gates.gate(head.Kind) {
 			return
 		}
@@ -329,12 +356,14 @@ func (p *queuePump) step() {
 			return
 		}
 		p.written = true
+		p.q.setInFlight(true)
 		p.lastTry = p.gates.now()
 		return
 	}
 	if p.gates.countTurns(head.Text) > p.baseline {
 		p.q.pop()
 		p.written = false
+		p.q.setInFlight(false)
 		p.tries = 0
 		return
 	}
@@ -406,12 +435,17 @@ var queuePumpEvery = 500 * time.Millisecond
 // newWrapperPump delivers q to one wrapped child on the production gates:
 // a steer at the tool boundary, a queued message at turn end, accepted only
 // when the transcript shows the turn.
-func newWrapperPump(src HeaderSource, q *inputQueue, write func([]byte) error) *queuePump {
+func newWrapperPump(src HeaderSource, q *inputQueue, write func([]byte) error, hasDraft func() bool, now func() time.Time) *queuePump {
+	nowFn := time.Now
+	if now != nil {
+		nowFn = now
+	}
 	return newQueuePump(q, pumpGates{
 		gate:       func(kind QueueKind) bool { return queueGate(src, kind) },
 		countTurns: wrapperTurns(src),
 		write:      write,
-		now:        time.Now,
+		now:        nowFn,
+		hasDraft:   hasDraft,
 	})
 }
 

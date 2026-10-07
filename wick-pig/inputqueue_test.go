@@ -39,6 +39,23 @@ func TestInputQueueHoldsKindsInOrder(t *testing.T) {
 	}
 }
 
+// User messages go before pending injections in arrival order.
+func TestInputQueueUserBeforeInjections(t *testing.T) {
+	q := newInputQueue()
+	q.enqueue(QueueKindSteer, "inj1", "tell")
+	q.enqueue(QueueKindQueue, "inj2", "reviewer")
+	q.enqueue(QueueKindSteer, "user steer", "user")
+	q.enqueue(QueueKindQueue, "user queued", "user")
+	want := []string{"user steer", "user queued", "inj1", "inj2"}
+	for i, w := range want {
+		head, ok := q.head()
+		if !ok || head.Text != w {
+			t.Fatalf("item %d = %q (ok=%v), want %q", i, head.Text, ok, w)
+		}
+		q.pop()
+	}
+}
+
 // Seam: the wrapper's control channel. A real unix socket in a temp state
 // dir, a real queue behind it: enqueue through the socket, read the pending
 // count back through it.
@@ -150,6 +167,7 @@ func TestTellToWrappedAgentUsesWrapperChannel(t *testing.T) {
 type pumpScript struct {
 	boundary bool
 	turnDone bool
+	hasDraft bool
 	turns    map[string]int
 	sink     strings.Builder
 	now      time.Time
@@ -166,6 +184,7 @@ func (s *pumpScript) gates() pumpGates {
 		countTurns: func(text string) int { return s.turns[text] },
 		write:      func(b []byte) error { _, err := s.sink.Write(b); return err },
 		now:        func() time.Time { return s.now },
+		hasDraft:   func() bool { return s.hasDraft },
 	}
 }
 
@@ -218,6 +237,34 @@ func TestPumpAcceptedItemPops(t *testing.T) {
 	p.step()
 	if got := s.sink.String(); got != "first\rsecond\r" {
 		t.Errorf("child got %q, want both messages in order", got)
+	}
+}
+
+// Wick injections are held while the row holds a draft; a user submit goes
+// before pending injections and delivers first.
+func TestPumpHoldsInjectionsWhileDraft(t *testing.T) {
+	oldSettle := submitSettle
+	submitSettle = 0
+	defer func() { submitSettle = oldSettle }()
+	s := &pumpScript{boundary: true, turnDone: true, hasDraft: true, turns: map[string]int{}, now: time.Now()}
+	p := newQueuePump(newInputQueue(), s.gates())
+	p.enqueue(QueueKindSteer, "injection", "tell")
+	p.step()
+	if got := s.sink.String(); got != "" {
+		t.Fatalf("injection during draft wrote %q, want nothing", got)
+	}
+	// User submits while injection is waiting
+	p.enqueue(QueueKindSteer, "user steer", "user")
+	s.hasDraft = false
+	p.step()
+	if got := s.sink.String(); got != "user steer\r" {
+		t.Fatalf("first delivery wrote %q, want user steer first", got)
+	}
+	s.turns["user steer"] = 1
+	p.step() // user steer pops
+	p.step() // injection delivers
+	if got := s.sink.String(); got != "user steer\rinjection\r" {
+		t.Errorf("full delivery wrote %q, want user steer then injection", got)
 	}
 }
 
@@ -455,7 +502,7 @@ func TestWrapperTurnsDeferredTranscript(t *testing.T) {
 	src := HeaderSource{Harness: "pig", TranscriptPath: transcript}
 	q := newInputQueue()
 	var sink bytes.Buffer
-	p := newWrapperPump(src, q, func(b []byte) error { _, err := sink.Write(b); return err })
+	p := newWrapperPump(src, q, func(b []byte) error { _, err := sink.Write(b); return err }, nil, nil)
 	p.enqueue(QueueKindSteer, "steer it", "tell")
 	// Transcript does not exist yet: write happens, but item stays unaccepted.
 	p.step()

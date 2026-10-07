@@ -90,5 +90,7 @@ func WrapTopLevel(cmd Command, src HeaderSource) error {
 		return RunPlainCommand(cmd.Bin, cmd.Args, cmd.Env, os.Stdin, os.Stdout, os.Stderr)
 	}
 	cwd, _ := os.Getwd()
-	return WrapChild(wrapConfigFor(cmd, src, tools.EffectiveSettings(cwd)))
+	cfg := wrapConfigFor(cmd, src, tools.EffectiveSettings(cwd))
+	cfg.InputRow = true
+	return WrapChild(cfg)
 }

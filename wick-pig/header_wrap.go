@@ -24,12 +24,15 @@ import (
 // stay exact.
 const StripFootprint = 1
 
+// InputRowHeight is the terminal rows reserved for the wick input row (ticket 02).
+const InputRowHeight = 1
+
 // ChildSize is the terminal size the agent child runs at: the full width
 // minus one column per side when the frame is on, and the full height minus
 // the strip rows and its top rule. The child is told this size and gets it
 // again on every resize, so its own output never reaches the strip rows.
 func ChildSize(termW, termH, stripRows int, frame bool) (w, h int) {
-	return ChildSizePad(termW, termH, stripRows, frame, Pad{})
+	return ChildSizePadRow(termW, termH, stripRows, frame, Pad{}, false)
 }
 
 // Pad is the empty space around the wrapped agent screen and the strip:
@@ -44,10 +47,13 @@ const (
 	minPadChildH = 5
 )
 
-// FitPad shrinks pad until the child screen keeps minPadChildW columns and
-// minPadChildH rows (or padding is gone): the wider side column gives first,
-// then the bottom rows.
-func FitPad(termW, termH, stripRows int, frame bool, pad Pad) Pad {
+// FitPadRow shrinks pad until the child screen keeps minPadChildW columns and
+// minPadChildH rows (or padding is gone).
+func FitPadRow(termW, termH, stripRows int, frame bool, pad Pad, row bool) Pad {
+	extra := 0
+	if row {
+		extra = InputRowHeight
+	}
 	frameCols := 0
 	if frame {
 		frameCols = 2
@@ -59,16 +65,27 @@ func FitPad(termW, termH, stripRows int, frame bool, pad Pad) Pad {
 			pad.Right--
 		}
 	}
-	for termH-stripRows-StripFootprint-pad.Bottom < minPadChildH && pad.Bottom > 0 {
+	for termH-stripRows-StripFootprint-extra-pad.Bottom < minPadChildH && pad.Bottom > 0 {
 		pad.Bottom--
 	}
 	return pad
 }
 
-// ChildSizePad is ChildSize with padding: the child also loses the padding
-// columns on each side and the padding rows below the strip.
-func ChildSizePad(termW, termH, stripRows int, frame bool, pad Pad) (w, h int) {
-	w, h = termW-pad.Left-pad.Right, termH-stripRows-StripFootprint-pad.Bottom
+// FitPad shrinks pad until the child screen keeps minPadChildW columns and
+// minPadChildH rows (or padding is gone).
+func FitPad(termW, termH, stripRows int, frame bool, pad Pad) Pad {
+	return FitPadRow(termW, termH, stripRows, frame, pad, false)
+}
+
+// ChildSizePadRow is ChildSize with padding and optional input row: the child
+// also loses the padding columns on each side, the padding rows below the strip,
+// and the input row between the child and strip.
+func ChildSizePadRow(termW, termH, stripRows int, frame bool, pad Pad, row bool) (w, h int) {
+	extra := 0
+	if row {
+		extra = InputRowHeight
+	}
+	w, h = termW-pad.Left-pad.Right, termH-stripRows-StripFootprint-extra-pad.Bottom
 	if frame {
 		w -= 2
 	}
@@ -79,6 +96,11 @@ func ChildSizePad(termW, termH, stripRows int, frame bool, pad Pad) (w, h int) {
 		h = 1
 	}
 	return w, h
+}
+
+// ChildSizePad is ChildSize with padding.
+func ChildSizePad(termW, termH, stripRows int, frame bool, pad Pad) (w, h int) {
+	return ChildSizePadRow(termW, termH, stripRows, frame, pad, false)
 }
 
 // Sequences a child emits that would destroy the strip: scroll-region
