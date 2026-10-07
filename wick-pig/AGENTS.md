@@ -86,9 +86,11 @@ owns its `_test.go` and the behaviour below):
   `header_wrap.go` (child size, input row height `InputRowHeight`, scroll-region and margin filter, snapshot
   builder reading the queued compress mark, compressing state, and persisted `CompressFailed` reason),
   `header_run.go` (PTY runner: reduced child size taking into account strip and optional input row,
-  forwarding, repaints, pane palette set at start and reset at exit, on signals and across
+  row/raw input routing with the Ctrl+O toggle, raw dirty tracking and 10 s
+  stale clear, forwarding, repaints, pane palette set at start and reset at exit, on signals and across
   restarts, exit restore, the wrapper queue and pump, sets snapshot pending
-  count from the in-process queue, sole child-PTY writer, the child's own stderr
+  count from the in-process queue and raw mode from the rawMode flag via readSnap,
+  sole child-PTY writer, the child's own stderr
   pipe beside the PTY; the borderless soft top edge, with the strip-rule setting restoring the drawn
   line), `header_source.go` (strip source from launch env,
   `wrap`/`exec`/top-level wiring, every wrapped launch serves the control
@@ -96,9 +98,14 @@ owns its `_test.go` and the behaviour below):
   `inputrow.go` (the wick input row editor between child screen and strip for top-level
   sessions: takes user typing, Enter steer, Alt+Enter queue, Shift+Enter newline,
   bracketed paste, Up history recall, Ctrl+C / Esc interrupt forwarding, 10 s stale clear),
+  `rawmode.go` (raw passthrough: Ctrl+O toggles between the row and the child,
+  strip shows `raw` and `raw, N queued`, dirty flag set by any forwarded byte
+  except bare Enter and reset by Enter, Ctrl+C or the wick clear, injections
+  held while dirty, 10 s stale sends six Ctrl+U then delivers, per-harness
+  clear/newline/interrupt table for claude and pig with a hold-only default),
   `inputqueue.go` (one queue per wrapper: user submissions prioritized before pending
   injections in arrival order, steer at tool boundary versus queued message at turn end,
-  injections held while the row holds a draft, unix-socket channel named by
+  injections held while the row holds a draft or raw mode is dirty, unix-socket channel named by
   agent id, pump with transcript acceptance and head retry, DeliverPrompt
   in `transcript.go` tries the channel first with the herdr path as
   fallback); settings carry strip rows, frame, rule,

@@ -100,7 +100,7 @@ func toolLabel(c ToolCall, running bool, argMax int) (icon, verb, arg string) {
 }
 
 // activityCell is the left of the strip's second row. A pending warning,
-// queued compress or running compress wins. Otherwise: the tool running now
+// queued compress or running compress wins, then raw mode. Otherwise: the tool running now
 // (bright), else while the turn is still going the last finished tool with
 // its result size (dim), else `thinking`. An idle agent shows nothing.
 func (h *headerCtx) activityCell(max int) cell {
@@ -108,6 +108,8 @@ func (h *headerCtx) activityCell(max int) cell {
 	case h.snap.Warning != "":
 		return h.fit(h.pill(), max)
 	case h.snap.State == HeaderQueued, h.snap.State == HeaderCompressing, h.snap.State == HeaderCompressFailed:
+		return h.fit(h.pill(), max)
+	case h.snap.Raw:
 		return h.fit(h.pill(), max)
 	case h.snap.State == HeaderIdle:
 		if h.snap.Pending > 0 {
