@@ -56,6 +56,40 @@ func TestInputQueueUserBeforeInjections(t *testing.T) {
 	}
 }
 
+// The restart handoff pins ahead of everything: pending injections and the
+// user's own messages wait behind it.
+func TestInputQueueHandoffPinsAheadOfAll(t *testing.T) {
+	q := newInputQueue()
+	q.enqueue(QueueKindSteer, "inj1", "tell")
+	q.enqueue(QueueKindSteer, "user msg", "user")
+	q.enqueueHandoff("handoff text")
+	want := []string{"handoff text", "user msg", "inj1"}
+	for i, w := range want {
+		head, ok := q.head()
+		if !ok || head.Text != w {
+			t.Fatalf("item %d = %q (ok=%v), want %q", i, head.Text, ok, w)
+		}
+		q.pop()
+	}
+}
+
+// A user submit after a restart lands behind the handoff, ahead of
+// pending injections.
+func TestInputQueueUserLandsBehindHandoff(t *testing.T) {
+	q := newInputQueue()
+	q.enqueue(QueueKindSteer, "inj1", "tell")
+	q.enqueueHandoff("handoff text")
+	q.enqueue(QueueKindSteer, "user msg", "user")
+	want := []string{"handoff text", "user msg", "inj1"}
+	for i, w := range want {
+		head, ok := q.head()
+		if !ok || head.Text != w {
+			t.Fatalf("item %d = %q (ok=%v), want %q", i, head.Text, ok, w)
+		}
+		q.pop()
+	}
+}
+
 // Seam: the wrapper's control channel. A real unix socket in a temp state
 // dir, a real queue behind it: enqueue through the socket, read the pending
 // count back through it.
@@ -421,13 +455,20 @@ func appendLine(t *testing.T, path, line string) {
 // bytes and the strip text, all on the production gates and clock.
 
 // blockingChild holds the wrapper's read loop open until the test releases
-// it, then ends the child with EOF.
+// it, then ends the child with EOF. A restart closes the old child instead:
+// a closed child also reads EOF, so the loop moves to the new child.
 type blockingChild struct {
 	fakeChild
 	release chan struct{}
 }
 
 func (b *blockingChild) Read(p []byte) (int, error) {
+	b.fakeChild.mu.Lock()
+	closed := b.fakeChild.closed
+	b.fakeChild.mu.Unlock()
+	if closed {
+		return 0, io.EOF
+	}
 	<-b.release
 	return 0, io.EOF
 }

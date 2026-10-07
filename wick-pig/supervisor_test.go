@@ -568,3 +568,66 @@ func TestRestartReassertsPaneName(t *testing.T) {
 		t.Errorf("restart must rename the pane for the agent type, got %v", fake.renamed)
 	}
 }
+
+// A restart for a wrapped agent goes through the wrapper's channel, not a
+// pane run: the handoff pins ahead of pending items, the state rotates to
+// the new session, and no pane run or late delivery runs.
+func TestRestartPaneUsesWrapperChannelWhenAlive(t *testing.T) {
+	isolateState(t)
+	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
+	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 2*time.Second
+	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
+	dir := t.TempDir()
+	oldID := "sess-old-wrapped"
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__wick__bash")+pigResultLine("r1", "call_1", "mcp__wick__bash", "ok"))
+	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", SessionID: oldID}); err != nil {
+		t.Fatal(err)
+	}
+	q := newInputQueue()
+	q.enqueue(QueueKindSteer, "queued before", "tell")
+	var got ctrlRestart
+	stop, err := serveCtrlRestart("w1", q, func(r ctrlRestart) (int, error) {
+		got = r
+		return q.enqueueHandoff(r.Handoff), nil
+	})
+	if err != nil {
+		t.Fatalf("serveCtrlRestart: %v", err)
+	}
+	defer stop()
+	fake := &restartFake{t: t, alive: true, group: 4242}
+	handoff := "handoff text\nsecond line"
+	launchFor := func(newID string) (Session, Launch, error) {
+		sess := Session{Role: "agent", Cwd: dir, Label: "w1", AgentID: "w1", ID: newID, Prompt: handoff}
+		launch, err := PrepareLaunch("pig", sess)
+		return sess, launch, err
+	}
+	next, err := RestartPane(fake.run, PaneRestart{Harness: "pig", Pane: "pane-1", AgentID: "w1", OldSessionID: oldID, SessionDir: dir, Handoff: handoff}, launchFor)
+	if err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	if len(fake.ran) != 0 {
+		t.Errorf("a wrapped restart must not pane-run, ran %d", len(fake.ran))
+	}
+	if len(fake.prompted) != 0 {
+		t.Errorf("a wrapped restart must not deliver late, prompted %v", fake.prompted)
+	}
+	if got.Handoff != handoff || got.SessionID != next {
+		t.Errorf("wrapper restart got %+v, want handoff %q session %q", got, handoff, next)
+	}
+	head, ok := q.head()
+	if !ok || head.Text != "handoff text second line" {
+		t.Fatalf("head = %q (ok=%v), want the handoff first", head.Text, ok)
+	}
+	q.pop()
+	head, ok = q.head()
+	if !ok || head.Text != "queued before" {
+		t.Fatalf("second = %q (ok=%v), want the pending item behind the handoff", head.Text, ok)
+	}
+	s, ok, err := ReadAgentState("w1")
+	if err != nil || !ok {
+		t.Fatalf("ReadAgentState: %v %v", ok, err)
+	}
+	if s.SessionID != next || s.Compressed != 1 {
+		t.Errorf("after wrapped restart = %+v, want session %q compressed 1", s, next)
+	}
+}

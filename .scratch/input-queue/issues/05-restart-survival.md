@@ -4,13 +4,13 @@
 
 **Blocked by:** 01-control-channel-and-queue-core, 02-wick-input-row
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] After a restart the row draft and history are unchanged
-- [ ] Items queued before the restart are still pending after it
-- [ ] The handoff goes before every pending item
-- [ ] A restart in raw mode keeps the mode and the dirty state
-- [ ] Tests through the supervisor seam with fake pane runners
-- [ ] Spec stories 20, 21
+- [x] After a restart the row draft and history are unchanged
+- [x] Items queued before the restart are still pending after it
+- [x] The handoff goes before every pending item
+- [x] A restart in raw mode keeps the mode and the dirty state
+- [x] Tests through the supervisor seam with fake pane runners
+- [x] Spec stories 20, 21
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.

@@ -154,7 +154,6 @@ func WrapChild(cfg WrapConfig) error {
 	if err != nil {
 		return err
 	}
-	defer child.Close()
 	filter := &wrapFilter{childH: childH, margins: wrapMarginSetupPad(termW, frame, pad)}
 	w := &wrapper{
 		cfg: cfg, stdin: stdin, stdout: stdout,
@@ -163,7 +162,7 @@ func WrapChild(cfg WrapConfig) error {
 		symbols: cfg.Settings.EffectiveStripSymbols(), separator: cfg.Settings.EffectiveStripSeparator(),
 		dark:    dark,
 		profile: detectProfile(stdout),
-		child:   child, snapshot: snapshot, filter: filter,
+		child:   child, wait: wait, snapshot: snapshot, filter: filter,
 		reporter: newAgentReporter(cfg),
 	}
 	if cfg.InputRow {
@@ -174,28 +173,17 @@ func WrapChild(cfg WrapConfig) error {
 		w.raw = newRawMode(cfg.Source.Harness, cfg.Clock)
 	}
 	w.syncMouseLocked()
-	defer w.reporter.release()
+	defer w.releaseReporter()
 	w.reporter.report(HeaderIdle)
 	w.queue = newInputQueue()
-	w.pump = newWrapperPump(cfg.Source, w.queue, func(b []byte) error {
-		_, err := w.writeChild(b)
-		return err
-	}, func() bool {
-		if w.inputRow != nil && w.inputRow.hasDraft() {
-			return true
-		}
-		if w.raw != nil && w.raw.isEnabled() && w.raw.dirty() {
-			return true
-		}
-		return false
-	}, cfg.Clock)
+	w.pump = w.makePump()
 	// The row runs macros, so a row session reports bad macro settings at
 	// startup: duplicates read as errors, built-in shadows as warnings.
 	if cfg.InputRow {
 		reportMacroValidation(cfg.Stderr, cfg.Settings)
 	}
 	if cfg.ServeCtrl && cfg.Source.AgentID != "" {
-		if stop, err := serveCtrl(cfg.Source.AgentID, w.queue); err == nil {
+		if stop, err := serveCtrlRestart(cfg.Source.AgentID, w.queue, w.onRestartRequest); err == nil {
 			defer stop()
 		} else {
 			errSink := cfg.Stderr
@@ -248,21 +236,27 @@ func WrapChild(cfg WrapConfig) error {
 	}()
 	buf := make([]byte, 32*1024)
 	for {
+		child, generation := w.currentChild()
 		n, err := child.Read(buf)
 		if n > 0 {
-			out, repaint := filter.push(buf[:n])
-			w.reporter.observe(out)
+			out, repaint := w.filtered(buf[:n])
+			w.currentReporter().observe(out)
 			w.write(string(out))
 			if repaint {
 				w.forced()
 			}
 		}
 		if err != nil {
-			break
+			// A restart closes the old child under us: follow the new one.
+			// Any other read end stops the wrapper.
+			if !w.restartedSince(generation) {
+				break
+			}
 		}
 	}
 	w.restore()
-	return wait()
+	w.closeChild()
+	return w.currentWait()
 }
 
 // HeaderStripDisabled is the rollout escape hatch: WICK_HEADER_STRIP=0 runs
@@ -343,10 +337,14 @@ type wrapper struct {
 	dark      bool
 	profile   termenv.Profile
 	child     wrapPty
+	wait      func() error // reaps the current child; swapped on restart
+	gen       int          // child generation; the read loop follows restarts
 	snapshot  func(HeaderSource, tools.Settings) (HeaderSnapshot, error)
 	filter    *wrapFilter
 	reporter  *agentReporter
 	mouse     mouseMapper
+	// The restart keeps w.raw itself, so raw mode and the dirty state survive
+	// a compress (ticket 05 keeps the state; ticket 04 owns the rest).
 	// lastPlain is the painted strip rows without colors, for copying a
 	// drag across them.
 	lastPlain []string
@@ -471,7 +469,7 @@ func (w *wrapper) pollUsage(done <-chan struct{}) {
 		}
 		wait = usagePollEvery
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		_ = RefreshUsage(ctx, w.cfg.Source.StateDir, key, time.Now())
+		_ = RefreshUsage(ctx, w.currentSource().StateDir, key, time.Now())
 		cancel()
 	}
 }
@@ -482,7 +480,7 @@ func (w *wrapper) pollUsage(done <-chan struct{}) {
 // repaints must not dial the server they serve. Raw mode travels the same
 // way, so the strip shows `raw` without a socket round trip.
 func (w *wrapper) readSnap() (HeaderSnapshot, bool) {
-	snap, err := w.snapshot(w.cfg.Source, w.cfg.Settings)
+	snap, err := w.snapshot(w.currentSource(), w.cfg.Settings)
 	if err != nil {
 		return HeaderSnapshot{}, false
 	}
@@ -529,7 +527,7 @@ func (w *wrapper) repaint() {
 	if !ok {
 		return
 	}
-	w.reporter.report(snap.State)
+	w.currentReporter().report(snap.State)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.paintLocked(w.renderSnapLocked(snap))
@@ -697,6 +695,177 @@ func (w *wrapper) restore() {
 // writeChild is the wrapper's only write to the child PTY: typed input and
 // queued prompts serialize here, so injected text never interleaves a
 // half-typed line.
+
+// makePump delivers the wrapper's queue to its child on the production
+// gates: a steer at the tool boundary, a queued message at turn end, held
+// while the row holds a draft or raw mode is dirty, accepted only when the
+// transcript shows the turn. Rebuilt on every restart, so the gates follow
+// the new session.
+func (w *wrapper) makePump() *queuePump {
+	return newWrapperPump(w.cfg.Source, w.queue, func(b []byte) error {
+		_, err := w.writeChild(b)
+		return err
+	}, func() bool {
+		if w.inputRow != nil && w.inputRow.hasDraft() {
+			return true
+		}
+		if w.raw != nil && w.raw.isEnabled() && w.raw.dirty() {
+			return true
+		}
+		return false
+	}, w.cfg.Clock)
+}
+
+// currentChild reports the child the read loop follows and its generation.
+func (w *wrapper) currentChild() (wrapPty, int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.child, w.gen
+}
+
+// restartedSince says whether a restart swapped the child after generation.
+func (w *wrapper) restartedSince(generation int) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.gen != generation
+}
+
+// closeChild shuts the current child: the exit path after the read loop.
+func (w *wrapper) closeChild() {
+	w.mu.Lock()
+	c := w.child
+	w.mu.Unlock()
+	_ = c.Close()
+}
+
+// currentWait reports the current child's wait: the exit error the wrapper
+// returns.
+func (w *wrapper) currentWait() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.wait == nil {
+		return nil
+	}
+	return w.wait()
+}
+
+// filtered passes one chunk of child output through the filter under the
+// wrapper lock, so a restart cannot swap it mid-chunk.
+func (w *wrapper) filtered(data []byte) ([]byte, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.filter.push(data)
+}
+
+// releaseReporter hands herdr authority back for the current child: the
+// exit path, nil-safe like the reporter's own methods.
+func (w *wrapper) releaseReporter() {
+	w.mu.Lock()
+	r := w.reporter
+	w.mu.Unlock()
+	if r != nil {
+		r.release()
+	}
+}
+
+// currentSource reports the session the strip paints: rotated on restart.
+func (w *wrapper) currentSource() HeaderSource {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.cfg.Source
+}
+
+// currentReporter reports the current child's agent state to herdr.
+func (w *wrapper) currentReporter() *agentReporter {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.reporter
+}
+
+// currentPump steps the current child's queue.
+func (w *wrapper) currentPump() *queuePump {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.pump
+}
+
+// onRestartRequest runs one channel restart: the supervisor's handoff for a
+// compress restart. The wrapper stays up and swaps only its child.
+func (w *wrapper) onRestartRequest(r ctrlRestart) (int, error) {
+	if strings.TrimSpace(r.SessionID) == "" {
+		return 0, fmt.Errorf("restart needs a session")
+	}
+	if strings.TrimSpace(r.Bin) == "" {
+		return 0, fmt.Errorf("restart needs a child command")
+	}
+	w.mu.Lock()
+	src := w.cfg.Source
+	w.mu.Unlock()
+	src.SessionID = r.SessionID
+	src.CompressCount = r.CompressCount
+	if err := w.restartChild(r.Bin, r.Args, r.Env, src, r.Handoff); err != nil {
+		return 0, err
+	}
+	return w.queue.len(), nil
+}
+
+// restartChild swaps the wrapper's child for a compress restart: the old
+// child stops, the new one starts at the same size under the same per-run
+// theme, and the wrapper keeps its queue, row draft and history, and raw
+// mode and dirty state. The handoff pins ahead of the surviving queue and
+// delivers through a fresh pump, accepted when the new session's transcript
+// shows its turn; the swapped-out pump retires. A start failure leaves the
+// old child untouched.
+func (w *wrapper) restartChild(bin string, args, env []string, src HeaderSource, handoff string) error {
+	start := w.cfg.Start
+	if start == nil {
+		start = realStart
+	}
+	// The new child starts themed like the first one: the supervisor sends the
+	// raw harness launch, and the wrapper applies the same per-run palette.
+	themeCfg := WrapConfig{Source: src, Bin: bin, Args: args, Env: env, ThemeDir: w.cfg.ThemeDir, Stderr: w.cfg.Stderr}
+	bin, args, env = themedChildCommand(themeCfg, w.dark)
+	child, wait, err := start(bin, args, env, w.childW, w.childH, w.cfg.ChildStderr)
+	if err != nil {
+		return err
+	}
+	w.mu.Lock()
+	old, oldReporter, oldPump := w.child, w.reporter, w.pump
+	w.child, w.wait = child, wait
+	w.gen++
+	w.cfg.Source = src
+	w.filter = &wrapFilter{childH: w.childH, margins: wrapMarginSetupPad(w.termW, w.frame, w.pad)}
+	w.reporter = newAgentReporter(w.cfg)
+	w.pump = w.makePump()
+	w.queue.setInFlight(false)
+	w.queue.enqueueHandoff(handoff)
+	var b strings.Builder
+	b.WriteString(ThemeSetSequence(w.dark))
+	b.WriteString(fmt.Sprintf("\x1b[1;%dr", w.childH))
+	b.WriteString(w.filter.marginStr())
+	w.mu.Unlock()
+	_ = old.Close()
+	// The swapped-out pump retires: a step captured before the swap stays
+	// quiet, so the head cannot go out twice to the new child.
+	oldPump.stop()
+	if oldReporter != nil {
+		oldReporter.release()
+	}
+	w.reporter.report(HeaderIdle)
+	// The snapshot reads transcripts and the database, so it runs outside the
+	// lock; the paint forces, since the pending count moved.
+	if snap, ok := w.readSnap(); ok {
+		w.mu.Lock()
+		w.last = ""
+		w.paintLocked(w.renderSnapLocked(snap))
+		if w.inputRow != nil {
+			w.paintRowLocked()
+		}
+		w.mu.Unlock()
+	}
+	return nil
+}
+
 func (w *wrapper) writeChild(p []byte) (int, error) {
 	w.childMu.Lock()
 	defer w.childMu.Unlock()
@@ -733,8 +902,9 @@ func (w *wrapper) checkStaleAndStep() {
 			w.raw.wickClear()
 		}
 	}
+	pump := w.pump
 	w.mu.Unlock()
-	w.pump.step()
+	pump.step()
 }
 
 func isMouseSequence(p []byte) bool {

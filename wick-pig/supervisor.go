@@ -69,7 +69,10 @@ func summarizePath(harness, transcriptPath string) (ContextSnapshot, error) {
 // child's first message: it waits for a tool-call boundary, stops the child,
 // starts the new child in the same pane, records the new harness session
 // with the compressed count, then delivers a late handoff. The pane never
-// closes: neither the happy path nor any failure closes or drops it.
+// closes: neither the happy path nor any failure closes or drops it. When
+// the agent's wrapper answers its control channel the restart goes through
+// it instead (restartWrapped): the wrapper stays up with the queue, row and
+// raw state, and the handoff pins ahead of them.
 // launchFor builds the new child's launch for the fresh session id carrying
 // req.Handoff, so the top-level session and every spawned pane share this
 // core with their own session template. A launchFor error leaves the pane
@@ -96,6 +99,11 @@ func RestartPane(run Exec, req PaneRestart, launchFor func(newSessionID string) 
 				return "", err
 			}
 		}
+	}
+	// A live wrapper restarts its own child: the wrapper stays up with the
+	// queue, row draft and history, and the handoff pins ahead of them.
+	if wrapperAlive(req.AgentID) {
+		return restartWrapped(req, launchFor)
 	}
 	if err := stopPane(run, req.Pane); err != nil {
 		return "", err
@@ -187,4 +195,47 @@ func reassertPaneName(run Exec, agentID, pane string) {
 		return
 	}
 	renamePane(run, pane, PaneNameForType(s.Type))
+}
+
+// restartWrapped restarts a wrapped agent through its control channel: the
+// wrapper swaps its child in place, so the queue, row draft and history
+// survive. The new child starts prompt-free — the handoff reaches it through
+// the same queue, pinned ahead of everything and accepted when the new
+// session's transcript shows its turn. No pane stop, no pane run, no late
+// delivery: the pane never notices the swap. A launchFor error leaves the
+// pane untouched; once the state records the new session, a later error
+// still returns its id the way the pane-run path does.
+func restartWrapped(req PaneRestart, launchFor func(newSessionID string) (Session, Launch, error)) (string, error) {
+	next := newSessionID()
+	sess, _, err := launchFor(next)
+	if err != nil {
+		return "", err
+	}
+	// The handoff travels through the queue, never the launch: strip the
+	// prompt, or the new child would hear it twice.
+	childSess := sess
+	childSess.Prompt = ""
+	cmd, err := BuildCommand(req.Harness, childSess)
+	if err != nil {
+		CleanupSession(sess)
+		return "", err
+	}
+	// The child is live on next from here: record first, so a restart-send
+	// error still leaves the state on the session the wrapper runs.
+	if err := recordPaneRestart(req.AgentID, req.Pane, next); err != nil {
+		CleanupSession(sess)
+		return next, err
+	}
+	st, _, _ := ReadAgentState(req.AgentID)
+	if _, err := ctrlRestartAgent(req.AgentID, ctrlRestart{
+		Handoff: req.Handoff, SessionID: next, CompressCount: st.Compressed,
+		Bin: cmd.Bin, Args: cmd.Args, Env: cmd.Env,
+	}); err != nil {
+		CleanupSession(sess)
+		return next, err
+	}
+	// The pane never execs this launch: drop its files the way the pane-run
+	// path drops the MCP config once the child reads it.
+	CleanupSession(sess)
+	return next, nil
 }

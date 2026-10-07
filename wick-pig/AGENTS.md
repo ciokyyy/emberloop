@@ -19,7 +19,9 @@ owns its `_test.go` and the behaviour below):
   for byte, at ultra; plus the per-turn reminder, `wick-pig voice-reminder`),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
   (pane launch text, the child's exit trace), `supervisor.go` (compress restart
-  in the same pane: boundary wait, child stop, handoff relaunch, pane-name
+  in the same pane: boundary wait, then the wrapper's own child swap through
+  its channel when live (queue, row and raw state kept, handoff pinned first),
+  else child stop, handoff relaunch, pane-name
   re-assertion, session rotation with the compressed count, forced restart
   past the wait), `compress.go` (manual compress: pig one-off summary,
   handoff and transcript copies, same-pane restart through the supervisor),
@@ -91,7 +93,11 @@ owns its `_test.go` and the behaviour below):
   restarts, exit restore, the wrapper queue and pump, sets snapshot pending
   count from the in-process queue and raw mode from the rawMode flag via readSnap,
   sole child-PTY writer, the child's own stderr
-  pipe beside the PTY; the borderless soft top edge, with the strip-rule setting restoring the drawn
+  pipe beside the PTY; a compress restart swaps only the child in place
+  (queue, row draft and history, w.raw kept, handoff pinned
+  first through a fresh pump with the old one retired, same per-run theme),
+  the read loop following the swap by child
+  generation; the borderless soft top edge, with the strip-rule setting restoring the drawn
   line), `header_source.go` (strip source from launch env,
   `wrap`/`exec`/top-level wiring, every wrapped launch serves the control
   channel; `WrapTopLevel` enables the input row for top-level sessions),
@@ -103,10 +109,11 @@ owns its `_test.go` and the behaviour below):
   except bare Enter and reset by Enter, Ctrl+C or the wick clear, injections
   held while dirty, 10 s stale sends six Ctrl+U then delivers, per-harness
   clear/newline/interrupt table for claude and pig with a hold-only default),
-  `inputqueue.go` (one queue per wrapper: user submissions prioritized before pending
+  `inputqueue.go` (one queue per wrapper: the restart handoff pinned ahead of
+  all, then user submissions before pending
   injections in arrival order, steer at tool boundary versus queued message at turn end,
   injections held while the row holds a draft or raw mode is dirty, unix-socket channel named by
-  agent id, pump with transcript acceptance and head retry, DeliverPrompt
+  agent id with a restart request (handoff plus new child launch), pump with transcript acceptance and head retry, DeliverPrompt
   in `transcript.go` tries the channel first with the herdr path as
   fallback), `macro.go` (row macro dispatch: prompt templates expand into the
   queue like typed text, unknown slash text stays a message, `/compress` runs
