@@ -1,11 +1,14 @@
 # emberloop
 
-emberloop runs parallel implement-and-review loops for coding agents inside [herdr](https://github.com/ogulcancelik/herdr). An orchestrator session (pig or Claude Code) splits a spec into tickets, spawns one worker per ticket in its own git worktree, has two persistent reviewers judge each worker, and merges a ticket only after the vet-and-test gate and both reviewers pass.
+emberloop runs parallel implement-and-review loops for coding agents inside [herdr](https://github.com/ogulcancelik/herdr). An orchestrator session (pig or Claude Code) splits a spec into tickets, spawns one worker per ticket in its own git worktree, has two persistent reviewers judge each worker, and merges a ticket only after every required reviewer has passed at the ticket's current tip.
 
 Every agent runs in a herdr pane under a two-row status strip that shows model, context use, cost, running tool, queue and usage windows.
 
 <p align="center">
-  <img src="docs/architecture.png" alt="emberloop run: orchestrator spawns a worker per ticket, two reviewers and a vet-and-test gate decide the merge into the spec branch" width="900">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.png">
+    <img src="docs/architecture-light.png" alt="emberloop run: the orchestrator spawns a worker per ticket, two reviewers judge it, and finish rebases and fast-forwards the ticket into the spec branch" width="900">
+  </picture>
 </p>
 
 ## Install
@@ -24,16 +27,16 @@ The installer is a terminal UI. It asks for three optional parts and installs ev
 |---|---|
 | pig | the `emberloop` entry in `~/.pig/agent/mcp.json`, the `herdr-report` and `pig-antigravity-auth` extensions linked into `~/.pig/agent/extensions` |
 | claude | the Claude Code CLI, installed with its official script when missing |
-| memory | the code graph MCP (`codebase-memory-mcp`), served to reviewers and scouts |
+| graph | the code graph MCP (`codebase-memory-mcp`), served to reviewers and scouts |
 
-Always installed: herdr (official script, when missing), the `emberloop`, `emberloop-mcp` and `emberloop-tui` binaries in `~/.local/bin`, the herdr compress plugin, the `prefix+shift+c` compress key in `~/.config/herdr/config.toml`, `~/.emberloop/settings.json`, and bun for the skill library. The last two commands, `emberloop deps` and `emberloop skills install`, run on the plain terminal because `deps` can ask for a sudo password.
+Always installed: herdr (official script, when missing), the `emberloop`, `emberloop-mcp` and `emberloop-tui` binaries in `~/.local/bin`, the herdr compress plugin, the `prefix+shift+c` compress key in `~/.config/herdr/config.toml`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `emberloop deps` and `emberloop skills install`, run on the plain terminal because `deps` can ask for a sudo password.
 
 Put `~/.local/bin` on your `PATH`. Rerunning the installer changes nothing that is already in place. A herdr config is copied to `config.toml.bak` before the first edit.
 
 Flags skip the UI:
 
 ```bash
-./install.sh --yes                        # defaults: pig, claude, memory
+./install.sh --yes                        # defaults: pig, claude, graph
 ./install.sh --yes --claude=false         # pig only
 ./install.sh --yes --graph=false          # no code graph
 ./install.sh --dry-run --yes              # print the steps, change nothing
@@ -66,29 +69,16 @@ Other commands:
 
 ## How a run works
 
-```mermaid
-flowchart LR
-    U([You]) --> O["Orchestrator<br/>pig or claude"]
-    O -- "spawn" --> W1["Worker 01<br/>worktree"]
-    O -- "spawn" --> W2["Worker 02<br/>worktree"]
-    W1 --> R1["Reviewer: spec"]
-    W1 --> R2["Reviewer: standards"]
-    W2 --> R3["Reviewer: spec"]
-    W2 --> R4["Reviewer: standards"]
-    R1 & R2 --> G1{"Gate<br/>vet + test"}
-    R3 & R4 --> G2{"Gate<br/>vet + test"}
-    G1 -- "pass" --> M[("spec branch")]
-    G2 -- "pass" --> M
-    G1 -. "fail or findings" .-> W1
-    G2 -. "fail or findings" .-> W2
-```
+The orchestrator reads a spec, spawns workers, and waits for notices. Each worker implements one ticket in `.emberloop-worktrees/<ticket>` on branch `implement/<ticket>` and submits `done` or `blocked`. At most three workers run at once by default (`max_workers`); extra tickets queue until a slot frees.
 
-The orchestrator reads a spec, spawns workers, and waits for notices. Each worker implements one ticket in `.emberloop-worktrees/<ticket>` and submits `done` or `blocked`. Two reviewers, one for the spec and one for the repository's standards, keep their context across passes. A ticket merges only when the gate and both reviewers pass; findings go back to the same worker.
+Two reviewers, one for the spec and one for the repository's standards, keep their context across passes. They can run the repository's named checks from `.emberloop/check`. Findings go back to the same worker with `tell`, and the loop repeats until both reviewers pass.
+
+`finish` is the merge step. It refuses unless every required reviewer passed at the current tip, so a stale pass does not count. It then rebases the worker branch onto the target and merges it with `git merge --ff-only`. A dirty worktree, a missing pass, or a rebase conflict keeps the worker alive instead of merging.
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/sequence-dark.png">
-    <img src="docs/sequence-light.png" alt="Sequence of one ticket: spawn, implement, review, fix loop, gate, merge" width="900">
+    <img src="docs/sequence-light.png" alt="Sequence of one ticket: spawn, implement, review, fix loop, re-review, finish and merge" width="900">
   </picture>
 </p>
 
@@ -106,7 +96,7 @@ The orchestrator reads a spec, spawns workers, and waits for notices. Each worke
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/components-dark.png">
-    <img src="docs/components-light.png" alt="emberloop components: CLI, agent, MCP server, SQLite state, worktrees, herdr, dashboard" width="900">
+    <img src="docs/components-light.png" alt="emberloop components: CLI, MCP server, state dir, herdr, herdr plugin and report extension, skills library, dashboard, installer" width="900">
   </picture>
 </p>
 

@@ -67,6 +67,9 @@ func deliverNotice(run Exec, pane, text string) error {
 	if res.Code != 0 {
 		return fmt.Errorf("herdr pane send-text %s failed: %s", pane, firstLine(res.Stderr, res.Stdout))
 	}
+	if submitSettle > 0 {
+		time.Sleep(submitSettle)
+	}
 	res, err = run(herdrBin(), []string{"pane", "send-keys", pane, "Enter"}, ExecOpts{Timeout: 15 * time.Second})
 	if err != nil {
 		return err
