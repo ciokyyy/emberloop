@@ -31,6 +31,7 @@ func runWrap(argv []string, stdin io.Reader, stdout io.Writer) error {
 	session := fs.String("session", "", "harness session id for the transcript")
 	dir := fs.String("dir", "", "session directory (harnesses that take one)")
 	compressCount := fs.Int("compress-count", 0, "completed compressions")
+	inputRow := fs.Bool("input-row", false, "draw wick input row above strip")
 	if err := fs.Parse(argv); err != nil {
 		return fmt.Errorf("%v\n%s", err, wrapUsage)
 	}
@@ -60,14 +61,14 @@ func runWrap(argv []string, stdin io.Reader, stdout io.Writer) error {
 	if wick.HeaderStripDisabled() {
 		return wick.RunPlainCommand(fs.Arg(0), fs.Args()[1:], nil, stdin, stdout, os.Stderr)
 	}
-	return wick.WrapChild(wrapCmdConfig(*agent, *agentType, *name, *harness, *session, *dir, *compressCount, settings, stdin, stdout, fs.Arg(0), fs.Args()[1:]))
+	return wick.WrapChild(wrapCmdConfig(*agent, *agentType, *name, *harness, *session, *dir, *compressCount, *inputRow || os.Getenv("WICK_INPUT_ROW") == "1", settings, stdin, stdout, fs.Arg(0), fs.Args()[1:]))
 }
 
 // wrapCmdConfig builds the wrapper config for `wick-pig wrap`: the strip's
 // snapshot source plus the child, with the input queue's control channel
 // served, so tell and the shared delivery path reach the child through the
 // queue instead of herdr send-text.
-func wrapCmdConfig(agent, agentType, name, harness, session, dir string, compressCount int, settings tools.Settings, stdin io.Reader, stdout io.Writer, bin string, args []string) wick.WrapConfig {
+func wrapCmdConfig(agent, agentType, name, harness, session, dir string, compressCount int, inputRow bool, settings tools.Settings, stdin io.Reader, stdout io.Writer, bin string, args []string) wick.WrapConfig {
 	return wick.WrapConfig{
 		Source: wick.HeaderSource{
 			AgentID: agent, AgentType: agentType, AgentName: name,
@@ -81,5 +82,6 @@ func wrapCmdConfig(agent, agentType, name, harness, session, dir string, compres
 		Stdout:    stdout,
 		Stderr:    os.Stderr,
 		ServeCtrl: true,
+		InputRow:  inputRow,
 	}
 }

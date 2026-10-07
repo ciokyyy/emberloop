@@ -6,14 +6,14 @@
 
 **Status:** ready-for-agent
 
-- [ ] Typing in the row never reaches the child until submit
-- [ ] A queued wick injection is not delivered while the row has a draft
-- [ ] After 10 s of no keystrokes the row clears and the injection is delivered
-- [ ] A user submit goes before pending injections
-- [ ] Enter steers at the tool boundary; Alt+Enter delivers at turn end
-- [ ] Multiline, paste, history and interrupt keys behave as described
-- [ ] Resize keeps the row and strip and forwards the reduced height to the child
-- [ ] Tests with a fake child PTY and fake clock assert bytes written and row and strip text
-- [ ] Spec stories 1, 2, 3, 5, 6, 7, 17, 18, 19
+- [x] Typing in the row never reaches the child until submit
+- [x] A queued wick injection is not delivered while the row has a draft
+- [x] After 10 s of no keystrokes the row clears and the injection is delivered
+- [x] A user submit goes before pending injections
+- [x] Enter steers at the tool boundary; Alt+Enter delivers at turn end
+- [x] Multiline, paste, history and interrupt keys behave as described
+- [x] Resize keeps the row and strip and forwards the reduced height to the child
+- [x] Tests with a fake child PTY and fake clock assert bytes written and row and strip text
+- [x] Spec stories 1, 2, 3, 5, 6, 7, 17, 18, 19
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.

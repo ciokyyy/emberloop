@@ -85,6 +85,11 @@ type WrapConfig struct {
 	// HERDR_PANE_ID when HERDR_ENV is 1. Both exist for tests.
 	Report func(args []string)
 	PaneID string
+	// InputRow draws the wick input row between the child screen and the strip
+	// for the user's top-level session (ticket 02).
+	InputRow bool
+	// Clock injects a fake clock for testing row timeouts and queue pumps.
+	Clock func() time.Time
 }
 
 // DefaultWrapPoll is the snapshot refresh while the child runs: usage rows
@@ -122,12 +127,12 @@ func WrapChild(cfg WrapConfig) error {
 	rows := cfg.Settings.EffectiveStripRows()
 	frame := cfg.Settings.StripFrameEnabled()
 	rule := cfg.Settings.StripRuleEnabled()
-	pad := FitPad(termW, termH, rows, frame, Pad{
+	pad := FitPadRow(termW, termH, rows, frame, Pad{
 		Left:   cfg.Settings.EffectivePadLeft(),
 		Right:  cfg.Settings.EffectivePadRight(),
 		Bottom: cfg.Settings.EffectivePadBottom(),
-	})
-	childW, childH := ChildSizePad(termW, termH, rows, frame, pad)
+	}, cfg.InputRow)
+	childW, childH := ChildSizePadRow(termW, termH, rows, frame, pad, cfg.InputRow)
 	dark := detectDark(stdout)
 	if cfg.ThemeDark != nil {
 		dark = *cfg.ThemeDark
@@ -157,6 +162,12 @@ func WrapChild(cfg WrapConfig) error {
 		child:   child, snapshot: snapshot, filter: filter,
 		reporter: newAgentReporter(cfg),
 	}
+	if cfg.InputRow {
+		w.inputRow = newInputRow()
+		if cfg.Clock != nil {
+			w.inputRow.now = cfg.Clock
+		}
+	}
 	w.syncMouseLocked()
 	defer w.reporter.release()
 	w.reporter.report(HeaderIdle)
@@ -164,7 +175,12 @@ func WrapChild(cfg WrapConfig) error {
 	w.pump = newWrapperPump(cfg.Source, w.queue, func(b []byte) error {
 		_, err := w.writeChild(b)
 		return err
-	})
+	}, func() bool {
+		if w.inputRow != nil {
+			return w.inputRow.hasDraft()
+		}
+		return false
+	}, cfg.Clock)
 	if cfg.ServeCtrl && cfg.Source.AgentID != "" {
 		if stop, err := serveCtrl(cfg.Source.AgentID, w.queue); err == nil {
 			defer stop()
@@ -322,6 +338,7 @@ type wrapper struct {
 	// drag across them.
 	lastPlain []string
 	usageKey  atomic.Value // string: the account the strip's usage reads
+	inputRow  *inputRow
 	queue     *inputQueue
 	pump      *queuePump
 	childMu   sync.Mutex
@@ -329,6 +346,33 @@ type wrapper struct {
 	last      string
 	phase     bool
 	closed    bool
+}
+
+// inputRowRow is the terminal row of the input row: the first row past the child area.
+func (w *wrapper) inputRowRow() int { return w.childH + 1 }
+
+// ruleRow is the terminal row of the strip's top rule: the row past the input row
+// when active, or the row past the child area when inactive.
+func (w *wrapper) ruleRow() int {
+	if w.inputRow != nil {
+		return w.childH + 1 + InputRowHeight
+	}
+	return w.childH + 1
+}
+
+// paintRowLocked paints the input row at inputRowRow.
+func (w *wrapper) paintRowLocked() {
+	if w.closed || w.inputRow == nil {
+		return
+	}
+	rendered := w.inputRow.render(w.contentW(), w.dark, w.profile)
+	col, _ := w.sideCols()
+	col++
+	var b strings.Builder
+	b.WriteString("\x1b7\x1b[?6l")
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s", w.inputRowRow(), col, rendered))
+	b.WriteString("\x1b8")
+	w.writeLocked(b.String())
 }
 
 // sideCols are the columns the strip and the child lose on the left and the
@@ -349,10 +393,6 @@ func (w *wrapper) contentW() int {
 	return w.termW - l - r
 }
 
-// ruleRow is the terminal row of the strip's top rule: the first row past
-// the child area.
-func (w *wrapper) ruleRow() int { return w.childH + 1 }
-
 // init claims the strip rows and sets the pane palette: the scroll region
 // and the column margins end above the strip rows, the frame goes up, the
 // OSC palette lands first so the child paints into themed colors, and the
@@ -364,6 +404,9 @@ func (w *wrapper) init() {
 	defer w.mu.Unlock()
 	var b strings.Builder
 	b.WriteString(ThemeSetSequence(w.dark))
+	if w.inputRow != nil {
+		b.WriteString("\x1b[?2004h")
+	}
 	// Wipe the screen and home the cursor first: the shell that started the
 	// wrapper leaves its greeting and command line behind, and a child that
 	// redraws only the cells it changes (claude) would show them through.
@@ -374,6 +417,9 @@ func (w *wrapper) init() {
 	w.drawFrameLocked()
 	if ok {
 		w.paintLocked(w.renderSnapLocked(snap))
+	}
+	if w.inputRow != nil {
+		w.paintRowLocked()
 	}
 }
 
@@ -485,6 +531,9 @@ func (w *wrapper) forced() {
 	defer w.mu.Unlock()
 	w.last = ""
 	w.paintLocked(w.renderSnapLocked(snap))
+	if w.inputRow != nil {
+		w.paintRowLocked()
+	}
 }
 
 // paintLocked draws the top rule and the strip rows at their reserved
@@ -601,11 +650,14 @@ func (w *wrapper) restore() {
 	defer w.mu.Unlock()
 	w.closed = true
 	var b strings.Builder
+	if w.inputRow != nil {
+		b.WriteString("\x1b[?2004l")
+	}
 	b.WriteString("\x1b[r")
 	if w.filter.marginStr() != "" {
 		b.WriteString("\x1b[?6l\x1b[?69l")
 	}
-	for r := w.ruleRow(); r <= w.termH; r++ {
+	for r := w.childH + 1; r <= w.termH; r++ {
 		b.WriteString(fmt.Sprintf("\x1b[%d;1H\x1b[2K", r))
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", w.termH))
@@ -633,14 +685,28 @@ func (w *wrapper) pumpQueue(done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			w.pump.step()
+			w.checkStaleAndStep()
 		}
 	}
 }
 
+func (w *wrapper) checkStaleAndStep() {
+	w.mu.Lock()
+	if w.inputRow != nil && w.inputRow.checkStale() {
+		w.paintRowLocked()
+	}
+	w.mu.Unlock()
+	w.pump.step()
+}
+
+func isMouseSequence(p []byte) bool {
+	return bytes.HasPrefix(p, []byte("\x1b[<")) || bytes.HasPrefix(p, []byte("\x1b[M"))
+}
+
 // forwardInput copies typed input to the child until stdin ends or a write
-// fails. A post-exit write fails against the closed child and ends the
-// loop; a terminal stdin outlives the child only until the process exits.
+// fails. In input-row mode (top-level sessions) normal typing feeds the row
+// editor instead; submits enqueue into the queue and interrupts forward
+// directly.
 func (w *wrapper) forwardInput() {
 	buf := make([]byte, 32*1024)
 	for {
@@ -648,16 +714,45 @@ func (w *wrapper) forwardInput() {
 		if n > 0 {
 			w.mu.Lock()
 			in := w.mouse.translate(buf[:n])
-			w.mu.Unlock()
 			if len(in) > 0 {
+				if w.inputRow != nil && !isMouseSequence(in) {
+					w.handleRowInputLocked(in)
+					w.mu.Unlock()
+					continue
+				}
+				w.mu.Unlock()
 				if _, werr := w.writeChild(in); werr != nil {
 					return
 				}
+				continue
 			}
+			w.mu.Unlock()
 		}
 		if err != nil {
 			return
 		}
+	}
+}
+
+func (w *wrapper) handleRowInputLocked(in []byte) {
+	action, text := w.inputRow.handleInput(in)
+	switch action {
+	case rowActionNone:
+		w.paintRowLocked()
+	case rowActionSubmit:
+		w.queue.enqueue(QueueKindSteer, text, "user")
+		w.paintRowLocked()
+		go w.pump.step()
+	case rowActionQueue:
+		w.queue.enqueue(QueueKindQueue, text, "user")
+		w.paintRowLocked()
+		go w.pump.step()
+	case rowActionInterrupt:
+		w.paintRowLocked()
+		go func() { _, _ = w.writeChild([]byte{0x03}) }()
+	case rowActionEsc:
+		w.paintRowLocked()
+		go func() { _, _ = w.writeChild([]byte{0x1b}) }()
 	}
 }
 
@@ -707,13 +802,14 @@ func (w *wrapper) resized(termW, termH int) {
 	if termW == w.termW && termH == w.termH {
 		return
 	}
+	hasRow := w.inputRow != nil
 	w.termW, w.termH = termW, termH
-	w.pad = FitPad(w.termW, w.termH, w.rows, w.frame, Pad{
+	w.pad = FitPadRow(w.termW, w.termH, w.rows, w.frame, Pad{
 		Left:   w.cfg.Settings.EffectivePadLeft(),
 		Right:  w.cfg.Settings.EffectivePadRight(),
 		Bottom: w.cfg.Settings.EffectivePadBottom(),
-	})
-	w.childW, w.childH = ChildSizePad(w.termW, w.termH, w.rows, w.frame, w.pad)
+	}, hasRow)
+	w.childW, w.childH = ChildSizePadRow(w.termW, w.termH, w.rows, w.frame, w.pad, hasRow)
 	w.child.Resize(w.childW, w.childH)
 	w.filter.setSize(w.childH, wrapMarginSetupPad(w.termW, w.frame, w.pad))
 	w.syncMouseLocked()
@@ -726,6 +822,9 @@ func (w *wrapper) resized(termW, termH int) {
 	w.last = ""
 	if ok {
 		w.paintLocked(w.renderSnapLocked(snap))
+	}
+	if w.inputRow != nil {
+		w.paintRowLocked()
 	}
 }
 

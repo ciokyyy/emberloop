@@ -63,7 +63,7 @@ func (f *fakeChild) forwardedString() string {
 	return f.forwarded.String()
 }
 
-func wrapTestConfig(child wrapPty, stdout *bytes.Buffer) WrapConfig {
+func wrapTestConfig(child wrapPty, stdout io.Writer) WrapConfig {
 	return WrapConfig{
 		Source:   HeaderSource{AgentID: "w1", AgentType: "worker", AgentName: "implementer", Harness: "pig"},
 		Settings: noPadSettings(),
