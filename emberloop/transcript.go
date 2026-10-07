@@ -150,6 +150,9 @@ func DeliverPrompt(run Exec, pane, text string) error {
 	}
 	line := strings.Join(strings.Fields(text), " ")
 	for _, args := range [][]string{{"pane", "send-text", pane, line}, {"pane", "send-keys", pane, "Enter"}} {
+		if args[1] == "send-keys" && submitSettle > 0 {
+			time.Sleep(submitSettle)
+		}
 		res, err := run(herdrBin(), args, ExecOpts{Timeout: 15 * time.Second})
 		if err != nil {
 			return err
