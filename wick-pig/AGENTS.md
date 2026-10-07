@@ -103,7 +103,11 @@ owns its `_test.go` and the behaviour below):
   channel; `WrapTopLevel` enables the input row for top-level sessions),
   `inputrow.go` (the wick input row editor between child screen and strip for top-level
   sessions: takes user typing, Enter steer, Alt+Enter queue, Shift+Enter newline,
-  bracketed paste, Up history recall, Ctrl+C / Esc interrupt forwarding, 10 s stale clear),
+  bracketed paste, Up history recall, word motion and delete, a visible cursor,
+  Ctrl+C / Esc interrupt forwarding, 10 s stale clear),
+  `keydecode.go` (the key decoder: raw bytes, legacy or kitty CSI-u, to canonical
+  keys; focus reports and unknown sequences consumed; the row and the raw-mode
+  toggle and reset checks act on its output, never on raw bytes),
   `rawmode.go` (raw passthrough: Ctrl+O toggles between the row and the child,
   strip shows `raw` and `raw, N queued`, dirty flag set by any forwarded byte
   except bare Enter and reset by Enter, Ctrl+C or the wick clear, injections
