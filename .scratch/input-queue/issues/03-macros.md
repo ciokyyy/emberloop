@@ -4,14 +4,14 @@
 
 **Blocked by:** 02-wick-input-row, context-compress 06-summarizer-and-manual-compress
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A prompt template macro with arguments expands and delivers as a message
-- [ ] `/compress` in the row triggers compress for claude and pig with no plugin or key
-- [ ] Unknown slash text is sent as plain text
-- [ ] A duplicate macro name or a built-in collision is reported at settings load
-- [ ] Macro text goes through the same queue and hold rules as typed text
-- [ ] Tests for expansion, unknown text, validation and the compress trigger through the exec seam
-- [ ] Spec stories 8, 9, 10, 11, 12
+- [x] A prompt template macro with arguments expands and delivers as a message
+- [x] `/compress` in the row triggers compress for claude and pig with no plugin or key
+- [x] Unknown slash text is sent as plain text
+- [x] A duplicate macro name or a built-in collision is reported at settings load
+- [x] Macro text goes through the same queue and hold rules as typed text
+- [x] Tests for expansion, unknown text, validation and the compress trigger through the exec seam
+- [x] Spec stories 8, 9, 10, 11, 12
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.
