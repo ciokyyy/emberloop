@@ -24,9 +24,10 @@ import (
 // Each item is a steer (delivered at the next tool boundary: no outstanding
 // tool call) or a queued message (delivered after the turn ends). Delivery
 // counts as accepted only when the transcript shows the user turn — an item
-// a startup dialog swallowed stays at the head and is retried. Later tickets
-// own the row, macros, raw mode and restart survival; their channel messages
-// (macro run, pause/resume) do not exist yet.
+// a startup dialog swallowed stays at the head and is retried. A compress
+// restart arrives as a restart request (ticket 05): the handoff pins ahead
+// of the surviving queue. Later tickets own macros and the rest of raw mode;
+// their channel messages (macro run, pause/resume) do not exist yet.
 
 // QueueKind is when one queued item goes out: a steer at the next tool
 // boundary, a queued message after the turn ends.
@@ -45,9 +46,13 @@ type queueItem struct {
 	Source string
 }
 
+// QueueSourceHandoff marks the compress-restart handoff: the one item that
+// pins ahead of everything, user messages included.
+const QueueSourceHandoff = "handoff"
+
 // inputQueue is the wrapper's FIFO of prompts: user messages go first before
 // pending injections (ticket 02), preserving arrival order among themselves.
-// The restart handoff pins ahead only from ticket 05.
+// The restart handoff pins ahead of all (ticket 05).
 type inputQueue struct {
 	mu       sync.Mutex
 	items    []queueItem
@@ -58,8 +63,23 @@ func newInputQueue() *inputQueue { return &inputQueue{} }
 
 // enqueue appends or inserts one item and reports the pending count. Text is
 // collapsed to a single line on the way in, so delivery and acceptance agree
-// on what the child receives. User messages (Source == "user") go before
-// pending injections.
+// on what the child receives. User messages (Source == "user") go behind the
+// restart handoff and before pending injections.
+// enqueueHandoff pins one restart handoff ahead of everything waiting, in
+// arrival order among handoffs. The restart resets the pump first, so no
+// item is mid-flight to the new child when this lands.
+func (q *inputQueue) enqueueHandoff(text string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	item := queueItem{Kind: QueueKindSteer, Text: collapseLine(text), Source: QueueSourceHandoff}
+	idx := 0
+	for idx < len(q.items) && q.items[idx].Source == QueueSourceHandoff {
+		idx++
+	}
+	q.items = append(q.items[:idx], append([]queueItem{item}, q.items[idx:]...)...)
+	return len(q.items)
+}
+
 func (q *inputQueue) enqueue(kind QueueKind, text, source string) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -70,6 +90,9 @@ func (q *inputQueue) enqueue(kind QueueKind, text, source string) int {
 			start = 1
 		}
 		idx := start
+		for idx < len(q.items) && q.items[idx].Source == QueueSourceHandoff {
+			idx++
+		}
 		for idx < len(q.items) && q.items[idx].Source == "user" {
 			idx++
 		}
@@ -112,12 +135,18 @@ func ctrlSocketPath(agentID string) string {
 }
 
 // ctrlRequest is one channel message. Macro-run and pause/resume arrive in
-// later tickets; the server rejects what it does not know.
+// later tickets; the server rejects what it does not know. A restart
+// carries the compress handoff plus the new child's launch (ticket 05).
 type ctrlRequest struct {
-	Op     string `json:"op"`
-	Kind   string `json:"kind,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Source string `json:"source,omitempty"`
+	Op      string   `json:"op"`
+	Kind    string   `json:"kind,omitempty"`
+	Text    string   `json:"text,omitempty"`
+	Source  string   `json:"source,omitempty"`
+	Session string   `json:"session,omitempty"`
+	Count   int      `json:"count,omitempty"`
+	Bin     string   `json:"bin,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	Env     []string `json:"env,omitempty"`
 }
 
 // ctrlResponse answers one request with the pending count after it.
@@ -130,8 +159,29 @@ type ctrlResponse struct {
 // serveCtrl listens on the agent's socket and enqueues into q until stop
 // runs. A socket that still answers belongs to a live wrapper, so a second
 // one for the same agent refuses to start; a stale file from a dead wrapper
-// is removed first; stop closes the listener and removes the file.
+// is removed first; stop closes the listener and removes the file. A
+// restart request without a restart handler only pins the handoff; the
+// wrapper serves with its child-swapping handler instead.
 func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
+	return serveCtrlRestart(agentID, q, nil)
+}
+
+// ctrlRestart is one compress restart for a wrapped agent: the handoff to
+// pin ahead of the surviving queue, the new harness session it starts, and
+// the new child's launch.
+type ctrlRestart struct {
+	Handoff       string
+	SessionID     string
+	CompressCount int
+	Bin           string
+	Args          []string
+	Env           []string
+}
+
+// serveCtrlRestart listens like serveCtrl, but a restart request also runs
+// onRestart, which swaps the wrapper's child and rotates its session before
+// the handoff pins. A nil handler keeps the queue-only behavior.
+func serveCtrlRestart(agentID string, q *inputQueue, onRestart func(ctrlRestart) (int, error)) (stop func(), err error) {
 	path := ctrlSocketPath(agentID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
@@ -161,7 +211,7 @@ func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
-			go serveOne(conn, q)
+			go serveOneRestart(conn, q, onRestart)
 		}
 	}()
 	return func() {
@@ -173,6 +223,12 @@ func serveCtrl(agentID string, q *inputQueue) (stop func(), err error) {
 
 // serveOne answers one connection: one JSON request in, one JSON reply out.
 func serveOne(conn net.Conn, q *inputQueue) {
+	serveOneRestart(conn, q, nil)
+}
+
+// serveOneRestart answers one connection with a restart handler: the
+// wrapper's child swap, or nil for the queue only.
+func serveOneRestart(conn net.Conn, q *inputQueue, onRestart func(ctrlRestart) (int, error)) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(ctrlTimeout))
 	var req ctrlRequest
@@ -180,11 +236,19 @@ func serveOne(conn net.Conn, q *inputQueue) {
 		_ = json.NewEncoder(conn).Encode(ctrlResponse{Error: "bad request: " + err.Error()})
 		return
 	}
-	_ = json.NewEncoder(conn).Encode(handleCtrl(q, req))
+	_ = json.NewEncoder(conn).Encode(handleCtrlRestart(q, req, onRestart))
 }
 
 // handleCtrl runs one request against the queue.
 func handleCtrl(q *inputQueue, req ctrlRequest) ctrlResponse {
+	return handleCtrlRestart(q, req, nil)
+}
+
+// handleCtrlRestart runs one request against the queue, restarting the
+// wrapper's child when the request asks and a handler is set. Without one
+// a restart only pins the handoff, so the supervisor seam stays drivable
+// on a bare queue.
+func handleCtrlRestart(q *inputQueue, req ctrlRequest, onRestart func(ctrlRestart) (int, error)) ctrlResponse {
 	switch req.Op {
 	case "pending":
 		return ctrlResponse{OK: true, Pending: q.len()}
@@ -198,6 +262,21 @@ func handleCtrl(q *inputQueue, req ctrlRequest) ctrlResponse {
 		default:
 			return ctrlResponse{Error: "unknown kind " + strconv.Quote(req.Kind) + ": want steer or queue"}
 		}
+	case "restart":
+		if strings.TrimSpace(req.Text) == "" {
+			return ctrlResponse{Error: "empty handoff: nothing to restart"}
+		}
+		if onRestart == nil {
+			return ctrlResponse{OK: true, Pending: q.enqueueHandoff(req.Text)}
+		}
+		n, err := onRestart(ctrlRestart{
+			Handoff: req.Text, SessionID: req.Session, CompressCount: req.Count,
+			Bin: req.Bin, Args: req.Args, Env: req.Env,
+		})
+		if err != nil {
+			return ctrlResponse{Error: err.Error()}
+		}
+		return ctrlResponse{OK: true, Pending: n}
 	default:
 		return ctrlResponse{Error: "unknown op " + strconv.Quote(req.Op)}
 	}
@@ -239,6 +318,26 @@ func ctrlPending(agentID string) int {
 		return 0
 	}
 	return n
+}
+
+// wrapperAlive says whether the agent's wrapper answers its channel: a
+// compress restart goes through it instead of a pane run when it does.
+func wrapperAlive(agentID string) bool {
+	if agentID == "" {
+		return false
+	}
+	_, err := ctrlRoundTrip(agentID, ctrlRequest{Op: "pending"})
+	return err == nil
+}
+
+// ctrlRestartAgent restarts the agent's wrapper on the new session: the
+// wrapper swaps its child, keeps the queue, row, history and raw state, and
+// pins the handoff ahead of everything. It reports the pending count after.
+func ctrlRestartAgent(agentID string, r ctrlRestart) (int, error) {
+	return ctrlRoundTrip(agentID, ctrlRequest{
+		Op: "restart", Text: r.Handoff, Session: r.SessionID, Count: r.CompressCount,
+		Bin: r.Bin, Args: r.Args, Env: r.Env,
+	})
 }
 
 // queueAcceptWait is how long a written item waits for the transcript to
@@ -304,7 +403,9 @@ type pumpGates struct {
 }
 
 // queuePump delivers one queue to one child: the head item goes out when
-// its gate passes, and leaves only once the transcript shows its turn.
+// its gate passes, and leaves only once the transcript shows its turn. A
+// restart stops the old pump on the swap, so a captured step can never
+// write twice to the new child.
 type queuePump struct {
 	mu       sync.Mutex
 	q        *inputQueue
@@ -313,6 +414,7 @@ type queuePump struct {
 	baseline int
 	lastTry  time.Time
 	tries    int
+	stopped  bool
 }
 
 func newQueuePump(q *inputQueue, gates pumpGates) *queuePump {
@@ -325,12 +427,24 @@ func (p *queuePump) enqueue(kind QueueKind, text, source string) int {
 
 func (p *queuePump) len() int { return p.q.len() }
 
+// stop retires the pump: a restart calls it on the swapped-out pump, so a
+// step captured before the swap stays quiet. An in-flight step finishes
+// first: stop waits on the pump lock.
+func (p *queuePump) stop() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stopped = true
+}
+
 // step moves the head item once: write it when its gate passes, pop it when
 // the transcript shows its turn, rewrite it when acceptance runs out. At
-// most one child write per step.
+// most one child write per step. A stopped pump does nothing.
 func (p *queuePump) step() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.stopped {
+		return
+	}
 	head, ok := p.q.head()
 	if !ok {
 		p.written = false
