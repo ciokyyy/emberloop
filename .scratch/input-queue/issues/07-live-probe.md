@@ -4,13 +4,13 @@
 
 **Blocked by:** 02-wick-input-row, 04-raw-mode, 06-shared-theme
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Probe runs claude and pig and prints pass or fail per behavior
-- [ ] Startup dialog case is covered and recorded
-- [ ] The script never submits a prompt to a model unless a flag says so
-- [ ] Findings are recorded in this ticket
-- [ ] Spec Testing Decisions, live probe paragraph
+- [x] Probe runs claude and pig and prints pass or fail per behavior
+- [x] Startup dialog case is covered and recorded
+- [x] The script never submits a prompt to a model unless a flag says so
+- [x] Findings are recorded in this ticket
+- [x] Spec Testing Decisions, live probe paragraph
 
 Spec: `.scratch/input-queue/spec.md`. Read it for the decisions this ticket implements and its Out of Scope section.
 
