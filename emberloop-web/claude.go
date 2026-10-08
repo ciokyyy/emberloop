@@ -310,6 +310,60 @@ func (b *ClaudeBackend) DropSession(id string) {
 	}
 }
 
+// dropConn removes the entry only when it still holds this connection, so
+// a release racing a resume never drops the resumed handle.
+func (b *ClaudeBackend) dropConn(id string, conn acpConn) {
+	b.mu.Lock()
+	if st, ok := b.sessions[id]; ok && st.conn == conn {
+		delete(b.sessions, id)
+		st.signalReady()
+	}
+	b.mu.Unlock()
+	_ = conn.Close()
+}
+
+// ReleaseSession captures the ACP session id, then drops the adapter
+// process so an idle Session holds no process. The id reloads through
+// session/load.
+func (b *ClaudeBackend) ReleaseSession(sessionID string) string {
+	b.mu.Lock()
+	st, ok := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	token := st.acpID
+	b.dropConn(sessionID, st.conn)
+	return token
+}
+
+// ResumeToken reports the live ACP session id for persistence.
+func (b *ClaudeBackend) ResumeToken(sessionID string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if st, ok := b.sessions[sessionID]; ok {
+		return st.acpID
+	}
+	return ""
+}
+
+// ResumeOK holds when a saved ACP session id exists to load.
+func (b *ClaudeBackend) ResumeOK(meta SessionMeta) (bool, string) {
+	if meta.ResumeToken == "" {
+		return false, "claude Session has no saved agent to load (it started before resume support); history is read-only"
+	}
+	return true, ""
+}
+
+// ResumeSession restarts the adapter around the saved ACP session id.
+func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	_ = emit
+	if meta.ResumeToken == "" {
+		return fmt.Errorf("claude: no saved session to resume")
+	}
+	return b.LoadSession(meta.ID, meta.ResumeToken, meta.Model, meta.WorkDir)
+}
+
 // OnPrompt runs after the prompt Event is stored. It waits for MCP-ready,
 // sends the prompt, and streams normalized Events through appendEvent.
 func (b *ClaudeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {

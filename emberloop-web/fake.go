@@ -21,3 +21,17 @@ func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, stat
 func (f *FakeBackend) CloseSession(sessionID string) {}
 
 func (f *FakeBackend) Models() []string { return []string{"fake-model"} }
+
+// ReleaseSession drops the fake handle; the token is a fixed marker.
+func (f *FakeBackend) ReleaseSession(sessionID string) string { return "fake-resume" }
+
+// ResumeSession rebuilds the fake handle; the log is the whole state.
+func (f *FakeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	return nil
+}
+
+// ResumeToken reports the fixed fake marker.
+func (f *FakeBackend) ResumeToken(sessionID string) string { return "fake-resume" }
+
+// ResumeOK always holds: the fake resumes from the log alone.
+func (f *FakeBackend) ResumeOK(meta SessionMeta) (bool, string) { return true, "" }

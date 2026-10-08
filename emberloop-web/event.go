@@ -24,4 +24,7 @@ type SessionMeta struct {
 	WorkDir   string    `json:"workDir"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
+	// ResumeToken is the harness handle needed to resume: the claude ACP
+	// session id, the pig Session id, or an opaque marker for fake.
+	ResumeToken string `json:"resumeToken,omitempty"`
 }

@@ -70,25 +70,9 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 	if _, ok := b.sessions[meta.ID]; ok {
 		return fmt.Errorf("pig: session %s already exists", meta.ID)
 	}
-	agentDir := b.AgentDir
-	if agentDir == "" {
-		agentDir = coding.DefaultAgentDir()
-	}
-	svcs, err := coding.NewServices(coding.ServicesOptions{CWD: meta.WorkDir, AgentDir: agentDir})
+	svcs, model, err := b.servicesModel(meta)
 	if err != nil {
-		return fmt.Errorf("pig: services: %w", err)
-	}
-	// BuildModel still builds unknown specs, so the listing check owns the
-	// rejection: only catalog models create. The test-faux provider passes
-	// only with PIG_TEST_FAUX=1, so production never admits unlisted models.
-	if _, ok := ai.LookupModel(meta.Model); !ok && !isTestFauxModel(meta.Model) {
-		svcs.Close()
-		return fmt.Errorf("pig: unknown model %q", meta.Model)
-	}
-	model, err := coding.BuildModel(meta.Model, svcs)
-	if err != nil {
-		svcs.Close()
-		return fmt.Errorf("pig: model %q: %w", meta.Model, err)
+		return err
 	}
 	rt, err := coding.NewRuntime(coding.RuntimeOptions{Services: svcs})
 	if err != nil {
@@ -106,14 +90,47 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		svcs.Close()
 		return fmt.Errorf("pig: session: %w", err)
 	}
+	b.subscribe(meta.ID, sess, rt, svcs, emit)
+	return nil
+}
+
+// servicesModel builds the Services and model for one Daemon Session. An
+// unknown model or unusable working directory returns an error for a 400.
+// Callers hold b.mu and own svcs on success.
+func (b *PigBackend) servicesModel(meta SessionMeta) (*coding.Services, *ai.Model, error) {
+	agentDir := b.AgentDir
+	if agentDir == "" {
+		agentDir = coding.DefaultAgentDir()
+	}
+	svcs, err := coding.NewServices(coding.ServicesOptions{CWD: meta.WorkDir, AgentDir: agentDir})
+	if err != nil {
+		return nil, nil, fmt.Errorf("pig: services: %w", err)
+	}
+	// BuildModel still builds unknown specs, so the listing check owns the
+	// rejection: only catalog models create. The test-faux provider passes
+	// only with PIG_TEST_FAUX=1, so production never admits unlisted models.
+	if _, ok := ai.LookupModel(meta.Model); !ok && !isTestFauxModel(meta.Model) {
+		svcs.Close()
+		return nil, nil, fmt.Errorf("pig: unknown model %q", meta.Model)
+	}
+	model, err := coding.BuildModel(meta.Model, svcs)
+	if err != nil {
+		svcs.Close()
+		return nil, nil, fmt.Errorf("pig: model %q: %w", meta.Model, err)
+	}
+	return svcs, model, nil
+}
+
+// subscribe attaches the normalized Event stream and stores the stack.
+// Callers hold b.mu.
+func (b *PigBackend) subscribe(id string, sess *coding.Session, rt *coding.Runtime, svcs *coding.Services, emit func(kind, text, status string)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	unsub := sess.Subscribe(func(e agent.AgentEvent) {
 		for _, ne := range mapAgentEvent(e) {
 			emit(ne.kind, ne.text, ne.status)
 		}
 	})
-	b.sessions[meta.ID] = &pigSession{ctx: ctx, cancel: cancel, sess: sess, rt: rt, svcs: svcs, unsub: unsub}
-	return nil
+	b.sessions[id] = &pigSession{ctx: ctx, cancel: cancel, sess: sess, rt: rt, svcs: svcs, unsub: unsub}
 }
 
 // OnPrompt runs one turn to completion. Chunks and tool calls already
@@ -164,7 +181,8 @@ func (b *PigBackend) FollowUp(sessionID, text string) {
 }
 
 // CloseSession cancels the turn, closes the SDK session and its runtime,
-// and drops the handle. Repeated calls are safe.
+// and drops the handle. Repeated calls are safe. A concurrent release that
+// already replaced the entry leaves the new handle alone.
 func (b *PigBackend) CloseSession(sessionID string) {
 	b.mu.Lock()
 	ps, ok := b.sessions[sessionID]
@@ -175,6 +193,11 @@ func (b *PigBackend) CloseSession(sessionID string) {
 	if !ok {
 		return
 	}
+	b.closePig(ps)
+}
+
+// closePig tears down one SDK stack outside the backend lock.
+func (b *PigBackend) closePig(ps *pigSession) {
 	ps.cancel()
 	if ps.unsub != nil {
 		ps.unsub()
@@ -189,6 +212,75 @@ func (b *PigBackend) alive(sessionID string) bool {
 	defer b.mu.Unlock()
 	_, ok := b.sessions[sessionID]
 	return ok
+}
+
+// ReleaseSession captures the pig Session id, then closes the SDK stack so
+// an idle Session holds no process. The id reloads through Runtime.Resume.
+func (b *PigBackend) ReleaseSession(sessionID string) string {
+	b.mu.Lock()
+	ps, ok := b.sessions[sessionID]
+	if ok {
+		delete(b.sessions, sessionID)
+	}
+	b.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	token := ps.sess.ID()
+	b.closePig(ps)
+	return token
+}
+
+// ResumeToken reports the live pig Session id for persistence.
+func (b *PigBackend) ResumeToken(sessionID string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if ps, ok := b.sessions[sessionID]; ok {
+		return ps.sess.ID()
+	}
+	return ""
+}
+
+// ResumeOK holds when a saved pig Session id exists to reload.
+func (b *PigBackend) ResumeOK(meta SessionMeta) (bool, string) {
+	if meta.ResumeToken == "" {
+		return false, "pig Session has no saved agent to load (it started before resume support); history is read-only"
+	}
+	return true, ""
+}
+
+// ResumeSession rebuilds the SDK stack and reloads the saved pig Session.
+func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	if meta.ResumeToken == "" {
+		return fmt.Errorf("pig: no saved session to resume")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.sessions[meta.ID]; ok {
+		return fmt.Errorf("pig: session %s already exists", meta.ID)
+	}
+	svcs, model, err := b.servicesModel(meta)
+	if err != nil {
+		return err
+	}
+	rt, err := coding.NewRuntime(coding.RuntimeOptions{Services: svcs})
+	if err != nil {
+		svcs.Close()
+		return fmt.Errorf("pig: runtime: %w", err)
+	}
+	sess, err := rt.Resume(meta.ResumeToken, coding.SessionStartOptions{
+		Model:              model,
+		SkipBuiltinTools:   true,
+		SkipExtensionTools: true,
+		ExtraTools:         b.extra,
+	})
+	if err != nil {
+		_ = rt.Close()
+		svcs.Close()
+		return fmt.Errorf("pig: resume: %w", err)
+	}
+	b.subscribe(meta.ID, sess, rt, svcs, emit)
+	return nil
 }
 
 func isTestFauxModel(model string) bool {

@@ -20,7 +20,8 @@
   let createError = $state('');
   let sending = $state(false);
   let loadError = $state('');
-
+  let resumable = $state(true);
+  let resumeNote = $state('');
   let source = null;
   let retryTimer = null;
   let backoff = 1;
@@ -53,7 +54,6 @@
     if (source) source.close();
     source = null;
   }
-
   async function openSession(id) {
     closeStream();
     currentId = id;
@@ -61,10 +61,14 @@
     lastSeq = 0;
     connected = true;
     backoff = 1;
+    resumable = true;
+    resumeNote = '';
     try {
       const body = await getSession(id);
       meta = body.session;
       events = body.events ?? [];
+      resumable = body.resumable ?? true;
+      resumeNote = body.resumeNote ?? '';
       lastSeq = events.reduce((m, e) => Math.max(m, e.seq), 0);
       // Whole-log replay first, so reload shows the same transcript.
       subscribe(id);
@@ -81,6 +85,10 @@
       if (e.kind === 'status' && e.status && id === currentId) {
         meta = { ...meta, status: e.status };
         sessions = sessions.map((s) => (s.id === id ? { ...s, status: e.status } : s));
+        if (e.status === 'ended') {
+          resumable = false;
+          resumeNote = 'session ended; history is read-only';
+        }
       }
     });
     source.onopen = () => {
@@ -160,6 +168,11 @@
     </aside>
 
     <main class="relative flex min-w-0 flex-1 flex-col">
+      {#if currentId && !resumable}
+        <p data-testid="read-only" class="border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+          Read-only history. {resumeNote}
+        </p>
+      {/if}
       <div bind:this={scroller} class="flex flex-1 flex-col gap-3 overflow-auto px-4 py-4">
         <div class="mx-auto flex w-full max-w-2xl flex-col gap-3">
           {#each blocks as b (b.key)}
@@ -173,7 +186,7 @@
       </div>
       <div class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/85 to-transparent px-4 pb-4 pt-10">
         <div class="pointer-events-auto mx-auto w-full max-w-2xl">
-          {#if currentId}
+          {#if currentId && resumable}
             <Composer {status} busy={sending} onSend={send} />
           {/if}
         </div>

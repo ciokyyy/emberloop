@@ -32,6 +32,17 @@ type Backend interface {
 	CloseSession(sessionID string)
 	// Models lists the harness's runnable models.
 	Models() []string
+	// ReleaseSession releases the agent process without deleting history
+	// and returns the token ResumeSession needs ("" when none).
+	ReleaseSession(sessionID string) string
+	// ResumeSession reallocates the agent process for a released Session
+	// using meta.ResumeToken.
+	ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error
+	// ResumeToken reports the current live handle for persistence.
+	ResumeToken(sessionID string) string
+	// ResumeOK reports whether a released Session can take a new prompt,
+	// with the why-not when it cannot.
+	ResumeOK(meta SessionMeta) (bool, string)
 }
 
 // Daemon owns every Session, writes Event logs and serves the API.
@@ -39,20 +50,27 @@ type Daemon struct {
 	stateDir string
 	backend  Backend
 	claude   *ClaudeBackend
-
+	// maxRunning overrides the max_workers setting when positive.
+	maxRunning int
+	// starting counts Sessions reserving a running slot while their
+	// backend handle builds before publish.
+	starting int
 	mu       sync.Mutex
 	sessions map[string]*session
 	backends map[string]Backend
 }
-
 type session struct {
 	meta   SessionMeta
 	events []Event
 	notify chan struct{}
 	last   time.Time
+	// live tells whether the backend holds an agent process. Released
+	// and never-started Sessions keep history only.
+	live bool
 }
 
 // NewDaemon loads persisted Sessions from stateDir/enderbloom/sessions.
+// Loaded Sessions hold history only; a new prompt resumes them.
 func NewDaemon(stateDir string, backend Backend) *Daemon {
 	d := &Daemon{
 		stateDir: stateDir,
@@ -147,6 +165,94 @@ func (d *Daemon) removeSession(id string) {
 	_ = os.RemoveAll(d.sessionDir(id))
 }
 
+// capMessage refuses a start over the concurrency cap. It names the setting
+// the cap came from so the message tells the user where to raise it.
+func capMessage(running, max int) string {
+	return fmt.Sprintf("session cap reached: %d running (max %d from max_workers); end a Session or wait for one to go idle", running, max)
+}
+
+// persistResumeToken stores the backend's live handle so a restart or a
+// later prompt can resume from it.
+func (d *Daemon) persistResumeToken(be Backend, id string) {
+	if be == nil {
+		return
+	}
+	tok := be.ResumeToken(id)
+	if tok == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s, ok := d.sessions[id]; ok {
+		s.meta.ResumeToken = tok
+		d.persistMeta(s.meta)
+	}
+}
+
+// resumeBackendLocked picks the Backend a prompt resumes through. Claude
+// Sessions need the wired claude Backend; without it only history reads.
+// Callers hold d.mu.
+func (d *Daemon) resumeBackendLocked(meta SessionMeta) (Backend, string) {
+	if meta.Harness == "claude" {
+		if d.claude == nil {
+			return nil, "claude backend not configured; history is read-only"
+		}
+		return d.claude, ""
+	}
+	return d.backendForLocked(meta.Harness), ""
+}
+
+// resumeViewLocked reports whether a new prompt would be accepted now: live
+// Sessions take one, ended Sessions never do, and released Sessions defer
+// to the Backend. Callers hold d.mu.
+func (d *Daemon) resumeViewLocked(s *session) (bool, string) {
+	if s.meta.Status == "ended" {
+		return false, "session ended; history is read-only"
+	}
+	if s.live {
+		return true, ""
+	}
+	be, unwired := d.resumeBackendLocked(s.meta)
+	if unwired != "" {
+		return false, unwired
+	}
+	return be.ResumeOK(s.meta)
+}
+
+// releaseIfIdle drops the agent process once the Session rests at idle, so
+// idle Sessions hold history only. The mark happens under the lock; the
+// slow backend release runs outside it.
+func (d *Daemon) releaseIfIdle(id string) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok || !s.live || s.meta.Status != "idle" {
+		d.mu.Unlock()
+		return
+	}
+	s.live = false
+	be := d.backendForLocked(s.meta.Harness)
+	if s.meta.Harness == "claude" && d.claude != nil {
+		be = d.claude
+	}
+	d.mu.Unlock()
+	if be == nil {
+		return
+	}
+	tok := be.ReleaseSession(id)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok = d.sessions[id]
+	if !ok {
+		return
+	}
+	// A prompt that resumed meanwhile already flipped live back on; its
+	// ResumeSession owns the token now, so only store when still released.
+	if !s.live && tok != "" {
+		s.meta.ResumeToken = tok
+		d.persistMeta(s.meta)
+	}
+}
+
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -228,6 +334,20 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
 		}
+		// The cap counts Sessions holding an agent process. Over it the
+		// create is refused with a clear message.
+		d.mu.Lock()
+		max := d.maxRunningLocked()
+		if d.liveCountLocked() >= max {
+			running := d.liveCountLocked()
+			d.mu.Unlock()
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": capMessage(running, max)})
+			return
+		}
+		if req.Harness != "claude" {
+			d.starting++
+		}
+		d.mu.Unlock()
 		// Allocate the harness Session before publishing: a concurrent GET
 		// or prompt must never see a Session with no harness handle.
 		// Claude skips the generic path here: its blocking StartSession runs
@@ -242,19 +362,26 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 				if err := be.CreateSession(meta, func(kind, text, status string) {
 					d.appendEvent(id, kind, text, status)
 				}); err != nil {
+					d.mu.Lock()
+					d.starting--
+					d.mu.Unlock()
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
+				d.mu.Lock()
+				d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+				d.persistMeta(meta)
+				d.starting--
+				d.mu.Unlock()
+				d.persistResumeToken(be, meta.ID)
 			}
-		}
-		d.mu.Lock()
-		d.sessions[meta.ID] = &session{meta: meta, notify: make(chan struct{}), last: time.Now()}
-		d.persistMeta(meta)
-		d.mu.Unlock()
-		// Claude creation blocks until session/new answers, so MCP tools
-		// are connected before the first prompt can go out.
-		if req.Harness == "claude" {
+		} else {
+			// Claude creation blocks until session/new answers, so MCP tools
+			// are connected before the first prompt can go out. The Session
+			// publishes live to hold its cap slot while it starts.
 			d.mu.Lock()
+			d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+			d.persistMeta(meta)
 			cb := d.claude
 			d.mu.Unlock()
 			if cb == nil {
@@ -270,6 +397,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			d.persistResumeToken(cb, meta.ID)
 		}
 		d.appendEvent(meta.ID, "status", "", "idle")
 		d.mu.Lock()
@@ -300,8 +428,13 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		}
 		meta := s.meta
 		events := append([]Event(nil), s.events...)
+		live := s.live
+		resumable, note := d.resumeViewLocked(s)
 		d.mu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"session": meta, "events": events})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"session": meta, "events": events,
+			"live": live, "resumable": resumable, "resumeNote": note,
+		})
 	case sub == "prompt" && r.Method == "POST":
 		var req struct {
 			Text string `json:"text"`
@@ -322,13 +455,68 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "session ended", http.StatusGone)
 			return
 		}
-		be := d.backendForLocked(s.meta.Harness)
+		meta := s.meta
+		needResume := !s.live
+		be, unwired := d.resumeBackendLocked(meta)
 		d.mu.Unlock()
+		if needResume {
+			// A released Session resumes from the log before the prompt
+			// runs. Where the harness cannot resume, history stays
+			// readable and the prompt is refused with the why.
+			if unwired != "" {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": unwired})
+				return
+			}
+			if okResume, reason := be.ResumeOK(meta); !okResume {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": reason})
+				return
+			}
+			d.mu.Lock()
+			cur, ok := d.sessions[id]
+			resume := ok && !cur.live && cur.meta.Status != "ended"
+			if resume {
+				if d.liveCountLocked() >= d.maxRunningLocked() {
+					running, max := d.liveCountLocked(), d.maxRunningLocked()
+					d.mu.Unlock()
+					writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": capMessage(running, max)})
+					return
+				}
+				d.starting++
+				meta = cur.meta
+			}
+			d.mu.Unlock()
+			if resume {
+				if err := be.ResumeSession(meta, func(kind, text, status string) {
+					d.appendEvent(id, kind, text, status)
+				}); err != nil {
+					d.mu.Lock()
+					d.starting--
+					d.mu.Unlock()
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+					return
+				}
+				d.mu.Lock()
+				d.starting--
+				if cur, ok := d.sessions[id]; ok && !cur.live {
+					cur.live = true
+					if tok := be.ResumeToken(id); tok != "" {
+						cur.meta.ResumeToken = tok
+					}
+					d.persistMeta(cur.meta)
+				}
+				d.mu.Unlock()
+			}
+		}
 		e := d.appendEvent(id, "prompt", req.Text, "")
 		if be != nil {
-			go be.OnPrompt(id, req.Text, func(kind, text, status string) {
-				d.appendEvent(id, kind, text, status)
-			})
+			go func() {
+				be.OnPrompt(id, req.Text, func(kind, text, status string) {
+					d.appendEvent(id, kind, text, status)
+				})
+				// The turn is over: release the agent process so idle
+				// Sessions hold no memory. The next prompt resumes it.
+				d.releaseIfIdle(id)
+			}()
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"seq": e.Seq})
 	case sub == "" && r.Method == "DELETE":
@@ -348,10 +536,12 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.meta.Status = "ended"
+		wasLive := s.live
+		s.live = false
 		d.persistMeta(s.meta)
 		be := d.backendForLocked(s.meta.Harness)
 		d.mu.Unlock()
-		if be != nil {
+		if wasLive && be != nil {
 			be.CloseSession(id)
 		}
 		d.appendEvent(id, "status", "", "ended")
