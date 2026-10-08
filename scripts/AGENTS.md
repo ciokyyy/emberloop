@@ -14,8 +14,10 @@ frame for comparison), the strip-look probe (each symbol preset and
 separator under wrap, with the Nerd Font codepoint check), and the
 reviewer-spawn probe (a claude reviewer in a background tab gets its first
 prompt within seconds, then still does after a tab move and in an overflow
-tab; measures ready/working latencies through `herdr agent wait`). Each
-script names its prerequisites in its header comment.
+tab; measures ready/working latencies through `herdr agent wait`), and the
+driver probe (two trivial tickets through `implement --driver` on a real
+herdr, killed mid-run and resumed with no second worker, printing each
+ticket's state). Each script names its prerequisites in its header comment.
 
 ## Ownership
 
