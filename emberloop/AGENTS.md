@@ -58,7 +58,13 @@ owns its `_test.go` and the behaviour below):
   attempts waiting out the same growing delay, recorded on the report when
   herdr never accepts it) with retries continuing on a doubling backoff while
   every other ticket keeps running (a ticket marked needs-you keeps the mark
-  and its alert when later parked or discarded), a parked ticket (`Parked`, live:
+  and its alert when later parked or discarded), a worker idle 3m with no
+  submit gets the fixed stall nudge (repeating every 5m, the third raising the
+  needs-you alert with the transcript's spawn error named in it; any submit
+  ends it; delivery is best effort and recorded, never fatal). After the alert
+  there is no give-up bound: the live run keeps polling and a stuck run waits
+  for a human; the spec never gives up on its own. The stall lands in the run
+  state's `Stalls` beside the nudge count and the alert. A parked ticket (`Parked`, live:
   the seeded Status park plus the file's parked Status read every pass) is never
   started or finished and frees its slot so only its dependents wait, a ticket the user
   discarded mid-run (`Discarded`, live: no worker record, not queued, run
@@ -76,7 +82,7 @@ owns its `_test.go` and the behaviour below):
   no state file, and exits with the report when nothing runs and nothing can
   start (the rest wait on parked tickets) instead of polling. `RunDriverLive`
   wires the live spawn, verdict, tell, submit-count, submit-read, file-tick,
-  finish, herdr-notification, park, discard and follow-up ops, the
+  transcript, finish, herdr-notification, park, discard and follow-up ops, the
   store-or-branch worker check and the history sha lookup.
   The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
   `--llm` and a bare run keep the LLM orchestrator)

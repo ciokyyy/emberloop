@@ -83,6 +83,10 @@ type DriverWorld struct {
 	// next submit is what triggers the retry. Nil means no waiting: worlds
 	// without it tell each distinct refusal once, as above.
 	Submits func(ticketID string) int
+	// Transcript reads a ticket worker's transcript text. The driver scans it
+	// for the real reviewer spawn error when the worker stalls. Nil means no
+	// transcript: the run state keeps no spawn error.
+	Transcript func(ticketID string) string
 	// Parked reports the user's park action, taken with p in the pane. A
 	// parked ticket keeps its worktree and branch, so the driver never starts
 	// or finishes it; only the tickets that depend on it wait. Read every
@@ -156,10 +160,26 @@ type DriverResult struct {
 	// minutes with no worker activity. In ticket order. A ticket that later
 	// merges leaves the list.
 	NeedsYou []string
-	Report   string
+	// Stalls holds the stall the driver saw per nudged ticket: how many fixed
+	// nudges went, the reviewer spawn error read out of the worker's
+	// transcript, and whether the third nudge raised the needs-you alert. A
+	// ticket never nudged has no entry.
+	Stalls map[string]DriverStall
+	Report string
 	// UnknownCheckboxes holds the completed names with no checkbox in the
 	// ticket, by ticket id. Reported, never merged against.
 	UnknownCheckboxes map[string][]string
+}
+
+// DriverStall is one ticket's stall as the run state keeps it.
+// NudgeError is the last nudge delivery failure. Delivery is best
+// effort: a dead worker pane never aborts the other tickets.
+// The alert itself goes through the shared needs-you notify path.
+type DriverStall struct {
+	Nudges     int
+	SpawnError string
+	NeedsYou   bool
+	NudgeError string
 }
 
 // RunDriver is the driver's one seam: the spec plus the injected world in,
@@ -173,7 +193,10 @@ type DriverResult struct {
 // run seeds its state from the world: Status done tickets are already merged
 // (their sha from MergedSHA), Status parked tickets sit out, and tickets with
 // a worker are already started and hold their slot. It never starts a second
-// worker for a ticket that has one, and writes no state file of its own.
+// worker for a ticket that has one, and writes no state file of its own. A
+// worker idle with no submit gets the fixed stall nudge (repeating every 5m,
+// the third raising the needs-you alert through the shared notify path) on
+// the world's clock.
 func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	tickets, err := readDriverTickets(spec, world.Files)
 	if err != nil {
@@ -187,11 +210,11 @@ func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	if world.Finish == nil {
 		return res, nil
 	}
-	merged, needsYou, unknown, report, err := runDriverLoop(order, world)
+	merged, needsYou, unknown, stalls, report, err := runDriverLoop(order, world)
 	if err != nil {
 		return DriverResult{}, err
 	}
-	res.Merged, res.NeedsYou, res.UnknownCheckboxes, res.Report = merged, needsYou, unknown, report
+	res.Merged, res.NeedsYou, res.UnknownCheckboxes, res.Stalls, res.Report = merged, needsYou, unknown, stalls, report
 	return res, nil
 }
 
@@ -209,6 +232,19 @@ const (
 	driverBackoffStart     = time.Minute
 	driverBackoffCap       = 15 * time.Minute
 )
+
+// Stall timing: a worker idle this long with no submit gets the fixed nudge,
+// which repeats on this interval, and the third nudge raises the needs-you
+// alert through the shared notify path.
+const (
+	driverStallIdle  = 3 * time.Minute
+	driverNudgeEvery = 5 * time.Minute
+	driverNudgeMax   = 3
+)
+
+// driverStallNudge is the fixed nudge a worker idle with no submit gets: it
+// forgot to spawn its reviewers or to submit, so the nudge names both.
+const driverStallNudge = "Nudge: you have not submitted. Spawn your reviewers and submit."
 
 // driverNow reads the world's clock. Nil means time.Now; tests inject a fake.
 func driverNow(world DriverWorld) time.Time {
@@ -246,11 +282,16 @@ func driverBackoffDelay(step int) time.Duration {
 // notification, and the retries continue with a growing delay. Completed
 // checkboxes tick into the ticket file as best effort beside it. Other
 // tickets keep running while one waits: the alert and the delay never gate
-// them. A resumed run seeds its state from the world first: Status done
-// tickets are already merged, Status parked tickets sit out while keeping
-// their workers, and tickets with a worker are already started and hold their
-// MaxWorkers slot.
-func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []string, map[string][]string, string, error) {
+// them. A worker idle with no submit gets the fixed stall nudge after
+// driverStallIdle, repeating every driverNudgeEvery, and the driverNudgeMax-th
+// one raises the needs-you alert with the transcript's spawn error named in
+// it. Any submit ends the nudging. After the alert there is no give-up bound:
+// the live run keeps polling and a stuck run waits for a human; the spec
+// never gives up on its own. A resumed run seeds its state from the world
+// first: Status done tickets are already merged, Status parked tickets sit out
+// while keeping their workers, and tickets with a worker are already started
+// and hold their MaxWorkers slot.
+func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []string, map[string][]string, map[string]DriverStall, string, error) {
 	maxRun := world.MaxWorkers
 	if maxRun <= 0 {
 		maxRun = 3
@@ -297,6 +338,19 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 	nextNotify := map[string]time.Time{}
 	backoffStep := map[string]int{}
 	nextRetry := map[string]time.Time{}
+	// Stall state per ticket: nudges counts the fixed nudges sent, lastNudge
+	// the last one, spawnErr the reviewer spawn error read out of the
+	// worker's transcript, nudgeErr the last nudge delivery failure.
+	// Idleness reads the shared lastActivity, so any submit, tip or verdict
+	// ends the nudging like it ends the idle alert.
+	nudges := map[string]int{}
+	lastNudge := map[string]time.Time{}
+	spawnErr := map[string]string{}
+	nudgeErr := map[string]string{}
+	// stallAlert latches the third nudge firing per ticket: the merge below
+	// clears the shared needs-you mark, but the run state keeps whether the
+	// stall escalated.
+	stallAlert := map[string]bool{}
 	// markNeedsYou marks the ticket and queues its alert text. Marking never
 	// fails and never stops the run: the notification below retries until it
 	// succeeds, so a herdr outage never kills the other tickets.
@@ -383,7 +437,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				break
 			}
 			if err := world.StartWorker(order[next]); err != nil {
-				return nil, nil, nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
+				return nil, nil, nil, nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
 			}
 			started[order[next].ID] = true
 			lastActivity[order[next].ID] = now
@@ -490,11 +544,49 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				continue
 			}
 			if before != tip || !driverGatePass(required, revs, tip) {
+				// A worker idle with no submit forgot its reviewers: the
+				// fixed nudge goes after driverStallIdle, repeats every
+				// driverNudgeEvery, and the driverNudgeMax-th raises the
+				// needs-you alert through the shared notify path. A nudge
+				// counts as progress, so the repeat gets its own pass. A
+				// told refusal waits for its submit instead of a nudge, so
+				// nothing here runs while waiting above holds. Delivery is
+				// best effort and needs a submit count: a dead pane is
+				// recorded on the stall, never fatal to the run, and
+				// without Submits no submit can be ruled out, so nothing is
+				// nudged.
+				if world.Tell != nil && world.Submits != nil && subs == 0 && nudges[tk.ID] < driverNudgeMax {
+					idle := now.Sub(lastActivity[tk.ID])
+					due := nudges[tk.ID] == 0 && idle >= driverStallIdle ||
+						nudges[tk.ID] > 0 && idle >= driverStallIdle && now.Sub(lastNudge[tk.ID]) >= driverNudgeEvery
+					if due {
+						if spawnErr[tk.ID] == "" && world.Transcript != nil {
+							spawnErr[tk.ID] = driverSpawnError(world.Transcript(tk.ID))
+						}
+						if err := world.Tell(tk.ID, driverStallNudge); err != nil {
+							nudgeErr[tk.ID] = err.Error()
+						}
+						nudges[tk.ID]++
+						lastNudge[tk.ID] = now
+						progress = true
+						if nudges[tk.ID] >= driverNudgeMax {
+							stallAlert[tk.ID] = true
+							if !needsYou[tk.ID] {
+								text := fmt.Sprintf("ticket %s needs you: stalled with no submit after %d nudges", tk.ID, nudges[tk.ID])
+								if spawnErr[tk.ID] != "" {
+									text += ": " + spawnErr[tk.ID]
+								}
+								markNeedsYou(tk.ID, text)
+								progress = true
+							}
+						}
+					}
+				}
 				continue
 			}
 			fin, err := world.Finish(tk.ID)
 			if err != nil {
-				return nil, nil, nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
+				return nil, nil, nil, nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
 			}
 			if !fin.Merged {
 				// A refused finish stays running; its text lands on the
@@ -534,7 +626,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 							at = world.Submits(tk.ID)
 						}
 						if err := world.Tell(tk.ID, fin.Detail); err != nil {
-							return nil, nil, nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
+							return nil, nil, nil, nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
 						}
 						toldText[tk.ID] = fin.Detail
 						if world.Submits != nil {
@@ -573,6 +665,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 	var needsYouIDs []string
 	gone := map[string]bool{}
 	followups := map[string]string{}
+	stalls := map[string]DriverStall{}
 	for _, tk := range order {
 		if isGone(tk.ID) {
 			gone[tk.ID] = true
@@ -583,6 +676,9 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 		if needsYou[tk.ID] {
 			needsYouIDs = append(needsYouIDs, tk.ID)
 		}
+		if nudges[tk.ID] > 0 {
+			stalls[tk.ID] = DriverStall{Nudges: nudges[tk.ID], SpawnError: spawnErr[tk.ID], NeedsYou: stallAlert[tk.ID], NudgeError: nudgeErr[tk.ID]}
+		}
 		// Follow-ups are read once the run holds, so the report carries what
 		// the workers last left, verbatim.
 		if world.Followups != nil {
@@ -591,7 +687,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			}
 		}
 	}
-	return out, needsYouIDs, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, refused, parked, gone, unknown, tickFailed, notifyErr, followups), nil
+	return out, needsYouIDs, driverUnknownOrNil(unknown), stalls, driverReport(order, out, started, merged, refused, parked, gone, unknown, tickFailed, notifyErr, followups, stalls), nil
 }
 
 // Resume states a ticket file carries: done (merged), parked (sitting out
@@ -636,6 +732,28 @@ func driverMergedSHA(world DriverWorld, ticketID string) string {
 		return ""
 	}
 	return world.MergedSHA(ticketID)
+}
+
+// driverSpawnError reads the real reviewer spawn error out of a worker's
+// transcript: the last line that mentions a spawn and a failure. Anything
+// else, including a transcript with no spawn failure, keeps no error. The
+// match is a known heuristic: worker prose naming a spawn failure reads the
+// same as the failure itself.
+func driverSpawnError(transcript string) string {
+	var found string
+	for _, line := range strings.Split(transcript, "\n") {
+		fold := strings.ToLower(line)
+		if !strings.Contains(fold, "spawn") {
+			continue
+		}
+		for _, fail := range []string{"fail", "error", "could not", "cannot", "timed out", "timeout"} {
+			if strings.Contains(fold, fail) {
+				found = strings.TrimSpace(line)
+				break
+			}
+		}
+	}
+	return found
 }
 
 // driverRequired names the reviewer types one ticket's finish needs: its own
@@ -686,9 +804,10 @@ func driverReviewSig(required []string, revs map[string]DriverReview) string {
 // and tick failures follow their ticket in order, then every unmerged ticket
 // the notification never reached. A discarded ticket reads discarded; a
 // parked ticket reads parked, keeping its last refusal beside it when it has
-// one. Worker follow-ups close the report, one entry per ticket, copied
-// verbatim.
-func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string, parked, gone map[string]bool, unknown map[string][]string, tickFailed, notifyErr map[string]string, followups map[string]string) string {
+// one. A nudged ticket names its nudge count, the needs-you alert and the
+// spawn error beside them. Worker follow-ups close the report, one entry per
+// ticket, copied verbatim.
+func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string, parked, gone map[string]bool, unknown map[string][]string, tickFailed, notifyErr map[string]string, followups map[string]string, stalls map[string]DriverStall) string {
 	var b strings.Builder
 	for _, m := range merged {
 		if m.SHA == "" {
@@ -699,20 +818,34 @@ func driverReport(order []DriverTicket, merged []DriverMerged, started, done map
 	}
 	for _, tk := range order {
 		if !done[tk.ID] {
+			detail := ""
 			switch {
 			case gone[tk.ID]:
-				fmt.Fprintf(&b, "unmerged %s: discarded\n", tk.ID)
+				detail = "discarded"
 			case parked[tk.ID] && refused[tk.ID] != "":
-				fmt.Fprintf(&b, "unmerged %s: parked: %s\n", tk.ID, refused[tk.ID])
+				detail = "parked: " + refused[tk.ID]
 			case parked[tk.ID]:
-				fmt.Fprintf(&b, "unmerged %s: parked\n", tk.ID)
+				detail = "parked"
 			case refused[tk.ID] != "":
-				fmt.Fprintf(&b, "unmerged %s: %s\n", tk.ID, refused[tk.ID])
+				detail = refused[tk.ID]
 			case !started[tk.ID]:
-				fmt.Fprintf(&b, "unmerged %s: never started\n", tk.ID)
+				detail = "never started"
 			default:
-				fmt.Fprintf(&b, "unmerged %s: still running\n", tk.ID)
+				detail = "still running"
 			}
+			if st, ok := stalls[tk.ID]; ok && st.Nudges > 0 {
+				detail += fmt.Sprintf("; nudged %dx", st.Nudges)
+				if st.NeedsYou {
+					detail += "; needs you: stalled with no submit"
+				}
+				if st.SpawnError != "" {
+					detail += "; spawn error: " + st.SpawnError
+				}
+				if st.NudgeError != "" {
+					detail += "; nudge failed: " + st.NudgeError
+				}
+			}
+			fmt.Fprintf(&b, "unmerged %s: %s\n", tk.ID, detail)
 		}
 		for _, name := range unknown[tk.ID] {
 			fmt.Fprintf(&b, "unknown checkbox %q in %s\n", name, tk.ID)
@@ -929,6 +1062,22 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 				submitSeq[ticketID]++
 			}
 			return submitSeq[ticketID]
+		},
+		Transcript: func(ticketID string) string {
+			id := WorkerID(paths[ticketID])
+			st, ok, err := ReadAgentState(id)
+			if err != nil || !ok {
+				return ""
+			}
+			path := TranscriptSource("", st.SessionID, id, "")
+			if path == "" {
+				return ""
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return ""
+			}
+			return string(raw)
 		},
 		Finish: func(ticketID string) (DriverFinish, error) {
 			res, err := Finish(finishExec, WorkerID(paths[ticketID]), true)
