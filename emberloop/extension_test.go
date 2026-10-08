@@ -56,7 +56,8 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 // The brief carries what the worker needs beyond the skills: the spec its
 // ticket belongs to, a spawn of both reviewer types in place of the
 // code-review skill's subagents, a rebase onto the target before the last
-// review, and how to decline a finding it cannot fix.
+// review, how to decline a finding it cannot fix, and that ticket files stay
+// untouched while completed checkboxes ride the submit's completed list.
 func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
@@ -64,7 +65,7 @@ func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := readFile(t, path)
-	for _, want := range []string{"/repo/.scratch/p/spec.md", "reviewer-standards", "reviewer-spec", "spawn(agents=", "git rebase spec/p", "Follow-ups"} {
+	for _, want := range []string{"/repo/.scratch/p/spec.md", "reviewer-standards", "reviewer-spec", "spawn(agents=", "git rebase spec/p", "Follow-ups", "Never edit ticket files", "completed"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("brief must carry %q:\n%s", want, text)
 		}

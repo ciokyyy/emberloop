@@ -170,6 +170,7 @@ func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 	b.WriteString("\nBefore editing, read the AGENTS.md chain from the repo root down to each file you will touch, following each doc's Child DOX Index; the nearest doc is the local contract. " +
 		"After a change that alters purpose, ownership, contracts, structure, workflow, inputs, outputs, or permissions, update the nearest owning AGENTS.md (plus affected parents and children, refreshing indexes) in the same task.\n")
 	b.WriteString("\nStay in this worktree. Commit to the current branch when the gate passes.\n")
+	b.WriteString("\nNever edit ticket files yourself: name each checkbox you completed by its checkbox line text in your submit's completed list, and the driver ticks them.\n")
 	if target != "" {
 		fmt.Fprintf(&b, "\nBefore your final review, bring the branch up to date: `git rebase %s`. "+
 			"Resolve any conflict keeping the intent of both sides, spawn the reviewers again, and commit. "+
