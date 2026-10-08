@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/* shadcn-style tokens on Tailwind v4. Light values on :root, dark values
+   follow the system theme, so the UI tracks light/dark with no toggle. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+}
+
+:root {
+  color-scheme: light dark;
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --destructive: #dc2626;
+  --border: #e4e4e7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #09090b;
+    --foreground: #fafafa;
+    --card: #131316;
+    --card-foreground: #fafafa;
+    --muted: #1c1c21;
+    --muted-foreground: #a1a1aa;
+    --primary: #fafafa;
+    --primary-foreground: #09090b;
+    --destructive: #f87171;
+    --border: #27272a;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+.diff-add {
+  @apply bg-green-500/10 text-green-700 dark:text-green-300;
+}
+.diff-del {
+  @apply bg-red-500/10 text-red-700 dark:text-red-300;
+}

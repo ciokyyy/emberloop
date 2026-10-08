@@ -21,11 +21,15 @@ imports it. No herdr, no ticket state.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
   `meta.json` plus append-only `events.jsonl`; the Daemon reloads both on start.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
-  is the embedded build served at `/`.
+  is the embedded build served at `/` with its bundle assets and correct
+  content types. Styling is Tailwind with shadcn-svelte-idiom components
+  in `web/src/lib/ui/`; component logic lives in `web/src/lib/*.js`.
 
 ## Verification
 
 In `emberloop-web/`: `go vet ./... && go test ./...`. Wired into the repo check.
+In `emberloop-web/web/`: `npm test` (vitest) and `npm run build`. The JS
+suite is not in the repo check; the check covers Go only.
 
 ## Child DOX Index
 

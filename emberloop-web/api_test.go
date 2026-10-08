@@ -276,8 +276,11 @@ func TestServesEmbeddedUI(t *testing.T) {
 	}
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(resp.Body)
-	if !strings.Contains(buf.String(), "Sessions") {
-		t.Fatalf("ui body missing Sessions marker")
+	if !strings.Contains(buf.String(), "Enderbloom") {
+		t.Fatalf("ui body missing Enderbloom marker")
+	}
+	if !strings.Contains(buf.String(), "assets/") {
+		t.Fatalf("ui body missing static bundle assets")
 	}
 }
 
