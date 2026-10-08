@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,15 @@ func (backgroundTool) Schema() map[string]any {
 	}, "action")
 }
 
+// bashCommand wraps command so the pane's login shell runs it under bash.
+// The pane types its text into the user's shell, which may be fish, and fish
+// rejects bash syntax such as $? and a rejected line is never run. The command
+// travels base64-encoded, which needs no quoting and reads the same in fish,
+// bash and zsh.
+func bashCommand(command string) string {
+	return fmt.Sprintf(`bash -c "$(printf %%s %s | base64 -d)"`, base64.StdEncoding.EncodeToString([]byte(command)))
+}
+
 func herdr(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -82,7 +92,7 @@ func (t backgroundTool) Execute(ctx context.Context, root string, args json.RawM
 		if err != nil {
 			return "", err
 		}
-		if _, err := HerdrRun(ctx, "pane", "run", pane, p.Command); err != nil {
+		if _, err := HerdrRun(ctx, "pane", "run", pane, bashCommand(p.Command)); err != nil {
 			_, _ = HerdrRun(ctx, "pane", "close", pane)
 			return "", err
 		}

@@ -109,3 +109,32 @@ func TestBackgroundOverflowsIntoScouts(t *testing.T) {
 		t.Errorf("overflow tab label = %q, want scouts", got)
 	}
 }
+
+// The command reaches the pane wrapped for bash: the pane's login shell may be
+// fish, which rejects bash syntax like $? and never runs the line.
+func TestBackgroundStartRunsTheCommandUnderBash(t *testing.T) {
+	g := newFakeGrid()
+	caller := g.tabs[0].order[0]
+	t.Setenv("HERDR_TAB_ID", "")
+	t.Setenv("HERDR_PANE_ID", caller)
+	tool := gridBackground(t, g)
+
+	if _, err := backgroundStart(t, tool, "/repo", `go run . > /tmp/x.log 2>&1; echo "EXIT=$?"`); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	ran := ""
+	for _, c := range g.calls {
+		if strings.Contains(c, "pane run ") {
+			ran = c
+		}
+	}
+	if ran == "" {
+		t.Fatal("start never ran a command")
+	}
+	if strings.Contains(ran, "$?") {
+		t.Errorf("the pane line %q carries bash syntax a fish shell rejects", ran)
+	}
+	if !strings.Contains(ran, "bash -c") {
+		t.Errorf("the pane line %q does not run the command under bash", ran)
+	}
+}
