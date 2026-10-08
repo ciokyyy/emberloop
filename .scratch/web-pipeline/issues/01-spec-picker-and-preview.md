@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The Daemon API lists specs under a repo directory and returns title and Ticket count for each
-- [ ] The Daemon API returns the Ticket preview for one spec, with blockers and checkbox progress
-- [ ] A directory with no spec returns an empty list, and the view shows a clear message
-- [ ] An unparsable Blocked by line surfaces as an error on that Ticket
-- [ ] The Runs view is reachable from the sidebar and lets the user pick a repo, a spec, and see the preview
-- [ ] The API is tested with a fake Backend, and the view is tested against a mocked API
-- [ ] The Daemon imports nothing from herdr
+- [x] The Daemon API lists specs under a repo directory and returns title and Ticket count for each
+- [x] The Daemon API returns the Ticket preview for one spec, with blockers and checkbox progress
+- [x] A directory with no spec returns an empty list, and the view shows a clear message
+- [x] An unparsable Blocked by line surfaces as an error on that Ticket
+- [x] The Runs view is reachable from the sidebar and lets the user pick a repo, a spec, and see the preview
+- [x] The API is tested with a fake Backend, and the view is tested against a mocked API
+- [x] The Daemon imports nothing from herdr
