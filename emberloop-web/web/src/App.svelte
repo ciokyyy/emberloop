@@ -60,7 +60,7 @@ async function send(ev) {
 
 <main>
 <h1>Sessions</h1>
-<form on:submit={create}>
+<form onsubmit={create}>
 <input id="harness" value="fake" aria-label="harness" />
 <input id="model" value="fake-model" aria-label="model" />
 <input id="workDir" value="." aria-label="working directory" />
@@ -68,12 +68,12 @@ async function send(ev) {
 </form>
 <ul>
 {#each sessions as s}
-<li><a href="#" on:click|preventDefault={() => openSession(s.id)}>{s.id} {s.status}</a></li>
+<li><a href="#" onclick={(e) => { e.preventDefault(); openSession(s.id); }}>{s.id} {s.status}</a></li>
 {/each}
 </ul>
 <h2>Transcript</h2>
 <div id="transcript"></div>
-<form on:submit={send}>
+<form onsubmit={send}>
 <input id="prompt" aria-label="prompt" placeholder="Send a prompt" />
 <button>Send</button>
 </form>

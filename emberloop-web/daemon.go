@@ -63,9 +63,9 @@ func (d *Daemon) Handler() http.Handler {
 
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	s, ok := d.sessions[id]
 	if !ok {
-		d.mu.Unlock()
 		return Event{}
 	}
 	e := Event{
@@ -85,11 +85,11 @@ func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 	notify := s.notify
 	s.notify = make(chan struct{})
 	meta := s.meta
-	d.mu.Unlock()
-
-	close(notify)
+	// Persist under the lock so concurrent appends land in the log in
+	// sequence order and the metadata never goes stale.
 	d.persistEvent(meta, e)
 	d.persistMeta(meta)
+	close(notify)
 	return e
 }
 
@@ -99,9 +99,9 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		metas := make([]SessionMeta, 0, len(d.sessions))
 		lasts := map[string]time.Time{}
-		for id, s := range d.sessions {
+		for _, s := range d.sessions {
 			metas = append(metas, s.meta)
-			lasts[id] = s.last
+			lasts[s.meta.ID] = s.last
 		}
 		d.mu.Unlock()
 		sort.Slice(metas, func(i, j int) bool {
@@ -135,10 +135,9 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		d.mu.Lock()
 		d.sessions[meta.ID] = &session{meta: meta, notify: make(chan struct{}), last: time.Now()}
-		d.mu.Unlock()
 		d.persistMeta(meta)
-		e := d.appendEvent(meta.ID, "status", "", "idle")
-		_ = e
+		d.mu.Unlock()
+		d.appendEvent(meta.ID, "status", "", "idle")
 		d.mu.Lock()
 		m := d.sessions[meta.ID].meta
 		d.mu.Unlock()
@@ -323,7 +322,23 @@ func (d *Daemon) persistMeta(meta SessionMeta) {
 	dir := d.sessionDir(meta.ID)
 	_ = os.MkdirAll(dir, 0o755)
 	b, _ := json.Marshal(meta)
-	_ = os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+	// Atomic write: a crash mid-write never leaves a corrupt meta.json
+	// that load would silently drop.
+	tmp, err := os.CreateTemp(dir, "meta-*.json")
+	if err != nil {
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return
+	}
+	_ = os.Rename(tmpName, filepath.Join(dir, "meta.json"))
 }
 
 func (d *Daemon) persistEvent(meta SessionMeta, e Event) {
@@ -370,9 +385,17 @@ func (d *Daemon) load() {
 				}
 			}
 		}
-		d.sessions[id] = &session{meta: meta, events: events, notify: make(chan struct{}), last: meta.CreatedAt}
+		// Order by sequence number so a log written under concurrency
+		// still replays in order; malformed lines are skipped above.
+		sort.Slice(events, func(i, j int) bool { return events[i].Seq < events[j].Seq })
+		// Key by the metadata ID so the map key always matches meta.ID.
+		key := meta.ID
+		if key == "" {
+			key = id
+		}
+		d.sessions[key] = &session{meta: meta, events: events, notify: make(chan struct{}), last: meta.CreatedAt}
 		if len(events) > 0 {
-			d.sessions[id].last = events[len(events)-1].CreatedAt
+			d.sessions[key].last = events[len(events)-1].CreatedAt
 		}
 	}
 }

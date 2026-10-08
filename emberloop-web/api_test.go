@@ -3,9 +3,13 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -86,10 +90,11 @@ func sendPrompt(t *testing.T, base, id, text string) int64 {
 
 func readSSE(t *testing.T, base, id string, since int64, want int, timeout time.Duration) []Event {
 	t.Helper()
-	req, _ := http.NewRequest("GET", base+"/api/sessions/"+id+"/events?since="+itoa(since), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/api/sessions/"+id+"/events?since="+strconv.FormatInt(since, 10), nil)
 	req.Header.Set("Accept", "text/event-stream")
-	client := &http.Client{Timeout: timeout + 5*time.Second}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,49 +102,38 @@ func readSSE(t *testing.T, base, id string, since int64, want int, timeout time.
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("events status = %d", resp.StatusCode)
 	}
+	// Scan in a goroutine: the scanner blocks on a live stream, so the
+	// deadline must live in this select, not in the read loop.
+	lines := make(chan string)
+	scanErr := make(chan error, 1)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		scanErr <- sc.Err()
+	}()
 	var events []Event
-	sc := bufio.NewScanner(resp.Body)
-	var data string
-	deadline := time.Now().Add(timeout)
-	for len(events) < want && time.Now().Before(deadline) {
-		// Nudge the scanner with a read deadline via goroutine-free poll:
-		// scanner blocks, so run Do in background is overkill here since
-		// the fake Backend emits within milliseconds.
-		if !sc.Scan() {
-			break
-		}
-		line := sc.Text()
-		if strings.HasPrefix(line, "data: ") {
-			data = strings.TrimPrefix(line, "data: ")
-			var e Event
-			if err := json.Unmarshal([]byte(data), &e); err != nil {
-				t.Fatal(err)
+	for len(events) < want {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out with %d of %d events", len(events), want)
+		case err := <-scanErr:
+			if err != nil {
+				t.Fatalf("stream read: %v", err)
 			}
-			events = append(events, e)
+			t.Fatalf("stream closed with %d of %d events", len(events), want)
+		case line := <-lines:
+			if strings.HasPrefix(line, "data: ") {
+				var e Event
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &e); err != nil {
+					t.Fatal(err)
+				}
+				events = append(events, e)
+			}
 		}
-	}
-	if len(events) < want {
-		t.Fatalf("got %d events, want %d: %+v", len(events), want, events)
 	}
 	return events
-}
-
-func itoa(n int64) string {
-	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(u64toa(uint64(n)), " ", ""), "\n", ""))
-}
-
-func u64toa(n uint64) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }
 
 // Slice 2: reconnecting with a last-seen sequence number delivers only the
@@ -284,5 +278,217 @@ func TestServesEmbeddedUI(t *testing.T) {
 	_, _ = buf.ReadFrom(resp.Body)
 	if !strings.Contains(buf.String(), "Sessions") {
 		t.Fatalf("ui body missing Sessions marker")
+	}
+}
+
+// Review gaps: validation, not-found, ordering, malformed log lines,
+// Last-Event-ID header and finite replay.
+func TestValidationAndNotFound(t *testing.T) {
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	for _, body := range []string{
+		`{}`,
+		`{"harness":"fake"}`,
+		`{"harness":"fake","model":"m"}`,
+		`not json`,
+	} {
+		resp, err := http.Post(srv.URL+"/api/sessions", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("create %q status = %d, want 400", body, resp.StatusCode)
+		}
+	}
+
+	resp, err := http.Post(srv.URL+"/api/sessions/nope/prompt", "application/json", strings.NewReader(`{"text":"hi"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("prompt unknown status = %d, want 404", resp.StatusCode)
+	}
+
+	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	resp, err = http.Post(srv.URL+"/api/sessions/"+id+"/prompt", "application/json", strings.NewReader(`{"text":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty prompt status = %d, want 400", resp.StatusCode)
+	}
+
+	for _, path := range []string{"/api/sessions/nope", "/api/sessions/nope/events?wait=0"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestListNewestActivityFirst(t *testing.T) {
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	first := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	time.Sleep(10 * time.Millisecond)
+	second := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+
+	resp, err := http.Get(srv.URL + "/api/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var list []SessionMeta
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != second || list[1].ID != first {
+		t.Fatalf("list order %+v", list)
+	}
+
+	// New activity moves the older Session to the front.
+	sendPrompt(t, srv.URL, first, "bump")
+	_ = readSSE(t, srv.URL, first, 0, 5, 5*time.Second)
+	resp2, err := http.Get(srv.URL + "/api/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	list = nil
+	if err := json.NewDecoder(resp2.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != first {
+		t.Fatalf("list order after activity %+v", list)
+	}
+}
+
+func TestMalformedLogLineSkippedOnReload(t *testing.T) {
+	dir := t.TempDir()
+	d := NewDaemon(dir, NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	srv.Close()
+
+	logPath := filepath.Join(dir, "enderbloom", "sessions", id, "events.jsonl")
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("this is not json\n[1,2\n")
+	_ = f.Close()
+
+	d2 := NewDaemon(dir, NewFakeBackend())
+	srv2 := httptest.NewServer(d2.Handler())
+	defer srv2.Close()
+	resp, err := http.Get(srv2.URL + "/api/sessions/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Events []Event `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Events) != 1 {
+		t.Fatalf("events after reload = %d, want 1", len(body.Events))
+	}
+	for i, e := range body.Events {
+		if e.Seq != int64(i+1) {
+			t.Fatalf("event %d seq = %d", i, e.Seq)
+		}
+	}
+}
+
+func TestLastEventIDHeaderAndFiniteReplay(t *testing.T) {
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	sendPrompt(t, srv.URL, id, "hello")
+	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
+
+	// Last-Event-ID header replays only what follows it; wait=0 closes
+	// the stream after the replay instead of holding it open.
+	req, _ := http.NewRequest("GET", srv.URL+"/api/sessions/"+id+"/events?wait=0", nil)
+	req.Header.Set("Last-Event-ID", "3")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var seqs []int64
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var e Event
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &e); err != nil {
+				t.Fatal(err)
+			}
+			seqs = append(seqs, e.Seq)
+		}
+	}
+	if len(seqs) != 2 || seqs[0] != 4 || seqs[1] != 5 {
+		t.Fatalf("header replay seqs = %v, want [4 5]", seqs)
+	}
+}
+
+func TestConcurrentPromptsStayOrdered(t *testing.T) {
+	dir := t.TempDir()
+	d := NewDaemon(dir, NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	const n = 5
+	done := make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer func() { done <- struct{}{} }()
+			body, _ := json.Marshal(map[string]string{"text": "burst " + strconv.Itoa(i)})
+			resp, err := http.Post(srv.URL+"/api/sessions/"+id+"/prompt", "application/json", bytes.NewReader(body))
+			if err != nil {
+				return
+			}
+			resp.Body.Close()
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		<-done
+	}
+
+	total := 1 + n*4
+	events := readSSE(t, srv.URL, id, 0, total, 10*time.Second)
+	for i, e := range events {
+		if e.Seq != int64(i+1) {
+			t.Fatalf("event %d seq = %d", i, e.Seq)
+		}
+	}
+
+	// The persisted log matches memory order after a restart.
+	srv.Close()
+	d2 := NewDaemon(dir, NewFakeBackend())
+	srv2 := httptest.NewServer(d2.Handler())
+	defer srv2.Close()
+	replayed := readSSE(t, srv2.URL, id, 0, total, 10*time.Second)
+	for i, e := range replayed {
+		if e.Seq != int64(i+1) || e.Kind != events[i].Kind || e.Text != events[i].Text {
+			t.Fatalf("replay differs at %d: %+v vs %+v", i, events[i], e)
+		}
 	}
 }

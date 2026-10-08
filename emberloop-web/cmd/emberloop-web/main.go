@@ -19,14 +19,21 @@ func main() {
 	stateDir := flag.String("state-dir", defaultStateDir(), "pig state directory (Sessions live in its enderbloom subtree)")
 	flag.Parse()
 
+	host, _, err := net.SplitHostPort(*addr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bad addr:", err)
+		os.Exit(1)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		if host != "localhost" {
+			fmt.Fprintln(os.Stderr, "refusing non-loopback bind")
+			os.Exit(1)
+		}
+	}
 	d := web.NewDaemon(*stateDir, web.NewFakeBackend())
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen:", err)
-		os.Exit(1)
-	}
-	if !ln.Addr().(*net.TCPAddr).IP.IsLoopback() {
-		fmt.Fprintln(os.Stderr, "refusing non-loopback bind")
 		os.Exit(1)
 	}
 	fmt.Println("emberloop-web on http://" + ln.Addr().String())

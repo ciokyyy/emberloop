@@ -3,7 +3,7 @@
 ## Purpose
 
 Enderbloom Web: local Daemon (Go) plus embedded browser UI driving
-claude and pig Sessions behind one `Agent` interface. See
+claude and pig Sessions behind one `Backend` interface. See
 `.scratch/enderbloom-web/spec.md`.
 
 ## Ownership
