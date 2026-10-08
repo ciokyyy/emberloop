@@ -4,14 +4,14 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Start creates a Run and returns it; a second Start on the same spec while active is refused
-- [ ] Tickets start in number order, only after blockers merged, up to the live-Session cap
-- [ ] Each Ticket has a Worker Session in its own worktree and branch, recorded as a Subagent of the Run
-- [ ] A Worker that submits done is merged by rebase and fast-forward-only; a dirty worktree or rebase conflict keeps the Worker alive and shows the refusal
-- [ ] Checkboxes in the ticket file are ticked from the Worker's completed list, written only by the driver
-- [ ] The Runs view shows the live Ticket table and links each Worker to its Session view
-- [ ] Roles from settings choose harness, model and effort; a missing role falls back to the Session default
-- [ ] API tests run a whole Run with a fake Backend and fake git; a view test covers the table
-- [ ] No herdr import in web; core exports only what the world needs
+- [x] Start creates a Run and returns it; a second Start on the same spec while active is refused
+- [x] Tickets start in number order, only after blockers merged, up to the live-Session cap
+- [x] Each Ticket has a Worker Session in its own worktree and branch, recorded as a Subagent of the Run
+- [x] A Worker that submits done is merged by rebase and fast-forward-only; a dirty worktree or rebase conflict keeps the Worker alive and shows the refusal
+- [x] Checkboxes in the ticket file are ticked from the Worker's completed list, written only by the driver
+- [x] The Runs view shows the live Ticket table and links each Worker to its Session view
+- [x] Roles from settings choose harness, model and effort; a missing role falls back to the Session default
+- [x] API tests run a whole Run with a fake Backend and fake git; a view test covers the table
+- [x] No herdr import in web; core exports only what the world needs
