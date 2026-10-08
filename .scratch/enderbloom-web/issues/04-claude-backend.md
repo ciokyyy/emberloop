@@ -4,12 +4,12 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A claude Session answers a prompt and streams Events in the normalized schema
-- [ ] The Session offers no native tools, only the emberloop MCP tools
-- [ ] The first prompt is delivered only after MCP tools are ready
-- [ ] Permission requests are auto-approved and appear as logged Events
-- [ ] Every `session/load` repeats the full `_meta.claudeCode.options` stripping set (the spike showed a load without them re-asks permission)
-- [ ] Claude models offered are opus, sonnet and haiku
-- [ ] A live probe (not in the main check) proves the above with a real claude
+- [x] A claude Session answers a prompt and streams Events in the normalized schema
+- [x] The Session offers no native tools, only the emberloop MCP tools
+- [x] The first prompt is delivered only after MCP tools are ready
+- [x] Permission requests are auto-approved and appear as logged Events
+- [x] Every `session/load` repeats the full `_meta.claudeCode.options` stripping set (the spike showed a load without them re-asks permission)
+- [x] Claude models offered are opus, sonnet and haiku
+- [x] A live probe (not in the main check) proves the above with a real claude
