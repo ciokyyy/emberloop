@@ -4,12 +4,12 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A submitted done spawns the spec Reviewer and the standards Reviewer for that Ticket, once
-- [ ] Findings are delivered to the same Worker, and the Reviewers keep their context on the next Pass
-- [ ] The merge is refused without both Passes at the current tip, and a new commit makes older Passes stale
-- [ ] The Ticket row shows both verdicts, tip freshness and the last refusal
-- [ ] A refused merge is told to the Worker unchanged and retried after the next submit
-- [ ] Reviewer Sessions count against the live-Session cap
-- [ ] API tests cover pass, fail, rework and stale Pass; a view test covers the verdict columns
+- [x] A submitted done spawns the spec Reviewer and the standards Reviewer for that Ticket, once
+- [x] Findings are delivered to the same Worker, and the Reviewers keep their context on the next Pass
+- [x] The merge is refused without both Passes at the current tip, and a new commit makes older Passes stale
+- [x] The Ticket row shows both verdicts, tip freshness and the last refusal
+- [x] A refused merge is told to the Worker unchanged and retried after the next submit
+- [x] Reviewer Sessions count against the live-Session cap
+- [x] API tests cover pass, fail, rework and stale Pass; a view test covers the verdict columns
