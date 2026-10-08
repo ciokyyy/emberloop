@@ -70,7 +70,35 @@ type session struct {
 	// active counts launched turns still running. A release waits for
 	// zero, so it never drops a process a new prompt just took.
 	active int
+	// busy marks a turn in flight. Messages arriving while busy queue
+	// in pending (fake and claude) or in the harness native queue (pig)
+	// and deliver after the turn. Only the turn runner mutates these
+	// under d.mu.
+	busy    bool
+	pending []queuedMsg
 }
+
+// queuedMsg is one not-yet-delivered message. Mode is prompt, steer or
+// followup; degraded marks a claude Steer stored as a Follow-up.
+type queuedMsg struct {
+	mode     string
+	text     string
+	degraded bool
+}
+
+// steerBackend is the harness native queue seam. Pig implements it; the
+// Daemon owns the queue for every other harness.
+type steerBackend interface {
+	Steer(sessionID, text string)
+	FollowUp(sessionID, text string)
+	QueuedMessages(sessionID string) []QueuedMessage
+	ClearQueued(sessionID string) int
+}
+
+// claudeDegradeNote labels a Steer the claude adapter cannot inject
+// mid-turn: the spike showed prompts queue until the turn ends, so the
+// Daemon stores it as a Follow-up and says so in the transcript.
+const claudeDegradeNote = "[Steer degraded to follow-up: claude delivers mid-turn prompts after the turn] "
 
 // NewDaemon loads persisted Sessions from stateDir/enderbloom/sessions.
 // Loaded Sessions hold history only; a new prompt resumes them.
@@ -222,49 +250,90 @@ func (d *Daemon) resumeViewLocked(s *session) (bool, string) {
 	return be.ResumeOK(s.meta)
 }
 
-// finishTurn releases the agent process once the Session settles at idle or
+// finishTurn ends the current turn, drains the Daemon pending list in turn
+// order, then releases the agent process once the Session settles at idle or
 // failed with no turn left running, so settled Sessions hold history only
-// and a retry resumes from the log. The prompt path counts each launched
-// turn in active under the lock; a release that finds a turn still running
-// leaves the process alone, which closes the race where a new prompt lands
-// while the old turn's status still reads idle.
+// and a retry resumes from the log. Send paths count each launched turn in
+// active under the lock; a release that finds a turn still running leaves
+// the process alone, which closes the race where a new message lands while
+// the old turn's status still reads idle. An ended Session drops its pending
+// list: ending is terminal too.
 func (d *Daemon) finishTurn(id string) {
-	d.mu.Lock()
-	s, ok := d.sessions[id]
-	if ok && s.active > 0 {
-		s.active--
-	}
-	if !ok || s.active > 0 || !s.live || (s.meta.Status != "idle" && s.meta.Status != "failed") {
+	for {
+		d.mu.Lock()
+		s, ok := d.sessions[id]
+		if !ok {
+			d.mu.Unlock()
+			return
+		}
+		if s.active > 0 {
+			s.active--
+		}
+		if s.meta.Status == "ended" {
+			s.pending = nil
+			s.busy = false
+			d.mu.Unlock()
+			return
+		}
+		if len(s.pending) > 0 {
+			next := s.pending[0]
+			s.pending = s.pending[1:]
+			s.active++
+			be := d.backendForLocked(s.meta.Harness)
+			d.mu.Unlock()
+			d.appendModeEvent(id, "prompt", transcriptText(next.text, next.degraded), "", modeLabel(next.mode))
+			if be == nil {
+				continue
+			}
+			be.OnPrompt(id, next.text, func(kind, text, status string) {
+				d.appendEvent(id, kind, text, status)
+			})
+			continue
+		}
+		s.busy = false
+		if !s.live || s.active > 0 || (s.meta.Status != "idle" && s.meta.Status != "failed") {
+			d.mu.Unlock()
+			return
+		}
+		s.live = false
+		be := d.backendForLocked(s.meta.Harness)
+		if s.meta.Harness == "claude" && d.claude != nil {
+			be = d.claude
+		}
+		d.mu.Unlock()
+		if be == nil {
+			return
+		}
+		tok := be.ReleaseSession(id)
+		d.mu.Lock()
+		s, ok = d.sessions[id]
+		if !ok {
+			d.mu.Unlock()
+			return
+		}
+		// A message that resumed meanwhile already flipped live back on; its
+		// ResumeSession owns the token now, so only store when still released.
+		if !s.live && tok != "" {
+			s.meta.ResumeToken = tok
+			d.persistMeta(s.meta)
+		}
 		d.mu.Unlock()
 		return
-	}
-	s.live = false
-	be := d.backendForLocked(s.meta.Harness)
-	if s.meta.Harness == "claude" && d.claude != nil {
-		be = d.claude
-	}
-	d.mu.Unlock()
-	if be == nil {
-		return
-	}
-	tok := be.ReleaseSession(id)
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	s, ok = d.sessions[id]
-	if !ok {
-		return
-	}
-	// A prompt that resumed meanwhile already flipped live back on; its
-	// ResumeSession owns the token now, so only store when still released.
-	if !s.live && tok != "" {
-		s.meta.ResumeToken = tok
-		d.persistMeta(s.meta)
 	}
 }
 
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
+	return d.appendModeEvent(id, kind, text, status, "")
+}
+
+func (d *Daemon) appendModeEvent(id, kind, text, status, mode string) Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	return d.appendModeEventLocked(id, kind, text, status, mode)
+}
+
+// appendModeEventLocked stores one Event; callers hold d.mu.
+func (d *Daemon) appendModeEventLocked(id, kind, text, status, mode string) Event {
 	s, ok := d.sessions[id]
 	if !ok {
 		return Event{}
@@ -281,6 +350,7 @@ func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 		Kind:      kind,
 		Text:      text,
 		Status:    status,
+		Mode:      mode,
 		CreatedAt: time.Now().UTC(),
 	}
 	s.events = append(s.events, e)
@@ -297,6 +367,274 @@ func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 	d.persistMeta(meta)
 	close(notify)
 	return e
+}
+
+// sendResult is the outcome of routing one message.
+type sendResult struct {
+	seq      int64
+	queued   bool
+	position int
+}
+
+// resumeReleased resumes a released Session's agent process before a send.
+// It returns 0 when the Session is live and ready; otherwise the HTTP code
+// and error text the send route answers with. The flow mirrors the create
+// cap: a resume over the cap is 429, a harness that cannot resume is 409
+// with the why, and history stays readable either way.
+func (d *Daemon) resumeReleased(id string) (int, string) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return http.StatusNotFound, "not found"
+	}
+	if s.meta.Status == "ended" {
+		d.mu.Unlock()
+		return http.StatusGone, "session ended"
+	}
+	meta := s.meta
+	needResume := !s.live
+	be, unwired := d.resumeBackendLocked(meta)
+	d.mu.Unlock()
+	if !needResume {
+		return 0, ""
+	}
+	// A released Session resumes from the log before the message runs.
+	// Where the harness cannot resume, history stays readable and the
+	// message is refused with the why.
+	if unwired != "" {
+		return http.StatusConflict, unwired
+	}
+	if be == nil {
+		return http.StatusInternalServerError, "backend not configured"
+	}
+	if okResume, reason := be.ResumeOK(meta); !okResume {
+		return http.StatusConflict, reason
+	}
+	d.mu.Lock()
+	cur, ok := d.sessions[id]
+	resume := ok && !cur.live && cur.meta.Status != "ended"
+	if resume {
+		if d.liveCountLocked() >= d.maxRunningLocked() {
+			running, max := d.liveCountLocked(), d.maxRunningLocked()
+			d.mu.Unlock()
+			return http.StatusTooManyRequests, capMessage(running, max)
+		}
+		d.starting++
+		meta = cur.meta
+	}
+	d.mu.Unlock()
+	if resume {
+		if err := be.ResumeSession(meta, func(kind, text, status string) {
+			d.appendEvent(id, kind, text, status)
+		}); err != nil {
+			d.mu.Lock()
+			d.starting--
+			d.mu.Unlock()
+			return http.StatusInternalServerError, err.Error()
+		}
+		d.mu.Lock()
+		d.starting--
+		if cur, ok := d.sessions[id]; ok && !cur.live {
+			cur.live = true
+			if tok := be.ResumeToken(id); tok != "" {
+				cur.meta.ResumeToken = tok
+			}
+			d.persistMeta(cur.meta)
+		}
+		d.mu.Unlock()
+	}
+	// Final gate: a concurrent end or a resume that lost its race must
+	// not send on a dead process.
+	d.mu.Lock()
+	s, ok = d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return http.StatusNotFound, "not found"
+	}
+	if s.meta.Status == "ended" {
+		d.mu.Unlock()
+		return http.StatusGone, "session ended"
+	}
+	if !s.live {
+		d.mu.Unlock()
+		return http.StatusConflict, "session is resuming; send the message again"
+	}
+	d.mu.Unlock()
+	return 0, ""
+}
+
+// sendMessage resumes a released Session if needed, then routes one prompt,
+// steer or follow-up. It writes the HTTP response itself. Refusals carry
+// the why as {"error"} so the UI can show it.
+func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, text string) {
+	if code, msg := d.resumeReleased(id); code != 0 {
+		if code == http.StatusNotFound {
+			http.NotFound(w, r)
+			return
+		}
+		if code == http.StatusGone {
+			http.Error(w, msg, code)
+			return
+		}
+		writeJSON(w, code, map[string]any{"error": msg})
+		return
+	}
+	res, code := d.routeLive(id, mode, text)
+	if code != http.StatusAccepted {
+		if code == http.StatusNotFound {
+			http.NotFound(w, r)
+			return
+		}
+		if code == http.StatusGone {
+			http.Error(w, "session ended", code)
+			return
+		}
+		writeJSON(w, code, map[string]any{"error": "session is resuming; send the message again"})
+		return
+	}
+	writeJSON(w, code, writeSendResult(res))
+}
+
+// routeLive stores or queues one prompt, steer or follow-up on a live
+// Session. Idle Sessions start a turn at once; messages arriving mid-turn
+// queue: in the pig native queue for pig steers and follow-ups, in the
+// Daemon pending list otherwise. A claude Steer arriving mid-turn degrades
+// to a Follow-up: the adapter queues mid-turn prompts until the turn ends,
+// so injection at a tool boundary is impossible. The fake Backend keeps both
+// mode labels so the seam tests cover them, though it delivers both after
+// the turn. Launched turns count in active so finishTurn never releases
+// their process early.
+func (d *Daemon) routeLive(id, mode, text string) (sendResult, int) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return sendResult{}, http.StatusNotFound
+	}
+	if s.meta.Status == "ended" {
+		d.mu.Unlock()
+		return sendResult{}, http.StatusGone
+	}
+	if !s.live {
+		d.mu.Unlock()
+		return sendResult{}, http.StatusConflict
+	}
+	harness := s.meta.Harness
+	be := d.backendForLocked(harness)
+	degraded := false
+	if harness == "claude" && mode == "steer" && s.busy {
+		mode = "followup"
+		degraded = true
+	}
+	// A working pig Session steers through the SDK native queue, which
+	// delivers at the next tool boundary. The native call and the prompt
+	// Event land under d.mu together, so the turn cannot end between
+	// them and strand the message until the turn after next. Lock order
+	// is d.mu before the backend lock; no Backend path takes them in
+	// the reverse order. The Event lands at once so the transcript shows
+	// what was queued, even if it is cleared before delivery.
+	if harness == "pig" && s.busy && (mode == "steer" || mode == "followup") {
+		if qb, ok := be.(steerBackend); ok {
+			if mode == "steer" {
+				qb.Steer(id, text)
+			} else {
+				qb.FollowUp(id, text)
+			}
+			e := d.appendModeEventLocked(id, "prompt", text, "", mode)
+			d.mu.Unlock()
+			return sendResult{seq: e.Seq, queued: true}, http.StatusAccepted
+		}
+	}
+	if s.busy {
+		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, degraded: degraded})
+		pos := len(s.pending)
+		d.mu.Unlock()
+		return sendResult{queued: true, position: pos}, http.StatusAccepted
+	}
+	s.busy = true
+	s.active++
+	d.mu.Unlock()
+	e := d.appendModeEvent(id, "prompt", transcriptText(text, degraded), "", modeLabel(mode))
+	if be != nil {
+		go d.runTurn(id, be, text)
+	} else {
+		d.finishTurn(id)
+	}
+	return sendResult{seq: e.Seq}, http.StatusAccepted
+}
+
+// transcriptText prefixes a degraded claude Steer so the transcript labels
+// it as a Follow-up. The backend always receives the original text.
+func transcriptText(text string, degraded bool) string {
+	if degraded {
+		return claudeDegradeNote + text
+	}
+	return text
+}
+
+// modeLabel maps a route mode to the prompt Event mode. Plain prompts keep
+// the field empty for log back-compatibility.
+func modeLabel(mode string) string {
+	if mode == "steer" || mode == "followup" {
+		return mode
+	}
+	return ""
+}
+
+// runTurn drives one backend turn, then drains the Daemon pending list in
+// turn order. Pig native queues drain inside the SDK Send, never here.
+func (d *Daemon) runTurn(id string, be Backend, text string) {
+	be.OnPrompt(id, text, func(kind, text, status string) {
+		d.appendEvent(id, kind, text, status)
+	})
+	d.finishTurn(id)
+}
+
+// listQueue reports not-yet-delivered messages.
+// It merges the Daemon pending list with pig native queues.
+func (d *Daemon) listQueue(id string) ([]QueuedMessage, int) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return nil, http.StatusNotFound
+	}
+	out := make([]QueuedMessage, 0, len(s.pending))
+	for _, p := range s.pending {
+		out = append(out, QueuedMessage{Mode: p.mode, Text: p.text, Degraded: p.degraded})
+	}
+	var qb steerBackend
+	if s.meta.Harness == "pig" {
+		qb, _ = d.backendForLocked(s.meta.Harness).(steerBackend)
+	}
+	d.mu.Unlock()
+	if qb != nil {
+		out = append(qb.QueuedMessages(id), out...)
+	}
+	return out, http.StatusOK
+}
+
+// dropQueue clears not-yet-delivered messages before delivery.
+// It clears the Daemon pending list and pig native queues.
+func (d *Daemon) dropQueue(id string) (int, int) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return 0, http.StatusNotFound
+	}
+	n := len(s.pending)
+	s.pending = nil
+	var qb steerBackend
+	if s.meta.Harness == "pig" {
+		qb, _ = d.backendForLocked(s.meta.Harness).(steerBackend)
+	}
+	d.mu.Unlock()
+	if qb != nil {
+		n += qb.ClearQueued(id)
+	}
+	return n, http.StatusOK
 }
 
 func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +761,15 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// writeSendResult renders one routing outcome. Immediate turns carry the
+// prompt Event seq; Daemon-queued messages carry their queue position.
+func writeSendResult(res sendResult) map[string]any {
+	out := map[string]any{"seq": res.seq, "queued": res.queued}
+	if res.queued && res.seq == 0 {
+		out["position"] = res.position
+	}
+	return out
+}
 func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
 	parts := strings.SplitN(rest, "/", 2)
@@ -452,118 +799,44 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 	case sub == "prompt" && r.Method == "POST":
 		var req struct {
 			Text string `json:"text"`
+			Mode string `json:"mode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "text is required", http.StatusBadRequest)
 			return
 		}
-		d.mu.Lock()
-		s, ok := d.sessions[id]
-		if !ok {
-			d.mu.Unlock()
+		mode := req.Mode
+		if mode == "" {
+			mode = "prompt"
+		}
+		if mode != "prompt" && mode != "steer" && mode != "followup" {
+			http.Error(w, "unknown mode (want prompt, steer or followup)", http.StatusBadRequest)
+			return
+		}
+		d.sendMessage(w, r, id, mode, req.Text)
+	case (sub == "steer" || sub == "followup") && r.Method == "POST":
+		var req struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
+			http.Error(w, "text is required", http.StatusBadRequest)
+			return
+		}
+		d.sendMessage(w, r, id, sub, req.Text)
+	case sub == "queue" && r.Method == "GET":
+		q, code := d.listQueue(id)
+		if code != http.StatusOK {
 			http.NotFound(w, r)
 			return
 		}
-		if s.meta.Status == "ended" {
-			d.mu.Unlock()
-			http.Error(w, "session ended", http.StatusGone)
-			return
-		}
-		meta := s.meta
-		needResume := !s.live
-		be, unwired := d.resumeBackendLocked(meta)
-		d.mu.Unlock()
-		if needResume {
-			// A released Session resumes from the log before the prompt
-			// runs. Where the harness cannot resume, history stays
-			// readable and the prompt is refused with the why.
-			if unwired != "" {
-				writeJSON(w, http.StatusConflict, map[string]any{"error": unwired})
-				return
-			}
-			if be == nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "backend not configured"})
-				return
-			}
-			if okResume, reason := be.ResumeOK(meta); !okResume {
-				writeJSON(w, http.StatusConflict, map[string]any{"error": reason})
-				return
-			}
-			d.mu.Lock()
-			cur, ok := d.sessions[id]
-			resume := ok && !cur.live && cur.meta.Status != "ended"
-			if resume {
-				if d.liveCountLocked() >= d.maxRunningLocked() {
-					running, max := d.liveCountLocked(), d.maxRunningLocked()
-					d.mu.Unlock()
-					writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": capMessage(running, max)})
-					return
-				}
-				d.starting++
-				meta = cur.meta
-			}
-			d.mu.Unlock()
-			if resume {
-				if err := be.ResumeSession(meta, func(kind, text, status string) {
-					d.appendEvent(id, kind, text, status)
-				}); err != nil {
-					d.mu.Lock()
-					d.starting--
-					d.mu.Unlock()
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-					return
-				}
-				d.mu.Lock()
-				d.starting--
-				if cur, ok := d.sessions[id]; ok && !cur.live {
-					cur.live = true
-					if tok := be.ResumeToken(id); tok != "" {
-						cur.meta.ResumeToken = tok
-					}
-					d.persistMeta(cur.meta)
-				}
-				d.mu.Unlock()
-			}
-		}
-		// Final gate under the lock: a concurrent end or a resume that
-		// lost its race must not launch a turn on a dead process. Live
-		// turns count in active so finishTurn never drops their process.
-		d.mu.Lock()
-		s, ok = d.sessions[id]
-		if !ok {
-			d.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"queue": q})
+	case sub == "queue" && r.Method == "DELETE":
+		n, code := d.dropQueue(id)
+		if code != http.StatusOK {
 			http.NotFound(w, r)
 			return
 		}
-		if s.meta.Status == "ended" {
-			d.mu.Unlock()
-			http.Error(w, "session ended", http.StatusGone)
-			return
-		}
-		if !s.live {
-			d.mu.Unlock()
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "session is resuming; send the prompt again"})
-			return
-		}
-		if be == nil {
-			d.mu.Unlock()
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "backend not configured"})
-			return
-		}
-		s.active++
-		d.mu.Unlock()
-		e := d.appendEvent(id, "prompt", req.Text, "")
-		if be != nil {
-			go func() {
-				be.OnPrompt(id, req.Text, func(kind, text, status string) {
-					d.appendEvent(id, kind, text, status)
-				})
-				// The turn is over: release the agent process so idle
-				// Sessions hold no memory. The next prompt resumes it.
-				d.finishTurn(id)
-			}()
-		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"seq": e.Seq})
+		writeJSON(w, http.StatusOK, map[string]any{"cleared": n})
 	case sub == "" && r.Method == "DELETE":
 		// Mark ended under the lock so two concurrent DELETEs emit one
 		// ended Event; the slow CloseSession runs outside the lock.

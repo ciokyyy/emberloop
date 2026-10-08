@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { cardForEvent, groupTranscript } from './events.js';
-
-const ev = (seq, kind, text = '', status = '') => ({ seq, kind, text, status });
+const ev = (seq, kind, text = '', status = '', mode = '') => ({ seq, kind, text, status, mode });
 
 describe('cardForEvent maps every Event kind to a card', () => {
   const cases = [
@@ -33,6 +32,19 @@ describe('cardForEvent maps every Event kind to a card', () => {
   });
   it('diff card is expanded by default', () => {
     expect(cardForEvent(ev(1, 'diff', '--- a\n+++ b')).collapsed).toBe(false);
+  });
+  it('labels steer prompts as Steer', () => {
+    const c = cardForEvent(ev(1, 'prompt', 'go left', '', 'steer'));
+    expect(c.card).toBe('user');
+    expect(c.title).toBe('Steer');
+  });
+  it('labels follow-up prompts as Follow-up', () => {
+    const c = cardForEvent(ev(1, 'prompt', 'after that', '', 'followup'));
+    expect(c.card).toBe('user');
+    expect(c.title).toBe('Follow-up');
+  });
+  it('labels plain prompts as You', () => {
+    expect(cardForEvent(ev(1, 'prompt', 'hi')).title).toBe('You');
   });
 });
 

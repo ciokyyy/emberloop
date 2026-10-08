@@ -3,13 +3,21 @@ package web
 import "time"
 
 // FakeBackend replays scripted Events for tests and the walking skeleton.
-type FakeBackend struct{}
+// Delay holds a turn open: queue tests set it so a Steer or Follow-up can
+// arrive while the Session still works.
+type FakeBackend struct {
+	Delay time.Duration
+}
 
 func NewFakeBackend() *FakeBackend { return &FakeBackend{} }
 
 func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
 	appendEvent("status", "", "working")
-	time.Sleep(5 * time.Millisecond)
+	delay := f.Delay
+	if delay <= 0 {
+		delay = 5 * time.Millisecond
+	}
+	time.Sleep(delay)
 	appendEvent("assistant_chunk", "fake reply to: "+text, "")
 	appendEvent("status", "", "idle")
 }

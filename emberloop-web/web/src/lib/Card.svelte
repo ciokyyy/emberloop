@@ -7,6 +7,9 @@
 {#if block.card === 'user'}
   <div class="flex justify-end" data-card="user">
     <div class="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2 text-sm text-primary-foreground shadow-sm">
+      {#if block.title && block.title !== 'You'}
+        <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
+      {/if}
       {block.body}
     </div>
   </div>

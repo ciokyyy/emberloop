@@ -25,4 +25,12 @@ describe('Card renders every Event kind', () => {
     const { container } = render(Card, { props: { block: block('diff', 'Diff', '-old\n+new') } });
     expect(container.querySelector('[data-card="diff"]')?.textContent).toContain('+new');
   });
+  it('user card labels a steer visibly', () => {
+    const { container } = render(Card, { props: { block: { ...block('user', 'Steer', 'go left') } } });
+    expect(container.querySelector('[data-card="user"]')?.textContent).toContain('Steer');
+  });
+  it('user card labels a follow-up visibly', () => {
+    const { container } = render(Card, { props: { block: { ...block('user', 'Follow-up', 'after that') } } });
+    expect(container.querySelector('[data-card="user"]')?.textContent).toContain('Follow-up');
+  });
 });

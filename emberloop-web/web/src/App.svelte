@@ -6,7 +6,7 @@
   import NewSessionDialog from './lib/NewSessionDialog.svelte';
   import DetailsPane from './lib/DetailsPane.svelte';
   import { groupTranscript } from './lib/events.js';
-  import { listSessions, createSession, getSession, postPrompt, openStream } from './lib/api.js';
+  import { listSessions, createSession, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, openStream } from './lib/api.js';
 
   let sessions = $state([]);
   let currentId = $state(null);
@@ -22,6 +22,28 @@
   let loadError = $state('');
   let resumable = $state(true);
   let resumeNote = $state('');
+  let queue = $state([]);
+
+  const queueLabel = (m) => (m.mode === 'steer' ? 'Steer' : m.mode === 'followup' ? 'Follow-up' : 'Prompt');
+
+  async function refreshQueue(id) {
+    if (!id) return;
+    try {
+      const body = await getQueue(id);
+      if (id === currentId) queue = body.queue ?? [];
+    } catch {
+      // Queue is best-effort: the transcript stays the source of truth.
+    }
+  }
+
+  async function clear(id) {
+    try {
+      await clearQueue(id);
+    } finally {
+      await refreshQueue(id);
+    }
+  }
+
   let source = null;
   let retryTimer = null;
   let backoff = 1;
@@ -72,6 +94,7 @@
       lastSeq = events.reduce((m, e) => Math.max(m, e.seq), 0);
       // Whole-log replay first, so reload shows the same transcript.
       subscribe(id);
+      await refreshQueue(id);
     } catch {
       loadError = 'Could not load that Session.';
     }
@@ -89,7 +112,10 @@
           resumable = false;
           resumeNote = 'session ended; history is read-only';
         }
+        // A turn edge may have delivered or exposed queued messages.
+        refreshQueue(id);
       }
+      if (e.kind === 'prompt' && id === currentId) refreshQueue(id);
     });
     source.onopen = () => {
       connected = true;
@@ -123,13 +149,15 @@
       creating = false;
     }
   }
-
   // Rejections propagate to the Composer, which keeps the draft.
   async function send(text, mode) {
     if (!currentId || sending) return;
     sending = true;
     try {
-      await postPrompt(currentId, text, mode);
+      if (mode === 'steer') await postSteer(currentId, text);
+      else if (mode === 'followup') await postFollowup(currentId, text);
+      else await postPrompt(currentId, text);
+      await refreshQueue(currentId);
     } finally {
       sending = false;
     }
@@ -185,7 +213,29 @@
         </div>
       </div>
       <div class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/85 to-transparent px-4 pb-4 pt-10">
-        <div class="pointer-events-auto mx-auto w-full max-w-2xl">
+        <div class="pointer-events-auto mx-auto flex w-full max-w-2xl flex-col gap-2">
+          {#if currentId && queue.length}
+            <div class="rounded-2xl border bg-card p-2 shadow-lg" data-testid="queue-panel">
+              <div class="flex items-center gap-2 px-2 pt-1">
+                <span class="text-xs font-medium text-muted-foreground">Queued ({queue.length})</span>
+                <button
+                  type="button"
+                  onclick={() => clear(currentId)}
+                  class="ml-auto rounded-full px-2.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+                >
+                  Clear
+                </button>
+              </div>
+              <ul class="flex flex-col gap-1 p-1">
+                {#each queue as m, i (i)}
+                  <li class="flex items-baseline gap-2 px-2 text-sm">
+                    <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{queueLabel(m)}</span>
+                    <span class="min-w-0 flex-1 truncate">{m.text}</span>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
           {#if currentId && resumable}
             <Composer {status} busy={sending} onSend={send} />
           {/if}

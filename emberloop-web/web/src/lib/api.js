@@ -24,14 +24,30 @@ export const createSession = (body) =>
 
 export const getSession = (id) => fetch(url(`/api/sessions/${id}`)).then(json);
 
-// mode travels along for forward compatibility; the current Daemon stores
-// the text and ignores the extra field.
-export const postPrompt = (id, text, mode = 'prompt') =>
+export const postPrompt = (id, text) =>
   fetch(url(`/api/sessions/${id}/prompt`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, mode }),
+    body: JSON.stringify({ text }),
   }).then(json);
+
+export const postSteer = (id, text) =>
+  fetch(url(`/api/sessions/${id}/steer`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).then(json);
+
+export const postFollowup = (id, text) =>
+  fetch(url(`/api/sessions/${id}/followup`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).then(json);
+
+export const getQueue = (id) => fetch(url(`/api/sessions/${id}/queue`)).then(json);
+
+export const clearQueue = (id) => fetch(url(`/api/sessions/${id}/queue`), { method: 'DELETE' }).then(json);
 
 export function openStream(id, since, onEvent) {
   const source = new EventSource(url(`/api/sessions/${id}/events?since=${since}`));

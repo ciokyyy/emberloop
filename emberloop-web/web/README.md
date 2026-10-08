@@ -22,7 +22,7 @@ Same-origin by default. To point the static build at another Daemon:
 
 ## Source map
 
-- `src/App.svelte` — layout, Session loading, SSE stream with reconnect
+- `src/App.svelte` — layout, Session loading, SSE stream with reconnect, queued-message panel with clear
 - `src/lib/api.js` — Daemon client (configurable base URL)
 - `src/lib/events.js` — Event-to-card mapping and transcript grouping
 - `src/lib/composer.js` — composer mode (prompt / steer / follow-up)

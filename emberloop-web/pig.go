@@ -169,8 +169,9 @@ func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, tex
 }
 
 // Steer delivers text at the next tool boundary through the SDK queue.
-// FollowUp delivers it after the turn. Both map to the SDK native queues
-// per the spec; their HTTP endpoints and queue UI land in ticket 05.
+// FollowUp delivers it after the turn. The Daemon routes working Sessions
+// here and lists both through QueuedMessages; messages queued with no turn
+// running buffer until the next Send.
 func (b *PigBackend) Steer(sessionID, text string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -185,6 +186,38 @@ func (b *PigBackend) FollowUp(sessionID, text string) {
 	if ps, ok := b.sessions[sessionID]; ok {
 		ps.sess.QueueFollowUp(text, nil)
 	}
+}
+
+// QueuedMessages lists the pig native queues oldest-first, steering ahead
+// of follow-ups. The Daemon merges this with its own pending list.
+func (b *PigBackend) QueuedMessages(sessionID string) []QueuedMessage {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ps, ok := b.sessions[sessionID]
+	if !ok {
+		return nil
+	}
+	var out []QueuedMessage
+	for _, text := range ps.sess.GetSteeringMessages() {
+		out = append(out, QueuedMessage{Mode: "steer", Text: text})
+	}
+	for _, text := range ps.sess.GetFollowUpMessages() {
+		out = append(out, QueuedMessage{Mode: "followup", Text: text})
+	}
+	return out
+}
+
+// ClearQueued drops the pig native queues before delivery and reports how
+// many messages were dropped.
+func (b *PigBackend) ClearQueued(sessionID string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ps, ok := b.sessions[sessionID]
+	if !ok {
+		return 0
+	}
+	steering, followUp := ps.sess.ClearQueue()
+	return len(steering) + len(followUp)
 }
 
 // CloseSession cancels the turn, closes the SDK session and its runtime,

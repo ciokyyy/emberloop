@@ -19,13 +19,16 @@ imports it. No herdr, no ticket state.
 - API is the test seam: `api_test.go` drives the Daemon's HTTP and SSE API
   with the fake Backend (create, prompt, replay, guard, restart, UI);
   `lifecycle_test.go` covers the cap, idle release, restart resume and
-  read-only paths the same way; `pig_test.go` does the same with the pig
-  Backend on the SDK test-faux provider, and `pig_live_test.go`
-  (env-gated) with a real pig.
+  read-only paths the same way; `steer_test.go` covers steer, follow-up,
+  queue list/clear and the claude Steer-to-Follow-up degradation at the
+  same seam; `pig_test.go` does the same with the pig Backend on the SDK
+  test-faux provider, and `pig_live_test.go` (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
   ExtraTools only, models from the SDK catalog, one SDK stack per live
   Session released on idle or DELETE and reloaded through `Runtime.Resume`.
-  Backends register per harness; the fake stays default.
+  Steer and Follow-up use the SDK native queues (`QueuedMessages`/
+  `ClearQueued` expose them); the Daemon merges them with its own pending
+  list. Backends register per harness; the fake stays default.
 - `claude.go` holds the claude ACP Backend (pinned adapter, shared
   new/load stripping set, allow-once auto-approve) with stub-transport
   tests in `claude_*_test.go` and a `-tags live` probe for the real adapter.
@@ -36,11 +39,24 @@ imports it. No herdr, no ticket state.
 - Lifecycle (`lifecycle.go`, `daemon.go`): the Daemon caps live Sessions at
   the global `max_workers` setting (env, settings file, default 3; over-cap
   creates and resumes are 429), releases a settled (idle or failed)
-  Session's agent process, and resumes it on the next prompt: claude
+  Session's agent process, and resumes it on the next send: claude
   through ACP `session/load`,
   pig through its saved session file, fake from the log. Sessions that
   cannot resume stay readable with a why (`resumable`/`resumeNote` on
-  session GET, read-only banner in the UI); a new prompt there is 409.
+  session GET, read-only banner in the UI); a new send there is 409.
+- Steering is `POST /api/sessions/{id}/steer|followup` with `{"text"}`.
+  `POST .../prompt` accepts an optional `mode` (prompt, steer, followup).
+  Live idle Sessions start a turn at once; mid-turn messages queue: pig
+  steers and follow-ups in the SDK native queues, everything else in the
+  Daemon pending list. A mid-turn claude Steer degrades to a Follow-up and
+  the transcript says so. Prompt Events carry the delivery in `mode`
+  (empty for plain prompts, else steer or followup).
+- `GET /api/sessions/{id}/queue` lists not-yet-delivered messages as
+  `{"queue":[{"mode","text"}]}` (pig native queues first); `DELETE` on the
+  same path clears them before delivery and answers `{"cleared":N}`.
+  Steer, follow-up and prompt-on-working answers are 202 with
+  `{"seq","queued"}` (queued Daemon messages add `"position"`); unknown
+  Sessions are 404, empty text is 400, ended Sessions are 410 on send.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
   `meta.json` (now carrying the resume token) plus append-only
   `events.jsonl`; the Daemon reloads both on start.

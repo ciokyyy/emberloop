@@ -29,6 +29,8 @@ export function cardForEvent(e) {
   const text = e.text ?? '';
   switch (e.kind) {
     case 'prompt':
+      if (e.mode === 'steer') return { card: 'user', title: 'Steer', body: text, collapsed: false };
+      if (e.mode === 'followup') return { card: 'user', title: 'Follow-up', body: text, collapsed: false };
       return { card: 'user', title: 'You', body: text, collapsed: false };
     case 'assistant_chunk':
       return { card: 'assistant', title: 'Agent', body: text, collapsed: false };

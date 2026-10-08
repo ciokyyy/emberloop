@@ -6,6 +6,9 @@ import "time"
 // Kinds: prompt, assistant_chunk, thinking_chunk, tool_call_started,
 // tool_call_updated, diff, permission, status, subagent_spawned,
 // subagent_finished, error.
+// Mode marks which delivery a prompt Event used: "" (a plain first prompt),
+// "steer" (next tool boundary) or "followup" (after the turn). A claude
+// Steer degrades to a followup and is stored so.
 type Event struct {
 	Version   int       `json:"v"`
 	Seq       int64     `json:"seq"`
@@ -13,7 +16,16 @@ type Event struct {
 	Kind      string    `json:"kind"`
 	Text      string    `json:"text,omitempty"`
 	Status    string    `json:"status,omitempty"`
+	Mode      string    `json:"mode,omitempty"`
 	CreatedAt time.Time `json:"at"`
+}
+
+// QueuedMessage is one not-yet-delivered Steer or Follow-up (or a plain
+// prompt that arrived while the Session worked).
+type QueuedMessage struct {
+	Mode     string `json:"mode"`
+	Text     string `json:"text"`
+	Degraded bool   `json:"degraded,omitempty"`
 }
 
 // SessionMeta is the small metadata file per Session.

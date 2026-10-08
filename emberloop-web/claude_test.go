@@ -27,6 +27,9 @@ type stubConn struct {
 	newErr        error
 	blockNew      chan struct{}
 	promptStarted chan struct{}
+	// blockPrompt holds a turn open until closed, so queue tests can
+	// Steer mid-turn.
+	blockPrompt chan struct{}
 }
 
 type stubPermission struct {
@@ -66,7 +69,11 @@ func (s *stubConn) Prompt(acpID, text string, cb acpCallbacks) (string, error) {
 	perms := append([]stubPermission{}, s.permissions...)
 	stop := s.stopReason
 	err := s.promptErr
+	gate := s.blockPrompt
 	s.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	if err != nil {
 		return "", err
 	}
