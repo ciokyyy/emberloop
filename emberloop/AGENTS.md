@@ -50,8 +50,11 @@ owns its `_test.go` and the behaviour below):
   prints the start order for `--driver --check`. A world with it runs the
   happy-path loop: tickets start in number order up to `MaxWorkers` once
   their blockers merged, `finish` runs only after every required reviewer
-  type passed at the worker's current tip, and the plain report lists merges
-  with sha. `RunDriverLive` wires the live spawn, verdict and finish ops.
+  type passed at the worker's current tip, a refused `finish` is told to the
+  worker unchanged and retried after its next submit with no attempt limit
+  (without a submit count each distinct refusal is told once), and the plain
+  report lists merges with sha. `RunDriverLive` wires the live
+  spawn, verdict, tell, submit-count and finish ops.
   The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
   `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface

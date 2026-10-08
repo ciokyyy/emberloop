@@ -60,6 +60,18 @@ type DriverWorld struct {
 	Tip func(ticketID string) string
 	// Reviews holds the reviewer verdicts for a ticket's worker.
 	Reviews func(ticketID string) map[string]DriverReview
+	// Tell delivers text to a ticket's worker. The driver sends every refused
+	// finish to the worker through it, unchanged. Nil means a world without
+	// delivery: refusals only land on the report line, as before. Set it with
+	// Submits: the pair is what retries a refusal after the worker's submit.
+	// Without Submits there is no submit to wait for, so each distinct
+	// refusal is told once and the run then holds.
+	Tell func(ticketID, text string) error
+	// Submits counts a ticket worker's submits. The driver reads it before
+	// each Tell and calls finish again only after it advances: the worker's
+	// next submit is what triggers the retry. Nil means no waiting: worlds
+	// without it tell each distinct refusal once, as above.
+	Submits func(ticketID string) int
 	// Finish merges a ticket's worker once its gate passes.
 	Finish func(ticketID string) (DriverFinish, error)
 	// Required names the reviewer types every finish needs. Nil means the
@@ -127,11 +139,12 @@ func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 const driverPollInterval = 5 * time.Second
 
 // runDriverLoop runs the happy path to a stable state: start what is ready,
-// finish what passed at its tip, repeat. A pass with no start, no merge and
-// no observed change ends the run in tests; a live run sleeps and polls
-// again instead, so it waits for workers rather than quitting on them. A
-// refused finish (later tickets tell the worker and retry) simply stays
-// running here.
+// finish what passed at its tip, repeat. A pass with no start, no merge, no
+// tell and no observed change ends the run in tests; a live run sleeps and
+// polls again instead, so it waits for workers rather than quitting on them.
+// A refused finish goes back to the worker unchanged through tell, and
+// finish runs again only after the worker's next submit. There is no attempt
+// limit: every refusal is told and retried like the first.
 func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, string, error) {
 	maxRun := world.MaxWorkers
 	if maxRun <= 0 {
@@ -141,6 +154,14 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 	started := map[string]bool{}
 	seen := map[string]string{}
 	refused := map[string]string{}
+	// told counts the submits a ticket's worker had when its last refusal
+	// was told to it; waiting holds the tickets whose told refusal still
+	// owes its next submit. toldText holds the last text told per ticket,
+	// so a world without Submits tells each distinct refusal once instead
+	// of every pass forever. A ticket with no submit count never waits.
+	told := map[string]int{}
+	toldText := map[string]string{}
+	waiting := map[string]bool{}
 	var out []DriverMerged
 	running := 0
 	ready := func(tk DriverTicket) bool {
@@ -177,6 +198,16 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 			if !started[tk.ID] || merged[tk.ID] {
 				continue
 			}
+			// A told refusal waits for the worker's next submit: finish runs
+			// again only after the submit count advances past what it was
+			// when the refusal was told.
+			if waiting[tk.ID] {
+				if world.Submits == nil || world.Submits(tk.ID) != told[tk.ID] {
+					waiting[tk.ID] = false
+				} else {
+					continue
+				}
+			}
 			before := world.Tip(tk.ID)
 			revs := world.Reviews(tk.ID)
 			tip := world.Tip(tk.ID)
@@ -194,12 +225,31 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 			}
 			if !fin.Merged {
 				// A refused finish stays running; its text lands on the
-				// unmerged line, and a later ticket owns the retry. An empty
-				// Detail clears the line back to still running.
+				// unmerged line and goes back to the worker unchanged through
+				// tell. An empty Detail clears the line back to still running
+				// and is never told. A tell counts as progress, so the retry
+				// after the worker's submit gets its own pass. Without a
+				// submit count there is no next submit to wait for, so each
+				// distinct refusal is told once and the run then holds.
 				if fin.Detail == "" {
 					delete(refused, tk.ID)
+					delete(toldText, tk.ID)
 				} else {
 					refused[tk.ID] = fin.Detail
+					if world.Tell != nil && (world.Submits != nil || fin.Detail != toldText[tk.ID]) {
+						at := 0
+						if world.Submits != nil {
+							at = world.Submits(tk.ID)
+						}
+						if err := world.Tell(tk.ID, fin.Detail); err != nil {
+							return nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
+						}
+						toldText[tk.ID] = fin.Detail
+						if world.Submits != nil {
+							told[tk.ID], waiting[tk.ID] = at, true
+						}
+						progress = true
+					}
 				}
 				continue
 			}
@@ -345,7 +395,9 @@ func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 // liveDriverWorld wires the live operations behind the driver seam: spawns go
 // through the same spawn call the orchestrator uses, tips resolve the same
 // implement branches, verdicts read the same review record finish gates on,
-// and finish is the same merge. Extracted so tests drive the mapping through
+// tells reach the worker's own pane through the same delivery the tell tool
+// uses, submit counts derive from the worker's submit record, and finish is
+// the same merge. Extracted so tests drive the mapping through
 // the seam with fake exec and temp state.
 func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
 	paths := map[string]string{}
@@ -355,6 +407,11 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 		}
 	}
 	types := mustLoadAgentTypes(repo)
+	// submitSeq counts each ticket worker's submits: the submit record holds
+	// only the last one, so a new marker (anything but the turn flag, which
+	// the stop gate flips on its own) advances the count.
+	submitSeq := map[string]int{}
+	submitMark := map[string]string{}
 	return DriverWorld{
 		Files:      files,
 		MaxWorkers: tools.LoadSettings().EffectiveMaxWorkers(),
@@ -386,6 +443,35 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 				return nil
 			}
 			return requiredReviewers(&w)
+		},
+		Tell: func(ticketID, text string) error {
+			id := WorkerID(paths[ticketID])
+			st, ok, err := ReadAgentState(id)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("unknown agent %q", id)
+			}
+			if st.Pane == "" {
+				return fmt.Errorf("agent %s has no pane to deliver to", id)
+			}
+			return Nudge(tellExec, st.Pane, text)
+		},
+		Submits: func(ticketID string) int {
+			s, ok, err := ReadAgentSubmit(WorkerID(paths[ticketID]))
+			if err != nil || !ok {
+				return submitSeq[ticketID]
+			}
+			mark := s.At + "\x00" + s.Status + "\x00" + s.Report + "\x00" + s.Summary
+			if s.Stopped {
+				mark += "\x00stopped"
+			}
+			if mark != submitMark[ticketID] {
+				submitMark[ticketID] = mark
+				submitSeq[ticketID]++
+			}
+			return submitSeq[ticketID]
 		},
 		Finish: func(ticketID string) (DriverFinish, error) {
 			res, err := Finish(finishExec, WorkerID(paths[ticketID]), true)

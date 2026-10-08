@@ -563,3 +563,308 @@ func TestDriverReportListsEveryMergedTicketWithSha(t *testing.T) {
 		t.Errorf("report = %q, want %q", res.Report, want)
 	}
 }
+
+// A refused finish reaches the worker byte for byte through tell, and finish
+// runs again after the worker's next submit: the fixed ticket then merges.
+// The refusal text keeps its newlines and spacing exactly.
+func TestDriverRefusalReachesWorkerAndRefinishMergesAfterSubmit(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	tip := "tip-1"
+	world.Tip = func(id string) string { return tip }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: tip},
+			reviewerSpec:      {Verdict: verdictPass, At: tip},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go, b.go; the rebase was aborted, the branch is unchanged\n\tsecond line  with  spacing"
+	var told []string
+	submits := 0
+	finished := 0
+	world.Tell = func(id, text string) error {
+		if id != "01-first" {
+			t.Errorf("Tell ticket = %q, want 01-first", id)
+		}
+		told = append(told, text)
+		// The worker fixes the conflict, is re-reviewed at the new tip, and
+		// submits.
+		tip = "tip-2"
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if finished == 1 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(told) != 1 || told[0] != refusal {
+		t.Errorf("told = %q, want exactly the refusal text %q", told, refusal)
+	}
+	if finished != 2 {
+		t.Errorf("finish calls = %d, want 2: one refusal and one retry after the submit", finished)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].SHA != "sha-fixed" {
+		t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+	}
+	if !strings.Contains(res.Report, "merged 01-first as sha-fixed") {
+		t.Errorf("report misses the merge:\n%s", res.Report)
+	}
+}
+
+// Without a next submit from the worker, finish never runs again: one
+// refusal means one tell and one finish, not a busy retry loop.
+func TestDriverWaitsForTheWorkerSubmitBeforeFinishingAgain(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	told, finished := 0, 0
+	world.Tell = func(id, text string) error {
+		told++
+		// The worker never submits: no fix, no new tip, no new submit.
+		return nil
+	}
+	world.Submits = func(id string) int { return 0 }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		return DriverFinish{Merged: false, Detail: "rebase onto spec/x conflicted in a.go"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if told != 1 {
+		t.Errorf("tell calls = %d, want 1: the refusal is told once, then the driver waits", told)
+	}
+	if finished != 1 {
+		t.Errorf("finish calls = %d, want 1: no submit means no retry", finished)
+	}
+	if len(res.Merged) != 0 {
+		t.Errorf("merged = %v, want nothing", res.Merged)
+	}
+	if !strings.Contains(res.Report, "unmerged 01-first: rebase onto spec/x conflicted in a.go") {
+		t.Errorf("report keeps the refusal:\n%s", res.Report)
+	}
+}
+
+// Every real refusal kind loops the same way until the world lets it merge:
+// a dirty worktree, an overlapping dirty integration checkout, and an
+// aborted rebase conflict. Each text below is what finish really refuses
+// with. The worker fixes it, submits, and the retry merges.
+func TestDriverEachRefusalKindLoopsUntilTheWorldLetsItMerge(t *testing.T) {
+	refusals := map[string]string{
+		"dirty worktree":             "the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again",
+		"overlapping dirty checkout": "the integration checkout has uncommitted changes overlapping the incoming change in a.go, b.go; commit or stash them and finish again",
+		"rebase conflict":            "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged",
+	}
+	for kind, refusal := range refusals {
+		t.Run(kind, func(t *testing.T) {
+			spec, world, _ := driverWorld(t, map[string]string{
+				"01-first.md": ticketDoc("None"),
+			})
+			world.MaxWorkers = 1
+			tip := "tip-1"
+			world.Tip = func(id string) string { return tip }
+			world.Reviews = func(id string) map[string]DriverReview {
+				return map[string]DriverReview{
+					reviewerStandards: {Verdict: verdictPass, At: tip},
+					reviewerSpec:      {Verdict: verdictPass, At: tip},
+				}
+			}
+			var told []string
+			submits := 0
+			finished := 0
+			world.Tell = func(id, text string) error {
+				told = append(told, text)
+				tip = "tip-2"
+				submits++
+				return nil
+			}
+			world.Submits = func(id string) int { return submits }
+			world.Finish = func(id string) (DriverFinish, error) {
+				finished++
+				if finished == 1 {
+					return DriverFinish{Merged: false, Detail: refusal}, nil
+				}
+				return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+			}
+			res, err := RunDriver(spec, world)
+			if err != nil {
+				t.Fatalf("RunDriver: %v", err)
+			}
+			if len(told) != 1 || told[0] != refusal {
+				t.Errorf("told = %q, want the %s text %q", told, kind, refusal)
+			}
+			if finished != 2 {
+				t.Errorf("finish calls = %d, want 2: refusal then retry after the submit", finished)
+			}
+			if len(res.Merged) != 1 || res.Merged[0].SHA != "sha-fixed" {
+				t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+			}
+		})
+	}
+}
+
+// There is no attempt limit: five refusals in a row are each told and
+// retried like the first, and the sixth finish merges.
+func TestDriverHandlesAFifthRefusalLikeTheFirst(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	var told []string
+	submits := 0
+	finished := 0
+	world.Tell = func(id, text string) error {
+		told = append(told, text)
+		// The worker tries again and submits, but the conflict is still
+		// there until the sixth finish.
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if finished <= 5 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if finished != 6 {
+		t.Fatalf("finish calls = %d, want 6: five refusals and the merging retry", finished)
+	}
+	if len(told) != 5 {
+		t.Fatalf("tell calls = %d, want 5: every refusal reaches the worker", len(told))
+	}
+	for i, text := range told {
+		if text != refusal {
+			t.Errorf("tell %d = %q, want the refusal text %q", i+1, text, refusal)
+		}
+	}
+	if len(res.Merged) != 1 || res.Merged[0].SHA != "sha-fixed" {
+		t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+	}
+}
+
+// The live world tells the worker's own pane the refusal verbatim and counts
+// its submits from the submit record: an unchanged record reads as the same
+// count, a new one as the next.
+func TestDriverLiveWorldTellsPaneVerbatimAndCountsSubmits(t *testing.T) {
+	oldState, oldTell := statePath, tellExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; tellExec = oldTell })
+	repo, dir := t.TempDir(), t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-tell"}
+	id := WorkerID(ticket)
+	if err := WriteAgentState(AgentState{ID: id, Type: "worker", Pane: "pane-1"}); err != nil {
+		t.Fatal(err)
+	}
+	var prompted []string
+	tellExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if len(args) == 4 && args[0] == "agent" && args[1] == "prompt" && args[2] == "pane-1" {
+			prompted = append(prompted, args[3])
+			return Result{Code: 0}, nil
+		}
+		return Result{Code: 1, Stderr: "unexpected call"}, nil
+	}
+	world := liveDriverWorld(spec, repo, files)
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	if err := world.Tell(id, refusal); err != nil {
+		t.Fatalf("Tell: %v", err)
+	}
+	if len(prompted) != 1 || prompted[0] != refusal {
+		t.Errorf("prompted = %q, want the refusal verbatim", prompted)
+	}
+	if got := world.Submits(id); got != 0 {
+		t.Errorf("Submits = %d before any submit, want 0", got)
+	}
+	submit := func(report string) {
+		if err := WriteAgentSubmit(AgentSubmit{AgentID: id, Type: "worker", Status: "done", Report: report, At: "2026-10-08T12:00:00Z", ThisTurn: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	submit("fixed the conflict")
+	if got := world.Submits(id); got != 1 {
+		t.Errorf("Submits = %d after one submit, want 1", got)
+	}
+	if got := world.Submits(id); got != 1 {
+		t.Errorf("Submits = %d on a re-read with no new submit, want 1", got)
+	}
+	submit("fixed the conflict again")
+	if got := world.Submits(id); got != 2 {
+		t.Errorf("Submits = %d after a second submit, want 2", got)
+	}
+}
+
+// A world with Tell but no submit count still ends: the distinct refusal is
+// told once, then the run holds on the refusal line instead of telling
+// every pass forever.
+func TestDriverTellWithoutSubmitsTellsOnceAndHolds(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	told, finished := 0, 0
+	world.Tell = func(id, text string) error {
+		told++
+		return nil
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		return DriverFinish{Merged: false, Detail: "rebase onto spec/x conflicted in a.go"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if told != 1 {
+		t.Errorf("tell calls = %d, want 1: the refusal is told once, then the run holds", told)
+	}
+	if finished != 2 {
+		t.Errorf("finish calls = %d, want 2: the run holds instead of retrying with no submit", finished)
+	}
+	if len(res.Merged) != 0 {
+		t.Errorf("merged = %v, want nothing", res.Merged)
+	}
+	if !strings.Contains(res.Report, "unmerged 01-first: rebase onto spec/x conflicted in a.go") {
+		t.Errorf("report keeps the refusal:\n%s", res.Report)
+	}
+}
