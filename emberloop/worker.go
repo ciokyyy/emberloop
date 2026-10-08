@@ -120,8 +120,9 @@ func loadWorkersLocked() (map[string]Worker, error) {
 type herdrReply struct {
 	Result struct {
 		Pane struct {
-			PaneID string `json:"pane_id"`
-			TabID  string `json:"tab_id"`
+			PaneID      string `json:"pane_id"`
+			TabID       string `json:"tab_id"`
+			AgentStatus string `json:"agent_status"`
 		} `json:"pane"`
 		RootPane struct {
 			PaneID string `json:"pane_id"`

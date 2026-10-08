@@ -58,7 +58,7 @@ owns its `_test.go` and the behaviour below):
   attempts waiting out the same growing delay, recorded on the report when
   herdr never accepts it) with retries continuing on a doubling backoff while
   every other ticket keeps running (a ticket marked needs-you keeps the mark
-  and its alert when later parked or discarded), a worker idle 3m with no
+  and its alert when later parked or discarded), a worker idle 3m (a pane reporting `working`, read through `Working`, is never idle) with no
   submit gets the fixed stall nudge (repeating every 5m, the third raising the
   needs-you alert with the transcript's spawn error named in it; any submit
   ends it; delivery is best effort and recorded, never fatal). After the alert

@@ -463,3 +463,51 @@ func TestDriverWithoutSubmitCountNothingIsNudged(t *testing.T) {
 		t.Errorf("merged = %v, want the merge", res.Merged)
 	}
 }
+
+// A worker whose pane reports working is never idle: the nudge waits until it
+// stops, then counts the usual three minutes from its last busy pass. Without
+// the busy signal this worker would be nudged at three minutes.
+func TestDriverBusyWorkerIsNotNudged(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	world.Now = func() time.Time { return now }
+	world.Sleep = func(d time.Duration) { now = now.Add(d) }
+	world.Tip = func(id string) string { return "tip" }
+	submits := 0
+	world.Submits = func(id string) int { return submits }
+	busyUntil := start.Add(10 * time.Minute)
+	world.Working = func(id string) bool { return now.Before(busyUntil) }
+	passing := false
+	world.Reviews = func(id string) map[string]DriverReview {
+		if !passing {
+			return nil
+		}
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	var toldAt []time.Time
+	world.Tell = func(id, text string) error {
+		toldAt = append(toldAt, now)
+		passing = true
+		submits = 1
+		return nil
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha-busy"}, nil
+	}
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(toldAt) != 1 {
+		t.Fatalf("tell calls = %d, want 1: the worker is nudged once it stops working", len(toldAt))
+	}
+	if idle := toldAt[0].Sub(busyUntil); idle < 2*time.Minute || idle > 3*time.Minute {
+		t.Errorf("nudge sent %v after the worker stopped, want about three minutes of idleness", idle)
+	}
+}

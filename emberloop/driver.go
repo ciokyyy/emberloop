@@ -87,6 +87,11 @@ type DriverWorld struct {
 	// for the real reviewer spawn error when the worker stalls. Nil means no
 	// transcript: the run state keeps no spawn error.
 	Transcript func(ticketID string) string
+	// Working reports whether a ticket's worker is busy right now: its pane
+	// reports the working agent status. A busy worker is never idle, so the
+	// stall nudge waits until it stops. Nil means no busy signal, and idleness
+	// reads only commits, verdicts and submits.
+	Working func(ticketID string) bool
 	// Parked reports the user's park action, taken with p in the pane. A
 	// parked ticket keeps its worktree and branch, so the driver never starts
 	// or finishes it; only the tickets that depend on it wait. Read every
@@ -338,6 +343,9 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 	lastSig := map[string]string{}
 	lastSubmits := map[string]int{}
 	lastActivity := map[string]time.Time{}
+	// lastBusy is the last pass a ticket's worker reported working. Only the
+	// stall nudge reads it: the ten minute needs-you alert stays on lastActivity.
+	lastBusy := map[string]time.Time{}
 	needsYou := map[string]bool{}
 	notifyMsg := map[string]string{}
 	notified := map[string]bool{}
@@ -555,6 +563,9 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				lastActivity[tk.ID] = now
 				lastTip[tk.ID], lastSig[tk.ID], lastSubmits[tk.ID] = tip, sig, subs
 			}
+			if world.Working != nil && world.Working(tk.ID) {
+				lastBusy[tk.ID] = now
+			}
 			// Ten minutes with no worker activity marks the ticket even
 			// while it waits for a submit or its gate: a hung worker is
 			// not invisible. Marking never stops the run; the notification
@@ -614,6 +625,9 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				// nudged.
 				if world.Tell != nil && world.Submits != nil && subs == 0 && nudges[tk.ID] < driverNudgeMax {
 					idle := now.Sub(lastActivity[tk.ID])
+					if busy, ok := lastBusy[tk.ID]; ok && now.Sub(busy) < idle {
+						idle = now.Sub(busy)
+					}
 					due := nudges[tk.ID] == 0 && idle >= driverStallIdle ||
 						nudges[tk.ID] > 0 && idle >= driverStallIdle && now.Sub(lastNudge[tk.ID]) >= driverNudgeEvery
 					if due {
@@ -1122,6 +1136,14 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 				submitSeq[ticketID]++
 			}
 			return submitSeq[ticketID]
+		},
+		Working: func(ticketID string) bool {
+			st, ok, err := ReadAgentState(WorkerID(paths[ticketID]))
+			if err != nil || !ok || st.Pane == "" {
+				return false
+			}
+			reply, err := herdrJSON(tellExec, []string{"pane", "get", st.Pane}, 15*time.Second)
+			return err == nil && reply.Result.Pane.AgentStatus == "working"
 		},
 		Transcript: func(ticketID string) string {
 			id := WorkerID(paths[ticketID])
