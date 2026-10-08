@@ -32,6 +32,7 @@ func main() {
 	}
 	d := web.NewDaemon(*stateDir, web.NewFakeBackend())
 	d.RegisterBackend("pig", web.NewPigBackend())
+	d.WithClaudeBackend(web.NewClaudeBackend())
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen:", err)

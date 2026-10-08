@@ -23,6 +23,15 @@ imports it. No herdr, no ticket state.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
   ExtraTools only, models from the SDK catalog, one SDK stack per Session
   closed by DELETE. Backends register per harness; the fake stays default.
+- `claude.go` holds the claude ACP Backend (pinned adapter, shared
+  new/load stripping set, allow-once auto-approve) with stub-transport
+  tests in `claude_*_test.go` and a `-tags live` probe for the real adapter.
+- `GET /api/models?harness=` offers models per harness (claude: opus,
+  sonnet, haiku). Creating a claude Session with another model is 400;
+  creating one without the claude Backend wired, or when the adapter
+  fails to start, is 500 with no Session left behind.
+- A Daemon restart keeps claude Sessions as readable history only;
+  resume through `session/load` arrives with the lifecycle ticket.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
   `meta.json` plus append-only `events.jsonl`; the Daemon reloads both on start.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`

@@ -38,6 +38,7 @@ type Backend interface {
 type Daemon struct {
 	stateDir string
 	backend  Backend
+	claude   *ClaudeBackend
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -89,6 +90,17 @@ func (d *Daemon) Handler() http.Handler {
 	return guard(mux)
 }
 
+// WithClaudeBackend routes harness "claude" Sessions to the ACP backend.
+// It also registers the backend so the generic harness lookup finds it.
+// Without it claude Sessions have nowhere to run.
+func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.claude = b
+	d.backends["claude"] = b
+	return d
+}
+
 // handleModels lists the harness's runnable models for the new-Session form.
 func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
@@ -100,14 +112,39 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "harness is required", http.StatusBadRequest)
 		return
 	}
+	if harness == "claude" {
+		writeJSON(w, http.StatusOK, map[string]any{"models": ClaudeModels()})
+		return
+	}
+	if harness != "pig" && harness != "fake" {
+		http.Error(w, "unknown harness (want claude, pig or fake)", http.StatusBadRequest)
+		return
+	}
 	d.mu.Lock()
 	be := d.backendForLocked(harness)
 	d.mu.Unlock()
-	if be == nil {
-		http.Error(w, "no backend for harness", http.StatusBadRequest)
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": be.Models()})
+}
+
+func validClaudeModel(model string) bool {
+	for _, m := range ClaudeModels() {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+// removeSession drops a Session that failed to start, with its log and any
+// backend state, so a failed claude start leaks no adapter process.
+func (d *Daemon) removeSession(id string) {
+	d.mu.Lock()
+	delete(d.sessions, id)
+	d.mu.Unlock()
+	if d.claude != nil {
+		d.claude.DropSession(id)
+	}
+	_ = os.RemoveAll(d.sessionDir(id))
 }
 
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
@@ -179,6 +216,10 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "harness, model and workDir are required", http.StatusBadRequest)
 			return
 		}
+		if req.Harness == "claude" && !validClaudeModel(req.Model) {
+			http.Error(w, "unknown claude model (want opus, sonnet or haiku)", http.StatusBadRequest)
+			return
+		}
 		meta := SessionMeta{
 			ID:        newID(),
 			Harness:   req.Harness,
@@ -189,22 +230,44 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		// Allocate the harness Session before publishing: a concurrent GET
 		// or prompt must never see a Session with no harness handle.
-		d.mu.Lock()
-		be := d.backendForLocked(req.Harness)
-		d.mu.Unlock()
-		if be != nil {
-			id := meta.ID
-			if err := be.CreateSession(meta, func(kind, text, status string) {
-				d.appendEvent(id, kind, text, status)
-			}); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
+		// Claude skips the generic path here: its blocking StartSession runs
+		// below after publishing, so MCP tools are connected before the
+		// first prompt can go out.
+		if req.Harness != "claude" {
+			d.mu.Lock()
+			be := d.backendForLocked(req.Harness)
+			d.mu.Unlock()
+			if be != nil {
+				id := meta.ID
+				if err := be.CreateSession(meta, func(kind, text, status string) {
+					d.appendEvent(id, kind, text, status)
+				}); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
 			}
 		}
 		d.mu.Lock()
 		d.sessions[meta.ID] = &session{meta: meta, notify: make(chan struct{}), last: time.Now()}
 		d.persistMeta(meta)
 		d.mu.Unlock()
+		// Claude creation blocks until session/new answers, so MCP tools
+		// are connected before the first prompt can go out.
+		if req.Harness == "claude" {
+			d.mu.Lock()
+			cb := d.claude
+			d.mu.Unlock()
+			if cb == nil {
+				d.removeSession(meta.ID)
+				http.Error(w, "claude backend not configured", http.StatusInternalServerError)
+				return
+			}
+			if err := cb.CreateSession(meta, nil); err != nil {
+				d.removeSession(meta.ID)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 		d.appendEvent(meta.ID, "status", "", "idle")
 		d.mu.Lock()
 		m := d.sessions[meta.ID].meta
