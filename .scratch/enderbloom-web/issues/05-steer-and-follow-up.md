@@ -4,11 +4,11 @@
 
 **Blocked by:** 03, 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The composer shows which mode a message will use and offers Steer and Follow-up while a Session works
-- [ ] A Steer reaches a pig Session at its next tool boundary
-- [ ] A Follow-up runs after the current turn on both harnesses
-- [ ] Queued messages are listed and can be cleared before delivery
-- [ ] A degraded Steer on claude is labelled as a Follow-up in the transcript
-- [ ] Seam tests with the fake Backend cover both modes and clearing
+- [x] The composer shows which mode a message will use and offers Steer and Follow-up while a Session works
+- [x] A Steer reaches a pig Session at its next tool boundary
+- [x] A Follow-up runs after the current turn on both harnesses
+- [x] Queued messages are listed and can be cleared before delivery
+- [x] A degraded Steer on claude is labelled as a Follow-up in the transcript
+- [x] Seam tests with the fake Backend cover both modes and clearing
