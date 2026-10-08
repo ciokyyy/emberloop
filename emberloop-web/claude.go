@@ -131,7 +131,14 @@ type claudeState struct {
 	acpID string
 	conn  acpConn
 	ready chan struct{}
+	// readyOnce makes the MCP-ready signal exactly-once: success,
+	// failure-drop and concurrent DropSession all signal it, whichever
+	// runs first, so a waiting prompt always wakes.
+	readyOnce sync.Once
 }
+
+// signalReady closes ready exactly once.
+func (s *claudeState) signalReady() { s.readyOnce.Do(func() { close(s.ready) }) }
 
 // applyTimeouts carries test timeouts onto a real wire connection.
 func (b *ClaudeBackend) applyTimeouts(conn acpConn) {
@@ -214,7 +221,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 	}
 	b.mu.Lock()
 	st.acpID = acpID
-	close(st.ready)
+	st.signalReady()
 	b.mu.Unlock()
 	return nil
 }
@@ -251,20 +258,21 @@ func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd string) error {
 		return err
 	}
 	b.mu.Lock()
-	close(st.ready)
+	st.signalReady()
 	b.mu.Unlock()
 	return nil
 }
 
 // drop releases a Session that never started: the map entry goes away and
-// ready closes under the lock, so a prompt waiting on MCP-ready wakes and
+// ready signals under the lock, so a prompt waiting on MCP-ready wakes and
 // reports failure; the process close runs outside the lock so a hung
-// adapter never blocks other Sessions.
+// adapter never blocks other Sessions. A concurrent DropSession may have
+// removed the entry first; the Once keeps the signal exactly-once either way.
 func (b *ClaudeBackend) drop(id string, conn acpConn) {
 	b.mu.Lock()
 	if st, ok := b.sessions[id]; ok {
 		delete(b.sessions, id)
-		close(st.ready)
+		st.signalReady()
 	}
 	b.mu.Unlock()
 	_ = conn.Close()
@@ -286,12 +294,15 @@ func (b *ClaudeBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 func (b *ClaudeBackend) CloseSession(sessionID string) { b.DropSession(sessionID) }
 
 // DropSession releases a Session id without reporting: creation-failure
-// cleanup calls it when the Daemon already removed the Session.
+// cleanup and DELETE teardown call it when the Daemon already removed the
+// Session. It signals ready so a prompt blocked on a still-starting
+// Session wakes instead of hanging.
 func (b *ClaudeBackend) DropSession(id string) {
 	b.mu.Lock()
 	st, ok := b.sessions[id]
 	if ok {
 		delete(b.sessions, id)
+		st.signalReady()
 	}
 	b.mu.Unlock()
 	if ok {

@@ -350,3 +350,48 @@ func TestPromptAfterFailedStartReportsFailed(t *testing.T) {
 		t.Fatalf("status events = %v", got)
 	}
 }
+
+// A DropSession racing a blocked start still wakes a waiting prompt:
+// the Once signals ready even though the later failure-drop finds no entry.
+func TestPromptAfterDropDuringStartReportsFailed(t *testing.T) {
+	block := make(chan struct{})
+	started := make(chan struct{})
+	stub := &stubConn{blockNew: block, promptStarted: started, newErr: errNoAdapter}
+	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: t.TempDir()}
+	startDone := make(chan error, 1)
+	go func() { startDone <- be.StartSession(meta) }()
+	<-started
+	type emit struct{ kind, text, status string }
+	promptDone := make(chan []emit, 1)
+	go func() {
+		var got []emit
+		be.OnPrompt("d1", "hi", func(kind, text, status string) {
+			got = append(got, emit{kind, text, status})
+		})
+		promptDone <- got
+	}()
+	be.DropSession("d1")
+	close(block)
+	select {
+	case <-startDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("start never finished")
+	}
+	var got []emit
+	select {
+	case got = <-promptDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("prompt hung after drop during start")
+	}
+	seen := map[string]string{}
+	for _, e := range got {
+		seen[e.kind] = e.text + "|" + e.status
+	}
+	if seen["error"] != "claude session not started|" {
+		t.Fatalf("error events = %v", got)
+	}
+	if seen["status"] != "|failed" {
+		t.Fatalf("status events = %v", got)
+	}
+}

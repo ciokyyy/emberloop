@@ -262,7 +262,10 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "claude backend not configured", http.StatusInternalServerError)
 				return
 			}
-			if err := cb.CreateSession(meta, nil); err != nil {
+			id := meta.ID
+			if err := cb.CreateSession(meta, func(kind, text, status string) {
+				d.appendEvent(id, kind, text, status)
+			}); err != nil {
 				d.removeSession(meta.ID)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
