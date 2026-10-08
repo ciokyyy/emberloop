@@ -35,8 +35,9 @@ imports it. No herdr, no ticket state.
   fails to start, is 500 with no Session left behind.
 - Lifecycle (`lifecycle.go`, `daemon.go`): the Daemon caps live Sessions at
   the global `max_workers` setting (env, settings file, default 3; over-cap
-  creates and resumes are 429), releases an idle Session's agent process,
-  and resumes it on the next prompt: claude through ACP `session/load`,
+  creates and resumes are 429), releases a settled (idle or failed)
+  Session's agent process, and resumes it on the next prompt: claude
+  through ACP `session/load`,
   pig through its saved session file, fake from the log. Sessions that
   cannot resume stay readable with a why (`resumable`/`resumeNote` on
   session GET, read-only banner in the UI); a new prompt there is 409.

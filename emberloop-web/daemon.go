@@ -222,18 +222,19 @@ func (d *Daemon) resumeViewLocked(s *session) (bool, string) {
 	return be.ResumeOK(s.meta)
 }
 
-// finishTurn releases the agent process once the Session rests at idle with
-// no turn left running, so idle Sessions hold history only. The prompt path
-// counts each launched turn in active under the lock; a release that finds
-// a turn still running leaves the process alone, which closes the race
-// where a new prompt lands while the old turn's status still reads idle.
+// finishTurn releases the agent process once the Session settles at idle or
+// failed with no turn left running, so settled Sessions hold history only
+// and a retry resumes from the log. The prompt path counts each launched
+// turn in active under the lock; a release that finds a turn still running
+// leaves the process alone, which closes the race where a new prompt lands
+// while the old turn's status still reads idle.
 func (d *Daemon) finishTurn(id string) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
 	if ok && s.active > 0 {
 		s.active--
 	}
-	if !ok || s.active > 0 || !s.live || s.meta.Status != "idle" {
+	if !ok || s.active > 0 || !s.live || (s.meta.Status != "idle" && s.meta.Status != "failed") {
 		d.mu.Unlock()
 		return
 	}
@@ -480,6 +481,10 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": unwired})
 				return
 			}
+			if be == nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "backend not configured"})
+				return
+			}
 			if okResume, reason := be.ResumeOK(meta); !okResume {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": reason})
 				return
@@ -538,6 +543,11 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		if !s.live {
 			d.mu.Unlock()
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "session is resuming; send the prompt again"})
+			return
+		}
+		if be == nil {
+			d.mu.Unlock()
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "backend not configured"})
 			return
 		}
 		s.active++
