@@ -222,6 +222,9 @@
               <th class="py-1 pr-2 font-medium">Title</th>
               <th class="py-1 pr-2 font-medium">State</th>
               <th class="py-1 pr-2 font-medium">Worker</th>
+              <th class="py-1 pr-2 font-medium">Spec review</th>
+              <th class="py-1 pr-2 font-medium">Standards</th>
+              <th class="py-1 pr-2 font-medium">Tip</th>
               <th class="py-1 font-medium">Refusal</th>
             </tr>
           </thead>
@@ -240,6 +243,9 @@
                     <span class="text-muted-foreground">—</span>
                   {/if}
                 </td>
+                <td class="py-1 pr-2">{t.verdicts?.['reviewer-spec']?.verdict ?? '—'}{t.verdicts?.['reviewer-spec'] ? (t.verdicts['reviewer-spec'].fresh ? '' : ' (stale)') : ''}</td>
+                <td class="py-1 pr-2">{t.verdicts?.['reviewer-standards']?.verdict ?? '—'}{t.verdicts?.['reviewer-standards'] ? (t.verdicts['reviewer-standards'].fresh ? '' : ' (stale)') : ''}</td>
+                <td class="py-1 pr-2">{t.tip ? t.tip.slice(0, 8) : '—'}</td>
                 <td class="py-1">{t.lastRefusal || '—'}</td>
               </tr>
             {/each}

@@ -1,0 +1,270 @@
+package web
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func submitReview(t *testing.T, base, id, status, report string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"status": status, "report": report})
+	resp, err := http.Post(base+"/api/sessions/"+id+"/submit", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("review submit status = %d, want 202", resp.StatusCode)
+	}
+}
+
+func waitReviewers(t *testing.T, base, runID, ticketID string) map[string]string {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		r := getRun(t, base, runID)
+		for _, tk := range r.Tickets {
+			if tk.ID == ticketID && len(tk.ReviewerSessions) == 2 {
+				return tk.ReviewerSessions
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for reviewers of %s", ticketID)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+type sessionBody struct {
+	Meta   SessionMeta `json:"session"`
+	Events []Event     `json:"events"`
+}
+
+func getSession(t *testing.T, base, id string) sessionBody {
+	t.Helper()
+	resp, err := http.Get(base + "/api/sessions/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("session get status = %d, want 200", resp.StatusCode)
+	}
+	var body sessionBody
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func sessTranscript(s sessionBody) string {
+	var b strings.Builder
+	for _, e := range s.Events {
+		b.WriteString(e.Text)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func passReviewers(t *testing.T, base, runID, ticketID string) {
+	t.Helper()
+	for _, sess := range waitReviewers(t, base, runID, ticketID) {
+		submitReview(t, base, sess, "pass", "")
+	}
+}
+
+func ticketByID(r runJSON, id string) runTicketJSON {
+	for _, tk := range r.Tickets {
+		if tk.ID == id {
+			return tk
+		}
+	}
+	return runTicketJSON{}
+}
+
+// A submitted done spawns both Reviewers once; without passes the merge is
+// refused, and the row carries verdicts, tip freshness and no refusal yet.
+func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	if revs["reviewer-spec"] == "" || revs["reviewer-standards"] == "" {
+		t.Fatalf("reviewer sessions = %v, want both types", revs)
+	}
+	if revs["reviewer-spec"] == revs["reviewer-standards"] {
+		t.Fatalf("reviewer sessions are the same, want two")
+	}
+	first := getRun(t, srv.URL, run.ID)
+	if got := ticketByID(first, "01-first"); got.State == "merged" {
+		t.Fatalf("ticket merged without passes, want the gate to refuse")
+	}
+	submitReview(t, srv.URL, revs["reviewer-spec"], "pass", "")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.Verdicts["reviewer-spec"].Verdict == "pass" && tk.State != "merged"
+	}, "spec pass shown without merging")
+	tk := ticketByID(r, "01-first")
+	if tk.Tip == "" {
+		t.Fatalf("tip empty, want the worker branch tip")
+	}
+	if !tk.Verdicts["reviewer-spec"].Fresh {
+		t.Fatalf("spec verdict = %+v, want fresh at the tip", tk.Verdicts["reviewer-spec"])
+	}
+	if tk.LastRefusal != "" {
+		t.Fatalf("lastRefusal = %q, want empty while a pass is still missing", tk.LastRefusal)
+	}
+}
+
+// A changes verdict is delivered to the same Worker unchanged; the rework
+// loop keeps the Reviewer sessions and merges once both pass at the new tip.
+func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+
+	submitReview(t, srv.URL, revs["reviewer-spec"], "changes", "work.go:1 blocker: handle nil")
+	submitReview(t, srv.URL, revs["reviewer-standards"], "pass", "")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "handle nil")
+	}, "refusal carries the findings")
+	if got := ticketByID(r, "01-first"); got.State == "merged" {
+		t.Fatalf("ticket merged with a changes verdict, want it kept")
+	}
+	sess := getSession(t, srv.URL, worker)
+	if !strings.Contains(sessTranscript(sess), "handle nil") {
+		t.Fatalf("worker transcript misses the findings")
+	}
+
+	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	writeFile(t, worktree, "work.go", "package main\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "fix nil")
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "not at the tip")
+	}, "stale pass refused after the new commit")
+	if got := ticketByID(r, "01-first"); got.Verdicts["reviewer-standards"].Fresh {
+		t.Fatalf("standards verdict = %+v, want stale after the new commit", got.Verdicts["reviewer-standards"])
+	}
+	for typ, sess := range waitReviewers(t, srv.URL, run.ID, "01-first") {
+		if sess != revs[typ] {
+			t.Fatalf("reviewer %s session changed, want the persistent one", typ)
+		}
+		submitReview(t, srv.URL, sess, "pass", "")
+	}
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done after both pass at the new tip")
+}
+
+// Reviewer sessions use their settings roles, falling back to the Run config.
+func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	raw, _ := json.Marshal(map[string]any{
+		"roles": map[string]any{
+			"reviewer-spec": map[string]any{"harness": "fake", "model": "spec-model"},
+		},
+	})
+	if err := os.WriteFile(settings, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EMBERLOOP_SETTINGS", settings)
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", nil)
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	if got := getSession(t, srv.URL, revs["reviewer-spec"]).Meta.Model; got != "spec-model" {
+		t.Fatalf("spec reviewer model = %q, want spec-model", got)
+	}
+	if got := getSession(t, srv.URL, revs["reviewer-standards"]).Meta.Model; got != "request-model" {
+		t.Fatalf("standards reviewer model = %q, want the run fallback request-model", got)
+	}
+}
+
+// A Reviewer Session starts through the shared live-Session cap: a full cap
+// refuses it, and freeing the cap lets the retry in.
+func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
+	repo, _ := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	branch := "implement/01-first"
+	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d.SetMaxRunning(1)
+	d.mu.Lock()
+	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.runs["r-cap"] = &runState{
+		ID: "r-cap", Spec: "spec", Repo: repo, Status: "running",
+		Harness: "fake", Model: "fake-model",
+		notify:   make(chan struct{}),
+		Tickets:  []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Sessions: map[string]string{}, Branches: map[string]string{"01-first": branch},
+		Worktrees: map[string]string{"01-first": worktree}, Targets: map[string]string{},
+		Bases: map[string]string{}, Merged: map[string]string{},
+		Reviewers: map[string]map[string]string{}, Reviews: map[string]map[string]storedReview{},
+		Reprompted: map[string]int{},
+	}
+	d.mu.Unlock()
+	if err := d.runStartReviewer("r-cap", "01-first", "reviewer-spec", "deadbeef"); err == nil || !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("runStartReviewer err = %v, want the cap refusal", err)
+	}
+	d.mu.Lock()
+	delete(d.sessions, "holder")
+	if sess := d.runs["r-cap"].Reviewers["01-first"]["reviewer-spec"]; sess != "" {
+		d.mu.Unlock()
+		t.Fatalf("reviewer session = %q, want none while capped", sess)
+	}
+	d.mu.Unlock()
+	if err := d.runStartReviewer("r-cap", "01-first", "reviewer-spec", "deadbeef"); err != nil {
+		t.Fatalf("runStartReviewer retry = %v, want the reviewer in", err)
+	}
+	d.mu.Lock()
+	sess := d.runs["r-cap"].Reviewers["01-first"]["reviewer-spec"]
+	d.mu.Unlock()
+	if sess == "" {
+		t.Fatalf("no reviewer session after the cap freed, want one")
+	}
+}

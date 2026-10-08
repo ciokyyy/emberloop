@@ -50,14 +50,23 @@ func demoTickets() map[string]string {
 	}
 }
 
+type reviewVerdictJSON struct {
+	Verdict string `json:"verdict"`
+	At      string `json:"at"`
+	Fresh   bool   `json:"fresh"`
+}
+
 type runTicketJSON struct {
-	ID            string   `json:"id"`
-	Num           int      `json:"num"`
-	Title         string   `json:"title"`
-	Blockers      []string `json:"blockers"`
-	State         string   `json:"state"`
-	WorkerSession string   `json:"workerSession"`
-	LastRefusal   string   `json:"lastRefusal"`
+	ID               string                       `json:"id"`
+	Num              int                          `json:"num"`
+	Title            string                       `json:"title"`
+	Blockers         []string                     `json:"blockers"`
+	State            string                       `json:"state"`
+	WorkerSession    string                       `json:"workerSession"`
+	ReviewerSessions map[string]string            `json:"reviewerSessions"`
+	Verdicts         map[string]reviewVerdictJSON `json:"verdicts"`
+	Tip              string                       `json:"tip"`
+	LastRefusal      string                       `json:"lastRefusal"`
 }
 
 type runJSON struct {
@@ -244,6 +253,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 		}
 	}
 	submitSession(t, srv.URL, first, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		byID := map[string]runTicketJSON{}
 		for _, tk := range r.Tickets {
@@ -260,6 +270,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 		}
 	}
 	submitSession(t, srv.URL, second, "done", []string{"beta"})
+	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		byID := map[string]runTicketJSON{}
 		for _, tk := range r.Tickets {
@@ -273,6 +284,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 			submitSession(t, srv.URL, tk.WorkerSession, "done", []string{"gamma"})
 		}
 	}
+	passReviewers(t, srv.URL, run.ID, "03-third")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done")
@@ -320,6 +332,7 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 		}
 	}
 	submitSession(t, srv.URL, busySession, "done", nil)
+	passReviewers(t, srv.URL, run.ID, busy)
 	_ = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		for _, tk := range r.Tickets {
 			if tk.ID == busy && tk.State == "merged" {
@@ -365,6 +378,7 @@ func TestRunTicksBoxesFromCompletedList(t *testing.T) {
 		}
 	}
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done")
@@ -413,6 +427,7 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
 	writeFile(t, worktree, "dirty.txt", "dirty\n")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		for _, tk := range r.Tickets {
 			if tk.ID == "01-first" && tk.LastRefusal != "" {
@@ -480,6 +495,7 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 	testGit(t, repo, "add", "conflict.txt")
 	testGit(t, repo, "commit", "-m", "main moves")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		for _, tk := range r.Tickets {
 			if tk.ID == "01-first" && tk.LastRefusal != "" {
@@ -586,6 +602,7 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 		}
 	}
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done after done submit")
@@ -620,6 +637,8 @@ func TestRunDetachedMergesTwoTickets(t *testing.T) {
 	}
 	submitSession(t, srv.URL, sess["01-first"], "done", []string{"alpha"})
 	submitSession(t, srv.URL, sess["02-second"], "done", []string{"beta"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
+	passReviewers(t, srv.URL, run.ID, "02-second")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done on detached repo")
@@ -659,8 +678,12 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 		Targets:   map[string]string{},
 		Bases:     map[string]string{"01-first": base},
 		Merged:    map[string]string{},
+		Reviewers: map[string]map[string]string{},
+		Reviews:   map[string]map[string]storedReview{},
 	}
-	d.submits["sess1"] = &submitRec{Status: "done", Completed: []string{"alpha"}, Count: 1}
+	tip := strings.TrimSpace(testGit(t, worktree, "rev-parse", "HEAD"))
+	d.runs["r-detached"].Reviewers["01-first"] = map[string]string{"reviewer-standards": "sess-std", "reviewer-spec": "sess-spec"}
+	d.runs["r-detached"].Reviews["01-first"] = map[string]storedReview{"reviewer-standards": {Verdict: "pass", At: tip}, "reviewer-spec": {Verdict: "pass", At: tip}}
 	fin, err := d.runFinishWorker("r-detached", "01-first")
 	if err != nil {
 		t.Fatalf("finish = %v, want merge", err)

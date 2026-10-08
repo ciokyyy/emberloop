@@ -32,8 +32,10 @@ the driver ticks boxes and marks done, nothing else writes them.
   scout read-only at the same seam; `runs_test.go` covers spec discovery and
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
   with a fake Backend and fake git (order, cap, box ticks, dirty and
-  conflict refusals, roles); `RunsView.test.js` covers the live Ticket
-  table with Worker links; `pig_test.go` does the same with the
+  conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
+  Sessions per Ticket, the gate, rework, staleness, roles and the cap at the
+  same seam; `RunsView.test.js` covers the live Ticket table with Worker
+  links and the verdict columns; `pig_test.go` does the same with the
   pig Backend on the SDK test-faux provider, and `pig_live_test.go`
   (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
@@ -110,8 +112,6 @@ the driver ticks boxes and marks done, nothing else writes them.
   progress per ticket with a row error for a bad Blocked by line). The scan
   stays four levels deep, matches only files named `spec.md`, and skips
   `.git` and `node_modules`. The UI mounts a Runs view beside chat and
-  settings with no router: repo picker defaulting to the Session working
-  directory, spec list, ticket table. No herdr import.
 - `runs_exec.go` runs one deterministic Run per spec through the core driver
   (`POST /api/runs` starts with spec, repo, harness, model; a second active
   Start on the same spec is 409; `GET /api/runs` lists, `GET /api/runs/{id}`
@@ -127,7 +127,17 @@ the driver ticks boxes and marks done, nothing else writes them.
   Start refuses a spec outside the repo. Boxes tick from the submit completed
   list through the per-file lock, the driver the only writer. Roles from
   settings choose harness, model and effort, falling back to the Start
-  request. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
+  request. A submitted done also spawns one persistent Reviewer Session per
+  required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent
+  of the Run in the Worker's worktree; later dones re-prompt the same
+  Sessions, so they keep context across Passes. Reviewer submits carry
+  pass or changes with the findings in the report; the finish merges only
+  when both types passed at the current tip (older Passes go stale), else
+  the refusal lands on the row and reaches the Worker unchanged, retried
+  after the next submit. Reviewer Sessions start through the shared
+  live-Session cap like every other Session. The row carries
+  `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with the
+  last refusal. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
   The UI shows the live table with Worker links to the Session view.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct

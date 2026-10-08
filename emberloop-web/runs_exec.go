@@ -34,39 +34,67 @@ type staticTicket struct {
 	Path     string   `json:"path"`
 }
 
-// submitRec is one Worker Session's submits: how many arrived, the last
-// status and its completed checkbox line texts.
+// submitRec is one Session's submits: how many arrived, the last
+// status, its completed checkbox line texts (workers) and its report
+// (reviewers' findings).
 type submitRec struct {
 	Status    string   `json:"status"`
 	Completed []string `json:"completed"`
+	Report    string   `json:"report,omitempty"`
 	Count     int      `json:"count"`
 }
 
-// runState is one deterministic Run: the spec, the repo, one Worker Session
-// per Ticket in its own worktree and branch, and the shared driver rows the
-// loop publishes every pass. Sessions maps ticket ids to Worker Session ids;
-// Submits lives on the Daemon so the submit route finds it without a run.
-type runState struct {
-	ID        string            `json:"id"`
-	Spec      string            `json:"spec"`
-	Repo      string            `json:"repo"`
-	Status    string            `json:"status"`
-	Harness   string            `json:"harness"`
-	Model     string            `json:"model"`
-	Effort    string            `json:"effort,omitempty"`
-	CreatedAt time.Time         `json:"createdAt"`
-	Error     string            `json:"error,omitempty"`
-	Tickets   []staticTicket    `json:"tickets"`
-	Sessions  map[string]string `json:"sessions"`
-	Branches  map[string]string `json:"branches"`
-	Worktrees map[string]string `json:"worktrees"`
-	Targets   map[string]string `json:"targets"`
-	Bases     map[string]string `json:"bases,omitempty"`
-	Merged    map[string]string `json:"merged,omitempty"`
+// The reviewer types every Ticket gets, one persistent Reviewer Session
+// each. The strings match core's built-in reviewers, which the web world
+// names literally so the gate agrees with the driver.
+const (
+	reviewerStandardsType = "reviewer-standards"
+	reviewerSpecType      = "reviewer-spec"
+)
 
-	SpecRun emberloop.SpecRun    `json:"-"`
-	Driver  *emberloop.DriverRun `json:"-"`
-	notify  chan struct{}        `json:"-"`
+// requiredReviewerTypes is the gate every finish needs: both reviewers
+// passed at the worker's current tip.
+var requiredReviewerTypes = []string{reviewerStandardsType, reviewerSpecType}
+
+// storedReview is one reviewer type's verdict on a Ticket: the status it
+// submitted and the branch tip it was given at, plus the findings text.
+// A pass at an older tip is stale and does not count.
+type storedReview struct {
+	Verdict string `json:"verdict"`
+	At      string `json:"at"`
+	Report  string `json:"report,omitempty"`
+}
+
+// runState is one deterministic Run: the spec, the repo, one Worker Session
+// per Ticket in its own worktree and branch, two persistent Reviewer
+// Sessions per Ticket once its Worker submits done, and the shared driver
+// rows the loop publishes every pass. Sessions maps ticket ids to Worker
+// Session ids, Reviewers ticket ids to reviewer type to Session id, and
+// Reviews ticket ids to reviewer type to verdict; Submits lives on the
+// Daemon so the submit route finds it without a run.
+type runState struct {
+	ID         string                             `json:"id"`
+	Spec       string                             `json:"spec"`
+	Repo       string                             `json:"repo"`
+	Status     string                             `json:"status"`
+	Harness    string                             `json:"harness"`
+	Model      string                             `json:"model"`
+	Effort     string                             `json:"effort,omitempty"`
+	CreatedAt  time.Time                          `json:"createdAt"`
+	Error      string                             `json:"error,omitempty"`
+	Tickets    []staticTicket                     `json:"tickets"`
+	Sessions   map[string]string                  `json:"sessions"`
+	Branches   map[string]string                  `json:"branches"`
+	Worktrees  map[string]string                  `json:"worktrees"`
+	Targets    map[string]string                  `json:"targets"`
+	Bases      map[string]string                  `json:"bases,omitempty"`
+	Merged     map[string]string                  `json:"merged,omitempty"`
+	Reviewers  map[string]map[string]string       `json:"reviewers,omitempty"`
+	Reviews    map[string]map[string]storedReview `json:"reviews,omitempty"`
+	Reprompted map[string]int                     `json:"reprompted,omitempty"`
+	SpecRun    emberloop.SpecRun                  `json:"-"`
+	Driver     *emberloop.DriverRun               `json:"-"`
+	notify     chan struct{}                      `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -85,6 +113,31 @@ func roleWorkerConfig() (harness, model, effort string) {
 		return "", "", ""
 	}
 	return r.Harness, r.Model, r.Effort
+}
+
+// roleReviewerConfig reads one reviewer type's harness and model from the
+// settings roles: its own type name first, then the settings-page alias
+// (spec-review, code-review). Empty when neither role is set, so the caller
+// falls back the same way workers do.
+func roleReviewerConfig(reviewerType string) (harness, model string) {
+	roles := readRoles()
+	if r, ok := roles[reviewerType]; ok && r.Harness != "" && r.Model != "" {
+		if r.Harness != "claude" || validClaudeModel(r.Model) {
+			return r.Harness, r.Model
+		}
+	}
+	alias := map[string]string{
+		reviewerSpecType:      "spec-review",
+		reviewerStandardsType: "code-review",
+	}[reviewerType]
+	if alias != "" {
+		if r, ok := roles[alias]; ok && r.Harness != "" && r.Model != "" {
+			if r.Harness != "claude" || validClaudeModel(r.Model) {
+				return r.Harness, r.Model
+			}
+		}
+	}
+	return "", ""
 }
 
 // gitRoot walks up from path to the repo holding it: the first directory
@@ -284,23 +337,26 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs := &runState{
-		ID:        newID(),
-		Spec:      specRun.Spec,
-		Repo:      repo,
-		Status:    runStatusRunning,
-		Harness:   harness,
-		Model:     model,
-		Effort:    effort,
-		CreatedAt: time.Now().UTC(),
-		Sessions:  map[string]string{},
-		Branches:  map[string]string{},
-		Worktrees: map[string]string{},
-		Targets:   map[string]string{},
-		Bases:     map[string]string{},
-		Merged:    map[string]string{},
-		SpecRun:   specRun,
-		Driver:    emberloop.NewDriverRun(nil),
-		notify:    make(chan struct{}),
+		ID:         newID(),
+		Spec:       specRun.Spec,
+		Repo:       repo,
+		Status:     runStatusRunning,
+		Harness:    harness,
+		Model:      model,
+		Effort:     effort,
+		CreatedAt:  time.Now().UTC(),
+		Sessions:   map[string]string{},
+		Branches:   map[string]string{},
+		Worktrees:  map[string]string{},
+		Targets:    map[string]string{},
+		Bases:      map[string]string{},
+		Merged:     map[string]string{},
+		Reviewers:  map[string]map[string]string{},
+		Reviews:    map[string]map[string]storedReview{},
+		Reprompted: map[string]int{},
+		SpecRun:    specRun,
+		Driver:     emberloop.NewDriverRun(nil),
+		notify:     make(chan struct{}),
 	}
 	for _, p := range previews {
 		blockers := p.Blockers
@@ -374,18 +430,15 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			}
 			return sha
 		},
-		Reviews: func(ticketID string) map[string]emberloop.DriverReview { return map[string]emberloop.DriverReview{} },
+		Reviews: func(ticketID string) map[string]emberloop.DriverReview {
+			d.ensureReviewers(rs.ID, ticketID)
+			return d.runReviews(rs.ID, ticketID)
+		},
 		Tell: func(ticketID, text string) error {
 			return d.runTellWorker(rs.ID, ticketID, text)
 		},
 		Submits: func(ticketID string) int {
-			d.mu.Lock()
-			defer d.mu.Unlock()
-			rec, ok := d.submits[rs.Sessions[ticketID]]
-			if !ok {
-				return 0
-			}
-			return rec.Count
+			return d.runSubmitCount(rs.ID, ticketID)
 		},
 		Completed: func(ticketID string) []string {
 			d.mu.Lock()
@@ -408,7 +461,8 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		Finish: func(ticketID string) (emberloop.DriverFinish, error) {
 			return d.runFinishWorker(rs.ID, ticketID)
 		},
-		Run: rs.Driver,
+		Required: append([]string(nil), requiredReviewerTypes...),
+		Run:      rs.Driver,
 		Sleep: func(wait time.Duration) {
 			if wait > runPollInterval {
 				wait = runPollInterval
@@ -427,6 +481,210 @@ func ticketPath(rs *runState, ticketID string) string {
 		}
 	}
 	return ""
+}
+
+// runReviews returns one Ticket's reviewer verdicts as the driver sees them:
+// each type's submitted status at the tip it was given at.
+func (d *Daemon) runReviews(runID, ticketID string) map[string]emberloop.DriverReview {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		return map[string]emberloop.DriverReview{}
+	}
+	out := map[string]emberloop.DriverReview{}
+	for typ, r := range rs.Reviews[ticketID] {
+		out[typ] = emberloop.DriverReview{Verdict: r.Verdict, At: r.At}
+	}
+	return out
+}
+
+// runSubmitCount counts one Ticket's submits for the driver's retry: the
+// Worker submits plus every Reviewer submit. A reviewer verdict advances the
+// count, so the finish retries without another Worker submit once both
+// reviewers passed at the tip.
+func (d *Daemon) runSubmitCount(runID, ticketID string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		return 0
+	}
+	n := 0
+	if rec := d.submits[rs.Sessions[ticketID]]; rec != nil {
+		n += rec.Count
+	}
+	for _, sess := range rs.Reviewers[ticketID] {
+		if rec := d.submits[sess]; rec != nil {
+			n += rec.Count
+		}
+	}
+	return n
+}
+
+// reviewerPrompt asks one reviewer type to judge the Ticket's worker branch
+// at the given tip and submit pass or changes with its findings.
+func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
+	axis := "correctness and this repo's standards"
+	if reviewerType == reviewerSpecType {
+		axis = "fit to the ticket and the spec"
+	}
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. When done, submit pass or changes with the findings in the report.", ticketID, spec, reviewerType, axis, branch, tip)
+}
+
+// ensureReviewers spawns the Ticket's two persistent Reviewer Sessions once
+// its Worker submitted done, and re-prompts them when the Worker submits
+// done again, so they keep their context across Passes. It spawns nothing
+// before the first done submit. A refused live-Session cap leaves the
+// missing reviewers for the next pass, which retries. Errors never fail
+func (d *Daemon) ensureReviewers(runID, ticketID string) {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	rec := d.submits[rs.Sessions[ticketID]]
+	if rec == nil || rec.Status != "done" {
+		d.mu.Unlock()
+		return
+	}
+	repo, branch := rs.Repo, rs.Branches[ticketID]
+	worktree := rs.Worktrees[ticketID]
+	spec := rs.Spec
+	if branch == "" || worktree == "" {
+		d.mu.Unlock()
+		return
+	}
+	missing := []string{}
+	existing := map[string]string{}
+	for _, typ := range requiredReviewerTypes {
+		if sess := rs.Reviewers[ticketID][typ]; sess == "" {
+			missing = append(missing, typ)
+		} else {
+			existing[typ] = sess
+		}
+	}
+	count := rec.Count
+	if len(missing) == 0 && rs.Reprompted[ticketID] >= count {
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
+	tip, _ := runGit(repo, "rev-parse", branch)
+	for _, typ := range missing {
+		if err := d.runStartReviewer(runID, ticketID, typ, tip); err != nil {
+			return
+		}
+	}
+	d.mu.Lock()
+	rs, ok = d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if rs.Reprompted[ticketID] >= count {
+		d.mu.Unlock()
+		return
+	}
+	rs.Reprompted[ticketID] = count
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	for _, typ := range requiredReviewerTypes {
+		if sess := existing[typ]; sess != "" {
+			_ = d.runTellSession(sess, reviewerPrompt(ticketID, spec, typ, branch, tip))
+		}
+	}
+}
+
+// runSpec returns one Run's spec path; callers use it for prompts.
+func (d *Daemon) runSpec(runID string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if rs, ok := d.runs[runID]; ok {
+		return rs.Spec
+	}
+	return ""
+}
+
+// runTellSession steers one Session by id, resuming it first when it was
+// released. Best effort: a capped or ended Session keeps the caller moving.
+func (d *Daemon) runTellSession(sessionID, text string) error {
+	if code, msg := d.resumeReleased(sessionID); code != 0 {
+		return fmt.Errorf("could not reach session: %s", msg)
+	}
+	if _, code := d.routeLive(sessionID, "steer", text); code != http.StatusAccepted {
+		return fmt.Errorf("could not reach session")
+	}
+	return nil
+}
+
+// runStartReviewer creates one Ticket's Reviewer Session of the given type:
+// a persistent Subagent of the Run in the Worker's worktree that judges the
+// branch at the given tip. Reviewer roles choose its harness and model with
+// the same fallback as Workers; the Session goes through the shared start,
+// so it counts against the live-Session cap like every other Session.
+func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) error {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return fmt.Errorf("unknown run %q", runID)
+	}
+	branch, worktree := rs.Branches[ticketID], rs.Worktrees[ticketID]
+	spec := rs.Spec
+	harness, model := rs.Harness, rs.Model
+	if rh, rm := roleReviewerConfig(reviewerType); rh != "" {
+		harness, model = rh, rm
+	}
+	d.mu.Unlock()
+	if branch == "" || worktree == "" {
+		return fmt.Errorf("ticket %s has no worker", ticketID)
+	}
+	meta := SessionMeta{
+		ID:        newID(),
+		Harness:   harness,
+		Model:     model,
+		WorkDir:   worktree,
+		Status:    "idle",
+		CreatedAt: time.Now().UTC(),
+		ParentID:  runID,
+	}
+	var be Backend
+	be, serr := d.startSession(meta)
+	if serr != nil {
+		return fmt.Errorf("could not start %s for %s: %s", reviewerType, ticketID, serr.msg)
+	}
+	d.mu.Lock()
+	rs, ok = d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		if be != nil {
+			be.CloseSession(meta.ID)
+		}
+		d.removeSession(meta.ID)
+		return fmt.Errorf("unknown run %q", runID)
+	}
+	if rs.Reviewers[ticketID] == nil {
+		rs.Reviewers[ticketID] = map[string]string{}
+	}
+	rs.Reviewers[ticketID][reviewerType] = meta.ID
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	d.persistResumeToken(be, meta.ID)
+	d.appendEvent(meta.ID, "status", "", "idle")
+	prompt := reviewerPrompt(ticketID, spec, reviewerType, branch, tip)
+	d.mu.Lock()
+	if s, ok := d.sessions[meta.ID]; ok {
+		s.busy = true
+		s.active++
+	}
+	d.mu.Unlock()
+	d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
+	go d.runTurn(meta.ID, be, prompt)
+	return nil
 }
 
 // runStartWorker creates the Ticket's worktree and branch and its Worker
@@ -542,10 +800,13 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
 	return nil
 }
 
-// runFinishWorker merges a submitted done through the shared core checks: a
-// dirty worktree or a rebase conflict keeps the Worker alive with the
-// refusal. On a merge the ticket is marked done and committed on the target,
-// and the worktree is removed; the Worker Session stays for its transcript.
+// runFinishWorker merges a submitted done through the reviewer gate and the
+// shared core checks: without both Passes at the current tip, or with a
+// dirty worktree or a rebase conflict, the Worker stays alive with the
+// refusal. A Ticket with no verdict yet is still under review, not refused:
+// the finish reports nothing and the driver polls again. On a merge the
+// ticket is marked done and committed on the target, and the worktree is
+// removed; the Worker Session stays for its transcript.
 func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish, error) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
@@ -565,6 +826,32 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 	}
 	if submitStatus != "" && submitStatus != "done" {
 		return emberloop.DriverFinish{Merged: false, Detail: fmt.Sprintf("worker submitted %q, waiting for done; submit done with the completed checkboxes", submitStatus)}, nil
+	}
+	d.ensureReviewers(runID, ticketID)
+	d.mu.Lock()
+	rs, ok = d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return emberloop.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
+	}
+	verdicts := map[string]storedReview{}
+	for typ, r := range rs.Reviews[ticketID] {
+		verdicts[typ] = r
+	}
+	sessions := map[string]string{}
+	for typ, sess := range rs.Reviewers[ticketID] {
+		sessions[typ] = sess
+	}
+	d.mu.Unlock()
+	tip, gerr := runGit(repo, "rev-parse", branch)
+	if gerr != nil || tip == "" {
+		return emberloop.DriverFinish{}, fmt.Errorf("ticket %s has no tip; start its worker again", ticketID)
+	}
+	if !reviewGateReady(sessions, verdicts) {
+		return emberloop.DriverFinish{}, nil
+	}
+	if why := reviewGateDetail(verdicts, tip); why != "" {
+		return emberloop.DriverFinish{Merged: false, Detail: why}, nil
 	}
 	// A detached repo has no target branch: rebase onto the repo HEAD as it
 	// stands at finish, since another Ticket may have moved it after this
@@ -629,8 +916,60 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 	return emberloop.DriverFinish{Merged: true, SHA: sha}, nil
 }
 
+// reviewGateReady says the finish may judge the gate: every required
+// reviewer type has a Session and a submitted verdict.
+func reviewGateReady(sessions map[string]string, verdicts map[string]storedReview) bool {
+	for _, typ := range requiredReviewerTypes {
+		if sessions[typ] == "" {
+			return false
+		}
+		if _, ok := verdicts[typ]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// reviewGateDetail refuses the merge unless every required reviewer type
+// passed at the tip: a missing pass, a changes verdict or a pass at an
+// older commit. A new commit makes older Passes stale. Empty means the gate
+// passed. Findings ride along verbatim, so the Tell reaches the Worker
+// unchanged.
+func reviewGateDetail(verdicts map[string]storedReview, tip string) string {
+	var missing []string
+	for _, typ := range requiredReviewerTypes {
+		r, ok := verdicts[typ]
+		switch {
+		case !ok || r.Verdict == "":
+			missing = append(missing, typ+": no review yet")
+		case r.Verdict != "pass":
+			at := shortSHA(r.At)
+			if strings.TrimSpace(r.Report) != "" {
+				missing = append(missing, fmt.Sprintf("%s: %s at %s: %s", typ, r.Verdict, at, strings.TrimSpace(r.Report)))
+			} else {
+				missing = append(missing, fmt.Sprintf("%s: %s at %s", typ, r.Verdict, at))
+			}
+		case r.At != tip:
+			missing = append(missing, fmt.Sprintf("%s: passed at %s, not at the tip %s", typ, shortSHA(r.At), shortSHA(tip)))
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "not reviewed to a pass: " + strings.Join(missing, "; ")
+}
+
+// shortSHA names a commit the way refusals do: the first eight characters.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
+}
+
 // runJSONLocked renders one Run with its live Ticket table: state, Worker
-// Session link and last refusal per Ticket. Callers hold d.mu.
+// Session link, both Reviewer verdicts with tip freshness, and the last
+// refusal per Ticket. Callers hold d.mu.
 func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 	rows := map[string]emberloop.DriverRow{}
 	if rs.Driver != nil {
@@ -642,9 +981,11 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 	for _, t := range rs.Tickets {
 		state := "queued"
 		lastRefusal := ""
+		tip := ""
 		if row, ok := rows[t.ID]; ok {
 			state = string(row.State)
 			lastRefusal = row.LastRefusal
+			tip = row.Tip
 		} else if rs.Status == runStatusPaused {
 			state = runStatusPaused
 		}
@@ -652,9 +993,23 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		if blockers == nil {
 			blockers = []string{}
 		}
+		verdicts := map[string]any{}
+		for _, typ := range requiredReviewerTypes {
+			if r, ok := rs.Reviews[t.ID][typ]; ok {
+				verdicts[typ] = map[string]any{
+					"verdict": r.Verdict, "at": r.At,
+					"fresh": tip != "" && r.At == tip,
+				}
+			}
+		}
+		reviewers := map[string]string{}
+		for typ, sess := range rs.Reviewers[t.ID] {
+			reviewers[typ] = sess
+		}
 		tickets = append(tickets, map[string]any{
 			"id": t.ID, "num": t.Num, "title": t.Title, "blockers": blockers,
 			"state": state, "workerSession": rs.Sessions[t.ID],
+			"reviewerSessions": reviewers, "verdicts": verdicts, "tip": tip,
 			"branch": rs.Branches[t.ID], "effort": rs.Effort, "lastRefusal": lastRefusal,
 		})
 	}
@@ -726,13 +1081,16 @@ func (d *Daemon) serveRunEvents(w http.ResponseWriter, r *http.Request, id strin
 	}
 }
 
-// handleSessionSubmit records a Worker's submit: its status and completed
-// checkbox line texts. The driver loop reads it, ticks the boxes and merges
-// a done submit.
+// handleSessionSubmit records a Worker's submit (its status and completed
+// checkbox line texts) or a Reviewer's submit (pass or changes with the
+// findings in the report). The driver loop reads both: it ticks the boxes
+// and merges a done submit once the gate passes. A Worker's done submit
+// also spawns its Reviewers, once, and re-prompts them on later dones.
 func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Status    string   `json:"status"`
 		Completed []string `json:"completed"`
+		Report    string   `json:"report"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Status == "" {
 		http.Error(w, "status is required", http.StatusBadRequest)
@@ -744,6 +1102,12 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 		http.NotFound(w, r)
 		return
 	}
+	runID, ticketID, reviewerType := d.findReviewerLocked(id)
+	if reviewerType != "" && req.Status != "pass" && req.Status != "changes" {
+		d.mu.Unlock()
+		http.Error(w, "reviewer status must be pass or changes", http.StatusBadRequest)
+		return
+	}
 	rec := d.submits[id]
 	if rec == nil {
 		rec = &submitRec{}
@@ -752,10 +1116,68 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	rec.Count++
 	rec.Status = req.Status
 	rec.Completed = append([]string(nil), req.Completed...)
+	rec.Report = req.Report
 	count := rec.Count
+	if reviewerType != "" {
+		branch := d.runs[runID].Branches[ticketID]
+		repo := d.runs[runID].Repo
+		if rs := d.runs[runID]; rs.Reviews[ticketID] == nil {
+			rs.Reviews[ticketID] = map[string]storedReview{}
+		}
+		d.mu.Unlock()
+		tip, _ := runGit(repo, "rev-parse", branch)
+		d.mu.Lock()
+		if rs, ok := d.runs[runID]; ok {
+			if rs.Reviews[ticketID] == nil {
+				rs.Reviews[ticketID] = map[string]storedReview{}
+			}
+			rs.Reviews[ticketID][reviewerType] = storedReview{Verdict: req.Status, At: tip, Report: req.Report}
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
+		}
+		d.mu.Unlock()
+		d.appendEvent(id, "submit", req.Status, "")
+		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
+		return
+	}
+	var workerRun, workerTicket string
+	if rec.Status == "done" {
+		workerRun, workerTicket = d.findWorkerLocked(id)
+	}
 	d.mu.Unlock()
 	d.appendEvent(id, "submit", req.Status, "")
 	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
+	if workerRun != "" {
+		d.ensureReviewers(workerRun, workerTicket)
+	}
+}
+
+// findReviewerLocked names the Run, Ticket and reviewer type of a Reviewer
+// Session. Empty type means the Session is no Reviewer's. Callers hold d.mu.
+func (d *Daemon) findReviewerLocked(id string) (runID, ticketID, reviewerType string) {
+	for _, rs := range d.runs {
+		for ticket, byType := range rs.Reviewers {
+			for typ, sess := range byType {
+				if sess == id {
+					return rs.ID, ticket, typ
+				}
+			}
+		}
+	}
+	return "", "", ""
+}
+
+// findWorkerLocked names the Run and Ticket of a Worker Session. Empty means
+// the Session is no Worker's. Callers hold d.mu.
+func (d *Daemon) findWorkerLocked(id string) (runID, ticketID string) {
+	for _, rs := range d.runs {
+		for ticket, sess := range rs.Sessions {
+			if sess == id {
+				return rs.ID, ticket
+			}
+		}
+	}
+	return "", ""
 }
 
 // --- run persistence: stateDir/enderbloom/runs/{id}.json ---
@@ -827,7 +1249,15 @@ func (d *Daemon) loadRuns() {
 		if rs.Merged == nil {
 			rs.Merged = map[string]string{}
 		}
-		rs.Driver = emberloop.NewDriverRun(nil)
+		if rs.Reviewers == nil {
+			rs.Reviewers = map[string]map[string]string{}
+		}
+		if rs.Reviews == nil {
+			rs.Reviews = map[string]map[string]storedReview{}
+		}
+		if rs.Reprompted == nil {
+			rs.Reprompted = map[string]int{}
+		}
 		rs.notify = make(chan struct{})
 		cp := rs
 		d.runs[cp.ID] = &cp

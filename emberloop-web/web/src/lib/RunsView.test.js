@@ -88,4 +88,47 @@ describe('RunsView', () => {
     await fireEvent.click(within(table).getByRole('button'));
     expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
   });
+
+  it('shows both reviewer verdicts, tip freshness and the last refusal', async () => {
+    const live = {
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      status: 'running',
+      tickets: [
+        {
+          id: '01-first', title: 'First', state: 'in-review', workerSession: 'sess-abcdef123456',
+          verdicts: {
+            'reviewer-spec': { verdict: 'pass', at: 'abcdef1234567890', fresh: true },
+            'reviewer-standards': { verdict: 'changes', at: '1234567890abcdef', fresh: false },
+          },
+          tip: 'abcdef1234567890', lastRefusal: 'not reviewed to a pass: standards',
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u, opts) => ({
+        ok: true,
+        json: async () => {
+          const s = String(u);
+          if (s.includes('/api/runs/')) return { run: live };
+          if (s.includes('/api/runs') && opts?.method === 'POST') return { run: live };
+          if (s.includes('/api/specs/preview')) return preview;
+          return { specs: [{ spec: '/repo/.scratch/demo/spec.md', title: 'Demo spec', tickets: 1 }] };
+        },
+      })),
+    );
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    await fireEvent.click(await within(container).findByText(/demo spec/i));
+    await tick();
+    await fireEvent.click(await within(container).findByText(/start run/i));
+    const table = await within(container).findByTestId('live-tickets');
+    expect(within(table).getByText('Spec review')).toBeTruthy();
+    expect(within(table).getByText('Standards')).toBeTruthy();
+    expect(within(table).getByText('Tip')).toBeTruthy();
+    expect(within(table).getByText('pass')).toBeTruthy();
+    expect(within(table).getByText(/changes \(stale\)/)).toBeTruthy();
+    expect(within(table).getByText('abcdef12')).toBeTruthy();
+    expect(within(table).getByText(/not reviewed to a pass/)).toBeTruthy();
+  });
 });

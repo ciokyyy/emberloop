@@ -43,7 +43,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/SessionList.svelte` — Session tree with per-Session status
 - `src/lib/Composer.svelte` — floating composer with mode badge
 - `src/lib/NewSessionDialog.svelte` — harness / model / working directory
-- `src/lib/RunsView.svelte` — repo picker, spec list, ticket preview table, Run start plus live Ticket table with Worker links to the Session view
+- `src/lib/RunsView.svelte` — repo picker, spec list, ticket preview table, Run start plus live Ticket table with Worker links to the Session view and per-Ticket reviewer verdict, tip freshness and refusal columns
 - `src/lib/SettingsPage.svelte` — role harness/model/effort groups plus the max_workers field, locked with a note under the environment override
 - `src/lib/DetailsPane.svelte` — collapsible Session metadata
 - `src/lib/ui/button.svelte` — shadcn-svelte-idiom button variants
@@ -56,6 +56,6 @@ Same-origin by default. To point the static build at another Daemon:
 mounted Composer badge and send behavior (`Composer.test.js`), harness
 model filtering (`harnesses.test.js`), Card rendering per kind
 (`Card.test.js`), Runs picker, preview, Start and live table with Worker
-links against a mocked API (`RunsView.test.js`), settings max_workers edit,
-validation and locked state against a mocked API (`SettingsPage.test.js`),
-and sidebar navigation to Runs (`App.test.js`).
+links plus the reviewer verdict columns against a mocked API (`RunsView.test.js`),
+settings max_workers edit, validation and locked state against a mocked API
+(`SettingsPage.test.js`), and sidebar navigation to Runs (`App.test.js`).
