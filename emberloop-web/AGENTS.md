@@ -35,6 +35,8 @@ imports it. No herdr, no ticket state.
 In `emberloop-web/`: `go vet ./... && go test ./...`. Wired into the repo check.
 In `emberloop-web/web/`: `npm test` (vitest) and `npm run build`. The JS
 suite is not in the repo check; the check covers Go only.
+The live probe is env-gated, never in the check: `EMBERLOOP_LIVE_PIG=1` with
+`PIG_LIVE_MODEL` set to a healthy provider/model runs `TestLivePigBackend`.
 
 ## Child DOX Index
 

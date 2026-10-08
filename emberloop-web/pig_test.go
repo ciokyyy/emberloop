@@ -250,3 +250,118 @@ func normEqual(a, b []normEvent) bool {
 	}
 	return true
 }
+
+// Review: a repeat DELETE returns the Session without another ended Event.
+func TestPigDeleteEmitsSingleEnded(t *testing.T) {
+	d, _ := newPigDaemon(t)
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	deleteSession(t, srv.URL, id)
+	deleteSession(t, srv.URL, id)
+
+	events := sessionEvents(t, srv.URL, id)
+	ended := 0
+	for _, e := range events {
+		if e.Kind == "status" && e.Status == "ended" {
+			ended++
+		}
+	}
+	if ended != 1 {
+		t.Fatalf("ended events = %d, want 1", ended)
+	}
+}
+
+// Review: the test-faux provider passes validation only with PIG_TEST_FAUX.
+func TestPigFauxModelRejectedWithoutEnv(t *testing.T) {
+	pb := newPigTestBackend(t)
+	if err := os.Unsetenv("PIG_TEST_FAUX"); err != nil {
+		t.Fatal(err)
+	}
+	err := pb.CreateSession(SessionMeta{ID: "ghost", Model: pigFauxModel, WorkDir: t.TempDir()}, func(kind, text, status string) {})
+	if err == nil || !strings.Contains(err.Error(), "unknown model") {
+		t.Fatalf("create err = %v, want unknown model", err)
+	}
+}
+
+// Review: OnPrompt after CloseSession emits no status edges, so a late
+// failed can never regress an ended Session.
+func TestPigPromptAfterCloseEmitsNoStatus(t *testing.T) {
+	pb := newPigTestBackend(t)
+	meta := SessionMeta{ID: "late", Model: pigFauxModel, WorkDir: t.TempDir()}
+	noop := func(kind, text, status string) {}
+	if err := pb.CreateSession(meta, noop); err != nil {
+		t.Fatal(err)
+	}
+	pb.CloseSession(meta.ID)
+	var kinds []string
+	pb.OnPrompt(meta.ID, "hi", func(kind, text, status string) { kinds = append(kinds, kind) })
+	for _, k := range kinds {
+		if k == "status" {
+			t.Fatalf("status edge after close: %q", kinds)
+		}
+	}
+}
+
+// Review: ended is terminal against late status edges at the Daemon.
+func TestEndedTerminalAgainstLateEdges(t *testing.T) {
+	d, _ := newPigDaemon(t)
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	deleteSession(t, srv.URL, id)
+	d.appendEvent(id, "status", "", "failed")
+
+	meta, _ := sessionMeta(t, srv.URL, id)
+	if meta.Status != "ended" {
+		t.Fatalf("status = %q, want ended", meta.Status)
+	}
+}
+
+func deleteSession(t *testing.T, base, id string) {
+	t.Helper()
+	req, _ := http.NewRequest("DELETE", base+"/api/sessions/"+id, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func sessionEvents(t *testing.T, base, id string) []Event {
+	t.Helper()
+	get, err := http.Get(base + "/api/sessions/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	var out struct {
+		Events []Event `json:"events"`
+	}
+	if err := json.NewDecoder(get.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Events
+}
+
+func sessionMeta(t *testing.T, base, id string) (SessionMeta, []Event) {
+	t.Helper()
+	get, err := http.Get(base + "/api/sessions/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	var out struct {
+		Session SessionMeta `json:"session"`
+		Events  []Event     `json:"events"`
+	}
+	if err := json.NewDecoder(get.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Session, out.Events
+}

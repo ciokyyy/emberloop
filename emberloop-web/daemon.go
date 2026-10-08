@@ -103,6 +103,10 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	be := d.backendForLocked(harness)
 	d.mu.Unlock()
+	if be == nil {
+		http.Error(w, "no backend for harness", http.StatusBadRequest)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": be.Models()})
 }
 
@@ -112,6 +116,11 @@ func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 	s, ok := d.sessions[id]
 	if !ok {
 		return Event{}
+	}
+	// Ended is terminal: a late turn edge (failed after a DELETE closed the
+	// SDK session) must never reopen the Session.
+	if kind == "status" && s.meta.Status == "ended" {
+		status = "ended"
 	}
 	e := Event{
 		Version:   1,
@@ -178,9 +187,9 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
 		}
+		// Allocate the harness Session before publishing: a concurrent GET
+		// or prompt must never see a Session with no harness handle.
 		d.mu.Lock()
-		d.sessions[meta.ID] = &session{meta: meta, notify: make(chan struct{}), last: time.Now()}
-		d.persistMeta(meta)
 		be := d.backendForLocked(req.Harness)
 		d.mu.Unlock()
 		if be != nil {
@@ -188,14 +197,14 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			if err := be.CreateSession(meta, func(kind, text, status string) {
 				d.appendEvent(id, kind, text, status)
 			}); err != nil {
-				d.mu.Lock()
-				delete(d.sessions, meta.ID)
-				d.mu.Unlock()
-				_ = os.RemoveAll(d.sessionDir(meta.ID))
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
+		d.mu.Lock()
+		d.sessions[meta.ID] = &session{meta: meta, notify: make(chan struct{}), last: time.Now()}
+		d.persistMeta(meta)
+		d.mu.Unlock()
 		d.appendEvent(meta.ID, "status", "", "idle")
 		d.mu.Lock()
 		m := d.sessions[meta.ID].meta
@@ -262,6 +271,12 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			d.mu.Unlock()
 			http.NotFound(w, r)
+			return
+		}
+		if s.meta.Status == "ended" {
+			m := s.meta
+			d.mu.Unlock()
+			writeJSON(w, http.StatusOK, m)
 			return
 		}
 		be := d.backendForLocked(s.meta.Harness)

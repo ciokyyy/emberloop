@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -78,8 +79,9 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		return fmt.Errorf("pig: services: %w", err)
 	}
 	// BuildModel still builds unknown specs, so the listing check owns the
-	// rejection: only catalog models (and the test-faux provider) create.
-	if _, ok := ai.LookupModel(meta.Model); !ok && !strings.HasPrefix(meta.Model, "test-faux/") {
+	// rejection: only catalog models create. The test-faux provider passes
+	// only with PIG_TEST_FAUX=1, so production never admits unlisted models.
+	if _, ok := ai.LookupModel(meta.Model); !ok && !isTestFauxModel(meta.Model) {
 		svcs.Close()
 		return fmt.Errorf("pig: unknown model %q", meta.Model)
 	}
@@ -116,6 +118,8 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 
 // OnPrompt runs one turn to completion. Chunks and tool calls already
 // streamed through the subscription; this records only the status edges.
+// A close mid-turn drops the status edges: the Daemon owns the ended state
+// and ended is terminal there, so a late idle or failed must not regress it.
 func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
 	b.mu.Lock()
 	ps, ok := b.sessions[sessionID]
@@ -125,8 +129,15 @@ func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, tex
 		return
 	}
 	appendEvent("status", "", "working")
-	if _, err := ps.sess.Send(ps.ctx, text); err != nil {
-		appendEvent("error", err.Error(), "")
+	_, sendErr := ps.sess.Send(ps.ctx, text)
+	if !b.alive(sessionID) {
+		if sendErr != nil {
+			appendEvent("error", sendErr.Error(), "")
+		}
+		return
+	}
+	if sendErr != nil {
+		appendEvent("error", sendErr.Error(), "")
 		appendEvent("status", "", "failed")
 		return
 	}
@@ -134,7 +145,8 @@ func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, tex
 }
 
 // Steer delivers text at the next tool boundary through the SDK queue.
-// FollowUp delivers it after the turn. The HTTP endpoints land in ticket 05.
+// FollowUp delivers it after the turn. Both map to the SDK native queues
+// per the spec; their HTTP endpoints and queue UI land in ticket 05.
 func (b *PigBackend) Steer(sessionID, text string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -170,6 +182,17 @@ func (b *PigBackend) CloseSession(sessionID string) {
 	_ = ps.sess.Close()
 	_ = ps.rt.Close()
 	ps.svcs.Close()
+}
+
+func (b *PigBackend) alive(sessionID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, ok := b.sessions[sessionID]
+	return ok
+}
+
+func isTestFauxModel(model string) bool {
+	return os.Getenv("PIG_TEST_FAUX") == "1" && strings.HasPrefix(model, "test-faux/")
 }
 
 // ToolNames reports the active loadout. Stripped Sessions offer no native
