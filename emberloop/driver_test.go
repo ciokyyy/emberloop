@@ -1,8 +1,11 @@
 package emberloop
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -866,5 +869,211 @@ func TestDriverTellWithoutSubmitsTellsOnceAndHolds(t *testing.T) {
 	}
 	if !strings.Contains(res.Report, "unmerged 01-first: rebase onto spec/x conflicted in a.go") {
 		t.Errorf("report keeps the refusal:\n%s", res.Report)
+	}
+}
+
+// A worker's submit lists completed checkboxes by line text: the driver
+// ticks exactly those boxes through the world and the ticket still merges.
+func TestDriverTicksSubmittedCheckboxes(t *testing.T) {
+	spec, world, _ := runWorld(t, map[string]string{
+		"01-first.md": "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n- [ ] second box\n",
+	}, 1)
+	files := map[string]string{"01-first": "- [ ] first box\n- [ ] second box\n"}
+	type tickCall struct {
+		ticket string
+		boxes  []string
+	}
+	var calls []tickCall
+	world.Completed = func(id string) []string {
+		if id == "01-first" {
+			return []string{"first box"}
+		}
+		return nil
+	}
+	world.TickCheckboxes = func(id string, boxes []string) ([]string, error) {
+		calls = append(calls, tickCall{id, append([]string(nil), boxes...)})
+		for _, box := range boxes {
+			files[id] = strings.ReplaceAll(files[id], "[ ] "+box, "[x] "+box)
+		}
+		return nil, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(calls) != 1 || calls[0].ticket != "01-first" || !equalIDs(calls[0].boxes, []string{"first box"}) {
+		t.Fatalf("tick calls = %+v, want exactly [{01-first [first box]}]", calls)
+	}
+	if want := "- [x] first box\n- [ ] second box\n"; files["01-first"] != want {
+		t.Errorf("ticked file = %q, want %q", files["01-first"], want)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "01-first" {
+		t.Errorf("merged = %v, want [01-first]: progress must still merge", res.Merged)
+	}
+}
+
+// A completed name with no checkbox in the ticket is reported and never
+// blocks the merge.
+func TestDriverReportsAnUnknownCheckboxAndStillMerges(t *testing.T) {
+	spec, world, _ := runWorld(t, map[string]string{
+		"01-first.md": "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n",
+	}, 1)
+	world.Completed = func(id string) []string { return []string{"no such box"} }
+	world.TickCheckboxes = func(id string, boxes []string) ([]string, error) {
+		return boxes, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "01-first" {
+		t.Fatalf("merged = %v, want [01-first]: an unknown box must not fail the merge", res.Merged)
+	}
+	if want := `unknown checkbox "no such box" in 01-first`; !strings.Contains(res.Report, want) {
+		t.Errorf("report misses %q:\n%s", want, res.Report)
+	}
+}
+
+// The live tick edits the ticket file in the integration checkout and
+// leaves the edit uncommitted: the box ticks, the rest stays, and git
+// reports the file modified but uncommitted.
+func TestTickDriverTicketFileTicksBoxesAndLeavesEditUncommitted(t *testing.T) {
+	repo := t.TempDir()
+	gitOut(t, repo, "init", "-q", "-b", "main")
+	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
+	gitOut(t, repo, "config", "user.name", "emberloop")
+	ticket := filepath.Join(repo, "01-first.md")
+	writeFile(t, ticket, "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n- [ ] second box\n")
+	gitOut(t, repo, "add", ".")
+	gitOut(t, repo, "commit", "-qm", "track the ticket")
+	miss, err := tickDriverTicketFile(ticket, []string{"first box"})
+	if err != nil {
+		t.Fatalf("tickDriverTicketFile: %v", err)
+	}
+	if len(miss) != 0 {
+		t.Fatalf("unknown = %v, want none", miss)
+	}
+	got, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# 01: Test ticket\n\n**Blocked by:** None\n\n- [x] first box\n- [ ] second box\n"
+	if string(got) != want {
+		t.Errorf("ticked ticket = %q, want %q", got, want)
+	}
+	if status := gitOut(t, repo, "status", "--porcelain", "--", "01-first.md"); !strings.Contains(status, "01-first.md") {
+		t.Errorf("git status = %q, want the tick left dirty in the checkout", status)
+	}
+	if staged := gitOut(t, repo, "diff", "--cached", "--name-only", "--", "01-first.md"); staged != "" {
+		t.Errorf("staged = %q, want the tick left uncommitted and unstaged", staged)
+	}
+	miss, err = tickDriverTicketFile(ticket, []string{"no such box"})
+	if err != nil {
+		t.Fatalf("tickDriverTicketFile: %v", err)
+	}
+	if !equalIDs(miss, []string{"no such box"}) {
+		t.Errorf("unknown = %v, want [no such box]", miss)
+	}
+}
+
+// Two workers submitting at once never write the same ticket file at the
+// same time: concurrent ticks of one file both land.
+func TestTickDriverTicketFileSerializesConcurrentTicks(t *testing.T) {
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	writeFile(t, ticket, "- [ ] first box\n- [ ] second box\n")
+	var wg sync.WaitGroup
+	for _, box := range []string{"first box", "second box"} {
+		wg.Add(1)
+		go func(box string) {
+			defer wg.Done()
+			if _, err := tickDriverTicketFile(ticket, []string{box}); err != nil {
+				t.Error(err)
+			}
+		}(box)
+	}
+	wg.Wait()
+	got, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "- [x] first box\n- [x] second box\n"; string(got) != want {
+		t.Errorf("ticked ticket = %q, want %q", got, want)
+	}
+}
+
+// The live world reads completed boxes from the worker's own submit and
+// ticks them in the ticket file: the seam from submit to file in one run.
+func TestDriverLiveWorldReadsSubmitsAndTicksTicketFile(t *testing.T) {
+	oldState, oldExec := statePath, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; spawnExec = oldExec })
+	repo, dir := t.TempDir(), t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	if err := os.WriteFile(ticket, []byte("# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n- [ ] second box\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{ticket: "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n- [ ] second box\n"}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-submit"}
+	id := WorkerID(ticket)
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: id, Type: "worker", Status: "done", Summary: "did it", Completed: []string{"first box"}, At: "2026-10-08T12:00:00Z", ThisTurn: true}); err != nil {
+		t.Fatal(err)
+	}
+	world := liveDriverWorld(spec, repo, files)
+	if got := world.Completed("01-first"); !equalIDs(got, []string{"first box"}) {
+		t.Fatalf("Completed = %v, want [first box]", got)
+	}
+	if _, err := world.TickCheckboxes("01-first", []string{"first box"}); err != nil {
+		t.Fatalf("TickCheckboxes: %v", err)
+	}
+	got, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "# 01: Test ticket\n\n**Blocked by:** None\n\n- [x] first box\n- [ ] second box\n"; string(got) != want {
+		t.Errorf("ticked ticket = %q, want %q", got, want)
+	}
+}
+
+// Two boxes sharing one line text still tick: the first unchecked one with
+// that text becomes [x], even past an already ticked same-text box.
+func TestTickDriverTicketFileTicksPastATickedDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	writeFile(t, ticket, "- [x] same text\n- [ ] same text\n")
+	miss, err := tickDriverTicketFile(ticket, []string{"same text"})
+	if err != nil {
+		t.Fatalf("tickDriverTicketFile: %v", err)
+	}
+	if len(miss) != 0 {
+		t.Fatalf("unknown = %v, want none", miss)
+	}
+	got, err := os.ReadFile(ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "- [x] same text\n- [x] same text\n"; string(got) != want {
+		t.Errorf("ticked ticket = %q, want %q", got, want)
+	}
+}
+
+// A tick failure is reported and never blocks the merge.
+func TestDriverReportsATickFailureAndStillMerges(t *testing.T) {
+	spec, world, _ := runWorld(t, map[string]string{
+		"01-first.md": "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n",
+	}, 1)
+	world.Completed = func(id string) []string { return []string{"first box"} }
+	world.TickCheckboxes = func(id string, boxes []string) ([]string, error) {
+		return nil, fmt.Errorf("disk gone")
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "01-first" {
+		t.Fatalf("merged = %v, want [01-first]: a tick failure must not fail the merge", res.Merged)
+	}
+	if want := "checkboxes for 01-first not applied: disk gone"; !strings.Contains(res.Report, want) {
+		t.Errorf("report misses %q:\n%s", want, res.Report)
 	}
 }

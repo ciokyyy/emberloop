@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"example.com/emberloop/tools"
@@ -74,6 +75,14 @@ type DriverWorld struct {
 	Submits func(ticketID string) int
 	// Finish merges a ticket's worker once its gate passes.
 	Finish func(ticketID string) (DriverFinish, error)
+	// Completed lists the ticket checkboxes one ticket's worker submitted as
+	// done, each named by its checkbox line text. Nil means the worker
+	// submitted no list. Nil stays valid: progress ticks nothing.
+	Completed func(ticketID string) []string
+	// TickCheckboxes ticks exactly those boxes in the ticket file and leaves
+	// the edit uncommitted. It reports the names with no checkbox in the
+	// ticket; the driver reports those and still merges. Nil skips ticking.
+	TickCheckboxes func(ticketID string, boxes []string) (unknown []string, err error)
 	// Required names the reviewer types every finish needs. Nil means the
 	// two built-in reviewers.
 	Required []string
@@ -103,6 +112,9 @@ type DriverResult struct {
 	Order  []DriverTicket
 	Merged []DriverMerged
 	Report string
+	// UnknownCheckboxes holds the completed names with no checkbox in the
+	// ticket, by ticket id. Reported, never merged against.
+	UnknownCheckboxes map[string][]string
 }
 
 // RunDriver is the driver's one seam: the spec plus the injected world in,
@@ -126,11 +138,11 @@ func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	if world.Finish == nil {
 		return res, nil
 	}
-	merged, report, err := runDriverLoop(order, world)
+	merged, unknown, report, err := runDriverLoop(order, world)
 	if err != nil {
 		return DriverResult{}, err
 	}
-	res.Merged, res.Report = merged, report
+	res.Merged, res.UnknownCheckboxes, res.Report = merged, unknown, report
 	return res, nil
 }
 
@@ -145,7 +157,7 @@ const driverPollInterval = 5 * time.Second
 // A refused finish goes back to the worker unchanged through tell, and
 // finish runs again only after the worker's next submit. There is no attempt
 // limit: every refusal is told and retried like the first.
-func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, string, error) {
+func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map[string][]string, string, error) {
 	maxRun := world.MaxWorkers
 	if maxRun <= 0 {
 		maxRun = 3
@@ -162,6 +174,14 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 	told := map[string]int{}
 	toldText := map[string]string{}
 	waiting := map[string]bool{}
+	// ticked holds every completed name already sent to TickCheckboxes, so
+	// each box ticks once no matter how many polls the run takes.
+	ticked := map[string]map[string]bool{}
+	// unknown holds the completed names with no checkbox in the ticket, and
+	// tickFailed the tick errors the run reported instead of failing on: a
+	// run is correct without progress, so neither ever blocks a merge.
+	unknown := map[string][]string{}
+	tickFailed := map[string]string{}
 	var out []DriverMerged
 	running := 0
 	ready := func(tk DriverTicket) bool {
@@ -188,7 +208,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 				break
 			}
 			if err := world.StartWorker(order[next]); err != nil {
-				return nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
+				return nil, nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
 			}
 			started[order[next].ID] = true
 			running++
@@ -197,6 +217,25 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 		for _, tk := range order {
 			if !started[tk.ID] || merged[tk.ID] {
 				continue
+			}
+			if fresh := driverFreshBoxes(ticked[tk.ID], world.Completed, tk.ID); len(fresh) > 0 && world.TickCheckboxes != nil {
+				if ticked[tk.ID] == nil {
+					ticked[tk.ID] = map[string]bool{}
+				}
+				for _, box := range fresh {
+					ticked[tk.ID][box] = true
+				}
+				miss, err := world.TickCheckboxes(tk.ID, fresh)
+				if err != nil {
+					tickFailed[tk.ID] = err.Error()
+				} else {
+					if len(miss) > 0 {
+						unknown[tk.ID] = append(unknown[tk.ID], miss...)
+					}
+					if len(miss) < len(fresh) {
+						progress = true
+					}
+				}
 			}
 			// A told refusal waits for the worker's next submit: finish runs
 			// again only after the submit count advances past what it was
@@ -221,7 +260,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 			}
 			fin, err := world.Finish(tk.ID)
 			if err != nil {
-				return nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
+				return nil, nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
 			}
 			if !fin.Merged {
 				// A refused finish stays running; its text lands on the
@@ -242,7 +281,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 							at = world.Submits(tk.ID)
 						}
 						if err := world.Tell(tk.ID, fin.Detail); err != nil {
-							return nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
+							return nil, nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
 						}
 						toldText[tk.ID] = fin.Detail
 						if world.Submits != nil {
@@ -269,7 +308,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, str
 		}
 		world.Sleep(driverPollInterval)
 	}
-	return out, driverReport(order, out, started, merged, refused), nil
+	return out, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, refused, unknown, tickFailed), nil
 }
 
 // driverRequired names the reviewer types one ticket's finish needs: its own
@@ -316,8 +355,9 @@ func driverReviewSig(required []string, revs map[string]DriverReview) string {
 
 // driverReport renders the plain final report: every merged ticket with its
 // sha, then every ticket left unmerged, each with its last refusal when a
-// finish refused it. Later tickets add the follow-ups beside them.
-func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string) string {
+// finish refused it. Unknown checkboxes and tick failures follow their
+// ticket in order. Later tickets add the follow-ups beside them.
+func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string, unknown map[string][]string, tickFailed map[string]string) string {
 	var b strings.Builder
 	for _, m := range merged {
 		fmt.Fprintf(&b, "merged %s as %s\n", m.ID, m.SHA)
@@ -333,8 +373,38 @@ func driverReport(order []DriverTicket, merged []DriverMerged, started, done map
 				fmt.Fprintf(&b, "unmerged %s: still running\n", tk.ID)
 			}
 		}
+		for _, name := range unknown[tk.ID] {
+			fmt.Fprintf(&b, "unknown checkbox %q in %s\n", name, tk.ID)
+		}
+		if tickFailed[tk.ID] != "" {
+			fmt.Fprintf(&b, "checkboxes for %s not applied: %s\n", tk.ID, tickFailed[tk.ID])
+		}
 	}
 	return b.String()
+}
+
+// driverFreshBoxes holds the completed names the driver has not ticked yet.
+// A nil Completed stays valid: no list means no fresh boxes.
+func driverFreshBoxes(sent map[string]bool, completed func(string) []string, ticketID string) []string {
+	if completed == nil {
+		return nil
+	}
+	var fresh []string
+	for _, box := range completed(ticketID) {
+		if !sent[box] {
+			fresh = append(fresh, box)
+		}
+	}
+	return fresh
+}
+
+// driverUnknownOrNil keeps an empty unknown map nil, so runs without
+// progress read exactly as runs before it.
+func driverUnknownOrNil(unknown map[string][]string) map[string][]string {
+	if len(unknown) == 0 {
+		return nil
+	}
+	return unknown
 }
 
 // RunDriverCheck reads the spec's tickets from disk, checks the graph through
@@ -396,9 +466,10 @@ func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 // through the same spawn call the orchestrator uses, tips resolve the same
 // implement branches, verdicts read the same review record finish gates on,
 // tells reach the worker's own pane through the same delivery the tell tool
-// uses, submit counts derive from the worker's submit record, and finish is
-// the same merge. Extracted so tests drive the mapping through
-// the seam with fake exec and temp state.
+// uses, submit counts derive from the worker's submit record, completed boxes
+// read the worker's own submit, ticks land in the ticket file in this checkout
+// through the per-file lock, and finish is the same merge. Extracted so tests
+// drive the mapping through the seam with fake exec and temp state.
 func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
 	paths := map[string]string{}
 	for path := range files {
@@ -479,6 +550,24 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 				return DriverFinish{}, err
 			}
 			return DriverFinish{Merged: res.Merged, SHA: res.SHA, Detail: res.Detail}, nil
+		},
+		Completed: func(ticketID string) []string {
+			path, ok := paths[ticketID]
+			if !ok {
+				return nil
+			}
+			s, ok, err := ReadAgentSubmit(WorkerID(path))
+			if err != nil || !ok {
+				return nil
+			}
+			return s.Completed
+		},
+		TickCheckboxes: func(ticketID string, boxes []string) ([]string, error) {
+			path, ok := paths[ticketID]
+			if !ok {
+				return boxes, nil
+			}
+			return tickDriverTicketFile(path, boxes)
 		},
 		Sleep: time.Sleep,
 	}
@@ -849,4 +938,93 @@ func driverCycle(tickets map[string]*DriverTicket, stuck map[string]int) []strin
 		}
 	}
 	return stuckIDs
+}
+
+// driverTickMu guards driverTickLocks: one mutex per ticket path, so two
+// workers submitting at once never write the same ticket file at the same
+// time. The driver is the only writer to ticket files during a run.
+var driverTickMu sync.Mutex
+var driverTickLocks = map[string]*sync.Mutex{}
+
+// driverTickLock returns the mutex for one ticket path, creating it once.
+func driverTickLock(path string) *sync.Mutex {
+	driverTickMu.Lock()
+	defer driverTickMu.Unlock()
+	if mu, ok := driverTickLocks[path]; ok {
+		return mu
+	}
+	mu := &sync.Mutex{}
+	driverTickLocks[path] = mu
+	return mu
+}
+
+// tickDriverTicketFile ticks exactly the named boxes in the ticket file at
+// path and leaves the edit uncommitted. Each box names a checkbox by its
+// line text; the return holds the names with no checkbox in the file.
+// Workers convey boxes through submit and never edit ticket files, so the
+// dirty tick overlaps no incoming diff and finish merges past it; a ticket
+// the worker itself changed still hits finish's dirty-overlap refusal.
+func tickDriverTicketFile(path string, boxes []string) ([]string, error) {
+	mu := driverTickLock(path)
+	mu.Lock()
+	defer mu.Unlock()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	ticked, unknown := applyCompletedBoxes(string(raw), boxes)
+	if ticked == string(raw) {
+		return unknown, nil
+	}
+	if err := os.WriteFile(path, []byte(ticked), 0o644); err != nil {
+		return nil, err
+	}
+	return unknown, nil
+}
+
+// applyCompletedBoxes ticks the checkboxes named by line text: the first
+// unchecked box with that text becomes [x]. A name matching an already
+// ticked box is known and changes nothing; a name matching no box at all
+// is unknown. Only - and * list markers count, so prose mentioning [ ]
+// never ticks.
+func applyCompletedBoxes(raw string, boxes []string) (string, []string) {
+	lines := strings.Split(raw, "\n")
+	var unknown []string
+nextBox:
+	for _, box := range boxes {
+		want := strings.TrimSpace(box)
+		for i, line := range lines {
+			text, checked, ok := checkboxText(line)
+			if !ok || checked || text != want {
+				continue
+			}
+			lines[i] = strings.Replace(line, "[ ]", "[x]", 1)
+			continue nextBox
+		}
+		for _, line := range lines {
+			if text, checked, ok := checkboxText(line); ok && checked && text == want {
+				continue nextBox
+			}
+		}
+		unknown = append(unknown, box)
+	}
+	return strings.Join(lines, "\n"), unknown
+}
+
+// checkboxText reads one checkbox line: its text after the marker and
+// whether it already ticks. ok is false for lines that hold no checkbox.
+func checkboxText(line string) (text string, checked bool, ok bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "- [") && !strings.HasPrefix(trimmed, "* [") {
+		return "", false, false
+	}
+	mark := trimmed[2:]
+	switch {
+	case strings.HasPrefix(mark, "[ ]"):
+		return strings.TrimSpace(mark[len("[ ]"):]), false, true
+	case strings.HasPrefix(mark, "[x]"), strings.HasPrefix(mark, "[X]"):
+		return strings.TrimSpace(mark[len("[x]"):]), true, true
+	default:
+		return "", false, false
+	}
 }

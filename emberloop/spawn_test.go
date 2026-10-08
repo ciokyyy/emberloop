@@ -489,6 +489,8 @@ func TestSubmitRejectsBadInput(t *testing.T) {
 		{"missing summary", nonBlocking, map[string]any{"status": "done"}, "summary"},
 		{"multi-line summary", nonBlocking, map[string]any{"status": "done", "summary": "one\ntwo"}, "one line"},
 		{"over-long summary", nonBlocking, map[string]any{"status": "done", "summary": strings.Repeat("x", summaryLimit+1)}, "limit"},
+		{"completed not an array", nonBlocking, map[string]any{"status": "done", "summary": "x", "completed": "first box"}, "completed"},
+		{"completed empty name", nonBlocking, map[string]any{"status": "done", "summary": "x", "completed": []string{""}}, "completed"},
 		{"wrong status for non-blocking", nonBlocking, map[string]any{"status": "answered", "summary": "x"}, "status"},
 	}
 	for _, c := range cases {
@@ -511,6 +513,37 @@ func TestSubmitRejectsBadInput(t *testing.T) {
 	got, ok, _ := ReadAgentSubmit("a2")
 	if !ok || got.Summary != "all good" || got.Status != "done" {
 		t.Errorf("recorded summary = %+v ok=%v", got, ok)
+	}
+}
+
+// A worker's submit lists the ticket checkboxes it completed by line text, and
+// a submit without the list still works: the recorded submit carries no boxes.
+func TestSubmitRecordsCompletedCheckboxes(t *testing.T) {
+	spawnTestState(t)
+	worker := AgentType{Name: "worker", Blocking: false, Statuses: []string{"done", "blocked"}}
+	tool := submitToolFor(worker, "w1")
+	raw, _ := json.Marshal(map[string]any{"status": "done", "summary": "did it", "completed": []string{"first box", "second box"}})
+	if _, err := tool.Execute(context.Background(), "", raw); err != nil {
+		t.Fatalf("a submit with completed boxes was refused: %v", err)
+	}
+	got, ok, err := ReadAgentSubmit("w1")
+	if err != nil || !ok {
+		t.Fatalf("the submit was not recorded: ok=%v err=%v", ok, err)
+	}
+	if len(got.Completed) != 2 || got.Completed[0] != "first box" || got.Completed[1] != "second box" {
+		t.Errorf("recorded completed = %v, want [first box second box]", got.Completed)
+	}
+	plain := submitToolFor(worker, "w2")
+	raw, _ = json.Marshal(map[string]any{"status": "done", "summary": "did it"})
+	if _, err := plain.Execute(context.Background(), "", raw); err != nil {
+		t.Fatalf("a submit without completed was refused: %v", err)
+	}
+	got, ok, err = ReadAgentSubmit("w2")
+	if err != nil || !ok {
+		t.Fatalf("the plain submit was not recorded: ok=%v err=%v", ok, err)
+	}
+	if len(got.Completed) != 0 {
+		t.Errorf("a submit without completed recorded %v", got.Completed)
 	}
 }
 

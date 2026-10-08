@@ -21,6 +21,10 @@ type AgentSubmit struct {
 	Status  string `json:"status"`
 	Report  string `json:"report,omitempty"`
 	Summary string `json:"summary,omitempty"`
+	// Completed lists the ticket checkboxes the submit completed, each named
+	// by its line text. Workers set it; other types leave it out. A submit
+	// without it still works.
+	Completed []string `json:"completed,omitempty"`
 	// Stopped marks a submit the stop gate wrote when it gave up on an agent
 	// that never called submit: the agent's result is the give-up notice.
 	Stopped  bool   `json:"stopped,omitempty"`
@@ -101,6 +105,11 @@ func submitToolFor(t AgentType, agentID string) tools.Tool {
 		},
 	}
 	required := []string{"status"}
+	properties["completed"] = map[string]any{
+		"type":        "array",
+		"items":       map[string]any{"type": "string"},
+		"description": "Ticket checkboxes this submit completed, each named by its checkbox line text. Workers list them; every other type leaves this out.",
+	}
 	if t.Blocking {
 		properties["report"] = map[string]any{
 			"type":        "string",
@@ -135,6 +144,9 @@ func submitDescription(t AgentType) string {
 	if t.Checkout == "none" {
 		return base + "Your pane closes once your result is delivered; a follow-up means a new scout."
 	}
+	if t.Name == "worker" {
+		return base + "List the ticket checkboxes you completed in completed, each named by its checkbox line text; leave it out when you completed none. Stay available afterwards: your parent may send you a follow-up."
+	}
 	return base + "Stay available afterwards: your parent may send you a follow-up."
 }
 
@@ -153,6 +165,13 @@ func submitRun(t AgentType, agentID string, params map[string]any) (string, erro
 		Status:   status,
 		At:       time.Now().UTC().Format(time.RFC3339),
 		ThisTurn: true,
+	}
+	if raw, present := params["completed"]; present && raw != nil {
+		boxes, err := submitCompleted(raw)
+		if err != nil {
+			return "", err
+		}
+		s.Completed = boxes
 	}
 	if t.Blocking {
 		s.Report = str(params, "report")
@@ -236,4 +255,23 @@ func stringEnum(values []string) []any {
 		out = append(out, v)
 	}
 	return out
+}
+
+// submitCompleted validates the optional completed checkbox list: an array
+// of non-empty strings, each naming a ticket checkbox by its line text.
+// Absent stays nil, so a submit without the list still works.
+func submitCompleted(raw any) ([]string, error) {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("completed must be an array of checkbox line texts")
+	}
+	boxes := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("completed must be an array of checkbox line texts")
+		}
+		boxes = append(boxes, text)
+	}
+	return boxes, nil
 }

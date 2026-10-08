@@ -53,8 +53,12 @@ owns its `_test.go` and the behaviour below):
   type passed at the worker's current tip, a refused `finish` is told to the
   worker unchanged and retried after its next submit with no attempt limit
   (without a submit count each distinct refusal is told once), and the plain
-  report lists merges with sha. `RunDriverLive` wires the live
-  spawn, verdict, tell, submit-count and finish ops.
+  report lists merges with sha. Checkbox progress rides the worker `submit`
+  `completed` list of checkbox line texts: during a driver run the driver is
+  the only ticket-file writer, ticks each fresh box once through the per-file
+  lock, leaves the edit uncommitted, and reports unknown names without failing
+  the merge. `RunDriverLive` wires the live spawn, verdict, tell, submit-count,
+  submit-read, file-tick and finish ops.
   The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
   `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
