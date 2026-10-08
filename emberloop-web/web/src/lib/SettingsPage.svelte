@@ -4,8 +4,8 @@
   import { HARNESSES, modelsForHarness, modelLabel } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
   import Button from './ui/button.svelte';
+  import Input from './ui/input.svelte';
   import Select from './ui/select.svelte';
-
   let { onBack = () => {} } = $props();
 
   const GROUPS = [
@@ -33,6 +33,8 @@
   const effortItems = ['low', 'medium', 'high', 'max'].map((e) => ({ value: e, label: e[0].toUpperCase() + e.slice(1) }));
 
   let roles = $state({});
+  let maxWorkers = $state('3');
+  let locked = $state(false);
   let saved = $state('');
   let catalogue = $state({});
   let loading = $state(true);
@@ -40,7 +42,8 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const dirty = $derived(JSON.stringify(roles) !== saved);
+  const snapshot = () => JSON.stringify({ roles, maxWorkers });
+  const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
     let list = modelsForHarness(harness);
@@ -62,7 +65,9 @@
       }
       await Promise.all(harnessItems.map((h) => models(h.value)));
       roles = next;
-      saved = JSON.stringify(next);
+      maxWorkers = body.max_workers != null ? String(body.max_workers) : '3';
+      locked = !!body.max_workers_from_env;
+      saved = snapshot();
     } catch (e) {
       error = e.message;
     } finally {
@@ -86,8 +91,14 @@
     saving = true;
     error = '';
     try {
-      await putSettings(roles);
-      saved = JSON.stringify(roles);
+      // Locked means the field holds the env value, not the file value:
+      // leave max_workers out so the save never writes the env cap
+      // into the file.
+      const payload = locked ? { roles } : { roles, max_workers: Number(maxWorkers) };
+      const savedBody = await putSettings(payload);
+      maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
+      locked = !!savedBody.max_workers_from_env;
+      saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
     } catch (e) {
@@ -98,7 +109,9 @@
   }
 
   function revert() {
-    roles = JSON.parse(saved);
+    const prev = JSON.parse(saved);
+    roles = prev.roles;
+    maxWorkers = prev.maxWorkers;
   }
 </script>
 
@@ -122,6 +135,30 @@
           {/each}
         </div>
       {:else}
+        <section class="animate-rise flex flex-col gap-2">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Concurrency</h2>
+            <p class="text-xs text-muted-foreground">How many Sessions run at once. Chat and Runs share the one cap.</p>
+          </div>
+          <div class="flex flex-col gap-2 rounded-2xl border bg-card p-4">
+            <label class="flex flex-col gap-1 text-sm font-medium" for="max-workers">Maximum workers</label>
+            <Input
+              id="max-workers"
+              aria-label="Maximum workers"
+              type="number"
+              min="1"
+              step="1"
+              class="h-10 max-w-40"
+              bind:value={maxWorkers}
+              disabled={locked}
+            />
+            {#if locked}
+              <p class="text-xs text-muted-foreground">Set by the EMBERLOOP_MAX_WORKERS environment variable. Unset it to edit here.</p>
+            {:else}
+              <p class="text-xs text-muted-foreground">Applies immediately, no restart.</p>
+            {/if}
+          </div>
+        </section>
         {#each GROUPS as g (g.title)}
           <section class="animate-rise flex flex-col gap-2">
             <div class="px-1">

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // roleSetting is one role's harness and model, as stored under "roles" in
@@ -72,16 +74,42 @@ func roleFor(name string) (string, string) {
 	return r.Harness, r.Model
 }
 
+// envMaxWorkers reports the EMBERLOOP_MAX_WORKERS override when it sets a
+// positive cap. The environment wins over the settings file.
+func envMaxWorkers() (int, bool) {
+	w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EMBERLOOP_MAX_WORKERS")))
+	if err != nil || w <= 0 {
+		return 0, false
+	}
+	return w, true
+}
+
+// settingsView is the GET and PUT shape: roles next to the live cap and
+// whether the environment overrides the file, so the UI can lock the field.
+func settingsView() map[string]any {
+	_, fromEnv := envMaxWorkers()
+	return map[string]any{
+		"roles":                readRoles(),
+		"max_workers":          maxRunningFromSettings(),
+		"max_workers_from_env": fromEnv,
+	}
+}
+
 func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		writeJSON(w, http.StatusOK, map[string]any{"roles": readRoles()})
+		writeJSON(w, http.StatusOK, settingsView())
 	case "PUT":
 		var body struct {
-			Roles map[string]roleSetting `json:"roles"`
+			Roles      map[string]roleSetting `json:"roles"`
+			MaxWorkers *int                   `json:"max_workers"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if body.MaxWorkers != nil && *body.MaxWorkers <= 0 {
+			http.Error(w, "max_workers must be a whole number above zero", http.StatusBadRequest)
 			return
 		}
 		for name, rs := range body.Roles {
@@ -103,12 +131,18 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		merged := readRoles()
-		for name, rs := range body.Roles {
-			merged[name] = rs
+		if body.Roles != nil {
+			merged := readRoles()
+			for name, rs := range body.Roles {
+				merged[name] = rs
+			}
+			raw, _ := json.Marshal(merged)
+			all["roles"] = raw
 		}
-		raw, _ := json.Marshal(merged)
-		all["roles"] = raw
+		if body.MaxWorkers != nil {
+			raw, _ := json.Marshal(*body.MaxWorkers)
+			all["max_workers"] = raw
+		}
 		out, _ := json.MarshalIndent(all, "", "  ")
 		p := settingsFile()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -119,7 +153,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"roles": merged})
+		// The live cap reads the file on every check, so the saved value is
+		// already in force; the view reports the cap in force, which the
+		// environment still wins.
+		writeJSON(w, http.StatusOK, settingsView())
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

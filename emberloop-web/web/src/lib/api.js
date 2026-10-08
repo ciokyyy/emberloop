@@ -66,11 +66,11 @@ export const getModels = (harness) =>
 
 export const getSettings = () => fetch(url('/api/settings')).then(json);
 
-export const putSettings = (roles) =>
+export const putSettings = (body) =>
   fetch(url('/api/settings'), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ roles }),
+    body: JSON.stringify(body),
   }).then(json);
 export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURIComponent(repo)}`)).then(json);
 

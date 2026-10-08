@@ -60,7 +60,11 @@ the driver ticks boxes and marks done, nothing else writes them.
   409 and retryable, so a stale release never kills a resumed process.
   Sessions that cannot resume stay readable with a why
   (`resumable`/`resumeNote` on session GET, read-only banner in the UI);
-  a new send there is 409.
+  a new send there is 409. The settings endpoint (`settings.go`) reads and
+  writes `max_workers` next to roles, reporting `max_workers_from_env` when
+  `EMBERLOOP_MAX_WORKERS` wins; a write takes effect on the live cap with
+  no restart, and Run Sessions share the one cap with chat Sessions. The
+  settings page edits the field and locks it with a note under the override.
 - Steering is `POST /api/sessions/{id}/steer|followup` with `{"text"}`.
   `POST .../prompt` accepts an optional `mode` (prompt, steer, followup).
   Live idle Sessions start a turn at once; mid-turn messages queue: pig
