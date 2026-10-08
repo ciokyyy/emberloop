@@ -215,11 +215,13 @@ func TestDriverRunMarksParkedAndDiscarded(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md":  ticketDoc("None"),
 		"02-parked.md": ticketDoc("None"),
+		"03-gone.md":   ticketDoc("None"),
 	})
 	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 2
+	world.MaxWorkers = 3
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Parked = func(id string) bool { return id == "02-parked" }
+	world.Discarded = func(id string) bool { return id == "03-gone" }
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview { return nil }
 	world.Finish = func(id string) (DriverFinish, error) {
@@ -241,6 +243,12 @@ func TestDriverRunMarksParkedAndDiscarded(t *testing.T) {
 	if byID["02-parked"].Worker != "" {
 		t.Errorf("parked ticket carries worker %q, want none", byID["02-parked"].Worker)
 	}
+	if byID["03-gone"].State != DriverRowDiscarded {
+		t.Errorf("03-gone state = %q, want discarded", byID["03-gone"].State)
+	}
+	if byID["03-gone"].Worker != "" {
+		t.Errorf("discarded ticket carries worker %q, want none", byID["03-gone"].Worker)
+	}
 }
 
 // A state change re-dates Since: the ticket starts running at the base
@@ -248,27 +256,32 @@ func TestDriverRunMarksParkedAndDiscarded(t *testing.T) {
 // row carries the later time.
 func TestDriverRunRedatesSinceOnStateChange(t *testing.T) {
 	base := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
-	now := base
-	later := base.Add(30 * time.Minute)
+	later := base.Add(5 * time.Minute)
+	nowCalls := 0
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 1
-	world.StartWorker = func(tk DriverTicket) error {
-		now = later
-		return nil
+	// The fake clock advances past its first read: the first pass dates
+	// running at the base time, every later pass at the later time. Gating
+	// on clock reads keeps the verdict timing independent of how many times
+	// a pass reads the reviews.
+	world.Now = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return base
+		}
+		return later
 	}
-	calls := 0
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
-		calls++
-		if calls > 2 {
-			return map[string]DriverReview{
-				reviewerStandards: {Verdict: verdictPass, At: "tip"},
-			}
+		if nowCalls <= 1 {
+			return nil
 		}
-		return nil
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+		}
 	}
 	world.Finish = func(id string) (DriverFinish, error) {
 		return DriverFinish{Merged: true, SHA: "sha"}, nil
@@ -355,5 +368,65 @@ func TestDriverLiveWorldNamesTheWorkerPane(t *testing.T) {
 	}
 	if got := world.WorkerPane("09-missing"); got != "" {
 		t.Errorf("WorkerPane for an unknown ticket = %q, want empty", got)
+	}
+}
+
+// The park command refuses a merged ticket: rewriting Status done to parked
+// would corrupt the merge record. The file stays untouched.
+func TestParkDriverTicketFileRefusesMerged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "01-first.md")
+	doc := "# 01: Test ticket\n\nStatus: done\n\n**Blocked by:** None\n"
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatalf("write ticket: %v", err)
+	}
+	if err := ParkDriverTicketFile(path); err == nil {
+		t.Fatal("ParkDriverTicketFile on a merged ticket must fail")
+	} else if !strings.Contains(err.Error(), "already merged") {
+		t.Fatalf("park error = %q, want the already-merged refusal", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ticket: %v", err)
+	}
+	if string(raw) != doc {
+		t.Errorf("refused park rewrote the file: %q", raw)
+	}
+}
+
+// Parking an already-parked ticket is a no-op success, so a repeated p never
+// fails.
+func TestParkDriverTicketFileKeepsParked(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "01-first.md")
+	doc := "# 01: Test ticket\n\nStatus: parked\n\n**Blocked by:** None\n"
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatalf("write ticket: %v", err)
+	}
+	if err := ParkDriverTicketFile(path); err != nil {
+		t.Fatalf("ParkDriverTicketFile on a parked ticket: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ticket: %v", err)
+	}
+	if !driverFileParked(string(raw)) {
+		t.Errorf("parked file = %q, want Status parked", raw)
+	}
+}
+
+// A zero pass time falls back to the run's injected clock, so a run built
+// over a fake clock never dates rows at the zero time.
+func TestDriverRunZeroTimeUsesInjectedClock(t *testing.T) {
+	at := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	run := NewDriverRun(func() time.Time { return at })
+	order := []DriverTicket{{ID: "01-first", Path: "/spec/01-first.md", Num: 1}}
+	run.set(order, func(tk DriverTicket) DriverRow {
+		return DriverRow{ID: tk.ID, Path: tk.Path, Num: tk.Num, State: DriverRowQueued}
+	}, time.Time{})
+	rows := run.Snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %v, want one", rows)
+	}
+	if !rows[0].Since.Equal(at) {
+		t.Errorf("Since = %v, want the injected clock %v", rows[0].Since, at)
 	}
 }

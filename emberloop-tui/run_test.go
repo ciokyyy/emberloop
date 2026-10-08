@@ -357,3 +357,28 @@ func TestRunPaneQuitsWithReportOnDone(t *testing.T) {
 		t.Fatalf("report = %q, want the final report", got)
 	}
 }
+
+// p on a merged row refuses with an already notice and parks nothing: the
+// merge record stays untouched.
+func TestRunPaneParkOnMergedShowsAlready(t *testing.T) {
+	rows := cannedRunRows()
+	var calls int
+	m := loadRunModel(t, &rows, &calls)
+	var parked []string
+	m.SetPark(func(path string) error {
+		parked = append(parked, path)
+		return nil
+	})
+	m, _ = pressRunKey(m, "j")
+	m, _ = pressRunKey(m, "j")
+	if got := selectedRunID(m); got != "03-third" {
+		t.Fatalf("selection = %q, want the merged row", got)
+	}
+	m, _ = pressRunKey(m, "p")
+	if m.notice != "ticket already merged" {
+		t.Fatalf("notice = %q, want the already refusal", m.notice)
+	}
+	if len(parked) != 0 {
+		t.Fatalf("parked = %q, want no park call", parked)
+	}
+}

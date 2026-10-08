@@ -24,12 +24,10 @@ Owns this directory as a separate Go module (`snapshot.go` and its test,
 `costs.go` with the usage/memory sums and its tests, `db_test.go` with the
 shared fixture-database helpers the usage tests build on, `model.go` and its
 test, `run.go` (the driver run pane: ticket table on top from the shared
-driver run state, the agents view below; `RunLoader`, `RunParker` and jump
-`CommandRunner` seams, `RunLiveRows` join, `RunDoneMsg` end) and its test,
-`herdr.go` (pane-list parse, liveness, and the `focusAgentPane`
-jump primitive) and its test, `settings.go` and its test,
-`cmd/emberloop-tui/main.go` (dashboard plus `--driver-run`, which runs the
-live driver loop in-process against the shared state)). Ticket status derivation lives in `Snapshot`;
+  driver run state, the agents view below; `RunLoader`, `RunParker` and jump
+  `CommandRunner` seams, `RunLiveRows` join, `RunDoneMsg` end; `p` refuses
+  merged and discarded rows with an already notice, quitting stops the
+  pane's loop while workers keep running) and its test,
 status glyphs and colours live in `model.go`'s view layer (run-pane state
 text in `run.go`'s view layer). The Settings tab edits through the
 `SettingsBackend` seam: the live backend calls the core's settings load/save,

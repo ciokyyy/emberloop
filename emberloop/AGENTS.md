@@ -87,13 +87,16 @@ owns its `_test.go` and the behaviour below):
   store-or-branch worker check and the history sha lookup.
   `driver_run.go` holds the shared run state: `DriverRun` (one row per ticket
   with state, worker and pane, verdicts at the tip, state entry time, last
-  refusal; snapshots copy), published by the loop every pass when the world's
-  `Run` is set and read by the run pane. `ParkDriverTicketFile` is the park
-  command (Status parked through the per-file lock). `ReadDriverFiles` and
-  `LiveDriverWorld` let the run pane build the same live world in its own
-  process. The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
-  on a terminal `--driver` opens the pane through `RunDriverPane` (`tui.go`,
-  same binary lookup as `tui`), off one it prints the plain report;
+  refusal; snapshots copy; a zero pass time falls back to the run's own
+  clock), published by the loop every pass when the world's `Run` is set and
+  read by the run pane. `ParkDriverTicketFile` is the park command (Status
+  parked through the per-file lock, refusing a merged ticket and leaving an
+  already-parked one alone). `ReadDriverFiles` and `LiveDriverWorld` let the
+  run pane build the same live world in its own process. The mode flags
+  `--driver/--llm/--check` live in `cmd/emberloop/main.go`; on a terminal
+  `--driver` opens the pane through `RunDriverPane` (`tui.go`, same binary
+  lookup as `tui`), and quitting that pane stops its loop while the workers
+  keep running, so a restart resumes; off one it prints the plain report;
   `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`

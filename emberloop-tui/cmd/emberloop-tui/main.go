@@ -71,9 +71,11 @@ func run(argv []string) error {
 
 // runDriverPane runs a spec through the deterministic driver with the live
 // ticket table: the loop runs in a goroutine against the shared run state
-// and the pane reads snapshots of it every second. Quitting the pane leaves
-// the workers running; starting again resumes the run from the tickets,
-// worker records and git. The loop's final report prints on exit.
+// and the pane reads snapshots of it every second. Quitting the pane stops
+// the loop with it, so a quit can land mid-pass; the workers keep running in
+// herdr and starting again resumes the run from the tickets, worker records
+// and git. The loop's final report prints on exit only when the loop finished
+// first.
 func runDriverPane(specArg, repo, stateDir string) error {
 	spec, err := emberloop.ResolveSpec(specArg)
 	if err != nil {
@@ -120,7 +122,7 @@ func runDriverPane(specArg, repo, stateDir string) error {
 		fmt.Fprint(os.Stdout, msg.Report)
 		return nil
 	default:
-		fmt.Fprintln(os.Stderr, "emberloop: run pane closed; workers keep running, start again to resume")
+		fmt.Fprintln(os.Stderr, "emberloop: run pane closed; loop stopped, workers keep running, start again to resume")
 		return nil
 	}
 }

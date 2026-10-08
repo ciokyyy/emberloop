@@ -36,9 +36,8 @@ import (
 	"golang.org/x/term"
 )
 
-// driverPaneTTY reports whether the run pane opens: a terminal on stdout
-// gets the live ticket table, a pipe keeps the plain report (probes and
-// scripts). A variable so tests drive both legs.
+// driverPaneTTY reports whether stdout is a terminal. A terminal gets the
+// live ticket table; a pipe keeps the plain report for probes and scripts.
 var driverPaneTTY = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 
 func main() {

@@ -236,12 +236,18 @@ func (m *RunModel) jumpSelected() {
 }
 
 // parkSelected parks the selected ticket through the park command and
-// reloads the rows, so the parked state shows on the next tick.
+// reloads the rows, so the parked state shows on the next tick. A merged or
+// discarded row refuses with an already notice and parks nothing, so the
+// merge record stays untouched.
 func (m *RunModel) parkSelected() tea.Cmd {
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return nil
 	}
 	row := m.rows[m.cursor].Row
+	if row.State == emberloop.DriverRowMerged || row.State == emberloop.DriverRowDiscarded {
+		m.notice = "ticket already " + runStateLabel(row.State)
+		return nil
+	}
 	if m.park == nil {
 		m.notice = "parking is not wired"
 		return nil
@@ -252,6 +258,7 @@ func (m *RunModel) parkSelected() tea.Cmd {
 	}
 	m.notice = "parked " + row.ID
 	return m.runLoadCmd()
+
 }
 
 // runStateLabel is the one place a driver row state becomes its pane text.

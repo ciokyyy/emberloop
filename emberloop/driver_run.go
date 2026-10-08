@@ -1,6 +1,7 @@
 package emberloop
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -97,8 +98,13 @@ func cloneDriverVerdicts(in map[string]DriverReview) map[string]DriverReview {
 }
 
 // set publishes one pass: rows for tickets the builder still names keep
-// their entry time while their state holds, and re-date it on change.
+// their entry time while their state holds, and re-date it on change. A zero
+// pass time falls back to the run's own clock, so the injected clock always
+// dates a row.
 func (r *DriverRun) set(order []DriverTicket, build func(DriverTicket) DriverRow, now time.Time) {
+	if now.IsZero() {
+		now = r.now()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.order = append([]DriverTicket(nil), order...)
@@ -116,10 +122,14 @@ func (r *DriverRun) set(order []DriverTicket, build func(DriverTicket) DriverRow
 }
 
 // ParkDriverTicketFile is the park command: it writes Status parked into the
-// ticket file at path, keeping the worktree and branch. The first header
-// Status line is rewritten in place with its markup kept; a file with no
-// Status line gains one on top. It takes the same per-file lock as the
-// checkbox tick, so the driver's own write never races it.
+// ticket file at path, keeping the worktree and branch. The first Status
+// line is rewritten in place with its markup kept, the same rule
+// ticketStatusValues reads, so writer and readers agree; a file with no
+// Status line gains one on top. A merged ticket is refused: rewriting Status
+// done to parked would corrupt the merge record. An already-parked ticket
+// succeeds without touching the file, so a repeated park never fails. It
+// takes the same per-file lock as the checkbox tick, so the driver's own
+// write never races it.
 func ParkDriverTicketFile(path string) error {
 	mu := driverTickLock(path)
 	mu.Lock()
@@ -127,6 +137,12 @@ func ParkDriverTicketFile(path string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	switch driverTicketState(string(raw)) {
+	case driverTicketDone:
+		return fmt.Errorf("ticket already merged")
+	case driverTicketParked:
+		return nil
 	}
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
