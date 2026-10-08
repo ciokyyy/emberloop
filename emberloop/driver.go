@@ -83,6 +83,11 @@ type DriverWorld struct {
 	// next submit is what triggers the retry. Nil means no waiting: worlds
 	// without it tell each distinct refusal once, as above.
 	Submits func(ticketID string) int
+	// Parked reports the user's park action, taken with p in the pane. A
+	// parked ticket keeps its worktree and branch, so the driver never starts
+	// or finishes it; only the tickets that depend on it wait. Read every
+	// pass, beside the seeded Status park. Nil means nothing is parked.
+	Parked func(ticketID string) bool
 	// Finish merges a ticket's worker once its gate passes.
 	Finish func(ticketID string) (DriverFinish, error)
 	// Completed lists the ticket checkboxes one ticket's worker submitted as
@@ -100,6 +105,20 @@ type DriverWorld struct {
 	// world without notifications: the ticket is still marked needs-you in
 	// the result.
 	Notify func(ticketID, message string) error
+	// Discard is the user's discard op: it removes a worker and its worktree
+	// on request. The driver never calls it; no run destroys work on its
+	// own. Nil means no discard op is wired.
+	Discard func(ticketID string) error
+	// Discarded reports the user's discard: the ticket's worker and worktree
+	// are gone. The driver only observes it, never sets it: a discarded
+	// ticket is never finished or told again, it frees its slot, and only
+	// its dependents wait. Nil means nothing is discarded.
+	Discarded func(ticketID string) bool
+	// Followups holds one worker's follow-ups: the declined findings and
+	// notes its submit named after Follow-ups:. The driver copies them
+	// verbatim into the final report. Nil or empty means the worker left
+	// none.
+	Followups func(ticketID string) string
 	// Required names the reviewer types every finish needs. Nil means the
 	// two built-in reviewers.
 	Required []string
@@ -298,21 +317,51 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			parked[tk.ID] = true
 		}
 	}
-	running := 0
 	for _, tk := range order {
 		if merged[tk.ID] || parked[tk.ID] {
 			continue
 		}
 		if driverHasWorker(world, tk.ID) {
 			started[tk.ID] = true
-			running++
 		}
+	}
+	// isParked is the seeded park plus the user's live park action, taken with
+	// p in the pane: a parked ticket keeps its worktree and branch, so the
+	// driver never starts or finishes it and only its dependents wait. Read
+	// every pass, so parking mid-run takes effect at once and unparking
+	// resumes the ticket where it stood.
+	isParked := func(id string) bool {
+		if parked[id] {
+			return true
+		}
+		return world.Parked != nil && world.Parked(id)
+	}
+	// isGone reports a started ticket the user discarded: its worker and
+	// worktree are gone. Only started unmerged tickets count, so a ticket that
+	// never ran never reads discarded for having no worker yet, and a merge
+	// never reads discarded either.
+	isGone := func(id string) bool {
+		return started[id] && !merged[id] && world.Discarded != nil && world.Discarded(id)
+	}
+	// runningCount is the workers holding a slot: started, unmerged, neither
+	// parked nor discarded. A parked or discarded ticket frees its slot, so
+	// the tickets around it keep running. Recomputed every pass, so parking
+	// or discarding mid-run takes effect at once.
+	runningCount := func() int {
+		n := 0
+		for _, tk := range order {
+			if started[tk.ID] && !merged[tk.ID] && !isParked(tk.ID) && !isGone(tk.ID) {
+				n++
+			}
+		}
+		return n
 	}
 	for {
 		now := driverNow(world)
 		progress, changed := false, false
+		running := runningCount()
 		ready := func(tk DriverTicket) bool {
-			if started[tk.ID] || merged[tk.ID] || parked[tk.ID] {
+			if started[tk.ID] || merged[tk.ID] || isParked(tk.ID) || isGone(tk.ID) {
 				return false
 			}
 			for _, b := range tk.Blockers {
@@ -349,7 +398,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			break
 		}
 		for _, tk := range order {
-			if !started[tk.ID] || merged[tk.ID] || parked[tk.ID] {
+			if !started[tk.ID] || merged[tk.ID] || isParked(tk.ID) || isGone(tk.ID) {
 				continue
 			}
 			if fresh := driverFreshBoxes(ticked[tk.ID], world.Completed, tk.ID); len(fresh) > 0 && world.TickCheckboxes != nil {
@@ -501,11 +550,16 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			delete(notifyMsg, tk.ID)
 			delete(notified, tk.ID)
 			delete(notifyErr, tk.ID)
-			running--
 			out = append(out, DriverMerged{ID: tk.ID, SHA: fin.SHA})
 			progress = true
 		}
-		if len(out)+len(parked) == len(order) {
+		closed := 0
+		for _, tk := range order {
+			if merged[tk.ID] || isParked(tk.ID) || isGone(tk.ID) {
+				closed++
+			}
+		}
+		if closed == len(order) {
 			break
 		}
 		if progress || changed {
@@ -517,12 +571,27 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 		world.Sleep(driverPollInterval)
 	}
 	var needsYouIDs []string
+	gone := map[string]bool{}
+	followups := map[string]string{}
 	for _, tk := range order {
+		if isGone(tk.ID) {
+			gone[tk.ID] = true
+		}
+		if isParked(tk.ID) {
+			parked[tk.ID] = true
+		}
 		if needsYou[tk.ID] {
 			needsYouIDs = append(needsYouIDs, tk.ID)
 		}
+		// Follow-ups are read once the run holds, so the report carries what
+		// the workers last left, verbatim.
+		if world.Followups != nil {
+			if text := world.Followups(tk.ID); text != "" {
+				followups[tk.ID] = text
+			}
+		}
 	}
-	return out, needsYouIDs, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, parked, refused, unknown, tickFailed, notifyErr), nil
+	return out, needsYouIDs, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, refused, parked, gone, unknown, tickFailed, notifyErr, followups), nil
 }
 
 // Resume states a ticket file carries: done (merged), parked (sitting out
@@ -613,12 +682,13 @@ func driverReviewSig(required []string, revs map[string]DriverReview) string {
 
 // driverReport renders the plain final report: every merged ticket with its
 // sha (bare when the old sha is unknown), then every ticket left unmerged,
-// each with its last refusal when a finish refused it, parked when it sat
-// out, never started when it never ran, still running otherwise. Unknown
-// checkboxes and tick failures follow their ticket in order, then every
-// unmerged ticket the notification never reached. Later tickets add the
-// follow-ups beside them.
-func driverReport(order []DriverTicket, merged []DriverMerged, started, done, parked map[string]bool, refused map[string]string, unknown map[string][]string, tickFailed, notifyErr map[string]string) string {
+// each with its last refusal when a finish refused it. Unknown checkboxes
+// and tick failures follow their ticket in order, then every unmerged ticket
+// the notification never reached. A discarded ticket reads discarded; a
+// parked ticket reads parked, keeping its last refusal beside it when it has
+// one. Worker follow-ups close the report, one entry per ticket, copied
+// verbatim.
+func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string, parked, gone map[string]bool, unknown map[string][]string, tickFailed, notifyErr map[string]string, followups map[string]string) string {
 	var b strings.Builder
 	for _, m := range merged {
 		if m.SHA == "" {
@@ -630,6 +700,10 @@ func driverReport(order []DriverTicket, merged []DriverMerged, started, done, pa
 	for _, tk := range order {
 		if !done[tk.ID] {
 			switch {
+			case gone[tk.ID]:
+				fmt.Fprintf(&b, "unmerged %s: discarded\n", tk.ID)
+			case parked[tk.ID] && refused[tk.ID] != "":
+				fmt.Fprintf(&b, "unmerged %s: parked: %s\n", tk.ID, refused[tk.ID])
 			case parked[tk.ID]:
 				fmt.Fprintf(&b, "unmerged %s: parked\n", tk.ID)
 			case refused[tk.ID] != "":
@@ -650,6 +724,9 @@ func driverReport(order []DriverTicket, merged []DriverMerged, started, done, pa
 	for _, tk := range order {
 		if notifyErr[tk.ID] != "" {
 			fmt.Fprintf(&b, "notify %s failed: %s\n", tk.ID, notifyErr[tk.ID])
+		}
+		if text := followups[tk.ID]; text != "" {
+			fmt.Fprintf(&b, "follow-ups %s: %s\n", tk.ID, strings.TrimRight(text, "\n"))
 		}
 	}
 	return b.String()
@@ -699,14 +776,16 @@ func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
 
 // RunDriverLive runs the whole spec through the live operations: the same
 // worker spawn, reviewer verdicts and finish the LLM orchestrator uses, with
-// the worker cap from settings. It prints the plain final report of merged
-// tickets with their sha. The repo is already on the integration branch, and
-// uncommitted edits in its checkout are left alone: the merge refuses on
-// overlap, like every finish, and completeTicket in worker.go commits only
-// the ticket file. The run waits for workers rather than quitting on them,
-// alerts needs-you tickets through a herdr notification with a growing retry
-// delay, and keeps every other ticket running: later tickets add parking and
-// progress rows for a run that stops converging.
+// the worker cap from settings. It prints the plain final report: merged
+// tickets with their sha, unmerged tickets with their last refusal, and the
+// workers' follow-ups verbatim. The repo is already on the integration
+// branch, and uncommitted edits in its checkout are left alone: the merge
+// refuses on overlap, like every finish, and completeTicket in worker.go
+// commits only the ticket file. The run waits for workers rather than
+// quitting on them, alerts needs-you tickets through a herdr notification
+// with a growing retry delay, and keeps every other ticket running. Parking
+// reads the ticket's parked status and discarding stays the user's op, never
+// the driver's.
 func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 	files, err := readDriverFiles(spec)
 	if err != nil {
@@ -745,8 +824,11 @@ func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 // alert shows a herdr notification. A resume reads the same three sources
 // the seam takes: Status done and Status parked come from the ticket files, a
 // running worker from its store record or its implement branch, and an old
-// merge sha from the run's ticket history. Extracted so tests drive the
-// mapping through the seam with fake exec and temp state.
+// merge sha from the run's ticket history. Parking reads the ticket file's
+// parked Status, discard is the same finish with merge=false on the user's
+// request, and follow-ups come from the worker's submit after Follow-ups:.
+// Extracted so tests drive the mapping through the seam with fake exec and
+// temp state.
 func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
 	paths := map[string]string{}
 	for path := range files {
@@ -866,6 +948,21 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 			}
 			return s.Completed
 		},
+		// Parked reads the ticket file's own Status line from disk, so the
+		// user's p action takes effect on the next pass. The driver is the
+		// only writer the run needs; a later pane owns the key that writes
+		// the parked status.
+		Parked: func(ticketID string) bool {
+			path, ok := paths[ticketID]
+			if !ok {
+				return false
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return false
+			}
+			return driverFileParked(string(raw))
+		},
 		TickCheckboxes: func(ticketID string, boxes []string) ([]string, error) {
 			path, ok := paths[ticketID]
 			if !ok {
@@ -885,8 +982,109 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 			}
 			return nil
 		},
+		// Discard is the user's op, never the driver's: the same finish
+		// with merge=false the finish tool runs, dropping the worker and
+		// its worktree and leaving the ticket file untouched.
+		Discard: func(ticketID string) error {
+			path, ok := paths[ticketID]
+			if !ok {
+				return fmt.Errorf("unknown ticket %q", ticketID)
+			}
+			_, err := Finish(finishExec, WorkerID(path), false)
+			return err
+		},
+		// Discarded sees the user's discard: the ticket's worker record is
+		// gone and its run history ends in a discard. A queued ticket has no
+		// record yet but is waiting for a slot, never discarded, so the queue
+		// is checked first. A pruned pane leaves a cancelled entry and keeps
+		// its worktree for a respawn, so only a discarded last entry counts.
+		// With no history the missing record still reads discarded, the way
+		// earlier runs recorded none. Merged tickets read gone too, but the
+		// loop only asks about started unmerged tickets and the report only
+		// marks unmerged ones, so a merge never reads discarded.
+		Discarded: func(ticketID string) bool {
+			path, ok := paths[ticketID]
+			if !ok {
+				return false
+			}
+			id := WorkerID(path)
+			for _, e := range loadWorkerQueue() {
+				if e.ID == id {
+					return false
+				}
+			}
+			store, err := loadWorkersLocked()
+			if err != nil {
+				return false
+			}
+			if _, ok = store[id]; ok {
+				return false
+			}
+			hist, err := loadHistory(specSlug(spec.Spec))
+			if err != nil || len(hist) == 0 {
+				return err == nil
+			}
+			found := false
+			outcome := ""
+			for _, h := range hist {
+				if h.Worker == id || h.Ticket == path {
+					outcome, found = h.Outcome, true
+				}
+			}
+			if !found {
+				return true
+			}
+			return outcome == outcomeDiscarded
+		},
+		// Followups reads the worker's last submit and returns the text it
+		// named after Follow-ups:, verbatim for the report.
+		Followups: func(ticketID string) string {
+			path, ok := paths[ticketID]
+			if !ok {
+				return ""
+			}
+			s, ok, err := ReadAgentSubmit(WorkerID(path))
+			if err != nil || !ok {
+				return ""
+			}
+			if text := followupsOf(s.Summary); text != "" {
+				return text
+			}
+			return followupsOf(s.Report)
+		},
 		Sleep: time.Sleep,
 	}
+}
+
+// driverFileParked reports whether a ticket file parks its ticket: its
+// header Status line reads parked. Only the header field counts, the way
+// tickTicket only ticks the header field. Named apart from the resume-state
+// constant, which shares the ticketParked word.
+func driverFileParked(raw string) bool {
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Status:") || strings.HasPrefix(trimmed, "**Status:") {
+			i := strings.Index(line, "Status:")
+			value := strings.TrimSpace(strings.Trim(strings.TrimSpace(line[i+len("Status:"):]), "*"))
+			return strings.EqualFold(value, "parked")
+		}
+	}
+	return false
+}
+
+// followupsOf returns the follow-ups a submit named after Follow-ups:,
+// verbatim. Empty when the submit names none: no marker, nothing after it,
+// or nothing but none. Like the Blocked by line, none means no follow-ups.
+func followupsOf(text string) string {
+	i := strings.Index(text, "Follow-ups:")
+	if i < 0 {
+		return ""
+	}
+	note := strings.TrimSpace(text[i+len("Follow-ups:"):])
+	if note == "" || strings.EqualFold(note, "none") || strings.EqualFold(note, "nothing") {
+		return ""
+	}
+	return note
 }
 
 // readDriverFiles reads every ticket file under the spec's tickets directory

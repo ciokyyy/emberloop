@@ -1812,3 +1812,447 @@ func TestDriverMergeDropsAPendingNotifyFailure(t *testing.T) {
 		t.Errorf("report keeps a failure line for a merged ticket:\n%s", res.Report)
 	}
 }
+
+// A parked ticket never starts and blocks only the tickets that depend on
+// it: 02-park keeps its worktree so the driver leaves it alone, 04-behind
+// waits on it, and 01 and 03 merge around them.
+func TestDriverParkedTicketNeverStartsAndBlocksOnlyDependents(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-parked.md": ticketDoc("01"),
+		"03-free.md":   ticketDoc("01"),
+		"04-behind.md": ticketDoc("02-parked"),
+	}, 3)
+	world.Parked = func(id string) bool { return id == "02-parked" }
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if indexOfID(fake.started, "02-parked") >= 0 {
+		t.Errorf("parked ticket started: %v", fake.started)
+	}
+	if indexOfID(fake.started, "04-behind") >= 0 {
+		t.Errorf("dependent of a parked ticket started: %v", fake.started)
+	}
+	if indexOfID(fake.finished, "02-parked") >= 0 {
+		t.Errorf("parked ticket finished, its worktree and branch must stay: %v", fake.finished)
+	}
+	if len(res.Merged) != 2 {
+		t.Errorf("merged = %v, want 01-first and 03-free", res.Merged)
+	}
+	for _, line := range []string{"merged 01-first as sha-01-first", "merged 03-free as sha-03-free", "unmerged 02-parked: parked", "unmerged 04-behind: never started"} {
+		if !strings.Contains(res.Report, line) {
+			t.Errorf("report misses %q:\n%s", line, res.Report)
+		}
+	}
+}
+
+// Parking mid-run stops the driver working the ticket but keeps its worktree
+// and branch: no finish and no tell after the park, and its worker slot goes
+// to the next ticket, which merges around it.
+func TestDriverParkingMidRunKeepsWorktreeAndFreesTheSlot(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("None"),
+	}, 1)
+	parked := false
+	world.StartWorker = func(tk DriverTicket) error {
+		fake.started = append(fake.started, tk.ID)
+		fake.active++
+		if fake.active > fake.maxSeen {
+			fake.maxSeen = fake.active
+		}
+		// The user presses p on 01-first the moment its worker exists.
+		if tk.ID == "01-first" {
+			parked = true
+		}
+		return nil
+	}
+	world.Parked = func(id string) bool { return parked && id == "01-first" }
+	var told []string
+	world.Tell = func(id, text string) error {
+		told = append(told, id+": "+text)
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if indexOfID(fake.finished, "01-first") >= 0 {
+		t.Errorf("parked ticket finished, its worktree and branch must stay: %v", fake.finished)
+	}
+	if len(told) != 0 {
+		t.Errorf("parked ticket told %v; the driver leaves it alone", told)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "02-second" {
+		t.Errorf("merged = %v, want 02-second merging into the freed slot", res.Merged)
+	}
+	for _, line := range []string{"merged 02-second as sha-02-second", "unmerged 01-first: parked"} {
+		if !strings.Contains(res.Report, line) {
+			t.Errorf("report misses %q:\n%s", line, res.Report)
+		}
+	}
+}
+
+// The driver never discards: refusals are told and retried, parked tickets
+// are left alone, and no run calls the user's discard op.
+func TestDriverNeverDiscardsOnItsOwn(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-parked.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 2
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	var told []string
+	world.Tell = func(id, text string) error {
+		told = append(told, text)
+		return nil
+	}
+	finished := 0
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if id == "01-first" && finished <= 2 {
+			return DriverFinish{Merged: false, Detail: "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-" + id}, nil
+	}
+	world.Parked = func(id string) bool { return id == "02-parked" }
+	var discarded []string
+	world.Discard = func(id string) error {
+		discarded = append(discarded, id)
+		return nil
+	}
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(discarded) != 0 {
+		t.Errorf("driver discarded %v; only the user discards", discarded)
+	}
+	if len(told) == 0 {
+		t.Errorf("no refusal told; refusals must reach the worker, not the discard")
+	}
+}
+
+// Worker follow-ups reach the final report verbatim: the merged ticket's
+// note and the unmerged ticket's note alike, punctuation and all.
+func TestDriverFollowUpsAppearVerbatimInTheReport(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("None"),
+	}, 2)
+	tip2 := fake.tips["02-second"]
+	fake.reviews["02-second"] = map[string]DriverReview{
+		reviewerStandards: {Verdict: verdictPass, At: tip2},
+	}
+	world.Followups = func(id string) string {
+		if id == "01-first" {
+			return "the rebase helper misfires on empty repos, worth a look"
+		}
+		return "still needs a reviewer pass at the tip, parked for now"
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	for _, line := range []string{
+		"merged 01-first as sha-01-first",
+		"follow-ups 01-first: the rebase helper misfires on empty repos, worth a look",
+		"unmerged 02-second: still running",
+		"follow-ups 02-second: still needs a reviewer pass at the tip, parked for now",
+	} {
+		if !strings.Contains(res.Report, line) {
+			t.Errorf("report misses %q:\n%s", line, res.Report)
+		}
+	}
+}
+
+// A parked ticket keeps its last refusal on the report: refused once, told,
+// then parked, the run never finishes it again and the line names both.
+func TestDriverParkedTicketKeepsItsLastRefusal(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	parked := false
+	world.Tell = func(id, text string) error {
+		// The user parks the ticket instead of letting the worker retry.
+		parked = true
+		return nil
+	}
+	world.Parked = func(id string) bool { return parked }
+	finished := 0
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		return DriverFinish{Merged: false, Detail: refusal}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if finished != 1 {
+		t.Errorf("finish calls = %d, want 1: a parked ticket is never finished again", finished)
+	}
+	if want := "unmerged 01-first: parked: " + refusal; !strings.Contains(res.Report, want) {
+		t.Errorf("report misses %q:\n%s", want, res.Report)
+	}
+}
+
+// The live world reads the park from the ticket file: a parked Status parks
+// the ticket, any other status does not, and the driver is still the only
+// writer the run needs.
+func TestDriverLiveWorldReadsParkedStatusFromTheTicketFile(t *testing.T) {
+	dir := t.TempDir()
+	running := filepath.Join(dir, "01-first.md")
+	parked := filepath.Join(dir, "02-parked.md")
+	files := map[string]string{
+		running: "# 01: Test ticket\n\n**Status:** ready-for-agent\n\n**Blocked by:** None\n",
+		parked:  "# 02: Test ticket\n\n**Status:** parked\n\n**Blocked by:** 01-first\n",
+	}
+	for path, raw := range files {
+		if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-park"}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	if world.Parked == nil {
+		t.Fatal("live world wires no Parked hook")
+	}
+	if world.Parked("01-first") {
+		t.Errorf("01-first reads parked with a ready-for-agent status")
+	}
+	if !world.Parked("02-parked") {
+		t.Errorf("02-parked with a parked status does not read parked")
+	}
+	if world.Parked("09-missing") {
+		t.Errorf("an unknown ticket reads parked")
+	}
+}
+
+// The live world reads follow-ups from the worker's submit: the text its
+// summary named after Follow-ups:, verbatim, and nothing when it named none.
+func TestDriverLiveWorldReadsFollowUpsFromTheWorkerSubmit(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+	dir := t.TempDir()
+	withNote := filepath.Join(dir, "01-first.md")
+	withoutNote := filepath.Join(dir, "02-second.md")
+	files := map[string]string{
+		withNote:    ticketDoc("None"),
+		withoutNote: ticketDoc("None"),
+	}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-followups"}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	if world.Followups == nil {
+		t.Fatal("live world wires no Followups hook")
+	}
+	note := "the rebase helper misfires on empty repos, worth a look"
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: WorkerID(withNote), Type: "worker", Status: "done", Summary: "done. Follow-ups: " + note, At: "2026-10-08T12:00:00Z", ThisTurn: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := world.Followups("01-first"); got != note {
+		t.Errorf("Followups = %q, want the note verbatim %q", got, note)
+	}
+	if got := world.Followups("02-second"); got != "" {
+		t.Errorf("Followups without a submit = %q, want empty", got)
+	}
+}
+
+// The live discard removes the worker and its worktree on request and leaves
+// the ticket file untouched: the same finish with merge=false the tool runs.
+func TestDriverLiveWorldDiscardsTheWorkerAndItsWorktree(t *testing.T) {
+	repo, tree := reviewRepo(t)
+	ticket := filepath.Join(t.TempDir(), "07-x.md")
+	writeFile(t, ticket, "# 07-x: example\n\n**Status:** ready-for-agent\n\n**Blocked by:** None\n")
+	pointWorkerAtTicket(t, ticket)
+	f := newFakeReviewers(answers("pass", "pass"))
+	old := finishExec
+	finishExec = f.run
+	t.Cleanup(func() { finishExec = old })
+	dir := filepath.Dir(ticket)
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-discard"}
+	world := liveDriverWorld(spec, repo, files)
+	if world.Discard == nil {
+		t.Fatal("live world wires no Discard hook")
+	}
+	if err := world.Discard("07-x"); err != nil {
+		t.Fatalf("Discard: %v", err)
+	}
+	if store, err := load(); err != nil {
+		t.Fatal(err)
+	} else if _, ok := store["07-x"]; ok {
+		t.Errorf("worker 07-x still recorded after a discard")
+	}
+	if _, err := os.Stat(tree); !os.IsNotExist(err) {
+		t.Errorf("worktree still exists after a discard: %v", err)
+	}
+	if err := world.Discard("09-missing"); err == nil {
+		t.Errorf("discarding an unknown ticket must fail")
+	}
+}
+
+// A ticket the user discards mid-run stops holding the run: no finish and
+// no tell after the discard, its slot frees for the next ticket, its
+// dependents wait, and the report names it discarded.
+func TestDriverDiscardedTicketFreesSlotAndReadsDiscarded(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-gone.md":   ticketDoc("None"),
+		"02-free.md":   ticketDoc("None"),
+		"03-behind.md": ticketDoc("01-gone"),
+	}, 1)
+	gone := false
+	world.StartWorker = func(tk DriverTicket) error {
+		fake.started = append(fake.started, tk.ID)
+		fake.active++
+		if fake.active > fake.maxSeen {
+			fake.maxSeen = fake.active
+		}
+		// The user discards 01-gone the moment its worker exists.
+		if tk.ID == "01-gone" {
+			gone = true
+		}
+		return nil
+	}
+	world.Discarded = func(id string) bool { return gone && id == "01-gone" }
+	var told []string
+	world.Tell = func(id, text string) error {
+		told = append(told, id+": "+text)
+		return nil
+	}
+	var discarded []string
+	world.Discard = func(id string) error {
+		discarded = append(discarded, id)
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if indexOfID(fake.finished, "01-gone") >= 0 {
+		t.Errorf("discarded ticket finished, its worker is gone: %v", fake.finished)
+	}
+	if len(told) != 0 {
+		t.Errorf("discarded ticket told %v; the driver leaves it alone", told)
+	}
+	if len(discarded) != 0 {
+		t.Errorf("driver discarded %v; only the user discards", discarded)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "02-free" {
+		t.Errorf("merged = %v, want 02-free merging into the freed slot", res.Merged)
+	}
+	if indexOfID(fake.started, "03-behind") >= 0 {
+		t.Errorf("dependent of a discarded ticket started: %v", fake.started)
+	}
+	for _, line := range []string{"merged 02-free as sha-02-free", "unmerged 01-gone: discarded", "unmerged 03-behind: never started"} {
+		if !strings.Contains(res.Report, line) {
+			t.Errorf("report misses %q:\n%s", line, res.Report)
+		}
+	}
+}
+
+// The live world sees the user's discard in the worker store: a ticket with
+// no worker record reads discarded, one with a record does not.
+func TestDriverLiveWorldSeesADiscardByItsMissingWorkerRecord(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-discarded"}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	if world.Discarded == nil {
+		t.Fatal("live world wires no Discarded hook")
+	}
+	if !world.Discarded("01-first") {
+		t.Errorf("ticket with no worker record does not read discarded")
+	}
+	if err := save(map[string]Worker{WorkerID(ticket): {ID: WorkerID(ticket)}}); err != nil {
+		t.Fatal(err)
+	}
+	if world.Discarded("01-first") {
+		t.Errorf("ticket with a worker record reads discarded")
+	}
+	if world.Discarded("09-missing") {
+		t.Errorf("an unknown ticket reads discarded")
+	}
+}
+
+// Follow-ups: none means no follow-ups: the report carries no line for it.
+func TestDriverLiveWorldReadsFollowUpsNoneAsEmpty(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-followups-none"}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	if err := WriteAgentSubmit(AgentSubmit{AgentID: WorkerID(ticket), Type: "worker", Status: "done", Summary: "done. Follow-ups: none", At: "2026-10-08T12:00:00Z", ThisTurn: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := world.Followups("01-first"); got != "" {
+		t.Errorf("Followups none = %q, want empty", got)
+	}
+}
+
+// A queued ticket is not a discard: spawn queues over the cap with no worker
+// record, so the driver must keep waiting for it instead of dropping it.
+func TestDriverLiveWorldQueuedTicketDoesNotReadDiscarded(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-queued"}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	if err := queueWorker(queuedWorker{ID: WorkerID(ticket), Type: "worker", Ticket: ticket, Repo: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	if world.Discarded("01-first") {
+		t.Errorf("queued ticket reads discarded; a queued worker has no record yet")
+	}
+}
+
+// History tells a discard from a pruned pane: a cancelled entry keeps its
+// worktree for a respawn, only a discarded entry reads discarded.
+func TestDriverLiveWorldCancelledHistoryDoesNotReadDiscarded(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-history"}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	slug := specSlug(spec.Spec)
+	if err := saveHistory(slug, []TicketHistory{{Ticket: ticket, Worker: WorkerID(ticket), Outcome: outcomeCancelled}}); err != nil {
+		t.Fatal(err)
+	}
+	if world.Discarded("01-first") {
+		t.Errorf("cancelled history reads discarded; only a discard removes work on request")
+	}
+	if err := saveHistory(slug, []TicketHistory{{Ticket: ticket, Worker: WorkerID(ticket), Outcome: outcomeCancelled}, {Ticket: ticket, Worker: WorkerID(ticket), Outcome: outcomeDiscarded}}); err != nil {
+		t.Fatal(err)
+	}
+	if !world.Discarded("01-first") {
+		t.Errorf("discarded history does not read discarded")
+	}
+}

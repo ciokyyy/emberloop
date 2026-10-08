@@ -57,7 +57,14 @@ owns its `_test.go` and the behaviour below):
   "needs you" (`NeedsYou` in the result, one `Notify` delivery with later
   attempts waiting out the same growing delay, recorded on the report when
   herdr never accepts it) with retries continuing on a doubling backoff while
-  every other ticket keeps running, and the plain report lists merges with sha.
+  every other ticket keeps running, a parked ticket (`Parked`, live: the seeded
+  Status park plus the file's parked Status read every pass) is never started
+  or finished and frees its slot so only its dependents wait, a ticket the user
+  discarded mid-run (`Discarded`, live: no worker record, not queued, run
+  history ending in a discard) is left alone the same way and reads discarded,
+  the user's `Discard` op (live: the same finish with merge=false) is never
+  called by the driver, and the plain report lists merges with sha, unmerged
+  tickets with their last refusal, and worker follow-ups verbatim.
   Checkbox progress rides the worker `submit` `completed` list of checkbox line
   texts: during a driver run the driver is the only ticket-file writer, ticks
   each fresh box once through the per-file lock, leaves the edit uncommitted,
@@ -68,8 +75,8 @@ owns its `_test.go` and the behaviour below):
   no state file, and exits with the report when nothing runs and nothing can
   start (the rest wait on parked tickets) instead of polling. `RunDriverLive`
   wires the live spawn, verdict, tell, submit-count, submit-read, file-tick,
-  finish and herdr-notification ops, the store-or-branch worker check and the
-  history sha lookup.
+  finish, herdr-notification, park, discard and follow-up ops, the
+  store-or-branch worker check and the history sha lookup.
   The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
   `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
