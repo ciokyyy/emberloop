@@ -1772,6 +1772,14 @@ func tickDriverTicketFile(path string, boxes []string) ([]string, error) {
 	return unknown, nil
 }
 
+// TickDriverTicketFile ticks exactly the named boxes in the ticket file at
+// path and leaves the edit uncommitted. Exported for the web driver, which
+// ticks Worker progress the same way the CLI driver does: the driver stays
+// the only ticket-file writer during a run.
+func TickDriverTicketFile(path string, boxes []string) ([]string, error) {
+	return tickDriverTicketFile(path, boxes)
+}
+
 // applyCompletedBoxes ticks the checkboxes named by line text: the first
 // unchecked box with that text becomes [x]. A name matching an already
 // ticked box is known and changes nothing; a name matching no box at all

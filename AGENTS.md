@@ -55,5 +55,6 @@ child it belongs to, and every entry must resolve to a file.
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
 - `.scratch/retro-hardening/AGENTS.md` — the spec and ticket area for this run
 - `.scratch/enderbloom-web/AGENTS.md` — the spec and ticket area for Enderbloom Web (browser UI and Daemon, planned module `emberloop-web`)
+- `.scratch/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
 - `GLOSSARY.md` — Enderbloom Web terms (Daemon, Session, Backend, Subagent, Group, Steer, Follow-up, Event, Event log)
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK

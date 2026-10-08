@@ -1,11 +1,12 @@
-<!-- Runs view: pick a repo, pick a spec, preview its tickets. Plain markup. -->
+<!-- Runs view: pick a repo, pick a spec, preview its tickets, start a Run and watch its live Ticket table. -->
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import Button from './ui/button.svelte';
+  import Badge from './ui/badge.svelte';
   import Input from './ui/input.svelte';
-  import { listSpecs, previewSpec } from './api.js';
+  import { listSpecs, previewSpec, startRun, getRun, openRunStream } from './api.js';
 
-  let { workDir = '' } = $props();
+  let { workDir = '', onOpenSession = null } = $props();
 
   let repo = $state(workDir);
   let specs = $state([]);
@@ -20,6 +21,65 @@
     if (workDir) repo = workDir;
   });
 
+  let run = $state(null);
+  let runError = $state('');
+  let starting = $state(false);
+  let pollTimer = null;
+  let runSource = null;
+
+  function closeRunStream() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+    if (runSource) runSource.close();
+    runSource = null;
+  }
+
+  function liveDone(r) {
+    return r && r.status && r.status !== 'running';
+  }
+
+  async function refreshRun() {
+    if (!run?.id) return;
+    try {
+      const body = await getRun(run.id);
+      run = body.run ?? body;
+      if (liveDone(run)) closeRunStream();
+    } catch {
+      // The table keeps the last state; the next poll retries.
+    }
+  }
+
+  function subscribeRun(id) {
+    closeRunStream();
+    pollTimer = setInterval(refreshRun, 1000);
+    if (typeof EventSource === 'undefined') return;
+    try {
+      runSource = openRunStream(id, (body) => {
+        run = body.run ?? body;
+        if (liveDone(run)) closeRunStream();
+      });
+    } catch {
+      // Polling already covers the table when SSE is unavailable.
+    }
+  }
+
+  onDestroy(closeRunStream);
+
+  async function start() {
+    if (!selected || starting) return;
+    starting = true;
+    runError = '';
+    try {
+      const body = await startRun({ spec: selected, repo });
+      run = body.run ?? null;
+      if (run?.id) subscribeRun(run.id);
+    } catch (e) {
+      runError = e?.message?.includes('409') ? 'A run is already active for this spec.' : 'Could not start the Run.';
+    } finally {
+      starting = false;
+    }
+  }
+
   async function load() {
     error = '';
     message = '';
@@ -27,6 +87,9 @@
     selected = '';
     tickets = [];
     previewTitle = '';
+    run = null;
+    runError = '';
+    closeRunStream();
     if (!repo) {
       message = 'Enter a repo directory to find specs.';
       return;
@@ -45,6 +108,9 @@
     tickets = [];
     previewTitle = '';
     error = '';
+    run = null;
+    runError = '';
+    closeRunStream();
     try {
       const body = await previewSpec(spec);
       // A reselect during the fetch wins: ignore the stale answer.
@@ -103,7 +169,15 @@
   {/if}
 
   {#if selected}
-    <h3 class="text-sm font-semibold tracking-tight">{previewTitle || selected}</h3>
+    <div class="flex items-center gap-2">
+      <h3 class="text-sm font-semibold tracking-tight">{previewTitle || selected}</h3>
+      <Button size="sm" class="ml-auto" disabled={starting || !tickets.length} onclick={start}>
+        {starting ? 'Starting…' : run ? 'Restart Run' : 'Start Run'}
+      </Button>
+    </div>
+    {#if runError}
+      <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{runError}</p>
+    {/if}
     {#if tickets.length}
       <table class="w-full text-left text-sm">
         <thead>
@@ -134,6 +208,44 @@
           {/each}
         </tbody>
       </table>
+    {/if}
+    {#if run}
+      <div class="flex items-center gap-2">
+        <h4 class="text-sm font-semibold tracking-tight">Live Tickets</h4>
+        <Badge>{run.status ?? ''}</Badge>
+      </div>
+      {#if run.tickets?.length}
+        <table class="w-full text-left text-sm" data-testid="live-tickets">
+          <thead>
+            <tr class="text-muted-foreground">
+              <th class="py-1 pr-2 font-medium">ID</th>
+              <th class="py-1 pr-2 font-medium">Title</th>
+              <th class="py-1 pr-2 font-medium">State</th>
+              <th class="py-1 pr-2 font-medium">Worker</th>
+              <th class="py-1 font-medium">Refusal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each run.tickets as t (t.id)}
+              <tr class="border-t">
+                <td class="py-1 pr-2">{t.id}</td>
+                <td class="py-1 pr-2">{t.title}</td>
+                <td class="py-1 pr-2">{t.state}</td>
+                <td class="py-1 pr-2">
+                  {#if t.workerSession}
+                    <Button variant="link" size="sm" class="h-auto p-0" onclick={() => onOpenSession?.(t.workerSession)}>
+                      {t.workerSession.slice(0, 8)}
+                    </Button>
+                  {:else}
+                    <span class="text-muted-foreground">—</span>
+                  {/if}
+                </td>
+                <td class="py-1">{t.lastRefusal || '—'}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
     {/if}
   {/if}
 </div>

@@ -61,7 +61,13 @@ type Daemon struct {
 	// groups tracks one spawn call each: its parent and members, so the
 	// last member to finish delivers one grouped result as a Steer.
 	groups map[string]*spawnGroup
+	// runs tracks one deterministic Run each: its Tickets and their Worker
+	// Sessions. submits holds every Session's Worker submits by Session id,
+	// which the driver loop reads for merges and checkbox ticks.
+	runs    map[string]*runState
+	submits map[string]*submitRec
 }
+
 type session struct {
 	meta   SessionMeta
 	events []Event
@@ -118,9 +124,12 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		sessions: map[string]*session{},
 		backends: map[string]Backend{},
 		groups:   map[string]*spawnGroup{},
+		runs:     map[string]*runState{},
+		submits:  map[string]*submitRec{},
 	}
 	d.load()
 	d.loadGroups()
+	d.loadRuns()
 	return d
 }
 
@@ -150,6 +159,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	mux.HandleFunc("/api/specs", d.handleSpecs)
 	mux.HandleFunc("/api/specs/preview", d.handleSpecPreview)
+	mux.HandleFunc("/api/runs", d.handleRuns)
+	mux.HandleFunc("/api/runs/", d.handleRunSub)
 	return guard(mux)
 }
 
@@ -915,6 +926,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"cleared": n})
+	case sub == "submit" && r.Method == "POST":
+		d.handleSessionSubmit(w, r, id)
 	case sub == "spawn" && r.Method == "POST":
 		d.handleSpawn(w, r, id)
 	case sub == "" && r.Method == "DELETE":

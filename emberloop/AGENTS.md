@@ -92,7 +92,10 @@ owns its `_test.go` and the behaviour below):
   read by the run pane. `ParkDriverTicketFile` is the park command (Status
   parked through the per-file lock, refusing a merged ticket and leaving an
   already-parked one alone). `ReadDriverFiles` and `LiveDriverWorld` let the
-  run pane build the same live world in its own process. `ticketview.go`
+  run pane build the same live world in its own process. The web driver
+  reuses `TickDriverTicketFile`, `MarkDriverTicketDone` and
+  `MergeCheckedBranch` (dirty check, rebase onto, checkout check,
+  fast-forward-only) without reviewers or herdr. `ticketview.go`
   holds the Runs preview surface (`SpecTitle`, `PreviewTickets`; private
   title and checkbox helpers): per-ticket title, resolved blockers and
   checkbox progress where one bad ticket fails only its own row. The mode flags

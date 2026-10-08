@@ -35,7 +35,7 @@ Same-origin by default. To point the static build at another Daemon:
 ## Source map
 
 - `src/App.svelte` — layout, Session loading, SSE stream with reconnect, queued-message panel with clear, chat/settings/runs view switch
-- `src/lib/api.js` — Daemon client (configurable base URL), incl. spec list and ticket preview
+- `src/lib/api.js` — Daemon client (configurable base URL), incl. spec list, ticket preview, Run start/get and Run SSE stream
 - `src/lib/events.js` — Event-to-card mapping and transcript grouping
 - `src/lib/composer.js` — composer mode (prompt / steer / follow-up)
 - `src/lib/harnesses.js` — harness catalogue for the new-Session dialog
@@ -43,7 +43,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/SessionList.svelte` — Session tree with per-Session status
 - `src/lib/Composer.svelte` — floating composer with mode badge
 - `src/lib/NewSessionDialog.svelte` — harness / model / working directory
-- `src/lib/RunsView.svelte` — repo picker, spec list, ticket preview table
+- `src/lib/RunsView.svelte` — repo picker, spec list, ticket preview table, Run start plus live Ticket table with Worker links to the Session view
 - `src/lib/DetailsPane.svelte` — collapsible Session metadata
 - `src/lib/ui/button.svelte` — shadcn-svelte-idiom button variants
 - `src/lib/ui/cn.js` — class merging (`clsx` + `tailwind-merge`)
@@ -54,5 +54,6 @@ Same-origin by default. To point the static build at another Daemon:
 (`events.test.js`), composer mode resolvers (`composer.test.js`),
 mounted Composer badge and send behavior (`Composer.test.js`), harness
 model filtering (`harnesses.test.js`), Card rendering per kind
-(`Card.test.js`), Runs picker and preview against a mocked API
-(`RunsView.test.js`), and sidebar navigation to Runs (`App.test.js`).
+(`Card.test.js`), Runs picker, preview, Start and live table with Worker
+links against a mocked API (`RunsView.test.js`), and sidebar navigation
+to Runs (`App.test.js`).

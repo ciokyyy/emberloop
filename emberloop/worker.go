@@ -926,11 +926,12 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 
 		if merge {
 			// Uncommitted work is not on the branch, so merging would drop it
-			// with the worktree.
-			if res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: w.Worktree}); err != nil {
+			// with the worktree. Fail fast before the reviewer gate; the
+			// shared git half below checks again.
+			if keptText, err := checkWorktreeClean(run, w.Worktree, "have it commit them and call spawn of its reviewers again"); err != nil {
 				return err
-			} else if strings.TrimSpace(res.Stdout) != "" {
-				r, err := kept("the worktree has uncommitted changes, which would be lost; have it commit them and call spawn of its reviewers again")
+			} else if keptText != "" {
+				r, err := kept(keptText)
 				out = r
 				return err
 			}
@@ -960,81 +961,19 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 			if onto == "" {
 				onto = w.Base
 			}
-			if res, err := run("git", []string{"rebase", onto}, ExecOpts{Cwd: w.Worktree}); err != nil {
+			// The git half of the merge is shared with the web driver, which
+			// merges a submitted done with no reviewers judging: same dirty
+			// check, rebase, checkout and fast-forward-only merge.
+			msha, keptText, err := MergeCheckedBranch(run, w.Repo, w.Worktree, w.Branch, onto, w.Target, "have it commit them and call spawn of its reviewers again")
+			if err != nil {
 				return err
-			} else if res.Code != 0 {
-				// Name the conflicts, then abort: the worker that is sent back to
-				// resolve them starts from its own clean branch, not a half rebase.
-				files := ""
-				if u, err := run("git", []string{"diff", "--name-only", "--diff-filter=U"}, ExecOpts{Cwd: w.Worktree}); err == nil {
-					files = strings.Join(strings.Fields(u.Stdout), ", ")
-				}
-				_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: w.Worktree})
-				detail := "rebase onto " + onto + " conflicted"
-				if files != "" {
-					detail += " in " + files
-				} else {
-					detail += ": " + gitFullText(res.Stderr, "rebase failed")
-				}
-				r, err := kept(detail + "; the rebase was aborted, the branch is unchanged")
+			}
+			if keptText != "" {
+				r, err := kept(keptText)
 				out = r
 				return err
 			}
-
-			// The fast-forward lands on whatever the repo has checked out, so that
-			// must be the worker's target.
-			if w.Target != "" {
-				if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: w.Repo}); err != nil {
-					return err
-				} else if on := strings.TrimSpace(res.Stdout); on != w.Target {
-					r, err := kept(fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, w.Target))
-					out = r
-					return err
-				}
-			}
-
-			// The integration checkout may hold uncommitted work of its own: the
-			// orchestrator's notes and ticket edits. That is fine unless it
-			// overlaps what the merge would change, in which case git would
-			// refuse halfway with its own error. Refuse up front instead, naming
-			// the files, so the orchestrator knows to commit or stash them.
-			// -uall lists untracked files individually: the default collapses a
-			// wholly-untracked directory to `dir/`, which never matches an
-			// incoming `dir/file` the merge would overwrite.
-			if res, err := run("git", []string{"status", "--porcelain", "-uall"}, ExecOpts{Cwd: w.Repo}); err == nil && res.Code == 0 {
-				if dirty := porcelainFiles(res.Stdout); len(dirty) > 0 {
-					if diff, err := run("git", []string{"diff", "--name-only", onto + "..." + w.Branch}, ExecOpts{Cwd: w.Repo}); err == nil && diff.Code == 0 {
-						incoming := map[string]bool{}
-						for _, f := range strings.Fields(diff.Stdout) {
-							incoming[strings.Trim(strings.TrimSpace(f), `"`)] = true
-						}
-						var overlap []string
-						for _, f := range dirty {
-							if incoming[f] {
-								overlap = append(overlap, f)
-							}
-						}
-						if len(overlap) > 0 {
-							sort.Strings(overlap)
-							r, err := kept(fmt.Sprintf("the integration checkout has uncommitted changes overlapping the incoming change in %s; commit or stash them and finish again", strings.Join(overlap, ", ")))
-							out = r
-							return err
-						}
-					}
-				}
-			}
-
-			if res, err := run("git", []string{"merge", "--ff-only", w.Branch}, ExecOpts{Cwd: w.Repo}); err != nil {
-				return err
-			} else if res.Code != 0 {
-				r, err := kept(gitFullText(res.Stderr, "merge failed"))
-				out = r
-				return err
-			}
-
-			if res, err := run("git", []string{"rev-parse", w.Branch}, ExecOpts{Cwd: w.Repo}); err == nil {
-				sha = strings.TrimSpace(res.Stdout)
-			}
+			sha = msha
 			merged, detail = true, "merged"
 			// The merge moved the target; the ticket's own completion lands on top
 			// of it, in one commit: done status, ticked boxes. Every earlier return
@@ -1150,6 +1089,135 @@ func completeTicket(run Exec, w *Worker) error {
 		return fmt.Errorf("git commit %s failed: %s", rel, gitFullText(res.Stderr, "unknown error"))
 	}
 	return nil
+}
+
+// checkWorktreeClean refuses a merge when the worktree holds uncommitted
+// changes, which would be lost with the worktree. dirtyAdvice names what to
+// do instead and is appended after a semicolon; empty leaves the bare reason.
+func checkWorktreeClean(run Exec, worktree, dirtyAdvice string) (string, error) {
+	res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: worktree})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(res.Stdout) != "" {
+		detail := "the worktree has uncommitted changes, which would be lost"
+		if dirtyAdvice != "" {
+			detail += "; " + dirtyAdvice
+		}
+		return detail, nil
+	}
+	return "", nil
+}
+
+// MergeCheckedBranch runs the git half of a worker finish: the dirty-worktree
+// check, a rebase of branch onto onto (aborted on conflict), the checkout
+// check against head (skipped when head is empty, the detached case) and the
+// fast-forward-only merge. Exported for the web driver, which merges a
+// submitted done the same way without reviewers: finish keeps its own
+// reviewer gate and ticket completion around this call. sha is the merged
+// tip; kept holds the refusal text when the branch is kept and the worker
+// stays alive; err is a hard git failure.
+func MergeCheckedBranch(run Exec, repo, worktree, branch, onto, head, dirtyAdvice string) (sha, kept string, err error) {
+	if kept, err := checkWorktreeClean(run, worktree, dirtyAdvice); kept != "" || err != nil {
+		return "", kept, err
+	}
+
+	// Rebase onto the target as it stands now, so the fast-forward below
+	// lands on it.
+	if res, err := run("git", []string{"rebase", onto}, ExecOpts{Cwd: worktree}); err != nil {
+		return "", "", err
+	} else if res.Code != 0 {
+		// Name the conflicts, then abort: the worker that is sent back to
+		// resolve them starts from its own clean branch, not a half rebase.
+		files := ""
+		if u, err := run("git", []string{"diff", "--name-only", "--diff-filter=U"}, ExecOpts{Cwd: worktree}); err == nil {
+			files = strings.Join(strings.Fields(u.Stdout), ", ")
+		}
+		_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: worktree})
+		detail := "rebase onto " + onto + " conflicted"
+		if files != "" {
+			detail += " in " + files
+		} else {
+			detail += ": " + gitFullText(res.Stderr, "rebase failed")
+		}
+		return "", detail + "; the rebase was aborted, the branch is unchanged", nil
+	}
+
+	// The fast-forward lands on whatever the repo has checked out, so that
+	// must be the worker's target.
+	if head != "" {
+		if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: repo}); err != nil {
+			return "", "", err
+		} else if on := strings.TrimSpace(res.Stdout); on != head {
+			return "", fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, head), nil
+		}
+	}
+
+	// The integration checkout may hold uncommitted work of its own: the
+	// orchestrator's notes and ticket edits. That is fine unless it
+	// overlaps what the merge would change, in which case git would
+	// refuse halfway with its own error. Refuse up front instead, naming
+	// the files, so the orchestrator knows to commit or stash them.
+	// -uall lists untracked files individually: the default collapses a
+	// wholly-untracked directory to `dir/`, which never matches an
+	// incoming `dir/file` the merge would overwrite.
+	if res, err := run("git", []string{"status", "--porcelain", "-uall"}, ExecOpts{Cwd: repo}); err == nil && res.Code == 0 {
+		if dirty := porcelainFiles(res.Stdout); len(dirty) > 0 {
+			if diff, err := run("git", []string{"diff", "--name-only", onto + "..." + branch}, ExecOpts{Cwd: repo}); err == nil && diff.Code == 0 {
+				incoming := map[string]bool{}
+				for _, f := range strings.Fields(diff.Stdout) {
+					incoming[strings.Trim(strings.TrimSpace(f), `"`)] = true
+				}
+				var overlap []string
+				for _, f := range dirty {
+					if incoming[f] {
+						overlap = append(overlap, f)
+					}
+				}
+				if len(overlap) > 0 {
+					sort.Strings(overlap)
+					return "", fmt.Sprintf("the integration checkout has uncommitted changes overlapping the incoming change in %s; commit or stash them and finish again", strings.Join(overlap, ", ")), nil
+				}
+			}
+		}
+	}
+
+	if res, err := run("git", []string{"merge", "--ff-only", branch}, ExecOpts{Cwd: repo}); err != nil {
+		return "", "", err
+	} else if res.Code != 0 {
+		return "", gitFullText(res.Stderr, "merge failed"), nil
+	}
+
+	if res, err := run("git", []string{"rev-parse", branch}, ExecOpts{Cwd: repo}); err == nil {
+		sha = strings.TrimSpace(res.Stdout)
+	}
+	return sha, "", nil
+}
+
+// MarkDriverTicketDone marks the ticket file at path done: its status reads
+// done and every checkbox ticks, through the same per-file lock as the
+// checkbox tick. The commit is the caller's: the CLI driver commits it on
+// the target after the merge, the web driver the same. Exported for the web
+// driver, which completes tickets without a herdr pane.
+func MarkDriverTicketDone(path string) (bool, error) {
+	mu := driverTickLock(path)
+	mu.Lock()
+	defer mu.Unlock()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	done, ok := tickTicket(string(raw))
+	if !ok {
+		return false, fmt.Errorf("ticket %s has no status line", path)
+	}
+	if done == string(raw) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(done), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // tickTicket returns the ticket with its status done and its boxes ticked. ok

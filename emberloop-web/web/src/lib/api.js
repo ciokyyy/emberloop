@@ -75,3 +75,26 @@ export const putSettings = (roles) =>
 export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURIComponent(repo)}`)).then(json);
 
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);
+
+export const listRuns = () => fetch(url('/api/runs')).then(json);
+
+export const startRun = (body) =>
+  fetch(url('/api/runs'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(json);
+
+export const getRun = (id) => fetch(url(`/api/runs/${id}`)).then(json);
+
+export function openRunStream(id, onRun) {
+  const source = new EventSource(url(`/api/runs/${id}/events`));
+  source.onmessage = (ev) => {
+    try {
+      onRun(JSON.parse(ev.data));
+    } catch {
+      // Malformed line: skip, keep the stream alive.
+    }
+  };
+  return source;
+}

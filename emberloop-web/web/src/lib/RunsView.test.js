@@ -53,4 +53,39 @@ describe('RunsView', () => {
     await tick();
     expect((await within(container).findByRole('alert')).textContent).toMatch(/blocked by/i);
   });
+
+  it('starts a Run and shows the live Ticket table with Worker links', async () => {
+    const live = {
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      status: 'running',
+      tickets: [
+        { id: '01-first', title: 'First', state: 'running', workerSession: 'sess-abcdef123456', lastRefusal: '' },
+        { id: '02-second', title: 'Second', state: 'queued', workerSession: '', lastRefusal: '' },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u, opts) => ({
+        ok: true,
+        json: async () => {
+          const s = String(u);
+          if (s.includes('/api/runs/')) return { run: live };
+          if (s.includes('/api/runs') && opts?.method === 'POST') return { run: live };
+          if (s.includes('/api/specs/preview')) return preview;
+          return { specs: [{ spec: '/repo/.scratch/demo/spec.md', title: 'Demo spec', tickets: 2 }] };
+        },
+      })),
+    );
+    const onOpenSession = vi.fn();
+    const { container } = render(RunsView, { props: { workDir: '/repo', onOpenSession } });
+    await fireEvent.click(await within(container).findByText(/demo spec/i));
+    await tick();
+    await fireEvent.click(await within(container).findByText(/start run/i));
+    const table = await within(container).findByTestId('live-tickets');
+    expect(within(table).getByText('running')).toBeTruthy();
+    expect(within(table).getByText('queued')).toBeTruthy();
+    await fireEvent.click(within(table).getByRole('button'));
+    expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
+  });
 });

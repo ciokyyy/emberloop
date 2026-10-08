@@ -11,7 +11,8 @@ claude and pig Sessions behind one `Backend` interface. See
 Owns `emberloop-web/`. May import emberloop core packages through the
 `replace example.com/emberloop => ../emberloop` in `go.mod`, so the module
 builds only beside a sibling `emberloop/` checkout; core never imports it.
-No herdr. Ticket files are read-only preview input, never Daemon state.
+No herdr. Ticket files are preview input plus the driver's only write target:
+the driver ticks boxes and marks done, nothing else writes them.
 
 ## Local Contracts
 
@@ -29,7 +30,10 @@ No herdr. Ticket files are read-only preview input, never Daemon state.
   queue list/clear and the claude Steer-to-Follow-up degradation at the
   same seam; `spawn_test.go` covers spawn, nesting, grouped delivery and
   scout read-only at the same seam; `runs_test.go` covers spec discovery and
-  ticket preview at the same seam; `pig_test.go` does the same with the
+  ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
+  with a fake Backend and fake git (order, cap, box ticks, dirty and
+  conflict refusals, roles); `RunsView.test.js` covers the live Ticket
+  table with Worker links; `pig_test.go` does the same with the
   pig Backend on the SDK test-faux provider, and `pig_live_test.go`
   (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
@@ -104,6 +108,23 @@ No herdr. Ticket files are read-only preview input, never Daemon state.
   `.git` and `node_modules`. The UI mounts a Runs view beside chat and
   settings with no router: repo picker defaulting to the Session working
   directory, spec list, ticket table. No herdr import.
+- `runs_exec.go` runs one deterministic Run per spec through the core driver
+  (`POST /api/runs` starts with spec, repo, harness, model; a second active
+  Start on the same spec is 409; `GET /api/runs` lists, `GET /api/runs/{id}`
+  shows the live Ticket table, `GET /api/runs/{id}/events` streams it over
+  SSE). Each Ticket starts in number order once blockers merged, up to the
+  live-Session cap, in its own worktree and branch as a Subagent of the Run
+  (ParentID the Run). A submitted done (`POST /api/sessions/{id}/submit`)
+  merges by rebase plus fast-forward-only through the shared core checks; a
+  non-done submit waits for done instead of merging; a dirty worktree or
+  rebase conflict keeps the Worker alive with the refusal on its row and
+  tells the Worker. With no target branch (detached repo) the rebase falls
+  back to the repo HEAD as it stands at finish, never the recorded base.
+  Start refuses a spec outside the repo. Boxes tick from the submit completed
+  list through the per-file lock, the driver the only writer. Roles from
+  settings choose harness, model and effort, falling back to the Start
+  request. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
+  The UI shows the live table with Worker links to the Session view.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

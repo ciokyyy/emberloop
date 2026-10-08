@@ -200,7 +200,7 @@
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
-      <RunsView workDir={meta?.workDir ?? ''} />
+      <RunsView workDir={meta?.workDir ?? ''} onOpenSession={openSession} />
     {:else}
     <header class="flex items-center gap-3 px-4 py-2.5 backdrop-blur-xl">
       <Button variant="ghost" size="icon-sm" class="md:hidden" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
