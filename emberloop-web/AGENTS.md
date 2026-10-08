@@ -41,9 +41,12 @@ imports it. No herdr, no ticket state.
   creates and resumes are 429), releases a settled (idle or failed)
   Session's agent process, and resumes it on the next send: claude
   through ACP `session/load`,
-  pig through its saved session file, fake from the log. Sessions that
-  cannot resume stay readable with a why (`resumable`/`resumeNote` on
-  session GET, read-only banner in the UI); a new send there is 409.
+  pig through its saved session file, fake from the log. One resume runs at
+  a time and sends fence an in-flight release: a send in either window is
+  409 and retryable, so a stale release never kills a resumed process.
+  Sessions that cannot resume stay readable with a why
+  (`resumable`/`resumeNote` on session GET, read-only banner in the UI);
+  a new send there is 409.
 - Steering is `POST /api/sessions/{id}/steer|followup` with `{"text"}`.
   `POST .../prompt` accepts an optional `mode` (prompt, steer, followup).
   Live idle Sessions start a turn at once; mid-turn messages queue: pig

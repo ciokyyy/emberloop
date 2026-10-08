@@ -495,3 +495,46 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 		t.Fatalf("native queue after clear = %+v, want empty", got)
 	}
 }
+
+// A send racing a resume or release in flight answers 409 and the Session
+// recovers: transition flags single-flight the resume and fence the
+// release, so a stale release never kills a freshly resumed process.
+func TestSendDuringTransitionAnswers409(t *testing.T) {
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	sendPrompt(t, srv.URL, id, "hello")
+	waitStatus(t, srv.URL, id, "idle", 30*time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if view := sessionView(t, srv.URL, id); !view.Live {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if view := sessionView(t, srv.URL, id); view.Live {
+		t.Fatal("live = true after idle, want the release to settle first")
+	}
+	for _, flag := range []string{"resuming", "releasing"} {
+		d.mu.Lock()
+		s := d.sessions[id]
+		s.live = false
+		if flag == "resuming" {
+			s.resuming = true
+		} else {
+			s.releasing = true
+		}
+		d.mu.Unlock()
+		if code, _ := postMode(t, srv.URL, id, "prompt", "again"); code != http.StatusConflict {
+			t.Fatalf("send during %s status = %d, want 409", flag, code)
+		}
+		d.mu.Lock()
+		s.resuming, s.releasing = false, false
+		d.mu.Unlock()
+	}
+	if code, _ := postMode(t, srv.URL, id, "prompt", "again"); code != http.StatusAccepted {
+		t.Fatalf("send after transition status = %d, want 202", code)
+	}
+	waitStatus(t, srv.URL, id, "idle", 30*time.Second)
+}

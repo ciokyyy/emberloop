@@ -76,6 +76,12 @@ type session struct {
 	// under d.mu.
 	busy    bool
 	pending []queuedMsg
+	// resuming marks a resume in flight. A second send on a released
+	// Session gets 409 instead of double-resuming past the cap.
+	// releasing marks a release in flight. Sends answer 409 while it
+	// runs, so a stale release never kills a freshly resumed process.
+	resuming  bool
+	releasing bool
 }
 
 // queuedMsg is one not-yet-delivered message. Mode is prompt, steer or
@@ -295,13 +301,22 @@ func (d *Daemon) finishTurn(id string) {
 			d.mu.Unlock()
 			return
 		}
+		// Flip live off and mark the release under one lock hold: a send
+		// in the release window answers 409 instead of resuming a process
+		// the stale ReleaseSession would then kill by id lookup.
 		s.live = false
+		s.releasing = true
 		be := d.backendForLocked(s.meta.Harness)
 		if s.meta.Harness == "claude" && d.claude != nil {
 			be = d.claude
 		}
 		d.mu.Unlock()
 		if be == nil {
+			d.mu.Lock()
+			if rs, ok := d.sessions[id]; ok {
+				rs.releasing = false
+			}
+			d.mu.Unlock()
 			return
 		}
 		tok := be.ReleaseSession(id)
@@ -311,6 +326,7 @@ func (d *Daemon) finishTurn(id string) {
 			d.mu.Unlock()
 			return
 		}
+		s.releasing = false
 		// A message that resumed meanwhile already flipped live back on; its
 		// ResumeSession owns the token now, so only store when still released.
 		if !s.live && tok != "" {
@@ -392,23 +408,42 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 		d.mu.Unlock()
 		return http.StatusGone, "session ended"
 	}
+	if s.live {
+		d.mu.Unlock()
+		return 0, ""
+	}
+	// Single-flight: a second send on a released Session answers 409
+	// instead of double-resuming past the cap or stacking loads. A send
+	// in a release window answers 409 too, so the stale release never
+	// kills the process the retry resumes.
+	if s.resuming || s.releasing {
+		d.mu.Unlock()
+		return http.StatusConflict, "session is resuming; send the message again"
+	}
+	s.resuming = true
 	meta := s.meta
-	needResume := !s.live
 	be, unwired := d.resumeBackendLocked(meta)
 	d.mu.Unlock()
-	if !needResume {
-		return 0, ""
+	// The flag clears on every exit below; the Session pointer stays
+	// valid even if the entry is deleted meanwhile.
+	clear := func() {
+		d.mu.Lock()
+		s.resuming = false
+		d.mu.Unlock()
 	}
 	// A released Session resumes from the log before the message runs.
 	// Where the harness cannot resume, history stays readable and the
 	// message is refused with the why.
 	if unwired != "" {
+		clear()
 		return http.StatusConflict, unwired
 	}
 	if be == nil {
+		clear()
 		return http.StatusInternalServerError, "backend not configured"
 	}
 	if okResume, reason := be.ResumeOK(meta); !okResume {
+		clear()
 		return http.StatusConflict, reason
 	}
 	d.mu.Lock()
@@ -418,6 +453,7 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 		if d.liveCountLocked() >= d.maxRunningLocked() {
 			running, max := d.liveCountLocked(), d.maxRunningLocked()
 			d.mu.Unlock()
+			clear()
 			return http.StatusTooManyRequests, capMessage(running, max)
 		}
 		d.starting++
@@ -431,6 +467,7 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 			d.mu.Lock()
 			d.starting--
 			d.mu.Unlock()
+			clear()
 			return http.StatusInternalServerError, err.Error()
 		}
 		d.mu.Lock()
@@ -444,8 +481,8 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 		}
 		d.mu.Unlock()
 	}
-	// Final gate: a concurrent end or a resume that lost its race must
-	// not send on a dead process.
+	clear()
+	// Final gate: a concurrent end must not send on a dead process.
 	d.mu.Lock()
 	s, ok = d.sessions[id]
 	if !ok {
