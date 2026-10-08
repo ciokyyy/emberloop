@@ -4,10 +4,10 @@
 
 **Blocked by:** 03, 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Starting a Session over the cap waits or is refused with a clear message
-- [ ] An idle Session's agent process is released and the next prompt resumes it
-- [ ] After a Daemon restart, a resumable Session accepts a new prompt
-- [ ] A non-resumable Session shows read-only history and says why
-- [ ] Seam tests with the fake Backend cover the cap, release and resume paths
+- [x] Starting a Session over the cap waits or is refused with a clear message
+- [x] An idle Session's agent process is released and the next prompt resumes it
+- [x] After a Daemon restart, a resumable Session accepts a new prompt
+- [x] A non-resumable Session shows read-only history and says why
+- [x] Seam tests with the fake Backend cover the cap, release and resume paths
