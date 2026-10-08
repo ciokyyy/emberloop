@@ -69,9 +69,10 @@ type storedReview struct {
 // per Ticket in its own worktree and branch, two persistent Reviewer
 // Sessions per Ticket once its Worker submits done, and the shared driver
 // rows the loop publishes every pass. Sessions maps ticket ids to Worker
-// Session ids, Reviewers ticket ids to reviewer type to Session id, and
-// Reviews ticket ids to reviewer type to verdict; Submits lives on the
-// Daemon so the submit route finds it without a run.
+// Session ids, Reviewers ticket ids to reviewer type to Session id,
+// ReviewTips ticket ids to reviewer type to the tip the reviewer was
+// prompted on, and Reviews ticket ids to reviewer type to verdict; Submits
+// lives on the Daemon so the submit route finds it without a run.
 type runState struct {
 	ID         string                             `json:"id"`
 	Spec       string                             `json:"spec"`
@@ -91,6 +92,7 @@ type runState struct {
 	Merged     map[string]string                  `json:"merged,omitempty"`
 	Reviewers  map[string]map[string]string       `json:"reviewers,omitempty"`
 	Reviews    map[string]map[string]storedReview `json:"reviews,omitempty"`
+	ReviewTips map[string]map[string]string       `json:"reviewTips,omitempty"`
 	Reprompted map[string]int                     `json:"reprompted,omitempty"`
 	SpecRun    emberloop.SpecRun                  `json:"-"`
 	Driver     *emberloop.DriverRun               `json:"-"`
@@ -353,6 +355,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Merged:     map[string]string{},
 		Reviewers:  map[string]map[string]string{},
 		Reviews:    map[string]map[string]storedReview{},
+		ReviewTips: map[string]map[string]string{},
 		Reprompted: map[string]int{},
 		SpecRun:    specRun,
 		Driver:     emberloop.NewDriverRun(nil),
@@ -523,20 +526,23 @@ func (d *Daemon) runSubmitCount(runID, ticketID string) int {
 }
 
 // reviewerPrompt asks one reviewer type to judge the Ticket's worker branch
-// at the given tip and submit pass or changes with its findings.
+// at the given tip and submit pass or changes with its findings. Reviewers
+// judge only: they never edit the worktree.
 func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 	axis := "correctness and this repo's standards"
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
 	}
-	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. When done, submit pass or changes with the findings in the report.", ticketID, spec, reviewerType, axis, branch, tip)
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. When done, submit pass or changes with the findings in the report.", ticketID, spec, reviewerType, axis, branch, tip)
 }
 
 // ensureReviewers spawns the Ticket's two persistent Reviewer Sessions once
 // its Worker submitted done, and re-prompts them when the Worker submits
 // done again, so they keep their context across Passes. It spawns nothing
 // before the first done submit. A refused live-Session cap leaves the
-// missing reviewers for the next pass, which retries. Errors never fail
+// missing reviewers for the next pass, which retries, as does a branch tip
+// it cannot read. Reviewer starts never fail the Run: the driver keeps
+// polling and the next pass tries again.
 func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
@@ -571,7 +577,10 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		return
 	}
 	d.mu.Unlock()
-	tip, _ := runGit(repo, "rev-parse", branch)
+	tip, err := runGit(repo, "rev-parse", branch)
+	if err != nil || tip == "" {
+		return
+	}
 	for _, typ := range missing {
 		if err := d.runStartReviewer(runID, ticketID, typ, tip); err != nil {
 			return
@@ -588,6 +597,15 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		return
 	}
 	rs.Reprompted[ticketID] = count
+	if rs.ReviewTips == nil {
+		rs.ReviewTips = map[string]map[string]string{}
+	}
+	if rs.ReviewTips[ticketID] == nil {
+		rs.ReviewTips[ticketID] = map[string]string{}
+	}
+	for _, typ := range requiredReviewerTypes {
+		rs.ReviewTips[ticketID][typ] = tip
+	}
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -596,16 +614,6 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 			_ = d.runTellSession(sess, reviewerPrompt(ticketID, spec, typ, branch, tip))
 		}
 	}
-}
-
-// runSpec returns one Run's spec path; callers use it for prompts.
-func (d *Daemon) runSpec(runID string) string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if rs, ok := d.runs[runID]; ok {
-		return rs.Spec
-	}
-	return ""
 }
 
 // runTellSession steers one Session by id, resuming it first when it was
@@ -666,10 +674,30 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		d.removeSession(meta.ID)
 		return fmt.Errorf("unknown run %q", runID)
 	}
+	if rs.Reviewers == nil {
+		rs.Reviewers = map[string]map[string]string{}
+	}
 	if rs.Reviewers[ticketID] == nil {
 		rs.Reviewers[ticketID] = map[string]string{}
 	}
+	if rs.Reviewers[ticketID][reviewerType] != "" {
+		// Another pass won the race and recorded its Session first: drop
+		// this one so no orphaned Session eats the live-Session cap.
+		d.mu.Unlock()
+		if be != nil {
+			be.CloseSession(meta.ID)
+		}
+		d.removeSession(meta.ID)
+		return nil
+	}
 	rs.Reviewers[ticketID][reviewerType] = meta.ID
+	if rs.ReviewTips == nil {
+		rs.ReviewTips = map[string]map[string]string{}
+	}
+	if rs.ReviewTips[ticketID] == nil {
+		rs.ReviewTips[ticketID] = map[string]string{}
+	}
+	rs.ReviewTips[ticketID][reviewerType] = tip
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -803,8 +831,11 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
 // runFinishWorker merges a submitted done through the reviewer gate and the
 // shared core checks: without both Passes at the current tip, or with a
 // dirty worktree or a rebase conflict, the Worker stays alive with the
-// refusal. A Ticket with no verdict yet is still under review, not refused:
-// the finish reports nothing and the driver polls again. On a merge the
+// refusal. A Ticket with no verdict yet, or with no verdict on the current
+// tip while its re-prompt is out, is still under review, not refused:
+// the finish reports nothing and the driver polls again. The gate judges
+// the pre-rebase tip: the rebase replays the reviewed commits onto the
+// target without changing their content. On a merge the
 // ticket is marked done and committed on the target, and the worktree is
 // removed; the Worker Session stays for its transcript.
 func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish, error) {
@@ -842,6 +873,11 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 	for typ, sess := range rs.Reviewers[ticketID] {
 		sessions[typ] = sess
 	}
+	workerCount := 0
+	if rec, ok := d.submits[rs.Sessions[ticketID]]; ok && rec != nil {
+		workerCount = rec.Count
+	}
+	reprompted := rs.Reprompted[ticketID]
 	d.mu.Unlock()
 	tip, gerr := runGit(repo, "rev-parse", branch)
 	if gerr != nil || tip == "" {
@@ -851,6 +887,13 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 		return emberloop.DriverFinish{}, nil
 	}
 	if why := reviewGateDetail(verdicts, tip); why != "" {
+		// No verdict judged the current tip and the re-prompt for it is
+		// already out: the Ticket is under review, not refused, so there
+		// is no new refusal to tell. A fresh changes verdict is still
+		// told unchanged below.
+		if reprompted >= workerCount && noneFreshAtTip(verdicts, tip) {
+			return emberloop.DriverFinish{}, nil
+		}
 		return emberloop.DriverFinish{Merged: false, Detail: why}, nil
 	}
 	// A detached repo has no target branch: rebase onto the repo HEAD as it
@@ -957,6 +1000,17 @@ func reviewGateDetail(verdicts map[string]storedReview, tip string) string {
 		return ""
 	}
 	return "not reviewed to a pass: " + strings.Join(missing, "; ")
+}
+
+// noneFreshAtTip says no reviewer judged the current tip yet: every verdict
+// predates it, so the re-prompt for this tip is still in flight.
+func noneFreshAtTip(verdicts map[string]storedReview, tip string) bool {
+	for _, typ := range requiredReviewerTypes {
+		if r, ok := verdicts[typ]; ok && r.At == tip {
+			return false
+		}
+	}
+	return true
 }
 
 // shortSHA names a commit the way refusals do: the first eight characters.
@@ -1121,13 +1175,26 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	if reviewerType != "" {
 		branch := d.runs[runID].Branches[ticketID]
 		repo := d.runs[runID].Repo
-		if rs := d.runs[runID]; rs.Reviews[ticketID] == nil {
+		// A verdict lands at the tip the reviewer was prompted on, not the
+		// tip as it stands at submit: a Worker commit mid-review reads
+		// stale, never fresh. Runs predating prompted tips fall back to
+		// the branch tip.
+		prompted := d.runs[runID].ReviewTips[ticketID][reviewerType]
+		if rs := d.runs[runID]; rs.Reviews == nil {
+			rs.Reviews = map[string]map[string]storedReview{}
+		} else if rs.Reviews[ticketID] == nil {
 			rs.Reviews[ticketID] = map[string]storedReview{}
 		}
 		d.mu.Unlock()
-		tip, _ := runGit(repo, "rev-parse", branch)
+		tip := prompted
+		if tip == "" {
+			tip, _ = runGit(repo, "rev-parse", branch)
+		}
 		d.mu.Lock()
 		if rs, ok := d.runs[runID]; ok {
+			if rs.Reviews == nil {
+				rs.Reviews = map[string]map[string]storedReview{}
+			}
 			if rs.Reviews[ticketID] == nil {
 				rs.Reviews[ticketID] = map[string]storedReview{}
 			}
@@ -1255,9 +1322,13 @@ func (d *Daemon) loadRuns() {
 		if rs.Reviews == nil {
 			rs.Reviews = map[string]map[string]storedReview{}
 		}
+		if rs.ReviewTips == nil {
+			rs.ReviewTips = map[string]map[string]string{}
+		}
 		if rs.Reprompted == nil {
 			rs.Reprompted = map[string]int{}
 		}
+		rs.Driver = emberloop.NewDriverRun(nil)
 		rs.notify = make(chan struct{})
 		cp := rs
 		d.runs[cp.ID] = &cp

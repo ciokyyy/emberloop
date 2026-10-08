@@ -171,12 +171,18 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "fix nil")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	// A new commit leaves older verdicts behind; while the re-prompt for
+	// the new tip is out the Ticket is under review, not refused, so no
+	// new Tell reaches the Worker.
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		tk := ticketByID(r, "01-first")
-		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "not at the tip")
-	}, "stale pass refused after the new commit")
+		return ticketByID(r, "01-first").LastRefusal == ""
+	}, "under review after the new commit")
 	if got := ticketByID(r, "01-first"); got.Verdicts["reviewer-standards"].Fresh {
 		t.Fatalf("standards verdict = %+v, want stale after the new commit", got.Verdicts["reviewer-standards"])
+	}
+	sess = getSession(t, srv.URL, worker)
+	if strings.Contains(sessTranscript(sess), "not at the tip") {
+		t.Fatalf("worker transcript carries a stale refusal, want no second Tell while under review")
 	}
 	for typ, sess := range waitReviewers(t, srv.URL, run.ID, "01-first") {
 		if sess != revs[typ] {
@@ -245,7 +251,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 		Worktrees: map[string]string{"01-first": worktree}, Targets: map[string]string{},
 		Bases: map[string]string{}, Merged: map[string]string{},
 		Reviewers: map[string]map[string]string{}, Reviews: map[string]map[string]storedReview{},
-		Reprompted: map[string]int{},
+		ReviewTips: map[string]map[string]string{}, Reprompted: map[string]int{},
 	}
 	d.mu.Unlock()
 	if err := d.runStartReviewer("r-cap", "01-first", "reviewer-spec", "deadbeef"); err == nil || !strings.Contains(err.Error(), "cap") {
@@ -266,5 +272,44 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 	d.mu.Unlock()
 	if sess == "" {
 		t.Fatalf("no reviewer session after the cap freed, want one")
+	}
+}
+
+// A verdict lands at the tip the reviewer was prompted on, not the tip as
+// it stands at submit: a Worker commit mid-review reads stale, never fresh.
+func TestReviewVerdictStampsPromptedTip(t *testing.T) {
+	repo, _ := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	branch := "implement/01-first"
+	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
+	prompted := "1111111111111111111111111111111111111111"
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d.mu.Lock()
+	d.sessions["rev-spec"] = &session{meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.runs["r-tip"] = &runState{
+		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
+		Harness: "fake", Model: "fake-model",
+		notify:     make(chan struct{}),
+		Tickets:    []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Branches:   map[string]string{"01-first": branch},
+		Worktrees:  map[string]string{"01-first": worktree},
+		Reviewers:  map[string]map[string]string{"01-first": {"reviewer-spec": "rev-spec"}},
+		ReviewTips: map[string]map[string]string{"01-first": {"reviewer-spec": prompted}},
+		Reviews:    map[string]map[string]storedReview{},
+	}
+	d.mu.Unlock()
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	submitReview(t, srv.URL, "rev-spec", "pass", "")
+	r := getRun(t, srv.URL, "r-tip")
+	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
+	if got.Verdict != "pass" || got.At != prompted {
+		t.Fatalf("verdict = %+v, want pass at the prompted tip %q", got, prompted)
+	}
+	if got.Fresh {
+		t.Fatalf("verdict = %+v, want stale against the moved branch tip", got)
 	}
 }

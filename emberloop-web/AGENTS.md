@@ -112,6 +112,8 @@ the driver ticks boxes and marks done, nothing else writes them.
   progress per ticket with a row error for a bad Blocked by line). The scan
   stays four levels deep, matches only files named `spec.md`, and skips
   `.git` and `node_modules`. The UI mounts a Runs view beside chat and
+  settings with no router: repo picker defaulting to the Session working
+  directory, spec list, ticket table. No herdr import.
 - `runs_exec.go` runs one deterministic Run per spec through the core driver
   (`POST /api/runs` starts with spec, repo, harness, model; a second active
   Start on the same spec is 409; `GET /api/runs` lists, `GET /api/runs/{id}`
@@ -131,10 +133,13 @@ the driver ticks boxes and marks done, nothing else writes them.
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent
   of the Run in the Worker's worktree; later dones re-prompt the same
   Sessions, so they keep context across Passes. Reviewer submits carry
-  pass or changes with the findings in the report; the finish merges only
-  when both types passed at the current tip (older Passes go stale), else
-  the refusal lands on the row and reaches the Worker unchanged, retried
-  after the next submit. Reviewer Sessions start through the shared
+  pass or changes with the findings in the report; each verdict is stamped
+  at the tip the reviewer was prompted on, so a mid-review Worker commit
+  reads stale, never fresh. The finish merges only when both types passed
+  at the current tip; a fresh refusal lands on the row and reaches the
+  Worker unchanged, retried after the next submit, while a Ticket with no
+  verdict on the current tip and its re-prompt already out stays under
+  review with no new Tell. Reviewer Sessions start through the shared
   live-Session cap like every other Session. The row carries
   `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with the
   last refusal. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
