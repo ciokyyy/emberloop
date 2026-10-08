@@ -1750,3 +1750,15 @@ func TestGateAcceptsPassOverStrayUntrackedFile(t *testing.T) {
 		t.Error("a tip with its own change must not be covered")
 	}
 }
+
+func TestReplacementSeatKeepsTheDeadSeatOnlyInTheCurrentTicketTab(t *testing.T) {
+	prev := reviewer{Tab: "w:t12", Slot: 3}
+	same := replacementSeat(prev, readOnlyPlace{Tab: "w:t12", Overflow: "x (2)"})
+	if same.Tab != "w:t12" || same.Slot != 3 {
+		t.Errorf("same tab: got %s slot %d, want the dead seat", same.Tab, same.Slot)
+	}
+	moved := replacementSeat(prev, readOnlyPlace{Tab: "w:t15", Overflow: "x (2)"})
+	if moved.Tab != "w:t15" || moved.Slot != 0 {
+		t.Errorf("respawned worker tab: got %s slot %d, want the new ticket tab, no slot", moved.Tab, moved.Slot)
+	}
+}

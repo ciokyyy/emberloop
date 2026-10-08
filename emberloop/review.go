@@ -941,9 +941,7 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 	place := p.place
 	notice := ""
 	if replaced {
-		if prev.Tab != "" {
-			place.Tab, place.Slot = prev.Tab, prev.Slot
-		}
+		place = replacementSeat(prev, place)
 		notice = fmt.Sprintf("(the previous %s reviewer's pane was gone: a new reviewer took over, briefed with its findings)",
 			t.Name)
 	}
@@ -1120,4 +1118,15 @@ func workerPatchID(run Exec, w *Worker, tip, tipTree string) string {
 		return ""
 	}
 	return patchIDOf(d)
+}
+
+// replacementSeat is where a replacement reviewer opens: the dead reviewer's
+// seat, but only in the tab the reviewers open in now. A respawned worker has
+// a new ticket tab and the old tab, with its grid record, is gone, which would
+// push the replacement to an overflow tab.
+func replacementSeat(prev reviewer, place readOnlyPlace) readOnlyPlace {
+	if prev.Tab != "" && (place.Tab == "" || prev.Tab == place.Tab) {
+		place.Tab, place.Slot = prev.Tab, prev.Slot
+	}
+	return place
 }
