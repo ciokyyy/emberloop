@@ -353,16 +353,20 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				continue
 			}
 			if fresh := driverFreshBoxes(ticked[tk.ID], world.Completed, tk.ID); len(fresh) > 0 && world.TickCheckboxes != nil {
-				if ticked[tk.ID] == nil {
-					ticked[tk.ID] = map[string]bool{}
-				}
-				for _, box := range fresh {
-					ticked[tk.ID][box] = true
-				}
+				// A failed tick marks nothing: the same boxes stay fresh and
+				// retry on the next pass. Only a successful call marks them
+				// sent, unknown names included, so neither retries forever.
 				miss, err := world.TickCheckboxes(tk.ID, fresh)
 				if err != nil {
 					tickFailed[tk.ID] = err.Error()
 				} else {
+					if ticked[tk.ID] == nil {
+						ticked[tk.ID] = map[string]bool{}
+					}
+					for _, box := range fresh {
+						ticked[tk.ID][box] = true
+					}
+					delete(tickFailed, tk.ID)
 					if len(miss) > 0 {
 						unknown[tk.ID] = append(unknown[tk.ID], miss...)
 					}

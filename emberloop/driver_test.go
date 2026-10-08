@@ -1128,6 +1128,50 @@ func TestDriverReportsATickFailureAndStillMerges(t *testing.T) {
 	}
 }
 
+// A tick error retries on the next pass: the box stays unticked until the
+// tick succeeds, and a later success clears the failure from the report.
+func TestDriverTickErrorRetriesUntilItSucceeds(t *testing.T) {
+	spec, world, _ := runWorld(t, map[string]string{
+		"01-first.md": "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n",
+	}, 1)
+	world.Completed = func(id string) []string { return []string{"first box"} }
+	tickCalls := 0
+	world.TickCheckboxes = func(id string, boxes []string) ([]string, error) {
+		tickCalls++
+		if tickCalls == 1 {
+			return nil, fmt.Errorf("disk gone")
+		}
+		return nil, nil
+	}
+	submits := 0
+	finished := 0
+	world.Tell = func(id, text string) error {
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if finished == 1 {
+			return DriverFinish{Merged: false, Detail: "boom"}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-01-first"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "01-first" {
+		t.Fatalf("merged = %v, want [01-first]", res.Merged)
+	}
+	if tickCalls != 2 {
+		t.Fatalf("tick calls = %d, want 2: a tick error must retry on the next pass", tickCalls)
+	}
+	if strings.Contains(res.Report, "not applied") {
+		t.Errorf("report keeps a tick failure after a later success:\n%s", res.Report)
+	}
+}
+
 // A resumed run finds the merged ticket in the ticket file and carries on:
 // 01-first reads Status done, so it never starts again, its old sha stays in
 // the report, and 02-second (blocked by 01) still starts and merges. Stray
