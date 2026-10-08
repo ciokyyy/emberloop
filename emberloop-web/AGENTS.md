@@ -34,8 +34,11 @@ the driver ticks boxes and marks done, nothing else writes them.
   with a fake Backend and fake git (order, cap, box ticks, dirty and
   conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
   Sessions per Ticket, the gate, rework, staleness, roles and the cap at the
-  same seam; `RunsView.test.js` covers the live Ticket table with Worker
-  links and the verdict columns; `pig_test.go` does the same with the
+  same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
+  reload with nothing spawned, pause, resume without a second Worker, and
+  finished Runs staying listed, at the same seam; `RunsView.test.js` covers
+  the live Ticket table with Worker links, the verdict columns, and the
+  paused state with its Resume button; `pig_test.go` does the same with the
   pig Backend on the SDK test-faux provider, and `pig_live_test.go`
   (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
@@ -144,8 +147,14 @@ the driver ticks boxes and marks done, nothing else writes them.
   starts plus two steers) so prompts queue in submit order. Reviewer Sessions
   start through the shared live-Session cap like every other Session. The row
   carries `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with
-  the last refusal. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
-  The UI shows the live table with Worker links to the Session view.
+  the last refusal. Runs persist as `enderbloom/runs/{id}.json` with one row
+  per Ticket (state, tip, last refusal, times) written after every driver
+  pass, and reload paused with nothing spawned. `POST /api/runs/{id}/pause`
+  freezes the driver (no new Workers or Reviewers, live Sessions untouched)
+  and `POST /api/runs/{id}/resume` continues it; started Tickets keep their
+  Worker Sessions and merged ones seed from their shas, so a Resume never
+  starts a second Worker. The UI shows the live table with Worker links to
+  the Session view plus Pause and Resume buttons on running and paused Runs.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

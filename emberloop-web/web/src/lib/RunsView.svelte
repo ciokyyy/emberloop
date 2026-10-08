@@ -4,7 +4,7 @@
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
   import Input from './ui/input.svelte';
-  import { listSpecs, previewSpec, startRun, getRun, openRunStream } from './api.js';
+  import { listSpecs, previewSpec, startRun, getRun, openRunStream, pauseRun, resumeRun } from './api.js';
 
   let { workDir = '', onOpenSession = null } = $props();
 
@@ -24,6 +24,7 @@
   let run = $state(null);
   let runError = $state('');
   let starting = $state(false);
+  let acting = $state(false);
   let pollTimer = null;
   let runSource = null;
 
@@ -34,8 +35,10 @@
     runSource = null;
   }
 
+  // Only a finished Run closes the stream: a paused Run stays subscribed,
+  // so the table wakes when the Resume continues it.
   function liveDone(r) {
-    return r && r.status && r.status !== 'running';
+    return r && (r.status === 'done' || r.status === 'failed');
   }
 
   async function refreshRun() {
@@ -78,6 +81,29 @@
     } finally {
       starting = false;
     }
+  }
+
+  async function act(fn, failed) {
+    if (!run?.id || acting) return;
+    acting = true;
+    runError = '';
+    try {
+      const body = await fn(run.id);
+      run = body.run ?? body;
+      if (run?.id) subscribeRun(run.id);
+    } catch {
+      runError = failed;
+    } finally {
+      acting = false;
+    }
+  }
+
+  async function pause() {
+    await act(pauseRun, 'Could not pause the Run.');
+  }
+
+  async function resume() {
+    await act(resumeRun, 'Could not resume the Run.');
   }
 
   async function load() {
@@ -213,6 +239,11 @@
       <div class="flex items-center gap-2">
         <h4 class="text-sm font-semibold tracking-tight">Live Tickets</h4>
         <Badge>{run.status ?? ''}</Badge>
+        {#if run.status === 'paused'}
+          <Button size="sm" variant="outline" class="ml-auto" disabled={acting} onclick={resume}>Resume</Button>
+        {:else if run.status === 'running'}
+          <Button size="sm" variant="outline" class="ml-auto" disabled={acting} onclick={pause}>Pause</Button>
+        {/if}
       </div>
       {#if run.tickets?.length}
         <table class="w-full text-left text-sm" data-testid="live-tickets">

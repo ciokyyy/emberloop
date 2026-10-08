@@ -65,6 +65,17 @@ type storedReview struct {
 	Report  string `json:"report,omitempty"`
 }
 
+// savedRow is one Ticket's driver row as the Run file keeps it: the state
+// the driver last published, the branch tip and last refusal then, and when
+// the Ticket entered the state. Live rows come from the Driver while it
+// runs; these carry the table across a Daemon restart.
+type savedRow struct {
+	State       string    `json:"state"`
+	Tip         string    `json:"tip,omitempty"`
+	LastRefusal string    `json:"lastRefusal,omitempty"`
+	Since       time.Time `json:"since"`
+}
+
 // runState is one deterministic Run: the spec, the repo, one Worker Session
 // per Ticket in its own worktree and branch, two persistent Reviewer
 // Sessions per Ticket once its Worker submits done, and the shared driver
@@ -74,7 +85,8 @@ type storedReview struct {
 // prompted on, ReviewPending ticket ids to reviewer type to the owed prompt
 // queue (oldest unanswered tip first), and Reviews ticket ids to reviewer
 // type to verdict; Submits lives on the Daemon so the submit route finds it
-// without a run.
+// without a run. Rows keeps the last published driver row per Ticket in
+// the Run file, so the table survives a Daemon restart.
 type runState struct {
 	ID            string                             `json:"id"`
 	Spec          string                             `json:"spec"`
@@ -97,9 +109,12 @@ type runState struct {
 	ReviewTips    map[string]map[string]string       `json:"reviewTips,omitempty"`
 	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
 	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
+	Rows          map[string]savedRow                `json:"rows,omitempty"`
 	SpecRun       emberloop.SpecRun                  `json:"-"`
 	Driver        *emberloop.DriverRun               `json:"-"`
 	notify        chan struct{}                      `json:"-"`
+	unpause       chan struct{}                      `json:"-"`
+	driving       bool                               `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -259,6 +274,10 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"run": out})
 	case sub == "events" && r.Method == "GET":
 		d.serveRunEvents(w, r, id)
+	case sub == "pause" && r.Method == "POST":
+		d.pauseRun(w, r, id)
+	case sub == "resume" && r.Method == "POST":
+		d.resumeRun(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -361,9 +380,12 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		ReviewTips:    map[string]map[string]string{},
 		ReviewPending: map[string]map[string][]string{},
 		Reprompted:    map[string]int{},
+		Rows:          map[string]savedRow{},
 		SpecRun:       specRun,
 		Driver:        emberloop.NewDriverRun(nil),
 		notify:        make(chan struct{}),
+		unpause:       make(chan struct{}),
+		driving:       true,
 	}
 	for _, p := range previews {
 		blockers := p.Blockers
@@ -400,6 +422,8 @@ func (d *Daemon) driveRun(id string, world emberloop.DriverWorld) {
 	if !ok {
 		return
 	}
+	rs.driving = false
+	d.snapshotRowsLocked(rs)
 	if err != nil {
 		rs.Status = runStatusFailed
 		rs.Error = err.Error()
@@ -419,7 +443,21 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 	return emberloop.DriverWorld{
 		Files:      files,
 		MaxWorkers: max,
-		HasWorker:  func(ticketID string) bool { return false },
+		// HasWorker names started Tickets from the recorded Worker
+		// Sessions, so a resumed Run never starts a second Worker for a
+		// Ticket that already has one. MergedSHA names the merge sha of
+		// an already-merged Ticket, so a resumed Run seeds it as merged
+		// instead of finishing it again.
+		HasWorker: func(ticketID string) bool {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return rs.Sessions[ticketID] != ""
+		},
+		MergedSHA: func(ticketID string) string {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return rs.Merged[ticketID]
+		},
 		StartWorker: func(tk emberloop.DriverTicket) error {
 			return d.runStartWorker(rs.ID, tk)
 		},
@@ -470,7 +508,12 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		},
 		Required: append([]string(nil), requiredReviewerTypes...),
 		Run:      rs.Driver,
+		// Sleep caps the driver's poll, writes the pass to the Run file
+		// first (state, tip, refusal and times per Ticket), then waits out
+		// a pause with no lock held, so Resume never blocks on the driver.
 		Sleep: func(wait time.Duration) {
+			d.snapshotAndPersist(rs.ID)
+			d.pauseGate(rs.ID)
 			if wait > runPollInterval {
 				wait = runPollInterval
 			}
@@ -592,6 +635,12 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		d.mu.Unlock()
 		return
 	}
+	// A paused Run spawns no Reviewers: the driver is frozen and the
+	// Resume's driver re-runs this for every done submit it finds.
+	if rs.Status == runStatusPaused {
+		d.mu.Unlock()
+		return
+	}
 	rec := d.submits[rs.Sessions[ticketID]]
 	if rec == nil || rec.Status != "done" {
 		d.mu.Unlock()
@@ -683,6 +732,12 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		d.mu.Unlock()
 		return fmt.Errorf("unknown run %q", runID)
 	}
+	// A paused Run spawns no Reviewers: fail fast so the driver's next
+	// pass retries after the Resume.
+	if rs.Status == runStatusPaused {
+		d.mu.Unlock()
+		return fmt.Errorf("run is paused")
+	}
 	branch, worktree := rs.Branches[ticketID], rs.Worktrees[ticketID]
 	spec := rs.Spec
 	harness, model := rs.Harness, rs.Model
@@ -716,6 +771,17 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		}
 		d.removeSession(meta.ID)
 		return fmt.Errorf("unknown run %q", runID)
+	}
+
+	// A Pause landing after the entry check drops this attempt instead of
+	// recording a Reviewer for a paused Run; the Resume's driver spawns it.
+	if rs.Status == runStatusPaused {
+		d.mu.Unlock()
+		if be != nil {
+			be.CloseSession(meta.ID)
+		}
+		d.removeSession(meta.ID)
+		return fmt.Errorf("run is paused")
 	}
 	if rs.Reviewers == nil {
 		rs.Reviewers = map[string]map[string]string{}
@@ -763,6 +829,10 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 // Session, a Subagent of the Run, and runs the Ticket prompt on it. A
 // refused live-Session cap retries briefly before failing the Run.
 func (d *Daemon) runStartWorker(runID string, tk emberloop.DriverTicket) error {
+	// A paused Run starts nothing new: wait for the Resume while holding
+	// no lock, so the Resume itself never blocks on this worker. Running
+	// Workers stay live and untouched meanwhile.
+	d.pauseGate(runID)
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
@@ -775,78 +845,98 @@ func (d *Daemon) runStartWorker(runID string, tk emberloop.DriverTicket) error {
 	worktree := filepath.Join(repo, ".emberloop-worktrees", workerID)
 	d.mu.Unlock()
 
-	target, err := runGit(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if err != nil {
-		target = ""
-	}
-	base := "HEAD"
-	if sha, err := runGit(repo, "rev-parse", "HEAD"); err == nil {
-		base = sha
-	} else {
-		return fmt.Errorf("could not read HEAD in %s: %w", repo, err)
-	}
-	if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
-		return err
-	}
 	cleanup := func() {
 		_, _ = runGit(repo, "worktree", "remove", "--force", worktree)
 		_, _ = runGit(repo, "branch", "-D", branch)
 	}
-
-	meta := SessionMeta{
-		ID:        newID(),
-		Harness:   harness,
-		Model:     model,
-		WorkDir:   worktree,
-		Status:    "idle",
-		CreatedAt: time.Now().UTC(),
-		ParentID:  runID,
-	}
-	var be Backend
-	for i := 0; ; i++ {
-		var serr *startError
-		be, serr = d.startSession(meta)
-		if serr == nil {
-			break
+	// A Pause landing anywhere below never records a Worker: the
+	// record-time check drops the attempt and waits for the Resume, then
+	// the start runs again from a clean worktree.
+	for {
+		target, err := runGit(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
+		if err != nil {
+			target = ""
 		}
-		if serr.code != http.StatusTooManyRequests || i >= 60 {
+		base := "HEAD"
+		if sha, err := runGit(repo, "rev-parse", "HEAD"); err == nil {
+			base = sha
+		} else {
+			return fmt.Errorf("could not read HEAD in %s: %w", repo, err)
+		}
+		if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
+			return err
+		}
+		meta := SessionMeta{
+			ID:        newID(),
+			Harness:   harness,
+			Model:     model,
+			WorkDir:   worktree,
+			Status:    "idle",
+			CreatedAt: time.Now().UTC(),
+			ParentID:  runID,
+		}
+		var be Backend
+		for i := 0; ; i++ {
+			var serr *startError
+			be, serr = d.startSession(meta)
+			if serr == nil {
+				break
+			}
+			if serr.code != http.StatusTooManyRequests || i >= 60 {
+				cleanup()
+				return fmt.Errorf("could not start worker for %s: %s", tk.ID, serr.msg)
+			}
+			// Freeze the cap wait while paused instead of burning retries.
+			d.pauseGate(runID)
+			time.Sleep(runPollInterval)
+		}
+		d.mu.Lock()
+		rs, ok = d.runs[runID]
+		if !ok {
+			d.mu.Unlock()
+			if be != nil {
+				be.CloseSession(meta.ID)
+			}
+			d.removeSession(meta.ID)
 			cleanup()
-			return fmt.Errorf("could not start worker for %s: %s", tk.ID, serr.msg)
+			return fmt.Errorf("unknown run %q", runID)
 		}
-		time.Sleep(runPollInterval)
-	}
-	d.mu.Lock()
-	rs, ok = d.runs[runID]
-	if !ok {
+		if rs.Status == runStatusPaused {
+			// Pause won the race after the gate: drop this attempt so no
+			// Worker exists for a paused Run, then wait for the Resume
+			// and start over.
+			d.mu.Unlock()
+			if be != nil {
+				be.CloseSession(meta.ID)
+			}
+			d.removeSession(meta.ID)
+			cleanup()
+			d.pauseGate(runID)
+			continue
+		}
+		rs.Sessions[tk.ID] = meta.ID
+		rs.Branches[tk.ID] = branch
+		rs.Worktrees[tk.ID] = worktree
+		rs.Targets[tk.ID] = target
+		rs.Bases[tk.ID] = base
+		spec := rs.Spec
+		d.persistRun(rs)
+		d.broadcastRunLocked(rs)
 		d.mu.Unlock()
-		if be != nil {
-			be.CloseSession(meta.ID)
-		}
-		d.removeSession(meta.ID)
-		cleanup()
-		return fmt.Errorf("unknown run %q", runID)
-	}
-	rs.Sessions[tk.ID] = meta.ID
-	rs.Branches[tk.ID] = branch
-	rs.Worktrees[tk.ID] = worktree
-	rs.Targets[tk.ID] = target
-	rs.Bases[tk.ID] = base
-	d.persistRun(rs)
-	d.broadcastRunLocked(rs)
-	d.mu.Unlock()
 
-	d.persistResumeToken(be, meta.ID)
-	d.appendEvent(meta.ID, "status", "", "idle")
-	prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes.", tk.ID, rs.Spec, tk.Path, branch)
-	d.mu.Lock()
-	if s, ok := d.sessions[meta.ID]; ok {
-		s.busy = true
-		s.active++
+		d.persistResumeToken(be, meta.ID)
+		d.appendEvent(meta.ID, "status", "", "idle")
+		prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes.", tk.ID, spec, tk.Path, branch)
+		d.mu.Lock()
+		if s, ok := d.sessions[meta.ID]; ok {
+			s.busy = true
+			s.active++
+		}
+		d.mu.Unlock()
+		d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
+		go d.runTurn(meta.ID, be, prompt)
+		return nil
 	}
-	d.mu.Unlock()
-	d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
-	go d.runTurn(meta.ID, be, prompt)
-	return nil
 }
 
 // runTellWorker steers the Ticket's Worker Session with the driver's text:
@@ -869,6 +959,9 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
 	if _, code := d.routeLive(sessionID, "steer", text); code != http.StatusAccepted {
 		return fmt.Errorf("could not reach worker for %s", ticketID)
 	}
+	// The tell carries the refusal the row shows: write the pass now, so
+	// the file holds it even when the next pass never sleeps.
+	d.snapshotAndPersist(runID)
 	return nil
 }
 
@@ -1081,6 +1174,12 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 			state = string(row.State)
 			lastRefusal = row.LastRefusal
 			tip = row.Tip
+		} else if saved, ok := rs.Rows[t.ID]; ok {
+			// No live Driver (reloaded or finished on another boot): show
+			// the row the last pass wrote.
+			state = saved.State
+			lastRefusal = saved.LastRefusal
+			tip = saved.Tip
 		} else if rs.Status == runStatusPaused {
 			state = runStatusPaused
 		}
@@ -1395,9 +1494,151 @@ func (d *Daemon) loadRuns() {
 		if rs.Reprompted == nil {
 			rs.Reprompted = map[string]int{}
 		}
+		if rs.Rows == nil {
+			rs.Rows = map[string]savedRow{}
+		}
 		rs.Driver = emberloop.NewDriverRun(nil)
 		rs.notify = make(chan struct{})
+		rs.unpause = make(chan struct{})
 		cp := rs
 		d.runs[cp.ID] = &cp
 	}
+}
+
+// snapshotRowsLocked copies the driver's live rows into the Run: one row
+// per Ticket with state, tip, last refusal and state entry time. Callers
+// hold d.mu.
+func (d *Daemon) snapshotRowsLocked(rs *runState) {
+	if rs.Driver == nil {
+		return
+	}
+	if rs.Rows == nil {
+		rs.Rows = map[string]savedRow{}
+	}
+	for _, row := range rs.Driver.Snapshot() {
+		rs.Rows[row.ID] = savedRow{State: string(row.State), Tip: row.Tip, LastRefusal: row.LastRefusal, Since: row.Since}
+	}
+}
+
+// snapshotAndPersist writes one driver pass to the Run file and wakes its
+// SSE streams. Callers hold no lock.
+func (d *Daemon) snapshotAndPersist(runID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		return
+	}
+	d.snapshotRowsLocked(rs)
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+}
+
+// pauseGate blocks while the Run is paused and returns once it runs again.
+// It holds no lock while waiting, so Pause and Resume never block on the
+// driver. An unknown Run returns at once; its caller reports it.
+func (d *Daemon) pauseGate(runID string) {
+	for {
+		d.mu.Lock()
+		rs, ok := d.runs[runID]
+		if !ok || rs.Status != runStatusPaused {
+			d.mu.Unlock()
+			return
+		}
+		ch := rs.unpause
+		d.mu.Unlock()
+		if ch == nil {
+			return
+		}
+		<-ch
+	}
+}
+
+// pauseRun freezes a running Run: its driver starts nothing new while
+// paused (the next start and the next poll both wait) and running Worker
+// Sessions stay live and untouched. Anything else is 409.
+func (d *Daemon) pauseRun(w http.ResponseWriter, r *http.Request, id string) {
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if rs.Status != runStatusRunning {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not running"})
+		return
+	}
+	rs.Status = runStatusPaused
+	d.persistRun(rs)
+	out := d.runJSONLocked(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"run": out})
+}
+
+// resumeRun continues a paused Run without starting a second Worker for a
+// Ticket that already has one: started Tickets keep their Sessions and
+// merged ones seed from their shas. Anything else is 409.
+func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if rs.Status != runStatusPaused {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not paused"})
+		return
+	}
+	spec := rs.Spec
+	d.mu.Unlock()
+	specRun, err := emberloop.ResolveSpec(spec)
+	if err != nil {
+		// The Run exists; its spec no longer resolves. That is Daemon
+		// state, not a missing Run.
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	files, err := emberloop.ReadDriverFiles(specRun)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	max := d.MaxRunning()
+	d.mu.Lock()
+	rs, ok = d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if rs.Status != runStatusPaused {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not paused"})
+		return
+	}
+	rs.SpecRun = specRun
+	rs.Status = runStatusRunning
+	if rs.unpause != nil {
+		close(rs.unpause)
+	}
+	rs.unpause = make(chan struct{})
+	var world emberloop.DriverWorld
+	startDriver := !rs.driving
+	if startDriver {
+		rs.driving = true
+		world = d.webDriverWorld(rs, files, max)
+	}
+	d.persistRun(rs)
+	out := d.runJSONLocked(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	if startDriver {
+		go d.driveRun(rs.ID, world)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": out})
 }

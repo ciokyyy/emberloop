@@ -131,4 +131,52 @@ describe('RunsView', () => {
     expect(within(table).getByText('abcdef12')).toBeTruthy();
     expect(within(table).getByText(/not reviewed to a pass/)).toBeTruthy();
   });
+
+  it('shows the paused state with a Resume button, and Pause while running', async () => {
+    let status = 'paused';
+    const live = () => ({
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      status,
+      tickets: [
+        { id: '01-first', title: 'First', state: 'running', workerSession: 'sess-abcdef123456', lastRefusal: '' },
+      ],
+    });
+    const calls = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u, opts) => {
+        calls.push(String(u));
+        if (String(u).endsWith('/resume')) {
+          status = 'running';
+          return { ok: true, json: async () => ({ run: live() }) };
+        }
+        if (String(u).endsWith('/pause')) {
+          status = 'paused';
+          return { ok: true, json: async () => ({ run: live() }) };
+        }
+        return {
+          ok: true,
+          json: async () => {
+            const s = String(u);
+            if (s.includes('/api/runs/')) return { run: live() };
+            if (s.includes('/api/runs') && opts?.method === 'POST') return { run: live() };
+            if (s.includes('/api/specs/preview')) return preview;
+            return { specs: [{ spec: '/repo/.scratch/demo/spec.md', title: 'Demo spec', tickets: 1 }] };
+          },
+        };
+      }),
+    );
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    await fireEvent.click(await within(container).findByText(/demo spec/i));
+    await tick();
+    await fireEvent.click(await within(container).findByText(/start run/i));
+    await within(container).findByRole('button', { name: /resume/i });
+    await fireEvent.click(await within(container).findByRole('button', { name: /resume/i }));
+    expect(calls.some((u) => u.endsWith('/api/runs/run-1/resume'))).toBe(true);
+    await within(container).findByRole('button', { name: /^pause/i });
+    await fireEvent.click(await within(container).findByRole('button', { name: /^pause/i }));
+    expect(calls.some((u) => u.endsWith('/api/runs/run-1/pause'))).toBe(true);
+    await within(container).findByRole('button', { name: /resume/i });
+  });
 });

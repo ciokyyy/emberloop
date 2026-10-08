@@ -1,0 +1,378 @@
+package web
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// postRunAction posts to a Run action (pause, resume) and returns the Run
+// with the response code. Empty body: the action needs no arguments.
+func postRunAction(t *testing.T, base, id, action string) (runJSON, int) {
+	t.Helper()
+	resp, err := http.Post(base+"/api/runs/"+id+"/"+action, "application/json", bytes.NewReader(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Run runJSON `json:"run"`
+	}
+	if resp.StatusCode == http.StatusOK {
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return out.Run, resp.StatusCode
+}
+
+// listRunsJSON lists every Run the Daemon knows, finished ones included.
+func listRunsJSON(t *testing.T, base string) []runJSON {
+	t.Helper()
+	resp, err := http.Get(base + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		Runs []runJSON `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Runs
+}
+
+// countSessions counts the Daemon's Sessions through the public list, which
+// answers a bare array.
+func countSessions(t *testing.T, base string) int {
+	t.Helper()
+	resp, err := http.Get(base + "/api/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sessions status = %d, want 200", resp.StatusCode)
+	}
+	var out []any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return len(out)
+}
+
+// assertHolds fails fast when cond turns false and passes after dur of it
+// holding: negative assertions (nothing started while paused) that catch a
+// violation at once instead of sampling once after a fixed sleep.
+func assertHolds(t *testing.T, dur time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(dur)
+	for time.Now().Before(deadline) {
+		if !cond() {
+			t.Fatalf("while holding: %s", what)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// runFileRows reads the Run's persisted file and returns its per-Ticket
+// rows. Empty while no driver pass has been written yet.
+func runFileRows(t *testing.T, stateDir, id string) map[string]map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(stateDir, "enderbloom", "runs", id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		Status string                    `json:"status"`
+		Rows   map[string]map[string]any `json:"rows"`
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	return saved.Rows
+}
+
+// A paused Run starts nothing new and leaves its Workers alone: after the
+// pause a submitted done still waits, the next Ticket stays queued, and the
+// Worker Session is the same one. Resume continues to done with no second
+// Worker for any Ticket, and the finished Run stays listed and readable.
+func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
+	repo, spec := initRunRepo(t, chainTickets())
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != "" &&
+			ticketByID(r, "02-second").WorkerSession == ""
+	}, "only 01-first started")
+	first := ticketByID(r, "01-first").WorkerSession
+
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+		t.Fatalf("pause status = %d, want 200", code)
+	}
+	if got := getRun(t, srv.URL, run.ID).Status; got != "paused" {
+		t.Fatalf("status = %q, want paused", got)
+	}
+
+	// The Worker submits while paused: nothing merges and nothing new
+	// starts until the Resume.
+	submitSession(t, srv.URL, first, "done", []string{"alpha"})
+	assertHolds(t, 1500*time.Millisecond, "01-first merged while paused", func() bool {
+		return ticketByID(getRun(t, srv.URL, run.ID), "01-first").State != "merged"
+	})
+	assertHolds(t, 1500*time.Millisecond, "02-second started while paused", func() bool {
+		return ticketByID(getRun(t, srv.URL, run.ID), "02-second").WorkerSession == ""
+	})
+	if got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").WorkerSession; got != first {
+		t.Fatalf("01-first worker = %q, want the same %q", got, first)
+	}
+
+	resumed, code := postRunAction(t, srv.URL, run.ID, "resume")
+	if code != http.StatusOK {
+		t.Fatalf("resume status = %d, want 200", code)
+	}
+	if resumed.Status != "running" {
+		t.Fatalf("resumed status = %q, want running", resumed.Status)
+	}
+	if got := ticketByID(resumed, "01-first").WorkerSession; got != first {
+		t.Fatalf("resumed 01-first worker = %q, want the same %q (no second Worker)", got, first)
+	}
+
+	// The done submit from the pause now drives: reviewers, merge, and the
+	// next Ticket starts exactly once.
+	passReviewers(t, srv.URL, run.ID, "01-first")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "merged" &&
+			ticketByID(r, "02-second").WorkerSession != ""
+	}, "01-first merged and 02-second started after resume")
+	second := ticketByID(r, "02-second").WorkerSession
+	submitSession(t, srv.URL, second, "done", []string{"beta"})
+	passReviewers(t, srv.URL, run.ID, "02-second")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "02-second").State == "merged" &&
+			ticketByID(r, "03-third").WorkerSession != ""
+	}, "02-second merged and 03-third started")
+	third := ticketByID(r, "03-third").WorkerSession
+	submitSession(t, srv.URL, third, "done", []string{"gamma"})
+	passReviewers(t, srv.URL, run.ID, "03-third")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done")
+	for _, tk := range r.Tickets {
+		if tk.State != "merged" {
+			t.Fatalf("ticket %s state = %q, want merged", tk.ID, tk.State)
+		}
+	}
+
+	runs := listRunsJSON(t, srv.URL)
+	found := false
+	for _, cand := range runs {
+		if cand.ID == run.ID {
+			found = true
+			if cand.Status != "done" || len(cand.Tickets) != 3 {
+				t.Fatalf("listed run = %+v, want done with 3 tickets", cand)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("finished run %s missing from the list", run.ID)
+	}
+
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusConflict {
+		t.Fatalf("pause on done = %d, want 409", code)
+	}
+}
+
+// Restarting the Daemon mid-Run leaves the Run paused with nothing spawned:
+// the same Worker Session waits, and Resume continues without a second
+// Worker. Run state reaches the file on every driver pass, so the reloaded
+// Run shows its Ticket rows.
+func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	stateDir := t.TempDir()
+	d := NewDaemon(stateDir, NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "01-first started")
+	first := ticketByID(r, "01-first").WorkerSession
+	before := countSessions(t, srv.URL)
+
+	// Every driver pass reaches the file: the row for the started Ticket is
+	// already there before any restart.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if rows := runFileRows(t, stateDir, run.ID); rows["01-first"] != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run file has no row for 01-first")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Pausing first freezes the old driver, the way a real restart kills
+	// it: the reloaded Daemon below is the only driver afterwards.
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+		t.Fatalf("pause status = %d, want 200", code)
+	}
+	srv.Close()
+
+	d2 := NewDaemon(stateDir, NewFakeBackend())
+	srv2 := httptest.NewServer(d2.Handler())
+	defer srv2.Close()
+
+	r = getRun(t, srv2.URL, run.ID)
+	if r.Status != "paused" {
+		t.Fatalf("reloaded status = %q, want paused", r.Status)
+	}
+	if got := ticketByID(r, "01-first"); got.WorkerSession != first {
+		t.Fatalf("reloaded worker = %q, want %q", got.WorkerSession, first)
+	}
+	if got := ticketByID(r, "01-first"); got.State == "" || got.State == "queued" {
+		t.Fatalf("reloaded 01-first state = %q, want the persisted row", got.State)
+	}
+	assertHolds(t, time.Second, "reload spawned a session", func() bool {
+		return countSessions(t, srv2.URL) == before
+	})
+	assertHolds(t, time.Second, "reloaded run left paused", func() bool {
+		return getRun(t, srv2.URL, run.ID).Status == "paused"
+	})
+
+	resumed, code := postRunAction(t, srv2.URL, run.ID, "resume")
+	if code != http.StatusOK {
+		t.Fatalf("resume status = %d, want 200", code)
+	}
+	if got := ticketByID(resumed, "01-first").WorkerSession; got != first {
+		t.Fatalf("resumed worker = %q, want the same %q (no second Worker)", got, first)
+	}
+	if got := countSessions(t, srv2.URL); got != before {
+		t.Fatalf("sessions after resume = %d, want %d (no second Worker)", got, before)
+	}
+
+	submitSession(t, srv2.URL, first, "done", []string{"alpha"})
+	passReviewers(t, srv2.URL, run.ID, "01-first")
+	r = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "merged" &&
+			ticketByID(r, "02-second").WorkerSession != ""
+	}, "01-first merged and 02-second started after resume")
+	second := ticketByID(r, "02-second").WorkerSession
+	submitSession(t, srv2.URL, second, "done", []string{"beta"})
+	passReviewers(t, srv2.URL, run.ID, "02-second")
+	_ = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done")
+}
+
+// Pause and Resume refuse the wrong states and unknown Runs.
+func TestPauseResumeValidation(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != http.StatusConflict {
+		t.Fatalf("resume while running = %d, want 409", code)
+	}
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+		t.Fatalf("pause = %d, want 200", code)
+	}
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusConflict {
+		t.Fatalf("second pause = %d, want 409", code)
+	}
+	if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != http.StatusOK {
+		t.Fatalf("resume = %d, want 200", code)
+	}
+	if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != http.StatusConflict {
+		t.Fatalf("second resume = %d, want 409", code)
+	}
+	if _, code := postRunAction(t, srv.URL, "no-such-run", "pause"); code != http.StatusNotFound {
+		t.Fatalf("pause unknown = %d, want 404", code)
+	}
+	if _, code := postRunAction(t, srv.URL, "no-such-run", "resume"); code != http.StatusNotFound {
+		t.Fatalf("resume unknown = %d, want 404", code)
+	}
+}
+
+// A Pause racing a start records nothing: the attempt is dropped and the
+// Resume starts every Ticket exactly once, with no orphan Session left
+// behind. Rounds retry until a Pause lands before the driver's first start;
+// other rounds prove nothing and close their server.
+func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
+	tickets := map[string]string{
+		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
+	}
+	for n := 0; ; n++ {
+		if n >= 6 {
+			t.Fatalf("pause never landed before the first start in 6 rounds")
+		}
+		repo, spec := initRunRepo(t, tickets)
+		d := NewDaemon(t.TempDir(), NewFakeBackend())
+		srv := httptest.NewServer(d.Handler())
+		run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+		if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+			srv.Close()
+			t.Fatalf("pause status = %d, want 200", code)
+		}
+		r := getRun(t, srv.URL, run.ID)
+		if ticketByID(r, "01-first").WorkerSession != "" ||
+			ticketByID(r, "02-second").WorkerSession != "" {
+			// Pause lost the race: a Worker already exists. Next round.
+			srv.Close()
+			continue
+		}
+		// Pause won: no Worker may appear until the Resume.
+		assertHolds(t, time.Second, "worker started while paused", func() bool {
+			rr := getRun(t, srv.URL, run.ID)
+			return ticketByID(rr, "01-first").WorkerSession == "" &&
+				ticketByID(rr, "02-second").WorkerSession == ""
+		})
+		if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != http.StatusOK {
+			srv.Close()
+			t.Fatalf("resume status = %d, want 200", code)
+		}
+		r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+			return ticketByID(r, "01-first").WorkerSession != "" &&
+				ticketByID(r, "02-second").WorkerSession != ""
+		}, "both workers started after resume")
+		// No dropped attempt left an orphan Session behind.
+		if got := countSessions(t, srv.URL); got != 2 {
+			srv.Close()
+			t.Fatalf("sessions = %d, want 2 (no orphan from the dropped start)", got)
+		}
+		first, second := ticketByID(r, "01-first").WorkerSession, ticketByID(r, "02-second").WorkerSession
+		submitSession(t, srv.URL, first, "done", []string{"alpha"})
+		submitSession(t, srv.URL, second, "done", []string{"beta"})
+		passReviewers(t, srv.URL, run.ID, "01-first")
+		passReviewers(t, srv.URL, run.ID, "02-second")
+		r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+			return r.Status == "done"
+		}, "run done")
+		if got := ticketByID(r, "01-first").WorkerSession; got != first {
+			srv.Close()
+			t.Fatalf("01-first worker changed to %q, want the same %q", got, first)
+		}
+		if got := ticketByID(r, "02-second").WorkerSession; got != second {
+			srv.Close()
+			t.Fatalf("02-second worker changed to %q, want the same %q", got, second)
+		}
+		srv.Close()
+		return
+	}
+}

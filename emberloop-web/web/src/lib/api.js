@@ -98,3 +98,15 @@ export function openRunStream(id, onRun) {
   };
   return source;
 }
+
+export const pauseRun = (id) =>
+  fetch(url(`/api/runs/${id}/pause`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(json);
+
+export const resumeRun = (id) =>
+  fetch(url(`/api/runs/${id}/resume`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(json);
