@@ -105,6 +105,11 @@ func TestPreviewTicketsUnknownAmbiguousAndNumberless(t *testing.T) {
 	if err := byID["03-unk"].Error; !strings.Contains(err, "unknown") {
 		t.Fatalf("unknown error = %q, want unknown", err)
 	}
+	for _, id := range []string{"02-amb", "03-unk", "notes"} {
+		if len(byID[id].Blockers) != 0 {
+			t.Fatalf("%s blockers = %q, want none on an error row", id, byID[id].Blockers)
+		}
+	}
 	if err := byID["notes"].Error; !strings.Contains(err, "no ticket number") {
 		t.Fatalf("notes error = %q, want no ticket number", err)
 	}

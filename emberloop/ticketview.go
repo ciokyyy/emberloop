@@ -171,7 +171,7 @@ func PreviewTickets(spec SpecRun, files map[string]string) []TicketPreview {
 			}
 		}
 		if p.preview.Error != "" {
-			resolved = nil
+			resolved = []string{}
 		}
 		sort.Slice(resolved, func(a, b int) bool {
 			if ids[resolved[a]] != ids[resolved[b]] {
