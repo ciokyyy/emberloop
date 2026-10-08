@@ -4,10 +4,10 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A pig Session answers a prompt and streams Events in the normalized schema
-- [ ] The Session offers no native tools, only the emberloop MCP tools
-- [ ] Model choices for pig match the pig model listing
-- [ ] Ending the Session closes the SDK session and runtime without leaks
-- [ ] A live probe (not in the main check) proves the above with a real pig
+- [x] A pig Session answers a prompt and streams Events in the normalized schema
+- [x] The Session offers no native tools, only the emberloop MCP tools
+- [x] Model choices for pig match the pig model listing
+- [x] Ending the Session closes the SDK session and runtime without leaks
+- [x] A live probe (not in the main check) proves the above with a real pig
