@@ -18,11 +18,20 @@ import (
 )
 
 // Backend drives one harness behind the Daemon. The fake Backend replays
-// scripted Events; real Backends arrive in later tickets.
+// scripted Events; real Backends (pig in ticket 03, claude in ticket 04)
+// drive the harness SDK. Backends are registered per harness; the default
+// Backend serves any harness without one.
 type Backend interface {
-	// OnPrompt runs after the prompt Event is stored. It appends scripted
-	// follow-up Events through appendEvent.
+	// OnPrompt runs after the prompt Event is stored. It appends follow-up
+	// Events through appendEvent.
 	OnPrompt(sessionID, text string, appendEvent func(kind, text, status string))
+	// CreateSession allocates the harness Session; emit streams its Events.
+	// An error rejects the create with a 400.
+	CreateSession(meta SessionMeta, emit func(kind, text, status string)) error
+	// CloseSession releases the harness Session without deleting history.
+	CloseSession(sessionID string)
+	// Models lists the harness's runnable models.
+	Models() []string
 }
 
 // Daemon owns every Session, writes Event logs and serves the API.
@@ -32,6 +41,7 @@ type Daemon struct {
 
 	mu       sync.Mutex
 	sessions map[string]*session
+	backends map[string]Backend
 }
 
 type session struct {
@@ -47,18 +57,53 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		stateDir: stateDir,
 		backend:  backend,
 		sessions: map[string]*session{},
+		backends: map[string]Backend{},
 	}
 	d.load()
 	return d
+}
+
+// RegisterBackend routes one harness to its Backend. The binary registers
+// the pig Backend; tests register their own.
+func (d *Daemon) RegisterBackend(harness string, be Backend) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.backends[harness] = be
+}
+
+// backendForLocked picks the harness Backend; callers hold d.mu.
+func (d *Daemon) backendForLocked(harness string) Backend {
+	if be, ok := d.backends[harness]; ok {
+		return be
+	}
+	return d.backend
 }
 
 // Handler returns the full HTTP handler with the loopback guard applied.
 func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", d.serveUI)
+	mux.HandleFunc("/api/models", d.handleModels)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	return guard(mux)
+}
+
+// handleModels lists the harness's runnable models for the new-Session form.
+func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	harness := r.URL.Query().Get("harness")
+	if harness == "" {
+		http.Error(w, "harness is required", http.StatusBadRequest)
+		return
+	}
+	d.mu.Lock()
+	be := d.backendForLocked(harness)
+	d.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"models": be.Models()})
 }
 
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
@@ -136,7 +181,21 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		d.sessions[meta.ID] = &session{meta: meta, notify: make(chan struct{}), last: time.Now()}
 		d.persistMeta(meta)
+		be := d.backendForLocked(req.Harness)
 		d.mu.Unlock()
+		if be != nil {
+			id := meta.ID
+			if err := be.CreateSession(meta, func(kind, text, status string) {
+				d.appendEvent(id, kind, text, status)
+			}); err != nil {
+				d.mu.Lock()
+				delete(d.sessions, meta.ID)
+				d.mu.Unlock()
+				_ = os.RemoveAll(d.sessionDir(meta.ID))
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 		d.appendEvent(meta.ID, "status", "", "idle")
 		d.mu.Lock()
 		m := d.sessions[meta.ID].meta
@@ -177,20 +236,44 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.mu.Lock()
-		if _, ok := d.sessions[id]; !ok {
+		s, ok := d.sessions[id]
+		if !ok {
 			d.mu.Unlock()
 			http.NotFound(w, r)
 			return
 		}
+		if s.meta.Status == "ended" {
+			d.mu.Unlock()
+			http.Error(w, "session ended", http.StatusGone)
+			return
+		}
+		be := d.backendForLocked(s.meta.Harness)
 		d.mu.Unlock()
 		e := d.appendEvent(id, "prompt", req.Text, "")
-		if d.backend != nil {
-			be := d.backend
+		if be != nil {
 			go be.OnPrompt(id, req.Text, func(kind, text, status string) {
 				d.appendEvent(id, kind, text, status)
 			})
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"seq": e.Seq})
+	case sub == "" && r.Method == "DELETE":
+		d.mu.Lock()
+		s, ok := d.sessions[id]
+		if !ok {
+			d.mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		be := d.backendForLocked(s.meta.Harness)
+		d.mu.Unlock()
+		if be != nil {
+			be.CloseSession(id)
+		}
+		d.appendEvent(id, "status", "", "ended")
+		d.mu.Lock()
+		m := d.sessions[id].meta
+		d.mu.Unlock()
+		writeJSON(w, http.StatusOK, m)
 	case sub == "events" && r.Method == "GET":
 		d.serveEvents(w, r, id)
 	default:

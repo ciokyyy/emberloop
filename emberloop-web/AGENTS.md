@@ -17,7 +17,12 @@ imports it. No herdr, no ticket state.
 - Terms follow root `GLOSSARY.md`.
 - Real Backends prove out in live probes, never the main check.
 - API is the test seam: `api_test.go` drives the Daemon's HTTP and SSE API
-  with the fake Backend (create, prompt, replay, guard, restart, UI).
+  with the fake Backend (create, prompt, replay, guard, restart, UI);
+  `pig_test.go` does the same with the pig Backend on the SDK test-faux
+  provider, and `pig_live_test.go` (env-gated) with a real pig.
+- `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
+  ExtraTools only, models from the SDK catalog, one SDK stack per Session
+  closed by DELETE. Backends register per harness; the fake stays default.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
   `meta.json` plus append-only `events.jsonl`; the Daemon reloads both on start.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`

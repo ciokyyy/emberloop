@@ -13,3 +13,11 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 	appendEvent("assistant_chunk", "fake reply to: "+text, "")
 	appendEvent("status", "", "idle")
 }
+
+func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	return nil
+}
+
+func (f *FakeBackend) CloseSession(sessionID string) {}
+
+func (f *FakeBackend) Models() []string { return []string{"fake-model"} }
