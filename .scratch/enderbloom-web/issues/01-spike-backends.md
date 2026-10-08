@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The probe programs are committed and re-runnable with one command each
-- [ ] Each of the seven open questions in the spec's Spike Findings has a written answer with evidence (captured output)
-- [ ] The claude run shows no native tools offered, only the emberloop MCP tools
-- [ ] The pig run shows no native tools offered, only the emberloop MCP tools
-- [ ] A recommendation is recorded: adapter or fallback for claude, with the reason
-- [ ] Any change to tickets 03 to 05 is written into those files
+- [x] The probe programs are committed and re-runnable with one command each
+- [x] Each of the seven open questions in the spec's Spike Findings has a written answer with evidence (captured output)
+- [x] The claude run shows no native tools offered, only the emberloop MCP tools
+- [x] The pig run shows no native tools offered, only the emberloop MCP tools
+- [x] A recommendation is recorded: adapter or fallback for claude, with the reason
+- [x] Any change to tickets 03 to 05 is written into those files
