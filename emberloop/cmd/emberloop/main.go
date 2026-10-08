@@ -182,12 +182,20 @@ func run(argv []string) error {
 			return err
 		}
 		if *driverMode {
-			// The full driver loop lands in a later ticket: check the graph
-			// first, since it fails before any worker would start, then stop.
+			// A bad graph fails before anything is created or spawned.
 			if err := emberloop.RunDriverCheck(spec, io.Discard); err != nil {
 				return err
 			}
-			return fmt.Errorf("emberloop implement: --driver run is not implemented yet; --driver --check validates the ticket graph")
+			created, err := emberloop.EnterIntegrationBranch(emberloop.OSExec, cwd, spec.Branch)
+			if err != nil {
+				return err
+			}
+			verb := "resuming on"
+			if created {
+				verb = "created"
+			}
+			fmt.Fprintf(os.Stderr, "emberloop: %s %s\n", verb, spec.Branch)
+			return emberloop.RunDriverLive(spec, cwd, os.Stdout)
 		}
 		r, err := sessionRole(sub, *role)
 		if err != nil {

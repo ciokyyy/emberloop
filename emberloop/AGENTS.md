@@ -46,11 +46,14 @@ owns its `_test.go` and the behaviour below):
   `tell.go`, `deliver.go`, `integration.go`, `run.go`, `history.go`
 - Driver: `driver.go` (the deterministic `implement --driver` loop's one seam:
   `RunDriver` takes the spec and an injected world of ticket files, fake ops
-  and a fake clock; the ticket graph check fails before any worker starts, and
-  `RunDriverCheck` prints the start order for `--driver --check`. The mode
-  flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`; `--llm` and
-  a bare run keep the LLM orchestrator, while `--driver` without `--check`
-  needs a herdr pane, checks the graph, then stops at the unbuilt loop)
+  and a fake clock. A world without `Finish` only checks the ticket graph and
+  prints the start order for `--driver --check`. A world with it runs the
+  happy-path loop: tickets start in number order up to `MaxWorkers` once
+  their blockers merged, `finish` runs only after every required reviewer
+  type passed at the worker's current tip, and the plain report lists merges
+  with sha. `RunDriverLive` wires the live spawn, verdict and finish ops.
+  The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
+  `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`
 - Transport: `mcp/` (child doc); binaries are `cmd/emberloop/main.go` (harness

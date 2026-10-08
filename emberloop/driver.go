@@ -9,22 +9,70 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"example.com/emberloop/tools"
 )
+
+// DriverReview is one reviewer type's verdict as the driver sees it: the
+// status and the commit it was given at. It models the same review record
+// finish itself checks; commit equality is the gate, so a branch change after
+// a pass reads as unreviewed again.
+type DriverReview struct {
+	Verdict string
+	At      string
+}
+
+// DriverFinish is what the world's finish did: whether the ticket merged,
+// the merge sha, or the refusal text when it did not.
+type DriverFinish struct {
+	Merged bool
+	SHA    string
+	Detail string
+}
+
+// DriverMerged is one merged ticket with the sha it merged as.
+type DriverMerged struct {
+	ID  string
+	SHA string
+}
 
 // DriverWorld is the injected world the deterministic driver runs against:
 // the ticket files, a fake clock, and the operations the driver calls. Tests
 // build it from a map and a fake; the CLI fills the files from disk.
+// A world without Finish is a check world: RunDriver only orders tickets and
+// never starts workers. A world with it is a run world: RunDriver also runs
+// the happy-path loop to a stable state.
 type DriverWorld struct {
 	// Files holds every ticket file by path. RunDriver only reads entries
 	// under the spec's tickets directory ending in .md.
 	Files map[string]string
 	// Now is the clock the driver reads. Nil means time.Now; tests inject a
-	// fake. Check mode keeps no time, but the seam stays one entry point for
-	// the later tickets that retry with backoff.
+	// fake. The happy path keeps no time, but the seam stays one entry
+	// point for the later tickets that retry with backoff.
 	Now func() time.Time
 	// StartWorker starts one ticket's worker. The graph check runs before any
 	// worker would start, so check mode never calls it.
 	StartWorker func(DriverTicket) error
+	// MaxWorkers caps how many workers run at once. Zero means three, the
+	// same default as the worker cap.
+	MaxWorkers int
+	// Tip is a worker's current branch tip.
+	Tip func(ticketID string) string
+	// Reviews holds the reviewer verdicts for a ticket's worker.
+	Reviews func(ticketID string) map[string]DriverReview
+	// Finish merges a ticket's worker once its gate passes.
+	Finish func(ticketID string) (DriverFinish, error)
+	// Required names the reviewer types every finish needs. Nil means the
+	// two built-in reviewers.
+	Required []string
+	// RequiredFor names the reviewer types one ticket's finish needs, so a
+	// worker type with its own requires_review gates like finish gates it.
+	// Nil falls back to Required.
+	RequiredFor func(ticketID string) []string
+	// Sleep waits between polls while tickets stay unmerged but nothing
+	// changed. Nil means tests: the run ends at a stable state. A live run
+	// passes time.Sleep, so the driver waits for workers instead of ending.
+	Sleep func(time.Duration)
 }
 
 // DriverTicket is one ticket as the driver sees it: its id (the file base),
@@ -37,15 +85,22 @@ type DriverTicket struct {
 }
 
 // DriverResult is what the driver computed: the tickets in the order work
-// would start, by ticket number among tickets whose blockers are done.
+// would start, by ticket number among tickets whose blockers are done, plus
+// the merges a run world reached and the plain report of them.
 type DriverResult struct {
-	Order []DriverTicket
+	Order  []DriverTicket
+	Merged []DriverMerged
+	Report string
 }
 
 // RunDriver is the driver's one seam: the spec plus the injected world in,
-// the start order out. It reads every ticket's Blocked by line first, and a
-// line that does not parse, an id that names no ticket, or a dependency cycle
-// fails before any worker starts.
+// the start order, the merges and the plain report out. It reads every
+// ticket's Blocked by line first, and a line that does not parse, an id that
+// names no ticket, or a dependency cycle fails before any worker starts.
+// A check world (no Finish) stops at the order. A run world also runs the
+// happy-path loop: tickets start in ticket-number order up to MaxWorkers
+// once their blockers have merged, and finish runs only after every required
+// reviewer type passed at the worker's current tip.
 func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	tickets, err := readDriverTickets(spec, world.Files)
 	if err != nil {
@@ -55,27 +110,190 @@ func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	if err != nil {
 		return DriverResult{}, err
 	}
-	return DriverResult{Order: order}, nil
+	res := DriverResult{Order: order}
+	if world.Finish == nil {
+		return res, nil
+	}
+	merged, report, err := runDriverLoop(order, world)
+	if err != nil {
+		return DriverResult{}, err
+	}
+	res.Merged, res.Report = merged, report
+	return res, nil
+}
+
+// driverPollInterval spaces a live run's polls while tickets stay unmerged
+// but nothing changed.
+const driverPollInterval = 5 * time.Second
+
+// runDriverLoop runs the happy path to a stable state: start what is ready,
+// finish what passed at its tip, repeat. A pass with no start, no merge and
+// no observed change ends the run in tests; a live run sleeps and polls
+// again instead, so it waits for workers rather than quitting on them. A
+// refused finish (later tickets tell the worker and retry) simply stays
+// running here.
+func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, string, error) {
+	maxRun := world.MaxWorkers
+	if maxRun <= 0 {
+		maxRun = 3
+	}
+	merged := map[string]bool{}
+	started := map[string]bool{}
+	seen := map[string]string{}
+	refused := map[string]string{}
+	var out []DriverMerged
+	running := 0
+	ready := func(tk DriverTicket) bool {
+		if started[tk.ID] {
+			return false
+		}
+		for _, b := range tk.Blockers {
+			if !merged[b] {
+				return false
+			}
+		}
+		return true
+	}
+	for {
+		progress, changed := false, false
+		for running < maxRun {
+			next := -1
+			for i, tk := range order {
+				if ready(tk) && (next < 0 || tk.Num < order[next].Num || (tk.Num == order[next].Num && tk.ID < order[next].ID)) {
+					next = i
+				}
+			}
+			if next < 0 {
+				break
+			}
+			if err := world.StartWorker(order[next]); err != nil {
+				return nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
+			}
+			started[order[next].ID] = true
+			running++
+			progress = true
+		}
+		for _, tk := range order {
+			if !started[tk.ID] || merged[tk.ID] {
+				continue
+			}
+			before := world.Tip(tk.ID)
+			revs := world.Reviews(tk.ID)
+			tip := world.Tip(tk.ID)
+			required := driverRequired(world, tk.ID)
+			if sig := tip + "\x00" + driverReviewSig(required, revs); sig != seen[tk.ID] {
+				seen[tk.ID] = sig
+				changed = true
+			}
+			if before != tip || !driverGatePass(required, revs, tip) {
+				continue
+			}
+			fin, err := world.Finish(tk.ID)
+			if err != nil {
+				return nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
+			}
+			if !fin.Merged {
+				// A refused finish stays running; its text lands on the
+				// unmerged line, and a later ticket owns the retry. An empty
+				// Detail clears the line back to still running.
+				if fin.Detail == "" {
+					delete(refused, tk.ID)
+				} else {
+					refused[tk.ID] = fin.Detail
+				}
+				continue
+			}
+			merged[tk.ID] = true
+			running--
+			out = append(out, DriverMerged{ID: tk.ID, SHA: fin.SHA})
+			progress = true
+		}
+		if len(out) == len(order) {
+			break
+		}
+		if progress || changed {
+			continue
+		}
+		if world.Sleep == nil {
+			break
+		}
+		world.Sleep(driverPollInterval)
+	}
+	return out, driverReport(order, out, started, merged, refused), nil
+}
+
+// driverRequired names the reviewer types one ticket's finish needs: its own
+// hook, then the world's list, then the two built-in reviewers.
+func driverRequired(world DriverWorld, ticketID string) []string {
+	if world.RequiredFor != nil {
+		if req := world.RequiredFor(ticketID); req != nil {
+			return req
+		}
+	}
+	if len(world.Required) > 0 {
+		return world.Required
+	}
+	return defaultReviewers
+}
+
+// driverGatePass says finish may run: every required reviewer type passed at
+// the tip. Anything else, a missing or stale pass, keeps the worker running.
+func driverGatePass(required []string, revs map[string]DriverReview, tip string) bool {
+	for _, typ := range required {
+		r, ok := revs[typ]
+		if !ok || r.Verdict != verdictPass || r.At != tip {
+			return false
+		}
+	}
+	return true
+}
+
+// driverReviewSig summarizes what the driver last saw of a ticket, so a new
+// verdict or a new tip counts as a change worth another pass.
+func driverReviewSig(required []string, revs map[string]DriverReview) string {
+	var b strings.Builder
+	for _, typ := range required {
+		r := revs[typ]
+		b.WriteString(typ)
+		b.WriteString("=")
+		b.WriteString(r.Verdict)
+		b.WriteString("@")
+		b.WriteString(r.At)
+		b.WriteString(";")
+	}
+	return b.String()
+}
+
+// driverReport renders the plain final report: every merged ticket with its
+// sha, then every ticket left unmerged, each with its last refusal when a
+// finish refused it. Later tickets add the follow-ups beside them.
+func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string) string {
+	var b strings.Builder
+	for _, m := range merged {
+		fmt.Fprintf(&b, "merged %s as %s\n", m.ID, m.SHA)
+	}
+	for _, tk := range order {
+		if !done[tk.ID] {
+			switch {
+			case refused[tk.ID] != "":
+				fmt.Fprintf(&b, "unmerged %s: %s\n", tk.ID, refused[tk.ID])
+			case !started[tk.ID]:
+				fmt.Fprintf(&b, "unmerged %s: never started\n", tk.ID)
+			default:
+				fmt.Fprintf(&b, "unmerged %s: still running\n", tk.ID)
+			}
+		}
+	}
+	return b.String()
 }
 
 // RunDriverCheck reads the spec's tickets from disk, checks the graph through
 // RunDriver, and prints the start order, one ticket id per line. It is what
 // `emberloop implement <spec> --driver --check` runs.
 func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
-	entries, err := os.ReadDir(spec.Tickets)
+	files, err := readDriverFiles(spec)
 	if err != nil {
 		return err
-	}
-	files := make(map[string]string, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(spec.Tickets, e.Name()))
-		if err != nil {
-			return err
-		}
-		files[filepath.Join(spec.Tickets, e.Name())] = string(raw)
 	}
 	res, err := RunDriver(spec, DriverWorld{Files: files})
 	if err != nil {
@@ -85,6 +303,120 @@ func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
 		fmt.Fprintln(stdout, tk.ID)
 	}
 	return nil
+}
+
+// RunDriverLive runs the whole spec through the live operations: the same
+// worker spawn, reviewer verdicts and finish the LLM orchestrator uses, with
+// the worker cap from settings. It prints the plain final report of merged
+// tickets with their sha. The repo is already on the integration branch, and
+// uncommitted edits in its checkout are left alone: the merge refuses on
+// overlap, like every finish, and completeTicket in worker.go commits only
+// the ticket file. The run waits for workers rather than quitting on them:
+// later tickets add the needs-you alert, parking and progress rows for a run
+// that stops converging.
+func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
+	files, err := readDriverFiles(spec)
+	if err != nil {
+		return err
+	}
+	if _, err := RunDriver(spec, DriverWorld{Files: files}); err != nil {
+		return err
+	}
+	// Every worker records the spec, the way workers spawned from an
+	// implement session do. Restored on return: the variable is process
+	// global and the value belongs to this run.
+	oldSpec, hadSpec := os.LookupEnv("EMBERLOOP_SPEC")
+	_ = os.Setenv("EMBERLOOP_SPEC", spec.Spec)
+	defer func() {
+		if hadSpec {
+			_ = os.Setenv("EMBERLOOP_SPEC", oldSpec)
+		} else {
+			_ = os.Unsetenv("EMBERLOOP_SPEC")
+		}
+	}()
+	res, err := RunDriver(spec, liveDriverWorld(spec, repo, files))
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(stdout, res.Report)
+	return nil
+}
+
+// liveDriverWorld wires the live operations behind the driver seam: spawns go
+// through the same spawn call the orchestrator uses, tips resolve the same
+// implement branches, verdicts read the same review record finish gates on,
+// and finish is the same merge. Extracted so tests drive the mapping through
+// the seam with fake exec and temp state.
+func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
+	paths := map[string]string{}
+	for path := range files {
+		if filepath.Dir(filepath.Clean(path)) == filepath.Clean(spec.Tickets) && strings.HasSuffix(path, ".md") {
+			paths[strings.TrimSuffix(filepath.Base(path), ".md")] = path
+		}
+	}
+	types := mustLoadAgentTypes(repo)
+	return DriverWorld{
+		Files:      files,
+		MaxWorkers: tools.LoadSettings().EffectiveMaxWorkers(),
+		StartWorker: func(tk DriverTicket) error {
+			_, err := spawnAgents(spawnExec, repo, types, []spawnRequest{{Type: "worker", Ticket: tk.Path}})
+			return err
+		},
+		Tip: func(ticketID string) string {
+			res, err := spawnExec("git", []string{"rev-parse", "implement/" + WorkerID(paths[ticketID])}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+			if err != nil || res.Code != 0 {
+				return ""
+			}
+			return strings.TrimSpace(res.Stdout)
+		},
+		Reviews: func(ticketID string) map[string]DriverReview {
+			out := map[string]DriverReview{}
+			for typ, r := range reviewersOf(worktreePath(repo, WorkerID(paths[ticketID]))) {
+				out[typ] = DriverReview{Verdict: r.Verdict, At: r.VerdictAt}
+			}
+			return out
+		},
+		RequiredFor: func(ticketID string) []string {
+			store, err := loadWorkersLocked()
+			if err != nil {
+				return nil
+			}
+			w, ok := store[WorkerID(paths[ticketID])]
+			if !ok {
+				return nil
+			}
+			return requiredReviewers(&w)
+		},
+		Finish: func(ticketID string) (DriverFinish, error) {
+			res, err := Finish(finishExec, WorkerID(paths[ticketID]), true)
+			if err != nil {
+				return DriverFinish{}, err
+			}
+			return DriverFinish{Merged: res.Merged, SHA: res.SHA, Detail: res.Detail}, nil
+		},
+		Sleep: time.Sleep,
+	}
+}
+
+// readDriverFiles reads every ticket file under the spec's tickets directory
+// into the map the driver runs against.
+func readDriverFiles(spec SpecRun) (map[string]string, error) {
+	entries, err := os.ReadDir(spec.Tickets)
+	if err != nil {
+		return nil, err
+	}
+	files := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(spec.Tickets, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		files[filepath.Join(spec.Tickets, e.Name())] = string(raw)
+	}
+	return files, nil
 }
 
 // readDriverTickets parses every ticket file under the spec's tickets

@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -289,21 +290,36 @@ func TestImplementDriverCheckFailsABadGraph(t *testing.T) {
 	}
 }
 
-// `implement --driver` without --check checks the graph first, then stops:
-// the full loop lands in a later ticket. A valid graph reaches the stub.
-func TestImplementDriverRunStopsAtTheUnbuiltLoop(t *testing.T) {
+// `implement --driver` without --check runs the driver loop: in a fresh repo
+// with no herdr workspace the first worker fails fast naming the workspace,
+// which proves dispatch reached the live run rather than the old stub.
+func TestImplementDriverRunStartsWorkersThroughTheLiveLoop(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("HERDR_WORKSPACE_ID", "")
+	t.Setenv("HOME", t.TempDir())
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
 	dir := writeSpec(t, map[string]string{
 		"01-first.md": "# 01\n\n**Blocked by:** None\n",
 	})
-	err := run([]string{"implement", "--driver", dir})
-	if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
-		t.Fatalf("implement --driver must stop at the unbuilt loop, got %v", err)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	err = run([]string{"implement", "--driver", dir})
+	if err == nil || !strings.Contains(err.Error(), "HERDR_WORKSPACE_ID") {
+		t.Fatalf("implement --driver must reach the live run, got %v", err)
 	}
 }
 
-// The stub still checks the graph first: a bad graph fails on the graph, not
-// on the stub.
+// The driver checks the graph first: a bad graph fails on the graph, never
+// reaching the live run.
 func TestImplementDriverRunChecksTheGraphFirst(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	dir := writeSpec(t, map[string]string{

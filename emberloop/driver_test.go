@@ -280,3 +280,286 @@ func TestDriverCheckFailsOnAnAmbiguousNumber(t *testing.T) {
 		t.Errorf("a bad graph started workers %v; none may start", *started)
 	}
 }
+
+// A run world is a check world plus the fake run operations: the worker tips,
+// the reviewer verdicts at those tips, and a finish that merges. The fakes
+// record every call, so run tests assert on calls and run state.
+type runFake struct {
+	started  []string
+	finished []string
+	active   int
+	maxSeen  int
+	tips     map[string]string
+	reviews  map[string]map[string]DriverReview
+	shas     map[string]string
+}
+
+// runWorld builds a spec plus a run world over constant tips with both
+// reviewers passed at the tip, merging each ticket as sha-<id>.
+func runWorld(t *testing.T, docs map[string]string, maxWorkers int) (SpecRun, DriverWorld, *runFake) {
+	t.Helper()
+	spec, world, _ := driverWorld(t, docs)
+	fake := &runFake{tips: map[string]string{}, reviews: map[string]map[string]DriverReview{}, shas: map[string]string{}}
+	for name := range docs {
+		id := strings.TrimSuffix(name, ".md")
+		tip := "tip-" + id
+		fake.tips[id] = tip
+		fake.reviews[id] = map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: tip},
+			reviewerSpec:      {Verdict: verdictPass, At: tip},
+		}
+		fake.shas[id] = "sha-" + id
+	}
+	world.MaxWorkers = maxWorkers
+	world.StartWorker = func(tk DriverTicket) error {
+		fake.started = append(fake.started, tk.ID)
+		fake.active++
+		if fake.active > fake.maxSeen {
+			fake.maxSeen = fake.active
+		}
+		return nil
+	}
+	world.Tip = func(id string) string { return fake.tips[id] }
+	world.Reviews = func(id string) map[string]DriverReview { return fake.reviews[id] }
+	world.Finish = func(id string) (DriverFinish, error) {
+		fake.finished = append(fake.finished, id)
+		fake.active--
+		return DriverFinish{Merged: true, SHA: fake.shas[id]}, nil
+	}
+	return spec, world, fake
+}
+
+func indexOfID(ids []string, want string) int {
+	for i, id := range ids {
+		if id == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// A chain with a fan-out merges in dependency order and never exceeds
+// max_workers: 04 starts only after 02 and 03 merged, and at most two
+// workers run at once when the cap is two.
+func TestDriverMergesChainAndFanoutInDependencyOrderWithinCap(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("01"),
+		"03-third.md":  ticketDoc("01"),
+		"04-fourth.md": ticketDoc("02, 03"),
+	}, 2)
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 4 {
+		t.Fatalf("merged = %v, want all 4 tickets", res.Merged)
+	}
+	for _, m := range res.Merged {
+		if want := "sha-" + m.ID; m.SHA != want {
+			t.Errorf("merged sha for %s = %q, want %q", m.ID, m.SHA, want)
+		}
+	}
+	if fake.maxSeen > 2 {
+		t.Errorf("max concurrent workers = %d, want at most 2", fake.maxSeen)
+	}
+	if indexOfID(fake.started, "01-first") != 0 {
+		t.Errorf("start order = %v, want 01-first first", fake.started)
+	}
+	if start04 := indexOfID(fake.started, "04-fourth"); start04 < 0 {
+		t.Errorf("04-fourth never started: %v", fake.started)
+	} else {
+		for _, dep := range []string{"02-second", "03-third"} {
+			if fin := indexOfID(fake.finished, dep); fin < 0 || start04 < fin {
+				t.Errorf("04-fourth started at %d but %s finished at %d: started=%v finished=%v", start04, dep, fin, fake.started, fake.finished)
+			}
+		}
+	}
+}
+
+// Finish runs only after both reviewers passed at the tip: A merges, while
+// B waits on a missing spec pass and C on a spec reviewer asking for
+// changes. Neither B nor C is ever finished.
+func TestDriverFinishWaitsForBothPassesAtTheTip(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("None"),
+		"03-third.md":  ticketDoc("None"),
+	}, 3)
+	tip2, tip3 := fake.tips["02-second"], fake.tips["03-third"]
+	fake.reviews["02-second"] = map[string]DriverReview{
+		reviewerStandards: {Verdict: verdictPass, At: tip2},
+	}
+	fake.reviews["03-third"] = map[string]DriverReview{
+		reviewerStandards: {Verdict: verdictPass, At: tip3},
+		reviewerSpec:      {Verdict: verdictChanges, At: tip3},
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "01-first" {
+		t.Fatalf("merged = %v, want only 01-first", res.Merged)
+	}
+	if len(fake.finished) != 1 || fake.finished[0] != "01-first" {
+		t.Errorf("finished = %v, want only 01-first", fake.finished)
+	}
+	for _, line := range []string{"merged 01-first as sha-01-first", "unmerged 02-second", "unmerged 03-third"} {
+		if !strings.Contains(res.Report, line) {
+			t.Errorf("report misses %q:\n%s", line, res.Report)
+		}
+	}
+}
+
+// A branch change after a pass reads as unreviewed again: the tip moves from
+// t1 to t2 between the two tip reads, so the pass at t1 never finishes, and
+// finish runs only once both reviewers re-pass at t2.
+func TestDriverTreatsAPostPassChangeAsUnreviewed(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	tips := []string{"t1", "t2", "t2", "t2", "t2", "t2"}
+	calls, lastTip := 0, ""
+	world.MaxWorkers = 1
+	var finishedAt []string
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string {
+		lastTip = tips[calls]
+		if calls < len(tips)-1 {
+			calls++
+		}
+		return lastTip
+	}
+	world.Reviews = func(id string) map[string]DriverReview {
+		at := "t1"
+		if calls >= 3 {
+			at = "t2"
+		}
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: at},
+			reviewerSpec:      {Verdict: verdictPass, At: at},
+		}
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		finishedAt = append(finishedAt, lastTip)
+		return DriverFinish{Merged: true, SHA: "sha-new"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(finishedAt) != 1 || finishedAt[0] != "t2" {
+		t.Errorf("finish ran at %v, want exactly once at the current tip t2", finishedAt)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].SHA != "sha-new" {
+		t.Errorf("merged = %v, want the re-passed tip", res.Merged)
+	}
+}
+
+// The live world maps the seam onto the same operations the orchestrator
+// uses: tips resolve the implement branches, verdicts read the review record
+// the merge gate reads, and the required types come from the worker's own
+// record. A run over that world merges through the seam.
+func TestDriverLiveWorldMapsTipsReviewsAndRequiredTypes(t *testing.T) {
+	oldState, oldExec := statePath, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; spawnExec = oldExec })
+	repo, dir := t.TempDir(), t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live"}
+	id := WorkerID(ticket)
+	tree := worktreePath(repo, id)
+	if err := mergeReviewerVerdict(tree, reviewerStandards, verdictPass, "tipsha", "tipsha", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeReviewerVerdict(tree, reviewerSpec, verdictPass, "tipsha", "tipsha", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := save(map[string]Worker{id: {ID: id, Ticket: ticket, Repo: repo, AgentType: "no-such-type"}}); err != nil {
+		t.Fatal(err)
+	}
+	spawnExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" && len(args) == 2 && args[0] == "rev-parse" && args[1] == "implement/"+id {
+			return Result{Code: 0, Stdout: "tipsha\n"}, nil
+		}
+		return Result{Code: 1, Stderr: "unexpected call"}, nil
+	}
+	world := liveDriverWorld(spec, repo, files)
+	world.MaxWorkers = 1
+	world.Sleep = nil
+	var started []string
+	world.StartWorker = func(tk DriverTicket) error {
+		started = append(started, tk.ID)
+		return nil
+	}
+	world.Finish = func(ticketID string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "mergedsha"}, nil
+	}
+	if got := world.Tip(id); got != "tipsha" {
+		t.Errorf("Tip = %q, want the implement branch sha", got)
+	}
+	if got := world.Reviews(id); got[reviewerStandards].At != "tipsha" || got[reviewerSpec].Verdict != verdictPass {
+		t.Errorf("Reviews = %v, want both passes at the tip", got)
+	}
+	if got := world.RequiredFor(id); !equalIDs(got, defaultReviewers) {
+		t.Errorf("RequiredFor = %v, want the built-in fallback for an unknown type", got)
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].SHA != "mergedsha" {
+		t.Errorf("merged = %v, want the live-mapped ticket", res.Merged)
+	}
+	if len(started) != 1 || started[0] != id {
+		t.Errorf("started = %v, want [%s]", started, id)
+	}
+}
+
+// A refused finish keeps its text on the unmerged line instead of reading as
+// still running.
+func TestDriverReportCarriesARefusedFinishText(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: false, Detail: "rebase onto spec/x conflicted in a.go"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 0 {
+		t.Fatalf("merged = %v, want nothing", res.Merged)
+	}
+	want := "unmerged 01-first: rebase onto spec/x conflicted in a.go\n"
+	if res.Report != want {
+		t.Errorf("report = %q, want %q", res.Report, want)
+	}
+}
+
+// The final report lists every merged ticket with its sha, one per line.
+func TestDriverReportListsEveryMergedTicketWithSha(t *testing.T) {
+	spec, world, _ := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("01"),
+	}, 2)
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	want := "merged 01-first as sha-01-first\nmerged 02-second as sha-02-second\n"
+	if res.Report != want {
+		t.Errorf("report = %q, want %q", res.Report, want)
+	}
+}
