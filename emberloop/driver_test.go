@@ -2256,3 +2256,33 @@ func TestDriverLiveWorldCancelledHistoryDoesNotReadDiscarded(t *testing.T) {
 		t.Errorf("discarded history does not read discarded")
 	}
 }
+
+// A worker that submitted while its reviewers passed an older tree gets
+// finish's refusal told to it: the driver gate alone would skip finish and
+// the stall nudge needs zero submits, so nothing else would move the ticket.
+func TestDriverTellsASubmittedWorkerWhoseReviewPassesAreStale(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string { return "t2" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "t1"},
+			reviewerSpec:      {Verdict: verdictPass, At: "t1"},
+		}
+	}
+	world.Submits = func(id string) int { return 1 }
+	var told []string
+	world.Tell = func(id, text string) error { told = append(told, text); return nil }
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Detail: "passed at t1, not at the tip t2"}, nil
+	}
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(told) != 1 || told[0] != "passed at t1, not at the tip t2" {
+		t.Errorf("told = %v, want the stale-pass refusal once", told)
+	}
+}

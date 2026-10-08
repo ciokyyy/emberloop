@@ -611,7 +611,14 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			if needsYou[tk.ID] && world.Sleep != nil && backoffStep[tk.ID] > 0 && now.Before(nextRetry[tk.ID]) {
 				continue
 			}
-			if before != tip || !driverGatePass(required, revs, tip) {
+			// A worker that already submitted and holds a stable tip with a
+			// gate that fails gets finish's refusal told to it, even though
+			// the driver's own gate is stricter than finish: a pass on an
+			// older tree is stale, and only the refusal text sends the
+			// worker back to its reviewers. Skipping finish here deadlocks:
+			// the stall nudge needs subs == 0.
+			submittedStale := subs > 0 && before == tip
+			if before != tip || (!driverGatePass(required, revs, tip) && !submittedStale) {
 				// A worker idle with no submit forgot its reviewers: the
 				// fixed nudge goes after driverStallIdle, repeats every
 				// driverNudgeEvery, and the driverNudgeMax-th raises the
