@@ -560,11 +560,14 @@ func DeliverLate(run Exec, pane, text string) error {
 	if text == "" {
 		return nil
 	}
+	// A background pane is not focused, so herdr reports its idle as done
+	// until someone looks. Wait for both, or the wait runs to its timeout
+	// and the first prompt never arrives.
 	// herdr only knows the pane as an agent once it has seen the process
 	// start, so "not found" right after pane run means "not yet".
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		_, err := herdrJSON(run, []string{"agent", "wait", pane, "--until", "idle", "--timeout", "90000"}, 100*time.Second)
+		_, err := herdrJSON(run, []string{"agent", "wait", pane, "--until", "idle", "--until", "done", "--timeout", "90000"}, 100*time.Second)
 		if err == nil {
 			break
 		}

@@ -189,3 +189,45 @@ func TestDeliverPromptFallbackTypesOneCompleteLine(t *testing.T) {
 		t.Errorf("fallback must press Enter once after typing, got %q", keys)
 	}
 }
+
+// A background pane is not focused, so herdr reports its idle as done until
+// someone looks. The late-prompt wait accepts both, or it runs to its timeout
+// and the reviewer's first prompt never arrives.
+func TestDeliverLateWaitsForIdleOrDone(t *testing.T) {
+	var waited [][]string
+	var prompted int
+	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
+		if cmd == herdrBin() && len(args) > 1 && args[0] == "agent" && args[1] == "wait" {
+			waited = append(waited, args)
+			return Result{Stdout: "{}"}, nil
+		}
+		if cmd == herdrBin() && len(args) > 1 && args[0] == "agent" && args[1] == "prompt" {
+			prompted++
+			return Result{Stdout: "{}"}, nil
+		}
+		return Result{Stdout: "{}"}, nil
+	}
+	if err := DeliverLate(run, "p9", "review this"); err != nil {
+		t.Fatalf("DeliverLate: %v", err)
+	}
+	if len(waited) != 1 {
+		t.Fatalf("late delivery must wait for readiness exactly once, got %d waits", len(waited))
+	}
+	var idle, done bool
+	for i := 0; i+1 < len(waited[0]); i++ {
+		if waited[0][i] == "--until" {
+			switch waited[0][i+1] {
+			case "idle":
+				idle = true
+			case "done":
+				done = true
+			}
+		}
+	}
+	if !idle || !done {
+		t.Errorf("wait must accept both idle and done, got args %q", waited[0])
+	}
+	if prompted != 1 {
+		t.Errorf("prompt must follow the wait exactly once, got %d prompts", prompted)
+	}
+}
