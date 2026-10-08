@@ -39,3 +39,27 @@ _Avoid_: Update, message
 **Event log**:
 The append-only file of a Session's Events. The UI renders a Session by replaying it.
 _Avoid_: Transcript file, history
+
+**Run**:
+One execution of the deterministic pipeline over one spec: it drives every Ticket of that spec to merged, parked or discarded.
+_Avoid_: Job, pipeline instance
+
+**Ticket**:
+One unit of work from a spec, kept as a file with blockers, status and checkboxes. Each Ticket gets one Worker.
+_Avoid_: Task, issue
+
+**Worker**:
+The Subagent that implements one Ticket in its own worktree and branch.
+_Avoid_: Implementer
+
+**Reviewer**:
+A persistent Subagent that judges one Ticket on one axis, spec fit or repository standards, and keeps its context across Passes.
+_Avoid_: Judge, checker
+
+**Pass**:
+A Reviewer verdict recorded at a specific tip of a Ticket's branch. A Pass at an older tip is stale and does not count.
+_Avoid_: Approval
+
+**Needs-you**:
+The state of a Ticket that the Run cannot advance without the user. The UI shows it as a banner with actions.
+_Avoid_: Alert, escalation
