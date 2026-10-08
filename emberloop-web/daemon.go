@@ -266,6 +266,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"seq": e.Seq})
 	case sub == "" && r.Method == "DELETE":
+		// Mark ended under the lock so two concurrent DELETEs emit one
+		// ended Event; the slow CloseSession runs outside the lock.
 		d.mu.Lock()
 		s, ok := d.sessions[id]
 		if !ok {
@@ -279,6 +281,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, m)
 			return
 		}
+		s.meta.Status = "ended"
+		d.persistMeta(s.meta)
 		be := d.backendForLocked(s.meta.Harness)
 		d.mu.Unlock()
 		if be != nil {
