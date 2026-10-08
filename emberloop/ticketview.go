@@ -44,7 +44,7 @@ func headingTitle(content string) string {
 // TicketPreview is one ticket as the Runs preview shows it: its id, number
 // and title, its blockers as resolved ticket ids, and its checkbox progress.
 // Error names a ticket the preview could not parse; it blocks nothing else
-// in the list.
+// in the list. An error row carries no blockers.
 type TicketPreview struct {
 	ID       string   `json:"id"`
 	Num      int      `json:"num"`
@@ -169,6 +169,9 @@ func PreviewTickets(spec SpecRun, files map[string]string) []TicketPreview {
 				sort.Strings(matches)
 				fail("ticket %q blocked by ambiguous ticket %q: %s", p.preview.ID, ref, strings.Join(matches, ", "))
 			}
+		}
+		if p.preview.Error != "" {
+			resolved = nil
 		}
 		sort.Slice(resolved, func(a, b int) bool {
 			if ids[resolved[a]] != ids[resolved[b]] {
