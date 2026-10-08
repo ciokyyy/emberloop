@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,5 +173,118 @@ func TestTuiRefusesArgs(t *testing.T) {
 func TestDepsRefusesUnknownFlags(t *testing.T) {
 	if err := run([]string{"deps", "--bogus"}); err == nil {
 		t.Error("run(deps --bogus) must fail")
+	}
+}
+
+// --driver and --llm pick the implement mode explicitly, so pairing them is
+// refused before anything runs.
+func TestImplementDriverAndLlmExcludeEachOther(t *testing.T) {
+	err := run([]string{"implement", "--driver", "--llm", "some-spec"})
+	if err == nil || !strings.Contains(err.Error(), "exclude") {
+		t.Fatalf("implement --driver --llm must be refused, got %v", err)
+	}
+}
+
+// --check is the driver's graph check, so it needs --driver.
+func TestImplementCheckNeedsDriver(t *testing.T) {
+	err := run([]string{"implement", "--check", "some-spec"})
+	if err == nil || !strings.Contains(err.Error(), "--check needs --driver") {
+		t.Fatalf("implement --check without --driver must be refused, got %v", err)
+	}
+}
+
+// The check still needs a spec to read.
+func TestImplementDriverCheckNeedsASpec(t *testing.T) {
+	err := run([]string{"implement", "--driver", "--check"})
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("implement --driver --check without a spec must fail with usage, got %v", err)
+	}
+}
+
+// --llm keeps the default path: outside a herdr pane it fails naming herdr,
+// like a bare run.
+func TestImplementLlmKeepsTheOrchestratorPath(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	err := run([]string{"implement", "--llm", "/nonexistent/spec.md"})
+	if err == nil || !strings.Contains(err.Error(), "herdr") {
+		t.Fatalf("implement --llm outside herdr must fail naming herdr, got %v", err)
+	}
+}
+
+// writeSpec lays out a spec dir with an issues directory holding the given
+// ticket files, and returns the spec dir for `implement --driver --check`.
+func writeSpec(t *testing.T, docs map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "spec.md"), []byte("# Spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	issues := filepath.Join(dir, "issues")
+	if err := os.MkdirAll(issues, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, doc := range docs {
+		if err := os.WriteFile(filepath.Join(issues, name), []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// captureStdout runs fn with os.Stdout pointed at a pipe and returns what it
+// wrote.
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	runErr := fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = old
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out), runErr
+}
+
+// --driver --check prints the start order and needs no herdr pane: it reads
+// files and starts no worker.
+func TestImplementDriverCheckPrintsStartOrder(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	dir := writeSpec(t, map[string]string{
+		"01-first.md":  "# 01\n\n**Blocked by:** None (can start immediately)\n",
+		"02-second.md": "# 02\n\n**Blocked by:** 01\n",
+	})
+	out, err := captureStdout(t, func() error {
+		return run([]string{"implement", "--driver", "--check", dir})
+	})
+	if err != nil {
+		t.Fatalf("implement --driver --check: %v", err)
+	}
+	if out != "01-first\n02-second\n" {
+		t.Errorf("check printed %q, want %q", out, "01-first\n02-second\n")
+	}
+}
+
+// --driver --check fails a bad graph before any worker would start, still with
+// no herdr pane.
+func TestImplementDriverCheckFailsABadGraph(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	dir := writeSpec(t, map[string]string{
+		"01-first.md":  "# 01\n\n**Blocked by:** None\n",
+		"02-second.md": "# 02\n\n**Blocked by:** 09 Typo\n",
+	})
+	_, err := captureStdout(t, func() error {
+		return run([]string{"implement", "--driver", "--check", dir})
+	})
+	if err == nil || !strings.Contains(err.Error(), "09") {
+		t.Fatalf("check of a bad graph must fail naming the unknown id, got %v", err)
 	}
 }

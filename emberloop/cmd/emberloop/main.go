@@ -20,13 +20,14 @@
 //	                                                         prune archived run data (dry run by default)
 //	emberloop tui                                            open the dashboard in the current pane
 //	emberloop [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
-//	emberloop implement <spec> [flags]                          run a spec on spec/<slug>
+//	emberloop implement [--driver [--check]|--llm] <spec>  run a spec on spec/<slug>
 //	emberloop <wayfinder|grill|research|...> [flags] [input...] one route skill
 package main
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -118,6 +119,9 @@ func run(argv []string) error {
 	effort := fs.String("effort", "", "reasoning effort for the harness")
 	role := fs.String("role", "", "session role; default plan (use full for every tool)")
 	headless := fs.Bool("p", false, "print one answer and exit")
+	driverMode := fs.Bool("driver", false, "run the deterministic driver (implement only)")
+	llmMode := fs.Bool("llm", false, "run the LLM orchestrator (implement default)")
+	checkMode := fs.Bool("check", false, "with --driver, only check the ticket graph and print start order")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -132,6 +136,11 @@ func run(argv []string) error {
 	cwd, _ := os.Getwd()
 	id := emberloop.NewSessionID()
 	s := emberloop.Session{ID: id, AgentID: id, Headless: *headless, Cwd: cwd}
+	// The driver flags belong to implement: any other session refuses them
+	// rather than ignore what the user asked for.
+	if sub != "implement" && (*driverMode || *llmMode || *checkMode) {
+		return fmt.Errorf("--driver, --llm and --check apply to emberloop implement")
+	}
 	var implSpec *emberloop.SpecRun
 	switch sub {
 	case "":
@@ -141,8 +150,23 @@ func run(argv []string) error {
 		}
 		s.Role, s.Prompt = r, rest
 	case "implement":
+		if *driverMode && *llmMode {
+			return fmt.Errorf("emberloop implement: --driver and --llm exclude each other")
+		}
+		if *checkMode && !*driverMode {
+			return fmt.Errorf("emberloop implement: --check needs --driver")
+		}
 		if rest == "" {
-			return fmt.Errorf("usage: emberloop implement <spec-file-or-dir>")
+			return fmt.Errorf("usage: emberloop implement [--driver [--check]|--llm] <spec-file-or-dir>")
+		}
+		// The graph check reads files and starts no worker, so it runs
+		// anywhere: no herdr pane and no integration branch needed.
+		if *checkMode {
+			spec, err := emberloop.ResolveSpec(rest)
+			if err != nil {
+				return err
+			}
+			return emberloop.RunDriverCheck(spec, os.Stdout)
 		}
 		// Workers' results reach their parent as notices delivered into its
 		// herdr pane, so an implement session without a pane could never hear
@@ -156,6 +180,14 @@ func run(argv []string) error {
 		spec, err := emberloop.ResolveSpec(rest)
 		if err != nil {
 			return err
+		}
+		if *driverMode {
+			// The full driver loop lands in a later ticket: check the graph
+			// first, since it fails before any worker would start, then stop.
+			if err := emberloop.RunDriverCheck(spec, io.Discard); err != nil {
+				return err
+			}
+			return fmt.Errorf("emberloop implement: --driver run is not implemented yet; --driver --check validates the ticket graph")
 		}
 		r, err := sessionRole(sub, *role)
 		if err != nil {

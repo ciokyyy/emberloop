@@ -44,6 +44,12 @@ owns its `_test.go` and the behaviour below):
   `orchestrate.go` (the spawn/finish/tell orchestration tools)
 - Review and merge: `review.go` (packet, pass record), `submit.go`,
   `tell.go`, `deliver.go`, `integration.go`, `run.go`, `history.go`
+- Driver: `driver.go` (the deterministic `implement --driver` loop's one seam:
+  `RunDriver` takes the spec and an injected world of ticket files, fake ops
+  and a fake clock; the ticket graph check fails before any worker starts, and
+  `RunDriverCheck` prints the start order for `--driver --check`. The mode
+  flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`; `--llm` and
+  a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`
 - Transport: `mcp/` (child doc); binaries are `cmd/emberloop/main.go` (harness
