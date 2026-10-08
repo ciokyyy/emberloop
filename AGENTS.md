@@ -4,7 +4,7 @@ Project preamble: emberloop is a harness extension for running parallel agent
 implement/review loops. Pig and claude sessions spawn workers in git
 worktrees, judge them with persistent reviewers, and merge through a gate
 (`finish`). The main Go package is `emberloop/`; `emberloop-tui/` is the dashboard
-module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
+module; `emberloop-web/` is the browser UI and Daemon module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
 extensions, and `herdr-emberloop/` is the herdr compress plugin; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
 live
 probes that need running agents; `.scratch/retro-hardening/` holds this

@@ -104,11 +104,23 @@ Two reviewers, one for the spec and one for the repository's standards, keep the
 |---|---|
 | `emberloop/` | the main Go module: sessions, spawn and grid, reviewers, gate and merge, tools, MCP server, state database |
 | `emberloop-tui/` | the dashboard module |
+| `emberloop-web/` | the browser UI and Daemon module: local Go Daemon plus embedded UI, loopback only |
 | `herdr-emberloop/` | the herdr plugin with the compress action |
 | `herdr-report/` | a pig extension that registers pig panes as herdr agents and enforces the stop gate |
 | `pig-antigravity-auth/` | a pig extension that adds the `google-antigravity` model provider |
 | `installer/` | the install TUI that `install.sh` runs |
 | `scripts/` | live probes that need running agents |
+
+## Enderbloom Web
+
+The browser UI runs on a local Daemon:
+
+```bash
+cd emberloop-web
+go run ./cmd/emberloop-web
+```
+
+The Daemon prints its address; open it in a browser. Default bind is `127.0.0.1:0` (ephemeral port), override with `-addr`; `-state-dir` overrides the state directory. Loopback only: the Daemon refuses a non-loopback bind and rejects requests with a foreign `Host` or `Origin`. No authentication in this version.
 
 ## The input row and the queue
 
@@ -122,7 +134,7 @@ A draft clears itself only while messages wait behind it. After 10 seconds witho
 .emberloop/check
 ```
 
-The check runs `go vet` and the tests for `emberloop/`, `emberloop-tui/` and `installer/`; live tests (`TestLive*`) are skipped. `AGENTS.md` files in each directory state the contract for that subtree; read the root file first.
+The check runs `go vet` and the tests for `emberloop/`, `emberloop-tui/`, `installer/` and `emberloop-web/`; live tests (`TestLive*`) are skipped. `AGENTS.md` files in each directory state the contract for that subtree; read the root file first.
 
 ## Files and environment
 
