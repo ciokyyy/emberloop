@@ -4,11 +4,11 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Run state is written after every driver pass and reloaded on Daemon start
-- [ ] Reloaded unfinished Runs are paused and spawn nothing
-- [ ] Resume continues the Run; no Ticket with a Worker gets a second Worker
-- [ ] Pause stops new starts and leaves running Workers alone
-- [ ] Finished Runs remain listed and readable
-- [ ] API tests restart the Daemon mid-Run and resume; a view test covers the paused state and Resume button
+- [x] Run state is written after every driver pass and reloaded on Daemon start
+- [x] Reloaded unfinished Runs are paused and spawn nothing
+- [x] Resume continues the Run; no Ticket with a Worker gets a second Worker
+- [x] Pause stops new starts and leaves running Workers alone
+- [x] Finished Runs remain listed and readable
+- [x] API tests restart the Daemon mid-Run and resume; a view test covers the paused state and Resume button
