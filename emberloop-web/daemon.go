@@ -67,6 +67,9 @@ type session struct {
 	// live tells whether the backend holds an agent process. Released
 	// and never-started Sessions keep history only.
 	live bool
+	// active counts launched turns still running. A release waits for
+	// zero, so it never drops a process a new prompt just took.
+	active int
 }
 
 // NewDaemon loads persisted Sessions from stateDir/enderbloom/sessions.
@@ -219,13 +222,18 @@ func (d *Daemon) resumeViewLocked(s *session) (bool, string) {
 	return be.ResumeOK(s.meta)
 }
 
-// releaseIfIdle drops the agent process once the Session rests at idle, so
-// idle Sessions hold history only. The mark happens under the lock; the
-// slow backend release runs outside it.
-func (d *Daemon) releaseIfIdle(id string) {
+// finishTurn releases the agent process once the Session rests at idle with
+// no turn left running, so idle Sessions hold history only. The prompt path
+// counts each launched turn in active under the lock; a release that finds
+// a turn still running leaves the process alone, which closes the race
+// where a new prompt lands while the old turn's status still reads idle.
+func (d *Daemon) finishTurn(id string) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
-	if !ok || !s.live || s.meta.Status != "idle" {
+	if ok && s.active > 0 {
+		s.active--
+	}
+	if !ok || s.active > 0 || !s.live || s.meta.Status != "idle" {
 		d.mu.Unlock()
 		return
 	}
@@ -357,24 +365,29 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			d.mu.Lock()
 			be := d.backendForLocked(req.Harness)
 			d.mu.Unlock()
-			if be != nil {
-				id := meta.ID
-				if err := be.CreateSession(meta, func(kind, text, status string) {
-					d.appendEvent(id, kind, text, status)
-				}); err != nil {
-					d.mu.Lock()
-					d.starting--
-					d.mu.Unlock()
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
+			if be == nil {
 				d.mu.Lock()
-				d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
-				d.persistMeta(meta)
 				d.starting--
 				d.mu.Unlock()
-				d.persistResumeToken(be, meta.ID)
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "backend not configured"})
+				return
 			}
+			id := meta.ID
+			if err := be.CreateSession(meta, func(kind, text, status string) {
+				d.appendEvent(id, kind, text, status)
+			}); err != nil {
+				d.mu.Lock()
+				d.starting--
+				d.mu.Unlock()
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			d.mu.Lock()
+			d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+			d.persistMeta(meta)
+			d.starting--
+			d.mu.Unlock()
+			d.persistResumeToken(be, meta.ID)
 		} else {
 			// Claude creation blocks until session/new answers, so MCP tools
 			// are connected before the first prompt can go out. The Session
@@ -507,6 +520,28 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 				d.mu.Unlock()
 			}
 		}
+		// Final gate under the lock: a concurrent end or a resume that
+		// lost its race must not launch a turn on a dead process. Live
+		// turns count in active so finishTurn never drops their process.
+		d.mu.Lock()
+		s, ok = d.sessions[id]
+		if !ok {
+			d.mu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		if s.meta.Status == "ended" {
+			d.mu.Unlock()
+			http.Error(w, "session ended", http.StatusGone)
+			return
+		}
+		if !s.live {
+			d.mu.Unlock()
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "session is resuming; send the prompt again"})
+			return
+		}
+		s.active++
+		d.mu.Unlock()
 		e := d.appendEvent(id, "prompt", req.Text, "")
 		if be != nil {
 			go func() {
@@ -515,7 +550,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 				})
 				// The turn is over: release the agent process so idle
 				// Sessions hold no memory. The next prompt resumes it.
-				d.releaseIfIdle(id)
+				d.finishTurn(id)
 			}()
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"seq": e.Seq})

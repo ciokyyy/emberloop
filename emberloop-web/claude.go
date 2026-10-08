@@ -328,11 +328,14 @@ func (b *ClaudeBackend) dropConn(id string, conn acpConn) {
 func (b *ClaudeBackend) ReleaseSession(sessionID string) string {
 	b.mu.Lock()
 	st, ok := b.sessions[sessionID]
+	var token string
+	if ok {
+		token = st.acpID
+	}
 	b.mu.Unlock()
 	if !ok {
 		return ""
 	}
-	token := st.acpID
 	b.dropConn(sessionID, st.conn)
 	return token
 }

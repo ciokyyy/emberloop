@@ -66,11 +66,13 @@ func (b *PigBackend) Models() []string { return PigModels() }
 // model or unusable working directory returns an error for a 400.
 func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if _, ok := b.sessions[meta.ID]; ok {
+		b.mu.Unlock()
 		return fmt.Errorf("pig: session %s already exists", meta.ID)
 	}
-	svcs, model, err := b.servicesModel(meta)
+	agentDir, extra := b.AgentDir, b.extra
+	b.mu.Unlock()
+	svcs, model, err := buildPigServices(agentDir, extra, meta)
 	if err != nil {
 		return err
 	}
@@ -83,22 +85,27 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		Model:              model,
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
-		ExtraTools:         b.extra,
+		ExtraTools:         extra,
 	})
 	if err != nil {
 		_ = rt.Close()
 		svcs.Close()
 		return fmt.Errorf("pig: session: %w", err)
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.sessions[meta.ID]; ok {
+		b.closePig(&pigSession{sess: sess, rt: rt, svcs: svcs, unsub: sess.Subscribe(func(agent.AgentEvent) {})})
+		return fmt.Errorf("pig: session %s already exists", meta.ID)
+	}
 	b.subscribe(meta.ID, sess, rt, svcs, emit)
 	return nil
 }
 
-// servicesModel builds the Services and model for one Daemon Session. An
+// buildPigServices builds the Services and model for one Daemon Session. An
 // unknown model or unusable working directory returns an error for a 400.
-// Callers hold b.mu and own svcs on success.
-func (b *PigBackend) servicesModel(meta SessionMeta) (*coding.Services, *ai.Model, error) {
-	agentDir := b.AgentDir
+// It holds no lock; callers snapshot AgentDir and ExtraTools first.
+func buildPigServices(agentDir string, extra []agent.AgentTool, meta SessionMeta) (*coding.Services, *ai.Model, error) {
 	if agentDir == "" {
 		agentDir = coding.DefaultAgentDir()
 	}
@@ -198,7 +205,9 @@ func (b *PigBackend) CloseSession(sessionID string) {
 
 // closePig tears down one SDK stack outside the backend lock.
 func (b *PigBackend) closePig(ps *pigSession) {
-	ps.cancel()
+	if ps.cancel != nil {
+		ps.cancel()
+	}
 	if ps.unsub != nil {
 		ps.unsub()
 	}
@@ -250,16 +259,20 @@ func (b *PigBackend) ResumeOK(meta SessionMeta) (bool, string) {
 }
 
 // ResumeSession rebuilds the SDK stack and reloads the saved pig Session.
+// Slow construction runs outside the backend lock; a handle that appears
+// meanwhile is adopted instead of replaced.
 func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	if meta.ResumeToken == "" {
 		return fmt.Errorf("pig: no saved session to resume")
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if _, ok := b.sessions[meta.ID]; ok {
-		return fmt.Errorf("pig: session %s already exists", meta.ID)
+		b.mu.Unlock()
+		return nil
 	}
-	svcs, model, err := b.servicesModel(meta)
+	agentDir, extra := b.AgentDir, b.extra
+	b.mu.Unlock()
+	svcs, model, err := buildPigServices(agentDir, extra, meta)
 	if err != nil {
 		return err
 	}
@@ -272,12 +285,18 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 		Model:              model,
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
-		ExtraTools:         b.extra,
+		ExtraTools:         extra,
 	})
 	if err != nil {
 		_ = rt.Close()
 		svcs.Close()
 		return fmt.Errorf("pig: resume: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.sessions[meta.ID]; ok {
+		b.closePig(&pigSession{sess: sess, rt: rt, svcs: svcs, unsub: sess.Subscribe(func(agent.AgentEvent) {})})
+		return nil
 	}
 	b.subscribe(meta.ID, sess, rt, svcs, emit)
 	return nil

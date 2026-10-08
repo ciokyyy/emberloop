@@ -17,9 +17,13 @@ import (
 
 func newPigTestBackend(t *testing.T) *PigBackend {
 	t.Helper()
+	return newPigTestBackendAt(t, t.TempDir())
+}
+
+func newPigTestBackendAt(t *testing.T, agentDir string) *PigBackend {
+	t.Helper()
 	t.Setenv("PIG_TEST_FAUX", "1")
 	t.Setenv("PIG_TEST_FAUX_SCENARIO", "parity-basic")
-	agentDir := t.TempDir()
 	config := `{"providers":{"test-faux":{"baseUrl":"http://localhost:0","api":"test-faux","authHeader":false,"models":[{"id":"faux-1","name":"Test Faux"}]}}}`
 	if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -249,6 +253,57 @@ func normEqual(a, b []normEvent) bool {
 		}
 	}
 	return true
+}
+
+// An idle pig Session releases its SDK stack; the next prompt and a Daemon
+// restart resume it through Runtime.Resume with the same answer.
+func TestPigIdleReleaseAndRestartResume(t *testing.T) {
+	t.Helper()
+	stateDir := t.TempDir()
+	agentDir := t.TempDir()
+	pb := newPigTestBackendAt(t, agentDir)
+	d := NewDaemon(stateDir, NewFakeBackend())
+	d.RegisterBackend("pig", pb)
+	srv := httptest.NewServer(d.Handler())
+
+	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	sendPrompt(t, srv.URL, id, "What is 20+22?")
+	_ = readSSE(t, srv.URL, id, 0, 5, 30*time.Second)
+	waitForLive(t, srv.URL, id, false, 10*time.Second)
+	if names := pb.ToolNames(id); names != nil {
+		t.Fatalf("released session tools = %q, want none", names)
+	}
+
+	sendPrompt(t, srv.URL, id, "What is 20+22?")
+	events := readSSE(t, srv.URL, id, 5, 4, 30*time.Second)
+	if !hasChunkWith(events, "42") {
+		t.Fatalf("resumed answer 42 missing in %+v", events)
+	}
+	waitForLive(t, srv.URL, id, false, 10*time.Second)
+	srv.Close()
+
+	pb2 := newPigTestBackendAt(t, agentDir)
+	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.RegisterBackend("pig", pb2)
+	srv2 := httptest.NewServer(d2.Handler())
+	defer srv2.Close()
+	if view := sessionView(t, srv2.URL, id); !view.Resumable {
+		t.Fatalf("resumable = false after restart, note %q", view.ResumeNote)
+	}
+	sendPrompt(t, srv2.URL, id, "What is 20+22?")
+	after := readSSE(t, srv2.URL, id, 9, 4, 30*time.Second)
+	if !hasChunkWith(after, "42") {
+		t.Fatalf("post-restart answer 42 missing in %+v", after)
+	}
+}
+
+func hasChunkWith(events []Event, want string) bool {
+	for _, e := range events {
+		if e.Kind == "assistant_chunk" && strings.Contains(e.Text, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // Review: a repeat DELETE returns the Session without another ended Event.
