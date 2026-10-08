@@ -28,8 +28,7 @@
 # with a claude login, run from inside an emberloop checkout (the pig session
 # loads this checkout's emberloop extension). Costs two claude reviewer
 # starts and leaves both unanswered: EXIT cleanup closes the whole workspace
-# with their panes, nothing merges. One run at a time: the dir below is new
-# per run, but two runs share the ticket-tab fill assumptions of step 3.
+# with their panes, nothing merges.
 #
 # Never runs in the automated check and never inside ticket work: run by
 # hand, then read the PASS/FAIL lines.
@@ -120,12 +119,11 @@ else
   echo "FAIL - prompt never delivered: reviewer idle 120s after ready"
   exit 1
 fi
-
 echo "== 2. reviewer bumped to another tab =="
 herdr pane move "$REVIEWER" --new-tab >/dev/null 2>&1 || { echo "FAIL - pane move refused"; exit 1; }
-# Plain prompt plus a separate wait: `agent prompt --wait` needs working
-# within 5s of submission (agent_prompt_stalled), too tight for a cold
-# claude start.
+# Plain prompt plus a separate wait: `herdr agent prompt --help` says --wait
+# needs working within 5000ms of submission (agent_prompt_stalled), too
+# tight for a cold claude start.
 herdr agent prompt "$REVIEWER" "probe ping: acknowledge with one word" >/dev/null 2>&1 || { echo "FAIL - bumped pane refused the prompt"; exit 1; }
 if herdr agent wait "$REVIEWER" --until working --timeout 120000 >/dev/null 2>&1; then
   echo "PASS - bumped pane still receives its prompt"
