@@ -4,10 +4,10 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The settings read returns max_workers and whether the environment overrides it
-- [ ] The settings write validates and saves max_workers without losing roles
-- [ ] A write changes the live cap; over-cap behaviour is unchanged
-- [ ] The settings page edits the field, and locks it with a note under an environment override
-- [ ] API and view tests cover edit, validation and the locked state
+- [x] The settings read returns max_workers and whether the environment overrides it
+- [x] The settings write validates and saves max_workers without losing roles
+- [x] A write changes the live cap; over-cap behaviour is unchanged
+- [x] The settings page edits the field, and locks it with a note under an environment override
+- [x] API and view tests cover edit, validation and the locked state
