@@ -367,23 +367,21 @@ const (
 )
 
 // driverTicketState reads one ticket file's resume state from its Status
-// lines: the first done or parked value wins. Only the header field counts,
-// the way tickTicket writes it and ticketFileDone reads it.
+// headers, through ticketStatusValues, the one rule for the line. Done wins
+// over parked anywhere in the file, the same precedence ticketFileDone uses
+// (any done reads done), so both readers agree on every file.
 func driverTicketState(raw string) int {
-	for _, line := range strings.Split(raw, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "Status:") && !strings.HasPrefix(trimmed, "**Status:") {
-			continue
+	parked := false
+	for _, value := range ticketStatusValues(raw) {
+		switch {
+		case strings.EqualFold(value, "done"):
+			return driverTicketDone
+		case strings.EqualFold(value, "parked"):
+			parked = true
 		}
-		if i := strings.Index(line, "Status:"); i >= 0 {
-			value := strings.TrimSpace(strings.Trim(line[i+len("Status:"):], " *\t"))
-			switch {
-			case strings.EqualFold(value, "done"):
-				return driverTicketDone
-			case strings.EqualFold(value, "parked"):
-				return driverTicketParked
-			}
-		}
+	}
+	if parked {
+		return driverTicketParked
 	}
 	return driverTicketOpen
 }
