@@ -2286,3 +2286,28 @@ func TestDriverTellsASubmittedWorkerWhoseReviewPassesAreStale(t *testing.T) {
 		t.Errorf("told = %v, want the stale-pass refusal once", told)
 	}
 }
+
+// A recorded worker whose pane is gone is not a worker: a resumed run starts
+// it again instead of waiting on a pane that can no longer act.
+func TestDriverLiveWorldTreatsAWorkerWithADeadPaneAsNoWorker(t *testing.T) {
+	oldState, oldExec := statePath, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; spawnExec = oldExec })
+	repo, dir := t.TempDir(), t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-resume"}
+	if err := save(map[string]Worker{WorkerID(ticket): {ID: WorkerID(ticket), Ticket: ticket, Repo: repo, Pane: "w:p1", Started: "2020-01-01T00:00:00Z"}}); err != nil {
+		t.Fatal(err)
+	}
+	spawnExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if len(args) > 1 && args[0] == "pane" && args[1] == "process-info" {
+			return Result{Code: 1, Stderr: `{"error":{"code":"pane_not_found"}}`}, nil
+		}
+		return Result{Code: 0, Stdout: "tipsha\n"}, nil
+	}
+	world := liveDriverWorld(spec, repo, files)
+	if world.HasWorker(WorkerID(ticket)) {
+		t.Errorf("HasWorker = true, want false for a worker whose pane is gone")
+	}
+}

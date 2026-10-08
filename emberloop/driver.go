@@ -1065,8 +1065,11 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 				return false
 			}
 			if store, err := loadWorkersLocked(); err == nil {
-				if _, ok := store[WorkerID(path)]; ok {
-					return true
+				if w, ok := store[WorkerID(path)]; ok {
+					// A worker whose pane died can no longer act: a resumed run
+					// starts it again, and spawn takes the id over, reusing the
+					// worktree and the work already on its branch.
+					return !paneDead(spawnExec, w.Pane, w.Started)
 				}
 			}
 			res, err := spawnExec("git", []string{"rev-parse", "--verify", "implement/" + WorkerID(path)}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
