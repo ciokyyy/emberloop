@@ -2256,3 +2256,108 @@ func TestDriverLiveWorldCancelledHistoryDoesNotReadDiscarded(t *testing.T) {
 		t.Errorf("discarded history does not read discarded")
 	}
 }
+
+// A dead worker pane never aborts the run: failed nudges are recorded on the
+// stall, the alert still fires, and the rescued worker still merges.
+func TestDriverFailedNudgeIsRecordedNotFatal(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	world.Now = func() time.Time { return now }
+	world.Sleep = func(d time.Duration) { now = now.Add(d) }
+	world.Tip = func(id string) string { return "tip" }
+	submits := 0
+	world.Submits = func(id string) int { return submits }
+	passing := false
+	world.Reviews = func(id string) map[string]DriverReview {
+		if !passing {
+			return nil
+		}
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	world.Tell = func(id, text string) error {
+		return fmt.Errorf("unknown agent %q", id)
+	}
+	var notified int
+	world.Notify = func(id, text string) error {
+		notified++
+		passing = true
+		submits = 1
+		return nil
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha-rescued"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	stall, ok := res.Stalls["01-first"]
+	if !ok {
+		t.Fatalf("run state has no stall for 01-first: %v", res.Stalls)
+	}
+	if stall.Nudges != 3 {
+		t.Errorf("nudges = %d, want 3: failed deliveries still count", stall.Nudges)
+	}
+	if !strings.Contains(stall.NudgeError, "unknown agent") {
+		t.Errorf("nudge error = %q, want the dead-pane failure", stall.NudgeError)
+	}
+	if !stall.NeedsYou || notified != 1 {
+		t.Errorf("alert = %+v with %d notifications, want the alert and one", stall, notified)
+	}
+	if len(res.Merged) != 1 {
+		t.Errorf("merged = %v, want the rescued merge: the run survived", res.Merged)
+	}
+}
+
+// Without a submit count no submit can be ruled out, so nothing is nudged: a
+// worker running ten minutes with no Submits hook merges without a nudge.
+func TestDriverWithoutSubmitCountNothingIsNudged(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	world.Now = func() time.Time { return now }
+	world.Sleep = func(d time.Duration) { now = now.Add(d) }
+	world.Tip = func(id string) string {
+		if !now.Before(start.Add(10 * time.Minute)) {
+			return "tip-2"
+		}
+		return "tip-1"
+	}
+	world.Reviews = func(id string) map[string]DriverReview {
+		if world.Tip(id) != "tip-2" {
+			return nil
+		}
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip-2"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip-2"},
+		}
+	}
+	told := 0
+	world.Tell = func(id, text string) error {
+		told++
+		return nil
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha-untracked"}, nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if told != 0 {
+		t.Errorf("tell calls = %d, want 0: no submit count means no nudge", told)
+	}
+	if len(res.Merged) != 1 {
+		t.Errorf("merged = %v, want the merge", res.Merged)
+	}
+}
