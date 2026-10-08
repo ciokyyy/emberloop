@@ -145,6 +145,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", d.serveUI)
 	mux.HandleFunc("/api/models", d.handleModels)
+	mux.HandleFunc("/api/settings", d.handleSettings)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	return guard(mux)
@@ -807,6 +808,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown claude model (want opus, sonnet or haiku)", http.StatusBadRequest)
 			return
 		}
+		req.WorkDir = absWorkDir(req.WorkDir)
 		meta := SessionMeta{
 			ID:        newID(),
 			Harness:   req.Harness,
@@ -1150,4 +1152,19 @@ func (d *Daemon) load() {
 			d.sessions[key].last = events[len(events)-1].CreatedAt
 		}
 	}
+}
+
+// absWorkDir expands a leading ~ and makes the path absolute: the claude
+// adapter rejects relative working directories.
+func absWorkDir(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
 }

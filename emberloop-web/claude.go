@@ -23,12 +23,14 @@ func ClaudeModels() []string { return []string{"opus", "sonnet", "haiku"} }
 // claudeDisallowedTools removes every native tool the model could call, so
 // only the emberloop MCP tools remain. Proven by the ticket-01 spike.
 var claudeDisallowedTools = []string{
-	"Task", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch",
+	"Task", "Agent", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit",
+	"Glob", "Grep", "WebFetch", "WebSearch", "ToolSearch", "Skill", "TodoWrite", "ExitPlanMode",
+	"EnterPlanMode", "AskUserQuestion", "SlashCommand", "ListMcpResources", "ReadMcpResource",
 }
 
 // claudeAllowedTools is the MCP prefix every emberloop tool carries, the same
 // policy the wick claude harness launches with. Bare entries auto-approve.
-var claudeAllowedTools = []string{"mcp__emberloop"}
+var claudeAllowedTools = []string{"mcp__emberloop", "mcp__emberloop-spawn"}
 
 // claudeStrippingOptions builds the full _meta.claudeCode.options set. One
 // builder serves session/new and session/load: the spike showed a load
@@ -37,8 +39,12 @@ func claudeStrippingOptions(model string) map[string]any {
 	opts := map[string]any{
 		"settingSources":  []string{},
 		"strictMcpConfig": true,
-		"allowedTools":    append([]string{}, claudeAllowedTools...),
-		"disallowedTools": append([]string{}, claudeDisallowedTools...),
+		// Every tool left is an emberloop MCP tool the user already chose:
+		// auto-allow all of them instead of asking.
+		"permissionMode":                  "bypassPermissions",
+		"allowDangerouslySkipPermissions": true,
+		"allowedTools":                    append([]string{}, claudeAllowedTools...),
+		"disallowedTools":                 append([]string{}, claudeDisallowedTools...),
 	}
 	if model != "" {
 		opts["model"] = model
@@ -51,6 +57,9 @@ func claudeStrippingOptions(model string) map[string]any {
 // telemetry leak into the ACP adapter's SDK.
 func claudeAdapterEnv() []string {
 	return []string{
+		// Load every MCP tool up front: with deferral the model must first
+		// call ToolSearch to see the emberloop tools.
+		"ENABLE_TOOL_SEARCH=false",
 		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
 		"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
 		"CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1",
@@ -400,9 +409,10 @@ func (b *ClaudeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, 
 	// turn ends (unverified in repo: no spike run log records MIDTURN-RESP),
 	// so no Daemon guard serializes them.
 	appendEvent("status", "", "working")
+	tracker := newToolTracker()
 	if _, perr := conn.Prompt(acpID, text, acpCallbacks{
 		OnUpdate: func(update map[string]any) {
-			mapACPUpdate(update, appendEvent)
+			mapACPUpdate(update, appendEvent, tracker)
 		},
 		OnPermission: func(toolName, optionID string) {
 			appendEvent("permission", toolName+" auto-approved as "+optionID, "auto-approved")
@@ -470,7 +480,7 @@ func (b *ClaudeBackend) mcpServersFor(sessionID string, scout bool) ([]acpMCPSer
 // commands are out of scope (the UI shows none for either harness), and
 // subagent updates never occur with Task disallowed, so all three are
 // ignored; everything else the ticket names becomes an Event.
-func mapACPUpdate(update map[string]any, emit func(kind, text, status string)) {
+func mapACPUpdate(update map[string]any, emit func(kind, text, status string), tr *toolTracker) {
 	kind, _ := update["sessionUpdate"].(string)
 	switch kind {
 	case "agent_message_chunk":
@@ -482,43 +492,55 @@ func mapACPUpdate(update map[string]any, emit func(kind, text, status string)) {
 			emit("thinking_chunk", t, "")
 		}
 	case "tool_call":
+		id, _ := update["toolCallId"].(string)
 		name, _ := update["name"].(string)
 		title, _ := update["title"].(string)
-		text := title
-		if text == "" {
-			text = name
+		label := title
+		if label == "" {
+			label = name
 		}
-		if title != "" && name != "" && title != name {
-			text = title + " [" + name + "]"
+		if label == "" {
+			label = id
+		}
+		t := tr.get(id)
+		t.Name = label
+		if raw, ok := update["rawInput"]; ok && raw != nil {
+			t.Input = prettyJSON(raw)
+		}
+		emit("tool_call_started", t.json(id, "running"), "")
+	case "tool_call_update":
+		id, _ := update["toolCallId"].(string)
+		status, _ := update["status"].(string)
+		t := tr.get(id)
+		if title, _ := update["title"].(string); title != "" {
+			t.Name = title
 		}
 		if raw, ok := update["rawInput"]; ok && raw != nil {
-			if s := compactJSON(raw); s != "" && s != "null" {
-				text += " " + s
+			if in := prettyJSON(raw); in != "" && in != "{}" {
+				t.Input = in
 			}
 		}
-		if text == "" {
-			if id, _ := update["toolCallId"].(string); id != "" {
-				text = id
-			}
-		}
-		emit("tool_call_started", text, "")
-	case "tool_call_update":
-		status, _ := update["status"].(string)
 		var parts []string
-		if status != "" {
-			parts = append(parts, status)
-		}
 		if c, ok := update["content"]; ok {
 			parts = append(parts, acpToolTexts(c)...)
 		}
-		if out, ok := update["rawOutput"]; ok && out != nil {
+		if out, ok := update["rawOutput"]; ok && out != nil && len(parts) == 0 {
 			if s := acpText(out); s != "" {
 				parts = append(parts, s)
 			}
 		}
-		emit("tool_call_updated", strings.Join(parts, " "), status)
+		if len(parts) > 0 {
+			t.Output = strings.Join(parts, "\n")
+		}
+		emit("tool_call_updated", t.json(id, status), status)
 		for _, d := range acpDiffs(update["content"]) {
 			emit("diff", d, "")
+		}
+	case "usage_update":
+		used, _ := update["used"].(float64)
+		size, _ := update["size"].(float64)
+		if size > 0 {
+			emit("usage", compactJSON(map[string]any{"used": int64(used), "size": int64(size)}), "")
 		}
 	default:
 		// plan, plan_update, available_commands_update, usage_update and
@@ -967,4 +989,40 @@ func waitClosed(ch <-chan struct{}, timeout time.Duration) bool {
 	case <-time.After(timeout):
 		return false
 	}
+}
+
+// toolTracker remembers each tool call across its started and update frames:
+// updates often omit the name and input, so the tracker keeps the latest
+// known value and every Event carries the whole call as JSON.
+type toolTracker struct{ calls map[string]*trackedTool }
+
+type trackedTool struct{ Name, Input, Output string }
+
+func newToolTracker() *toolTracker { return &toolTracker{calls: map[string]*trackedTool{}} }
+
+func (tr *toolTracker) get(id string) *trackedTool {
+	if tr == nil {
+		return &trackedTool{}
+	}
+	t, ok := tr.calls[id]
+	if !ok {
+		t = &trackedTool{}
+		tr.calls[id] = t
+	}
+	return t
+}
+
+func (t *trackedTool) json(id, status string) string {
+	return compactJSON(map[string]any{"id": id, "name": t.Name, "input": t.Input, "output": t.Output, "status": status})
+}
+
+func prettyJSON(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

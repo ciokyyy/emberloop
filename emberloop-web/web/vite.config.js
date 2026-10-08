@@ -12,5 +12,6 @@ export default defineConfig({
   build: { outDir: 'dist', emptyOutDir: true },
   // Tests mount real components in jsdom, so resolve the client build of Svelte.
   resolve: { conditions: ['browser', 'module', 'import', 'default'] },
+  server: { port: 5173, proxy: { '/api': 'http://127.0.0.1:8899' } },
   test: { environment: 'jsdom' },
 });

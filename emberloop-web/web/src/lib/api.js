@@ -60,3 +60,15 @@ export function openStream(id, since, onEvent) {
   };
   return source;
 }
+
+export const getModels = (harness) =>
+  fetch(url(`/api/models?harness=${encodeURIComponent(harness)}`)).then(json);
+
+export const getSettings = () => fetch(url('/api/settings')).then(json);
+
+export const putSettings = (roles) =>
+  fetch(url('/api/settings'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roles }),
+  }).then(json);

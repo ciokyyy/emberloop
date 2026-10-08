@@ -13,6 +13,10 @@ imports it. No herdr, no ticket state.
 
 ## Local Contracts
 
+- UI design rules (shadcn-svelte primitives everywhere, ChatGPT + Apple look,
+  smooth motion everywhere) are in `web/README.md` "Design rules": follow them
+  for every UI change.
+
 - `spike/` holds live-only probe programs, never imported by product code.
 - Terms follow root `GLOSSARY.md`.
 - Real Backends prove out in live probes, never the main check.

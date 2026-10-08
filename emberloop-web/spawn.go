@@ -73,10 +73,18 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 	metas := make([]SessionMeta, len(agents))
 	for i, a := range agents {
 		members[i] = newID()
+		h, m := harness, model
+		role := "worker"
+		if a.Type == "scout" {
+			role = "scout"
+		}
+		if rh, rm := roleFor(role); rh != "" {
+			h, m = rh, rm
+		}
 		metas[i] = SessionMeta{
 			ID:        members[i],
-			Harness:   harness,
-			Model:     model,
+			Harness:   h,
+			Model:     m,
 			WorkDir:   workDir,
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),

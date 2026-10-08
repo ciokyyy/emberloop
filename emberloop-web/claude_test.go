@@ -148,11 +148,14 @@ func mustStripped(t *testing.T, meta map[string]any, model string) {
 	if got, _ := opts["settingSources"].([]string); len(got) != 0 {
 		t.Fatalf("settingSources = %v, want empty", got)
 	}
+	if opts["permissionMode"] != "bypassPermissions" {
+		t.Fatalf("permissionMode = %v, want bypassPermissions", opts["permissionMode"])
+	}
 	if opts["strictMcpConfig"] != true {
 		t.Fatalf("strictMcpConfig = %v, want true", opts["strictMcpConfig"])
 	}
 	allowed, _ := opts["allowedTools"].([]string)
-	if !reflect.DeepEqual(allowed, []string{"mcp__emberloop"}) {
+	if !reflect.DeepEqual(allowed, []string{"mcp__emberloop", "mcp__emberloop-spawn"}) {
 		t.Fatalf("allowedTools = %v", allowed)
 	}
 	disallowed, ok := opts["disallowedTools"].([]string)
@@ -211,7 +214,7 @@ func TestPromptStreamsNormalizedEvents(t *testing.T) {
 	if len(kinds["thinking_chunk"]) != 1 {
 		t.Fatalf("thinking chunks = %v", kinds["thinking_chunk"])
 	}
-	if len(kinds["tool_call_started"]) != 1 || !strings.Contains(kinds["tool_call_started"][0], "mcp__emberloop__echo") {
+	if len(kinds["tool_call_started"]) != 1 || !strings.Contains(kinds["tool_call_started"][0], "Spike Echo") {
 		t.Fatalf("tool started = %v", kinds["tool_call_started"])
 	}
 	if len(kinds["tool_call_updated"]) != 2 {

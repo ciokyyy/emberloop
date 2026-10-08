@@ -1,11 +1,17 @@
 <script>
+  import { Plus, SquarePen, PanelRight, Menu, Settings } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
+  import Badge from './lib/ui/badge.svelte';
+  import Sheet from './lib/ui/sheet.svelte';
   import Card from './lib/Card.svelte';
   import SessionList from './lib/SessionList.svelte';
   import Composer from './lib/Composer.svelte';
   import NewSessionDialog from './lib/NewSessionDialog.svelte';
+  import SettingsPage from './lib/SettingsPage.svelte';
+  import ContextMeter from './lib/ContextMeter.svelte';
   import DetailsPane from './lib/DetailsPane.svelte';
-  import { groupTranscript } from './lib/events.js';
+  import { modelLabel } from './lib/harnesses.js';
+  import { groupTranscript, latestUsage } from './lib/events.js';
   import { listSessions, createSession, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, openStream } from './lib/api.js';
 
   let sessions = $state([]);
@@ -15,7 +21,9 @@
   let lastSeq = $state(0);
   let connected = $state(true);
   let dialogOpen = $state(false);
+  let view = $state('chat');
   let detailsOpen = $state(false);
+  let menuOpen = $state(false);
   let creating = $state(false);
   let createError = $state('');
   let sending = $state(false);
@@ -49,6 +57,7 @@
   let backoff = 1;
 
   const blocks = $derived(groupTranscript(events));
+  const usage = $derived(latestUsage(events));
   const status = $derived(meta?.status ?? 'idle');
   let scroller = $state(null);
 
@@ -78,6 +87,7 @@
   }
   async function openSession(id) {
     closeStream();
+    view = 'chat';
     currentId = id;
     events = [];
     lastSeq = 0;
@@ -166,91 +176,111 @@
   refresh(true);
 </script>
 
-<div class="flex h-dvh flex-col">
-  <header class="flex items-center gap-3 border-b px-4 py-2.5">
-    <h1 class="text-sm font-semibold">Enderbloom Web</h1>
-    {#if connected}
-      <span class="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-0.5 text-xs text-green-700 dark:text-green-300">
-        <span class="h-1.5 w-1.5 rounded-full bg-green-500"></span>Live
-      </span>
-    {:else}
-      <span data-testid="reconnect" class="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs text-amber-700 dark:text-amber-300">
-        <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500"></span>Reconnecting…
-      </span>
-    {/if}
-    <div class="ml-auto flex gap-2">
-      <Button variant="outline" size="sm" onclick={() => (detailsOpen = !detailsOpen)} aria-pressed={detailsOpen}>
-        Details
-      </Button>
-      <Button size="sm" onclick={() => (dialogOpen = true)}>New Session</Button>
+<div class="flex h-dvh">
+  <aside class="flex w-64 shrink-0 flex-col gap-3 border-r bg-sidebar p-3 max-md:hidden">
+    <div class="flex items-center justify-between px-2 pt-1">
+      <h1 class="text-sm font-semibold tracking-tight">Enderbloom</h1>
+      <Button variant="ghost" size="icon-sm" onclick={() => { view = 'chat'; dialogOpen = true; }} aria-label="New Session"><SquarePen /></Button>
     </div>
-  </header>
-
-  {#if loadError}
-    <p role="alert" class="border-b bg-red-500/10 px-4 py-2 text-sm text-red-700 dark:text-red-300">{loadError}</p>
-  {/if}
-
-  <div class="flex min-h-0 flex-1">
-    <aside class="flex w-64 shrink-0 flex-col gap-2 overflow-auto border-r p-3 max-md:hidden">
+    <Button variant="secondary" class="justify-start" onclick={() => { view = 'chat'; dialogOpen = true; }}><Plus />New Session</Button>
+    <div class="min-h-0 flex-1 overflow-auto">
       <SessionList {sessions} {currentId} onSelect={openSession} />
-    </aside>
-
-    <main class="relative flex min-w-0 flex-1 flex-col">
-      {#if currentId && !resumable}
-        <p data-testid="read-only" class="border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
-          Read-only history. {resumeNote}
-        </p>
-      {:else if currentId && meta?.scout}
-        <p data-testid="scout-read-only" class="border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
-          Scout session. Read-only transcript.
-        </p>
-      {/if}
-      <div bind:this={scroller} class="flex flex-1 flex-col gap-3 overflow-auto px-4 py-4">
-        <div class="mx-auto flex w-full max-w-2xl flex-col gap-3">
-          {#each blocks as b (b.key)}
-            <Card block={b} />
-          {:else}
-            <p class="py-16 text-center text-sm text-muted-foreground">
-              {currentId ? 'No Events yet. Send a prompt to start.' : 'Select a Session or create one.'}
-            </p>
-          {/each}
-        </div>
-      </div>
-      <div class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/85 to-transparent px-4 pb-4 pt-10">
-        <div class="pointer-events-auto mx-auto flex w-full max-w-2xl flex-col gap-2">
-          {#if currentId && queue.length}
-            <div class="rounded-2xl border bg-card p-2 shadow-lg" data-testid="queue-panel">
-              <div class="flex items-center gap-2 px-2 pt-1">
-                <span class="text-xs font-medium text-muted-foreground">Queued ({queue.length})</span>
-                <button
-                  type="button"
-                  onclick={() => clear(currentId)}
-                  class="ml-auto rounded-full px-2.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-muted"
-                >
-                  Clear
-                </button>
-              </div>
-              <ul class="flex flex-col gap-1 p-1">
-                {#each queue as m, i (i)}
-                  <li class="flex items-baseline gap-2 px-2 text-sm">
-                    <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{queueLabel(m)}</span>
-                    <span class="min-w-0 flex-1 truncate">{m.text}</span>
-                  </li>
-                {/each}
-              </ul>
-            </div>
-          {/if}
-          {#if currentId && resumable && !meta?.scout}
-            <Composer {status} busy={sending} onSend={send} />
-          {/if}
-        </div>
-      </div>
-    </main>
-
-    <div class="p-3 pl-0">
-      <DetailsPane session={meta} eventCount={events.length} open={detailsOpen} onToggle={() => (detailsOpen = false)} />
     </div>
+    <Button variant={view === 'settings' ? 'secondary' : 'ghost'} class="justify-start" onclick={() => (view = 'settings')}><Settings />Settings</Button>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    {#if view === 'settings'}
+      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
+      </header>
+      <SettingsPage onBack={() => (view = 'chat')} />
+    {:else}
+    <header class="flex items-center gap-3 px-4 py-2.5 backdrop-blur-xl">
+      <Button variant="ghost" size="icon-sm" class="md:hidden" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
+      <span class="text-sm font-medium text-muted-foreground">{meta ? `${meta.harness} · ${modelLabel(meta.harness, meta.model)}` : 'No Session'}</span>
+      {#if connected}
+        <Badge variant="success"><span class="size-1.5 rounded-full bg-green-500"></span>Live</Badge>
+      {:else}
+        <Badge variant="warning" data-testid="reconnect"><span class="size-1.5 animate-pulse rounded-full bg-amber-500"></span>Reconnecting…</Badge>
+      {/if}
+      <div class="ml-auto flex gap-2">
+        <Button variant="ghost" size="sm" class="md:hidden" onclick={() => { view = 'chat'; dialogOpen = true; }}><Plus />New</Button>
+        <Button variant="outline" size="sm" onclick={() => (detailsOpen = !detailsOpen)} aria-pressed={detailsOpen}>
+          <PanelRight />Details
+        </Button>
+      </div>
+    </header>
+
+    {#if loadError}
+      <p role="alert" class="mx-4 rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{loadError}</p>
+    {/if}
+
+    <div class="flex min-h-0 flex-1">
+      <main class="relative flex min-w-0 flex-1 flex-col">
+        {#if currentId && !resumable}
+          <p data-testid="read-only" class="mx-4 rounded-xl bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
+            Read-only history. {resumeNote}
+          </p>
+        {:else if currentId && meta?.scout}
+          <p data-testid="scout-read-only" class="mx-4 rounded-xl bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
+            Scout session. Read-only transcript.
+          </p>
+        {/if}
+        <div bind:this={scroller} class="flex flex-1 flex-col gap-3 overflow-auto px-4 pt-4 pb-44">
+          <div class="mx-auto flex w-full max-w-3xl flex-col gap-4">
+            {#each blocks as b (b.key)}
+              <Card block={b} />
+            {:else}
+              <p class="py-24 text-center text-2xl font-semibold tracking-tight text-muted-foreground">
+                {currentId ? 'Send a prompt to start.' : 'Select a Session or create one.'}
+              </p>
+            {/each}
+          </div>
+        </div>
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-4 pb-5 pt-10">
+          <div class="pointer-events-auto mx-auto flex w-full max-w-3xl flex-col gap-2">
+            {#if currentId && queue.length}
+              <div class="animate-rise rounded-2xl border bg-card p-2" data-testid="queue-panel">
+                <div class="flex items-center gap-2 px-2 pt-1">
+                  <span class="text-xs font-medium text-muted-foreground">Queued ({queue.length})</span>
+                  <Button variant="ghost" size="sm" class="ml-auto h-6 px-2" onclick={() => clear(currentId)}>Clear</Button>
+                </div>
+                <ul class="flex flex-col gap-1 p-1">
+                  {#each queue as m, i (i)}
+                    <li class="flex items-baseline gap-2 px-2 text-sm">
+                      <Badge class="shrink-0">{queueLabel(m)}</Badge>
+                      <span class="min-w-0 flex-1 truncate">{m.text}</span>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+            {#if currentId && resumable && !meta?.scout}
+              <Composer {status} busy={sending} onSend={send} />
+              <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} />
+            {/if}
+          </div>
+        </div>
+      </main>
+
+      <div class="p-3 pl-0">
+        <DetailsPane session={meta} eventCount={events.length} open={detailsOpen} onToggle={() => (detailsOpen = false)} />
+      </div>
+    </div>
+    {/if}
   </div>
 </div>
+
+<Sheet bind:open={menuOpen} title="Sessions">
+  <div class="flex items-center justify-between px-2 pt-1">
+    <span class="text-sm font-semibold tracking-tight">Enderbloom</span>
+  </div>
+  <Button variant="secondary" class="justify-start" onclick={() => { menuOpen = false; dialogOpen = true; }}><Plus />New Session</Button>
+  <div class="min-h-0 flex-1 overflow-auto">
+    <SessionList {sessions} {currentId} onSelect={(id) => { menuOpen = false; openSession(id); }} />
+  </div>
+  <Button variant="ghost" class="justify-start" onclick={() => { menuOpen = false; view = 'settings'; }}><Settings />Settings</Button>
+</Sheet>
 
 <NewSessionDialog open={dialogOpen} busy={creating} error={createError} onClose={() => (dialogOpen = false)} onCreate={create} />

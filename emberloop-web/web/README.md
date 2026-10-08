@@ -5,13 +5,25 @@ Svelte 5 + Vite single-page app, built to static files. `npm run build` in
 `/index.html` and the bundle assets (JS, CSS, favicon) at `/`. No server
 rendering anywhere, so the same build wraps in Tauri later unchanged.
 
-Styling is Tailwind v4 with shadcn-svelte-idiom primitives
-(`src/lib/ui/`: `cn`, `button` variants via tailwind-variants) and the
-same tokens in `src/app.css`: cards, dialog, badges and
-`details`-based collapsibles in a calm chat layout (single transcript
-column, floating composer, collapsible details pane). System light/dark
-via `prefers-color-scheme`. A full registry port (bits-ui Dialog
-primitives) is deferred: no behavior delta.
+## Design rules
+
+Follow these for every UI change.
+
+- Look: ChatGPT neutral surfaces plus Apple softness (system font, large
+  radii, blurred translucent chrome, pill buttons). Tokens live in
+  `src/app.css`; never hardcode colors.
+- shadcn-svelte everywhere: every interactive control (button, select,
+  dialog, input, badge, ...) comes from `src/lib/ui/`, built on bits-ui.
+  Never use a raw `<select>`, `<dialog>` or unstyled `<input>`. Add a missing
+  primitive to `src/lib/ui/` first.
+- Icons come from `@lucide/svelte`.
+- Motion everywhere: new blocks use `animate-rise`, overlays use
+  `tw-animate-css` (`animate-in`/`fade-in-0`/`zoom-in-95`), interactive
+  elements transition on the shared `--ease-smooth` curve. Reduced motion
+  is honored in `app.css`.
+- Models show display names (`modelLabel` in `harnesses.js`); the Daemon owns
+  the model list (`GET /api/models`).
+- Dev: `npm run dev` proxies `/api` to the Daemon on 127.0.0.1:8899.
 
 ## API base URL
 

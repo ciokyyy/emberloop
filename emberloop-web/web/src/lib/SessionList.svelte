@@ -1,5 +1,6 @@
 <!-- Session tree: newest activity first, Subagents nested under parents. -->
 <script>
+  import Badge from './ui/badge.svelte';
   let { sessions = [], currentId = null, onSelect = () => {} } = $props();
 
   const STATUS_DOT = {
@@ -32,11 +33,11 @@
   <button
     onclick={() => onSelect(s.id)}
     aria-current={s.id === currentId}
-    class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
-    class:bg-muted={s.id === currentId}
+    class="flex w-full animate-rise items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none"
+    class:bg-accent={s.id === currentId}
   >
     <span class="h-2 w-2 shrink-0 rounded-full {STATUS_DOT[s.status] ?? STATUS_DOT.idle}" title={s.status}></span>
-    <span class="min-w-0 flex-1 truncate font-medium">{s.harness} · {short(s.id)}{#if s.scout}<span class="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">scout</span>{/if}</span>
+    <span class="min-w-0 flex-1 truncate font-medium">{s.harness} · {short(s.id)}{#if s.scout}<Badge class="ml-1 px-1.5 py-0 text-[10px]">scout</Badge>{/if}</span>
     <span class="shrink-0 text-xs text-muted-foreground">{s.status}</span>
   </button>
 {/snippet}
