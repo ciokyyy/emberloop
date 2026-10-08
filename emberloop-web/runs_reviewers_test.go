@@ -313,3 +313,67 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 		t.Fatalf("verdict = %+v, want stale against the moved branch tip", got)
 	}
 }
+
+// A verdict already stale at birth re-prompts its reviewer once at the
+// current tip: the stale verdict still lands at its prompted tip, but the
+// reviewer is asked to judge the tip that moved under review.
+func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
+	repo, _ := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	branch := "implement/01-first"
+	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
+	prompted := "1111111111111111111111111111111111111111"
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d.mu.Lock()
+	d.runs["r-tip"] = &runState{
+		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
+		Harness: "fake", Model: "fake-model",
+		notify:     make(chan struct{}),
+		Tickets:    []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Branches:   map[string]string{"01-first": branch},
+		Worktrees:  map[string]string{"01-first": worktree},
+		Reviewers:  map[string]map[string]string{},
+		ReviewTips: map[string]map[string]string{},
+		Reviews:    map[string]map[string]storedReview{},
+	}
+	d.mu.Unlock()
+	// Start the reviewer judging an older tip through the real start path,
+	// so its Session can take the re-prompt.
+	if err := d.runStartReviewer("r-tip", "01-first", "reviewer-spec", prompted); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	sess := d.runs["r-tip"].Reviewers["01-first"]["reviewer-spec"]
+	d.mu.Unlock()
+	if sess == "" {
+		t.Fatalf("no reviewer session, want one")
+	}
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	submitReview(t, srv.URL, sess, "pass", "")
+	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
+	r := getRun(t, srv.URL, "r-tip")
+	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
+	if got.Verdict != "pass" || got.At != prompted {
+		t.Fatalf("verdict = %+v, want pass at the prompted tip %q", got, prompted)
+	}
+	d.mu.Lock()
+	retipped := d.runs["r-tip"].ReviewTips["01-first"]["reviewer-spec"]
+	d.mu.Unlock()
+	if retipped != cur {
+		t.Fatalf("prompted tip = %q, want the re-prompt at the current tip %q", retipped, cur)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if strings.Contains(sessTranscript(getSession(t, srv.URL, sess)), cur) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reviewer transcript misses the re-prompt at %q", cur)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}

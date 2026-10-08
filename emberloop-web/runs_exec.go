@@ -831,8 +831,8 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
 // runFinishWorker merges a submitted done through the reviewer gate and the
 // shared core checks: without both Passes at the current tip, or with a
 // dirty worktree or a rebase conflict, the Worker stays alive with the
-// refusal. A Ticket with no verdict yet, or with no verdict on the current
-// tip while its re-prompt is out, is still under review, not refused:
+// refusal. A Ticket with no verdict on the current tip is still under
+// review, not refused:
 // the finish reports nothing and the driver polls again. The gate judges
 // the pre-rebase tip: the rebase replays the reviewed commits onto the
 // target without changing their content. On a merge the
@@ -873,11 +873,6 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 	for typ, sess := range rs.Reviewers[ticketID] {
 		sessions[typ] = sess
 	}
-	workerCount := 0
-	if rec, ok := d.submits[rs.Sessions[ticketID]]; ok && rec != nil {
-		workerCount = rec.Count
-	}
-	reprompted := rs.Reprompted[ticketID]
 	d.mu.Unlock()
 	tip, gerr := runGit(repo, "rev-parse", branch)
 	if gerr != nil || tip == "" {
@@ -887,11 +882,10 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 		return emberloop.DriverFinish{}, nil
 	}
 	if why := reviewGateDetail(verdicts, tip); why != "" {
-		// No verdict judged the current tip and the re-prompt for it is
-		// already out: the Ticket is under review, not refused, so there
-		// is no new refusal to tell. A fresh changes verdict is still
-		// told unchanged below.
-		if reprompted >= workerCount && noneFreshAtTip(verdicts, tip) {
+		// No verdict judged the current tip: the Ticket is under review,
+		// not refused, so there is no new refusal to tell. A fresh
+		// changes verdict is still told unchanged below.
+		if noneFreshAtTip(verdicts, tip) {
 			return emberloop.DriverFinish{}, nil
 		}
 		return emberloop.DriverFinish{Merged: false, Detail: why}, nil
@@ -1180,6 +1174,7 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 		// stale, never fresh. Runs predating prompted tips fall back to
 		// the branch tip.
 		prompted := d.runs[runID].ReviewTips[ticketID][reviewerType]
+		spec := d.runs[runID].Spec
 		if rs := d.runs[runID]; rs.Reviews == nil {
 			rs.Reviews = map[string]map[string]storedReview{}
 		} else if rs.Reviews[ticketID] == nil {
@@ -1190,7 +1185,9 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 		if tip == "" {
 			tip, _ = runGit(repo, "rev-parse", branch)
 		}
+		cur, _ := runGit(repo, "rev-parse", branch)
 		d.mu.Lock()
+		retell := ""
 		if rs, ok := d.runs[runID]; ok {
 			if rs.Reviews == nil {
 				rs.Reviews = map[string]map[string]storedReview{}
@@ -1199,10 +1196,26 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 				rs.Reviews[ticketID] = map[string]storedReview{}
 			}
 			rs.Reviews[ticketID][reviewerType] = storedReview{Verdict: req.Status, At: tip, Report: req.Report}
+			// A verdict already stale at birth means the tip moved under
+			// review: re-prompt this reviewer once at the current tip, so
+			// the stale verdict never reads fresh later.
+			if tip != "" && cur != "" && tip != cur {
+				if rs.ReviewTips == nil {
+					rs.ReviewTips = map[string]map[string]string{}
+				}
+				if rs.ReviewTips[ticketID] == nil {
+					rs.ReviewTips[ticketID] = map[string]string{}
+				}
+				rs.ReviewTips[ticketID][reviewerType] = cur
+				retell = reviewerPrompt(ticketID, spec, reviewerType, branch, cur)
+			}
 			d.persistRun(rs)
 			d.broadcastRunLocked(rs)
 		}
 		d.mu.Unlock()
+		if retell != "" {
+			_ = d.runTellSession(id, retell)
+		}
 		d.appendEvent(id, "submit", req.Status, "")
 		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 		return
@@ -1213,10 +1226,12 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	}
 	d.mu.Unlock()
 	d.appendEvent(id, "submit", req.Status, "")
-	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 	if workerRun != "" {
+		// Re-prompt before answering: the driver's next finish must see
+		// the re-prompt already out, never a stale refusal first.
 		d.ensureReviewers(workerRun, workerTicket)
 	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 }
 
 // findReviewerLocked names the Run, Ticket and reviewer type of a Reviewer

@@ -135,11 +135,12 @@ the driver ticks boxes and marks done, nothing else writes them.
   Sessions, so they keep context across Passes. Reviewer submits carry
   pass or changes with the findings in the report; each verdict is stamped
   at the tip the reviewer was prompted on, so a mid-review Worker commit
-  reads stale, never fresh. The finish merges only when both types passed
-  at the current tip; a fresh refusal lands on the row and reaches the
-  Worker unchanged, retried after the next submit, while a Ticket with no
-  verdict on the current tip and its re-prompt already out stays under
-  review with no new Tell. Reviewer Sessions start through the shared
+  reads stale, never fresh, and a verdict already stale at birth re-prompts
+  its reviewer once at the current tip. The finish merges only when both
+  types passed at the current tip; a fresh refusal lands on the row and
+  reaches the Worker unchanged, retried after the next submit, while a
+  Ticket with no verdict on the current tip stays under review with no new
+  Tell. Reviewer Sessions start through the shared
   live-Session cap like every other Session. The row carries
   `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with the
   last refusal. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
