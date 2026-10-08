@@ -508,6 +508,9 @@ func TestDriverLiveWorldMapsTipsReviewsAndRequiredTypes(t *testing.T) {
 	if got := world.RequiredFor(id); !equalIDs(got, defaultReviewers) {
 		t.Errorf("RequiredFor = %v, want the built-in fallback for an unknown type", got)
 	}
+	if !world.HasWorker(id) {
+		t.Errorf("HasWorker(%s) = false, want the recorded worker", id)
+	}
 	res, err := RunDriver(spec, world)
 	if err != nil {
 		t.Fatalf("RunDriver: %v", err)
@@ -515,8 +518,54 @@ func TestDriverLiveWorldMapsTipsReviewsAndRequiredTypes(t *testing.T) {
 	if len(res.Merged) != 1 || res.Merged[0].SHA != "mergedsha" {
 		t.Errorf("merged = %v, want the live-mapped ticket", res.Merged)
 	}
-	if len(started) != 1 || started[0] != id {
-		t.Errorf("started = %v, want [%s]", started, id)
+	if len(started) != 0 {
+		t.Errorf("started = %v, want no second worker for the recorded one", started)
+	}
+}
+
+// The live world reads a resume from the worker store, the implement branch
+// and the run history: a store record counts as a worker, a bare branch with
+// no record counts too, and the last merged history entry gives the old sha.
+func TestDriverLiveWorldReadsResumeFromStoreBranchAndHistory(t *testing.T) {
+	oldState, oldExec := statePath, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; spawnExec = oldExec })
+	repo, dir := t.TempDir(), t.TempDir()
+	stored := filepath.Join(dir, "01-first.md")
+	branched := filepath.Join(dir, "02-second.md")
+	missing := filepath.Join(dir, "03-third.md")
+	files := map[string]string{stored: ticketDoc("None"), branched: ticketDoc("None"), missing: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-resume"}
+	if err := save(map[string]Worker{WorkerID(stored): {ID: WorkerID(stored), Ticket: stored, Repo: repo}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveHistory(specSlug(spec.Spec), []TicketHistory{
+		{Ticket: stored, Outcome: outcomeMerged, SHA: "old-sha"},
+		{Ticket: stored, Outcome: outcomeMerged, SHA: "new-sha"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spawnExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		if cmd == "git" && len(args) == 3 && args[0] == "rev-parse" && args[1] == "--verify" && args[2] == "implement/"+WorkerID(branched) {
+			return Result{Code: 0, Stdout: "tipsha\n"}, nil
+		}
+		return Result{Code: 1, Stderr: "no such branch"}, nil
+	}
+	world := liveDriverWorld(spec, repo, files)
+	if !world.HasWorker(WorkerID(stored)) {
+		t.Errorf("HasWorker(%s) = false, want the recorded worker", WorkerID(stored))
+	}
+	if !world.HasWorker(WorkerID(branched)) {
+		t.Errorf("HasWorker(%s) = false, want the bare implement branch", WorkerID(branched))
+	}
+	if world.HasWorker(WorkerID(missing)) {
+		t.Errorf("HasWorker(%s) = true, want nothing without a record or a branch", WorkerID(missing))
+	}
+	if got := world.MergedSHA(WorkerID(stored)); got != "new-sha" {
+		t.Errorf("MergedSHA = %q, want the last merged history entry", got)
+	}
+	if got := world.MergedSHA(WorkerID(missing)); got != "" {
+		t.Errorf("MergedSHA = %q, want empty without history", got)
 	}
 }
 
@@ -1075,5 +1124,128 @@ func TestDriverReportsATickFailureAndStillMerges(t *testing.T) {
 	}
 	if want := "checkboxes for 01-first not applied: disk gone"; !strings.Contains(res.Report, want) {
 		t.Errorf("report misses %q:\n%s", want, res.Report)
+	}
+}
+
+// A resumed run finds the merged ticket in the ticket file and carries on:
+// 01-first reads Status done, so it never starts again, its old sha stays in
+// the report, and 02-second (blocked by 01) still starts and merges. A stray
+// earlier Status line never hides the done marker: the first done wins.
+func TestDriverResumeSkipsMergedAndFinishesRest(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  "# 01: Test ticket\n\nStatus: ready\n\nStatus: done\n\n**Blocked by:** None\n",
+		"02-second.md": ticketDoc("01"),
+	}, 2)
+	world.MergedSHA = func(id string) string {
+		if id == "01-first" {
+			return "sha-01-first"
+		}
+		return ""
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if indexOfID(fake.started, "01-first") >= 0 {
+		t.Errorf("resumed run restarted merged ticket 01-first: started=%v", fake.started)
+	}
+	if len(res.Merged) != 2 || res.Merged[0].ID != "01-first" || res.Merged[0].SHA != "sha-01-first" {
+		t.Errorf("merged = %v, want 01-first with its old sha first", res.Merged)
+	}
+	if !strings.Contains(res.Report, "merged 01-first as sha-01-first\n") {
+		t.Errorf("report misses the resumed merge:\n%s", res.Report)
+	}
+}
+
+// A ticket that already has a worker gets no second worker: 01-first is
+// running, so it never starts again, but its pass at the tip still finishes
+// it, freeing the MaxWorkers slot for 02-second.
+func TestDriverResumeStartsNoSecondWorkerForRunning(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("01"),
+	}, 1)
+	world.HasWorker = func(id string) bool { return id == "01-first" }
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if indexOfID(fake.started, "01-first") >= 0 {
+		t.Errorf("resumed run started a second worker for 01-first: started=%v", fake.started)
+	}
+	if !equalIDs(fake.finished, []string{"01-first", "02-second"}) {
+		t.Errorf("finished = %v, want both tickets finished in order", fake.finished)
+	}
+	if len(res.Merged) != 2 {
+		t.Errorf("merged = %v, want both tickets", res.Merged)
+	}
+}
+
+// A parked ticket keeps its worker but the driver leaves it alone: 02-park
+// reads Status parked, so it never starts or finishes, 03-second (blocked by
+// it) waits, and every other ticket keeps running.
+func TestDriverResumeRecognisesParkedAndBlocksOnlyDependents(t *testing.T) {
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-park.md":   "# 02: Test ticket\n\nStatus: parked\n\n**Blocked by:** None\n",
+		"03-second.md": ticketDoc("02-park"),
+		"04-free.md":   ticketDoc("None"),
+	}, 3)
+	world.HasWorker = func(id string) bool { return id == "02-park" }
+	// Nothing left can run or start, so a live run must exit with the report
+	// instead of polling: any sleep here fails the run.
+	world.Sleep = func(time.Duration) { panic("driver slept with nothing left to wait for") }
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if indexOfID(fake.started, "02-park") >= 0 {
+		t.Errorf("resumed run started parked ticket 02-park: started=%v", fake.started)
+	}
+	if indexOfID(fake.finished, "02-park") >= 0 {
+		t.Errorf("resumed run finished parked ticket 02-park: finished=%v", fake.finished)
+	}
+	if indexOfID(fake.started, "03-second") >= 0 {
+		t.Errorf("dependent 03-second started while 02-park stays parked: started=%v", fake.started)
+	}
+	if !equalIDs(fake.started, []string{"01-first", "04-free"}) {
+		t.Errorf("started = %v, want only the unblocked tickets", fake.started)
+	}
+	if !strings.Contains(res.Report, "unmerged 02-park: parked\n") {
+		t.Errorf("report misses the parked row:\n%s", res.Report)
+	}
+	if !strings.Contains(res.Report, "unmerged 03-second: never started\n") {
+		t.Errorf("report misses the blocked dependent:\n%s", res.Report)
+	}
+}
+
+// The driver holds no state file of its own: a resumed run reads the injected
+// world and leaves it untouched. A merged ticket whose old sha is unknown
+// still lists bare in the report.
+func TestDriverResumeLeavesTheInjectedWorldUntouched(t *testing.T) {
+	spec, world, _ := runWorld(t, map[string]string{
+		"01-first.md":  "# 01: Test ticket\n\nStatus: done\n\n**Blocked by:** None\n",
+		"02-second.md": ticketDoc("01"),
+	}, 2)
+	world.HasWorker = func(id string) bool { return false }
+	world.MergedSHA = func(id string) string { return "" }
+	before := map[string]string{}
+	for path, raw := range world.Files {
+		before[path] = raw
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	for path, raw := range before {
+		if world.Files[path] != raw {
+			t.Errorf("driver rewrote ticket file %s", path)
+		}
+	}
+	if len(world.Files) != len(before) {
+		t.Errorf("driver added files to the world: %d, want %d", len(world.Files), len(before))
+	}
+	if !strings.Contains(res.Report, "merged 01-first\n") {
+		t.Errorf("report misses the bare resumed merge:\n%s", res.Report)
 	}
 }

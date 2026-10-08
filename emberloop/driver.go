@@ -45,7 +45,9 @@ type DriverMerged struct {
 // the happy-path loop to a stable state.
 type DriverWorld struct {
 	// Files holds every ticket file by path. RunDriver only reads entries
-	// under the spec's tickets directory ending in .md.
+	// under the spec's tickets directory ending in .md. A resume reads the
+	// same map and writes nothing to it: Status done means merged, Status
+	// parked means parked, and the driver keeps no private state file.
 	Files map[string]string
 	// Now is the clock the driver reads. Nil means time.Now; tests inject a
 	// fake. The happy path keeps no time, but the seam stays one entry
@@ -57,6 +59,14 @@ type DriverWorld struct {
 	// MaxWorkers caps how many workers run at once. Zero means three, the
 	// same default as the worker cap.
 	MaxWorkers int
+	// HasWorker reports whether a ticket already has a worker: its record in
+	// the worker store, or its implement branch in git. A resumed run never
+	// starts a second worker for such a ticket. Nil means no ticket has one.
+	HasWorker func(ticketID string) bool
+	// MergedSHA is the merge sha of a ticket whose file already reads Status
+	// done, so a resumed run keeps it in the report. Empty means unknown, and
+	// the report lists the ticket bare. Nil means every old sha is unknown.
+	MergedSHA func(ticketID string) string
 	// Tip is a worker's current branch tip.
 	Tip func(ticketID string) string
 	// Reviews holds the reviewer verdicts for a ticket's worker.
@@ -124,7 +134,11 @@ type DriverResult struct {
 // A check world (no Finish) stops at the order. A run world also runs the
 // happy-path loop: tickets start in ticket-number order up to MaxWorkers
 // once their blockers have merged, and finish runs only after every required
-// reviewer type passed at the worker's current tip.
+// reviewer type passed at the worker's current tip. A resumed run seeds its
+// state from the world: Status done tickets are already merged (their sha
+// from MergedSHA), Status parked tickets sit out, and tickets with a worker
+// are already started and hold their slot. It never starts a second worker
+// for a ticket that has one, and writes no state file of its own.
 func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	tickets, err := readDriverTickets(spec, world.Files)
 	if err != nil {
@@ -154,9 +168,14 @@ const driverPollInterval = 5 * time.Second
 // finish what passed at its tip, repeat. A pass with no start, no merge, no
 // tell and no observed change ends the run in tests; a live run sleeps and
 // polls again instead, so it waits for workers rather than quitting on them.
+// When nothing runs and nothing could start, the rest wait on parked tickets
+// and no poll would change anything, so the run exits with the report.
 // A refused finish goes back to the worker unchanged through tell, and
 // finish runs again only after the worker's next submit. There is no attempt
-// limit: every refusal is told and retried like the first.
+// limit: every refusal is told and retried like the first. A resumed run
+// seeds its state from the world first: Status done tickets are already
+// merged, Status parked tickets sit out while keeping their workers, and
+// tickets with a worker are already started and hold their MaxWorkers slot.
 func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map[string][]string, string, error) {
 	maxRun := world.MaxWorkers
 	if maxRun <= 0 {
@@ -164,6 +183,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 	}
 	merged := map[string]bool{}
 	started := map[string]bool{}
+	parked := map[string]bool{}
 	seen := map[string]string{}
 	refused := map[string]string{}
 	// told counts the submits a ticket's worker had when its last refusal
@@ -183,20 +203,39 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 	unknown := map[string][]string{}
 	tickFailed := map[string]string{}
 	var out []DriverMerged
+	for _, tk := range order {
+		switch driverTicketState(world.Files[tk.Path]) {
+		case driverTicketDone:
+			merged[tk.ID] = true
+			out = append(out, DriverMerged{ID: tk.ID, SHA: driverMergedSHA(world, tk.ID)})
+		case driverTicketParked:
+			parked[tk.ID] = true
+		}
+	}
 	running := 0
-	ready := func(tk DriverTicket) bool {
-		if started[tk.ID] {
-			return false
+	for _, tk := range order {
+		if merged[tk.ID] || parked[tk.ID] {
+			continue
 		}
-		for _, b := range tk.Blockers {
-			if !merged[b] {
-				return false
-			}
+		if driverHasWorker(world, tk.ID) {
+			started[tk.ID] = true
+			running++
 		}
-		return true
 	}
 	for {
 		progress, changed := false, false
+		ready := func(tk DriverTicket) bool {
+			if started[tk.ID] || merged[tk.ID] || parked[tk.ID] {
+				return false
+			}
+			for _, b := range tk.Blockers {
+				if !merged[b] {
+					return false
+				}
+			}
+			return true
+		}
+		startedNew := false
 		for running < maxRun {
 			next := -1
 			for i, tk := range order {
@@ -212,10 +251,17 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 			}
 			started[order[next].ID] = true
 			running++
+			startedNew = true
 			progress = true
 		}
+		if running == 0 && !startedNew {
+			// Nothing runs and nothing could start: the tickets left unmerged
+			// wait on parked tickets, so no poll would change anything. A live
+			// run exits with the report instead of sleeping forever.
+			break
+		}
 		for _, tk := range order {
-			if !started[tk.ID] || merged[tk.ID] {
+			if !started[tk.ID] || merged[tk.ID] || parked[tk.ID] {
 				continue
 			}
 			if fresh := driverFreshBoxes(ticked[tk.ID], world.Completed, tk.ID); len(fresh) > 0 && world.TickCheckboxes != nil {
@@ -297,7 +343,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 			out = append(out, DriverMerged{ID: tk.ID, SHA: fin.SHA})
 			progress = true
 		}
-		if len(out) == len(order) {
+		if len(out)+len(parked) == len(order) {
 			break
 		}
 		if progress || changed {
@@ -308,7 +354,53 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 		}
 		world.Sleep(driverPollInterval)
 	}
-	return out, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, refused, unknown, tickFailed), nil
+	return out, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, parked, refused, unknown, tickFailed), nil
+}
+
+// Resume states a ticket file carries: done (merged), parked (sitting out
+// with its worktree kept), or anything else (open). The parked marker is the
+// same Status value the park action writes.
+const (
+	driverTicketOpen = iota
+	driverTicketDone
+	driverTicketParked
+)
+
+// driverTicketState reads one ticket file's resume state from its Status
+// lines: the first done or parked value wins. Only the header field counts,
+// the way tickTicket writes it and ticketFileDone reads it.
+func driverTicketState(raw string) int {
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Status:") && !strings.HasPrefix(trimmed, "**Status:") {
+			continue
+		}
+		if i := strings.Index(line, "Status:"); i >= 0 {
+			value := strings.TrimSpace(strings.Trim(line[i+len("Status:"):], " *\t"))
+			switch {
+			case strings.EqualFold(value, "done"):
+				return driverTicketDone
+			case strings.EqualFold(value, "parked"):
+				return driverTicketParked
+			}
+		}
+	}
+	return driverTicketOpen
+}
+
+// driverHasWorker reports whether the world already holds a worker for the
+// ticket. Nil means none do.
+func driverHasWorker(world DriverWorld, ticketID string) bool {
+	return world.HasWorker != nil && world.HasWorker(ticketID)
+}
+
+// driverMergedSHA is the old merge sha of an already-merged ticket. Empty
+// means unknown, and the report lists the ticket bare.
+func driverMergedSHA(world DriverWorld, ticketID string) string {
+	if world.MergedSHA == nil {
+		return ""
+	}
+	return world.MergedSHA(ticketID)
 }
 
 // driverRequired names the reviewer types one ticket's finish needs: its own
@@ -354,17 +446,25 @@ func driverReviewSig(required []string, revs map[string]DriverReview) string {
 }
 
 // driverReport renders the plain final report: every merged ticket with its
-// sha, then every ticket left unmerged, each with its last refusal when a
-// finish refused it. Unknown checkboxes and tick failures follow their
-// ticket in order. Later tickets add the follow-ups beside them.
-func driverReport(order []DriverTicket, merged []DriverMerged, started, done map[string]bool, refused map[string]string, unknown map[string][]string, tickFailed map[string]string) string {
+// sha (bare when the old sha is unknown), then every ticket left unmerged,
+// each with its last refusal when a finish refused it, parked when it sat
+// out, never started when it never ran, still running otherwise. Unknown
+// checkboxes and tick failures follow their ticket in order. Later tickets
+// add the follow-ups beside them.
+func driverReport(order []DriverTicket, merged []DriverMerged, started, done, parked map[string]bool, refused map[string]string, unknown map[string][]string, tickFailed map[string]string) string {
 	var b strings.Builder
 	for _, m := range merged {
+		if m.SHA == "" {
+			fmt.Fprintf(&b, "merged %s\n", m.ID)
+			continue
+		}
 		fmt.Fprintf(&b, "merged %s as %s\n", m.ID, m.SHA)
 	}
 	for _, tk := range order {
 		if !done[tk.ID] {
 			switch {
+			case parked[tk.ID]:
+				fmt.Fprintf(&b, "unmerged %s: parked\n", tk.ID)
 			case refused[tk.ID] != "":
 				fmt.Fprintf(&b, "unmerged %s: %s\n", tk.ID, refused[tk.ID])
 			case !started[tk.ID]:
@@ -468,8 +568,11 @@ func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 // tells reach the worker's own pane through the same delivery the tell tool
 // uses, submit counts derive from the worker's submit record, completed boxes
 // read the worker's own submit, ticks land in the ticket file in this checkout
-// through the per-file lock, and finish is the same merge. Extracted so tests
-// drive the mapping through the seam with fake exec and temp state.
+// through the per-file lock, and finish is the same merge. A resume reads the
+// same three sources the seam takes: Status done and Status parked come from
+// the ticket files, a running worker from its store record or its implement
+// branch, and an old merge sha from the run's ticket history. Extracted so
+// tests drive the mapping through the seam with fake exec and temp state.
 func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
 	paths := map[string]string{}
 	for path := range files {
@@ -486,6 +589,33 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 	return DriverWorld{
 		Files:      files,
 		MaxWorkers: tools.LoadSettings().EffectiveMaxWorkers(),
+		HasWorker: func(ticketID string) bool {
+			path := paths[ticketID]
+			if path == "" {
+				return false
+			}
+			if store, err := loadWorkersLocked(); err == nil {
+				if _, ok := store[WorkerID(path)]; ok {
+					return true
+				}
+			}
+			res, err := spawnExec("git", []string{"rev-parse", "--verify", "implement/" + WorkerID(path)}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
+			return err == nil && res.Code == 0
+		},
+		MergedSHA: func(ticketID string) string {
+			entries, err := loadHistory(specSlug(spec.Spec))
+			if err != nil {
+				return ""
+			}
+			sha := ""
+			for _, h := range entries {
+				if h.Outcome != outcomeMerged || filepath.Base(h.Ticket) != ticketID+".md" {
+					continue
+				}
+				sha = h.SHA
+			}
+			return sha
+		},
 		StartWorker: func(tk DriverTicket) error {
 			_, err := spawnAgents(spawnExec, repo, types, []spawnRequest{{Type: "worker", Ticket: tk.Path}})
 			return err
