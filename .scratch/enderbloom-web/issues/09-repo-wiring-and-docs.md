@@ -4,9 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The repo check builds, vets and tests `emberloop-web`
-- [ ] `emberloop-web/AGENTS.md` follows the DOX shape and is listed in the root index
-- [ ] The root preamble names the new module
-- [ ] The README documents starting the Daemon and the loopback-only rule
+- [x] The repo check builds, vets and tests `emberloop-web`
+- [x] `emberloop-web/AGENTS.md` follows the DOX shape and is listed in the root index
+- [x] The root preamble names the new module
+- [x] The README documents starting the Daemon and the loopback-only rule
