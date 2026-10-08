@@ -11,6 +11,10 @@ import (
 // can stand in for herdr.
 var tellExec Exec = osExec
 
+// notifyExec is the exec the driver's needs-you notification drives. A var,
+// like tellExec, so a test can stand in for herdr.
+var notifyExec Exec = osExec
+
 // renderSubmit is one agent's report as its caller sees it: its type, id,
 // status and the body it gave, a summary for a non-blocking agent or a full
 // report for a blocking one. A give-up is not a status the agent chose but the

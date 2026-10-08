@@ -1,6 +1,7 @@
 package emberloop
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1248,5 +1249,522 @@ func TestDriverResumeLeavesTheInjectedWorldUntouched(t *testing.T) {
 	}
 	if !strings.Contains(res.Report, "merged 01-first\n") {
 		t.Errorf("report misses the bare resumed merge:\n%s", res.Report)
+	}
+}
+
+// Three identical refusals in a row mark the ticket "needs you" and send one
+// herdr notification. The retry after the alert still runs, and further
+// identical refusals send no second notification.
+func TestDriverThreeIdenticalRefusalsRaiseNeedsYouOnce(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	var told []string
+	submits := 0
+	finished := 0
+	var notified []string
+	world.Tell = func(id, text string) error {
+		told = append(told, text)
+		if len(told) <= 3 {
+			// The worker tries again after each of the first three tells,
+			// then stalls: no more submits.
+			submits++
+		}
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		return DriverFinish{Merged: false, Detail: refusal}, nil
+	}
+	world.Notify = func(id, message string) error {
+		notified = append(notified, id+": "+message)
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.NeedsYou) != 1 || res.NeedsYou[0] != "01-first" {
+		t.Errorf("NeedsYou = %v, want [01-first]", res.NeedsYou)
+	}
+	if len(notified) != 1 {
+		t.Fatalf("notify calls = %d, want 1: the alert sends one notification", len(notified))
+	}
+	if !strings.Contains(notified[0], "01-first") || !strings.Contains(notified[0], refusal) {
+		t.Errorf("notification = %q, want the ticket and the refusal text", notified[0])
+	}
+	if finished != 4 {
+		t.Errorf("finish calls = %d, want 4: three to raise the alert and one retry after it", finished)
+	}
+	if len(told) != 4 {
+		t.Errorf("tell calls = %d, want 4: every refusal still reaches the worker", len(told))
+	}
+	if len(res.Merged) != 0 {
+		t.Errorf("merged = %v, want nothing: the worker stalled", res.Merged)
+	}
+}
+
+// Two identical refusals do not raise the alert: the ticket merges on the
+// retry with no notification and no needs-you mark.
+func TestDriverTwoIdenticalRefusalsDoNotRaiseNeedsYou(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	finished := 0
+	notified := 0
+	world.Tell = func(id, text string) error {
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if finished <= 2 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	world.Notify = func(id, message string) error {
+		notified++
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if notified != 0 {
+		t.Errorf("notify calls = %d, want 0: two refusals raise no alert", notified)
+	}
+	if len(res.NeedsYou) != 0 {
+		t.Errorf("NeedsYou = %v, want nothing", res.NeedsYou)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].SHA != "sha-fixed" {
+		t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+	}
+}
+
+// Ten minutes with no worker activity marks the ticket "needs you" and sends
+// one notification on the fake clock. The slow worker still merges after it
+// recovers, so the alert never stops the ticket.
+func TestDriverIdleWorkerRaisesNeedsYouAndStillMerges(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-slow.md": ticketDoc("None"),
+		"02-fast.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 2
+	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	world.Now = func() time.Time { return now }
+	world.Sleep = func(d time.Duration) { now = now.Add(d) }
+	world.Tip = func(id string) string { return "tip-" + id }
+	world.Reviews = func(id string) map[string]DriverReview {
+		if id == "01-slow" && now.Before(start.Add(11*time.Minute)) {
+			// The slow worker shows one pass and then goes quiet.
+			return map[string]DriverReview{
+				reviewerStandards: {Verdict: verdictPass, At: "tip-01-slow"},
+			}
+		}
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip-" + id},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip-" + id},
+		}
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha-" + id}, nil
+	}
+	var notified []string
+	world.Notify = func(id, message string) error {
+		notified = append(notified, id+": "+message)
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(notified) != 1 {
+		t.Fatalf("notify calls = %d, want 1: the idle ticket alerts once", len(notified))
+	}
+	if !strings.Contains(notified[0], "01-slow") || !strings.Contains(notified[0], "10 minutes") {
+		t.Errorf("notification = %q, want the idle ticket and the 10 minutes", notified[0])
+	}
+	if len(res.Merged) != 2 {
+		t.Errorf("merged = %v, want both tickets: the slow one recovers", res.Merged)
+	}
+}
+
+// Retries continue after the alert with a growing delay: the gaps between
+// finish calls grow once the ticket is marked needs-you.
+func TestDriverNeedsYouRetriesWithGrowingDelay(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	world.Now = func() time.Time { return now }
+	world.Sleep = func(d time.Duration) { now = now.Add(d) }
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	var finishAt []time.Time
+	notified := 0
+	world.Tell = func(id, text string) error {
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finishAt = append(finishAt, now)
+		if len(finishAt) <= 4 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	world.Notify = func(id, message string) error {
+		notified++
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(finishAt) != 5 {
+		t.Fatalf("finish calls = %d, want 5: retries continue after the alert", len(finishAt))
+	}
+	firstGap := finishAt[3].Sub(finishAt[2])
+	secondGap := finishAt[4].Sub(finishAt[3])
+	if firstGap < time.Minute {
+		t.Errorf("first post-alert gap = %v, want at least a minute", firstGap)
+	}
+	if secondGap <= firstGap {
+		t.Errorf("gaps = %v then %v, want the delay to keep growing", firstGap, secondGap)
+	}
+	if notified != 1 {
+		t.Errorf("notify calls = %d, want 1: one alert across all five finishes", notified)
+	}
+	if len(res.Merged) != 1 {
+		t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+	}
+}
+
+// One ticket in "needs you" stops nothing else: the stuck ticket alerts and
+// waits while the other ticket merges.
+func TestDriverOtherTicketsRunWhileOneNeedsYou(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-stuck.md": ticketDoc("None"),
+		"02-quick.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 2
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	told := 0
+	var notified []string
+	world.Tell = func(id, text string) error {
+		told++
+		if told <= 3 {
+			submits++
+		}
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		if id == "02-quick" {
+			return DriverFinish{Merged: true, SHA: "sha-02-quick"}, nil
+		}
+		return DriverFinish{Merged: false, Detail: refusal}, nil
+	}
+	world.Notify = func(id, message string) error {
+		notified = append(notified, id)
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "02-quick" {
+		t.Errorf("merged = %v, want only 02-quick", res.Merged)
+	}
+	if len(res.NeedsYou) != 1 || res.NeedsYou[0] != "01-stuck" {
+		t.Errorf("NeedsYou = %v, want [01-stuck]", res.NeedsYou)
+	}
+	if len(notified) != 1 || notified[0] != "01-stuck" {
+		t.Errorf("notified = %v, want one alert for 01-stuck", notified)
+	}
+}
+
+// The live world sends the needs-you alert through herdr's notification show:
+// the title names the ticket and the body carries the alert text.
+func TestDriverLiveWorldNotifiesThroughHerdr(t *testing.T) {
+	oldState, oldNotify := statePath, notifyExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; notifyExec = oldNotify })
+	repo, dir := t.TempDir(), t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-notify"}
+	var calls [][]string
+	notifyExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		calls = append(calls, append([]string{cmd}, args...))
+		return Result{Code: 0}, nil
+	}
+	world := liveDriverWorld(spec, repo, files)
+	message := "ticket 01-first needs you: the same refusal 3 times in a row: conflicted"
+	if err := world.Notify("01-first", message); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("herdr calls = %d, want 1", len(calls))
+	}
+	want := []string{"notification", "show", "emberloop: ticket 01-first needs you", "--body", message}
+	got := calls[0][1:]
+	if len(got) != len(want) {
+		t.Fatalf("args = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// A notification herdr rejects never stops the run: the stuck ticket stays
+// marked, the other ticket merges, and the report records the failed
+// notification beside the refusal.
+func TestDriverFailedNotificationKeepsTheRunGoing(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-stuck.md": ticketDoc("None"),
+		"02-quick.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 2
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	told := 0
+	world.Tell = func(id, text string) error {
+		told++
+		if told <= 3 {
+			submits++
+		}
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		if id == "02-quick" {
+			return DriverFinish{Merged: true, SHA: "sha-02-quick"}, nil
+		}
+		return DriverFinish{Merged: false, Detail: refusal}, nil
+	}
+	world.Notify = func(id, message string) error {
+		return errors.New("herdr down")
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].ID != "02-quick" {
+		t.Errorf("merged = %v, want only 02-quick", res.Merged)
+	}
+	if len(res.NeedsYou) != 1 || res.NeedsYou[0] != "01-stuck" {
+		t.Errorf("NeedsYou = %v, want [01-stuck]", res.NeedsYou)
+	}
+	for _, line := range []string{"unmerged 01-stuck: " + refusal, "notify 01-stuck failed: herdr down"} {
+		if !strings.Contains(res.Report, line) {
+			t.Errorf("report misses %q:\n%s", line, res.Report)
+		}
+	}
+}
+
+// A notification that fails once goes out on retry: two calls, one delivery,
+// and no failure line on the report.
+func TestDriverNotificationRetriesUntilItSucceeds(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	finished := 0
+	calls := 0
+	world.Tell = func(id, text string) error {
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if finished <= 4 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	world.Notify = func(id, message string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("herdr down")
+		}
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("notify calls = %d, want 2: one failure and one delivery", calls)
+	}
+	if strings.Contains(res.Report, "notify 01-first failed") {
+		t.Errorf("report keeps a failure line after the retry succeeded:\n%s", res.Report)
+	}
+	if len(res.Merged) != 1 {
+		t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+	}
+}
+
+// Failed notifications wait out the same growing delay as the retries: with
+// herdr down for the whole run the driver attempts exactly three times (at
+// the mark, a minute later, three minutes later) instead of every poll.
+func TestDriverNotificationRetriesWaitOutTheBackoff(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	world.Now = func() time.Time { return now }
+	world.Sleep = func(d time.Duration) { now = now.Add(d) }
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	var notifyAt []time.Time
+	calls := 0
+	world.Tell = func(id, text string) error {
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		calls++
+		if calls <= 4 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	world.Notify = func(id, message string) error {
+		notifyAt = append(notifyAt, now)
+		if len(notifyAt) <= 2 {
+			return errors.New("herdr down")
+		}
+		return nil
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(notifyAt) != 3 {
+		t.Fatalf("notify calls = %d, want 3: the mark plus two delayed retries", len(notifyAt))
+	}
+	if gap := notifyAt[1].Sub(notifyAt[0]); gap < time.Minute {
+		t.Errorf("first notify retry gap = %v, want at least a minute", gap)
+	}
+	if gap := notifyAt[2].Sub(notifyAt[1]); gap <= notifyAt[1].Sub(notifyAt[0]) {
+		t.Errorf("notify gaps keep growing, got %v then %v", notifyAt[1].Sub(notifyAt[0]), gap)
+	}
+	if len(res.Merged) != 1 {
+		t.Errorf("merged = %v, want the fixed ticket", res.Merged)
+	}
+}
+
+// A ticket that merges after its notification failed carries no failure line:
+// the merge clears the pending error with the mark.
+func TestDriverMergeDropsAPendingNotifyFailure(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxWorkers = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	refusal := "rebase onto spec/x conflicted in a.go; the rebase was aborted, the branch is unchanged"
+	submits := 0
+	finished := 0
+	world.Tell = func(id, text string) error {
+		submits++
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		finished++
+		if finished <= 3 {
+			return DriverFinish{Merged: false, Detail: refusal}, nil
+		}
+		return DriverFinish{Merged: true, SHA: "sha-fixed"}, nil
+	}
+	world.Notify = func(id, message string) error {
+		return errors.New("herdr down")
+	}
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 1 {
+		t.Fatalf("merged = %v, want the fixed ticket", res.Merged)
+	}
+	if strings.Contains(res.Report, "notify 01-first failed") {
+		t.Errorf("report keeps a failure line for a merged ticket:\n%s", res.Report)
 	}
 }

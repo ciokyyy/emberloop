@@ -50,8 +50,8 @@ type DriverWorld struct {
 	// parked means parked, and the driver keeps no private state file.
 	Files map[string]string
 	// Now is the clock the driver reads. Nil means time.Now; tests inject a
-	// fake. The happy path keeps no time, but the seam stays one entry
-	// point for the later tickets that retry with backoff.
+	// fake. The clock drives the needs-you alert (ten minutes with no worker
+	// activity) and the growing retry delay after it.
 	Now func() time.Time
 	// StartWorker starts one ticket's worker. The graph check runs before any
 	// worker would start, so check mode never calls it.
@@ -93,6 +93,13 @@ type DriverWorld struct {
 	// the edit uncommitted. It reports the names with no checkbox in the
 	// ticket; the driver reports those and still merges. Nil skips ticking.
 	TickCheckboxes func(ticketID string, boxes []string) (unknown []string, err error)
+	// Notify sends a ticket's needs-you alert as a herdr notification. The
+	// driver retries it until herdr accepts it, so at most one delivery
+	// succeeds per ticket per run. A notification herdr never accepts is
+	// recorded on the report line instead of stopping the run. Nil means a
+	// world without notifications: the ticket is still marked needs-you in
+	// the result.
+	Notify func(ticketID, message string) error
 	// Required names the reviewer types every finish needs. Nil means the
 	// two built-in reviewers.
 	Required []string
@@ -101,8 +108,10 @@ type DriverWorld struct {
 	// Nil falls back to Required.
 	RequiredFor func(ticketID string) []string
 	// Sleep waits between polls while tickets stay unmerged but nothing
-	// changed. Nil means tests: the run ends at a stable state. A live run
-	// passes time.Sleep, so the driver waits for workers instead of ending.
+	// changed. Nil means tests: the run ends at a stable state and no
+	// backoff delay ever gates a retry. A live run passes time.Sleep, so the
+	// driver waits for workers instead of ending, and spaces a needs-you
+	// ticket's retries with a growing delay.
 	Sleep func(time.Duration)
 }
 
@@ -117,28 +126,35 @@ type DriverTicket struct {
 
 // DriverResult is what the driver computed: the tickets in the order work
 // would start, by ticket number among tickets whose blockers are done, plus
-// the merges a run world reached and the plain report of them.
+// the merges a run world reached, the tickets marked "needs you" still
+// unmerged, the completed names with no checkbox in the ticket, and the
+// plain report of them.
 type DriverResult struct {
 	Order  []DriverTicket
 	Merged []DriverMerged
-	Report string
+	// NeedsYou holds the started but unmerged tickets the driver marked
+	// "needs you": the same refusal text three times in a row, or ten
+	// minutes with no worker activity. In ticket order. A ticket that later
+	// merges leaves the list.
+	NeedsYou []string
+	Report   string
 	// UnknownCheckboxes holds the completed names with no checkbox in the
 	// ticket, by ticket id. Reported, never merged against.
 	UnknownCheckboxes map[string][]string
 }
 
 // RunDriver is the driver's one seam: the spec plus the injected world in,
-// the start order, the merges and the plain report out. It reads every
-// ticket's Blocked by line first, and a line that does not parse, an id that
-// names no ticket, or a dependency cycle fails before any worker starts.
-// A check world (no Finish) stops at the order. A run world also runs the
-// happy-path loop: tickets start in ticket-number order up to MaxWorkers
-// once their blockers have merged, and finish runs only after every required
-// reviewer type passed at the worker's current tip. A resumed run seeds its
-// state from the world: Status done tickets are already merged (their sha
-// from MergedSHA), Status parked tickets sit out, and tickets with a worker
-// are already started and hold their slot. It never starts a second worker
-// for a ticket that has one, and writes no state file of its own.
+// the start order, the merges, the needs-you marks and the plain report out.
+// It reads every ticket's Blocked by line first, and a line that does not
+// parse, an id that names no ticket, or a dependency cycle fails before any
+// worker starts. A check world (no Finish) stops at the order. A run world
+// also runs the happy-path loop: tickets start in ticket-number order up to
+// MaxWorkers once their blockers have merged, and finish runs only after
+// every required reviewer type passed at the worker's current tip. A resumed
+// run seeds its state from the world: Status done tickets are already merged
+// (their sha from MergedSHA), Status parked tickets sit out, and tickets with
+// a worker are already started and hold their slot. It never starts a second
+// worker for a ticket that has one, and writes no state file of its own.
 func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	tickets, err := readDriverTickets(spec, world.Files)
 	if err != nil {
@@ -152,11 +168,11 @@ func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 	if world.Finish == nil {
 		return res, nil
 	}
-	merged, unknown, report, err := runDriverLoop(order, world)
+	merged, needsYou, unknown, report, err := runDriverLoop(order, world)
 	if err != nil {
 		return DriverResult{}, err
 	}
-	res.Merged, res.UnknownCheckboxes, res.Report = merged, unknown, report
+	res.Merged, res.NeedsYou, res.UnknownCheckboxes, res.Report = merged, needsYou, unknown, report
 	return res, nil
 }
 
@@ -164,19 +180,58 @@ func RunDriver(spec SpecRun, world DriverWorld) (DriverResult, error) {
 // but nothing changed.
 const driverPollInterval = 5 * time.Second
 
+// The needs-you alert fires after the same refusal text three times in a row,
+// or after ten minutes with no worker activity. A needs-you ticket keeps
+// retrying with a growing delay: one minute after the alert, doubling each
+// retry, capped at fifteen.
+const (
+	driverNeedsYouRefusals = 3
+	driverIdleTimeout      = 10 * time.Minute
+	driverBackoffStart     = time.Minute
+	driverBackoffCap       = 15 * time.Minute
+)
+
+// driverNow reads the world's clock. Nil means time.Now; tests inject a fake.
+func driverNow(world DriverWorld) time.Time {
+	if world.Now != nil {
+		return world.Now()
+	}
+	return time.Now()
+}
+
+// driverBackoffDelay spaces a needs-you ticket's retries: the step-th delay
+// after the alert, starting at a minute and doubling to the cap.
+func driverBackoffDelay(step int) time.Duration {
+	if step <= 0 {
+		return driverBackoffCap
+	}
+	d := driverBackoffStart << (step - 1)
+	if d <= 0 || d > driverBackoffCap {
+		return driverBackoffCap
+	}
+	return d
+}
+
 // runDriverLoop runs the happy path to a stable state: start what is ready,
 // finish what passed at its tip, repeat. A pass with no start, no merge, no
-// tell and no observed change ends the run in tests; a live run sleeps and
-// polls again instead, so it waits for workers rather than quitting on them.
-// When nothing runs and nothing could start, the rest wait on parked tickets
-// and no poll would change anything, so the run exits with the report.
+// tell, no alert, no tick and no observed change ends the run in tests; a
+// live run sleeps and polls again instead, so it waits for workers rather
+// than quitting on them. When nothing runs and nothing could start, the rest
+// wait on parked tickets and no poll would change anything, so the run exits
+// with the report.
 // A refused finish goes back to the worker unchanged through tell, and
 // finish runs again only after the worker's next submit. There is no attempt
-// limit: every refusal is told and retried like the first. A resumed run
-// seeds its state from the world first: Status done tickets are already
-// merged, Status parked tickets sit out while keeping their workers, and
-// tickets with a worker are already started and hold their MaxWorkers slot.
-func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map[string][]string, string, error) {
+// limit: every refusal is told and retried like the first. The same refusal
+// text three times in a row, or ten minutes with no worker activity (a new
+// submit, tip or verdict), marks the ticket "needs you" with one herdr
+// notification, and the retries continue with a growing delay. Completed
+// checkboxes tick into the ticket file as best effort beside it. Other
+// tickets keep running while one waits: the alert and the delay never gate
+// them. A resumed run seeds its state from the world first: Status done
+// tickets are already merged, Status parked tickets sit out while keeping
+// their workers, and tickets with a worker are already started and hold their
+// MaxWorkers slot.
+func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []string, map[string][]string, string, error) {
 	maxRun := world.MaxWorkers
 	if maxRun <= 0 {
 		maxRun = 3
@@ -202,6 +257,37 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 	// run is correct without progress, so neither ever blocks a merge.
 	unknown := map[string][]string{}
 	tickFailed := map[string]string{}
+	// streakText counts the consecutive finishes refused with the same text.
+	// lastTip, lastSig and lastSubmits hold what the driver last saw of a
+	// worker, so any advance dates its last activity. needsYou marks the
+	// tickets that raised the alert; notifyMsg holds the alert text until
+	// the notification succeeds, notified the tickets it reached, and
+	// notifyErr the tickets it never reached. backoffStep and nextRetry
+	// space their retries with the growing delay.
+	streakText := map[string]string{}
+	streakCount := map[string]int{}
+	lastTip := map[string]string{}
+	lastSig := map[string]string{}
+	lastSubmits := map[string]int{}
+	lastActivity := map[string]time.Time{}
+	needsYou := map[string]bool{}
+	notifyMsg := map[string]string{}
+	notified := map[string]bool{}
+	notifyErr := map[string]string{}
+	notifyStep := map[string]int{}
+	nextNotify := map[string]time.Time{}
+	backoffStep := map[string]int{}
+	nextRetry := map[string]time.Time{}
+	// markNeedsYou marks the ticket and queues its alert text. Marking never
+	// fails and never stops the run: the notification below retries until it
+	// succeeds, so a herdr outage never kills the other tickets.
+	markNeedsYou := func(id, message string) {
+		if needsYou[id] {
+			return
+		}
+		needsYou[id] = true
+		notifyMsg[id] = message
+	}
 	var out []DriverMerged
 	for _, tk := range order {
 		switch driverTicketState(world.Files[tk.Path]) {
@@ -223,6 +309,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 		}
 	}
 	for {
+		now := driverNow(world)
 		progress, changed := false, false
 		ready := func(tk DriverTicket) bool {
 			if started[tk.ID] || merged[tk.ID] || parked[tk.ID] {
@@ -247,9 +334,10 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 				break
 			}
 			if err := world.StartWorker(order[next]); err != nil {
-				return nil, nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
+				return nil, nil, nil, "", fmt.Errorf("could not start %s: %w", order[next].ID, err)
 			}
 			started[order[next].ID] = true
+			lastActivity[order[next].ID] = now
 			running++
 			startedNew = true
 			progress = true
@@ -283,6 +371,54 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 					}
 				}
 			}
+			// Worker signals are read before the submit wait below on
+			// purpose: a ticket owed a submit still dates its activity and
+			// feeds the idle alert, or a hung worker would go invisible.
+			before := world.Tip(tk.ID)
+			revs := world.Reviews(tk.ID)
+			tip := world.Tip(tk.ID)
+			required := driverRequired(world, tk.ID)
+			sig := tip + "\x00" + driverReviewSig(required, revs)
+			if sig != seen[tk.ID] {
+				seen[tk.ID] = sig
+				changed = true
+			}
+			subs := -1
+			if world.Submits != nil {
+				subs = world.Submits(tk.ID)
+			}
+			if _, ok := lastActivity[tk.ID]; !ok || tip != lastTip[tk.ID] || sig != lastSig[tk.ID] || subs != lastSubmits[tk.ID] {
+				lastActivity[tk.ID] = now
+				lastTip[tk.ID], lastSig[tk.ID], lastSubmits[tk.ID] = tip, sig, subs
+			}
+			// Ten minutes with no worker activity marks the ticket even
+			// while it waits for a submit or its gate: a hung worker is
+			// not invisible. Marking never stops the run; the notification
+			// below retries until it succeeds.
+			if !needsYou[tk.ID] && now.Sub(lastActivity[tk.ID]) >= driverIdleTimeout {
+				markNeedsYou(tk.ID, fmt.Sprintf("ticket %s needs you: no worker activity for 10 minutes", tk.ID))
+				progress = true
+			}
+			// The alert goes out once per ticket: the first attempt runs at
+			// once, later ones wait out the same growing delay as the
+			// retries, and the run continues either way. A ticket the
+			// notification never reached keeps its error for the report.
+			// Without Sleep there is no clock to advance, so tests attempt
+			// every pass and end at a stable state.
+			if needsYou[tk.ID] && !notified[tk.ID] && world.Notify != nil &&
+				(world.Sleep == nil || notifyStep[tk.ID] == 0 || !now.Before(nextNotify[tk.ID])) {
+				if err := world.Notify(tk.ID, notifyMsg[tk.ID]); err != nil {
+					notifyErr[tk.ID] = err.Error()
+					if world.Sleep != nil {
+						notifyStep[tk.ID]++
+						nextNotify[tk.ID] = now.Add(driverBackoffDelay(notifyStep[tk.ID]))
+					}
+				} else {
+					delete(notifyErr, tk.ID)
+					notified[tk.ID] = true
+					progress = true
+				}
+			}
 			// A told refusal waits for the worker's next submit: finish runs
 			// again only after the submit count advances past what it was
 			// when the refusal was told.
@@ -293,20 +429,19 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 					continue
 				}
 			}
-			before := world.Tip(tk.ID)
-			revs := world.Reviews(tk.ID)
-			tip := world.Tip(tk.ID)
-			required := driverRequired(world, tk.ID)
-			if sig := tip + "\x00" + driverReviewSig(required, revs); sig != seen[tk.ID] {
-				seen[tk.ID] = sig
-				changed = true
+			// A needs-you ticket's retries wait out the growing delay. Only
+			// a run that can sleep waits: without Sleep there is no clock
+			// to advance, so tests run every retry at once and end at a
+			// stable state.
+			if needsYou[tk.ID] && world.Sleep != nil && backoffStep[tk.ID] > 0 && now.Before(nextRetry[tk.ID]) {
+				continue
 			}
 			if before != tip || !driverGatePass(required, revs, tip) {
 				continue
 			}
 			fin, err := world.Finish(tk.ID)
 			if err != nil {
-				return nil, nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
+				return nil, nil, nil, "", fmt.Errorf("could not finish %s: %w", tk.ID, err)
 			}
 			if !fin.Merged {
 				// A refused finish stays running; its text lands on the
@@ -319,15 +454,34 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 				if fin.Detail == "" {
 					delete(refused, tk.ID)
 					delete(toldText, tk.ID)
+					delete(streakText, tk.ID)
+					delete(streakCount, tk.ID)
 				} else {
 					refused[tk.ID] = fin.Detail
+					if fin.Detail == streakText[tk.ID] {
+						streakCount[tk.ID]++
+					} else {
+						streakText[tk.ID] = fin.Detail
+						streakCount[tk.ID] = 1
+					}
+					// The same refusal three times in a row marks the
+					// ticket; the notify above sends the one alert and the
+					// retry below still runs.
+					if streakCount[tk.ID] >= driverNeedsYouRefusals && !needsYou[tk.ID] {
+						markNeedsYou(tk.ID, fmt.Sprintf("ticket %s needs you: the same refusal 3 times in a row: %s", tk.ID, fin.Detail))
+						progress = true
+					}
+					if needsYou[tk.ID] && world.Sleep != nil {
+						backoffStep[tk.ID]++
+						nextRetry[tk.ID] = now.Add(driverBackoffDelay(backoffStep[tk.ID]))
+					}
 					if world.Tell != nil && (world.Submits != nil || fin.Detail != toldText[tk.ID]) {
 						at := 0
 						if world.Submits != nil {
 							at = world.Submits(tk.ID)
 						}
 						if err := world.Tell(tk.ID, fin.Detail); err != nil {
-							return nil, nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
+							return nil, nil, nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
 						}
 						toldText[tk.ID] = fin.Detail
 						if world.Submits != nil {
@@ -339,6 +493,10 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 				continue
 			}
 			merged[tk.ID] = true
+			delete(needsYou, tk.ID)
+			delete(notifyMsg, tk.ID)
+			delete(notified, tk.ID)
+			delete(notifyErr, tk.ID)
 			running--
 			out = append(out, DriverMerged{ID: tk.ID, SHA: fin.SHA})
 			progress = true
@@ -354,7 +512,13 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, map
 		}
 		world.Sleep(driverPollInterval)
 	}
-	return out, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, parked, refused, unknown, tickFailed), nil
+	var needsYouIDs []string
+	for _, tk := range order {
+		if needsYou[tk.ID] {
+			needsYouIDs = append(needsYouIDs, tk.ID)
+		}
+	}
+	return out, needsYouIDs, driverUnknownOrNil(unknown), driverReport(order, out, started, merged, parked, refused, unknown, tickFailed, notifyErr), nil
 }
 
 // Resume states a ticket file carries: done (merged), parked (sitting out
@@ -447,9 +611,10 @@ func driverReviewSig(required []string, revs map[string]DriverReview) string {
 // sha (bare when the old sha is unknown), then every ticket left unmerged,
 // each with its last refusal when a finish refused it, parked when it sat
 // out, never started when it never ran, still running otherwise. Unknown
-// checkboxes and tick failures follow their ticket in order. Later tickets
-// add the follow-ups beside them.
-func driverReport(order []DriverTicket, merged []DriverMerged, started, done, parked map[string]bool, refused map[string]string, unknown map[string][]string, tickFailed map[string]string) string {
+// checkboxes and tick failures follow their ticket in order, then every
+// unmerged ticket the notification never reached. Later tickets add the
+// follow-ups beside them.
+func driverReport(order []DriverTicket, merged []DriverMerged, started, done, parked map[string]bool, refused map[string]string, unknown map[string][]string, tickFailed, notifyErr map[string]string) string {
 	var b strings.Builder
 	for _, m := range merged {
 		if m.SHA == "" {
@@ -476,6 +641,11 @@ func driverReport(order []DriverTicket, merged []DriverMerged, started, done, pa
 		}
 		if tickFailed[tk.ID] != "" {
 			fmt.Fprintf(&b, "checkboxes for %s not applied: %s\n", tk.ID, tickFailed[tk.ID])
+		}
+	}
+	for _, tk := range order {
+		if notifyErr[tk.ID] != "" {
+			fmt.Fprintf(&b, "notify %s failed: %s\n", tk.ID, notifyErr[tk.ID])
 		}
 	}
 	return b.String()
@@ -529,9 +699,10 @@ func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
 // tickets with their sha. The repo is already on the integration branch, and
 // uncommitted edits in its checkout are left alone: the merge refuses on
 // overlap, like every finish, and completeTicket in worker.go commits only
-// the ticket file. The run waits for workers rather than quitting on them:
-// later tickets add the needs-you alert, parking and progress rows for a run
-// that stops converging.
+// the ticket file. The run waits for workers rather than quitting on them,
+// alerts needs-you tickets through a herdr notification with a growing retry
+// delay, and keeps every other ticket running: later tickets add parking and
+// progress rows for a run that stops converging.
 func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 	files, err := readDriverFiles(spec)
 	if err != nil {
@@ -562,15 +733,16 @@ func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 
 // liveDriverWorld wires the live operations behind the driver seam: spawns go
 // through the same spawn call the orchestrator uses, tips resolve the same
-// implement branches, verdicts read the same review record finish gates on,
+// implement branches, verdicts read the review record finish gates on,
 // tells reach the worker's own pane through the same delivery the tell tool
 // uses, submit counts derive from the worker's submit record, completed boxes
 // read the worker's own submit, ticks land in the ticket file in this checkout
-// through the per-file lock, and finish is the same merge. A resume reads the
-// same three sources the seam takes: Status done and Status parked come from
-// the ticket files, a running worker from its store record or its implement
-// branch, and an old merge sha from the run's ticket history. Extracted so
-// tests drive the mapping through the seam with fake exec and temp state.
+// through the per-file lock, finish is the same merge, and the needs-you
+// alert shows a herdr notification. A resume reads the same three sources
+// the seam takes: Status done and Status parked come from the ticket files, a
+// running worker from its store record or its implement branch, and an old
+// merge sha from the run's ticket history. Extracted so tests drive the
+// mapping through the seam with fake exec and temp state.
 func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
 	paths := map[string]string{}
 	for path := range files {
@@ -696,6 +868,18 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 				return boxes, nil
 			}
 			return tickDriverTicketFile(path, boxes)
+		},
+		// herdr notification show <title> [--body TEXT], per herdr
+		// notification --help.
+		Notify: func(ticketID, message string) error {
+			res, err := notifyExec(herdrBin(), []string{"notification", "show", "emberloop: ticket " + ticketID + " needs you", "--body", message}, ExecOpts{Timeout: 30 * time.Second})
+			if err != nil {
+				return err
+			}
+			if res.Code != 0 {
+				return fmt.Errorf("herdr notification show %s failed: %s", ticketID, firstLine(res.Stderr, res.Stdout))
+			}
+			return nil
 		},
 		Sleep: time.Sleep,
 	}
