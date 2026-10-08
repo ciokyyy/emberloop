@@ -57,8 +57,14 @@ owns its `_test.go` and the behaviour below):
   `completed` list of checkbox line texts: during a driver run the driver is
   the only ticket-file writer, ticks each fresh box once through the per-file
   lock, leaves the edit uncommitted, and reports unknown names without failing
-  the merge. `RunDriverLive` wires the live spawn, verdict, tell, submit-count,
-  submit-read, file-tick and finish ops.
+  the merge. A resumed run seeds its state from the world (Status done is
+  merged with its sha from `MergedSHA`, Status parked sits out, `HasWorker`
+  tickets are already started and hold their slot), never starts a second
+  worker for a ticket that has one, writes no state file, and exits with the
+  report when nothing runs and nothing can start (the rest wait on parked
+  tickets) instead of polling. `RunDriverLive` wires the live spawn, verdict,
+  tell, submit-count, submit-read, file-tick and finish ops, the store-or-branch
+  worker check and the history sha lookup.
   The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
   `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface

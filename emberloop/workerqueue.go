@@ -221,8 +221,8 @@ func ticketIsDone(e queuedWorker) bool {
 	return false
 }
 
-// ticketFileDone reports whether the ticket file's status line reads done.
-// Only the header field counts, the way tickTicket writes it.
+// ticketFileDone reports whether any Status line in the ticket file reads
+// done. The values come from ticketStatusValues, the one rule for the line.
 func ticketFileDone(path string) bool {
 	if path == "" {
 		return false
@@ -231,16 +231,9 @@ func ticketFileDone(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "Status:") && !strings.HasPrefix(trimmed, "**Status:") {
-			continue
-		}
-		if i := strings.Index(line, "Status:"); i >= 0 {
-			value := strings.Trim(line[i+len("Status:"):], " *\t")
-			if strings.EqualFold(strings.TrimSpace(value), "done") {
-				return true
-			}
+	for _, value := range ticketStatusValues(string(raw)) {
+		if strings.EqualFold(value, "done") {
+			return true
 		}
 	}
 	return false

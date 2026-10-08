@@ -1183,6 +1183,25 @@ func tickTicket(raw string) (done string, ok bool) {
 	return strings.Join(out, "\n"), true
 }
 
+// ticketStatusValues returns every Status header value in file order: done,
+// parked, or whatever the file holds. Only header fields count, the way
+// tickTicket writes them. Empty when the file holds no status line.
+// tickTicket rewrites the one line in place, so files hold one; readers still
+// scan all lines, so a stray second line never hides the first.
+func ticketStatusValues(raw string) []string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Status:") && !strings.HasPrefix(trimmed, "**Status:") {
+			continue
+		}
+		if i := strings.Index(line, "Status:"); i >= 0 {
+			out = append(out, strings.TrimSpace(strings.Trim(line[i+len("Status:"):], " *\t")))
+		}
+	}
+	return out
+}
+
 func firstLine(text, fallback string) string {
 	if trimmed := strings.TrimSpace(text); trimmed != "" {
 		return strings.SplitN(trimmed, "\n", 2)[0]
