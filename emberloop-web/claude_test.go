@@ -129,7 +129,7 @@ func TestNewAndLoadShareFullStrippingSet(t *testing.T) {
 	}
 
 	be2 := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	if err := be2.LoadSession("d2", "acp-session-1", "opus", meta.WorkDir); err != nil {
+	if err := be2.LoadSession("d2", "acp-session-1", "opus", meta.WorkDir, false); err != nil {
 		t.Fatal(err)
 	}
 	mustStripped(t, stub.loadMeta, "opus")

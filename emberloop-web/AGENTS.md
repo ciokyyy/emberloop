@@ -60,6 +60,9 @@ imports it. No herdr, no ticket state.
 - `GET /api/sessions/{id}/queue` lists not-yet-delivered messages as
   `{"queue":[{"mode","text"}]}` (pig native queues first); `DELETE` on the
   same path clears them before delivery and answers `{"cleared":N}`.
+  Steer, follow-up and prompt-on-working answers are 202 with
+  `{"seq","queued"}` (queued Daemon messages add `"position"`); unknown
+  Sessions are 404, empty text is 400, ended Sessions are 410 on send.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
   `meta.json` (now carrying the resume token plus `parentId`, `groupId`,
   `scout`) plus append-only `events.jsonl`; Groups persist as
@@ -71,9 +74,15 @@ imports it. No herdr, no ticket state.
   whole call is 429 with no half Group. The session list nests children
   under `parentId` and each opens its own transcript. The last member to
   settle delivers one grouped result to the parent as a Steer (queued when
-  the parent works). Scouts are read-only: sends and nested spawns are 403,
-  the UI hides the composer with a banner, and pig scout loadouts carry no
-  spawn tool.
+  the parent works); the parent transcript also keeps one
+  `subagent_spawned` Event per child and one `subagent_finished` Event per
+  Group. Delivery is exactly-once per Group: a parent that cannot resume
+  (cap, ended) still gets its `subagent_finished` marker, but the grouped
+  Steer is dropped, and a Group mid-flight across a restart is never
+  redelivered; member transcripts stay readable either way. Scouts are
+  read-only: sends and nested spawns are 403, the UI hides the composer
+  with a banner, pig scout loadouts carry no spawn tool, and claude scout
+  Sessions run the base server under `--role scout` with no spawn server.
 - `spawn` is Daemon-hosted (`spawn.go`, `spawnmcp.go`): pig takes it as a
   per-Session ExtraTool bound to its own id, claude through a per-Session
   `emberloop-spawn` MCP server (the Daemon binary in `spawn-server` mode,

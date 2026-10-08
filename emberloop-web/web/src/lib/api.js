@@ -49,13 +49,6 @@ export const getQueue = (id) => fetch(url(`/api/sessions/${id}/queue`)).then(jso
 
 export const clearQueue = (id) => fetch(url(`/api/sessions/${id}/queue`), { method: 'DELETE' }).then(json);
 
-export const spawnSubagents = (id, agents) =>
-  fetch(url(`/api/sessions/${id}/spawn`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agents }),
-  }).then(json);
-
 export function openStream(id, since, onEvent) {
   const source = new EventSource(url(`/api/sessions/${id}/events?since=${since}`));
   source.onmessage = (ev) => {

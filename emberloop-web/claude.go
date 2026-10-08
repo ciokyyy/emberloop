@@ -195,7 +195,7 @@ func (b *ClaudeBackend) strippingMeta(model string) map[string]any {
 // returns only after session/new answers, so the MCP tools are connected
 // before the first prompt can go out.
 func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
-	mcp, err := b.mcpServersFor(meta.ID)
+	mcp, err := b.mcpServersFor(meta.ID, meta.Scout)
 	if err != nil {
 		return err
 	}
@@ -233,8 +233,8 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 
 // LoadSession restarts the adapter around a known ACP session id. It repeats
 // the full stripping set: without it the loaded session re-asks permission.
-func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd string) error {
-	mcp, err := b.mcpServersFor(daemonID)
+func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd string, scout bool) error {
+	mcp, err := b.mcpServersFor(daemonID, scout)
 	if err != nil {
 		return err
 	}
@@ -369,7 +369,7 @@ func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 	if meta.ResumeToken == "" {
 		return fmt.Errorf("claude: no saved session to resume")
 	}
-	return b.LoadSession(meta.ID, meta.ResumeToken, meta.Model, meta.WorkDir)
+	return b.LoadSession(meta.ID, meta.ResumeToken, meta.Model, meta.WorkDir, meta.Scout)
 }
 
 // OnPrompt runs after the prompt Event is stored. It waits for MCP-ready,
@@ -426,13 +426,15 @@ func (b *ClaudeBackend) SetSpawnServer(command []string, daemonAddr string) {
 }
 
 func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
-	return b.mcpServersFor("")
+	return b.mcpServersFor("", false)
 }
 
 // mcpServersFor lists the base emberloop MCP server plus, when configured,
 // the Daemon-hosted spawn server bound to one Session: its parent env names
-// the spawning Session, so the Daemon always knows the parent.
-func (b *ClaudeBackend) mcpServersFor(sessionID string) ([]acpMCPServer, error) {
+// the spawning Session, so the Daemon always knows the parent. Scout
+// Sessions get neither spawn nor write tools: the base server runs under
+// the read-only scout role and the spawn server is skipped.
+func (b *ClaudeBackend) mcpServersFor(sessionID string, scout bool) ([]acpMCPServer, error) {
 	cmd := b.mcpCommand
 	if !filepath.IsAbs(cmd) {
 		abs, err := exec.LookPath(cmd)
@@ -445,8 +447,12 @@ func (b *ClaudeBackend) mcpServersFor(sessionID string) ([]acpMCPServer, error) 
 	if name == "" {
 		name = "emberloop"
 	}
-	out := []acpMCPServer{{Name: name, Command: cmd, Args: b.mcpArgs}}
-	if len(b.spawnCommand) > 0 && sessionID != "" {
+	args := b.mcpArgs
+	if scout {
+		args = []string{"--role", "scout"}
+	}
+	out := []acpMCPServer{{Name: name, Command: cmd, Args: args}}
+	if len(b.spawnCommand) > 0 && sessionID != "" && !scout {
 		out = append(out, acpMCPServer{
 			Name:    "emberloop-spawn",
 			Command: b.spawnCommand[0],

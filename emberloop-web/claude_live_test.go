@@ -99,7 +99,7 @@ func TestLiveClaudeBackend(t *testing.T) {
 	be2.mcpCommand = node
 	be2.mcpArgs = []string{absEcho}
 	be2.allowedTools = []string{"mcp__spike__spike_echo"}
-	if err := be2.LoadSession("live-claude-2", acpID, "haiku", cwd); err != nil {
+	if err := be2.LoadSession("live-claude-2", acpID, "haiku", cwd, false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	var got2 []Event

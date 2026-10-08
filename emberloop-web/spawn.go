@@ -86,11 +86,13 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 		}
 	}
 	// Publish the Group before any child can finish: a fast child must
-	// find its Group when its first turn settles.
+	// find its Group when its first turn settles. The pointer stays local
+	// so the persist below never reads the map outside the lock.
+	g := &spawnGroup{ID: gid, Parent: parentID, Members: append([]string(nil), members...)}
 	d.mu.Lock()
-	d.groups[gid] = &spawnGroup{ID: gid, Parent: parentID, Members: append([]string(nil), members...)}
+	d.groups[gid] = g
 	d.mu.Unlock()
-	d.persistGroup(d.groups[gid])
+	d.persistGroup(g)
 
 	type started struct {
 		meta SessionMeta
@@ -237,11 +239,23 @@ func (d *Daemon) groupResultText(gid string) string {
 			if s.meta.Scout {
 				kind = "scout"
 			}
+			// Chunks stream per delta, so the reply is every assistant
+			// chunk of the last turn joined, not the last chunk alone.
+			start := 0
 			for i := len(s.events) - 1; i >= 0; i-- {
-				if s.events[i].Kind == "assistant_chunk" {
-					reply = s.events[i].Text
+				if s.events[i].Kind == "prompt" {
+					start = i + 1
 					break
 				}
+			}
+			var rb strings.Builder
+			for _, e := range s.events[start:] {
+				if e.Kind == "assistant_chunk" {
+					rb.WriteString(e.Text)
+				}
+			}
+			if rb.Len() > 0 {
+				reply = rb.String()
 			}
 			if s.meta.Status == "failed" {
 				reply += " [failed]"

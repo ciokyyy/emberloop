@@ -67,10 +67,11 @@ func TestPigScoutHasNoSpawnTool(t *testing.T) {
 }
 
 // Claude Sessions get the Daemon-hosted spawn server bound to their id;
-// without it the listing is the base server alone.
+// without it the listing is the base server alone. Scouts get neither
+// spawn nor write tools: the base server runs under the read-only role.
 func TestClaudeMCPServersIncludeSpawnServer(t *testing.T) {
 	b := NewClaudeBackend()
-	servers, err := b.mcpServersFor("sess-1")
+	servers, err := b.mcpServersFor("sess-1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestClaudeMCPServersIncludeSpawnServer(t *testing.T) {
 		t.Fatalf("servers = %d, want 1 without spawn config", len(servers))
 	}
 	b.SetSpawnServer([]string{"/abs/emberloop-web", "spawn-server"}, "http://127.0.0.1:9")
-	servers, err = b.mcpServersFor("sess-1")
+	servers, err = b.mcpServersFor("sess-1", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +96,16 @@ func TestClaudeMCPServersIncludeSpawnServer(t *testing.T) {
 	}
 	if env[SpawnParentEnv] != "sess-1" || env[SpawnDaemonEnv] != "http://127.0.0.1:9" {
 		t.Fatalf("spawn env = %v", env)
+	}
+	scouts, err := b.mcpServersFor("sess-9", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scouts) != 1 {
+		t.Fatalf("scout servers = %d, want base alone", len(scouts))
+	}
+	if len(scouts[0].Args) != 2 || scouts[0].Args[0] != "--role" || scouts[0].Args[1] != "scout" {
+		t.Fatalf("scout base args = %v, want --role scout", scouts[0].Args)
 	}
 }
 
