@@ -57,9 +57,10 @@ owns its `_test.go` and the behaviour below):
   "needs you" (`NeedsYou` in the result, one `Notify` delivery with later
   attempts waiting out the same growing delay, recorded on the report when
   herdr never accepts it) with retries continuing on a doubling backoff while
-  every other ticket keeps running, a parked ticket (`Parked`, live: the seeded
-  Status park plus the file's parked Status read every pass) is never started
-  or finished and frees its slot so only its dependents wait, a ticket the user
+  every other ticket keeps running (a ticket marked needs-you keeps the mark
+  and its alert when later parked or discarded), a parked ticket (`Parked`, live:
+  the seeded Status park plus the file's parked Status read every pass) is never
+  started or finished and frees its slot so only its dependents wait, a ticket the user
   discarded mid-run (`Discarded`, live: no worker record, not queued, run
   history ending in a discard) is left alone the same way and reads discarded,
   the user's `Discard` op (live: the same finish with merge=false) is never
