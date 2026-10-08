@@ -100,17 +100,23 @@ func cloneDriverVerdicts(in map[string]DriverReview) map[string]DriverReview {
 // set publishes one pass: rows for tickets the builder still names keep
 // their entry time while their state holds, and re-date it on change. A zero
 // pass time falls back to the run's own clock, so the injected clock always
-// dates a row.
+// dates a row. The builder runs before the lock is taken, so world callbacks
+// behind it may take their own locks: holding this lock across the world
+// would deadlock any reader that takes those locks before snapshotting.
 func (r *DriverRun) set(order []DriverTicket, build func(DriverTicket) DriverRow, now time.Time) {
 	if now.IsZero() {
 		now = r.now()
+	}
+	built := make(map[string]DriverRow, len(order))
+	for _, tk := range order {
+		built[tk.ID] = build(tk)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.order = append([]DriverTicket(nil), order...)
 	next := make(map[string]DriverRow, len(order))
 	for _, tk := range order {
-		row := build(tk)
+		row := built[tk.ID]
 		if old, ok := r.rows[tk.ID]; ok && old.State == row.State && !old.Since.IsZero() {
 			row.Since = old.Since
 		} else if row.Since.IsZero() {

@@ -88,11 +88,13 @@ owns its `_test.go` and the behaviour below):
   `driver_run.go` holds the shared run state: `DriverRun` (one row per ticket
   with state, worker and pane, verdicts at the tip, state entry time, last
   refusal; snapshots copy; a zero pass time falls back to the run's own
-  clock), published by the loop every pass when the world's `Run` is set and
-  read by the run pane. `ParkDriverTicketFile` is the park command (Status
-  parked through the per-file lock, refusing a merged ticket and leaving an
-  already-parked one alone). `ReadDriverFiles` and `LiveDriverWorld` let the
-  run pane build the same live world in its own process. The web driver
+  clock; `set` builds rows before taking its lock, so world callbacks
+  behind the build may take their own locks), published by the loop every
+  pass when the world's `Run` is set and read by the run pane. `ParkDriverTicketFile`
+  is the park command (Status parked through the per-file lock, refusing a merged
+  ticket and leaving an already-parked one alone).
+  `ReadDriverFiles` and `LiveDriverWorld` let the run pane build the same live
+  world in its own process. The web driver
   reuses `TickDriverTicketFile`, `MarkDriverTicketDone` and
   `MergeCheckedBranch` (dirty check, rebase onto, checkout check,
   fast-forward-only) without reviewers or herdr. `ticketview.go`

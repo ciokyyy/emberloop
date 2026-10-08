@@ -430,3 +430,29 @@ func TestDriverRunZeroTimeUsesInjectedClock(t *testing.T) {
 		t.Errorf("Since = %v, want the injected clock %v", rows[0].Since, at)
 	}
 }
+
+// Publishing never holds the run lock across the world: a builder that
+// snapshots (any world lock taken before a snapshot, as the web Run read
+// does) must not deadlock.
+func TestDriverRunSetBuildsWithoutHoldingTheLock(t *testing.T) {
+	at := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	run := NewDriverRun(func() time.Time { return at })
+	order := []DriverTicket{{ID: "01-first", Path: "/spec/01-first.md", Num: 1}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		run.set(order, func(tk DriverTicket) DriverRow {
+			_ = run.Snapshot()
+			return DriverRow{ID: tk.ID, Path: tk.Path, Num: tk.Num, State: DriverRowQueued}
+		}, at)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("set holds its lock across the builder, deadlocking a snapshot inside it")
+	}
+	rows := run.Snapshot()
+	if len(rows) != 1 || rows[0].ID != "01-first" {
+		t.Fatalf("rows = %v, want the published row", rows)
+	}
+}
