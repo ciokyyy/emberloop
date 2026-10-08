@@ -561,8 +561,9 @@ func DeliverLate(run Exec, pane, text string) error {
 		return nil
 	}
 	// A background pane is not focused, so herdr reports its idle as done
-	// until someone looks. Wait for both, or the wait runs to its timeout
-	// and the first prompt never arrives.
+	// until someone looks. `herdr agent wait --help` says one --until per
+	// state ("repeat for more than one state"), so wait for both: idle-only
+	// runs to its timeout and the first prompt never arrives.
 	// herdr only knows the pane as an agent once it has seen the process
 	// start, so "not found" right after pane run means "not yet".
 	deadline := time.Now().Add(30 * time.Second)

@@ -9,25 +9,27 @@
 #     (`herdr agent wait --until idle --until done`, the same wait the spawn
 #     path uses), and the first working state after the prompt is delivered.
 #     A background pane is not focused, so herdr reports its idle as done
-#     until someone looks: on the old idle-only wait the spawn path timed
-#     out, the reviewer pane died, and this step FAILed with no working
-#     reviewer. It passes now.
+#     until someone looks (`herdr agent wait --help`: one --until per state,
+#     "repeat for more than one state"). Against the old idle-only wait the
+#     spawn path timed out here, the reviewer pane died, and this step
+#     FAILed with no working reviewer; it passes with the idle-or-done wait.
 #  2. Bumped pane: the reviewer pane moves to a fresh tab (`herdr pane move
-#     --new-tab) and a follow-up prompt must still land (the agent works
+#     --new-tab`) and a follow-up prompt must still land (the agent works
 #     again). Delivery is pane-addressed, so the tab must not matter.
-#  3. Overflow tab: the ticket tab is filled to nine panes with bare shells,
-#     the worker is asked for its standards reviewer, and the tenth pane
-#     must land in the `<ticket> (2)` overflow tab and still get its prompt
-#     within seconds.
+#  3. Overflow tab: the ticket tab is filled to nine panes (the grid holds
+#     gridMax 3x3) with bare shells, the worker spawns its standards
+#     reviewer after its sleep, and the tenth pane must land in the
+#     `<ticket> (2)` overflow tab and still get its prompt within seconds.
 #  A fresh repo dir means claude's folder-trust dialog would stall the pane
 #  if the spawn path did not pre-accept it (harness Trust); a stall here
 #  FAILs step 1 at the readiness wait and points at the dialog.
 #
-# Prerequisites: herdr server running, `pig` and `claude` on PATH with a
-# claude login, run from inside an emberloop checkout (the pig session loads
-# this checkout's emberloop extension). Costs two claude reviewer starts and
-# leaves both unanswered: the probe closes their panes once delivery is
-# proven, nothing merges.
+# Prerequisites: herdr server running, `pig`, `claude` and `python3` on PATH
+# with a claude login, run from inside an emberloop checkout (the pig session
+# loads this checkout's emberloop extension). Costs two claude reviewer
+# starts and leaves both unanswered: EXIT cleanup closes the whole workspace
+# with their panes, nothing merges. One run at a time: the dir below is new
+# per run, but two runs share the ticket-tab fill assumptions of step 3.
 #
 # Never runs in the automated check and never inside ticket work: run by
 # hand, then read the PASS/FAIL lines.
@@ -42,8 +44,8 @@ for bin in herdr pig claude; do
 done
 [ -d "$EMBERLOOP" ] || { echo "FAIL - run from inside an emberloop checkout"; exit 1; }
 
-DIR=/tmp/emberloop-reviewer-probe
-rm -rf "$DIR"; mkdir -p "$DIR/.scratch/probe/issues"
+DIR=$(mktemp -d /tmp/emberloop-reviewer-probe.XXXXXX)
+mkdir -p "$DIR/.scratch/probe/issues"
 printf 'alpha\nbeta\n' > "$DIR/app.txt"
 git -C "$DIR" init -qb master
 git -C "$DIR" -c user.email=w@x -c user.name=emberloop add -A >/dev/null
@@ -60,7 +62,9 @@ WS=$(herdr workspace create --cwd "$DIR" --label reviewer-probe --no-focus 2>&1)
 WID=$(printf '%s' "$WS" | python3 -c "import sys,json;print(json.load(sys.stdin)['result']['workspace']['workspace_id'])")
 PANE=$(printf '%s' "$WS" | python3 -c "import sys,json;print(json.load(sys.stdin)['result']['root_pane']['pane_id'])")
 echo "workspace: $WID  driver pane: $PANE (never focused)"
+DRIVER=""
 cleanup() {
+  kill "$DRIVER" >/dev/null 2>&1 || true
   herdr workspace close "$WID" >/dev/null 2>&1 || true
   rm -rf "$DIR"
 }
@@ -81,11 +85,14 @@ export EMBERLOOP_READONLY_HARNESS=claude
 export EMBERLOOP_HERDR_REPORT="$REPORT"
 
 T_SPAWN=$(date +%s)
-timeout 600 pig --no-skills -e "$EMBERLOOP" -p '
+DRIVER_PROMPT=$(cat <<EOF
 Do these in order, no other tool calls:
-1. spawn with agents=[{"type": "worker", "ticket": "/tmp/emberloop-reviewer-probe/.scratch/probe/issues/01-probe.md", "repo": "/tmp/emberloop-reviewer-probe"}].
+1. spawn with agents=[{"type": "worker", "ticket": "$DIR/.scratch/probe/issues/01-probe.md", "repo": "$DIR"}].
 2. bash with command "sleep 420", so this session stays alive while the probe watches.
-A spawn returns at once: the worker result arrives in this pane as a system notice, so end your turn and report that notice when it lands.' >/tmp/emberloop-reviewer-probe-driver.log 2>&1 &
+A spawn returns at once: the worker result arrives in this pane as a system notice, so end your turn and report that notice when it lands.
+EOF
+)
+timeout 600 pig --no-skills -e "$EMBERLOOP" -p "$DRIVER_PROMPT" >/tmp/emberloop-reviewer-probe-driver.$$.log 2>&1 &
 DRIVER=$!
 
 echo "== 1. reviewer in a background tab =="
@@ -116,7 +123,11 @@ fi
 
 echo "== 2. reviewer bumped to another tab =="
 herdr pane move "$REVIEWER" --new-tab >/dev/null 2>&1 || { echo "FAIL - pane move refused"; exit 1; }
-if herdr agent prompt "$REVIEWER" "probe ping: acknowledge with one word" --wait --until working --timeout 120000 >/dev/null 2>&1; then
+# Plain prompt plus a separate wait: `agent prompt --wait` needs working
+# within 5s of submission (agent_prompt_stalled), too tight for a cold
+# claude start.
+herdr agent prompt "$REVIEWER" "probe ping: acknowledge with one word" >/dev/null 2>&1 || { echo "FAIL - bumped pane refused the prompt"; exit 1; }
+if herdr agent wait "$REVIEWER" --until working --timeout 120000 >/dev/null 2>&1; then
   echo "PASS - bumped pane still receives its prompt"
 else
   echo "FAIL - bumped pane took no prompt within 120s"
@@ -152,5 +163,4 @@ else
   exit 1
 fi
 
-kill "$DRIVER" >/dev/null 2>&1 || true
 echo "ALL PASS"
