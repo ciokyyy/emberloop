@@ -163,9 +163,10 @@ func driverBlockedValue(content string) (value string, line int, found bool, err
 // The ids come first; everything after is free text for humans. Empty, None
 // and nothing mean no blockers. Parenthesized asides are free text too, so
 // commas inside them never split the id list. Free text may itself hold
-// commas: once free text has started, later comma segments are its
-// continuation, not new ids. A segment with no leading id before any free
-// text fails, so a typo never reads as no blockers.
+// commas: a comma segment with no leading id continues the free text once
+// free text has started, while a segment with a leading id still adds
+// blockers. A segment with no leading id before any free text fails, so a
+// typo never reads as no blockers.
 func parseBlockerRefs(value string) ([]string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -241,11 +242,11 @@ func stripParens(s string) (string, bool) {
 // isTicketRef reports whether a field is one ticket id: digits with an
 // optional -slug, like 02 or 02-ticket-graph.
 func isTicketRef(field string) bool {
-	head, tail := field, ""
+	head, tail, dashed := field, "", false
 	if i := strings.Index(field, "-"); i >= 0 {
-		head, tail = field[:i], field[i+1:]
+		head, tail, dashed = field[:i], field[i+1:], true
 	}
-	if head == "" || tail == "-" {
+	if head == "" || (dashed && tail == "") {
 		return false
 	}
 	for _, r := range head {

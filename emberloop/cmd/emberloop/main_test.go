@@ -288,3 +288,29 @@ func TestImplementDriverCheckFailsABadGraph(t *testing.T) {
 		t.Fatalf("check of a bad graph must fail naming the unknown id, got %v", err)
 	}
 }
+
+// `implement --driver` without --check checks the graph first, then stops:
+// the full loop lands in a later ticket. A valid graph reaches the stub.
+func TestImplementDriverRunStopsAtTheUnbuiltLoop(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	dir := writeSpec(t, map[string]string{
+		"01-first.md": "# 01\n\n**Blocked by:** None\n",
+	})
+	err := run([]string{"implement", "--driver", dir})
+	if err == nil || !strings.Contains(err.Error(), "not implemented yet") {
+		t.Fatalf("implement --driver must stop at the unbuilt loop, got %v", err)
+	}
+}
+
+// The stub still checks the graph first: a bad graph fails on the graph, not
+// on the stub.
+func TestImplementDriverRunChecksTheGraphFirst(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	dir := writeSpec(t, map[string]string{
+		"01-first.md": "# 01\n\n**Blocked by:** 09 Typo\n",
+	})
+	err := run([]string{"implement", "--driver", dir})
+	if err == nil || !strings.Contains(err.Error(), "09") {
+		t.Fatalf("implement --driver on a bad graph must fail naming the unknown id, got %v", err)
+	}
+}

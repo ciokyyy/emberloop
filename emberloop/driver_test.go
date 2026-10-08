@@ -11,10 +11,9 @@ import (
 // files, a fake clock, and a hook that records worker starts. Every test here
 // goes through that seam and asserts on the returned order and the recorded
 // calls, never on the parser directly.
-
 // driverWorld builds a world whose ticket files live under one temp dir. The
-// start hook fails the test when called, so every check test also proves no
-// worker starts, including on failure.
+// start hook records worker starts, so every check test also proves no worker
+// starts, including on failure.
 func driverWorld(t *testing.T, docs map[string]string) (SpecRun, DriverWorld, *[]string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -119,8 +118,9 @@ func TestDriverCheckIgnoresABlockedByMentionInProse(t *testing.T) {
 	}
 }
 
-// Free text may hold commas of its own: once it has started, later comma
-// segments are its continuation.
+// Free text may hold commas of its own: a comma segment with no leading id
+// continues the free text once it has started, while a segment with a leading
+// id still adds blockers.
 func TestDriverCheckIgnoresCommasInsideFreeText(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md":  ticketDoc("None"),
@@ -241,5 +241,42 @@ func TestDriverCheckFailsWhenATicketBlocksItself(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "01-first") {
 		t.Errorf("error must name the ticket, got: %v", err)
+	}
+}
+
+// A dangling dash is no ticket id: `02-` fails naming the file and line.
+func TestDriverCheckFailsOnADanglingDash(t *testing.T) {
+	spec, world, started := driverWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("02-"),
+	})
+	_, err := RunDriver(spec, world)
+	if err == nil {
+		t.Fatal("RunDriver must fail on a dangling dash")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(spec.Tickets, "02-second.md")) {
+		t.Errorf("error must name the file, got: %v", err)
+	}
+	if len(*started) != 0 {
+		t.Errorf("a bad graph started workers %v; none may start", *started)
+	}
+}
+
+// A bare number matching two tickets is ambiguous and fails naming both.
+func TestDriverCheckFailsOnAnAmbiguousNumber(t *testing.T) {
+	spec, world, started := driverWorld(t, map[string]string{
+		"02-alpha.md": ticketDoc("None"),
+		"02-beta.md":  ticketDoc("None"),
+		"03-third.md": ticketDoc("02"),
+	})
+	_, err := RunDriver(spec, world)
+	if err == nil {
+		t.Fatal("RunDriver must fail on an ambiguous ticket number")
+	}
+	if !strings.Contains(err.Error(), "02-alpha") || !strings.Contains(err.Error(), "02-beta") {
+		t.Errorf("error must name both tickets, got: %v", err)
+	}
+	if len(*started) != 0 {
+		t.Errorf("a bad graph started workers %v; none may start", *started)
 	}
 }
