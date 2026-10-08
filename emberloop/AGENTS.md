@@ -49,7 +49,8 @@ owns its `_test.go` and the behaviour below):
   and a fake clock; the ticket graph check fails before any worker starts, and
   `RunDriverCheck` prints the start order for `--driver --check`. The mode
   flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`; `--llm` and
-  a bare run keep the LLM orchestrator)
+  a bare run keep the LLM orchestrator, while `--driver` without `--check`
+  needs a herdr pane, checks the graph, then stops at the unbuilt loop)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`
 - Transport: `mcp/` (child doc); binaries are `cmd/emberloop/main.go` (harness
