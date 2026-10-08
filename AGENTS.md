@@ -51,6 +51,7 @@ child it belongs to, and every entry must resolve to a file.
   the focused pane)
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
+- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (live-only Backend spike probes for now)
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
 - `.scratch/retro-hardening/AGENTS.md` — the spec and ticket area for this run
 - `.scratch/enderbloom-web/AGENTS.md` — the spec and ticket area for Enderbloom Web (browser UI and Daemon, planned module `emberloop-web`)

@@ -6,11 +6,11 @@ The spec and ticket area for Enderbloom Web: `spec.md` (the decisions every tick
 
 ## Ownership
 
-Owns `spec.md` and `issues/` in this directory. Code from these tickets lands in the `emberloop-web/` module, owned by its doc once it exists. Terms live in the root `GLOSSARY.md`; the backend decision lives in `docs/adr/0001-claude-via-acp-pig-via-sdk.md`.
+Owns `spec.md`, `spike-findings.md` and `issues/` in this directory. Code from these tickets lands in the `emberloop-web/` module, owned by `emberloop-web/AGENTS.md`. Terms live in the root `GLOSSARY.md`; the backend decision lives in `docs/adr/0001-claude-via-acp-pig-via-sdk.md`.
 
 ## Local Contracts
 
-- Ticket 01 (spike) blocks every other ticket. Its answers are appended to the spec's Spike Findings section and may change tickets 03 to 05.
+- Ticket 01 (spike) blocks every other ticket. Its answers live in `spike-findings.md` and may change tickets 03 to 05.
 - Tickets use the root `GLOSSARY.md` vocabulary.
 - Ticket files carry status and checkboxes; only a merge into the integration branch moves them.
 
