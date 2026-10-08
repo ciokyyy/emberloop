@@ -4,12 +4,12 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Starting the Daemon serves the embedded UI on loopback only
-- [ ] A client creates a Session, sends a prompt, and reads Events over SSE in order with sequence numbers
-- [ ] Reconnecting with a last-seen sequence number delivers only the missed Events
-- [ ] Reloading the page replays the whole log and shows the same transcript
-- [ ] A request with a foreign `Origin` or `Host` is rejected
-- [ ] Restarting the Daemon keeps the Session readable as history
-- [ ] Seam tests at the HTTP and SSE API with the fake Backend pass; the module is wired into the repo check
+- [x] Starting the Daemon serves the embedded UI on loopback only
+- [x] A client creates a Session, sends a prompt, and reads Events over SSE in order with sequence numbers
+- [x] Reconnecting with a last-seen sequence number delivers only the missed Events
+- [x] Reloading the page replays the whole log and shows the same transcript
+- [x] A request with a foreign `Origin` or `Host` is rejected
+- [x] Restarting the Daemon keeps the Session readable as history
+- [x] Seam tests at the HTTP and SSE API with the fake Backend pass; the module is wired into the repo check
