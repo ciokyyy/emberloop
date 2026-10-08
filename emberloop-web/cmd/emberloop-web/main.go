@@ -15,6 +15,22 @@ import (
 )
 
 func main() {
+	// Spawn-server mode serves the Daemon-hosted spawn MCP tool over stdio
+	// for one claude Session: the adapter starts this per Session with the
+	// parent and Daemon URL in its environment.
+	if len(os.Args) > 1 && os.Args[1] == "spawn-server" {
+		parent := os.Getenv(web.SpawnParentEnv)
+		daemonURL := os.Getenv(web.SpawnDaemonEnv)
+		if parent == "" || daemonURL == "" {
+			fmt.Fprintln(os.Stderr, "spawn-server: "+web.SpawnParentEnv+" and "+web.SpawnDaemonEnv+" are required")
+			os.Exit(2)
+		}
+		if err := web.ServeSpawnMCP(os.Stdin, os.Stdout, daemonURL, parent); err != nil {
+			fmt.Fprintln(os.Stderr, "spawn-server:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to bind")
 	stateDir := flag.String("state-dir", defaultStateDir(), "pig state directory (Sessions live in its enderbloom subtree)")
 	flag.Parse()
@@ -30,15 +46,33 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	d := web.NewDaemon(*stateDir, web.NewFakeBackend())
-	d.RegisterBackend("pig", web.NewPigBackend())
-	d.WithClaudeBackend(web.NewClaudeBackend())
+	// Listen first: the claude spawn server calls the Daemon back over
+	// loopback HTTP, so backends need the bound address before serving.
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "listen:", err)
 		os.Exit(1)
 	}
-	fmt.Println("emberloop-web on http://" + ln.Addr().String())
+	daemonURL := "http://" + ln.Addr().String()
+	d := web.NewDaemon(*stateDir, web.NewFakeBackend())
+	pig := web.NewPigBackend()
+	pig.Spawn = func(parentID string, agents []web.SpawnAgent) (string, []web.SessionMeta, error) {
+		gid, kids, code, msg := d.Spawn(parentID, agents)
+		if code != 0 {
+			return "", nil, fmt.Errorf("spawn: %s", msg)
+		}
+		return gid, kids, nil
+	}
+	d.RegisterBackend("pig", pig)
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "executable:", err)
+		os.Exit(1)
+	}
+	claude := web.NewClaudeBackend()
+	claude.SetSpawnServer([]string{exe, "spawn-server"}, daemonURL)
+	d.WithClaudeBackend(claude)
+	fmt.Println("emberloop-web on " + daemonURL)
 	if err := http.Serve(ln, d.Handler()); err != nil {
 		fmt.Fprintln(os.Stderr, "serve:", err)
 		os.Exit(1)

@@ -16,8 +16,10 @@ import (
 
 // PigBackend drives pig through the embedded Go SDK (pinned in go.mod).
 // Every Session runs stripped: no built-in tools, no extension tools, only
-// the ExtraTools passed here. That slice is the emberloop MCP tool set; it
-// stays empty until ticket 06 serves the spawn tool.
+// the ExtraTools passed here plus the Daemon's spawn tool. Spawn is how an
+// agent creates Subagents: the tool is bound per Session to its own id, so
+// the Daemon always knows the parent. Scout Sessions get no spawn tool and
+// no write tools: they are read-only.
 type PigBackend struct {
 	mu       sync.Mutex
 	sessions map[string]*pigSession
@@ -26,6 +28,9 @@ type PigBackend struct {
 	// test-faux models.json.
 	AgentDir string
 	extra    []agent.AgentTool
+	// Spawn creates Subagents under one parent. The Daemon wires it to
+	// its own Spawn; nil keeps Sessions tool-free.
+	Spawn func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error)
 }
 
 type pigSession struct {
@@ -40,6 +45,73 @@ type pigSession struct {
 func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
 	return &PigBackend{sessions: map[string]*pigSession{}, extra: extra}
 }
+
+// sessionTools is the stripped loadout for one Session: the configured
+// ExtraTools plus the Daemon spawn tool bound to this Session's id, so the
+// Daemon knows the parent of anything it spawns. Scouts keep the ExtraTools
+// without spawn: nothing they call can write.
+func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	tools := append([]agent.AgentTool(nil), b.extra...)
+	if b.Spawn != nil && !meta.Scout {
+		tools = append(tools, &spawnAgentTool{parent: meta.ID, spawn: b.Spawn})
+	}
+	return tools
+}
+
+// spawnAgentTool is the Daemon spawn tool as a pig ExtraTool. One instance
+// serves one Session: Execute spawns Subagents under the bound parent and
+// answers with the Group and its Session ids.
+type spawnAgentTool struct {
+	parent string
+	spawn  func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error)
+}
+
+func (t *spawnAgentTool) Name() string  { return "spawn" }
+func (t *spawnAgentTool) Label() string { return "spawn subagents" }
+func (t *spawnAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Spawn Subagents that work in parallel and report back as one grouped result. Each agent takes a prompt and a type (worker or scout); scouts are read-only.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"agents": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":       "object",
+						"properties": map[string]any{"prompt": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}},
+						"required":   []string{"prompt"},
+					},
+				},
+			},
+			"required": []string{"agents"},
+		},
+	}
+}
+
+func (t *spawnAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		Agents []SpawnAgent `json:"agents"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || len(req.Agents) == 0 {
+		return agent.AgentToolResult{}, fmt.Errorf("spawn: agents is required")
+	}
+	gid, kids, err := t.spawn(t.parent, req.Agents)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	ids := make([]string, 0, len(kids))
+	for _, k := range kids {
+		ids = append(ids, k.ID)
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: "spawned group " + gid + ": " + strings.Join(ids, " ")}},
+	}, nil
+}
+
+func (t *spawnAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
 
 var pigModelsOnce sync.Once
 var pigModelsCache []string
@@ -65,14 +137,15 @@ func (b *PigBackend) Models() []string { return PigModels() }
 // Daemon Session and subscribes the normalized Event stream. An unknown
 // model or unusable working directory returns an error for a 400.
 func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	tools := b.sessionTools(meta)
 	b.mu.Lock()
 	if _, ok := b.sessions[meta.ID]; ok {
 		b.mu.Unlock()
 		return fmt.Errorf("pig: session %s already exists", meta.ID)
 	}
-	agentDir, extra := b.AgentDir, b.extra
+	agentDir := b.AgentDir
 	b.mu.Unlock()
-	svcs, model, err := buildPigServices(agentDir, extra, meta)
+	svcs, model, err := buildPigServices(agentDir, tools, meta)
 	if err != nil {
 		return err
 	}
@@ -85,7 +158,7 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		Model:              model,
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
-		ExtraTools:         extra,
+		ExtraTools:         tools,
 	})
 	if err != nil {
 		_ = rt.Close()
@@ -303,9 +376,12 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 		b.mu.Unlock()
 		return nil
 	}
-	agentDir, extra := b.AgentDir, b.extra
 	b.mu.Unlock()
-	svcs, model, err := buildPigServices(agentDir, extra, meta)
+	tools := b.sessionTools(meta)
+	b.mu.Lock()
+	agentDir := b.AgentDir
+	b.mu.Unlock()
+	svcs, model, err := buildPigServices(agentDir, tools, meta)
 	if err != nil {
 		return err
 	}
@@ -318,7 +394,7 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 		Model:              model,
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
-		ExtraTools:         extra,
+		ExtraTools:         tools,
 	})
 	if err != nil {
 		_ = rt.Close()

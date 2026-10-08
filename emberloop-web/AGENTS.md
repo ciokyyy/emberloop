@@ -21,11 +21,14 @@ imports it. No herdr, no ticket state.
   `lifecycle_test.go` covers the cap, idle release, restart resume and
   read-only paths the same way; `steer_test.go` covers steer, follow-up,
   queue list/clear and the claude Steer-to-Follow-up degradation at the
-  same seam; `pig_test.go` does the same with the pig Backend on the SDK
-  test-faux provider, and `pig_live_test.go` (env-gated) with a real pig.
+  same seam; `spawn_test.go` covers spawn, nesting, grouped delivery and
+  scout read-only at the same seam; `pig_test.go` does the same with the
+  pig Backend on the SDK test-faux provider, and `pig_live_test.go`
+  (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
-  ExtraTools only, models from the SDK catalog, one SDK stack per live
-  Session released on idle or DELETE and reloaded through `Runtime.Resume`.
+  ExtraTools plus the per-Session spawn tool (scouts: ExtraTools without
+  spawn), models from the SDK catalog, one SDK stack per live Session
+  released on idle or DELETE and reloaded through `Runtime.Resume`.
   Steer and Follow-up use the SDK native queues (`QueuedMessages`/
   `ClearQueued` expose them); the Daemon merges them with its own pending
   list. Backends register per harness; the fake stays default.
@@ -57,12 +60,26 @@ imports it. No herdr, no ticket state.
 - `GET /api/sessions/{id}/queue` lists not-yet-delivered messages as
   `{"queue":[{"mode","text"}]}` (pig native queues first); `DELETE` on the
   same path clears them before delivery and answers `{"cleared":N}`.
-  Steer, follow-up and prompt-on-working answers are 202 with
-  `{"seq","queued"}` (queued Daemon messages add `"position"`); unknown
-  Sessions are 404, empty text is 400, ended Sessions are 410 on send.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
-  `meta.json` (now carrying the resume token) plus append-only
-  `events.jsonl`; the Daemon reloads both on start.
+  `meta.json` (now carrying the resume token plus `parentId`, `groupId`,
+  `scout`) plus append-only `events.jsonl`; Groups persist as
+  `enderbloom/groups/{id}.json`; the Daemon reloads all three on start.
+- Subagents are `POST /api/sessions/{id}/spawn` with
+  `{"agents":[{"prompt","type"}]}` (type worker or scout, default worker).
+  Each child inherits the parent's harness, model and working directory,
+  records its parent and Group, and runs its prompt at once; over-cap the
+  whole call is 429 with no half Group. The session list nests children
+  under `parentId` and each opens its own transcript. The last member to
+  settle delivers one grouped result to the parent as a Steer (queued when
+  the parent works). Scouts are read-only: sends and nested spawns are 403,
+  the UI hides the composer with a banner, and pig scout loadouts carry no
+  spawn tool.
+- `spawn` is Daemon-hosted (`spawn.go`, `spawnmcp.go`): pig takes it as a
+  per-Session ExtraTool bound to its own id, claude through a per-Session
+  `emberloop-spawn` MCP server (the Daemon binary in `spawn-server` mode,
+  parent and Daemon URL in its env) alongside the base `emberloop-mcp`
+  server. The existing MCP server never calls back; all Group state stays
+  in the Daemon.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

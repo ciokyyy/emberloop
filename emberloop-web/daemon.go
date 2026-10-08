@@ -58,6 +58,9 @@ type Daemon struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	backends map[string]Backend
+	// groups tracks one spawn call each: its parent and members, so the
+	// last member to finish delivers one grouped result as a Steer.
+	groups map[string]*spawnGroup
 }
 type session struct {
 	meta   SessionMeta
@@ -114,8 +117,10 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		backend:  backend,
 		sessions: map[string]*session{},
 		backends: map[string]Backend{},
+		groups:   map[string]*spawnGroup{},
 	}
 	d.load()
+	d.loadGroups()
 	return d
 }
 
@@ -206,6 +211,87 @@ func (d *Daemon) removeSession(id string) {
 // the cap came from so the message tells the user where to raise it.
 func capMessage(running, max int) string {
 	return fmt.Sprintf("session cap reached: %d running (max %d from max_workers); end a Session or wait for one to go idle", running, max)
+}
+
+// startError is a Session start refusal carrying its HTTP status. asJSON
+// marks the {"error"} envelope; otherwise the message goes out as plain text.
+type startError struct {
+	code   int
+	msg    string
+	asJSON bool
+}
+
+func (e *startError) Error() string { return e.msg }
+
+// startSession allocates the harness Session and publishes it live,
+// enforcing the concurrency cap. It returns the owning Backend for the
+// caller to run turns on. Both the create route and spawn share it, so a
+// Subagent starts exactly like a Session.
+func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
+	// The cap counts Sessions holding an agent process. Over it the
+	// start is refused with a clear message.
+	d.mu.Lock()
+	max := d.maxRunningLocked()
+	if d.liveCountLocked() >= max {
+		running := d.liveCountLocked()
+		d.mu.Unlock()
+		return nil, &startError{code: http.StatusTooManyRequests, msg: capMessage(running, max), asJSON: true}
+	}
+	if meta.Harness != "claude" {
+		d.starting++
+	}
+	d.mu.Unlock()
+	// Allocate the harness Session before publishing: a concurrent GET
+	// or prompt must never see a Session with no harness handle.
+	// Claude skips the generic path here: its blocking StartSession runs
+	// below after publishing, so MCP tools are connected before the
+	// first prompt can go out.
+	if meta.Harness != "claude" {
+		d.mu.Lock()
+		be := d.backendForLocked(meta.Harness)
+		d.mu.Unlock()
+		if be == nil {
+			d.mu.Lock()
+			d.starting--
+			d.mu.Unlock()
+			return nil, &startError{code: http.StatusInternalServerError, msg: "backend not configured", asJSON: true}
+		}
+		id := meta.ID
+		if err := be.CreateSession(meta, func(kind, text, status string) {
+			d.appendEvent(id, kind, text, status)
+		}); err != nil {
+			d.mu.Lock()
+			d.starting--
+			d.mu.Unlock()
+			return nil, &startError{code: http.StatusBadRequest, msg: err.Error()}
+		}
+		d.mu.Lock()
+		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+		d.persistMeta(meta)
+		d.starting--
+		d.mu.Unlock()
+		return be, nil
+	}
+	// Claude creation blocks until session/new answers, so MCP tools
+	// are connected before the first prompt can go out. The Session
+	// publishes live to hold its cap slot while it starts.
+	d.mu.Lock()
+	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+	d.persistMeta(meta)
+	cb := d.claude
+	d.mu.Unlock()
+	if cb == nil {
+		d.removeSession(meta.ID)
+		return nil, &startError{code: http.StatusInternalServerError, msg: "claude backend not configured"}
+	}
+	id := meta.ID
+	if err := cb.CreateSession(meta, func(kind, text, status string) {
+		d.appendEvent(id, kind, text, status)
+	}); err != nil {
+		d.removeSession(meta.ID)
+		return nil, &startError{code: http.StatusInternalServerError, msg: err.Error()}
+	}
+	return cb, nil
 }
 
 // persistResumeToken stores the backend's live handle so a restart or a
@@ -505,6 +591,14 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 // steer or follow-up. It writes the HTTP response itself. Refusals carry
 // the why as {"error"} so the UI can show it.
 func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, text string) {
+	// Scout Subagents are read-only: their spawn prompt is their only turn.
+	d.mu.Lock()
+	if s, ok := d.sessions[id]; ok && s.meta.Scout {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "scout sessions are read-only"})
+		return
+	}
+	d.mu.Unlock()
 	if code, msg := d.resumeReleased(id); code != 0 {
 		if code == http.StatusNotFound {
 			http.NotFound(w, r)
@@ -626,6 +720,9 @@ func (d *Daemon) runTurn(id string, be Backend, text string) {
 		d.appendEvent(id, kind, text, status)
 	})
 	d.finishTurn(id)
+	// A settled Subagent may complete its Group: the last member to finish
+	// delivers one grouped result to the parent as a Steer.
+	d.maybeDeliverGroup(id)
 }
 
 // listQueue reports not-yet-delivered messages.
@@ -718,76 +815,16 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
 		}
-		// The cap counts Sessions holding an agent process. Over it the
-		// create is refused with a clear message.
-		d.mu.Lock()
-		max := d.maxRunningLocked()
-		if d.liveCountLocked() >= max {
-			running := d.liveCountLocked()
-			d.mu.Unlock()
-			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": capMessage(running, max)})
+		be, serr := d.startSession(meta)
+		if serr != nil {
+			if serr.asJSON {
+				writeJSON(w, serr.code, map[string]any{"error": serr.msg})
+			} else {
+				http.Error(w, serr.msg, serr.code)
+			}
 			return
 		}
-		if req.Harness != "claude" {
-			d.starting++
-		}
-		d.mu.Unlock()
-		// Allocate the harness Session before publishing: a concurrent GET
-		// or prompt must never see a Session with no harness handle.
-		// Claude skips the generic path here: its blocking StartSession runs
-		// below after publishing, so MCP tools are connected before the
-		// first prompt can go out.
-		if req.Harness != "claude" {
-			d.mu.Lock()
-			be := d.backendForLocked(req.Harness)
-			d.mu.Unlock()
-			if be == nil {
-				d.mu.Lock()
-				d.starting--
-				d.mu.Unlock()
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "backend not configured"})
-				return
-			}
-			id := meta.ID
-			if err := be.CreateSession(meta, func(kind, text, status string) {
-				d.appendEvent(id, kind, text, status)
-			}); err != nil {
-				d.mu.Lock()
-				d.starting--
-				d.mu.Unlock()
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			d.mu.Lock()
-			d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
-			d.persistMeta(meta)
-			d.starting--
-			d.mu.Unlock()
-			d.persistResumeToken(be, meta.ID)
-		} else {
-			// Claude creation blocks until session/new answers, so MCP tools
-			// are connected before the first prompt can go out. The Session
-			// publishes live to hold its cap slot while it starts.
-			d.mu.Lock()
-			d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
-			d.persistMeta(meta)
-			cb := d.claude
-			d.mu.Unlock()
-			if cb == nil {
-				d.removeSession(meta.ID)
-				http.Error(w, "claude backend not configured", http.StatusInternalServerError)
-				return
-			}
-			id := meta.ID
-			if err := cb.CreateSession(meta, func(kind, text, status string) {
-				d.appendEvent(id, kind, text, status)
-			}); err != nil {
-				d.removeSession(meta.ID)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			d.persistResumeToken(cb, meta.ID)
-		}
+		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
 		d.mu.Lock()
 		m := d.sessions[meta.ID].meta
@@ -874,6 +911,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"cleared": n})
+	case sub == "spawn" && r.Method == "POST":
+		d.handleSpawn(w, r, id)
 	case sub == "" && r.Method == "DELETE":
 		// Mark ended under the lock so two concurrent DELETEs emit one
 		// ended Event; the slow CloseSession runs outside the lock.

@@ -110,6 +110,11 @@ type ClaudeBackend struct {
 	mcpName    string
 	mcpCommand string
 	mcpArgs    []string
+	// spawnCommand starts the Daemon-hosted spawn MCP server (the Daemon
+	// binary in spawn-server mode); spawnDaemonAddr is the Daemon it calls
+	// back over loopback HTTP. Unset keeps Sessions on the base server only.
+	spawnCommand    []string
+	spawnDaemonAddr string
 	// allowedTools overrides the default MCP allow-list; the live probe
 	// points it at the echo server's tool.
 	allowedTools []string
@@ -190,7 +195,7 @@ func (b *ClaudeBackend) strippingMeta(model string) map[string]any {
 // returns only after session/new answers, so the MCP tools are connected
 // before the first prompt can go out.
 func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
-	mcp, err := b.mcpServers()
+	mcp, err := b.mcpServersFor(meta.ID)
 	if err != nil {
 		return err
 	}
@@ -229,7 +234,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 // LoadSession restarts the adapter around a known ACP session id. It repeats
 // the full stripping set: without it the loaded session re-asks permission.
 func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd string) error {
-	mcp, err := b.mcpServers()
+	mcp, err := b.mcpServersFor(daemonID)
 	if err != nil {
 		return err
 	}
@@ -410,7 +415,24 @@ func (b *ClaudeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, 
 	appendEvent("status", "", "idle")
 }
 
+// SetSpawnServer serves the spawn tool to claude Sessions through a
+// Daemon-hosted MCP server: command starts it (the Daemon binary in
+// spawn-server mode) and daemonAddr is the loopback Daemon it calls back.
+func (b *ClaudeBackend) SetSpawnServer(command []string, daemonAddr string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.spawnCommand = append([]string(nil), command...)
+	b.spawnDaemonAddr = daemonAddr
+}
+
 func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
+	return b.mcpServersFor("")
+}
+
+// mcpServersFor lists the base emberloop MCP server plus, when configured,
+// the Daemon-hosted spawn server bound to one Session: its parent env names
+// the spawning Session, so the Daemon always knows the parent.
+func (b *ClaudeBackend) mcpServersFor(sessionID string) ([]acpMCPServer, error) {
 	cmd := b.mcpCommand
 	if !filepath.IsAbs(cmd) {
 		abs, err := exec.LookPath(cmd)
@@ -423,7 +445,19 @@ func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
 	if name == "" {
 		name = "emberloop"
 	}
-	return []acpMCPServer{{Name: name, Command: cmd, Args: b.mcpArgs}}, nil
+	out := []acpMCPServer{{Name: name, Command: cmd, Args: b.mcpArgs}}
+	if len(b.spawnCommand) > 0 && sessionID != "" {
+		out = append(out, acpMCPServer{
+			Name:    "emberloop-spawn",
+			Command: b.spawnCommand[0],
+			Args:    append([]string(nil), b.spawnCommand[1:]...),
+			Env: [][2]string{
+				{"EMBERLOOP_WEB_PARENT", sessionID},
+				{"EMBERLOOP_WEB_DAEMON_URL", b.spawnDaemonAddr},
+			},
+		})
+	}
+	return out, nil
 }
 
 // mapACPUpdate normalizes one session/update payload. Plans and slash

@@ -28,7 +28,10 @@ type QueuedMessage struct {
 	Degraded bool   `json:"degraded,omitempty"`
 }
 
-// SessionMeta is the small metadata file per Session.
+// SessionMeta is the small metadata file per Session. ParentID names the
+// spawning Session for Subagents; GroupID names the spawn call that created
+// them (one Group per call). Scout marks a read-only Subagent: user sends
+// and nested spawns are refused, and its tool set carries no write tools.
 type SessionMeta struct {
 	ID        string    `json:"id"`
 	Harness   string    `json:"harness"`
@@ -36,6 +39,9 @@ type SessionMeta struct {
 	WorkDir   string    `json:"workDir"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
+	ParentID  string    `json:"parentId,omitempty"`
+	GroupID   string    `json:"groupId,omitempty"`
+	Scout     bool      `json:"scout,omitempty"`
 	// ResumeToken is the harness handle needed to resume: the claude ACP
 	// session id, the pig Session id, or an opaque marker for fake.
 	ResumeToken string `json:"resumeToken,omitempty"`

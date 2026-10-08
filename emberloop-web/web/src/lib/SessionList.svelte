@@ -36,7 +36,7 @@
     class:bg-muted={s.id === currentId}
   >
     <span class="h-2 w-2 shrink-0 rounded-full {STATUS_DOT[s.status] ?? STATUS_DOT.idle}" title={s.status}></span>
-    <span class="min-w-0 flex-1 truncate font-medium">{s.harness} · {short(s.id)}</span>
+    <span class="min-w-0 flex-1 truncate font-medium">{s.harness} · {short(s.id)}{#if s.scout}<span class="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">scout</span>{/if}</span>
     <span class="shrink-0 text-xs text-muted-foreground">{s.status}</span>
   </button>
 {/snippet}

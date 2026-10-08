@@ -200,6 +200,10 @@
         <p data-testid="read-only" class="border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
           Read-only history. {resumeNote}
         </p>
+      {:else if currentId && meta?.scout}
+        <p data-testid="scout-read-only" class="border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+          Scout session. Read-only transcript.
+        </p>
       {/if}
       <div bind:this={scroller} class="flex flex-1 flex-col gap-3 overflow-auto px-4 py-4">
         <div class="mx-auto flex w-full max-w-2xl flex-col gap-3">
@@ -236,7 +240,7 @@
               </ul>
             </div>
           {/if}
-          {#if currentId && resumable}
+          {#if currentId && resumable && !meta?.scout}
             <Composer {status} busy={sending} onSend={send} />
           {/if}
         </div>
