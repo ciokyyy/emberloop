@@ -1,6 +1,6 @@
 # 07: Design pass with shadcn-svelte
 
-**What to build:** Replace the unstyled UI with the designed one: session tree, single-column transcript of cards (messages, tool calls with collapsible output, plan checklist, diffs, errors), floating composer, collapsible details pane, new-Session dialog with harness, model and working directory. shadcn-svelte on Tailwind, a ChatGPT-and-Apple look, system light or dark theme, reconnect indicator.
+**What to build:** Replace the unstyled UI with the designed one: session tree, single-column transcript of cards (messages, tool calls with collapsible output, diffs, errors), floating composer, collapsible details pane, new-Session dialog with harness, model and working directory. shadcn-svelte on Tailwind, a ChatGPT-and-Apple look, system light or dark theme, reconnect indicator.
 
 **Blocked by:** 02
 

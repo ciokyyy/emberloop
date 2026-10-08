@@ -33,7 +33,7 @@ A prompt delivered to a Session after its current turn ends.
 _Avoid_: Queue message, next prompt
 
 **Event**:
-One normalized record of something a Session did or received: message chunk, tool call, plan, prompt, status change.
+One normalized record of something a Session did or received: message chunk, tool call, prompt, status change.
 _Avoid_: Update, message
 
 **Event log**:
