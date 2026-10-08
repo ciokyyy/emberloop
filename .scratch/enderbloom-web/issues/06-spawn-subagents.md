@@ -4,10 +4,10 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A `spawn` call creates one Subagent Session per requested agent, each recording its parent and Group
-- [ ] The session tree nests Subagents under their parent and each opens its own transcript
-- [ ] The parent receives exactly one grouped result when the last Group member finishes
-- [ ] A scout Subagent cannot write
-- [ ] Seam tests with the fake Backend cover spawn, nesting, grouped delivery and parent notification
+- [x] A `spawn` call creates one Subagent Session per requested agent, each recording its parent and Group
+- [x] The session tree nests Subagents under their parent and each opens its own transcript
+- [x] The parent receives exactly one grouped result when the last Group member finishes
+- [x] A scout Subagent cannot write
+- [x] Seam tests with the fake Backend cover spawn, nesting, grouped delivery and parent notification
