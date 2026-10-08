@@ -148,6 +148,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/settings", d.handleSettings)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
+	mux.HandleFunc("/api/specs", d.handleSpecs)
+	mux.HandleFunc("/api/specs/preview", d.handleSpecPreview)
 	return guard(mux)
 }
 

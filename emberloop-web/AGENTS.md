@@ -8,8 +8,10 @@ claude and pig Sessions behind one `Backend` interface. See
 
 ## Ownership
 
-Owns `emberloop-web/`. May import emberloop core packages; core never
-imports it. No herdr, no ticket state.
+Owns `emberloop-web/`. May import emberloop core packages through the
+`replace example.com/emberloop => ../emberloop` in `go.mod`, so the module
+builds only beside a sibling `emberloop/` checkout; core never imports it.
+No herdr. Ticket files are read-only preview input, never Daemon state.
 
 ## Local Contracts
 
@@ -26,7 +28,8 @@ imports it. No herdr, no ticket state.
   read-only paths the same way; `steer_test.go` covers steer, follow-up,
   queue list/clear and the claude Steer-to-Follow-up degradation at the
   same seam; `spawn_test.go` covers spawn, nesting, grouped delivery and
-  scout read-only at the same seam; `pig_test.go` does the same with the
+  scout read-only at the same seam; `runs_test.go` covers spec discovery and
+  ticket preview at the same seam; `pig_test.go` does the same with the
   pig Backend on the SDK test-faux provider, and `pig_live_test.go`
   (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
@@ -93,6 +96,14 @@ imports it. No herdr, no ticket state.
   parent and Daemon URL in its env) alongside the base `emberloop-mcp`
   server. The existing MCP server never calls back; all Group state stays
   in the Daemon.
+- `runs.go` serves the Runs picker off core spec resolution and ticket
+  reading (`GET /api/specs` lists specs with title and ticket count,
+  `GET /api/specs/preview` returns number, title, blockers and checkbox
+  progress per ticket with a row error for a bad Blocked by line). The scan
+  stays four levels deep, matches only files named `spec.md`, and skips
+  `.git` and `node_modules`. The UI mounts a Runs view beside chat and
+  settings with no router: repo picker defaulting to the Session working
+  directory, spec list, ticket table. No herdr import.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

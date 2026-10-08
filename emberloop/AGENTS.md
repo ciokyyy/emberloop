@@ -92,7 +92,10 @@ owns its `_test.go` and the behaviour below):
   read by the run pane. `ParkDriverTicketFile` is the park command (Status
   parked through the per-file lock, refusing a merged ticket and leaving an
   already-parked one alone). `ReadDriverFiles` and `LiveDriverWorld` let the
-  run pane build the same live world in its own process. The mode flags
+  run pane build the same live world in its own process. `ticketview.go`
+  holds the Runs preview surface (`SpecTitle`, `PreviewTickets`; private
+  title and checkbox helpers): per-ticket title, resolved blockers and
+  checkbox progress where one bad ticket fails only its own row. The mode flags
   `--driver/--llm/--check` live in `cmd/emberloop/main.go`; on a terminal
   `--driver` opens the pane through `RunDriverPane` (`tui.go`, same binary
   lookup as `tui`), and quitting that pane stops its loop while the workers

@@ -72,3 +72,6 @@ export const putSettings = (roles) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ roles }),
   }).then(json);
+export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURIComponent(repo)}`)).then(json);
+
+export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);

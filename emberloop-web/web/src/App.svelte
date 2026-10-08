@@ -1,5 +1,5 @@
 <script>
-  import { Plus, SquarePen, PanelRight, Menu, Settings } from '@lucide/svelte';
+  import { Plus, SquarePen, PanelRight, Menu, Settings, Layers } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Badge from './lib/ui/badge.svelte';
   import Sheet from './lib/ui/sheet.svelte';
@@ -8,6 +8,7 @@
   import Composer from './lib/Composer.svelte';
   import NewSessionDialog from './lib/NewSessionDialog.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
+  import RunsView from './lib/RunsView.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
   import DetailsPane from './lib/DetailsPane.svelte';
   import { modelLabel } from './lib/harnesses.js';
@@ -186,15 +187,20 @@
     <div class="min-h-0 flex-1 overflow-auto">
       <SessionList {sessions} {currentId} onSelect={openSession} />
     </div>
+    <Button variant={view === 'runs' ? 'secondary' : 'ghost'} class="justify-start" onclick={() => (view = 'runs')}><Layers />Runs</Button>
     <Button variant={view === 'settings' ? 'secondary' : 'ghost'} class="justify-start" onclick={() => (view = 'settings')}><Settings />Settings</Button>
   </aside>
-
   <div class="flex min-w-0 flex-1 flex-col">
     {#if view === 'settings'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
       <SettingsPage onBack={() => (view = 'chat')} />
+    {:else if view === 'runs'}
+      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
+      </header>
+      <RunsView workDir={meta?.workDir ?? ''} />
     {:else}
     <header class="flex items-center gap-3 px-4 py-2.5 backdrop-blur-xl">
       <Button variant="ghost" size="icon-sm" class="md:hidden" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
@@ -280,7 +286,7 @@
   <div class="min-h-0 flex-1 overflow-auto">
     <SessionList {sessions} {currentId} onSelect={(id) => { menuOpen = false; openSession(id); }} />
   </div>
+  <Button variant="ghost" class="justify-start" onclick={() => { menuOpen = false; view = 'runs'; }}><Layers />Runs</Button>
   <Button variant="ghost" class="justify-start" onclick={() => { menuOpen = false; view = 'settings'; }}><Settings />Settings</Button>
 </Sheet>
-
 <NewSessionDialog open={dialogOpen} busy={creating} error={createError} onClose={() => (dialogOpen = false)} onCreate={create} />
