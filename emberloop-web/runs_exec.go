@@ -70,33 +70,36 @@ type storedReview struct {
 // Sessions per Ticket once its Worker submits done, and the shared driver
 // rows the loop publishes every pass. Sessions maps ticket ids to Worker
 // Session ids, Reviewers ticket ids to reviewer type to Session id,
-// ReviewTips ticket ids to reviewer type to the tip the reviewer was
-// prompted on, and Reviews ticket ids to reviewer type to verdict; Submits
-// lives on the Daemon so the submit route finds it without a run.
+// ReviewTips ticket ids to reviewer type to the latest tip the reviewer was
+// prompted on, ReviewPending ticket ids to reviewer type to the owed prompt
+// queue (oldest unanswered tip first), and Reviews ticket ids to reviewer
+// type to verdict; Submits lives on the Daemon so the submit route finds it
+// without a run.
 type runState struct {
-	ID         string                             `json:"id"`
-	Spec       string                             `json:"spec"`
-	Repo       string                             `json:"repo"`
-	Status     string                             `json:"status"`
-	Harness    string                             `json:"harness"`
-	Model      string                             `json:"model"`
-	Effort     string                             `json:"effort,omitempty"`
-	CreatedAt  time.Time                          `json:"createdAt"`
-	Error      string                             `json:"error,omitempty"`
-	Tickets    []staticTicket                     `json:"tickets"`
-	Sessions   map[string]string                  `json:"sessions"`
-	Branches   map[string]string                  `json:"branches"`
-	Worktrees  map[string]string                  `json:"worktrees"`
-	Targets    map[string]string                  `json:"targets"`
-	Bases      map[string]string                  `json:"bases,omitempty"`
-	Merged     map[string]string                  `json:"merged,omitempty"`
-	Reviewers  map[string]map[string]string       `json:"reviewers,omitempty"`
-	Reviews    map[string]map[string]storedReview `json:"reviews,omitempty"`
-	ReviewTips map[string]map[string]string       `json:"reviewTips,omitempty"`
-	Reprompted map[string]int                     `json:"reprompted,omitempty"`
-	SpecRun    emberloop.SpecRun                  `json:"-"`
-	Driver     *emberloop.DriverRun               `json:"-"`
-	notify     chan struct{}                      `json:"-"`
+	ID            string                             `json:"id"`
+	Spec          string                             `json:"spec"`
+	Repo          string                             `json:"repo"`
+	Status        string                             `json:"status"`
+	Harness       string                             `json:"harness"`
+	Model         string                             `json:"model"`
+	Effort        string                             `json:"effort,omitempty"`
+	CreatedAt     time.Time                          `json:"createdAt"`
+	Error         string                             `json:"error,omitempty"`
+	Tickets       []staticTicket                     `json:"tickets"`
+	Sessions      map[string]string                  `json:"sessions"`
+	Branches      map[string]string                  `json:"branches"`
+	Worktrees     map[string]string                  `json:"worktrees"`
+	Targets       map[string]string                  `json:"targets"`
+	Bases         map[string]string                  `json:"bases,omitempty"`
+	Merged        map[string]string                  `json:"merged,omitempty"`
+	Reviewers     map[string]map[string]string       `json:"reviewers,omitempty"`
+	Reviews       map[string]map[string]storedReview `json:"reviews,omitempty"`
+	ReviewTips    map[string]map[string]string       `json:"reviewTips,omitempty"`
+	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
+	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
+	SpecRun       emberloop.SpecRun                  `json:"-"`
+	Driver        *emberloop.DriverRun               `json:"-"`
+	notify        chan struct{}                      `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -339,27 +342,28 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs := &runState{
-		ID:         newID(),
-		Spec:       specRun.Spec,
-		Repo:       repo,
-		Status:     runStatusRunning,
-		Harness:    harness,
-		Model:      model,
-		Effort:     effort,
-		CreatedAt:  time.Now().UTC(),
-		Sessions:   map[string]string{},
-		Branches:   map[string]string{},
-		Worktrees:  map[string]string{},
-		Targets:    map[string]string{},
-		Bases:      map[string]string{},
-		Merged:     map[string]string{},
-		Reviewers:  map[string]map[string]string{},
-		Reviews:    map[string]map[string]storedReview{},
-		ReviewTips: map[string]map[string]string{},
-		Reprompted: map[string]int{},
-		SpecRun:    specRun,
-		Driver:     emberloop.NewDriverRun(nil),
-		notify:     make(chan struct{}),
+		ID:            newID(),
+		Spec:          specRun.Spec,
+		Repo:          repo,
+		Status:        runStatusRunning,
+		Harness:       harness,
+		Model:         model,
+		Effort:        effort,
+		CreatedAt:     time.Now().UTC(),
+		Sessions:      map[string]string{},
+		Branches:      map[string]string{},
+		Worktrees:     map[string]string{},
+		Targets:       map[string]string{},
+		Bases:         map[string]string{},
+		Merged:        map[string]string{},
+		Reviewers:     map[string]map[string]string{},
+		Reviews:       map[string]map[string]storedReview{},
+		ReviewTips:    map[string]map[string]string{},
+		ReviewPending: map[string]map[string][]string{},
+		Reprompted:    map[string]int{},
+		SpecRun:       specRun,
+		Driver:        emberloop.NewDriverRun(nil),
+		notify:        make(chan struct{}),
 	}
 	for _, p := range previews {
 		blockers := p.Blockers
@@ -536,13 +540,51 @@ func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. When done, submit pass or changes with the findings in the report.", ticketID, spec, reviewerType, axis, branch, tip)
 }
 
+// appendReviewPending queues one owed judgement at tip for the Ticket's
+// reviewer type. Consecutive duplicates collapse: re-prompting the same tip
+// twice still owes one judgement. Callers hold d.mu.
+func appendReviewPending(rs *runState, ticketID, reviewerType, tip string) {
+	if tip == "" {
+		return
+	}
+	if rs.ReviewPending == nil {
+		rs.ReviewPending = map[string]map[string][]string{}
+	}
+	if rs.ReviewPending[ticketID] == nil {
+		rs.ReviewPending[ticketID] = map[string][]string{}
+	}
+	q := rs.ReviewPending[ticketID][reviewerType]
+	if len(q) > 0 && q[len(q)-1] == tip {
+		return
+	}
+	rs.ReviewPending[ticketID][reviewerType] = append(q, tip)
+}
+
+// popReviewPending takes the oldest unanswered prompt for the Ticket's
+// reviewer type: the tip of the prompt the next verdict answers. Empty when
+// the reviewer owes nothing (runs predating the queue fall back to the
+// latest prompted tip). Callers hold d.mu.
+func popReviewPending(rs *runState, ticketID, reviewerType string) string {
+	q := rs.ReviewPending[ticketID][reviewerType]
+	if len(q) == 0 {
+		return ""
+	}
+	tip := q[0]
+	rs.ReviewPending[ticketID][reviewerType] = append([]string(nil), q[1:]...)
+	return tip
+}
+
 // ensureReviewers spawns the Ticket's two persistent Reviewer Sessions once
 // its Worker submitted done, and re-prompts them when the Worker submits
-// done again, so they keep their context across Passes. It spawns nothing
-// before the first done submit. A refused live-Session cap leaves the
-// missing reviewers for the next pass, which retries, as does a branch tip
-// it cannot read. Reviewer starts never fail the Run: the driver keeps
-// polling and the next pass tries again.
+// done again, so they keep their context across Passes. Each prompt queues
+// its tip as owed; a verdict answers the oldest queued tip, so a Worker
+// commit between prompts never lets a T1 judgement read fresh at T2. It
+// spawns nothing before the first done submit. A refused live-Session cap
+// leaves the missing reviewers for the next pass, which retries, as does a
+// branch tip it cannot read. Reviewer starts never fail the Run: the driver
+// keeps polling and the next pass tries again. The submit route runs this
+// sync (bounded to two starts plus two steers) so prompts queue in submit
+// order and the driver's next finish sees the re-prompt already out.
 func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
@@ -605,6 +647,7 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	}
 	for _, typ := range requiredReviewerTypes {
 		rs.ReviewTips[ticketID][typ] = tip
+		appendReviewPending(rs, ticketID, typ, tip)
 	}
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
@@ -698,6 +741,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		rs.ReviewTips[ticketID] = map[string]string{}
 	}
 	rs.ReviewTips[ticketID][reviewerType] = tip
+	appendReviewPending(rs, ticketID, reviewerType, tip)
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -970,8 +1014,9 @@ func reviewGateReady(sessions map[string]string, verdicts map[string]storedRevie
 // reviewGateDetail refuses the merge unless every required reviewer type
 // passed at the tip: a missing pass, a changes verdict or a pass at an
 // older commit. A new commit makes older Passes stale. Empty means the gate
-// passed. Findings ride along verbatim, so the Tell reaches the Worker
-// unchanged.
+// passed. Fresh findings ride along verbatim, so the Tell reaches the Worker
+// unchanged; stale findings stay behind (at only, never the old report),
+// since the re-prompt asked for a new judgement.
 func reviewGateDetail(verdicts map[string]storedReview, tip string) string {
 	var missing []string
 	for _, typ := range requiredReviewerTypes {
@@ -979,6 +1024,8 @@ func reviewGateDetail(verdicts map[string]storedReview, tip string) string {
 		switch {
 		case !ok || r.Verdict == "":
 			missing = append(missing, typ+": no review yet")
+		case r.Verdict != "pass" && r.At != tip:
+			missing = append(missing, fmt.Sprintf("%s: %s at %s, not at the tip %s", typ, r.Verdict, shortSHA(r.At), shortSHA(tip)))
 		case r.Verdict != "pass":
 			at := shortSHA(r.At)
 			if strings.TrimSpace(r.Report) != "" {
@@ -1169,22 +1216,8 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	if reviewerType != "" {
 		branch := d.runs[runID].Branches[ticketID]
 		repo := d.runs[runID].Repo
-		// A verdict lands at the tip the reviewer was prompted on, not the
-		// tip as it stands at submit: a Worker commit mid-review reads
-		// stale, never fresh. Runs predating prompted tips fall back to
-		// the branch tip.
-		prompted := d.runs[runID].ReviewTips[ticketID][reviewerType]
 		spec := d.runs[runID].Spec
-		if rs := d.runs[runID]; rs.Reviews == nil {
-			rs.Reviews = map[string]map[string]storedReview{}
-		} else if rs.Reviews[ticketID] == nil {
-			rs.Reviews[ticketID] = map[string]storedReview{}
-		}
 		d.mu.Unlock()
-		tip := prompted
-		if tip == "" {
-			tip, _ = runGit(repo, "rev-parse", branch)
-		}
 		cur, _ := runGit(repo, "rev-parse", branch)
 		d.mu.Lock()
 		retell := ""
@@ -1195,11 +1228,24 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 			if rs.Reviews[ticketID] == nil {
 				rs.Reviews[ticketID] = map[string]storedReview{}
 			}
+			// A verdict answers the oldest unanswered prompt, not the latest
+			// prompted tip: a Worker commit between prompts never lets a T1
+			// judgement read fresh at T2. Runs predating the queue fall back
+			// to the latest prompted tip, then the branch tip.
+			tip := popReviewPending(rs, ticketID, reviewerType)
+			if tip == "" {
+				tip = rs.ReviewTips[ticketID][reviewerType]
+			}
+			if tip == "" {
+				tip = cur
+			}
 			rs.Reviews[ticketID][reviewerType] = storedReview{Verdict: req.Status, At: tip, Report: req.Report}
 			// A verdict already stale at birth means the tip moved under
 			// review: re-prompt this reviewer once at the current tip, so
-			// the stale verdict never reads fresh later.
-			if tip != "" && cur != "" && tip != cur {
+			// the stale verdict never reads fresh later. When the re-prompt
+			// for the current tip is already out (queued by a later done),
+			// the verdict stays stale with no extra Tell.
+			if tip != "" && cur != "" && tip != cur && rs.ReviewTips[ticketID][reviewerType] != cur {
 				if rs.ReviewTips == nil {
 					rs.ReviewTips = map[string]map[string]string{}
 				}
@@ -1207,6 +1253,7 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 					rs.ReviewTips[ticketID] = map[string]string{}
 				}
 				rs.ReviewTips[ticketID][reviewerType] = cur
+				appendReviewPending(rs, ticketID, reviewerType, cur)
 				retell = reviewerPrompt(ticketID, spec, reviewerType, branch, cur)
 			}
 			d.persistRun(rs)
@@ -1227,8 +1274,10 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	d.mu.Unlock()
 	d.appendEvent(id, "submit", req.Status, "")
 	if workerRun != "" {
-		// Re-prompt before answering: the driver's next finish must see
-		// the re-prompt already out, never a stale refusal first.
+		// Sync so the driver's next finish sees the re-prompt already out,
+		// never a stale refusal first, and prompts queue in submit order.
+		// Bounded to two reviewer starts plus two steers; the cap refuses
+		// fast and Tell is best effort, so the ack waits on at most that.
 		d.ensureReviewers(workerRun, workerTicket)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
@@ -1339,6 +1388,9 @@ func (d *Daemon) loadRuns() {
 		}
 		if rs.ReviewTips == nil {
 			rs.ReviewTips = map[string]map[string]string{}
+		}
+		if rs.ReviewPending == nil {
+			rs.ReviewPending = map[string]map[string][]string{}
 		}
 		if rs.Reprompted == nil {
 			rs.Reprompted = map[string]int{}

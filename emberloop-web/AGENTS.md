@@ -132,18 +132,19 @@ the driver ticks boxes and marks done, nothing else writes them.
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent
   of the Run in the Worker's worktree; later dones re-prompt the same
-  Sessions, so they keep context across Passes. Reviewer submits carry
-  pass or changes with the findings in the report; each verdict is stamped
-  at the tip the reviewer was prompted on, so a mid-review Worker commit
-  reads stale, never fresh, and a verdict already stale at birth re-prompts
-  its reviewer once at the current tip. The finish merges only when both
-  types passed at the current tip; a fresh refusal lands on the row and
-  reaches the Worker unchanged, retried after the next submit, while a
-  Ticket with no verdict on the current tip stays under review with no new
-  Tell. Reviewer Sessions start through the shared
-  live-Session cap like every other Session. The row carries
-  `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with the
-  last refusal. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
+  Sessions, so they keep context across Passes. Each prompt queues its tip as
+  owed and each verdict answers the oldest queued tip, so a mid-review Worker
+  commit reads stale, never fresh; a verdict already stale at birth re-prompts
+  its reviewer once at the current tip unless that re-prompt is already out.
+  The finish merges only when both types passed at the current tip; a fresh
+  refusal lands on the row and reaches the Worker unchanged, retried after the
+  next submit, while stale findings stay behind (at only, never the old
+  report) and a Ticket with no verdict on the current tip stays under review
+  with no new Tell. The done submit runs the ensure sync (bounded to two
+  starts plus two steers) so prompts queue in submit order. Reviewer Sessions
+  start through the shared live-Session cap like every other Session. The row
+  carries `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with
+  the last refusal. Runs persist as `enderbloom/runs/{id}.json` and reload paused.
   The UI shows the live table with Worker links to the Session view.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct

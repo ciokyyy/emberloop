@@ -377,3 +377,64 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// A reviewer pass after the Worker moved the tip under review binds to the
+// tip of the prompt it answers, not the latest prompted tip: with T1
+// prompted, then T2 prompted, the first submit still lands at T1 stale.
+func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	t1 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	writeFile(t, worktree, "work.go", "package main\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "second")
+	t2 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	if t1 == t2 {
+		t.Fatalf("tips equal %q, want a new commit to move the tip", t1)
+	}
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	// Wait for the driver to publish the new tip before judging freshness:
+	// verdict Fresh compares against the published row tip.
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").Tip == t2
+	}, "driver publishes the new tip")
+	specSess := revs["reviewer-spec"]
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if strings.Contains(sessTranscript(getSession(t, srv.URL, specSess)), t2) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reviewer transcript misses the re-prompt at %q", t2)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	submitReview(t, srv.URL, specSess, "pass", "")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.Verdicts["reviewer-spec"].Verdict == "pass" && tk.Tip == t2
+	}, "spec verdict shown at the new tip")
+	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
+	if got.At != t1 {
+		t.Fatalf("verdict at = %q, want the answered prompt %q (not the latest %q)", got.At, t1, t2)
+	}
+	if got.Fresh {
+		t.Fatalf("verdict = %+v, want stale at %q against the tip %q", got, t1, t2)
+	}
+	if ticketByID(r, "01-first").State == "merged" {
+		t.Fatalf("ticket merged on a stale pass, want the gate to refuse")
+	}
+}
