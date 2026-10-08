@@ -10,7 +10,7 @@ live
 probes that need running agents; `.scratch/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
 `CLAUDE.md`, which imports this file. The repo check is `.emberloop/check`
-(`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../emberloop-tui && go vet ./... && go test ./... && cd ../installer && go vet ./... && go test ./...`).
+(`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../emberloop-tui && go vet ./... && go test ./... && cd ../installer && go vet ./... && go test ./... && cd ../emberloop-web && go vet ./... && go test ./...`).
 
 ## DOX contract
 
@@ -51,7 +51,7 @@ child it belongs to, and every entry must resolve to a file.
   the focused pane)
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
-- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (live-only Backend spike probes for now)
+- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake Backend walking skeleton; real Backends land per ticket)
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
 - `.scratch/retro-hardening/AGENTS.md` — the spec and ticket area for this run
 - `.scratch/enderbloom-web/AGENTS.md` — the spec and ticket area for Enderbloom Web (browser UI and Daemon, planned module `emberloop-web`)

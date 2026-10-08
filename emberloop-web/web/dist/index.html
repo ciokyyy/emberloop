@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enderbloom Web</title>
+</head>
+<body>
+<h1>Sessions</h1>
+<form id="create">
+<input id="harness" value="fake" aria-label="harness">
+<input id="model" value="fake-model" aria-label="model">
+<input id="workDir" value="." aria-label="working directory">
+<button>Create Session</button>
+</form>
+<ul id="sessions"></ul>
+<h2>Transcript</h2>
+<div id="transcript"></div>
+<form id="composer">
+<input id="prompt" aria-label="prompt" placeholder="Send a prompt">
+<button>Send</button>
+</form>
+<script>
+let current = null, lastSeq = 0, source = null;
+async function refresh() {
+  const res = await fetch('/api/sessions');
+  const sessions = await res.json();
+  const ul = document.getElementById('sessions');
+  ul.innerHTML = '';
+  sessions.forEach(s => {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '#'; a.textContent = s.id + ' ' + s.status;
+    a.onclick = ev => { ev.preventDefault(); openSession(s.id); };
+    li.appendChild(a); ul.appendChild(li);
+  });
+  if (!current && sessions.length) openSession(sessions[0].id);
+}
+async function openSession(id) {
+  current = id; lastSeq = 0;
+  document.getElementById('transcript').innerHTML = '';
+  if (source) source.close();
+  // Whole-log replay first so reload shows the same transcript.
+  const res = await fetch('/api/sessions/' + id);
+  const body = await res.json();
+  (body.events || []).forEach(show);
+  lastSeq = (body.events || []).reduce((m, e) => Math.max(m, e.seq), 0);
+  // Then live Events from the last-seen sequence number.
+  source = new EventSource('/api/sessions/' + id + '/events?since=' + lastSeq);
+  source.onmessage = ev => {
+    const e = JSON.parse(ev.data);
+    lastSeq = Math.max(lastSeq, e.seq);
+    show(e);
+  };
+}
+function show(e) {
+  const div = document.createElement('div');
+  div.dataset.seq = e.seq;
+  div.textContent = '#' + e.seq + ' ' + e.kind + ' ' + (e.text || e.status || '');
+  document.getElementById('transcript').appendChild(div);
+}
+document.getElementById('create').onsubmit = async ev => {
+  ev.preventDefault();
+  const body = {
+    harness: document.getElementById('harness').value,
+    model: document.getElementById('model').value,
+    workDir: document.getElementById('workDir').value
+  };
+  const res = await fetch('/api/sessions', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const s = await res.json();
+  await refresh(); openSession(s.id);
+};
+document.getElementById('composer').onsubmit = async ev => {
+  ev.preventDefault();
+  if (!current) return;
+  const text = document.getElementById('prompt').value;
+  document.getElementById('prompt').value = '';
+  await fetch('/api/sessions/' + current + '/prompt', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})});
+};
+refresh();
+</script>
+</body>
+</html>
