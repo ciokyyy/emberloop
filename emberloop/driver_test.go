@@ -1129,11 +1129,12 @@ func TestDriverReportsATickFailureAndStillMerges(t *testing.T) {
 
 // A resumed run finds the merged ticket in the ticket file and carries on:
 // 01-first reads Status done, so it never starts again, its old sha stays in
-// the report, and 02-second (blocked by 01) still starts and merges. A stray
-// earlier Status line never hides the done marker: the first done wins.
+// the report, and 02-second (blocked by 01) still starts and merges. Stray
+// earlier Status lines never hide the marker: done wins over parked anywhere
+// in the file.
 func TestDriverResumeSkipsMergedAndFinishesRest(t *testing.T) {
 	spec, world, fake := runWorld(t, map[string]string{
-		"01-first.md":  "# 01: Test ticket\n\nStatus: ready\n\nStatus: done\n\n**Blocked by:** None\n",
+		"01-first.md":  "# 01: Test ticket\n\nStatus: ready\n\nStatus: parked\n\nStatus: done\n\n**Blocked by:** None\n",
 		"02-second.md": ticketDoc("01"),
 	}, 2)
 	world.MergedSHA = func(id string) string {
