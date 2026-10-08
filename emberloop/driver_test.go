@@ -2311,3 +2311,28 @@ func TestDriverLiveWorldTreatsAWorkerWithADeadPaneAsNoWorker(t *testing.T) {
 		t.Errorf("HasWorker = true, want false for a worker whose pane is gone")
 	}
 }
+
+// A worktree left on disk with no worker record is a pruned worker: the run
+// starts it again, while a bare branch still reads as a worker already done.
+func TestDriverLiveWorldTreatsALeftoverWorktreeAsNoWorker(t *testing.T) {
+	oldState, oldExec := statePath, spawnExec
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState; spawnExec = oldExec })
+	repo, dir := t.TempDir(), t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-resume"}
+	spawnExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
+		return Result{Code: 0, Stdout: "tipsha\n"}, nil
+	}
+	world := liveDriverWorld(spec, repo, files)
+	if !world.HasWorker(WorkerID(ticket)) {
+		t.Fatalf("HasWorker = false, want the bare implement branch")
+	}
+	if err := os.MkdirAll(worktreePath(repo, WorkerID(ticket)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if world.HasWorker(WorkerID(ticket)) {
+		t.Errorf("HasWorker = true, want false for a worktree with no record")
+	}
+}

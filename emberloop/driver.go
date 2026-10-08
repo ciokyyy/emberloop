@@ -1072,6 +1072,12 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 					return !paneDead(spawnExec, w.Pane, w.Started)
 				}
 			}
+			// No record but a worktree on disk is a worker whose pane was pruned:
+			// finish removes the worktree of a merged or discarded one. Start it
+			// again; spawn reuses the worktree and the work on its branch.
+			if _, err := os.Stat(worktreePath(repo, WorkerID(path))); err == nil {
+				return false
+			}
 			res, err := spawnExec("git", []string{"rev-parse", "--verify", "implement/" + WorkerID(path)}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
 			return err == nil && res.Code == 0
 		},
