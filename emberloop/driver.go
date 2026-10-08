@@ -123,6 +123,14 @@ type DriverWorld struct {
 	// verbatim into the final report. Nil or empty means the worker left
 	// none.
 	Followups func(ticketID string) string
+	// Run is the in-memory run state the loop shares with the run pane: when
+	// non-nil the loop publishes one row per ticket every pass (state,
+	// worker and pane, verdicts at the tip, state entry time, last
+	// refusal) and the pane reads snapshots. Nil publishes nothing.
+	Run *DriverRun
+	// WorkerPane names a ticket worker's herdr pane for the row's jump. Nil
+	// leaves the pane empty and the jump nowhere.
+	WorkerPane func(ticketID string) string
 	// Required names the reviewer types every finish needs. Nil means the
 	// two built-in reviewers.
 	Required []string
@@ -410,6 +418,52 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 		}
 		return n
 	}
+	// publish shares one row per ticket with the run pane: the state the
+	// loop sees this pass, the worker and its pane, the verdicts at the
+	// tip, and the last refusal. A nil Run publishes nothing, so worlds
+	// without a pane read the world exactly as before.
+	publish := func(at time.Time) {
+		if world.Run == nil {
+			return
+		}
+		world.Run.set(order, func(tk DriverTicket) DriverRow {
+			row := DriverRow{ID: tk.ID, Path: tk.Path, Num: tk.Num, Since: at}
+			if text := refused[tk.ID]; text != "" {
+				row.LastRefusal = text
+			}
+			switch {
+			case merged[tk.ID]:
+				row.State = DriverRowMerged
+				row.LastRefusal = ""
+			case isGone(tk.ID):
+				row.State = DriverRowDiscarded
+			case isParked(tk.ID):
+				row.State = DriverRowParked
+			case needsYou[tk.ID]:
+				row.State = DriverRowNeedsYou
+			case !started[tk.ID]:
+				row.State = DriverRowQueued
+			default:
+				row.Worker = WorkerID(tk.Path)
+				if world.WorkerPane != nil {
+					row.Pane = world.WorkerPane(tk.ID)
+				}
+				required := driverRequired(world, tk.ID)
+				row.Tip = world.Tip(tk.ID)
+				row.Verdicts = cloneDriverVerdicts(world.Reviews(tk.ID))
+				row.Required = append([]string(nil), required...)
+				switch {
+				case row.Tip != "" && driverGatePass(required, row.Verdicts, row.Tip):
+					row.State = DriverRowMerging
+				case len(row.Verdicts) > 0:
+					row.State = DriverRowInReview
+				default:
+					row.State = DriverRowRunning
+				}
+			}
+			return row
+		}, at)
+	}
 	for {
 		now := driverNow(world)
 		progress, changed := false, false
@@ -445,6 +499,9 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			startedNew = true
 			progress = true
 		}
+		// The rows publish after starting, so a snapshot taken inside a
+		// world call later this pass already sees the started workers.
+		publish(now)
 		if running == 0 && !startedNew {
 			// Nothing runs and nothing could start: the tickets left unmerged
 			// wait on parked tickets, so no poll would change anything. A live
@@ -687,6 +744,9 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			}
 		}
 	}
+	// The last pass changed state after its publish: share the final rows
+	// before the report, so the pane ends where the run did.
+	publish(driverNow(world))
 	return out, needsYouIDs, driverUnknownOrNil(unknown), stalls, driverReport(order, out, started, merged, refused, parked, gone, unknown, tickFailed, notifyErr, followups, stalls), nil
 }
 
@@ -1201,8 +1261,37 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 			}
 			return followupsOf(s.Report)
 		},
+		// WorkerPane reads the worker's herdr pane from its agent state, so
+		// the run pane jumps to the worker. Unknown or stateless workers
+		// leave the pane empty and the jump nowhere.
+		WorkerPane: func(ticketID string) string {
+			path, ok := paths[ticketID]
+			if !ok {
+				return ""
+			}
+			st, ok, err := ReadAgentState(WorkerID(path))
+			if err != nil || !ok {
+				return ""
+			}
+			return st.Pane
+		},
 		Sleep: time.Sleep,
 	}
+}
+
+// ReadDriverFiles reads every ticket file under the spec's tickets directory
+// into the map the driver runs against. Exported for the run pane, which
+// builds the same live world in its own process.
+func ReadDriverFiles(spec SpecRun) (map[string]string, error) {
+	return readDriverFiles(spec)
+}
+
+// LiveDriverWorld wires the live operations behind the driver seam for a
+// caller outside this package: the run pane builds it, sets Run to its
+// shared state, and runs the loop. Sleep already waits between polls; the
+// pane polls the shared state on its own tick.
+func LiveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
+	return liveDriverWorld(spec, repo, files)
 }
 
 // driverFileParked reports whether a ticket file parks its ticket: its

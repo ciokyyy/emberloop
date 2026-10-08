@@ -23,15 +23,21 @@ each harness's cached `Models()` and the archive size beside them.
 Owns this directory as a separate Go module (`snapshot.go` and its test,
 `costs.go` with the usage/memory sums and its tests, `db_test.go` with the
 shared fixture-database helpers the usage tests build on, `model.go` and its
-test, `herdr.go` (pane-list parse, liveness, and the `focusAgentPane`
+test, `run.go` (the driver run pane: ticket table on top from the shared
+driver run state, the agents view below; `RunLoader`, `RunParker` and jump
+`CommandRunner` seams, `RunLiveRows` join, `RunDoneMsg` end) and its test,
+`herdr.go` (pane-list parse, liveness, and the `focusAgentPane`
 jump primitive) and its test, `settings.go` and its test,
-`cmd/emberloop-tui/main.go`). Ticket status derivation lives in `Snapshot`;
-status glyphs and colours live in `model.go`'s view layer. The Settings tab
-edits through the `SettingsBackend` seam: the live backend calls the core's
-settings load/save, harness `Models()` cache and archive size (this module
-may import the core; never the reverse). Pane jumps run through the
-model's jump `CommandRunner`: the live binary passes os/exec, tests a
-fake over a canned pane list.
+`cmd/emberloop-tui/main.go` (dashboard plus `--driver-run`, which runs the
+live driver loop in-process against the shared state)). Ticket status derivation lives in `Snapshot`;
+status glyphs and colours live in `model.go`'s view layer (run-pane state
+text in `run.go`'s view layer). The Settings tab edits through the
+`SettingsBackend` seam: the live backend calls the core's settings load/save,
+harness `Models()` cache and archive size (this module may import the core;
+never the reverse). Pane jumps run through the jump `CommandRunner` both
+models share: the live binary passes os/exec, tests a fake over a canned
+pane list. The run pane's `p` parks through its `RunParker` seam: the live
+mode passes the driver's park command, tests a fake over canned rows.
 
 ## Local Contracts
 
@@ -66,9 +72,9 @@ fake over a canned pane list.
   `CommandRunner` seams with fixture state dirs; drive Settings edits
   through the `SettingsBackend` seam with the shared load/save pointed at
   a temp file and stubbed model lists.
-- Behavioural change needs a test through `Snapshot` or model messages, not
-  internals; expected values come from the fixture, never recomputed the way
-  the code does. Enter and double-click jumps assert the focus sequence
+- Behavioural change needs a test through `Snapshot`, the run loader, or
+  model messages, not internals; expected values come from the fixture,
+  never recomputed the way the code does. Enter and double-click jumps assert
   through a fake jump runner over a canned pane list, plus the gone
   message for a pane the list no longer names.
 

@@ -1,0 +1,359 @@
+package emberloop
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// The run pane shares one in-memory run state with the driver loop: the loop
+// publishes every pass, the pane reads snapshots. These tests go through the
+// one driver seam with an injected world and a fake clock, asserting on calls
+// and run state, never on internals.
+func TestDriverRunPublishesRowsForEveryState(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("03-third"),
+		"03-third.md":  ticketDoc("01-first"),
+	})
+	world.Now = func() time.Time { return now }
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string { return "tip-" + id }
+	world.Reviews = func(id string) map[string]DriverReview {
+		if id == "02-second" {
+			return map[string]DriverReview{
+				reviewerStandards: {Verdict: verdictPass, At: "tip-02-second"},
+				reviewerSpec:      {Verdict: verdictChanges, At: "tip-02-second"},
+			}
+		}
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip-" + id},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip-" + id},
+		}
+	}
+	world.WorkerPane = func(id string) string { return "pane-" + id }
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha-" + id}, nil
+	}
+	run := NewDriverRun(world.Now)
+	world.Run = run
+
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 2 {
+		t.Fatalf("merged = %v, want 01-first and 03-third", res.Merged)
+	}
+	rows := run.Snapshot()
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want one per ticket", len(rows))
+	}
+	byID := map[string]DriverRow{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	if byID["01-first"].State != DriverRowMerged {
+		t.Errorf("01-first state = %q, want merged", byID["01-first"].State)
+	}
+	if byID["03-third"].State != DriverRowMerged {
+		t.Errorf("03-third state = %q, want merged", byID["03-third"].State)
+	}
+	inReview := byID["02-second"]
+	if inReview.State != DriverRowInReview {
+		t.Errorf("02-second state = %q, want in-review", inReview.State)
+	}
+	if inReview.Worker == "" || inReview.Pane != "pane-02-second" {
+		t.Errorf("02-second worker/pane = %q/%q, want the worker and its pane", inReview.Worker, inReview.Pane)
+	}
+	if inReview.Verdicts[reviewerSpec].Verdict != verdictChanges {
+		t.Errorf("02-second spec verdict = %+v, want changes at the tip", inReview.Verdicts[reviewerSpec])
+	}
+	if inReview.Since.IsZero() {
+		t.Errorf("02-second Since is zero, want the state entry time")
+	}
+}
+
+// A ticket the gate holds back but no reviewer has seen reads running; a
+// blocked ticket that never started reads queued with no worker.
+func TestDriverRunMarksRunningAndQueued(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md":   ticketDoc("None"),
+		"02-blocked.md": ticketDoc("01-first"),
+	})
+	world.Now = func() time.Time { return now }
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string { return "" }
+	world.Reviews = func(id string) map[string]DriverReview { return nil }
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{}, nil
+	}
+	run := NewDriverRun(world.Now)
+	world.Run = run
+
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	byID := map[string]DriverRow{}
+	for _, r := range run.Snapshot() {
+		byID[r.ID] = r
+	}
+	if byID["01-first"].State != DriverRowRunning {
+		t.Errorf("01-first state = %q, want running", byID["01-first"].State)
+	}
+	if byID["01-first"].Worker == "" {
+		t.Errorf("01-first worker is empty, want the started worker")
+	}
+	if byID["02-blocked"].State != DriverRowQueued {
+		t.Errorf("02-blocked state = %q, want queued", byID["02-blocked"].State)
+	}
+	if byID["02-blocked"].Worker != "" || byID["02-blocked"].Pane != "" {
+		t.Errorf("queued ticket carries worker %q pane %q, want none", byID["02-blocked"].Worker, byID["02-blocked"].Pane)
+	}
+}
+
+// The same refusal three times in a row marks the ticket needs-you with the
+// refusal text on the row.
+func TestDriverRunMarksNeedsYouWithTheRefusal(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.Now = func() time.Time { return now }
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	submits := 0
+	var told []string
+	world.Tell = func(id, text string) error {
+		told = append(told, text)
+		if len(told) <= 3 {
+			// The worker retries after the first three tells, then stalls:
+			// no more submits, so the run holds after the fourth finish.
+			submits++
+		}
+		return nil
+	}
+	world.Submits = func(id string) int { return submits }
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: false, Detail: "conflict in work.go"}, nil
+	}
+	run := NewDriverRun(world.Now)
+	world.Run = run
+
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.NeedsYou) != 1 {
+		t.Fatalf("NeedsYou = %v, want the ticket", res.NeedsYou)
+	}
+	rows := run.Snapshot()
+	if len(rows) != 1 || rows[0].State != DriverRowNeedsYou {
+		t.Fatalf("row state = %v, want one needs-you row", rows)
+	}
+	if rows[0].LastRefusal != "conflict in work.go" {
+		t.Errorf("LastRefusal = %q, want the refusal text", rows[0].LastRefusal)
+	}
+}
+
+// While finish runs, the ticket reads merging: the snapshot taken inside the
+// finish call itself shows it.
+func TestDriverRunMarksMergingWhileFinishRuns(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.Now = func() time.Time { return now }
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	run := NewDriverRun(world.Now)
+	world.Run = run
+	var during DriverRowState
+	world.Finish = func(id string) (DriverFinish, error) {
+		for _, r := range run.Snapshot() {
+			if r.ID == id {
+				during = r.State
+			}
+		}
+		return DriverFinish{Merged: true, SHA: "sha"}, nil
+	}
+
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if during != DriverRowMerging {
+		t.Errorf("state during finish = %q, want merging", during)
+	}
+	if got := run.Snapshot()[0].State; got != DriverRowMerged {
+		t.Errorf("final state = %q, want merged", got)
+	}
+}
+
+// Parked and discarded tickets read parked and discarded with no worker.
+func TestDriverRunMarksParkedAndDiscarded(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-parked.md": ticketDoc("None"),
+	})
+	world.Now = func() time.Time { return now }
+	world.MaxWorkers = 2
+	world.StartWorker = func(tk DriverTicket) error { return nil }
+	world.Parked = func(id string) bool { return id == "02-parked" }
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview { return nil }
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha"}, nil
+	}
+	run := NewDriverRun(world.Now)
+	world.Run = run
+
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	byID := map[string]DriverRow{}
+	for _, r := range run.Snapshot() {
+		byID[r.ID] = r
+	}
+	if byID["02-parked"].State != DriverRowParked {
+		t.Errorf("02-parked state = %q, want parked", byID["02-parked"].State)
+	}
+	if byID["02-parked"].Worker != "" {
+		t.Errorf("parked ticket carries worker %q, want none", byID["02-parked"].Worker)
+	}
+}
+
+// A state change re-dates Since: the ticket starts running at the base
+// clock, the reviewers arrive after the clock advances, and the in-review
+// row carries the later time.
+func TestDriverRunRedatesSinceOnStateChange(t *testing.T) {
+	base := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	now := base
+	later := base.Add(30 * time.Minute)
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.Now = func() time.Time { return now }
+	world.MaxWorkers = 1
+	world.StartWorker = func(tk DriverTicket) error {
+		now = later
+		return nil
+	}
+	calls := 0
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		calls++
+		if calls > 2 {
+			return map[string]DriverReview{
+				reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			}
+		}
+		return nil
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: true, SHA: "sha"}, nil
+	}
+	run := NewDriverRun(world.Now)
+	world.Run = run
+
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	rows := run.Snapshot()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %v, want one", rows)
+	}
+	if rows[0].State != DriverRowInReview {
+		t.Fatalf("state = %q, want in-review", rows[0].State)
+	}
+	if !rows[0].Since.Equal(later) {
+		t.Errorf("Since = %v, want the state entry time %v", rows[0].Since, later)
+	}
+}
+
+// The park command writes Status parked into the ticket file: the driver's
+// parked hook reads it on the next pass.
+func TestParkDriverTicketFileParksTheTicket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "01-first.md")
+	doc := "# 01: Test ticket\n\nStatus: ready-for-agent\n\n**Blocked by:** None\n"
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatalf("write ticket: %v", err)
+	}
+	if err := ParkDriverTicketFile(path); err != nil {
+		t.Fatalf("ParkDriverTicketFile: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ticket: %v", err)
+	}
+	if !driverFileParked(string(raw)) {
+		t.Errorf("parked file = %q, want Status parked", raw)
+	}
+	if strings.Contains(string(raw), "ready-for-agent") {
+		t.Errorf("parked file keeps the old status: %q", raw)
+	}
+}
+
+// Without a Status line the park command adds one, so prose-only tickets
+// still park.
+func TestParkDriverTicketFileAddsAStatusLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "01-first.md")
+	if err := os.WriteFile(path, []byte(ticketDoc("None")), 0o644); err != nil {
+		t.Fatalf("write ticket: %v", err)
+	}
+	if err := ParkDriverTicketFile(path); err != nil {
+		t.Fatalf("ParkDriverTicketFile: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ticket: %v", err)
+	}
+	if !driverFileParked(string(raw)) {
+		t.Errorf("parked file = %q, want Status parked", raw)
+	}
+}
+
+// The live world names the worker's herdr pane from its agent state, so the
+// row jumps to the worker; unknown workers leave the pane empty.
+func TestDriverLiveWorldNamesTheWorkerPane(t *testing.T) {
+	oldState := statePath
+	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
+	dir := t.TempDir()
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-pane"}
+	if err := WriteAgentState(AgentState{ID: WorkerID(ticket), Type: "worker", Pane: "pane-1"}); err != nil {
+		t.Fatal(err)
+	}
+	world := liveDriverWorld(spec, t.TempDir(), files)
+	if world.WorkerPane == nil {
+		t.Fatal("live world wires no WorkerPane hook")
+	}
+	if got := world.WorkerPane("01-first"); got != "pane-1" {
+		t.Errorf("WorkerPane = %q, want the worker's pane", got)
+	}
+	if got := world.WorkerPane("09-missing"); got != "" {
+		t.Errorf("WorkerPane for an unknown ticket = %q, want empty", got)
+	}
+}

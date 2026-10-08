@@ -82,9 +82,18 @@ owns its `_test.go` and the behaviour below):
   no state file, and exits with the report when nothing runs and nothing can
   start (the rest wait on parked tickets) instead of polling. `RunDriverLive`
   wires the live spawn, verdict, tell, submit-count, submit-read, file-tick,
-  transcript, finish, herdr-notification, park, discard and follow-up ops, the
+  transcript, finish, herdr-notification, park, discard, worker-pane and
+  follow-up ops, the
   store-or-branch worker check and the history sha lookup.
-  The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
+  `driver_run.go` holds the shared run state: `DriverRun` (one row per ticket
+  with state, worker and pane, verdicts at the tip, state entry time, last
+  refusal; snapshots copy), published by the loop every pass when the world's
+  `Run` is set and read by the run pane. `ParkDriverTicketFile` is the park
+  command (Status parked through the per-file lock). `ReadDriverFiles` and
+  `LiveDriverWorld` let the run pane build the same live world in its own
+  process. The mode flags `--driver/--llm/--check` live in `cmd/emberloop/main.go`;
+  on a terminal `--driver` opens the pane through `RunDriverPane` (`tui.go`,
+  same binary lookup as `tui`), off one it prints the plain report;
   `--llm` and a bare run keep the LLM orchestrator)
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`

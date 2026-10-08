@@ -33,7 +33,13 @@ import (
 
 	"example.com/emberloop"
 	"example.com/emberloop/tools"
+	"golang.org/x/term"
 )
+
+// driverPaneTTY reports whether the run pane opens: a terminal on stdout
+// gets the live ticket table, a pipe keeps the plain report (probes and
+// scripts). A variable so tests drive both legs.
+var driverPaneTTY = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -195,6 +201,9 @@ func run(argv []string) error {
 				verb = "created"
 			}
 			fmt.Fprintf(os.Stderr, "emberloop: %s %s\n", verb, spec.Branch)
+			if driverPaneTTY() {
+				return emberloop.RunDriverPane(rest, cwd)
+			}
 			return emberloop.RunDriverLive(spec, cwd, os.Stdout)
 		}
 		r, err := sessionRole(sub, *role)

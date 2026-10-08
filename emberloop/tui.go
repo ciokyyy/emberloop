@@ -52,3 +52,18 @@ func RunTUI(argv []string) error {
 	}
 	return tuiStarter(path, nil)
 }
+
+// RunDriverPane opens the run pane for a driver run: exec the dashboard
+// binary's driver-run mode in this pane with the spec and repo. The mode
+// runs the driver loop in-process against the shared run state, so quitting
+// the pane leaves the workers running and a later start resumes the run.
+func RunDriverPane(specArg, repo string) error {
+	if specArg == "" || repo == "" {
+		return fmt.Errorf("usage: emberloop-tui --driver-run <spec> --repo <repo>")
+	}
+	path, err := FindTUIBinary()
+	if err != nil {
+		return err
+	}
+	return tuiStarter(path, []string{"--driver-run", specArg, "--repo", repo})
+}

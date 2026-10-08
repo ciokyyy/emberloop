@@ -70,3 +70,33 @@ func TestRunTUIStartsTheBinaryAndRefusesArgs(t *testing.T) {
 		t.Errorf("the failure must print usage, got: %v", err)
 	}
 }
+
+// RunDriverPane opens the dashboard's driver-run mode with the spec and
+// repo, sharing the terminal. Empty args fail with usage before anything
+// starts.
+func TestRunDriverPaneStartsDriverRunMode(t *testing.T) {
+	path := fakeTUIBin(t)
+	old := tuiStarter
+	var started []string
+	tuiStarter = func(bin string, argv []string) error {
+		started = append([]string{bin}, argv...)
+		return nil
+	}
+	t.Cleanup(func() { tuiStarter = old })
+
+	if err := RunDriverPane(".scratch/x", "/repo"); err != nil {
+		t.Fatalf("RunDriverPane: %v", err)
+	}
+	want := []string{path, "--driver-run", ".scratch/x", "--repo", "/repo"}
+	if len(started) != len(want) {
+		t.Fatalf("started = %q, want %q", started, want)
+	}
+	for i := range want {
+		if started[i] != want[i] {
+			t.Fatalf("started = %q, want %q", started, want)
+		}
+	}
+	if err := RunDriverPane("", "/repo"); err == nil {
+		t.Error("RunDriverPane without a spec must fail with usage")
+	}
+}
