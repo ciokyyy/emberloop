@@ -61,12 +61,12 @@ func readFindLines(t *testing.T, agent string) []statedb.UsageRow {
 
 func TestFindLogsDecisionCallsAgainstTheCallingAgent(t *testing.T) {
 	dir := project(t)
-	t.Setenv("EMBERLOOP_SETTINGS", dir+"/none.json")
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_AGENT_ID", "agent-find")
+	t.Setenv("EL_SETTINGS", dir+"/none.json")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_AGENT_ID", "agent-find")
 	// The model assertion needs the default: an ambient override would log
 	// whatever the machine prefers instead of the pin.
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
+	t.Setenv("EL_DECISION_MODEL", "")
 
 	out, err := run(t, findTool{provider: usageJudge{}}, dir, findArgs())
 	if err != nil || !strings.Contains(out, "auth.go") {
@@ -102,10 +102,10 @@ func TestFindLogsDecisionCallsAgainstTheCallingAgent(t *testing.T) {
 
 func TestFindWithoutUsageStillLogsCallCounts(t *testing.T) {
 	dir := project(t)
-	t.Setenv("EMBERLOOP_SETTINGS", dir+"/none.json")
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_AGENT_ID", "agent-bare")
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
+	t.Setenv("EL_SETTINGS", dir+"/none.json")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_AGENT_ID", "agent-bare")
+	t.Setenv("EL_DECISION_MODEL", "")
 
 	if _, err := run(t, findTool{provider: bareJudge{fixedJudge{0.85}}}, dir, findArgs()); err != nil {
 		t.Fatal(err)
@@ -134,17 +134,17 @@ func TestFindWithoutUsageStillLogsCallCounts(t *testing.T) {
 
 func TestFindCallIDGroupsOneSearchAndResetsOnReuse(t *testing.T) {
 	dir := project(t)
-	t.Setenv("EMBERLOOP_SETTINGS", dir+"/none.json")
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
+	t.Setenv("EL_SETTINGS", dir+"/none.json")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_DECISION_MODEL", "")
 	searcher := NewCascadeSearcher(usageJudge{}, systemone.JevModelPinned, 0.2, dir)
 	ctx := context.Background()
 
-	t.Setenv("EMBERLOOP_AGENT_ID", "agent-reuse")
+	t.Setenv("EL_AGENT_ID", "agent-reuse")
 	if _, err := searcher.Search(ctx, "how are tokens verified", []string{"VerifyToken"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_AGENT_ID", "agent-next")
+	t.Setenv("EL_AGENT_ID", "agent-next")
 	if _, err := searcher.Search(ctx, "how are tokens verified", []string{"VerifyToken"}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -166,10 +166,10 @@ func TestFindCallIDGroupsOneSearchAndResetsOnReuse(t *testing.T) {
 
 func TestFindWithoutAgentLogsNothing(t *testing.T) {
 	state := t.TempDir()
-	t.Setenv("EMBERLOOP_SETTINGS", state+"/none.json")
-	t.Setenv("EMBERLOOP_STATE_DIR", state)
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
+	t.Setenv("EL_SETTINGS", state+"/none.json")
+	t.Setenv("EL_STATE_DIR", state)
+	t.Setenv("EL_AGENT_ID", "")
+	t.Setenv("EL_DECISION_MODEL", "")
 
 	if _, err := run(t, findTool{provider: usageJudge{}}, project(t), findArgs()); err != nil {
 		t.Fatal(err)

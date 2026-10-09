@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// bash is ported from emberloop's apps/backend/tools/terminal.go, rewriter.go and
+// bash is ported from el's apps/backend/tools/terminal.go, rewriter.go and
 // sanitizer.go. It runs through os/exec directly: ctx.ExecuteTool("bash")
 // would resolve back to this tool, and a direct exec keeps it host-agnostic.
 //
@@ -96,6 +96,11 @@ func (bashTool) Execute(ctx context.Context, root string, args json.RawMessage) 
 	}
 	if strings.TrimSpace(p.Command) == "" {
 		return "", errors.New("command is required")
+	}
+	if gate := SudoGate; gate != nil && UsesSudo(p.Command) {
+		if msg, taken := gate(ctx, root, p.Command); taken {
+			return msg, nil
+		}
 	}
 	timeout := defaultBashTimeout
 	if p.Timeout > 0 {

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -11,11 +11,11 @@ import (
 	"time"
 )
 
-// launchFile is the complete launch emberloop types into a pane: the binary, its
-// args including the full prompt, and the env. It lives in emberloop's state dir
+// launchFile is the complete launch el types into a pane: the binary, its
+// args including the full prompt, and the env. It lives in el's state dir
 // because herdr pane run types one shell line: newlines and quoting in the
 // prompt would break, and the pane's shell may be fish, bash or zsh. Instead
-// the pane gets one shell-agnostic line, `emberloop exec <launch-file>`, which
+// the pane gets one shell-agnostic line, `el exec <launch-file>`, which
 // reads the file and execs the harness with the prompt as a real argument.
 // The brief and prompt files are still written, for the archive and
 // debugging, but the agent is not told to read them.
@@ -28,7 +28,7 @@ type launchFile struct {
 // launchDir holds one launch file per session, beside the worker store.
 func launchDir() string { return filepath.Join(filepath.Dir(statePath), "launches") }
 
-// launchPath is where the launch of s is written: under emberloop's state dir,
+// launchPath is where the launch of s is written: under el's state dir,
 // named for the session, so whoever owns the session's lifetime can delete
 // it. The key follows the MCP config's (session id, then label, then role),
 // so CleanupSession finds the same file the launch wrote.
@@ -48,7 +48,7 @@ func launchPath(s Session) string {
 	return filepath.Join(launchDir(), key+".json")
 }
 
-// writeLaunch stores cmd for `emberloop exec` to run.
+// writeLaunch stores cmd for `el exec` to run.
 func writeLaunch(s Session, cmd Command) (string, error) {
 	path := launchPath(s)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -64,7 +64,7 @@ func writeLaunch(s Session, cmd Command) (string, error) {
 	return path, nil
 }
 
-// readLaunch loads the launch `emberloop exec` runs.
+// readLaunch loads the launch `el exec` runs.
 func readLaunch(path string) (Command, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -80,12 +80,12 @@ func readLaunch(path string) (Command, error) {
 // execLine is the one shell-agnostic line typed into the pane. It carries no
 // env assignments (fish has no VAR=val prefix form) and no prompt text, so it
 // is one line in fish, bash and zsh alike.
-func execLine(path string) string { return "emberloop exec " + shellArg(path) }
+func execLine(path string) string { return "el exec " + shellArg(path) }
 
 // execFileFromLine parses the launch file out of the typed line. It reverses
 // shellArg's quoting, so a state dir with spaces still resolves.
 func execFileFromLine(line string) (string, bool) {
-	rest, ok := strings.CutPrefix(strings.TrimSpace(line), "emberloop exec ")
+	rest, ok := strings.CutPrefix(strings.TrimSpace(line), "el exec ")
 	if !ok {
 		return "", false
 	}
@@ -175,10 +175,10 @@ func TeeStderr(dst io.Writer) (w io.Writer, tail func() string) {
 	return io.MultiWriter(dst, &kept), kept.String
 }
 
-// agentIDFromEnv is the emberloop agent id a launch carries, or "".
+// agentIDFromEnv is the el agent id a launch carries, or "".
 func agentIDFromEnv(env []string) string {
 	for _, e := range env {
-		if v, ok := strings.CutPrefix(e, "EMBERLOOP_AGENT_ID="); ok {
+		if v, ok := strings.CutPrefix(e, "EL_AGENT_ID="); ok {
 			return v
 		}
 	}
@@ -238,15 +238,15 @@ func (t *stderrTail) String() string {
 // openToolsLog opens the per-session log of how many tools pig sent with each
 // provider request, so a session that says a tool is missing can be checked
 // against what its provider was actually sent. It applies to pig sessions
-// only, and EMBERLOOP_PIG_TOOLS_LOG=0 turns it off. A log that cannot be opened is
+// only, and EL_PIG_TOOLS_LOG=0 turns it off. A log that cannot be opened is
 // no reason to stop the session: it returns nil and the session runs as before.
 func openToolsLog(cmd Command) (*os.File, string) {
-	if filepath.Base(cmd.Bin) != "pig" || os.Getenv("EMBERLOOP_PIG_TOOLS_LOG") == "0" {
+	if filepath.Base(cmd.Bin) != "pig" || os.Getenv("EL_PIG_TOOLS_LOG") == "0" {
 		return nil, ""
 	}
 	name := ""
 	for _, e := range cmd.Env {
-		if v, ok := strings.CutPrefix(e, "EMBERLOOP_SESSION_ID="); ok && v != "" {
+		if v, ok := strings.CutPrefix(e, "EL_SESSION_ID="); ok && v != "" {
 			name = v
 		}
 	}

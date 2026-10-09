@@ -81,7 +81,7 @@ from the merger side.
 
 ```bash
 export PATH="$HOME/go/bin:$PATH"
-cd emberloop && gofmt -w . && go vet ./... && go test ./... -count=1
+cd el && gofmt -w . && go vet ./... && go test ./... -count=1
 pig install $PWD --validate-only --json    # must print valid: true
 ```
 
@@ -104,8 +104,8 @@ There are tests asserting the brief does not contain skill text.
 `worktree create` opens *two* workspaces — the worktree and the source
 checkout. Close both; leaking them strands panes in `herdr workspace list`.
 
-**Worker state** is `~/.pig/state/emberloop/workers.json`, briefs in
-`~/.pig/state/emberloop/briefs/<id>.md`, guarded by `storeMu`.
+**Worker state** is `~/.pig/state/el/workers.json`, briefs in
+`~/.pig/state/el/briefs/<id>.md`, guarded by `storeMu`.
 
 ## Current state
 

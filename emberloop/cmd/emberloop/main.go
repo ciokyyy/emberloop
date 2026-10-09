@@ -1,27 +1,27 @@
-// emberloop starts an agent session: pig or claude, with emberloop's tools over MCP.
+// el starts an agent session: pig or claude, with el's tools over MCP.
 //
-//	emberloop settings [decision-model <id>|threshold <n>|max-workers <n>]  read and save settings
-//	emberloop settings models [--refresh] [--harness h]    list a harness's models
-//	emberloop settings role <slot> harness|model|effort <value>   set a launch slot
-//	emberloop settings tool <name> ... | mcp-server <name> ...    tune tools and MCP servers
-//	emberloop stop-gate                                         claude Stop hook gate
-//	emberloop pig-gate <event-json>                             pig extension stop gate
-//	emberloop claude-status                                     claude statusline command: stores the 5h and weekly usage
-//	emberloop voice-reminder [hook]                             per-turn register reminder (pig extension, claude hook)
-//	emberloop exec <launch-file>                                run a launch file the pane typed
-//	emberloop wrap --harness h -- <bin> [args...]              run a command under the header strip
-//	emberloop skills install                                    fill the skill library
-//	emberloop install [--force]                               rebuild and install the emberloop binaries (refuses while agents are live)
-//	emberloop deps                                             check and install external dependencies
-//	emberloop context [--harness h] [--dir d] <session-id>   print one session’s context numbers
-//	emberloop compress [--force] <pane>                   summarize the worker in pane and restart it there
-//	emberloop request-compress <pane>                      the herdr compress key's signal for the focused pane
-//	emberloop stats prune [--run <slug>] [--older-than <age>] [--apply]
+//	el settings [decision-model <id>|threshold <n>|max-workers <n>]  read and save settings
+//	el settings models [--refresh] [--harness h]    list a harness's models
+//	el settings role <slot> harness|model|effort <value>   set a launch slot
+//	el settings tool <name> ... | mcp-server <name> ...    tune tools and MCP servers
+//	el stop-gate                                         claude Stop hook gate
+//	el pig-gate <event-json>                             pig extension stop gate
+//	el claude-status                                     claude statusline command: stores the 5h and weekly usage
+//	el voice-reminder [hook]                             per-turn register reminder (pig extension, claude hook)
+//	el exec <launch-file>                                run a launch file the pane typed
+//	el wrap --harness h -- <bin> [args...]              run a command under the header strip
+//	el skills install                                    fill the skill library
+//	el install [--force]                               rebuild and install the el binaries (refuses while agents are live)
+//	el deps                                             check and install external dependencies
+//	el context [--harness h] [--dir d] <session-id>   print one session’s context numbers
+//	el compress [--force] <pane>                   summarize the worker in pane and restart it there
+//	el request-compress <pane>                      the herdr compress key's signal for the focused pane
+//	el stats prune [--run <slug>] [--older-than <age>] [--apply]
 //	                                                         prune archived run data (dry run by default)
-//	emberloop tui                                            open the dashboard in the current pane
-//	emberloop [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
-//	emberloop implement [--driver [--check]|--llm] <spec>  run a spec on spec/<slug>
-//	emberloop <wayfinder|grill|research|...> [flags] [input...] one route skill
+//	el tui                                            open the dashboard in the current pane
+//	el [--pig|--claude] [--role full] [--model M] [--effort L] [-p] plan session
+//	el implement [--driver [--check]|--llm] <spec>  run a spec on spec/<slug>
+//	el <wayfinder|grill|research|...> [flags] [input...] one route skill
 package main
 
 import (
@@ -42,7 +42,7 @@ var driverPaneTTY = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "emberloop:", err)
+		fmt.Fprintln(os.Stderr, "el:", err)
 		os.Exit(2)
 	}
 }
@@ -54,27 +54,27 @@ func run(argv []string) error {
 	}
 	if sub == "exec" {
 		if len(argv) != 1 {
-			return fmt.Errorf("usage: emberloop exec <launch-file>")
+			return fmt.Errorf("usage: el exec <launch-file>")
 		}
-		return emberloop.RunExecFile(argv[0])
+		return el.RunExecFile(argv[0])
 	}
 	if sub == "wrap" {
 		return runWrap(argv, os.Stdin, os.Stdout)
 	}
 	if sub == "stop-gate" {
-		return emberloop.RunStopGate(os.Stdin, os.Stdout)
+		return el.RunStopGate(os.Stdin, os.Stdout)
 	}
 	if sub == "claude-status" {
-		return emberloop.RunClaudeStatus(os.Stdin, "")
+		return el.RunClaudeStatus(os.Stdin, "")
 	}
 	if sub == "voice-reminder" {
-		return emberloop.RunVoiceReminder(argv, os.Stdout)
+		return el.RunVoiceReminder(argv, os.Stdout)
 	}
 	if sub == "pig-gate" {
 		if len(argv) != 1 {
-			return fmt.Errorf("usage: emberloop pig-gate <event-json>")
+			return fmt.Errorf("usage: el pig-gate <event-json>")
 		}
-		return emberloop.RunPigGate(argv[0], os.Stdout)
+		return el.RunPigGate(argv[0], os.Stdout)
 	}
 	if sub == "settings" {
 		return runSettings(argv, os.Stdout, cachedModels)
@@ -90,33 +90,33 @@ func run(argv []string) error {
 	}
 	if sub == "retry" {
 		if len(argv) != 1 {
-			return fmt.Errorf("usage: emberloop retry <worker-id|pane-id>")
+			return fmt.Errorf("usage: el retry <worker-id|pane-id>")
 		}
-		return emberloop.Retry(emberloop.OSExec, argv[0])
+		return el.Retry(el.OSExec, argv[0])
 	}
 	if sub == "stats" {
-		return emberloop.RunStats(argv, os.Stdout)
+		return el.RunStats(argv, os.Stdout)
 	}
 	if sub == "tui" {
-		return emberloop.RunTUI(argv)
+		return el.RunTUI(argv)
 	}
 	if sub == "deps" {
-		return emberloop.RunDeps(argv, os.Stdout)
+		return el.RunDeps(argv, os.Stdout)
 	}
 	if sub == "install" {
-		return emberloop.RunInstall(argv, os.Stdout)
+		return el.RunInstall(argv, os.Stdout)
 	}
 	if sub == "skills" {
 		if len(argv) != 1 || argv[0] != "install" {
-			return fmt.Errorf("usage: emberloop skills install")
+			return fmt.Errorf("usage: el skills install")
 		}
-		if err := emberloop.InstallSkills(emberloop.OSExec); err != nil {
+		if err := el.InstallSkills(el.OSExec); err != nil {
 			return err
 		}
-		fmt.Printf("installed %s into %s\n", "mattpocock/skills", emberloop.SkillLibraryDir())
+		fmt.Printf("installed %s into %s\n", "mattpocock/skills", el.SkillLibraryDir())
 		return nil
 	}
-	fs := flag.NewFlagSet("emberloop", flag.ContinueOnError)
+	fs := flag.NewFlagSet("el", flag.ContinueOnError)
 	harness := fs.String("harness", "", "pig or claude (default: the orchestrator slot)")
 	pig := fs.Bool("pig", false, "use pig")
 	claude := fs.Bool("claude", false, "use claude")
@@ -139,14 +139,14 @@ func run(argv []string) error {
 	rest := strings.Join(fs.Args(), " ")
 
 	cwd, _ := os.Getwd()
-	id := emberloop.NewSessionID()
-	s := emberloop.Session{ID: id, AgentID: id, Headless: *headless, Cwd: cwd}
+	id := el.NewSessionID()
+	s := el.Session{ID: id, AgentID: id, Headless: *headless, Cwd: cwd}
 	// The driver flags belong to implement: any other session refuses them
 	// rather than ignore what the user asked for.
 	if sub != "implement" && (*driverMode || *llmMode || *checkMode) {
-		return fmt.Errorf("--driver, --llm and --check apply to emberloop implement")
+		return fmt.Errorf("--driver, --llm and --check apply to el implement")
 	}
-	var implSpec *emberloop.SpecRun
+	var implSpec *el.SpecRun
 	switch sub {
 	case "":
 		r, err := sessionRole(sub, *role)
@@ -156,22 +156,22 @@ func run(argv []string) error {
 		s.Role, s.Prompt = r, rest
 	case "implement":
 		if *driverMode && *llmMode {
-			return fmt.Errorf("emberloop implement: --driver and --llm exclude each other")
+			return fmt.Errorf("el implement: --driver and --llm exclude each other")
 		}
 		if *checkMode && !*driverMode {
-			return fmt.Errorf("emberloop implement: --check needs --driver")
+			return fmt.Errorf("el implement: --check needs --driver")
 		}
 		if rest == "" {
-			return fmt.Errorf("usage: emberloop implement [--driver [--check]|--llm] <spec-file-or-dir>")
+			return fmt.Errorf("usage: el implement [--driver [--check]|--llm] <spec-file-or-dir>")
 		}
 		// The graph check reads files and starts no worker, so it runs
 		// anywhere: no herdr pane and no integration branch needed.
 		if *checkMode {
-			spec, err := emberloop.ResolveSpec(rest)
+			spec, err := el.ResolveSpec(rest)
 			if err != nil {
 				return err
 			}
-			return emberloop.RunDriverCheck(spec, os.Stdout)
+			return el.RunDriverCheck(spec, os.Stdout)
 		}
 		// Workers' results reach their parent as notices delivered into its
 		// herdr pane, so an implement session without a pane could never hear
@@ -182,16 +182,16 @@ func run(argv []string) error {
 		if *headless {
 			return fmt.Errorf("implement must run in a herdr pane; -p is not supported")
 		}
-		spec, err := emberloop.ResolveSpec(rest)
+		spec, err := el.ResolveSpec(rest)
 		if err != nil {
 			return err
 		}
 		if *driverMode {
 			// A bad graph fails before anything is created or spawned.
-			if err := emberloop.RunDriverCheck(spec, io.Discard); err != nil {
+			if err := el.RunDriverCheck(spec, io.Discard); err != nil {
 				return err
 			}
-			created, err := emberloop.EnterIntegrationBranch(emberloop.OSExec, cwd, spec.Branch)
+			created, err := el.EnterIntegrationBranch(el.OSExec, cwd, spec.Branch)
 			if err != nil {
 				return err
 			}
@@ -199,17 +199,17 @@ func run(argv []string) error {
 			if created {
 				verb = "created"
 			}
-			fmt.Fprintf(os.Stderr, "emberloop: %s %s\n", verb, spec.Branch)
+			fmt.Fprintf(os.Stderr, "el: %s %s\n", verb, spec.Branch)
 			if driverPaneTTY() {
-				return emberloop.RunDriverPane(rest, cwd)
+				return el.RunDriverPane(rest, cwd)
 			}
-			return emberloop.RunDriverLive(spec, cwd, os.Stdout)
+			return el.RunDriverLive(spec, cwd, os.Stdout)
 		}
 		r, err := sessionRole(sub, *role)
 		if err != nil {
 			return err
 		}
-		created, err := emberloop.EnterIntegrationBranch(emberloop.OSExec, cwd, spec.Branch)
+		created, err := el.EnterIntegrationBranch(el.OSExec, cwd, spec.Branch)
 		if err != nil {
 			return err
 		}
@@ -217,18 +217,18 @@ func run(argv []string) error {
 		if created {
 			verb = "created"
 		}
-		fmt.Fprintf(os.Stderr, "emberloop: %s %s\n", verb, spec.Branch)
-		s.Role, s.Prompt, s.Spec = r, emberloop.ImplementPrompt(spec), spec.Spec
+		fmt.Fprintf(os.Stderr, "el: %s %s\n", verb, spec.Branch)
+		s.Role, s.Prompt, s.Spec = r, el.ImplementPrompt(spec), spec.Spec
 		implSpec = &spec
 	default:
 		found := false
-		for _, e := range emberloop.SkillEntries() {
+		for _, e := range el.SkillEntries() {
 			if e.Name == sub {
 				r, err := sessionRole(sub, *role)
 				if err != nil {
 					return err
 				}
-				s.Role, s.Prompt = r, emberloop.SkillPrompt(e.Skill, rest, e.Scout)
+				s.Role, s.Prompt = r, el.SkillPrompt(e.Skill, rest, e.Scout)
 				found = true
 			}
 		}
@@ -236,37 +236,37 @@ func run(argv []string) error {
 			return fmt.Errorf("unknown command %q", sub)
 		}
 	}
-	choice := topLevelChoice(emberloop.Choice{Harness: *harness, Model: *model, Effort: *effort})
+	choice := topLevelChoice(el.Choice{Harness: *harness, Model: *model, Effort: *effort})
 	s.Model, s.Effort = choice.Model, choice.Effort
 	// An implement run leaves a trace: one record per spec slug, updated on
 	// re-run and stamped at exit. Readers decide "running" from the pane.
 	runSlug := ""
 	if implSpec != nil {
-		rec, err := emberloop.RecordRun(emberloop.OSExec, *implSpec, cwd, s.AgentID, choice.Harness, choice.Model, choice.Effort)
+		rec, err := el.RecordRun(el.OSExec, *implSpec, cwd, s.AgentID, choice.Harness, choice.Model, choice.Effort)
 		if err != nil {
 			return err
 		}
 		runSlug = rec.Slug
 	}
-	launch, err := emberloop.PrepareLaunch(choice.Harness, s)
+	launch, err := el.PrepareLaunch(choice.Harness, s)
 	if err != nil {
 		return err
 	}
-	cmd, err := emberloop.BuildCommand(choice.Harness, withoutPrompt(s, launch))
+	cmd, err := el.BuildCommand(choice.Harness, withoutPrompt(s, launch))
 	if err != nil {
 		return err
 	}
 	// The agent reads its MCP config at startup, so the file is dead weight
 	// once it exits.
-	defer emberloop.CleanupSession(s)
+	defer el.CleanupSession(s)
 	if launch.Late != "" {
 		pane := os.Getenv("HERDR_PANE_ID")
 		if pane == "" {
 			return fmt.Errorf("%s needs herdr to deliver its first message; run inside herdr", choice.Harness)
 		}
 		go func() {
-			if err := emberloop.DeliverLate(emberloop.OSExec, pane, launch.Late); err != nil {
-				fmt.Fprintln(os.Stderr, "emberloop:", err)
+			if err := el.DeliverLate(el.OSExec, pane, launch.Late); err != nil {
+				fmt.Fprintln(os.Stderr, "el:", err)
 			}
 		}()
 	}
@@ -276,7 +276,7 @@ func run(argv []string) error {
 	// herdr there is no pane and no record. A failed write is silent: the
 	// session runs, only the key stays deaf.
 	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" && !*headless {
-		_ = emberloop.WriteTopLevelState(emberloop.TopLevelSession{
+		_ = el.WriteTopLevelState(el.TopLevelSession{
 			AgentID: s.AgentID, Pane: pane, Harness: choice.Harness,
 			Model: choice.Model, Effort: choice.Effort, Role: s.Role,
 			Cwd: cwd, SessionID: s.ID,
@@ -285,17 +285,17 @@ func run(argv []string) error {
 	// The top-level session names its own pane orchestrator, so the herdr
 	// sidebar names it like every spawned pane. Outside herdr there is no
 	// pane and the call does nothing; a failed rename is silent.
-	emberloop.NameOrchestratorPane(emberloop.OSExec)
+	el.NameOrchestratorPane(el.OSExec)
 	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" && !*headless {
 		stop := make(chan struct{})
 		defer close(stop)
-		if h := emberloop.Registered(choice.Harness); h != nil {
-			go emberloop.Supervise(emberloop.OSExec, h, s, pane, stop)
+		if h := el.Registered(choice.Harness); h != nil {
+			go el.Supervise(el.OSExec, h, s, pane, stop)
 		}
 		// The orchestrator supervises its workers' context: a pane past its
 		// threshold compresses on its own at a tool-call boundary or at
 		// idle, never during a running tool call.
-		go emberloop.SuperviseAutoCompress(emberloop.OSExec, func() tools.Settings {
+		go el.SuperviseAutoCompress(el.OSExec, func() tools.Settings {
 			return tools.EffectiveSettings(cwd)
 		}, stop)
 	}
@@ -304,21 +304,21 @@ func run(argv []string) error {
 	// (or with the strip disabled) the session runs exactly as before. The
 	// strip wrapper is the child's parent here, so a bad exit still lands
 	// in the agent's state, without a stderr tail the wrapper owns.
-	err = emberloop.WrapTopLevel(cmd, emberloop.HeaderSource{
-		AgentID: s.AgentID, AgentType: s.AgentType, AgentName: emberloop.TopLevelChipName(s.AgentType, s.Role),
+	err = el.WrapTopLevel(cmd, el.HeaderSource{
+		AgentID: s.AgentID, AgentType: s.AgentType, AgentName: el.TopLevelChipName(s.AgentType, s.Role),
 		Harness: choice.Harness, SessionID: s.ID, SessionDir: s.Dir,
 	})
-	if exit, ok := emberloop.ChildExitOf(err); ok {
-		_ = emberloop.RecordChildExit(s.AgentID, exit)
+	if exit, ok := el.ChildExitOf(err); ok {
+		_ = el.RecordChildExit(s.AgentID, exit)
 	}
 	if runSlug != "" {
-		_ = emberloop.FinishRun(runSlug)
+		_ = el.FinishRun(runSlug)
 	}
 	return err
 }
 
 // withoutPrompt drops the prompt from s when the harness takes it late.
-func withoutPrompt(s emberloop.Session, l emberloop.Launch) emberloop.Session {
+func withoutPrompt(s el.Session, l el.Launch) el.Session {
 	if l.Late != "" {
 		s.Prompt = ""
 	}
@@ -336,7 +336,7 @@ func sessionRole(sub, flagValue string) (string, error) {
 		if sub != "" {
 			return "", fmt.Errorf("--role applies to a bare session; %q already picks its role", sub)
 		}
-		if _, err := emberloop.RoleTools(flagValue); err != nil {
+		if _, err := el.RoleTools(flagValue); err != nil {
 			return "", err
 		}
 		return flagValue, nil
@@ -350,8 +350,8 @@ func sessionRole(sub, flagValue string) (string, error) {
 // topLevelChoice resolves a top-level session's harness, model and effort
 // through the orchestrator slot: the flags win, then the slot, then the
 // built-in default. A claude session with no model of its own runs sonnet.
-func topLevelChoice(flags emberloop.Choice) emberloop.Choice {
-	c := emberloop.Resolve("orchestrator", flags, emberloop.Choice{})
+func topLevelChoice(flags el.Choice) el.Choice {
+	c := el.Resolve("orchestrator", flags, el.Choice{})
 	if c.Harness == "claude" && c.Model == "" {
 		c.Model = "sonnet"
 	}

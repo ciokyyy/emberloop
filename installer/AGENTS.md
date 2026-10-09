@@ -6,7 +6,7 @@ The install TUI that `install.sh` runs. It asks which harnesses to install
 (pig, claude) and whether to enable the code graph MCP, then builds the three
 binaries, installs herdr, links the herdr plugin, binds the compress key,
 writes emberloop settings and the pig MCP entry, links the pig extensions, and
-ends on the plain terminal with `emberloop deps` and `emberloop skills install`.
+ends on the plain terminal with `el deps` and `el skills install`.
 
 ## Ownership
 

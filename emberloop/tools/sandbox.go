@@ -7,13 +7,13 @@
 // and generated module. A one-time self-test per process proves the
 // sandbox blocks writes and network before anything runs; when bwrap is
 // missing or the self-test fails, every call returns a
-// SandboxUnavailableError naming `emberloop deps` and never runs the
+// SandboxUnavailableError naming `el deps` and never runs the
 // command unsandboxed. This package does not know about Python: callers
 // pass any argv, ticket 16 passes python3.
 //
-// Test hooks: EMBERLOOP_BIN_DIR overrides the emberloop bin directory,
-// EMBERLOOP_BWRAP overrides the bwrap path outright, and
-// EMBERLOOP_SANDBOX_FORCE_FAIL=1 forces the self-test to fail.
+// Test hooks: EL_BIN_DIR overrides the el bin directory,
+// EL_BWRAP overrides the bwrap path outright, and
+// EL_SANDBOX_FORCE_FAIL=1 forces the self-test to fail.
 package tools
 
 import (
@@ -36,9 +36,9 @@ const (
 	sandboxProbeTimeout   = 30 * time.Second
 )
 
-// SandboxUnavailableError reports that a emberloop dependency cannot be used:
+// SandboxUnavailableError reports that a el dependency cannot be used:
 // bwrap is missing or the sandbox failed its self-test. The message names
-// `emberloop deps`, the command that installs and verifies it. Binary names
+// `el deps`, the command that installs and verifies it. Binary names
 // the missing binary, and is empty when the sandbox itself failed, so the
 // same type serves the other tools that share ResolveBinary.
 type SandboxUnavailableError struct {
@@ -51,7 +51,7 @@ func (e *SandboxUnavailableError) Error() string {
 	if e.Binary != "" {
 		what = e.Binary
 	}
-	return fmt.Sprintf("%s unavailable (%s); run emberloop deps to install it", what, e.Reason)
+	return fmt.Sprintf("%s unavailable (%s); run el deps to install it", what, e.Reason)
 }
 
 // IsSandboxUnavailable reports whether err is a *SandboxUnavailableError.
@@ -60,18 +60,18 @@ func IsSandboxUnavailable(err error) bool {
 	return errors.As(err, &t)
 }
 
-// BinDir is where emberloop looks for its own binaries first, before PATH.
-// EMBERLOOP_BIN_DIR overrides it for tests. Ticket 19's installer and the
+// BinDir is where el looks for its own binaries first, before PATH.
+// EL_BIN_DIR overrides it for tests. Ticket 19's installer and the
 // grep, execute and graph tools share this resolver.
 func BinDir() string {
-	if d := os.Getenv("EMBERLOOP_BIN_DIR"); d != "" {
+	if d := os.Getenv("EL_BIN_DIR"); d != "" {
 		return d
 	}
 	return filepath.Join(os.Getenv("HOME"), ".emberloop", "bin")
 }
 
-// ResolveBinary finds name in the emberloop bin directory first, then on PATH.
-// A miss is a *SandboxUnavailableError naming `emberloop deps`.
+// ResolveBinary finds name in the el bin directory first, then on PATH.
+// A miss is a *SandboxUnavailableError naming `el deps`.
 func ResolveBinary(name string) (string, error) {
 	if p := filepath.Join(BinDir(), name); isExecutable(p) {
 		return p, nil
@@ -82,15 +82,15 @@ func ResolveBinary(name string) (string, error) {
 	return "", &SandboxUnavailableError{Binary: name, Reason: fmt.Sprintf("not found in %s or PATH", BinDir())}
 }
 
-// resolveBwrap is ResolveBinary("bwrap") with the EMBERLOOP_BWRAP test
+// resolveBwrap is ResolveBinary("bwrap") with the EL_BWRAP test
 // override: when set it wins outright, and a path that is not executable
 // is an unavailable sandbox, never a fallthrough to PATH.
 func resolveBwrap() (string, error) {
-	if p := os.Getenv("EMBERLOOP_BWRAP"); p != "" {
+	if p := os.Getenv("EL_BWRAP"); p != "" {
 		if isExecutable(p) {
 			return p, nil
 		}
-		return "", &SandboxUnavailableError{Binary: "bwrap", Reason: fmt.Sprintf("EMBERLOOP_BWRAP=%q is not executable", p)}
+		return "", &SandboxUnavailableError{Binary: "bwrap", Reason: fmt.Sprintf("EL_BWRAP=%q is not executable", p)}
 	}
 	return ResolveBinary("bwrap")
 }
@@ -226,15 +226,15 @@ var (
 // a network socket, and must fail at all three. Success is cached per
 // process, keyed by bwrap path and worktree; failures retry on the next
 // call, so installing bwrap needs no restart. A forced failure
-// (EMBERLOOP_SANDBOX_FORCE_FAIL) always fails, even when cached healthy.
-// Ticket 19 reuses this as the bubblewrap proof in `emberloop deps`.
+// (EL_SANDBOX_FORCE_FAIL) always fails, even when cached healthy.
+// Ticket 19 reuses this as the bubblewrap proof in `el deps`.
 func EnsureHealthy(worktree string) error {
 	bwrap, err := resolveBwrap()
 	if err != nil {
 		return err
 	}
-	if os.Getenv("EMBERLOOP_SANDBOX_FORCE_FAIL") != "" {
-		return &SandboxUnavailableError{Reason: "self-test forced to fail (EMBERLOOP_SANDBOX_FORCE_FAIL is set)"}
+	if os.Getenv("EL_SANDBOX_FORCE_FAIL") != "" {
+		return &SandboxUnavailableError{Reason: "self-test forced to fail (EL_SANDBOX_FORCE_FAIL is set)"}
 	}
 	wt, err := filepath.Abs(worktree)
 	if err != nil {
@@ -271,7 +271,7 @@ func runSelfTest(bwrap, worktree string) error {
 	script := `set -u
 in="$1/.emberloop-sandbox-selftest.$$-$RANDOM"
 if touch "$in" 2>/dev/null; then rm -f "$in"; exit 10; fi
-out="$2/emberloop-sandbox-selftest.$$-$RANDOM"
+out="$2/el-sandbox-selftest.$$-$RANDOM"
 if touch "$out" 2>/dev/null; then rm -f "$out"; exit 11; fi
 if (exec 3<>/dev/tcp/127.0.0.1/9) 2>/dev/null; then exit 12; fi
 exit 0`

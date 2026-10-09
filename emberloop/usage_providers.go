@@ -1,10 +1,10 @@
-package emberloop
+package el
 
 // Usage windows of the model account behind a pane, for the strip's right
 // side. claude reports its own through the statusline (claude_usage.go);
 // the opencode Go plan and Antigravity have no push channel, so one poller
 // per machine asks their usage endpoints and every strip reads the cache:
-// `usage-<key>.json` in emberloop's state dir. Panes race for one lock per key, so
+// `usage-<key>.json` in el's state dir. Panes race for one lock per key, so
 // N panes cost one request per interval, never N.
 
 import (
@@ -55,7 +55,7 @@ var (
 // pig-antigravity-auth saves them to ~/.emberloop/agy-oauth.json at login; the
 // environment overrides the file.
 func agyClient() (id, secret string, err error) {
-	id, secret = strings.TrimSpace(os.Getenv("EMBERLOOP_AGY_CLIENT_ID")), strings.TrimSpace(os.Getenv("EMBERLOOP_AGY_CLIENT_SECRET"))
+	id, secret = strings.TrimSpace(os.Getenv("EL_AGY_CLIENT_ID")), strings.TrimSpace(os.Getenv("EL_AGY_CLIENT_SECRET"))
 	if id != "" && secret != "" {
 		return id, secret, nil
 	}
@@ -65,7 +65,7 @@ func agyClient() (id, secret string, err error) {
 		Secret string `json:"client_secret"`
 	}
 	if rerr != nil || json.Unmarshal(raw, &c) != nil || c.ID == "" || c.Secret == "" {
-		return "", "", fmt.Errorf("antigravity oauth client missing: log in to the provider, or set EMBERLOOP_AGY_CLIENT_ID and EMBERLOOP_AGY_CLIENT_SECRET")
+		return "", "", fmt.Errorf("antigravity oauth client missing: log in to the provider, or set EL_AGY_CLIENT_ID and EL_AGY_CLIENT_SECRET")
 	}
 	return c.ID, c.Secret, nil
 }
@@ -215,7 +215,7 @@ type pigAuth struct {
 }
 
 func readPigAuth() (pigAuth, error) {
-	path := os.Getenv("EMBERLOOP_PIG_AUTH")
+	path := os.Getenv("EL_PIG_AUTH")
 	if path == "" {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, ".pig", "agent", "auth.json")
@@ -262,7 +262,7 @@ func fetchOpencodeUsage(ctx context.Context) ([]UsageWindow, error) {
 		} `json:"usage"`
 	}
 	err = getJSON(ctx, http.MethodGet, opencodeUsageURL,
-		map[string]string{"Authorization": "Bearer " + auth.OpencodeGo.Key, "User-Agent": "emberloop"}, nil, &r)
+		map[string]string{"Authorization": "Bearer " + auth.OpencodeGo.Key, "User-Agent": "el"}, nil, &r)
 	if err != nil {
 		return nil, err
 	}

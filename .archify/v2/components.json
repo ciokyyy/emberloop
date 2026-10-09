@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": { "title": "emberloop components", "output": ".archify/v2/components.html", "quality_profile": "showcase" },
+  "components": [
+    { "id": "you", "type": "external", "label": "You", "sublabel": "terminal", "pos": [40, 120], "size": [120, 60] },
+    { "id": "cli", "type": "frontend", "label": "emberloop", "sublabel": "CLI + header, pig or claude", "pos": [250, 120], "size": [190, 60] },
+    { "id": "mcp", "type": "backend", "label": "emberloop-mcp", "sublabel": "tools for agent roles", "pos": [550, 120], "size": [180, 60] },
+    { "id": "state", "type": "database", "label": "State dir", "sublabel": "SQLite + JSON", "pos": [850, 120], "size": [150, 60] },
+    { "id": "plugin", "type": "messagebus", "label": "herdr-emberloop", "sublabel": "compress key", "pos": [20, 300], "size": [150, 60] },
+    { "id": "herdr", "type": "cloud", "label": "herdr", "sublabel": "pane per agent", "pos": [270, 300], "size": [150, 60] },
+    { "id": "skills", "type": "backend", "label": "Skills library", "sublabel": "emberloop:// reads", "pos": [550, 300], "size": [180, 60] },
+    { "id": "tui", "type": "frontend", "label": "emberloop-tui", "sublabel": "Runs + Settings", "pos": [850, 300], "size": [150, 60] },
+    { "id": "report", "type": "security", "label": "herdr-report", "sublabel": "pig state + stop gate", "pos": [270, 460], "size": [150, 60] },
+    { "id": "installer", "type": "external", "label": "installer", "sublabel": "./install.sh", "pos": [550, 460], "size": [180, 60] }
+  ],
+  "boundaries": [],
+  "connections": [
+    { "id": "you-cli", "from": "you", "to": "cli", "label": "prompt", "variant": "emphasis" },
+    { "id": "cli-mcp", "from": "cli", "to": "mcp", "label": "MCP stdio", "variant": "emphasis" },
+    { "id": "mcp-state", "from": "mcp", "to": "state", "label": "writes" },
+    { "id": "cli-herdr", "from": "cli", "to": "herdr", "label": "panes", "fromSide": "bottom", "toSide": "top" },
+    { "id": "plugin-herdr", "from": "plugin", "to": "herdr", "label": "key", "variant": "dashed" },
+    { "id": "report-herdr", "from": "report", "to": "herdr", "label": "state", "fromSide": "top", "toSide": "bottom" },
+    { "id": "mcp-skills", "from": "mcp", "to": "skills", "label": "serves", "fromSide": "bottom", "toSide": "top" },
+    { "id": "tui-state", "from": "tui", "to": "state", "label": "reads", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "installer-skills", "from": "installer", "to": "skills", "label": "installs", "variant": "dashed", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Entry", "items": ["emberloop tui execs the separate emberloop-tui binary", "install builds emberloop, emberloop-mcp, emberloop-tui and links the herdr plugin"] },
+    { "dot": "emerald", "title": "Optional", "items": ["Code graph MCP when graph is enabled", "pig-antigravity-auth adds a Google provider to pig"] }
+  ]
+}

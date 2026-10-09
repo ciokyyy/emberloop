@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// RunRecord is one `emberloop implement` run, keyed by spec slug. It names the
+// RunRecord is one `el implement` run, keyed by spec slug. It names the
 // spec, the repo and integration branch, the orchestrator (agent id, pane and
 // tab), the harness it runs on, and when it started and — when the session
 // exits normally — ended. Readers decide "running" from whether the

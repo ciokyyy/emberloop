@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Seam: the wrapper through a fake child. No PTY, no live agent: the fake
 // answers the same start/read/write/resize surface the real PTY does, so
@@ -295,10 +295,10 @@ func TestWrapReportsClaudeToHerdr(t *testing.T) {
 		t.Fatalf("herdr calls = %v, want a report then a release", calls)
 	}
 	join := func(a []string) string { return strings.Join(a, " ") }
-	if got := join(calls[0]); !strings.HasPrefix(got, "pane report-agent w:p1 --source emberloop --agent code-reviewer --state working --seq ") {
+	if got := join(calls[0]); !strings.HasPrefix(got, "pane report-agent w:p1 --source el --agent code-reviewer --state working --seq ") {
 		t.Errorf("first call = %q", got)
 	}
-	if got := join(calls[1]); !strings.HasPrefix(got, "pane release-agent w:p1 --source emberloop --agent code-reviewer --seq ") {
+	if got := join(calls[1]); !strings.HasPrefix(got, "pane release-agent w:p1 --source el --agent code-reviewer --seq ") {
 		t.Errorf("last call = %q", got)
 	}
 }
@@ -330,10 +330,10 @@ func TestAgentReporterTracksState(t *testing.T) {
 	r.release()             // once only
 	r.report(HeaderWorking) // after release: no call
 	want := []string{
-		"pane report-agent p --source emberloop --agent x --state idle --seq 11",
-		"pane report-agent p --source emberloop --agent x --state working --seq 12",
-		"pane report-agent p --source emberloop --agent x --state idle --seq 13",
-		"pane release-agent p --source emberloop --agent x --seq 14",
+		"pane report-agent p --source el --agent x --state idle --seq 11",
+		"pane report-agent p --source el --agent x --state working --seq 12",
+		"pane report-agent p --source el --agent x --state idle --seq 13",
+		"pane release-agent p --source el --agent x --seq 14",
 	}
 	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
@@ -401,7 +401,7 @@ func TestTopRuleSoftEdgeProfiles(t *testing.T) {
 // The strip background sits one step off the pane background, dark and
 // light: mantle against base, so tint — not a line — separates the areas.
 // The dim tone the borders dim to is the surface tone, dark and light.
-// Expected values are the probe (run-borderless.sh Mocha base, the emberloopb
+// Expected values are the probe (run-borderless.sh Mocha base, the elb
 // themes' surface0 for dark, Latte surface0 for light); the code reads the
 // strip side of the shared palette in header.go, so drift breaks the test.
 func TestStripBgStandsOffPane(t *testing.T) {

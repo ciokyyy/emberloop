@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Seam: the wrapper through a fake child and a fake terminal stream. The
 // test asserts the exact bytes the terminal receives: the OSC palette at
@@ -69,7 +69,7 @@ func TestWrapPigThemeFlags(t *testing.T) {
 			name = gotArgs[i+1]
 		}
 	}
-	if name != "emberloop-mocha" || theme == "" {
+	if name != "el-mocha" || theme == "" {
 		t.Errorf("pig child args = %q, want per-run --theme/--use-theme", gotArgs)
 	}
 	if len(child.sizes) == 0 {
@@ -161,8 +161,8 @@ func TestWrapClaudeThemeResolves(t *testing.T) {
 			ref, _ = m["theme"].(string)
 		}
 	}
-	if ref != "custom:emberloop-mocha" {
-		t.Errorf("claude theme ref = %q, want custom:emberloop-mocha", ref)
+	if ref != "custom:el-mocha" {
+		t.Errorf("claude theme ref = %q, want custom:el-mocha", ref)
 	}
 	for _, e := range gotEnv {
 		if strings.HasPrefix(e, "CLAUDE_CONFIG_DIR=") {
@@ -179,7 +179,7 @@ func TestWrapClaudeThemeResolves(t *testing.T) {
 	if err := json.Unmarshal(b, &theme); err != nil {
 		t.Fatal(err)
 	}
-	if theme["name"] != "Emberloop (Catppuccin Mocha)" {
+	if theme["name"] != "El (Catppuccin Mocha)" {
 		t.Errorf("slug file name = %v, want the generated mocha theme", theme["name"])
 	}
 }

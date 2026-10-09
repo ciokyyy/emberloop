@@ -1,0 +1,192 @@
+{
+ "schema_version": 1,
+ "diagram_type": "sequence",
+ "meta": {
+  "title": "One ticket through emberloop",
+  "output": ".archify/sequence-run/ticket-sequence.html",
+  "viewBox": [
+   1000,
+   600
+  ],
+  "column_fit": "spread",
+  "quality_profile": "showcase"
+ },
+ "participants": [
+  {
+   "id": "orch",
+   "type": "frontend",
+   "label": "Orchestrator",
+   "sublabel": "pig or claude"
+  },
+  {
+   "id": "worker",
+   "type": "backend",
+   "label": "Worker",
+   "sublabel": "own worktree"
+  },
+  {
+   "id": "rev",
+   "type": "security",
+   "label": "Reviewers",
+   "sublabel": "spec + standards"
+  },
+  {
+   "id": "gate",
+   "type": "messagebus",
+   "label": "Gate",
+   "sublabel": "vet + test"
+  },
+  {
+   "id": "branch",
+   "type": "database",
+   "label": "Spec branch",
+   "sublabel": "merged tickets"
+  }
+ ],
+ "segments": [
+  {
+   "from": 145,
+   "to": 210,
+   "label": "Implement"
+  },
+  {
+   "from": 225,
+   "to": 290,
+   "label": "Review"
+  },
+  {
+   "from": 305,
+   "to": 365,
+   "label": "Fix loop"
+  },
+  {
+   "from": 380,
+   "to": 480,
+   "label": "Merge"
+  }
+ ],
+ "messages": [
+  {
+   "id": "spawn",
+   "from": "orch",
+   "to": "worker",
+   "y": 160,
+   "label": "spawn(ticket)",
+   "variant": "emphasis"
+  },
+  {
+   "id": "done",
+   "from": "worker",
+   "to": "orch",
+   "y": 200,
+   "label": "submit(done)",
+   "variant": "return"
+  },
+  {
+   "id": "spawn-rev",
+   "from": "orch",
+   "to": "rev",
+   "y": 240,
+   "label": "review packet",
+   "variant": "emphasis"
+  },
+  {
+   "id": "verdict",
+   "from": "rev",
+   "to": "orch",
+   "y": 275,
+   "label": "pass or findings",
+   "variant": "return"
+  },
+  {
+   "id": "findings",
+   "from": "orch",
+   "to": "worker",
+   "y": 320,
+   "label": "tell(findings)",
+   "variant": "dashed"
+  },
+  {
+   "id": "redone",
+   "from": "worker",
+   "to": "orch",
+   "y": 350,
+   "label": "submit(done)",
+   "variant": "return"
+  },
+  {
+   "id": "finish",
+   "from": "orch",
+   "to": "gate",
+   "y": 395,
+   "label": "finish: vet + test",
+   "variant": "emphasis"
+  },
+  {
+   "id": "merge",
+   "from": "gate",
+   "to": "branch",
+   "y": 430,
+   "label": "merge",
+   "variant": "emphasis"
+  },
+  {
+   "id": "merged",
+   "from": "gate",
+   "to": "orch",
+   "y": 465,
+   "label": "merged",
+   "variant": "return"
+  }
+ ],
+ "activations": [
+  {
+   "participant": "worker",
+   "from": 155,
+   "to": 205,
+   "type": "backend"
+  },
+  {
+   "participant": "rev",
+   "from": 235,
+   "to": 280,
+   "type": "security"
+  },
+  {
+   "participant": "worker",
+   "from": 315,
+   "to": 355,
+   "type": "backend"
+  },
+  {
+   "participant": "gate",
+   "from": 390,
+   "to": 470,
+   "type": "messagebus"
+  },
+  {
+   "participant": "branch",
+   "from": 425,
+   "to": 435,
+   "type": "database"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "amber",
+   "title": "Fix loop",
+   "items": [
+    "Findings go back to the same worker",
+    "Reviewers keep context across passes"
+   ]
+  },
+  {
+   "dot": "emerald",
+   "title": "Merge rule",
+   "items": [
+    "finish runs only after both reviewers pass",
+    "A failing gate sends the ticket back to its worker"
+   ]
+  }
+ ]
+}

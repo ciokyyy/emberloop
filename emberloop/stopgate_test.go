@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"bytes"
@@ -112,8 +112,8 @@ func gate(t *testing.T, hook string) string {
 func spawnAgent(t *testing.T, deliver bool) *recorder {
 	t.Helper()
 	deliverTestState(t)
-	t.Setenv("EMBERLOOP_AGENT_ID", "w1")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "worker")
+	t.Setenv("EL_AGENT_ID", "w1")
+	t.Setenv("EL_AGENT_TYPE", "worker")
 	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", ParentID: "p", Parent: "pP", Deliver: deliver}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,8 +245,8 @@ func TestPigGateStartsTheCountOnAFreshTurn(t *testing.T) {
 // carries an agent id, so the test sets one the way main.go does.
 func TestPigGateIgnoresANonAgentSession(t *testing.T) {
 	deliverTestState(t)
-	t.Setenv("EMBERLOOP_AGENT_ID", "top-1")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "")
+	t.Setenv("EL_AGENT_ID", "top-1")
+	t.Setenv("EL_AGENT_TYPE", "")
 	if got := askPigGate(t, `{"fresh":true}`); got.Outcome != pigGateAllow {
 		t.Errorf("a top-level session must be left alone, got %q", got.Outcome)
 	}
@@ -310,11 +310,11 @@ func TestStopGateGiveUpBecomesTheWaitingSpawnResult(t *testing.T) {
 // the group notice.
 func TestBlockingGiveUpIsReturnedByTheWaitingSpawn(t *testing.T) {
 	spawnTestState(t)
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "scout")
+	t.Setenv("EL_AGENT_TYPE", "scout")
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	rec := &recorder{reply: func(string, []string) Result { return Result{Stdout: "{}"} }}
 	oldDeliver := deliverExec
 	deliverExec = rec.run
@@ -352,7 +352,7 @@ type giveUpExec struct{ g *fakeGrid }
 
 func (e giveUpExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "run" {
-		if err := giveUpWithoutSubmit(envIn(args[3], "EMBERLOOP_AGENT_ID"), "gave up"); err != nil {
+		if err := giveUpWithoutSubmit(envIn(args[3], "EL_AGENT_ID"), "gave up"); err != nil {
 			return Result{}, err
 		}
 		return Result{Stdout: "{}"}, nil
@@ -364,7 +364,7 @@ func (e giveUpExec) run(cmd string, args []string, opts ExecOpts) (Result, error
 // lock: whichever runs first owns the result, so the parent always hears.
 func TestGiveUpOwnershipIsDecidedUnderTheLock(t *testing.T) {
 	deliverTestState(t)
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "scout")
+	t.Setenv("EL_AGENT_TYPE", "scout")
 	rec := &recorder{reply: func(string, []string) Result { return Result{} }}
 	deliverExec = rec.run
 
@@ -476,8 +476,8 @@ func TestStopGateStartsTheCountOnAFreshTurn(t *testing.T) {
 // sets one the way main.go does.
 func TestStopGateIgnoresANonAgentSession(t *testing.T) {
 	deliverTestState(t)
-	t.Setenv("EMBERLOOP_AGENT_ID", "top-1")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "")
+	t.Setenv("EL_AGENT_ID", "top-1")
+	t.Setenv("EL_AGENT_TYPE", "")
 	if out := gate(t, `{"stop_hook_active":false}`); strings.TrimSpace(out) != "" {
 		t.Errorf("a top-level session must be left alone, got %q", out)
 	}

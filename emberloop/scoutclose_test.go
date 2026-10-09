@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -19,7 +19,7 @@ func TestSpawnOutputListsAgentAndPaneIDs(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &noneScoutExec{g: g}
 	spawnExec = ex.run
 	oldDeliver := deliverExec

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"crypto/sha256"
@@ -17,7 +17,7 @@ import (
 	"example.com/emberloop/tools"
 )
 
-// The reviewer types emberloop ships. A worker's reviewers are the types its
+// The reviewer types el ships. A worker's reviewers are the types its
 // requires_review names; these are the defaults when a record names none.
 const (
 	reviewerStandards = "reviewer-standards"
@@ -295,7 +295,7 @@ func pluralFiles(n int) string {
 	return fmt.Sprintf("%d files", n)
 }
 
-// reviewer is what emberloop remembers of one persistent reviewer between calls. Tab
+// reviewer is what el remembers of one persistent reviewer between calls. Tab
 // and Slot are where it lives: the ticket's tab and its slot in the grid, so a
 // dead reviewer is replaced in the same place.
 type reviewer struct {
@@ -518,7 +518,7 @@ func passHolds(repo string) map[string]bool {
 // new files, taken through a throwaway index so the worker's own is untouched.
 // Empty when git cannot say; callers then fall back to the commit.
 func snapshotTree(run Exec, tree string) string {
-	f, err := os.CreateTemp("", "emberloop-index-*")
+	f, err := os.CreateTemp("", "el-index-*")
 	if err != nil {
 		return ""
 	}
@@ -617,7 +617,7 @@ func workerAt(tree string) *Worker {
 
 // workerPlace is where a worker's reviewers open: in the ticket's tab, beside
 // the implementor, with the ticket's first overflow tab labelled <ticket> (2).
-// A worker with no tab predates the ticket tab, or was not spawned by emberloop;
+// A worker with no tab predates the ticket tab, or was not spawned by el;
 // its reviewers fall back to the caller's tab, the way a scout does.
 func workerPlace(w *Worker) readOnlyPlace {
 	if w == nil || w.Tab == "" {
@@ -669,7 +669,7 @@ type reviewPacket struct {
 	// starting one.
 	noChanges bool
 	// place is where the reviewers open: the worker's ticket tab, or the
-	// caller's tab when there is no ticket (a tree emberloop did not spawn).
+	// caller's tab when there is no ticket (a tree el did not spawn).
 	place readOnlyPlace
 	// coverOK says the file counts below were computed. diffFiles is how many
 	// files the full diff covers, treeFiles how many the working tree changed
@@ -925,7 +925,7 @@ func followUpReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, par
 // notice.
 func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replaced bool, parentPane, parentID, groupID string) (*spawnedAgent, error) {
 	// The reviewer resolves its own slot, not the worker's model:
-	// EMBERLOOP_READONLY_HARNESS is a flag layer, the type's frontmatter the
+	// EL_READONLY_HARNESS is a flag layer, the type's frontmatter the
 	// typeOrSpawn layer, then the slot's settings, then pig.
 	choice := Resolve(reviewSlot(t.Name), readonlyHarnessChoice(),
 		Choice{Harness: t.Harness, Model: t.Model, Effort: t.Effort})
@@ -936,7 +936,7 @@ func freshReviewer(run Exec, p *reviewPacket, t AgentType, prev reviewer, replac
 		Dir: filepath.Join(readOnlyDir(), "sessions"),
 		// A reviewer inside a run archives under it: the spawning worker
 		// carries its spec in the environment, the way workers record it.
-		Spec: os.Getenv("EMBERLOOP_SPEC"),
+		Spec: os.Getenv("EL_SPEC"),
 	}
 	place := p.place
 	notice := ""
@@ -1012,7 +1012,7 @@ func writeReviewState(id, typ string, p *reviewPacket, parentPane, parentID, gro
 }
 
 // packetPrompt is the reviewer's brief: where it runs, the ticket and spec for
-// the spec reviewer, the diff to read, the checks emberloop ran, and the worker's
+// the spec reviewer, the diff to read, the checks el ran, and the worker's
 // note. It is appended to the type's own standing instructions.
 func packetPrompt(p *reviewPacket, typ string, prev reviewer, replaced bool) string {
 	var b strings.Builder
@@ -1028,7 +1028,7 @@ func packetPrompt(p *reviewPacket, typ string, prev reviewer, replaced bool) str
 	if p.coverOK {
 		fmt.Fprintf(&b, "\n%s\n", coverageNotice(p.diffFiles, p.treeFiles, p.missing))
 	}
-	fmt.Fprintf(&b, "\nChecks run by emberloop on this tree: %s\n", p.checks)
+	fmt.Fprintf(&b, "\nChecks run by el on this tree: %s\n", p.checks)
 	if p.note != "" {
 		fmt.Fprintf(&b, "\nThe worker says: %s\n", p.note)
 	}
@@ -1040,10 +1040,15 @@ func packetPrompt(p *reviewPacket, typ string, prev reviewer, replaced bool) str
 }
 
 // followUpPrompt is the follow-up review message itself: the incremental diff
-// since the reviewer last looked, inline in full with no size cap, plus the
-// full diff for reference. When the branch was rebased the increment is the
-// full diff, carried once.
+// since the reviewer last looked, inline, plus the full diff for reference.
+// A file whose diff block is over maxInlineBlock (a built bundle, a lockfile)
+// is replaced by a one-line stub naming the full diff file, so one generated
+// file cannot put hundreds of thousands of tokens into the reviewer's
+// context. When the branch was rebased the increment is the full diff,
+// carried once.
 func followUpPrompt(p *reviewPacket, prev reviewer, rebased bool, inc, full string) string {
+	inc = elideBigBlocks(inc, p.fullDiff)
+	full = elideBigBlocks(full, p.fullDiff)
 	var b strings.Builder
 	if rebased {
 		fmt.Fprintf(&b, "Follow-up review. The branch was rebased since you last looked (%s), so here is the full diff again:\n\n%s\n\n",
@@ -1057,12 +1062,43 @@ func followUpPrompt(p *reviewPacket, prev reviewer, rebased bool, inc, full stri
 	} else {
 		b.WriteString("Re-judge each of your open findings: say which are resolved, which still hold, and anything new the change introduced.\n\n")
 	}
-	fmt.Fprintf(&b, "Checks run by emberloop on this tree: %s\n\n", p.checks)
+	fmt.Fprintf(&b, "Checks run by el on this tree: %s\n\n", p.checks)
 	if p.note != "" {
 		fmt.Fprintf(&b, "The worker says: %s\n\n", p.note)
 	}
 	b.WriteString("When the review is done, call the submit tool with status \"pass\" or \"changes\" and put your findings in its report. Submit is your whole answer: after it, yield and write no text.")
 	return b.String()
+}
+
+// maxInlineBlock is the largest one-file diff block a follow-up carries
+// inline, in bytes. A var so tests run it small.
+var maxInlineBlock = 20000
+
+// elideBigBlocks replaces the body of every file block in diff longer than
+// maxInlineBlock with one stub line that names the file, its size, and the
+// full diff file to read on demand. The `diff --git` line stays, so the
+// reviewer still sees that the file changed.
+func elideBigBlocks(diff, fullPath string) string {
+	if len(diff) <= maxInlineBlock {
+		return diff
+	}
+	lines := strings.SplitAfter(diff, "\n")
+	var out strings.Builder
+	for i := 0; i < len(lines); {
+		j := i + 1
+		for j < len(lines) && !strings.HasPrefix(lines[j], "diff --git ") {
+			j++
+		}
+		block := strings.Join(lines[i:j], "")
+		if len(block) > maxInlineBlock && strings.HasPrefix(lines[i], "diff --git ") {
+			head := strings.TrimRight(lines[i], "\n")
+			fmt.Fprintf(&out, "%s\n[%d bytes of diff elided; read this file's block in %s only if you need it]\n", head, len(block), fullPath)
+		} else {
+			out.WriteString(block)
+		}
+		i = j
+	}
+	return out.String()
 }
 
 func short(sha string) string {
@@ -1076,7 +1112,7 @@ func short(sha string) string {
 // target it is the merge-base with that target: after the worker rebases onto
 // the integration tip, that is the tip, so other tickets merged meanwhile stay
 // out of its diff. Otherwise it is the commit recorded at spawn. Outside a
-// worktree emberloop created there is no record, and the default branch is the
+// worktree el created there is no record, and the default branch is the
 // only fallback, main or else master.
 func diffBase(run Exec, tree string, w *Worker) string {
 	git := func(args ...string) (string, bool) {

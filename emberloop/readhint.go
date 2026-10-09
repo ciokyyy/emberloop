@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -70,4 +70,17 @@ func roleServesBash(role string, base []tools.Tool, s tools.Settings) bool {
 		placement = tools.PlacementMain
 	}
 	return enabled && placement == tools.PlacementMain
+}
+
+// ExecuteMulti forwards images from the inner read tool, with the same
+// oversize-refusal rewrite as Execute.
+func (t readHintTool) ExecuteMulti(ctx context.Context, root string, args json.RawMessage) (string, []tools.Image, error) {
+	out, imgs, err := tools.ExecuteMulti(ctx, t.inner, root, args)
+	if err == nil || t.hasBash {
+		return out, imgs, err
+	}
+	if msg := err.Error(); strings.Contains(msg, oversizeBashClause) {
+		return "", nil, errors.New(strings.Replace(msg, oversizeBashClause, oversizeNoBashClause, 1))
+	}
+	return "", nil, err
 }

@@ -31,7 +31,7 @@ func writeContextTranscript(t *testing.T, id string) string {
 
 func TestContextPrintsSessionNumbers(t *testing.T) {
 	settingsFile(t)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	dir := writeContextTranscript(t, "sess1")
 	var b strings.Builder
 	if err := runContext([]string{"--harness", "pig", "--dir", dir, "sess1"}, &b); err != nil {
@@ -57,7 +57,7 @@ func TestContextUnknownSessionFails(t *testing.T) {
 // override) and the window overrides.
 func TestSettingsCompressThreshold(t *testing.T) {
 	settingsFile(t)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	var b strings.Builder
 	if err := runSettings([]string{"compress-threshold", "150000"}, &b, nil); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestSettingsWindowOverride(t *testing.T) {
 // their sources, and a cleared window persists as gone.
 func TestSettingsPrintShowsContext(t *testing.T) {
 	settingsFile(t)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	var b strings.Builder
 	if err := runSettings([]string{"compress-threshold", "150000"}, &b, nil); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestSettingsPrintShowsContext(t *testing.T) {
 
 func TestSettingsWindowClearRemovesTheObject(t *testing.T) {
 	p := settingsFile(t)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	var b strings.Builder
 	if err := runSettings([]string{"window", "my-model", "1000000"}, &b, nil); err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestSettingsWindowClearRemovesTheObject(t *testing.T) {
 // labels the winning value as env on every line.
 func TestSettingsPrintLabelsEnvWin(t *testing.T) {
 	settingsFile(t)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "50000")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "50000")
 	var b strings.Builder
 	if err := runSettings([]string{"compress-threshold", "pig", "300000"}, &b, nil); err != nil {
 		t.Fatal(err)

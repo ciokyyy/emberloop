@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -218,8 +218,8 @@ func TestExecSeamReachesHerdr(t *testing.T) {
 	}
 	// It splits and closes real panes, and from inside a herdr session it can
 	// take a running worker's own pane down with it.
-	if os.Getenv("EMBERLOOP_LIVE_HERDR") == "" {
-		t.Skip("set EMBERLOOP_LIVE_HERDR=1 to run against a real herdr")
+	if os.Getenv("EL_LIVE_HERDR") == "" {
+		t.Skip("set EL_LIVE_HERDR=1 to run against a real herdr")
 	}
 	res, err := osExec("herdr", []string{"--version"}, ExecOpts{})
 	t.Logf("code=%d err=%v stdout=%q stderr=%q", res.Code, err, res.Stdout, res.Stderr)
@@ -252,8 +252,8 @@ func TestSpawnFinishOnAWorktree(t *testing.T) {
 
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -341,8 +341,8 @@ func TestSpawnAfterFinishReusesTheKeptBranch(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -505,8 +505,8 @@ func TestSpawnAcceptsABranchName(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -536,8 +536,8 @@ func TestFinishRebasesOntoARefBase(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -598,8 +598,8 @@ func TestFinishRebasesOntoTheTargetsCurrentTip(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -654,8 +654,8 @@ func TestFinishRefusesWhenTheRepoIsOnAnotherBranch(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

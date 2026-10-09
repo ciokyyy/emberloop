@@ -9,15 +9,15 @@ import (
 )
 
 // defaultMaxRunning caps concurrent running Sessions when no setting exists.
-// It matches the emberloop global default for max_workers.
+// It matches the el global default for max_workers.
 const defaultMaxRunning = 3
 
 // maxRunningFromSettings reads the existing global max_workers setting: the
-// EMBERLOOP_MAX_WORKERS env wins, then the global settings file (or
-// EMBERLOOP_SETTINGS when set, for tests and second profiles), then the old
+// EL_MAX_WORKERS env wins, then the global settings file (or
+// EL_SETTINGS when set, for tests and second profiles), then the old
 // state-dir file, then the built-in default.
 func maxRunningFromSettings() int {
-	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EMBERLOOP_MAX_WORKERS"))); err == nil && w > 0 {
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS"))); err == nil && w > 0 {
 		return w
 	}
 	for _, p := range settingsPaths() {
@@ -36,7 +36,7 @@ func maxRunningFromSettings() int {
 }
 
 func settingsPaths() []string {
-	if p := os.Getenv("EMBERLOOP_SETTINGS"); p != "" {
+	if p := os.Getenv("EL_SETTINGS"); p != "" {
 		return []string{p}
 	}
 	home, err := os.UserHomeDir()
@@ -44,7 +44,7 @@ func settingsPaths() []string {
 		return nil
 	}
 	return []string{
-		filepath.Join(home, ".emberloop", "settings.json"),
+		filepath.Join(home, ".el", "settings.json"),
 		filepath.Join(home, ".pig", "state", "emberloop", "settings.json"),
 	}
 }

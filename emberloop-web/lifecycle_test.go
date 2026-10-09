@@ -132,25 +132,25 @@ func TestSessionCapRefusedOverMax(t *testing.T) {
 func TestMaxRunningReadsGlobalSetting(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
-	t.Setenv("EMBERLOOP_SETTINGS", "")
+	t.Setenv("EL_MAX_WORKERS", "")
+	t.Setenv("EL_SETTINGS", "")
 	if got := maxRunningFromSettings(); got != 3 {
 		t.Fatalf("default cap = %d, want 3", got)
 	}
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "7")
+	t.Setenv("EL_MAX_WORKERS", "7")
 	if got := maxRunningFromSettings(); got != 7 {
 		t.Fatalf("env cap = %d, want 7", got)
 	}
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_MAX_WORKERS", "")
 	settings := `{"max_workers": 5}`
 	if err := os.WriteFile(dir+"/settings.json", []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", dir+"/settings.json")
+	t.Setenv("EL_SETTINGS", dir+"/settings.json")
 	if got := maxRunningFromSettings(); got != 5 {
 		t.Fatalf("file cap = %d, want 5", got)
 	}
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "2")
+	t.Setenv("EL_MAX_WORKERS", "2")
 	if got := maxRunningFromSettings(); got != 2 {
 		t.Fatalf("env-over-file cap = %d, want 2", got)
 	}

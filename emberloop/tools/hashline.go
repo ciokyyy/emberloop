@@ -15,7 +15,7 @@ import (
 
 // Hashline: line-anchored file edits.
 //
-// The grammar, the applier and the tag are ported from emberloop's
+// The grammar, the applier and the tag are ported from el's
 // apps/backend/tools/edit.go. One thing differs on purpose: read serves plain
 // text only. Binary, oversized text, PDFs, notebooks, images and archives are
 // refused with a reason, because ctx.ExecuteTool("read") resolves back to the
@@ -558,7 +558,7 @@ func readTarget(baseDir, target string) (string, error) {
 
 // renderFile renders the regular text file at full, labelling it display in the
 // header. The caller has already decided the path is one this tool may serve.
-// A plain render is for files that can never be edited (emberloop://): no tag and
+// A plain render is for files that can never be edited (el://): no tag and
 // no line numbers, since both only cost tokens there.
 func renderFile(display, full string, offset, limit int, plain bool) (string, error) {
 	info, err := os.Stat(full)

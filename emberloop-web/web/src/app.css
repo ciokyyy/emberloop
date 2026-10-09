@@ -61,12 +61,31 @@
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";
   }
+  /* Custom scrollbars everywhere: slim rounded thumb, no track, brighter on
+     hover. Firefox gets the closest standard equivalent. */
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
+    background: transparent;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply rounded-full border-[3px] border-transparent bg-muted-foreground/30 bg-clip-content;
+    @apply rounded-full border-[4px] border-transparent bg-muted-foreground/25 bg-clip-content transition-colors;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/55;
+  }
+  ::-webkit-scrollbar-thumb:active {
+    @apply bg-ring/70;
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+    }
   }
 }
 
@@ -190,6 +209,14 @@
   font-size: 0.82em;
   line-height: 1.6;
 }
-.md table { border-collapse: collapse; display: block; overflow-x: auto; }
-.md th, .md td { border: 1px solid var(--border); padding: 0.4em 0.8em; }
+.md-table {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  margin: 0.75em 0;
+}
+.md table { border-collapse: separate; border-spacing: 0; width: 100%; }
+.md th, .md td { padding: 0.45em 0.9em; border-bottom: 1px solid var(--border); text-align: left; }
+.md th + th, .md td + td { border-left: 1px solid var(--border); }
+.md tr:last-child td { border-bottom: 0; }
 .md th { background: var(--muted); font-weight: 600; }

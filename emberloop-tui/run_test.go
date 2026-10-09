@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -16,22 +16,22 @@ import (
 func cannedRunRows() []RunTicket {
 	at := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	return []RunTicket{
-		{Row: emberloop.DriverRow{
+		{Row: el.DriverRow{
 			ID: "01-first", Path: "/spec/issues/01-first.md", Num: 1,
-			State: emberloop.DriverRowRunning, Worker: "01-first", Pane: "pane-w1",
+			State: el.DriverRowRunning, Worker: "01-first", Pane: "pane-w1",
 			Tip: "tip1", Required: []string{"reviewer-standards", "reviewer-spec"},
-			Verdicts: map[string]emberloop.DriverReview{
+			Verdicts: map[string]el.DriverReview{
 				"reviewer-standards": {Verdict: "pass", At: "tip1"},
 			},
 			Since: at.Add(-3 * time.Minute),
 		}, Agents: []AgentSnap{
 			{ID: "w-one", Kind: AgentWorker, Harness: "pig", Pane: "pane-w1"},
 		}},
-		{Row: emberloop.DriverRow{
+		{Row: el.DriverRow{
 			ID: "02-second", Path: "/spec/issues/02-second.md", Num: 2,
-			State: emberloop.DriverRowNeedsYou, Worker: "02-second", Pane: "pane-w2",
+			State: el.DriverRowNeedsYou, Worker: "02-second", Pane: "pane-w2",
 			Tip: "tip2", Required: []string{"reviewer-standards", "reviewer-spec"},
-			Verdicts: map[string]emberloop.DriverReview{
+			Verdicts: map[string]el.DriverReview{
 				"reviewer-standards": {Verdict: "pass", At: "tip2"},
 				"reviewer-spec":      {Verdict: "changes", At: "tip2"},
 			},
@@ -40,9 +40,9 @@ func cannedRunRows() []RunTicket {
 		}, Agents: []AgentSnap{
 			{ID: "w-two", Kind: AgentWorker, Harness: "pig", Pane: "pane-w2"},
 		}},
-		{Row: emberloop.DriverRow{
+		{Row: el.DriverRow{
 			ID: "03-third", Path: "/spec/issues/03-third.md", Num: 3,
-			State: emberloop.DriverRowMerged,
+			State: el.DriverRowMerged,
 			Since: at,
 		}},
 	}
@@ -132,18 +132,18 @@ func TestRunPaneRendersEveryRow(t *testing.T) {
 // One row per ticket in every state: queued, running, in review, merging,
 // needs you, parked, merged.
 func TestRunPaneRendersEveryState(t *testing.T) {
-	states := []emberloop.DriverRowState{
-		emberloop.DriverRowQueued,
-		emberloop.DriverRowRunning,
-		emberloop.DriverRowInReview,
-		emberloop.DriverRowMerging,
-		emberloop.DriverRowNeedsYou,
-		emberloop.DriverRowParked,
-		emberloop.DriverRowMerged,
+	states := []el.DriverRowState{
+		el.DriverRowQueued,
+		el.DriverRowRunning,
+		el.DriverRowInReview,
+		el.DriverRowMerging,
+		el.DriverRowNeedsYou,
+		el.DriverRowParked,
+		el.DriverRowMerged,
 	}
 	var rows []RunTicket
 	for i, s := range states {
-		rows = append(rows, RunTicket{Row: emberloop.DriverRow{
+		rows = append(rows, RunTicket{Row: el.DriverRow{
 			ID:    "0" + string(rune('1'+i)) + "-ticket",
 			State: s,
 			Since: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC),
@@ -289,30 +289,30 @@ func TestRunLiveRowsJoinsAgentsByTicketPath(t *testing.T) {
 		first:  "# 01\n\n**Blocked by:** None\n",
 		second: "# 02\n\n**Blocked by:** None\n",
 	}
-	spec := emberloop.SpecRun{Spec: dir + "/spec.md", Tickets: dir, Branch: "spec/run-join"}
-	world := emberloop.DriverWorld{
+	spec := el.SpecRun{Spec: dir + "/spec.md", Tickets: dir, Branch: "spec/run-join"}
+	world := el.DriverWorld{
 		Files: files,
 		Now:   func() time.Time { return time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC) },
-		StartWorker: func(tk emberloop.DriverTicket) error {
+		StartWorker: func(tk el.DriverTicket) error {
 			return nil
 		},
 		Tip: func(id string) string { return "tip-" + id },
-		Reviews: func(id string) map[string]emberloop.DriverReview {
+		Reviews: func(id string) map[string]el.DriverReview {
 			if id == "02-second" {
 				return nil
 			}
-			return map[string]emberloop.DriverReview{
+			return map[string]el.DriverReview{
 				"reviewer-standards": {Verdict: "pass", At: "tip-" + id},
 				"reviewer-spec":      {Verdict: "pass", At: "tip-" + id},
 			}
 		},
-		Finish: func(id string) (emberloop.DriverFinish, error) {
-			return emberloop.DriverFinish{Merged: true, SHA: "sha-" + id}, nil
+		Finish: func(id string) (el.DriverFinish, error) {
+			return el.DriverFinish{Merged: true, SHA: "sha-" + id}, nil
 		},
 	}
-	run := emberloop.NewDriverRun(world.Now)
+	run := el.NewDriverRun(world.Now)
 	world.Run = run
-	if _, err := emberloop.RunDriver(spec, world); err != nil {
+	if _, err := el.RunDriver(spec, world); err != nil {
 		t.Fatalf("RunDriver: %v", err)
 	}
 	snap := Snap{Repos: []RepoSnap{
@@ -329,13 +329,13 @@ func TestRunLiveRowsJoinsAgentsByTicketPath(t *testing.T) {
 	if len(joined) != 2 {
 		t.Fatalf("joined = %d rows, want one per ticket", len(joined))
 	}
-	if joined[0].Row.State != emberloop.DriverRowMerged {
+	if joined[0].Row.State != el.DriverRowMerged {
 		t.Errorf("first state = %q, want merged", joined[0].Row.State)
 	}
 	if len(joined[0].Agents) != 1 || joined[0].Agents[0].ID != "w-one" {
 		t.Errorf("first agents = %+v, want the snapshot worker", joined[0].Agents)
 	}
-	if joined[1].Row.State != emberloop.DriverRowRunning {
+	if joined[1].Row.State != el.DriverRowRunning {
 		t.Errorf("second state = %q, want running", joined[1].Row.State)
 	}
 	if len(joined[1].Agents) != 0 {

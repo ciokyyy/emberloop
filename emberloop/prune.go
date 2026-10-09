@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 	"example.com/emberloop/statedb"
 )
 
-// Pruning deletes archived run data on purpose, never automatically: `emberloop
+// Pruning deletes archived run data on purpose, never automatically: `el
 // stats prune` takes a run filter (--run) or an age filter (--older-than), dry
 // runs by default, and only deletes with --apply. A dry run lists the runs
 // that would go and how much space they would free. Runs whose orchestrator
@@ -610,7 +610,7 @@ func ParseOlderThan(s string) (time.Duration, error) {
 // statsUsage is printed on a bad stats invocation. It documents the one
 // decision the ticket leaves open: pruning dry runs by default, and only
 // --apply deletes.
-const statsUsage = `usage: emberloop stats prune [--run <slug>]... [--older-than <age>] [--apply]
+const statsUsage = `usage: el stats prune [--run <slug>]... [--older-than <age>] [--apply]
 
   Prune archived run data on purpose; nothing is ever deleted automatically.
   A prune dry runs by default: it lists the runs that would go and how much
@@ -631,7 +631,7 @@ const statsUsage = `usage: emberloop stats prune [--run <slug>]... [--older-than
   ticket history, the run record and the usage logs of its agents, plus the
   blobs no surviving run references.`
 
-// RunStats serves `emberloop stats`. Today stats has one subcommand, prune;
+// RunStats serves `el stats`. Today stats has one subcommand, prune;
 // argv is what follows "stats".
 func RunStats(argv []string, out io.Writer) error {
 	if len(argv) == 0 || argv[0] == "-h" || argv[0] == "--help" || argv[0] == "help" {

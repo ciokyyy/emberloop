@@ -23,12 +23,12 @@ func graphFakeEnv(t *testing.T, cfg mcpfake.Config) string {
 	log := filepath.Join(t.TempDir(), "graph-methods.log")
 	cfg.LogPath = log
 	command, args, env := mcpfake.Helper(t, cfg)
-	t.Setenv("EMBERLOOP_GRAPH_TEST_COMMAND", command)
+	t.Setenv("EL_GRAPH_TEST_COMMAND", command)
 	raw, err := json.Marshal(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_GRAPH_TEST_ARGS", string(raw))
+	t.Setenv("EL_GRAPH_TEST_ARGS", string(raw))
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
@@ -39,12 +39,12 @@ func graphFakeEnv(t *testing.T, cfg mcpfake.Config) string {
 // every binary, so synthesis sees no real graph binary.
 func graphHermeticEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_BIN_DIR", t.TempDir())
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_BIN_DIR", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
-	t.Setenv("EMBERLOOP_GRAPH_TEST_COMMAND", "")
-	t.Setenv("EMBERLOOP_GRAPH_TEST_ARGS", "")
+	t.Setenv("EL_GRAPH_TEST_COMMAND", "")
+	t.Setenv("EL_GRAPH_TEST_ARGS", "")
 }
 
 // graphTools lists the fake's graph-shaped tools: the five exposed plus the
@@ -90,7 +90,7 @@ func TestGraphProjectSlugDiffersPerWorktree(t *testing.T) {
 func TestGraphDisabledSynthesizesNothing(t *testing.T) {
 	graphHermeticEnv(t)
 	graphFakeEnv(t, mcpfake.Config{Tools: graphTools()})
-	t.Setenv("EMBERLOOP_SETTINGS", writeGraphSettings(t, `{"graph":{"enabled":false}}`))
+	t.Setenv("EL_SETTINGS", writeGraphSettings(t, `{"graph":{"enabled":false}}`))
 	s := EffectiveSettings(t.TempDir())
 	if _, ok := GraphServerSetting(s); ok {
 		t.Fatal("disabled graph must synthesize no server")
@@ -151,7 +151,7 @@ func TestGraphSynthesisShapesServer(t *testing.T) {
 func TestGraphCacheDirBecomesEnv(t *testing.T) {
 	graphHermeticEnv(t)
 	graphFakeEnv(t, mcpfake.Config{Tools: graphTools()})
-	t.Setenv("EMBERLOOP_SETTINGS", writeGraphSettings(t, `{"graph":{"cache_dir":"/tmp/cbm"}}`))
+	t.Setenv("EL_SETTINGS", writeGraphSettings(t, `{"graph":{"cache_dir":"/tmp/cbm"}}`))
 	cfg, ok := GraphServerSetting(EffectiveSettings(t.TempDir()))
 	if !ok {
 		t.Fatal("override must synthesize a server")
@@ -165,7 +165,7 @@ func TestGraphCacheDirBecomesEnv(t *testing.T) {
 func TestGraphUserEntryWins(t *testing.T) {
 	graphHermeticEnv(t)
 	graphFakeEnv(t, mcpfake.Config{Tools: graphTools()})
-	t.Setenv("EMBERLOOP_SETTINGS", writeGraphSettings(t, `{"mcp_servers":{"graph":{"command":"/user/graph"}}}`))
+	t.Setenv("EL_SETTINGS", writeGraphSettings(t, `{"mcp_servers":{"graph":{"command":"/user/graph"}}}`))
 	got := WithGraphServer(EffectiveSettings(t.TempDir()))
 	if got.MCPServers[GraphServerName].Command != "/user/graph" {
 		t.Fatalf("user entry lost: %+v", got.MCPServers[GraphServerName])
@@ -173,7 +173,7 @@ func TestGraphUserEntryWins(t *testing.T) {
 }
 
 // The registry shaping keeps the exposed tools and drops the management set
-// and detect_changes; per-role placement is proved in the emberloop package,
+// and detect_changes; per-role placement is proved in the el package,
 // where the role resolution lives.
 func TestGraphRegistryShapesExposedSet(t *testing.T) {
 	graphHermeticEnv(t)

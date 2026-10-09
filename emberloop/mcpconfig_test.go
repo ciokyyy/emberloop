@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -20,7 +20,7 @@ func claudeHerdr(home, report string) func(string, []string) Result {
 		case "split":
 			return Result{Stdout: `{"result":{"pane":{"pane_id":"p9"}}}`}
 		case "run":
-			// The pane runs `emberloop exec <launch-file>`: read the launch the
+			// The pane runs `el exec <launch-file>`: read the launch the
 			// way exec would, to find the session it starts.
 			file, ok := execFileFromLine(args[3])
 			if !ok {
@@ -46,12 +46,12 @@ func claudeHerdr(home, report string) func(string, []string) Result {
 }
 
 // mcpConfigArg is the path claude was told to read its MCP config from: the
-// --mcp-config in the launch file the pane's `emberloop exec` line names.
+// --mcp-config in the launch file the pane's `el exec` line names.
 func mcpConfigArg(t *testing.T, calls [][]string) string {
 	t.Helper()
 	for _, c := range calls {
 		joined := strings.Join(c, " ")
-		idx := strings.Index(joined, "emberloop exec ")
+		idx := strings.Index(joined, "el exec ")
 		if idx < 0 {
 			continue
 		}
@@ -77,7 +77,7 @@ func TestReadOnlyLeavesNoClaudeMCPConfigBehind(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("EMBERLOOP_READONLY_HARNESS", "claude")
+	t.Setenv("EL_READONLY_HARNESS", "claude")
 
 	rec := &recorder{reply: claudeHerdr(home, "looks fine")}
 	if _, err := ReadOnly(rec.run, "", "", "look at it"); err != nil {
@@ -86,7 +86,7 @@ func TestReadOnlyLeavesNoClaudeMCPConfigBehind(t *testing.T) {
 
 	cfg := mcpConfigArg(t, rec.calls)
 	if !strings.HasPrefix(cfg, filepath.Dir(statePath)+string(os.PathSeparator)) {
-		t.Errorf("claude config %s lives outside emberloop's state dir %s", cfg, filepath.Dir(statePath))
+		t.Errorf("claude config %s lives outside el's state dir %s", cfg, filepath.Dir(statePath))
 	}
 	if _, err := os.Stat(cfg); !os.IsNotExist(err) {
 		t.Errorf("claude MCP config %s outlived the review (err=%v)", cfg, err)

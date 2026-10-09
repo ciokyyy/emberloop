@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	_ "embed"
@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// The register every emberloop session writes its own words in is the caveman
+// The register every el session writes its own words in is the caveman
 // plugin's, adopted as the plugin loads it, at its ultra level, always:
 //
 //   - the SessionStart text: a banner and caveman/SKILL.md, a byte-for-byte
@@ -29,7 +29,7 @@ import (
 //go:embed caveman/SKILL.md
 var cavemanSkill string
 
-// voiceLevel is the one intensity level emberloop runs. It has no switch.
+// voiceLevel is the one intensity level el runs. It has no switch.
 const voiceLevel = "ultra"
 
 // voiceBanner is the plugin's ruleset banner for that level.
@@ -40,9 +40,9 @@ const voiceReminder = "CAVEMAN MODE ACTIVE (" + voiceLevel + "). Enforce this re
 	"Drop articles, filler, pleasantries, hedging, and excess conjunctions. Prefer fragments over full natural-prose sentences. State each fact once. No preamble or recap." +
 	" Technical terms, code, commands, paths, and errors stay exact."
 
-// voiceEmberloop is what emberloop adds after the plugin's text: where a spawned agent's
+// voiceEl is what el adds after the plugin's text: where a spawned agent's
 // result goes.
-const voiceEmberloop = "Emberloop. Your report goes in the submit tool when you have one: call it last, " +
+const voiceEl = "El. Your report goes in the submit tool when you have one: call it last, " +
 	"with the full result inside it, in this register, and end the turn with no text after it. " +
 	"Without submit, the final answer is the result, not a recap of the steps."
 
@@ -77,13 +77,13 @@ func filterRuleset(skill, level string) string {
 }
 
 // voiceRegister is the register as the system prompt carries it.
-var voiceRegister = voiceBanner + "\n\n" + filterRuleset(cavemanSkill, voiceLevel) + "\n\n" + voiceEmberloop
+var voiceRegister = voiceBanner + "\n\n" + filterRuleset(cavemanSkill, voiceLevel) + "\n\n" + voiceEl
 
 // VoiceReminder is the per-turn reminder, for the extension that cannot import
 // this package.
 func VoiceReminder() string { return voiceReminder }
 
-// RunVoiceReminder serves `emberloop voice-reminder`. Plain, it prints the
+// RunVoiceReminder serves `el voice-reminder`. Plain, it prints the
 // reminder text, which the pig extension reads. With hook it prints claude's
 // UserPromptSubmit hook output, which adds the reminder to the user's message.
 func RunVoiceReminder(args []string, out io.Writer) error {

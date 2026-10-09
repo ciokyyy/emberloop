@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// Seam 1: harness command — every session emberloop launches carries EMBERLOOP_AGENT_ID
-// in its role environment, so its emberloop-mcp knows who it serves. The id is the
+// Seam 1: harness command — every session el launches carries EL_AGENT_ID
+// in its role environment, so its el-mcp knows who it serves. The id is the
 // session id, or the worker's ticket label when there is no session id yet.
 func TestEverySessionCarriesAnAgentID(t *testing.T) {
 	isolateState(t)
@@ -29,12 +29,12 @@ func TestEverySessionCarriesAnAgentID(t *testing.T) {
 			}
 			found := ""
 			for _, e := range cmd.Env {
-				if v, ok := strings.CutPrefix(e, "EMBERLOOP_AGENT_ID="); ok {
+				if v, ok := strings.CutPrefix(e, "EL_AGENT_ID="); ok {
 					found = v
 				}
 			}
 			if found != c.want {
-				t.Errorf("%s/%s: EMBERLOOP_AGENT_ID = %q, want %q in %q", name, harness, found, c.want, cmd.Env)
+				t.Errorf("%s/%s: EL_AGENT_ID = %q, want %q in %q", name, harness, found, c.want, cmd.Env)
 			}
 		}
 	}
@@ -46,7 +46,7 @@ func TestEverySessionCarriesAnAgentID(t *testing.T) {
 	}
 	got := ""
 	for _, e := range cmd.Env {
-		if v, ok := strings.CutPrefix(e, "EMBERLOOP_AGENT_ID="); ok {
+		if v, ok := strings.CutPrefix(e, "EL_AGENT_ID="); ok {
 			got = v
 		}
 	}
@@ -93,7 +93,7 @@ func TestImplementRunRecordIsWrittenListedAndUpdated(t *testing.T) {
 	if first.Ended != "" {
 		t.Errorf("a fresh run has no end time: %+v", first)
 	}
-	// The launch serves the recorded orchestrator id to its emberloop-mcp: the
+	// The launch serves the recorded orchestrator id to its el-mcp: the
 	// record and the session agree on who the orchestrator is.
 	launch, err := PrepareLaunch("pig", Session{ID: "orch-1", AgentID: "orch-1", Role: "implement", Spec: spec.Spec, Prompt: "x"})
 	if err != nil {
@@ -109,7 +109,7 @@ func TestImplementRunRecordIsWrittenListedAndUpdated(t *testing.T) {
 	}
 	launchID := ""
 	for _, e := range cmd.Env {
-		if v, ok := strings.CutPrefix(e, "EMBERLOOP_AGENT_ID="); ok {
+		if v, ok := strings.CutPrefix(e, "EL_AGENT_ID="); ok {
 			launchID = v
 		}
 	}

@@ -11,27 +11,27 @@ import (
 // reads only what it wrote and never the machine's own environment.
 func settingsEnv(t *testing.T, path string) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SETTINGS", path)
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SETTINGS", path)
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 }
 
 // homeEnv makes the default path resolve under a temp home with the override
 // unset, which is what the old-file fallback tests need.
 func homeEnv(t *testing.T, home string) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SETTINGS", "")
+	t.Setenv("EL_SETTINGS", "")
 	t.Setenv("HOME", home)
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 }
 
 // The default store lives beside the user's skills, not in machine state.
-func TestSettingsPathDefaultsToEmberloopPig(t *testing.T) {
+func TestSettingsPathDefaultsToElPig(t *testing.T) {
 	settingsEnv(t, "")
 	t.Setenv("HOME", "/home/example")
 	if got, want := SettingsPath(), filepath.Join("/home/example", ".emberloop", "settings.json"); got != want {
@@ -67,7 +67,7 @@ func TestSettingsReadsTheOldFileWhenTheNewOneIsAbsent(t *testing.T) {
 	}
 }
 
-// An explicit EMBERLOOP_SETTINGS file is the whole world: the old file must not
+// An explicit EL_SETTINGS file is the whole world: the old file must not
 // leak in and turn a hermetic test into a reading of the machine.
 func TestSettingsOverrideDoesNotFallBackToTheOldFile(t *testing.T) {
 	home := t.TempDir()
@@ -114,7 +114,7 @@ func TestSettingsSaveWritesTheNewPathOverTheOldFile(t *testing.T) {
 	}
 }
 
-// A key emberloop does not know yet survives a save, so the file can grow.
+// A key el does not know yet survives a save, so the file can grow.
 func TestSettingsKeepsUnknownKeys(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
 	settingsEnv(t, p)
@@ -142,8 +142,8 @@ func TestSettingsKeepsUnknownKeys(t *testing.T) {
 	}
 }
 
-// A key emberloop does not know inside a role object survives too, so a role can
-// grow without losing what a newer emberloop wrote there.
+// A key el does not know inside a role object survives too, so a role can
+// grow without losing what a newer el wrote there.
 func TestSettingsKeepsUnknownRoleFields(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
 	settingsEnv(t, p)
@@ -213,7 +213,7 @@ func TestSettingsSourceTracksFileEnvAndDefault(t *testing.T) {
 	if got := s.SourceOf("decision_model"); got != "default" {
 		t.Fatalf("decision_model source = %q, want default", got)
 	}
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "respan/span-01")
+	t.Setenv("EL_DECISION_MODEL", "respan/span-01")
 	if got := LoadSettings().SourceOf("decision_model"); got != "env" {
 		t.Fatalf("env did not win the source: %q", got)
 	}

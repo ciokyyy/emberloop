@@ -1,0 +1,347 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// fakeDaemon is the Daemon HTTP contract the proxies call back: spawn,
+// session reads and list, steer/follow-up, queue, interrupt, end and submit.
+type fakeDaemon struct {
+	t        *testing.T
+	spawned  []map[string]any
+	steered  []string
+	ended    []string
+	submits  []map[string]any
+	sessions map[string]fakeSession
+	order    []string
+}
+
+type fakeSession struct {
+	meta   map[string]any
+	events []map[string]any
+	live   bool
+}
+
+func newFakeDaemon(t *testing.T) *fakeDaemon {
+	t.Helper()
+	d := &fakeDaemon{t: t, sessions: map[string]fakeSession{}}
+	d.sessions["parent"] = fakeSession{meta: map[string]any{"id": "parent", "status": "idle"}}
+	d.sessions["child"] = fakeSession{
+		meta: map[string]any{"id": "child", "status": "working", "parentId": "parent"},
+		events: []map[string]any{
+			{"seq": 1, "kind": "prompt", "text": "job A"},
+			{"seq": 2, "kind": "assistant_chunk", "text": "working on it"},
+		},
+		live: true,
+	}
+	d.sessions["scout"] = fakeSession{
+		meta: map[string]any{"id": "scout", "status": "idle", "parentId": "parent", "scout": true},
+	}
+	d.sessions["stranger"] = fakeSession{meta: map[string]any{"id": "stranger", "status": "idle"}}
+	d.sessions["ended"] = fakeSession{meta: map[string]any{"id": "ended", "status": "ended", "parentId": "parent"}}
+	d.order = []string{"parent", "child", "scout", "stranger", "ended"}
+	return d
+}
+
+func (d *fakeDaemon) writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (d *fakeDaemon) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		var all []map[string]any
+		for _, id := range d.order {
+			all = append(all, d.sessions[id].meta)
+		}
+		d.writeJSON(w, http.StatusOK, all)
+	})
+	mux.HandleFunc("/api/sessions/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+		id, sub, _ := strings.Cut(rest, "/")
+		s, ok := d.sessions[id]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		switch {
+		case sub == "spawn" && r.Method == http.MethodPost:
+			var req struct {
+				Agents []map[string]any `json:"agents"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if len(req.Agents) == 0 {
+				d.writeJSON(w, http.StatusBadRequest, map[string]any{"error": "agents is required"})
+				return
+			}
+			if id == "scout" {
+				d.writeJSON(w, http.StatusForbidden, map[string]any{"error": "scout sessions are read-only"})
+				return
+			}
+			d.spawned = append(d.spawned, req.Agents...)
+			d.writeJSON(w, http.StatusCreated, map[string]any{
+				"group":    "g1",
+				"sessions": []map[string]any{{"id": "c1"}, {"id": "c2"}},
+			})
+		case sub == "" && r.Method == http.MethodGet:
+			d.writeJSON(w, http.StatusOK, map[string]any{"session": s.meta, "events": s.events, "live": s.live})
+		case (sub == "steer" || sub == "followup") && r.Method == http.MethodPost:
+			var req struct {
+				Text string `json:"text"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if sc, _ := s.meta["scout"].(bool); sc {
+				d.writeJSON(w, http.StatusForbidden, map[string]any{"error": "scout sessions are read-only"})
+				return
+			}
+			d.steered = append(d.steered, sub+":"+req.Text)
+			d.writeJSON(w, http.StatusAccepted, map[string]any{"seq": 7, "queued": false})
+		case sub == "queue":
+			d.writeJSON(w, http.StatusOK, map[string]any{"queue": []any{}})
+		case sub == "interrupt" && r.Method == http.MethodPost:
+			d.writeJSON(w, http.StatusOK, map[string]any{"interrupted": s.meta["status"] == "working"})
+		case sub == "submit" && r.Method == http.MethodPost:
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["status"] == "" {
+				http.Error(w, "status is required", http.StatusBadRequest)
+				return
+			}
+			d.submits = append(d.submits, req)
+			d.writeJSON(w, http.StatusAccepted, map[string]any{"submits": len(d.submits)})
+		case sub == "" && r.Method == http.MethodDelete:
+			d.ended = append(d.ended, id)
+			d.writeJSON(w, http.StatusOK, map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	return mux
+}
+
+// bindProxy points the proxy binding at the fake Daemon as one Session.
+func bindProxy(t *testing.T, srv *httptest.Server, session string) {
+	t.Helper()
+	t.Setenv(SudoGateDaemonEnv, srv.URL)
+	t.Setenv(SudoGateSessionEnv, session)
+}
+
+func proxyCall(t *testing.T, name, args string) (string, error) {
+	t.Helper()
+	tool := WebProxyTool(name)
+	if tool == nil {
+		t.Fatalf("WebProxyTool(%q) = nil", name)
+	}
+	return tool.Execute(context.Background(), t.TempDir(), json.RawMessage(args))
+}
+
+func TestWebProxySpawnPostsAgents(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+
+	out, err := proxyCall(t, "spawn", `{"agents":[{"prompt":"job A"},{"prompt":"look","type":"scout"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "spawned group g1: c1 c2" {
+		t.Fatalf("spawn = %q", out)
+	}
+	if len(d.spawned) != 2 {
+		t.Fatalf("spawned agents = %v", d.spawned)
+	}
+	if _, err := proxyCall(t, "spawn", `{"agents":[]}`); err == nil {
+		t.Fatal("empty agents must fail")
+	}
+}
+
+func TestWebProxySteerRoutesByStatus(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+
+	out, err := proxyCall(t, "steer", `{"id":"child","message":"go left"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "started steer on child (seq 7)" {
+		t.Fatalf("steer working = %q", out)
+	}
+	if len(d.steered) != 1 || d.steered[0] != "steer:go left" {
+		t.Fatalf("steered = %v", d.steered)
+	}
+
+	d.sessions["child"] = fakeSession{meta: map[string]any{"id": "child-1", "status": "idle", "parentId": "parent"}}
+	out, err = proxyCall(t, "steer", `{"id":"child","message":"go right"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "started follow-up on child (seq 7)" {
+		t.Fatalf("steer idle = %q", out)
+	}
+
+	for _, tc := range []struct{ id, want string }{
+		{"stranger", "not a child"},
+		{"scout", "read-only"},
+		{"ended", "session ended"},
+		{"missing", "unknown session"},
+	} {
+		if _, err := proxyCall(t, "steer", `{"id":"`+tc.id+`","message":"x"}`); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("steer %s err = %v, want %q", tc.id, err, tc.want)
+		}
+	}
+	if _, err := proxyCall(t, "steer", `{"id":"child"}`); err == nil {
+		t.Error("steer without message must fail")
+	}
+}
+
+func TestWebProxyCheckListsAndPeeks(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+
+	out, err := proxyCall(t, "check", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three children of the bound parent: the worker, the scout and the ended one.
+	for _, want := range []string{"worker", "scout", "ended"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("check list = %q, want %q", out, want)
+		}
+	}
+	if strings.Contains(out, "stranger") {
+		t.Errorf("check list leaks a stranger: %q", out)
+	}
+
+	out, err = proxyCall(t, "check", `{"id":"child"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "status=working") || !strings.Contains(out, "working on it") {
+		t.Errorf("check one = %q", out)
+	}
+	if _, err := proxyCall(t, "check", `{"id":"stranger"}`); err == nil || !strings.Contains(err.Error(), "not a child") {
+		t.Errorf("check stranger err = %v", err)
+	}
+}
+
+func TestWebProxyCancelInterruptsAndKills(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+
+	out, err := proxyCall(t, "cancel", `{"id":"child"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "interrupted child" {
+		t.Fatalf("cancel working = %q", out)
+	}
+
+	d.sessions["child"] = fakeSession{meta: map[string]any{"id": "child-1", "status": "idle", "parentId": "parent"}}
+	out, err = proxyCall(t, "cancel", `{"id":"child"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "child already idle" {
+		t.Fatalf("cancel idle = %q", out)
+	}
+
+	out, err = proxyCall(t, "cancel", `{"id":"child","kill":true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "killed child" {
+		t.Fatalf("cancel kill = %q", out)
+	}
+	if len(d.ended) != 1 {
+		t.Fatalf("ended = %v", d.ended)
+	}
+
+	if _, err := proxyCall(t, "cancel", `{"id":"stranger"}`); err == nil || !strings.Contains(err.Error(), "not a child") {
+		t.Errorf("cancel stranger err = %v", err)
+	}
+	// Scouts stop without messaging: the interrupt lands.
+	if _, err := proxyCall(t, "cancel", `{"id":"scout"}`); err != nil {
+		t.Errorf("cancel scout err = %v", err)
+	}
+}
+
+func TestWebProxySubmitPostsOwnResult(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "child")
+
+	out, err := proxyCall(t, "submit", `{"status":"done","completed":["box one"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "submitted done (submit 1)" {
+		t.Fatalf("submit = %q", out)
+	}
+	if len(d.submits) != 1 || d.submits[0]["status"] != "done" {
+		t.Fatalf("submits = %v", d.submits)
+	}
+	if _, err := proxyCall(t, "submit", `{}`); err == nil || !strings.Contains(err.Error(), "status is required") {
+		t.Errorf("submit without status err = %v", err)
+	}
+}
+
+func TestWebProxyNeedsBinding(t *testing.T) {
+	t.Setenv(SudoGateDaemonEnv, "")
+	t.Setenv(SudoGateSessionEnv, "")
+	for _, name := range []string{"spawn", "steer", "check", "cancel", "submit"} {
+		if _, err := proxyCall(t, name, `{}`); err == nil || !strings.Contains(err.Error(), "not bound") {
+			t.Errorf("%s unbound err = %v", name, err)
+		}
+	}
+	if WebProxyTool("nope") != nil {
+		t.Error("WebProxyTool(nope) must be nil")
+	}
+	if _, _, ok := WebDaemonBinding(); ok {
+		t.Error("empty binding must not bind")
+	}
+}
+
+func TestWebProxyCheckIsReadOnly(t *testing.T) {
+	check := WebProxyTool("check")
+	ro, ok := check.(ReadOnly)
+	if !ok || !ro.ReadOnly() {
+		t.Fatal("check must stay read-only so the MCP server can batch it")
+	}
+	for _, name := range []string{"spawn", "steer", "cancel", "submit"} {
+		if ro, ok := WebProxyTool(name).(ReadOnly); ok && ro.ReadOnly() {
+			t.Errorf("%s must not be read-only", name)
+		}
+	}
+}
+
+// Daemon proxies never reach a script, even renamed: steering, peeking,
+// stopping, spawning or submitting from inside execute would bypass the
+// harness that owns the turn.
+func TestWebProxiesStayOutOfExecute(t *testing.T) {
+	for _, name := range []string{"spawn", "steer", "check", "cancel", "submit"} {
+		if !ExecuteExcludedTool(WebProxyTool(name)) {
+			t.Errorf("%s proxy must stay out of execute", name)
+		}
+		if !ExecuteExcludedTool(Renamed(WebProxyTool(name), "renamed-"+name)) {
+			t.Errorf("renamed %s proxy must stay out of execute", name)
+		}
+	}
+	if ExecuteExcludedTool(readTool{}) {
+		t.Error("read must stay script-callable")
+	}
+}

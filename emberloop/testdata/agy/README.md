@@ -2,7 +2,7 @@
 
 Captured 2026-10-05 with `agy` 1.2.17, model `gemini-3.8-flash-low`
 unless noted. See the ticket
-(`.scratch/harnesses-agy/issues/03-agy-probe.md`) for the question each
+(`.scratch/archive/harnesses-agy/issues/03-agy-probe.md`) for the question each
 answers. Paths inside payloads point at the probe machine; tests should
 parse structure, not absolute paths.
 

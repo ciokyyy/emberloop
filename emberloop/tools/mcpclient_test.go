@@ -128,11 +128,11 @@ func TestMCPCallToolReturnsTextAndForwardsArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := got[0].Execute(context.Background(), t.TempDir(), []byte(`{"query":"emberloop"}`))
+	text, err := got[0].Execute(context.Background(), t.TempDir(), []byte(`{"query":"el"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if text != `search({"query":"emberloop"})` {
+	if text != `search({"query":"el"})` {
 		t.Fatalf("call text = %q, want the echo with arguments", text)
 	}
 }

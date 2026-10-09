@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -10,22 +10,23 @@ import (
 	"time"
 )
 
-// systemPrompt is the rule set every emberloop session carries. The tools are
-// emberloop's own; background exists because a blocking bash call on a dev server
+// systemPrompt is the rule set every el session carries. The tools are
+// el's own; background exists because a blocking bash call on a dev server
 // never returns. The skill sentence names the one address the read tool serves
 // the library under, so an open session can load a skill the user names.
-var systemPrompt = "Your file and shell tools are emberloop's: read, find, edit, write, bash, background. " +
+var systemPrompt = "Your file and shell tools are el's: read, find, edit, write, bash, background. " +
 	"Never start a dev server, watcher or log tail with bash: it blocks until timeout. Use background(action=start) and read or stop it later. " +
 	"For facts about this repo, spawn a scout when you have one: spawn(agents=[{type: \"scout\", prompt: \"...\"}]). Scouts report facts only; decisions stay with you and the user. " +
-	"Skills are listed by reading emberloop://" + skillsNamespace + "; when the user asks for one by name " +
+	"Skills are listed by reading el://" + skillsNamespace + "; when the user asks for one by name " +
 	"(grill, research, wayfinder, tdd, to-spec), read the matching skill and follow it exactly. " +
+	"Upkeep of el itself is documented under el://" + docsNamespace + " (update, verify, webui): when the user asks to update, rebuild or verify el, or to manage the web UI Daemon, read the page first. " +
 	"When a spawn starts agents, end your turn: one notice with every result arrives when the last agent of that call has submitted. Never poll with sleep or bash while agents run." +
 	" A spawned agent yields right after submit: end the turn at once, with no text." +
 	" " + voiceRegister
 
 // Session is everything an adapter needs to start one agent.
 type Session struct {
-	Role  string // picks the tool set served by emberloop-mcp
+	Role  string // picks the tool set served by el-mcp
 	Model string
 	// Effort is the reasoning effort in the harness's own vocabulary; empty
 	// means the harness's default.
@@ -51,7 +52,7 @@ type Command struct {
 }
 
 // Harness turns a Session into the command that starts it. A new agent CLI is
-// one type implementing this and one Register call; nothing else in emberloop
+// one type implementing this and one Register call; nothing else in el
 // (launcher, workers, reviewers, scouts) names a harness.
 type Harness interface {
 	Name() string
@@ -109,7 +110,7 @@ func HarnessNames() []string {
 	return names
 }
 
-// withAgentID gives every session an agent id, so its emberloop-mcp knows who it
+// withAgentID gives every session an agent id, so its el-mcp knows who it
 // serves. An explicit id wins; otherwise the harness session id names it, then
 // the label (a worker's ticket id), then a fresh id for a bare session with
 // neither. It is applied in the session builder (BuildCommand/PrepareLaunch),
@@ -159,45 +160,45 @@ func (c Command) Line() string {
 	return strings.Join(words, " ")
 }
 
-// roleEnv is what the session's emberloop process needs to know: its role, the
+// roleEnv is what the session's el process needs to know: its role, the
 // agent type and id of a spawned agent, for an implement session the spec
 // (which spawn hands to every worker), and the session id naming its harness
 // transcript. The session dir (pig only: claude takes none) and the launch
 // choice (harness, model, effort) come from the harness command beside it;
-// together they let the session's own emberloop process (the emberloop-mcp attached to
+// together they let the session's own el process (the el-mcp attached to
 // the harness) snapshot the session's blobs and tail its transcript into the
 // archive.
 func roleEnv(s Session) []string {
-	env := []string{"EMBERLOOP_ROLE=" + s.Role}
+	env := []string{"EL_ROLE=" + s.Role}
 	if s.AgentType != "" {
-		env = append(env, "EMBERLOOP_AGENT_TYPE="+s.AgentType)
+		env = append(env, "EL_AGENT_TYPE="+s.AgentType)
 	}
 	if s.AgentID != "" {
-		env = append(env, "EMBERLOOP_AGENT_ID="+s.AgentID)
+		env = append(env, "EL_AGENT_ID="+s.AgentID)
 	}
 	if s.Spec != "" {
-		env = append(env, "EMBERLOOP_SPEC="+s.Spec)
+		env = append(env, "EL_SPEC="+s.Spec)
 	}
 	if s.ID != "" {
-		env = append(env, "EMBERLOOP_SESSION_ID="+s.ID)
+		env = append(env, "EL_SESSION_ID="+s.ID)
 	}
 	return env
 }
 
-// harnessEnv is the launch choice the session's emberloop process records in its
+// harnessEnv is the launch choice the session's el process records in its
 // flags blob: the harness, model and effort the session started with.
 func harnessEnv(harness string, s Session) []string {
-	env := []string{"EMBERLOOP_HARNESS=" + harness}
+	env := []string{"EL_HARNESS=" + harness}
 	if s.Model != "" {
-		env = append(env, "EMBERLOOP_MODEL="+s.Model)
+		env = append(env, "EL_MODEL="+s.Model)
 	}
 	if s.Effort != "" {
-		env = append(env, "EMBERLOOP_EFFORT="+s.Effort)
+		env = append(env, "EL_EFFORT="+s.Effort)
 	}
 	return env
 }
 
-// pigHarness: pig loads emberloop-mcp from its mcp.json, so the built-in tools are
+// pigHarness: pig loads el-mcp from its mcp.json, so the built-in tools are
 // switched off and the role's MCP tool set is all that is left.
 type pigHarness struct{}
 
@@ -214,7 +215,7 @@ func pigSessionFileID(s Session) string {
 
 func (pigHarness) Command(s Session) (Command, error) {
 	// --no-skills keeps the harness from loading the user's global library:
-	// a session reaches skills only by the emberloop:// addresses its prompt names.
+	// a session reaches skills only by the el:// addresses its prompt names.
 	args := []string{"--no-builtin-tools", "--no-skills", "--append-system-prompt", systemPrompt}
 	if ext := reportExtension(runningExe(), os.Getenv("HOME")); ext != "" && !s.Headless {
 		args = append(args, "-e", ext)
@@ -241,9 +242,9 @@ func (pigHarness) Command(s Session) (Command, error) {
 	args = appendPrompt(args, s.Prompt)
 	env := append(roleEnv(s), harnessEnv("pig", s)...)
 	if s.Label != "" {
-		env = append(env, "EMBERLOOP_AGENT_LABEL="+s.Label)
+		env = append(env, "EL_AGENT_LABEL="+s.Label)
 	}
-	// The session's emberloop-mcp tails this transcript for the usage log; the
+	// The session's el-mcp tails this transcript for the usage log; the
 	// id is what the transcript file carries, the dir where it looks.
 	env = append(env, usageTailEnv("pig", pigSessionFileID(s), s.Dir)...)
 	return Command{Bin: pigBin(), Args: args, Env: env}, nil
@@ -315,29 +316,29 @@ func (claudeHarness) LastReply(path string) (string, bool) {
 }
 
 // claudeStopGate is the settings claude is launched with: a `Stop` hook that
-// runs emberloop's shared gate, so a claude agent cannot end a turn without
+// runs el's shared gate, so a claude agent cannot end a turn without
 // submitting, and a `UserPromptSubmit` hook that adds the register's per-turn
 // reminder to every user message, as the caveman plugin does, and turns off
 // the away recap (awaySummaryEnabled; the env var does the same), hides spinner tips and skips the bypass-mode prompt. It is passed
 // inline with --settings, which still applies under --setting-sources "".
-const claudeStopGate = `{"awaySummaryEnabled":false,"spinnerTipsEnabled":false,"statusLine":{"type":"command","command":"emberloop claude-status"},"skipDangerousModePermissionPrompt":true,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"emberloop stop-gate"}]}],` +
-	`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"emberloop voice-reminder hook"}]}]}}`
+const claudeStopGate = `{"awaySummaryEnabled":false,"spinnerTipsEnabled":false,"statusLine":{"type":"command","command":"el claude-status"},"skipDangerousModePermissionPrompt":true,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"el stop-gate"}]}],` +
+	`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"el voice-reminder hook"}]}]}}`
 
 type claudeHarness struct{}
 
 func (claudeHarness) Name() string { return "claude" }
 
 func (claudeHarness) Command(s Session) (Command, error) {
-	// Claude starts emberloop-mcp from this config, not from its own environment:
+	// Claude starts el-mcp from this config, not from its own environment:
 	// an MCP stdio server gets the default env merged with this map, so the
-	// session identity the tailer reads (like the EMBERLOOP_AGENT_ID the tools
+	// session identity the tailer reads (like the EL_AGENT_ID the tools
 	// already rely on) travels here, as does the launch choice the archiver
-	// stores in the flags blob. Pig's emberloop-mcp instead inherits its process
+	// stores in the flags blob. Pig's el-mcp instead inherits its process
 	// env, which the pig command covers the same way.
 	mcpEnv := append(roleEnv(s), harnessEnv("claude", s)...)
 	mcpEnv = append(mcpEnv, usageTailEnv("claude", s.ID, "")...)
-	cfg, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"emberloop": map[string]any{
-		"command": "emberloop-mcp", "env": envMap(mcpEnv),
+	cfg, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"el": map[string]any{
+		"command": "el-mcp", "env": envMap(mcpEnv),
 	}}})
 	if err != nil {
 		return Command{}, err
@@ -357,7 +358,7 @@ func (claudeHarness) Command(s Session) (Command, error) {
 		// Bypass mode never stops to ask, and replaces the auto mode footer.
 		// Slash commands stay on so /model and /resume work; --tools "" keeps
 		// the Skill tool away from the model.
-		"--allowedTools", "mcp__emberloop", "--permission-mode", "bypassPermissions",
+		"--allowedTools", "mcp__el", "--permission-mode", "bypassPermissions",
 	}
 	if s.Headless {
 		args = append(args, "-p", "--no-session-persistence")
@@ -372,7 +373,7 @@ func (claudeHarness) Command(s Session) (Command, error) {
 	}
 	args = appendPrompt(args, s.Prompt)
 	// Claude's transcript is named by its session id; without one there is
-	// nothing for the session's emberloop-mcp to tail. Claude takes no session
+	// nothing for the session's el-mcp to tail. Claude takes no session
 	// dir, so none is passed. The process env carries the same identity as
 	// the MCP config above, plus claude's own switches.
 	return Command{Bin: "claude", Args: args, Env: append(mcpEnv,
@@ -384,7 +385,7 @@ func (claudeHarness) Command(s Session) (Command, error) {
 }
 
 // mcpConfigPath is where the MCP config of one claude session is written: under
-// emberloop's state dir, named for the session, so whoever owns the session's
+// el's state dir, named for the session, so whoever owns the session's
 // lifetime can delete it. A temp file outlives every launch that makes one.
 func mcpConfigPath(s Session) string {
 	key := s.ID
@@ -398,15 +399,15 @@ func mcpConfigPath(s Session) string {
 }
 
 // CleanupSession removes the per-session files a harness launch left behind:
-// the MCP config claude reads at startup and the launch file `emberloop exec`
-// reads, both under emberloop's state dir. Call it when the session ends; a file
-// that is already gone is the wanted end state, not a failure. `emberloop
+// the MCP config claude reads at startup and the launch file `el exec`
+// reads, both under el's state dir. Call it when the session ends; a file
+// that is already gone is the wanted end state, not a failure. `el
 // exec` already consumes the launch file once it has read it, so this is the
 // backup for a launch that never started.
 func CleanupSession(s Session) { _ = os.Remove(mcpConfigPath(s)); _ = os.Remove(launchPath(s)) }
 
 // cleanupMCP removes only the MCP config, for launches whose launch file the
-// pane's `emberloop exec` still has to consume: deleting it right after pane
+// pane's `el exec` still has to consume: deleting it right after pane
 // run would race the agent's startup.
 func cleanupMCP(s Session) { _ = os.Remove(mcpConfigPath(s)) }
 
@@ -451,7 +452,7 @@ func envMap(env []string) map[string]string {
 	return m
 }
 
-// pig has no folder-trust prompt for the sessions emberloop starts.
+// pig has no folder-trust prompt for the sessions el starts.
 func (pigHarness) Trust(string) error { return nil }
 
 // Trust sets hasTrustDialogAccepted for dir in ~/.claude.json, the flag the
@@ -523,8 +524,8 @@ type Launch struct {
 }
 
 // PrepareLaunch writes the session's complete launch (binary, args including
-// the full prompt, env) to a launch file in emberloop's state dir and returns the
-// one shell-agnostic line the pane runs: `emberloop exec <launch-file>`. The
+// the full prompt, env) to a launch file in el's state dir and returns the
+// one shell-agnostic line the pane runs: `el exec <launch-file>`. The
 // prompt stays out of the typed line, so newlines and quoting survive and the
 // line is one line in fish, bash and zsh alike. A harness that takes its
 // first message after startup keeps it in Late: the launch file holds the

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -59,7 +59,7 @@ func readFile(t *testing.T, path string) string {
 
 func TestInstallSkillsFillsTheLibrary(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("EMBERLOOP_SKILLS_DIR", root)
+	t.Setenv("EL_SKILLS_DIR", root)
 
 	fake := &fakeSkills{
 		skills: map[string]string{"tdd": "# tdd", "implement": "# implement"},
@@ -92,7 +92,7 @@ func TestInstallSkillsFillsTheLibrary(t *testing.T) {
 
 func TestInstallSkillsKeepsTheOldLibraryOnFailure(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("EMBERLOOP_SKILLS_DIR", root)
+	t.Setenv("EL_SKILLS_DIR", root)
 	old := filepath.Join(root, "matt-pocock", "old")
 	if err := os.MkdirAll(old, 0o755); err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestInstallSkillsKeepsTheOldLibraryOnFailure(t *testing.T) {
 }
 
 func TestInstallSkillsReportsMissingBunx(t *testing.T) {
-	t.Setenv("EMBERLOOP_SKILLS_DIR", t.TempDir())
+	t.Setenv("EL_SKILLS_DIR", t.TempDir())
 	fake := &fakeSkills{fail: func() (Result, error) {
 		return Result{}, &exec.Error{Name: "bunx", Err: exec.ErrNotFound}
 	}}
@@ -132,7 +132,7 @@ func TestInstallSkillsReportsMissingBunx(t *testing.T) {
 
 func TestInstallSkillsReportsFailedGitInit(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("EMBERLOOP_SKILLS_DIR", root)
+	t.Setenv("EL_SKILLS_DIR", root)
 	fake := &fakeSkills{
 		skills: map[string]string{"one": "# one"},
 		git:    Result{Stderr: "not a git repository", Code: 128},
@@ -148,7 +148,7 @@ func TestInstallSkillsReportsFailedGitInit(t *testing.T) {
 
 func TestInstallSkillsReplacesTheOldLibrary(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("EMBERLOOP_SKILLS_DIR", root)
+	t.Setenv("EL_SKILLS_DIR", root)
 
 	first := &fakeSkills{skills: map[string]string{"one": "# one"}, lock: `{"one":1}`}
 	if err := InstallSkills(first.run); err != nil {

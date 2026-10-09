@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"errors"
@@ -9,12 +9,12 @@ import (
 	"strings"
 )
 
-// skillsRepo is the upstream library emberloop installs.
+// skillsRepo is the upstream library el installs.
 const skillsRepo = "mattpocock/skills"
 
 // errNoBunx tells the reader what is missing and what to do about it.
 var errNoBunx = errors.New("bunx was not found: install bun from https://bun.sh, " +
-	"then run `emberloop skills install` again")
+	"then run `el skills install` again")
 
 // InstallSkills fills skillsDir from skillsRepo using the `skills` CLI.
 //

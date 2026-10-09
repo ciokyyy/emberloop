@@ -271,7 +271,7 @@ func TestWebsearchFreshnessReachesProviders(t *testing.T) {
 // A headerless failure does not hide the last known quota in the footer:
 // the footer reads the latest row that reports something.
 func TestWebsearchFooterKeepsLastKnownQuota(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	db, err := statedb.Open(statedb.DBPath())
 	if err != nil {
 		t.Fatal(err)

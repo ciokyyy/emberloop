@@ -25,12 +25,20 @@ The Subagents created by one `spawn` call. The parent receives one grouped resul
 _Avoid_: Batch, swarm
 
 **Steer**:
-A prompt delivered to a running Session at its next tool boundary.
+A prompt delivered to a running Session mid-turn: at its next tool boundary for pig, injected into the turn through the adapter for claude. A parent steers its own Subagent with the `steer` tool; an idle child starts as a follow-up instead.
 _Avoid_: Interrupt, nudge
 
 **Follow-up**:
 A prompt delivered to a Session after its current turn ends.
 _Avoid_: Queue message, next prompt
+
+**Check**:
+A read-only peek by a parent at its own Subagents: one status line each, or one child plus its recent events. Never a poll: the grouped result still arrives on its own.
+_Avoid_: Poll, status query
+
+**Cancel**:
+Stopping a parent's own Subagent mid-turn without touching the parent turn; kill also ends the child Session. A stop, not a message, so scouts can be stopped.
+_Avoid_: Kill, abort
 
 **Event**:
 One normalized record of something a Session did or received: message chunk, tool call, prompt, status change.

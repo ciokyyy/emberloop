@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# emberloop installer entry point. Checks for Go, then runs the installer TUI
+# el installer entry point. Checks for Go, then runs the installer TUI
 # in ./installer. Every flag passes through: see installer/main.go.
 set -euo pipefail
 

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -63,8 +63,8 @@ func TestReadOversizeNamesBashForBashRoles(t *testing.T) {
 			t.Errorf("%s oversize refusal must name bash, got %q", role, err)
 		}
 	}
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "worker")
-	t.Setenv("EMBERLOOP_AGENT_ID", "w1")
+	t.Setenv("EL_AGENT_TYPE", "worker")
+	t.Setenv("EL_AGENT_ID", "w1")
 	if err := readPathErr(t, servedRead(t, "agent"), path); err == nil ||
 		!strings.Contains(err.Error(), "with bash") {
 		t.Errorf("a worker agent oversize refusal must name bash, got %v", err)
@@ -92,8 +92,8 @@ func TestReadOversizeNamesGrepForRolesWithoutBash(t *testing.T) {
 			t.Errorf("%s has no bash, so its refusal must not name it, got %q", role, msg)
 		}
 	}
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "scout")
-	t.Setenv("EMBERLOOP_AGENT_ID", "s1")
+	t.Setenv("EL_AGENT_TYPE", "scout")
+	t.Setenv("EL_AGENT_ID", "s1")
 	if err := readPathErr(t, servedRead(t, "agent"), path); err == nil ||
 		!strings.Contains(err.Error(), "tools.grep") ||
 		strings.Contains(err.Error(), "bash") {

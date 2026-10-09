@@ -1,10 +1,10 @@
-package emberloop
+package el
 
 // Claude account usage for the strip: the 5-hour and weekly rate-limit
 // windows. Claude hands its statusline command a JSON blob after every
 // assistant message, with rate_limits.five_hour and rate_limits.seven_day.
-// `emberloop claude-status` is that command: it stores the two windows in one
-// small file in emberloop's state dir, and every strip reads the file on its
+// `el claude-status` is that command: it stores the two windows in one
+// small file in el's state dir, and every strip reads the file on its
 // poll. The numbers are account-wide, so the newest write from any claude
 // pane wins.
 
@@ -68,7 +68,7 @@ func RunClaudeStatus(in io.Reader, stateDir string) error {
 	if err := json.NewDecoder(in).Decode(&s); err != nil {
 		return nil
 	}
-	storeLiveTranscript(stateDir, os.Getenv("EMBERLOOP_AGENT_ID"), s.TranscriptPath)
+	storeLiveTranscript(stateDir, os.Getenv("EL_AGENT_ID"), s.TranscriptPath)
 	if s.RateLimits.FiveHour == nil && s.RateLimits.SevenDay == nil {
 		return nil
 	}

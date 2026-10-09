@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -12,13 +12,13 @@ import (
 func resolverSettings(t *testing.T, body string) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "settings.json")
-	t.Setenv("EMBERLOOP_SETTINGS", p)
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_SETTINGS", p)
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
 	// The read-only harness override is the resolver's flag layer and it wins
 	// over any slot: clear it, so a launch reads only what the test writes.
-	t.Setenv("EMBERLOOP_READONLY_HARNESS", "")
+	t.Setenv("EL_READONLY_HARNESS", "")
 	if body != "" {
 		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -126,12 +126,12 @@ func TestResolvePrecedencePerField(t *testing.T) {
 	}
 }
 
-// EMBERLOOP_READONLY_HARNESS is the resolver's flag layer: it drops the slot's
+// EL_READONLY_HARNESS is the resolver's flag layer: it drops the slot's
 // model and effort for another harness, the post-finish case of a pig slot
 // with a claude override resolving to a pig model on claude.
 func TestResolveReadonlyHarnessDropsTheSlotsModel(t *testing.T) {
 	resolverSettings(t, `{"roles":{"code-review":{"harness":"pig","model":"slot-model","effort":"minimal"}}}`)
-	t.Setenv("EMBERLOOP_READONLY_HARNESS", "claude")
+	t.Setenv("EL_READONLY_HARNESS", "claude")
 	if got := Resolve("code-review", readonlyHarnessChoice(), Choice{}); got != (Choice{Harness: "claude"}) {
 		t.Errorf("Resolve = %+v, want {claude}", got)
 	}

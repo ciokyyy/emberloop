@@ -15,13 +15,13 @@ import (
 // pinned adapter. Never runs in the main check (it needs claude login,
 // node and network):
 //
-//	EMBERLOOP_LIVE=claude go test -tags live -run TestLiveClaudeBackend .
+//	EL_LIVE=claude go test -tags live -run TestLiveClaudeBackend .
 //
-// It uses the spike echo server as the MCP server, so no emberloop-mcp
+// It uses the spike echo server as the MCP server, so no el-mcp
 // binary is needed.
 func TestLiveClaudeBackend(t *testing.T) {
-	if os.Getenv("EMBERLOOP_LIVE") != "claude" {
-		t.Skip("set EMBERLOOP_LIVE=claude for the real-adapter probe")
+	if os.Getenv("EL_LIVE") != "claude" {
+		t.Skip("set EL_LIVE=claude for the real-adapter probe")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -57,11 +57,13 @@ func TestLiveClaudeBackend(t *testing.T) {
 	native := []string{"Task", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"}
 	var chunks, tools int
 	var sawEcho, sawDone bool
+	var reply strings.Builder
 	for _, e := range got {
 		switch e.Kind {
 		case "assistant_chunk":
 			chunks++
-			if strings.Contains(e.Text, "SPIKE-DONE") {
+			reply.WriteString(e.Text)
+			if strings.Contains(reply.String(), "SPIKE-DONE") {
 				sawDone = true
 			}
 		case "tool_call_started":
@@ -99,7 +101,7 @@ func TestLiveClaudeBackend(t *testing.T) {
 	be2.mcpCommand = node
 	be2.mcpArgs = []string{absEcho}
 	be2.allowedTools = []string{"mcp__spike__spike_echo"}
-	if err := be2.LoadSession("live-claude-2", acpID, "haiku", cwd, false); err != nil {
+	if err := be2.LoadSession("live-claude-2", acpID, "haiku", cwd, "web"); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	var got2 []Event

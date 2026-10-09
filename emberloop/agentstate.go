@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -61,7 +61,7 @@ type AgentState struct {
 	LostNotified bool `json:"lost_notified,omitempty"`
 	// SessionID is the harness session id currently in use: the id the
 	// transcript file carries. It is set at launch and changes at each
-	// restart, while ID stays the stable emberloop agent id every other record
+	// restart, while ID stays the stable el agent id every other record
 	// (usage rows, submits, gate state, pane mapping) is keyed by. A new
 	// child always gets a fresh UUID, never a reused id.
 	SessionID string `json:"session_id,omitempty"`
@@ -78,7 +78,7 @@ type AgentState struct {
 	// the same tool set. Workers restart as agents from their own store.
 	Role string `json:"role,omitempty"`
 	// Cwd is the directory the session runs in: the top-level session
-	// records where emberloop started, so a compress restart relaunches
+	// records where el started, so a compress restart relaunches
 	// there. Workers restart in their worktree from their own store.
 	Cwd string `json:"cwd,omitempty"`
 	// ExitCode is how the agent's child process ended, recorded by the

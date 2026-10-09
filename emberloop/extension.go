@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"example.com/emberloop/tools"
@@ -20,34 +20,34 @@ var workerSkills = []struct{ name, when string }{
 	{"tdd", "at the pre-agreed seams, while doing the work"},
 }
 
-// skillsRoot is where emberloop keeps the skill libraries it installs. The env var
-// names the root itself, so EMBERLOOP_SKILLS_DIR overrides the whole tree, not one
+// skillsRoot is where el keeps the skill libraries it installs. The env var
+// names the root itself, so EL_SKILLS_DIR overrides the whole tree, not one
 // library inside it.
 func skillsRoot() string {
-	if dir := os.Getenv("EMBERLOOP_SKILLS_DIR"); dir != "" {
+	if dir := os.Getenv("EL_SKILLS_DIR"); dir != "" {
 		return dir
 	}
 	return filepath.Join(os.Getenv("HOME"), ".emberloop", "skills")
 }
 
 // skillsNamespace is the library's directory under the skills root, and the
-// namespace its emberloop:// addresses carry. The two must stay one string: an
+// namespace its el:// addresses carry. The two must stay one string: an
 // address that names a namespace the read tool cannot find reads as nothing.
 const skillsNamespace = "matt-pocock"
 
-// skillsDir is the library emberloop installs: the mattpocock skills, one
+// skillsDir is the library el installs: the mattpocock skills, one
 // directory per skill, under the root.
 func skillsDir() string {
 	return filepath.Join(skillsRoot(), skillsNamespace)
 }
 
-// skillAddress is the emberloop:// address the read tool serves one skill under.
+// skillAddress is the el:// address the read tool serves one skill under.
 // Reading the namespace itself returns the index of every skill.
 func skillAddress(name string) string {
-	return "emberloop://" + skillsNamespace + "/" + name + "/SKILL.md"
+	return "el://" + skillsNamespace + "/" + name + "/SKILL.md"
 }
 
-// SkillLibraryDir is where emberloop installs and reads the skill library, for
+// SkillLibraryDir is where el installs and reads the skill library, for
 // callers outside the package.
 func SkillLibraryDir() string { return skillsDir() }
 
@@ -56,7 +56,7 @@ func SkillLibraryDir() string { return skillsDir() }
 // wins; otherwise the first candidate directory that exists wins. exe and home
 // are parameters so a test can point them at temp dirs.
 func reportExtension(exe, home string) string {
-	if ext := os.Getenv("EMBERLOOP_HERDR_REPORT"); ext != "" {
+	if ext := os.Getenv("EL_HERDR_REPORT"); ext != "" {
 		return ext
 	}
 	for _, candidate := range reportCandidates(exe, home) {
@@ -89,7 +89,7 @@ func reportExtensionWarning(harness string) string {
 		return ""
 	}
 	return "\nwarning: the herdr-report extension was not found, so this worker will read " +
-		"unknown to herdr. Install herdr-report beside emberloop or point EMBERLOOP_HERDR_REPORT at its directory."
+		"unknown to herdr. Install herdr-report beside el or point EL_HERDR_REPORT at its directory."
 }
 
 // recall returns one worker's record from the store, under the cross-process
@@ -134,7 +134,7 @@ func shellArg(s string) string {
 func briefPath(id string) string { return filepath.Join(filepath.Dir(statePath), "briefs", id+".md") }
 
 // writeBrief puts the worker's instructions on disk, beside the worker store.
-// It points at the ticket, its spec and the skills by path and emberloop:// address
+// It points at the ticket, its spec and the skills by path and el:// address
 // rather than restating them, so an upstream rewrite lands without a code
 // change here. target is the branch the worker merges into; it rebases onto
 // it before its last review, so conflicts are resolved while it still has
@@ -165,7 +165,7 @@ func writeBrief(id, ticket, spec, target, harness string) (string, error) {
 	b.WriteString("\n" + executeDirection + "\n")
 	b.WriteString("\nWhere a skill says /code-review, spawn both of your reviewer types in one spawn call: " +
 		"spawn(agents=[{type: \"reviewer-standards\"}, {type: \"reviewer-spec\"}]). They review this worktree and report pass or changes. " +
-		"The spawn tool is in your tool list: in pig its name is mcp__emberloop__spawn. Call it directly; do not decide it is missing, and never start reviewers through bash or a second emberloop-mcp.\n")
+		"The spawn tool is in your tool list: in pig its name is mcp__el__spawn. Call it directly; do not decide it is missing, and never start reviewers through bash or a second el-mcp.\n")
 	b.WriteString("\nAfter spawn, end your turn; the result arrives as a system notice. Never poll with sleep or bash while reviewers run.\n")
 	b.WriteString("\nBefore editing, read the AGENTS.md chain from the repo root down to each file you will touch, following each doc's Child DOX Index; the nearest doc is the local contract. " +
 		"After a change that alters purpose, ownership, contracts, structure, workflow, inputs, outputs, or permissions, update the nearest owning AGENTS.md (plus affected parents and children, refreshing indexes) in the same task.\n")
@@ -202,14 +202,14 @@ func renderFinish(r *FinishResult) string {
 	}
 }
 
-// implementPrompt is what `emberloop implement <spec>` injects. The skill does
-// the thinking; the adapter only maps its vocabulary onto emberloop's tools and
-// drops what emberloop already does (review per ticket, the integration branch).
+// implementPrompt is what `el implement <spec>` injects. The skill does
+// the thinking; the adapter only maps its vocabulary onto el's tools and
+// drops what el already does (review per ticket, the integration branch).
 func implementPrompt(run SpecRun) string {
 	maxWorkers := tools.LoadSettings().EffectiveMaxWorkers()
 	return fmt.Sprintf(`Implement the spec at %s. Its tickets are under %s.
 
-Read %s and follow it, with these emberloop adaptations:
+Read %s and follow it, with these el adaptations:
 
 - The integration branch is %s. It already exists and is checked out; never switch away from it.
 - An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else. Spawn returns at once with the agents still running, for every type.

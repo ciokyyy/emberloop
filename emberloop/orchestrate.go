@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -66,7 +66,7 @@ func orchestrationTools(types map[string]AgentType, spawnable []string) []tools.
 	}
 }
 
-// AllTools is every tool emberloop serves, file tools first.
+// AllTools is every tool el serves, file tools first.
 func AllTools() []tools.Tool {
 	return append(tools.All(), OrchestrationTools()...)
 }
@@ -83,7 +83,7 @@ var spawnGap = 3 * time.Second
 var spawnGate sync.Mutex
 
 // spawnTimestampPath is the shared launch timestamp, beside the worker store so
-// every session (every emberloop-mcp process) shares it. A per-process timestamp
+// every session (every el-mcp process) shares it. A per-process timestamp
 // cannot space launches from separate sessions.
 func spawnTimestampPath() string { return filepath.Join(filepath.Dir(statePath), "last-spawn") }
 
@@ -181,8 +181,8 @@ var finishTool = fnTool{
 		// background: a vanished member with no further submit is finalized
 		// after this call ends instead of waiting forever. The dead-child sweep
 		// runs beside it, so a cancelled worker is reported here too.
-		sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("EMBERLOOP_AGENT_ID"))
-		sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("EMBERLOOP_AGENT_ID"))
+		sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("EL_AGENT_ID"))
+		sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("EL_AGENT_ID"))
 		id, err := resolveAgentParam(params, finishExec)
 		if err != nil {
 			return "", err

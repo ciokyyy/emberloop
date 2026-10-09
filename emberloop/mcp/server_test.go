@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"os"
@@ -62,7 +63,7 @@ func toolsOf(t *testing.T, reply map[string]any) []map[string]any {
 // The harness batches read-only calls only when the server says they are safe
 // to batch, and it must never be told a call that writes or spawns is.
 func TestToolsListMarksExactlyReadFindGrepGitCheckReadOnly(t *testing.T) {
-	replies := serve(t, emberloop.AllTools(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	replies := serve(t, el.AllTools(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	if len(replies) != 1 {
 		t.Fatalf("want one reply, got %d", len(replies))
 	}
@@ -132,7 +133,7 @@ func TestTwoSlowCallsFinishInAboutOneCallsTime(t *testing.T) {
 // types, and the scout tool is gone.
 func TestToolsListHasSpawnAndNoScout(t *testing.T) {
 	isolatedSettings(t)
-	served, err := emberloop.RoleTools("implement")
+	served, err := el.RoleTools("implement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +184,11 @@ func callText(t *testing.T, reply map[string]any) string {
 
 // A server whose binary did not change leaves the tool's text alone.
 func TestUnchangedBinaryLeavesReplyAlone(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "emberloop-mcp")
+	bin := filepath.Join(t.TempDir(), "el-mcp")
 	if err := os.WriteFile(bin, []byte("binary-v1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_BINARY_PATH", bin)
+	t.Setenv("EL_BINARY_PATH", bin)
 
 	replies := serve(t, []tools.Tool{echoTool{text: "hello"}},
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`)
@@ -203,7 +204,7 @@ func TestUnchangedBinaryLeavesReplyAlone(t *testing.T) {
 // reply stale: without both identities there is nothing to compare, so an
 // odd launch environment can never produce a false notice.
 func TestUnknownBinaryLeavesReplyAlone(t *testing.T) {
-	t.Setenv("EMBERLOOP_BINARY_PATH", filepath.Join(t.TempDir(), "no-such-binary"))
+	t.Setenv("EL_BINARY_PATH", filepath.Join(t.TempDir(), "no-such-binary"))
 
 	replies := serve(t, []tools.Tool{echoTool{text: "hello"}},
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`)
@@ -235,11 +236,11 @@ func (g gateTool) Execute(context.Context, string, json.RawMessage) (string, err
 // A server started before its binary changed says so in its next reply,
 // keeping the tool's own output and adding the stale line.
 func TestStaleBinaryAddsNoticeToNextReply(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "emberloop-mcp")
+	bin := filepath.Join(t.TempDir(), "el-mcp")
 	if err := os.WriteFile(bin, []byte("binary-v1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_BINARY_PATH", bin)
+	t.Setenv("EL_BINARY_PATH", bin)
 
 	tool := gateTool{entered: make(chan struct{}), release: make(chan struct{})}
 	in, out := io.Pipe()
@@ -319,11 +320,11 @@ func TestCancelledNotificationEndsTheNamedCall(t *testing.T) {
 // configuration.
 func isolatedSettings(t *testing.T) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
 }
 
 // listNames digs the tool names out of a tools/list reply.
@@ -345,12 +346,12 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"tools":{"bash":{"enabled":false},"read":{"rename":"rd"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", p)
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
-	served, err := emberloop.RoleTools("work")
+	t.Setenv("EL_SETTINGS", p)
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
+	served, err := el.RoleTools("work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +374,7 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 	if !found {
 		t.Fatalf("tools/list does not serve the renamed read: %v", names)
 	}
-	main, execute, err := emberloop.ResolvedTools("work")
+	main, execute, err := el.ResolvedTools("work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,5 +395,25 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 	}
 	if len(executeNames) != 3 || executeNames[0] != "check" || executeNames[1] != "grep" || executeNames[2] != "git" {
 		t.Fatalf("check, grep and git hide behind execute here, got %v", executeNames)
+	}
+}
+
+func TestReadImageIsServedAsImageContent(t *testing.T) {
+	dir := t.TempDir()
+	raw, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+	_ = os.WriteFile(filepath.Join(dir, "p.png"), raw, 0o644)
+	read, err := el.RoleTools("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replies := serve(t, read, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read","arguments":{"path":"`+filepath.Join(dir, "p.png")+`"}}}`)
+	result, _ := replies[0]["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("content = %v", content)
+	}
+	img, _ := content[1].(map[string]any)
+	if img["type"] != "image" || img["mimeType"] != "image/png" || img["data"] == "" {
+		t.Fatalf("image block = %v", img)
 	}
 }

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -64,7 +64,7 @@ func RegisterContextParser(harness string, p ContextParser) {
 }
 
 // ContextParserFor returns the parser for a harness, or false for one
-// with no context emberloop reads.
+// with no context el reads.
 func ContextParserFor(harness string) (ContextParser, bool) {
 	p, ok := contextParsers[harness]
 	return p, ok

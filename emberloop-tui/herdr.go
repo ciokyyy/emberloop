@@ -114,11 +114,11 @@ func focusAgentPane(run CommandRunner, pane string) error {
 	return nil
 }
 
-// DefaultStateDir is emberloop's state directory: the runs, history and worker
-// stores the Snapshot read model reads. EMBERLOOP_STATE_DIR points it elsewhere,
+// DefaultStateDir is el's state directory: the runs, history and worker
+// stores the Snapshot read model reads. EL_STATE_DIR points it elsewhere,
 // which is what scripts and tests use.
 func DefaultStateDir() string {
-	if dir := os.Getenv("EMBERLOOP_STATE_DIR"); dir != "" {
+	if dir := os.Getenv("EL_STATE_DIR"); dir != "" {
 		return dir
 	}
 	return filepath.Join(os.Getenv("HOME"), ".pig", "state", "emberloop")

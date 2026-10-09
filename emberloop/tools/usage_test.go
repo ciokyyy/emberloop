@@ -33,7 +33,7 @@ func readFindRows(t *testing.T, agent string) []statedb.UsageRow {
 
 func TestLogFindCallWritesOneRowPerCall(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("EMBERLOOP_STATE_DIR", dir)
+	t.Setenv("EL_STATE_DIR", dir)
 
 	rec := FindUsage{
 		Agent:      "agent-1",
@@ -78,7 +78,7 @@ func TestLogFindCallWritesOneRowPerCall(t *testing.T) {
 
 func TestLogFindCallWithoutUsageStillLogsTheCall(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("EMBERLOOP_STATE_DIR", dir)
+	t.Setenv("EL_STATE_DIR", dir)
 
 	if err := LogFindCall(FindUsage{Agent: "agent-2", Model: "m", FindCallID: "f", Questions: 3}); err != nil {
 		t.Fatalf("LogFindCall: %v", err)
@@ -98,7 +98,7 @@ func TestLogFindCallWithoutUsageStillLogsTheCall(t *testing.T) {
 
 func TestLogFindCallWithoutAgentWritesNothing(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("EMBERLOOP_STATE_DIR", dir)
+	t.Setenv("EL_STATE_DIR", dir)
 
 	if err := LogFindCall(FindUsage{Model: "m", FindCallID: "f", Questions: 1}); err != nil {
 		t.Fatalf("LogFindCall: %v", err)

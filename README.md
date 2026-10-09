@@ -25,11 +25,11 @@ The installer is a terminal UI. It asks for three optional parts and installs ev
 
 | Choice | What it adds |
 |---|---|
-| pig | the `emberloop` entry in `~/.pig/agent/mcp.json`, the `herdr-report` and `pig-antigravity-auth` extensions linked into `~/.pig/agent/extensions` |
+| pig | the `el` entry in `~/.pig/agent/mcp.json`, the `herdr-report` and `pig-antigravity-auth` extensions linked into `~/.pig/agent/extensions` |
 | claude | the Claude Code CLI, installed with its official script when missing |
 | graph | the code graph MCP (`codebase-memory-mcp`), served to reviewers and scouts |
 
-Always installed: herdr (official script, when missing), the `emberloop`, `emberloop-mcp` and `emberloop-tui` binaries in `~/.local/bin`, the herdr compress plugin, the `prefix+shift+c` compress key in `~/.config/herdr/config.toml`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `emberloop deps` and `emberloop skills install`, run on the plain terminal because `deps` can ask for a sudo password.
+Always installed: herdr (official script, when missing), the `el`, `el-mcp` and `el-tui` binaries in `~/.local/bin`, the herdr compress plugin, the `prefix+shift+c` compress key in `~/.config/herdr/config.toml`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `el deps` and `el skills install`, run on the plain terminal because `deps` can ask for a sudo password.
 
 Put `~/.local/bin` on your `PATH`. Rerunning the installer changes nothing that is already in place. A herdr config is copied to `config.toml.bak` before the first edit.
 
@@ -48,7 +48,7 @@ Flags skip the UI:
 Start an orchestrator inside a herdr pane:
 
 ```bash
-emberloop --pig          # or --claude
+el --pig          # or --claude
 emberloop implement specs/my-feature.md
 ```
 
@@ -58,12 +58,12 @@ Other commands:
 
 | Command | Does |
 |---|---|
-| `emberloop settings` | read and change role slots, models, tools and MCP servers |
-| `emberloop tui` | open the dashboard: runs, tickets, agents, costs, settings |
-| `emberloop compress <pane>` | summarize the agent in a pane and restart it there |
-| `emberloop deps` | check and install system dependencies (python3, rg, git, bwrap, graph binary) |
-| `emberloop install` | rebuild the binaries from the checkout; refuses while agents are live |
-| `emberloop context <session-id>` | print one session's context numbers |
+| `el settings` | read and change role slots, models, tools and MCP servers |
+| `el tui` | open the dashboard: runs, tickets, agents, costs, settings |
+| `el compress <pane>` | summarize the agent in a pane and restart it there |
+| `el deps` | check and install system dependencies (python3, rg, git, bwrap, graph binary) |
+| `el install` | rebuild the binaries from the checkout; refuses while agents are live |
+| `el context <session-id>` | print one session's context numbers |
 
 `prefix+shift+c` in herdr compresses the focused pane. At a tool boundary it compresses at once; during a running tool call the request queues, and a second press forces it.
 
@@ -141,9 +141,9 @@ The check runs `go vet` and the tests for `emberloop/`, `emberloop-tui/`, `insta
 | Path | Purpose |
 |---|---|
 | `~/.local/bin` | installed binaries |
-| `~/.emberloop/settings.json` | settings; `EMBERLOOP_SETTINGS` overrides the path |
-| `~/.emberloop/skills` | the skill library behind `emberloop://` addresses |
+| `~/.emberloop/settings.json` | settings; `EL_SETTINGS` overrides the path |
+| `~/.emberloop/skills` | the skill library behind `el://` addresses |
 | `~/.pig/state/emberloop` | agent records, usage, archives |
 | `.emberloop-worktrees/` | one git worktree per ticket |
 
-All environment variables use the `EMBERLOOP_` prefix.
+All environment variables use the `EL_` prefix.

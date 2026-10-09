@@ -13,14 +13,14 @@ import (
 )
 
 // Grid places the pane a background command runs in through the shared agent
-// grid and returns its pane id. emberloop installs its grid here at startup, so a
+// grid and returns its pane id. el installs its grid here at startup, so a
 // server or watcher sits in the caller's tab beside the agents instead of
 // splitting the caller's own pane. A host with no grid leaves it nil, and start
 // refuses rather than stacking panes.
 var Grid func(cwd string) (string, error)
 
 // HerdrRun runs one herdr command for start's pane run and for read and stop.
-// It is a var so a emberloop test can watch the pane through the same fake grid.
+// It is a var so a el test can watch the pane through the same fake grid.
 var HerdrRun = herdr
 
 // backgroundTool runs a long-lived command (a dev server, a watcher) in a

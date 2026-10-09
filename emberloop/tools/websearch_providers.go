@@ -21,18 +21,18 @@ import (
 // used, and quota stays NULL when the provider reports nothing.
 
 // braveEndpoint is the Brave Web Search API root: the default, or the fake
-// server tests point at through EMBERLOOP_BRAVE_ENDPOINT.
+// server tests point at through EL_BRAVE_ENDPOINT.
 func braveEndpoint() string {
-	if s := strings.TrimSpace(os.Getenv("EMBERLOOP_BRAVE_ENDPOINT")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("EL_BRAVE_ENDPOINT")); s != "" {
 		return strings.TrimSuffix(s, "/")
 	}
 	return defaultBraveEndpoint
 }
 
 // exaEndpoint is the Exa Search API root: the default, or the fake server
-// tests point at through EMBERLOOP_EXA_ENDPOINT.
+// tests point at through EL_EXA_ENDPOINT.
 func exaEndpoint() string {
-	if s := strings.TrimSpace(os.Getenv("EMBERLOOP_EXA_ENDPOINT")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("EL_EXA_ENDPOINT")); s != "" {
 		return strings.TrimSuffix(s, "/")
 	}
 	return defaultExaEndpoint

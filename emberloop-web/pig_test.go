@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -43,9 +44,12 @@ func newPigDaemon(t *testing.T) (*Daemon, *PigBackend) {
 
 const pigFauxModel = "test-faux/faux-1"
 
-// Slice 1: model choices for pig match the pig model listing.
-func TestPigModelsMatchSDKListing(t *testing.T) {
-	d, _ := newPigDaemon(t)
+// The pig picker lists only providers with usable auth (fake openrouter key
+// in auth.json here), not the whole SDK catalog.
+func TestPigModelsFilteredToAuthedProviders(t *testing.T) {
+	d, pb := newPigDaemon(t)
+	writeAuthJSON(t, pb.AgentDir, `{"openrouter":{"type":"api_key","key":"fake-key"}}`)
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -64,24 +68,97 @@ func TestPigModelsMatchSDKListing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := PigModels()
-	if !slices.Equal(out.Models, want) {
-		t.Fatalf("models mismatch: got %d, want %d", len(out.Models), len(want))
+	if !slices.Equal(out.Models, pb.Models()) {
+		t.Fatalf("endpoint models != backend models (%d vs %d)", len(out.Models), len(pb.Models()))
 	}
-	found := false
-	for _, m := range ai.ListModels("") {
-		fq := m.Provider + "/" + m.ID
-		if slices.Contains(out.Models, fq) {
-			found = true
-			break
+	full := map[string]bool{}
+	for _, m := range PigModels() {
+		full[m] = true
+	}
+	for _, m := range out.Models {
+		if !full[m] {
+			t.Fatalf("listed model %q not in SDK catalog", m)
 		}
 	}
-	if !found {
-		t.Fatalf("no SDK catalog entry in models (len=%d)", len(out.Models))
+	openrouter := ai.ListModels("openrouter")
+	if len(openrouter) == 0 {
+		t.Fatal("no openrouter models in catalog")
+	}
+	if !slices.Contains(out.Models, openrouter[0].Provider+"/"+openrouter[0].ID) {
+		t.Fatalf("authed openrouter model missing (len=%d)", len(out.Models))
+	}
+	for _, m := range ai.ListModels("anthropic") {
+		if slices.Contains(out.Models, m.Provider+"/"+m.ID) {
+			t.Fatalf("unauthed model %q listed", m.Provider+"/"+m.ID)
+		}
+	}
+	if len(out.Models) >= len(PigModels()) {
+		t.Fatalf("filtered list not smaller than catalog (%d vs %d)", len(out.Models), len(PigModels()))
 	}
 }
 
-// Slice 2: the Session offers no native tools, only the emberloop MCP tools
+// An environment key alone (no auth.json entry) authorizes its provider.
+func TestPigModelsEnvKeyAuth(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "fake-key")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	pb := NewPigBackend()
+	pb.AgentDir = t.TempDir()
+	models := pb.Models()
+	openrouter := ai.ListModels("openrouter")
+	if len(openrouter) == 0 {
+		t.Fatal("no openrouter models in catalog")
+	}
+	if !slices.Contains(models, openrouter[0].Provider+"/"+openrouter[0].ID) {
+		t.Fatalf("env-authed openrouter model missing (len=%d)", len(models))
+	}
+	for _, m := range ai.ListModels("anthropic") {
+		if slices.Contains(models, m.Provider+"/"+m.ID) {
+			t.Fatalf("unauthed model %q listed", m.Provider+"/"+m.ID)
+		}
+	}
+}
+
+// ?current= keeps the selected model visible even when its provider holds
+// no auth, so a stored choice never vanishes from the picker.
+func TestModelsEndpointKeepsCurrent(t *testing.T) {
+	d, pb := newPigDaemon(t)
+	writeAuthJSON(t, pb.AgentDir, `{"openrouter":{"type":"api_key","key":"fake-key"}}`)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	anthropic := ai.ListModels("anthropic")
+	if len(anthropic) == 0 {
+		t.Fatal("no anthropic models in catalog")
+	}
+	current := anthropic[0].Provider + "/" + anthropic[0].ID
+	if slices.Contains(pb.Models(), current) {
+		t.Fatalf("test needs %q unauthed", current)
+	}
+	resp, err := http.Get(srv.URL + "/api/models?harness=pig&current=" + current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Models []string `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(out.Models, current) {
+		t.Fatalf("current model %q missing (len=%d)", current, len(out.Models))
+	}
+}
+
+func writeAuthJSON(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Slice 2: the Session offers no native tools, only the el MCP tools
 // (empty until ticket 06 serves spawn).
 func TestPigSessionStrippedToMCPOnly(t *testing.T) {
 	d, pb := newPigDaemon(t)
@@ -223,16 +300,16 @@ func TestMapAgentEventToolCalls(t *testing.T) {
 	}{
 		{"text", msg(ai.TextDeltaEvent{Delta: "hi"}), []normEvent{{kind: "assistant_chunk", text: "hi"}}},
 		{"thinking", msg(ai.ThinkingDeltaEvent{Delta: "hmm"}), []normEvent{{kind: "thinking_chunk", text: "hmm"}}},
-		{"exec start", agent.ToolExecutionStartEvent{ToolName: "echo"}, []normEvent{{kind: "tool_call_started", text: "echo"}}},
+		{"exec start", agent.ToolExecutionStartEvent{ToolName: "echo"}, []normEvent{{kind: "tool_call_started", text: `{"id":"","name":"echo","input":"","output":"","status":"running"}`}}},
 		{"exec end", agent.ToolExecutionEndEvent{
 			ToolName: "echo",
 			Result:   agent.AgentToolResult{Content: []ai.ToolResultMessageContent{ai.TextContent{Text: "done"}}},
-		}, []normEvent{{kind: "tool_call_updated", text: "done"}}},
+		}, []normEvent{{kind: "tool_call_updated", text: `{"id":"","name":"echo","input":"","output":"done","status":"completed"}`}}},
 		{"exec error", agent.ToolExecutionEndEvent{
 			ToolName: "echo",
 			IsError:  true,
 			Result:   agent.AgentToolResult{Content: []ai.ToolResultMessageContent{ai.TextContent{Text: "boom"}}},
-		}, []normEvent{{kind: "tool_call_updated", text: "error: boom"}}},
+		}, []normEvent{{kind: "tool_call_updated", text: `{"id":"","name":"echo","input":"","output":"boom","status":"failed"}`}}},
 		{"turn noise ignored", agent.TurnStartEvent{}, nil},
 		{"queue owned by ticket 05", agent.QueueUpdateEvent{}, nil},
 	}
@@ -273,13 +350,15 @@ func TestPigIdleReleaseAndRestartResume(t *testing.T) {
 	if names := pb.ToolNames(id); names != nil {
 		t.Fatalf("released session tools = %q, want none", names)
 	}
+	seq1 := lastSeqOf(sessionEvents(t, srv.URL, id))
 
 	sendPrompt(t, srv.URL, id, "What is 20+22?")
-	events := readSSE(t, srv.URL, id, 5, 4, 30*time.Second)
+	events := readSSE(t, srv.URL, id, seq1, 4, 30*time.Second)
 	if !hasChunkWith(events, "42") {
 		t.Fatalf("resumed answer 42 missing in %+v", events)
 	}
 	waitForLive(t, srv.URL, id, false, 10*time.Second)
+	seq2 := lastSeqOf(sessionEvents(t, srv.URL, id))
 	srv.Close()
 
 	pb2 := newPigTestBackendAt(t, agentDir)
@@ -291,7 +370,7 @@ func TestPigIdleReleaseAndRestartResume(t *testing.T) {
 		t.Fatalf("resumable = false after restart, note %q", view.ResumeNote)
 	}
 	sendPrompt(t, srv2.URL, id, "What is 20+22?")
-	after := readSSE(t, srv2.URL, id, 9, 4, 30*time.Second)
+	after := readSSE(t, srv2.URL, id, seq2, 4, 30*time.Second)
 	if !hasChunkWith(after, "42") {
 		t.Fatalf("post-restart answer 42 missing in %+v", after)
 	}
@@ -419,4 +498,70 @@ func sessionMeta(t *testing.T, base, id string) (SessionMeta, []Event) {
 		t.Fatal(err)
 	}
 	return out.Session, out.Events
+}
+
+// lastSeqOf is the newest Event seq, so a test reads only what follows.
+func lastSeqOf(events []Event) int64 {
+	var m int64
+	for _, e := range events {
+		if e.Seq > m {
+			m = e.Seq
+		}
+	}
+	return m
+}
+
+func TestPigSpawnToolSpawnsUnderItsSession(t *testing.T) {
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	var gotParent string
+	var gotAgents []SpawnAgent
+	pb := NewPigBackend()
+	pb.Spawn = func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error) {
+		gotParent, gotAgents = parentID, agents
+		return "g1", []SessionMeta{{ID: "c1"}, {ID: "c2"}}, nil
+	}
+	tools := pb.sessionTools(SessionMeta{ID: parent})
+	var tool *spawnAgentTool
+	for _, tl := range tools {
+		if st, ok := tl.(*spawnAgentTool); ok {
+			tool = st
+		}
+	}
+	if tool == nil {
+		t.Fatal("spawn tool missing from pig loadout")
+	}
+	res, err := tool.Execute(context.Background(), "call-1",
+		json.RawMessage(`{"agents":[{"prompt":"job A"},{"prompt":"job B","type":"scout"}]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotParent != parent {
+		t.Fatalf("spawn parent = %q, want %q", gotParent, parent)
+	}
+	if len(gotAgents) != 2 || gotAgents[0].Prompt != "job A" || gotAgents[1].Type != "scout" {
+		t.Fatalf("spawn agents = %+v", gotAgents)
+	}
+	if !strings.Contains(res.Text(), "g1") || !strings.Contains(res.Text(), "c1") {
+		t.Fatalf("spawn result = %q, want group and ids", res.Text())
+	}
+}
+
+// Scouts keep a tool-free loadout: no spawn tool, nothing writable through it.
+func TestPigScoutHasNoSpawnTool(t *testing.T) {
+	pb := NewPigBackend()
+	pb.Spawn = func(string, []SpawnAgent) (string, []SessionMeta, error) {
+		return "", nil, nil
+	}
+	for _, tl := range pb.sessionTools(SessionMeta{ID: "s", Scout: true}) {
+		if tl.Name() == "spawn" {
+			t.Fatal("scout loadout contains spawn")
+		}
+	}
+	if names := len(pb.sessionTools(SessionMeta{ID: "s", Scout: true})); names != 0 {
+		t.Fatalf("scout loadout has %d tools, want 0", names)
+	}
 }

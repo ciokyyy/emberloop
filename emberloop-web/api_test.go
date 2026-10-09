@@ -475,13 +475,16 @@ func TestConcurrentPromptsStayOrdered(t *testing.T) {
 		<-done
 	}
 
-	total := 1 + n*4
-	events := readSSE(t, srv.URL, id, 0, total, 10*time.Second)
+	// Messages queued behind a running turn go out as one merged message, so
+	// the event count varies: wait until every burst is in the log and the
+	// Session is idle again.
+	events := waitBurstSettled(t, srv.URL, id, n)
 	for i, e := range events {
 		if e.Seq != int64(i+1) {
 			t.Fatalf("event %d seq = %d", i, e.Seq)
 		}
 	}
+	total := len(events)
 
 	// The persisted log matches memory order after a restart.
 	srv.Close()
@@ -494,4 +497,45 @@ func TestConcurrentPromptsStayOrdered(t *testing.T) {
 			t.Fatalf("replay differs at %d: %+v vs %+v", i, events[i], e)
 		}
 	}
+}
+
+// waitBurstSettled replays the Session log until it holds all n "burst i"
+// texts and ends idle, then returns it.
+func waitBurstSettled(t *testing.T, base, id string, n int) []Event {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(base + "/api/sessions/" + id + "/events?wait=0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var events []Event
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if line := sc.Text(); strings.HasPrefix(line, "data: ") {
+				var e Event
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &e); err != nil {
+					t.Fatal(err)
+				}
+				events = append(events, e)
+			}
+		}
+		resp.Body.Close()
+		var prompts strings.Builder
+		for _, e := range events {
+			if e.Kind == "prompt" {
+				prompts.WriteString(e.Text + "\n")
+			}
+		}
+		all := true
+		for i := 0; i < n; i++ {
+			all = all && strings.Contains(prompts.String(), "burst "+strconv.Itoa(i))
+		}
+		if last := len(events) - 1; all && last >= 0 && events[last].Kind == "status" && events[last].Status == "idle" {
+			return events
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("burst did not settle")
+	return nil
 }

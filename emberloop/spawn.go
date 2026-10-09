@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -36,11 +36,11 @@ func spawnableNames(role string, types map[string]AgentType) []string {
 // plus submit and, when the type may spawn, a spawn tool for its own types.
 // The type is read from the environment the launcher set.
 func agentTools() ([]tools.Tool, error) {
-	typ := os.Getenv("EMBERLOOP_AGENT_TYPE")
+	typ := os.Getenv("EL_AGENT_TYPE")
 	if typ == "" {
-		return nil, fmt.Errorf("EMBERLOOP_AGENT_TYPE is required for a spawned agent")
+		return nil, fmt.Errorf("EL_AGENT_TYPE is required for a spawned agent")
 	}
-	agentID := os.Getenv("EMBERLOOP_AGENT_ID")
+	agentID := os.Getenv("EL_AGENT_ID")
 	types, err := LoadAgentTypes(cwd())
 	if err != nil {
 		return nil, err
@@ -263,7 +263,7 @@ func spawnAgentsCtx(ctx context.Context, run Exec, root string, types map[string
 		}
 	}
 	parentPane := os.Getenv("HERDR_PANE_ID")
-	parentID := os.Getenv("EMBERLOOP_AGENT_ID")
+	parentID := os.Getenv("EL_AGENT_ID")
 	// The prune runs before any cap is read: a hand-closed worker pane frees
 	// its slot, and the sweep after it reports the cancelled worker to this
 	// parent through the dead-child sweep.
@@ -540,7 +540,7 @@ func closeSpawned(run Exec, agents []*spawnedAgent) {
 // launchScout starts one read-only agent in the caller's tab. Its pane
 // closes as soon as its result is delivered; a follow-up means a new scout.
 func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAgent, error) {
-	// A scout resolves the scout slot: EMBERLOOP_READONLY_HARNESS is a flag layer,
+	// A scout resolves the scout slot: EL_READONLY_HARNESS is a flag layer,
 	// the type's frontmatter the typeOrSpawn layer, then the slot's settings,
 	// then pig.
 	choice := Resolve(slotScout, readonlyHarnessChoice(),
@@ -557,7 +557,7 @@ func launchScout(run Exec, root string, t AgentType, prompt string) (*spawnedAge
 		Dir:       filepath.Join(readOnlyDir(), "sessions"),
 		// A scout inside a run archives under it: the spawning session
 		// carries its spec in the environment, the way workers record it.
-		Spec: os.Getenv("EMBERLOOP_SPEC"),
+		Spec: os.Getenv("EL_SPEC"),
 	}
 	spaceSpawns()
 	agent, err := launchPlacedAgent(run, readOnlyPlace{Overflow: "scouts"}, choice.Harness, sess, renderPrompt(t, prompt))
@@ -604,14 +604,14 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 	}
 	// An implement session carries its spec in the environment; every worker
 	// it spawns records it, for its brief and its spec reviewer.
-	in.Spec = os.Getenv("EMBERLOOP_SPEC")
+	in.Spec = os.Getenv("EL_SPEC")
 	brief, err := writeBrief(id, in.Ticket, in.Spec, target, choice.Harness)
 	if err != nil {
 		return nil, err
 	}
 	// The brief file stays for the archive, but the worker's first message is
 	// the brief itself, not a "read this file" indirection: the launch file
-	// carries it as a real argument through `emberloop exec`.
+	// carries it as a real argument through `el exec`.
 	briefText, err := os.ReadFile(brief)
 	if err != nil {
 		return nil, err
@@ -692,7 +692,7 @@ func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, pa
 						return fmt.Errorf("cannot read ticket %s: %w", r.Ticket, err)
 					}
 					entry := queuedWorker{
-						ID: id, Type: t.Name, Ticket: r.Ticket, Spec: os.Getenv("EMBERLOOP_SPEC"),
+						ID: id, Type: t.Name, Ticket: r.Ticket, Spec: os.Getenv("EL_SPEC"),
 						Repo: repo, Base: r.Base, Target: r.Target,
 						Harness: choice.Harness, Model: choice.Model, Effort: choice.Effort,
 						ParentID: parentID, Parent: parentPane, GroupID: groupID,
@@ -794,7 +794,7 @@ func liveAgentFor(run Exec, t AgentType, parentID, parentPane string, r spawnReq
 
 // liveFor reports whether an agent's state is the live agent of this type for
 // this parent. A session with an agent id names its children by it; a
-// hand-started emberloop-mcp with no id falls back to its pane, so two sessions
+// hand-started el-mcp with no id falls back to its pane, so two sessions
 // sharing a state dir keep their agents apart.
 func liveFor(s AgentState, typ, parentID, parentPane string, run Exec) bool {
 	if s.Type != typ || s.Pane == "" {

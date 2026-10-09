@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// TestLiveReadOnly runs a real reviewer pane. EMBERLOOP_LIVE=pig|claude, inside herdr.
+// TestLiveReadOnly runs a real reviewer pane. EL_LIVE=pig|claude, inside herdr.
 func TestLiveReadOnly(t *testing.T) {
-	h := os.Getenv("EMBERLOOP_LIVE")
+	h := os.Getenv("EL_LIVE")
 	if h == "" {
-		t.Skip("set EMBERLOOP_LIVE=pig or claude, inside herdr")
+		t.Skip("set EL_LIVE=pig or claude, inside herdr")
 	}
-	t.Setenv("EMBERLOOP_READONLY_HARNESS", h)
+	t.Setenv("EL_READONLY_HARNESS", h)
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	got, err := ReadOnly(osExec, mustAbs(t, ".."), "", "Use read on emberloop/go.mod. Reply with only its first line.")
 	if err != nil {
@@ -33,13 +33,13 @@ func mustAbs(t *testing.T, p string) string {
 	return a
 }
 
-// TestLiveModels lists a real harness's models through its CLI. EMBERLOOP_LIVE=pig
+// TestLiveModels lists a real harness's models through its CLI. EL_LIVE=pig
 // or claude. It proves the listing is a real run that answers and exits --
 // claude's initialize spends no tokens, so this is safe to repeat.
 func TestLiveModels(t *testing.T) {
-	h := os.Getenv("EMBERLOOP_LIVE")
+	h := os.Getenv("EL_LIVE")
 	if h == "" {
-		t.Skip("set EMBERLOOP_LIVE=pig or claude")
+		t.Skip("set EL_LIVE=pig or claude")
 	}
 	isolateState(t)
 	list, err := CachedModels(h, osExec, true)
@@ -115,10 +115,10 @@ func waitForToolStart(t *testing.T, sess Session, command, doneMarker string) {
 		if strings.Contains(tr, doneMarker) {
 			t.Fatalf("slow tool finished before the mid-call notice was delivered; transcript:\n%s", tr)
 		}
-		// mcp__emberloop__bash is the tool-use name; "bash" in quotes covers a
+		// mcp__el__bash is the tool-use name; "bash" in quotes covers a
 		// bare bash name. Either with the sleep command proves the slow
 		// call started, not the prompt-file read that precedes it.
-		bashUse := strings.Contains(tr, "mcp__emberloop__bash") ||
+		bashUse := strings.Contains(tr, "mcp__el__bash") ||
 			(strings.Contains(strings.ToLower(tr), "tool_use") && strings.Contains(tr, `"bash"`))
 		if bashUse && strings.Contains(tr, command) {
 			return
@@ -128,12 +128,12 @@ func waitForToolStart(t *testing.T, sess Session, command, doneMarker string) {
 	t.Fatalf("slow tool never started within 90s; transcript:\n%s", liveTranscript(sess))
 }
 
-// TestLiveClaudeSlowMCPStaysForeground is opt-in (EMBERLOOP_LIVE=claude, inside
-// herdr): a claude session calls a emberloop tool that runs longer than 120 s and
+// TestLiveClaudeSlowMCPStaysForeground is opt-in (EL_LIVE=claude, inside
+// herdr): a claude session calls a el tool that runs longer than 120 s and
 // the result arrives in the same turn, not as a background task.
 func TestLiveClaudeSlowMCPStaysForeground(t *testing.T) {
-	if os.Getenv("EMBERLOOP_LIVE") != "claude" {
-		t.Skip("set EMBERLOOP_LIVE=claude, inside herdr")
+	if os.Getenv("EL_LIVE") != "claude" {
+		t.Skip("set EL_LIVE=claude, inside herdr")
 	}
 	version := liveClaudeVersion(t)
 	statePath = filepath.Join(t.TempDir(), "workers.json")
@@ -157,11 +157,11 @@ func TestLiveClaudeSlowMCPStaysForeground(t *testing.T) {
 }
 
 // TestLiveClaudeNoticeDuringToolCallStaysForeground is opt-in
-// (EMBERLOOP_LIVE=claude, inside herdr): a notice delivered while a tool call runs
+// (EL_LIVE=claude, inside herdr): a notice delivered while a tool call runs
 // does not detach the call; the notice is seen after the call returns.
 func TestLiveClaudeNoticeDuringToolCallStaysForeground(t *testing.T) {
-	if os.Getenv("EMBERLOOP_LIVE") != "claude" {
-		t.Skip("set EMBERLOOP_LIVE=claude, inside herdr")
+	if os.Getenv("EL_LIVE") != "claude" {
+		t.Skip("set EL_LIVE=claude, inside herdr")
 	}
 	version := liveClaudeVersion(t)
 	statePath = filepath.Join(t.TempDir(), "workers.json")

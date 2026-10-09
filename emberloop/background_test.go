@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"example.com/emberloop/tools"
 )
 
-// The background tool lives in the tools package, but emberloop wires its grid, so
+// The background tool lives in the tools package, but el wires its grid, so
 // its placement is tested here, beside the grid fake.
 
-// gridBackground is the background tool emberloop serves, driven by g: emberloop installs
+// gridBackground is the background tool el serves, driven by g: el installs
 // its grid at startup, and the test points that grid and the tool's herdr at
 // the fake. Both seams go back when the test ends.
 func gridBackground(t *testing.T, g *fakeGrid) tools.Tool {
@@ -37,7 +37,7 @@ func gridBackground(t *testing.T, g *fakeGrid) tools.Tool {
 			return tool
 		}
 	}
-	t.Fatal("emberloop serves no background tool")
+	t.Fatal("el serves no background tool")
 	return nil
 }
 

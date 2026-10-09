@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -18,7 +18,7 @@ func writeAgentFile(t *testing.T, root, name, body string) {
 	}
 }
 
-// The built-in scout ships in emberloop: a none-checkout, blocking, read-only type
+// The built-in scout ships in el: a none-checkout, blocking, read-only type
 // that answers with status "answered".
 func TestBuiltinScoutTypeLoads(t *testing.T) {
 	types, err := LoadAgentTypes(t.TempDir())
@@ -51,7 +51,7 @@ func TestBuiltinScoutTypeLoads(t *testing.T) {
 	}
 }
 
-// The built-in worker ships in emberloop: a worktree, non-blocking type that
+// The built-in worker ships in el: a worktree, non-blocking type that
 // reports done or blocked and can edit and run code.
 func TestBuiltinWorkerTypeLoads(t *testing.T) {
 	types, err := LoadAgentTypes(t.TempDir())
@@ -91,7 +91,7 @@ func TestBuiltinWorkerNamesItsReviewers(t *testing.T) {
 	}
 }
 
-// Both built-in reviewer types ship in emberloop: parent checkout, blocking,
+// Both built-in reviewer types ship in el: parent checkout, blocking,
 // persistent, read-only, with pass and changes statuses.
 func TestBuiltinReviewerTypesLoad(t *testing.T) {
 	types, err := LoadAgentTypes(t.TempDir())

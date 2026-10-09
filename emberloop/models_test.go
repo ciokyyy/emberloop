@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -21,7 +21,7 @@ opencode-go  kimi-k3                                             1.0M     131.1K
 // claudeInitializeResponse is a captured answer to the initialize control
 // request, trimmed to the models it carries: value, displayName and, for a
 // model that takes effort, supportedEffortLevels.
-const claudeInitializeResponse = `{"type":"control_response","response":{"subtype":"success","request_id":"emberloop-models","response":{"models":[{"value":"default","displayName":"Default (recommended)","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]},{"value":"haiku","displayName":"Haiku 4.5"},{"value":"opus","displayName":"Opus 5.5","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]}]}}}`
+const claudeInitializeResponse = `{"type":"control_response","response":{"subtype":"success","request_id":"el-models","response":{"models":[{"value":"default","displayName":"Default (recommended)","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]},{"value":"haiku","displayName":"Haiku 4.5"},{"value":"opus","displayName":"Opus 5.5","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]}]}}}`
 
 func TestPigModelsParseTheListModelsTable(t *testing.T) {
 	run := func(cmd string, args []string, _ ExecOpts) (Result, error) {

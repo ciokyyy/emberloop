@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -51,7 +51,7 @@ func TestMemorySamplerFindsHarnessTreeInFakeProc(t *testing.T) {
 		}
 	}
 	writeStat(100, "harness", 1, 100)
-	writeStat(101, "emberloop-mcp", 100, 200)
+	writeStat(101, "el-mcp", 100, 200)
 	writeStat(102, "test-run", 101, 300)
 	writeStat(104, "my worker", 100, 50)
 	writeStat(200, "unrelated", 1, 999)
@@ -67,7 +67,7 @@ func TestMemorySamplerFindsHarnessTreeInFakeProc(t *testing.T) {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].PID < rows[j].PID })
 	want := []MemorySample{
 		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 100, Name: "harness", RSS: int64(100 * page)},
-		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 101, Name: "emberloop-mcp", RSS: int64(200 * page)},
+		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 101, Name: "el-mcp", RSS: int64(200 * page)},
 		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 102, Name: "test-run", RSS: int64(300 * page)},
 		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 104, Name: "my worker", RSS: int64(50 * page)},
 	}
@@ -91,7 +91,7 @@ func TestMemorySamplesAppendToAgentLog(t *testing.T) {
 	isolateState(t)
 	rows := []MemorySample{
 		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 100, Name: "harness", RSS: 409600},
-		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 101, Name: "emberloop-mcp", RSS: 819200},
+		{Agent: "01-x", At: "2026-10-05T00:00:00Z", PID: 101, Name: "el-mcp", RSS: 819200},
 	}
 	path := MemoryLogPath("run-records", "01-x")
 	if err := AppendMemorySamples(path, rows); err != nil {
@@ -197,11 +197,11 @@ func TestMemorySamplerWithoutAgentRecordsNothing(t *testing.T) {
 }
 
 func TestMemoryRunSlugFollowsTheSpecEnv(t *testing.T) {
-	t.Setenv("EMBERLOOP_SPEC", "/repo/.scratch/run-records/spec.md")
+	t.Setenv("EL_SPEC", "/repo/.scratch/archive/run-records/spec.md")
 	if got := MemoryRunSlug(); got != "run-records" {
 		t.Errorf("run slug = %q, want run-records", got)
 	}
-	t.Setenv("EMBERLOOP_SPEC", "")
+	t.Setenv("EL_SPEC", "")
 	if got := MemoryRunSlug(); got != "local" {
 		t.Errorf("run slug without a spec = %q, want local", got)
 	}

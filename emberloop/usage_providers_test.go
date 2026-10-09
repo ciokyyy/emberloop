@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -42,9 +42,9 @@ func providerEnv(t *testing.T, handler http.Handler) string {
 	if err := os.WriteFile(auth, []byte(`{"opencode-go":{"key":"k1"},"google-antigravity":{"refresh":"r1","projectId":"p1"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_PIG_AUTH", auth)
-	t.Setenv("EMBERLOOP_AGY_CLIENT_ID", "test-id")
-	t.Setenv("EMBERLOOP_AGY_CLIENT_SECRET", "test-secret")
+	t.Setenv("EL_PIG_AUTH", auth)
+	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
+	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
 	return t.TempDir()
 }
 

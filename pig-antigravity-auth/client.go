@@ -10,11 +10,11 @@ import (
 
 // The Antigravity OAuth application is Google's own desktop client. Its id and
 // secret are not kept in this repo: they come from the environment or from
-// ~/.emberloop/agy-oauth.json, and login asks for them once when neither
-// exists. emberloop/usage_providers.go reads the same file.
+// ~/.el/agy-oauth.json, and login asks for them once when neither
+// exists. el/usage_providers.go reads the same file.
 const (
-	envClientID     = "EMBERLOOP_AGY_CLIENT_ID"
-	envClientSecret = "EMBERLOOP_AGY_CLIENT_SECRET"
+	envClientID     = "EL_AGY_CLIENT_ID"
+	envClientSecret = "EL_AGY_CLIENT_SECRET"
 )
 
 type oauthClient struct {
@@ -22,10 +22,10 @@ type oauthClient struct {
 	Secret string `json:"client_secret"`
 }
 
-var errNoClient = errors.New("antigravity oauth client missing: set " + envClientID + " and " + envClientSecret + ", or add them to ~/.emberloop/agy-oauth.json")
+var errNoClient = errors.New("antigravity oauth client missing: set " + envClientID + " and " + envClientSecret + ", or add them to ~/.el/agy-oauth.json")
 
 func clientPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".emberloop", "agy-oauth.json")
+	return filepath.Join(os.Getenv("HOME"), ".el", "agy-oauth.json")
 }
 
 // loadClient reads the pair from the environment, then from the file.

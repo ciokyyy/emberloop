@@ -81,6 +81,20 @@ func TestListSpecsFindsSpecWithTitleAndCount(t *testing.T) {
 	}
 }
 
+// Specs under a directory named archive are never listed.
+func TestListSpecsSkipsArchive(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, ".scratch/live/spec.md", "# Live spec\n")
+	writeFile(t, repo, ".scratch/archive/old/spec.md", "# Old spec\n")
+	got, err := discoverSpecs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Title != "Live spec" {
+		t.Fatalf("specs = %+v, want only the live spec", got)
+	}
+}
+
 func writeFile(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := root + "/" + name

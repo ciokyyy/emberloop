@@ -4,9 +4,9 @@
 # agent. This checks the narrower claim that it DOES reach a worker mid-turn.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-EMBERLOOP=/home/cioky/Projects/emberloop/emberloop
+EL=/home/cioky/Projects/emberloop/emberloop
 REPORT=/home/cioky/Projects/emberloop/herdr-report
-DIR=/tmp/emberloop-tell2
+DIR=/tmp/el-tell2
 
 rm -rf "$DIR" ~/.pig/state/emberloop; mkdir -p "$DIR/.scratch/tell/issues"
 printf 'alpha\nbeta\n' > "$DIR/app.txt"
@@ -15,13 +15,13 @@ Work slowly and carefully. Before changing anything, re-read app.txt five times
 with a short pause between each. Then change line 1 from alpha to GAMMA.
 TICKET
 git -C "$DIR" init -q
-git -C "$DIR" -c user.email=w@x -c user.name=emberloop add -A >/dev/null
-git -C "$DIR" -c user.email=w@x -c user.name=emberloop commit -qm base
+git -C "$DIR" -c user.email=w@x -c user.name=el add -A >/dev/null
+git -C "$DIR" -c user.email=w@x -c user.name=el commit -qm base
 
-cd "$DIR" && timeout 600 env EMBERLOOP_HERDR_REPORT="$REPORT" \
-  pig --no-skills -e "$EMBERLOOP" -p '
+cd "$DIR" && timeout 600 env EL_HERDR_REPORT="$REPORT" \
+  pig --no-skills -e "$EL" -p '
 Do these in order, no other tool calls:
-1. spawn with agents=[{"type": "worker", "ticket": "/tmp/emberloop-tell2/.scratch/tell/issues/01-slow.md", "repo": "/tmp/emberloop-tell2"}].
+1. spawn with agents=[{"type": "worker", "ticket": "/tmp/el-tell2/.scratch/tell/issues/01-slow.md", "repo": "/tmp/el-tell2"}].
 2. bash with command "sleep 25", so the worker is in its turn, not done.
 3. tell with agent set to the id the spawn returned, and text:
    "Stop the current task. Create a file named TELLMARKER.txt containing exactly marker-received, commit it, then stop."

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -299,7 +299,7 @@ func ctrlRoundTrip(agentID string, req ctrlRequest) (int, error) {
 		return 0, err
 	}
 	if !res.OK {
-		return 0, fmt.Errorf("emberloop control channel: %s", res.Error)
+		return 0, fmt.Errorf("el control channel: %s", res.Error)
 	}
 	return res.Pending, nil
 }

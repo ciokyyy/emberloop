@@ -182,7 +182,7 @@ func (g grepTool) search(ctx context.Context, root, searchRoot string, q grepQue
 	return grepWithGo(ctx, root, searchRoot, q)
 }
 
-// rgPath resolves the ripgrep binary through the shared resolver: the emberloop
+// rgPath resolves the ripgrep binary through the shared resolver: the el
 // bin directory first, then PATH. Empty means no ripgrep is installed.
 func rgPath() string {
 	p, err := ResolveBinary("rg")
@@ -231,7 +231,7 @@ func grepWithRg(ctx context.Context, root, searchRoot string, q grepQuery) ([]gr
 	cmd := exec.CommandContext(ctx, bin, args...)
 	// rg matches slash globs against its working directory, so it runs in
 	// the workspace root: `-g sub/*.txt` then means what the Go fallback
-	// means, wherever the emberloop process started.
+	// means, wherever the el process started.
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {

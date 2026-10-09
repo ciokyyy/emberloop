@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	_ "embed"
@@ -53,7 +53,7 @@ type AgentType struct {
 	file string
 }
 
-// builtinAgentSources are the types emberloop embeds. A repo file with the same
+// builtinAgentSources are the types el embeds. A repo file with the same
 // name overrides one.
 var builtinAgentSources = map[string]string{
 	"scout":              builtinScout,

@@ -1,9 +1,9 @@
-// Package statedb owns emberloop's SQLite state database: one file in the emberloop
+// Package statedb owns el's SQLite state database: one file in the el
 // state directory holding usage stats, the search cache and quota, and the
 // overflow store. Both the harness (usage tailer,
 // prune) and the agent tools (find logging) write through here, and the TUI
 // reads through here, so the schema has one home. It is a leaf package: it
-// imports nothing from emberloop or its tools, so both can import it without a
+// imports nothing from el or its tools, so both can import it without a
 // cycle.
 package statedb
 
@@ -32,12 +32,12 @@ const CurrentVersion = 3
 // never trip over each other.
 const BusyTimeoutMillis = 5000
 
-// StateDir is emberloop's state directory: EMBERLOOP_STATE_DIR redirects it, the way
-// EMBERLOOP_SETTINGS redirects settings. Callers that already hold a state dir
+// StateDir is el's state directory: EL_STATE_DIR redirects it, the way
+// EL_SETTINGS redirects settings. Callers that already hold a state dir
 // (the TUI's Snapshot seam) join DBFileName onto it with DBPathForDir
 // instead.
 func StateDir() string {
-	if dir := os.Getenv("EMBERLOOP_STATE_DIR"); dir != "" {
+	if dir := os.Getenv("EL_STATE_DIR"); dir != "" {
 		return dir
 	}
 	return filepath.Join(os.Getenv("HOME"), ".pig", "state", "emberloop")

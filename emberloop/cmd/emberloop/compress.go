@@ -9,7 +9,7 @@ import (
 	"example.com/emberloop/tools"
 )
 
-const compressUsage = `usage: emberloop compress [--force] <pane>
+const compressUsage = `usage: el compress [--force] <pane>
 
 Summarize the worker session in pane and restart it in the same pane with
 the handoff as its first message. The handoff copy and the old transcript
@@ -17,14 +17,14 @@ are kept for audit and rollback. A failed summary leaves the old session
 untouched. A press during a running tool call queues to the next boundary
 and the header shows it; --force compresses past the running call.`
 
-const requestCompressUsage = `usage: emberloop request-compress <pane>
+const requestCompressUsage = `usage: el request-compress <pane>
 
 The herdr compress key's signal for the focused pane, whatever the harness.
 At a tool boundary it compresses at once. During a running tool call it
 queues to the boundary and the header shows the queue; a second press while
 the queue stands forces the compress now.`
 
-// runCompress serves `emberloop compress`: the manual path over the
+// runCompress serves `el compress`: the manual path over the
 // supervisor restart, with the settings' compress model per harness.
 func runCompress(argv []string, out io.Writer) error {
 	force := false
@@ -40,7 +40,7 @@ func runCompress(argv []string, out io.Writer) error {
 		return fmt.Errorf("compress needs a pane\n%s", compressUsage)
 	}
 	cwd, _ := os.Getwd()
-	next, err := emberloop.CompressPaneWithForce(emberloop.OSExec, panes[0], tools.EffectiveSettings(cwd), force)
+	next, err := el.CompressPaneWithForce(el.OSExec, panes[0], tools.EffectiveSettings(cwd), force)
 	if err != nil {
 		return err
 	}
@@ -48,14 +48,14 @@ func runCompress(argv []string, out io.Writer) error {
 	return nil
 }
 
-// runRequestCompress serves `emberloop request-compress`: the herdr plugin
+// runRequestCompress serves `el request-compress`: the herdr plugin
 // action's signal path over the same restart.
 func runRequestCompress(argv []string, out io.Writer) error {
 	if len(argv) != 1 {
 		return fmt.Errorf("request-compress needs a pane\n%s", requestCompressUsage)
 	}
 	cwd, _ := os.Getwd()
-	next, err := emberloop.RequestCompress(emberloop.OSExec, argv[0], tools.EffectiveSettings(cwd))
+	next, err := el.RequestCompress(el.OSExec, argv[0], tools.EffectiveSettings(cwd))
 	if err != nil {
 		return err
 	}

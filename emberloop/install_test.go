@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"errors"
@@ -19,9 +19,9 @@ func installTestState(t *testing.T) string {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Cleanup(func() { statePath = old })
 	dir := t.TempDir()
-	t.Setenv("EMBERLOOP_INSTALL_DIR", dir)
+	t.Setenv("EL_INSTALL_DIR", dir)
 	src := t.TempDir()
-	t.Setenv("EMBERLOOP_SOURCE_DIR", src)
+	t.Setenv("EL_SOURCE_DIR", src)
 	// The TUI module sits beside the main module in a real checkout; the
 	// builder fake asserts every build dir exists, so the fixture mirrors it.
 	if err := os.MkdirAll(filepath.Join(src, "..", "emberloop-tui"), 0o755); err != nil {
@@ -81,8 +81,8 @@ func TestInstallRefusesWhileAWorkerIsLiveAndReplacesNothing(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
-	writeInstallSentinel(t, dir, "emberloop-mcp", "old-mcp")
+	writeInstallSentinel(t, dir, "el", "old-pig")
+	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
 
 	_, err := InstallBinaries(installPaneExec(t, "w1:p1"), InstallOptions{})
 	if err == nil {
@@ -91,18 +91,18 @@ func TestInstallRefusesWhileAWorkerIsLiveAndReplacesNothing(t *testing.T) {
 	if !strings.Contains(err.Error(), "07-foo") {
 		t.Errorf("the refusal must name the live agent, got: %v", err)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "old-pig" {
-		t.Errorf("a refused install must replace nothing, emberloop = %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
+		t.Errorf("a refused install must replace nothing, el = %q", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-mcp"); got != "old-mcp" {
-		t.Errorf("a refused install must replace nothing, emberloop-mcp = %q", got)
+	if got := readInstallFile(t, dir, "el-mcp"); got != "old-mcp" {
+		t.Errorf("a refused install must replace nothing, el-mcp = %q", got)
 	}
 }
 
 // installBuildExec answers `herdr pane list` with panes alive and plays `go
 // build` by writing a marker where -o points, so the test sees what would be
 // installed without a toolchain. Builds run in the source checkout, or in the
-// TUI module under it for the emberloop-tui target.
+// TUI module under it for the el-tui target.
 func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 	t.Helper()
 	return func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -117,7 +117,7 @@ func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 				return Result{Code: 1, Stderr: "no -o"}, nil
 			}
 			if o.Cwd != src && o.Cwd != filepath.Join(src, "..", "emberloop-tui") {
-				t.Errorf("go build must run in the source checkout %q or its sibling emberloop-tui module, got %q", src, o.Cwd)
+				t.Errorf("go build must run in the source checkout %q or its sibling el-tui module, got %q", src, o.Cwd)
 			}
 			if info, err := os.Stat(o.Cwd); err != nil || !info.IsDir() {
 				t.Errorf("go build must run in an existing checkout dir, got %q", o.Cwd)
@@ -136,9 +136,9 @@ func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 // binaries are replaced.
 func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	dir := installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
-	writeInstallSentinel(t, dir, "emberloop-mcp", "old-mcp")
+	src := os.Getenv("EL_SOURCE_DIR")
+	writeInstallSentinel(t, dir, "el", "old-pig")
+	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
 
 	res, err := InstallBinaries(installBuildExec(t, src), InstallOptions{})
 	if err != nil {
@@ -147,14 +147,14 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	if res.Dir != dir {
 		t.Errorf("install dir = %q, want %q", res.Dir, dir)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "built ./cmd/emberloop" {
-		t.Errorf("emberloop = %q, want the new build", got)
+	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/emberloop" {
+		t.Errorf("el = %q, want the new build", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-mcp"); got != "built ./cmd/emberloop-mcp" {
-		t.Errorf("emberloop-mcp = %q, want the new build", got)
+	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/emberloop-mcp" {
+		t.Errorf("el-mcp = %q, want the new build", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-tui"); got != "built ./cmd/emberloop-tui" {
-		t.Errorf("emberloop-tui = %q, want the new build", got)
+	if got := readInstallFile(t, dir, "el-tui"); got != "built ./cmd/emberloop-tui" {
+		t.Errorf("el-tui = %q, want the new build", got)
 	}
 }
 
@@ -162,14 +162,14 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 // warns that running sessions keep the old binary until they restart.
 func TestInstallForceInstallsPastALiveAgentWithWarning(t *testing.T) {
 	dir := installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
+	src := os.Getenv("EL_SOURCE_DIR")
 	if err := save(map[string]Worker{
 		"07-foo": {ID: "07-foo", Pane: "w1:p1"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
-	writeInstallSentinel(t, dir, "emberloop-mcp", "old-mcp")
+	writeInstallSentinel(t, dir, "el", "old-pig")
+	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
 
 	res, err := InstallBinaries(installBuildExec(t, src, "w1:p1"), InstallOptions{Force: true})
 	if err != nil {
@@ -178,14 +178,14 @@ func TestInstallForceInstallsPastALiveAgentWithWarning(t *testing.T) {
 	if !strings.Contains(res.Warning, "running sessions keep the old binary until they restart") {
 		t.Errorf("a forced install must warn about stale sessions, got %q", res.Warning)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "built ./cmd/emberloop" {
-		t.Errorf("a forced install must replace, emberloop = %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/emberloop" {
+		t.Errorf("a forced install must replace, el = %q", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-mcp"); got != "built ./cmd/emberloop-mcp" {
-		t.Errorf("a forced install must replace, emberloop-mcp = %q", got)
+	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/emberloop-mcp" {
+		t.Errorf("a forced install must replace, el-mcp = %q", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-tui"); got != "built ./cmd/emberloop-tui" {
-		t.Errorf("a forced install must replace, emberloop-tui = %q", got)
+	if got := readInstallFile(t, dir, "el-tui"); got != "built ./cmd/emberloop-tui" {
+		t.Errorf("a forced install must replace, el-tui = %q", got)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestInstallNamesReviewerAndScoutAndIgnoresDeadPanes(t *testing.T) {
 	if err := WriteAgentState(AgentState{ID: "scout-1", Type: "scout", Pane: "w1:p3"}); err != nil {
 		t.Fatal(err)
 	}
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
+	writeInstallSentinel(t, dir, "el", "old-pig")
 
 	_, err := InstallBinaries(installPaneExec(t, "w1:p2", "w1:p3"), InstallOptions{})
 	if err == nil {
@@ -228,8 +228,8 @@ func TestInstallNamesReviewerAndScoutAndIgnoresDeadPanes(t *testing.T) {
 	if n := strings.Count(err.Error(), "w1:p2"); n != 1 {
 		t.Errorf("one pane must be named once, w1:p2 appears %d times in: %v", n, err)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "old-pig" {
-		t.Errorf("a refused install must replace nothing, emberloop = %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
+		t.Errorf("a refused install must replace nothing, el = %q", got)
 	}
 }
 
@@ -267,17 +267,17 @@ func TestInstallWithUnknownLivenessRefusesUnlessForced(t *testing.T) {
 	if !strings.Contains(res.Warning, "running sessions keep the old binary until they restart") {
 		t.Errorf("a forced install past unknown liveness must warn, got %q", res.Warning)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "built" {
-		t.Errorf("a forced install must replace, emberloop = %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "built" {
+		t.Errorf("a forced install must replace, el = %q", got)
 	}
 }
 
-// Seam (ticket 13): install CLI — `emberloop install` refuses live agents by
+// Seam (ticket 13): install CLI — `el install` refuses live agents by
 // name, installs cleanly, and --force installs with the stale-session
 // warning; unknown flags fail with usage.
 func installCLIExec(t *testing.T, panes ...string) Exec {
 	t.Helper()
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
+	src := os.Getenv("EL_SOURCE_DIR")
 	return installBuildExec(t, src, panes...)
 }
 
@@ -317,7 +317,7 @@ func TestRunInstallInstallsCleanlyAndForceWarns(t *testing.T) {
 	depsCalls := 0
 	runInstallDeps = func(out io.Writer) error { depsCalls++; return nil }
 	t.Cleanup(func() { runInstallDeps = oldDeps })
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
+	writeInstallSentinel(t, dir, "el", "old-pig")
 
 	var out strings.Builder
 	if err := RunInstall([]string{}, &out); err != nil {
@@ -326,8 +326,8 @@ func TestRunInstallInstallsCleanlyAndForceWarns(t *testing.T) {
 	if !strings.Contains(out.String(), "installed") || !strings.Contains(out.String(), dir) {
 		t.Errorf("a clean install must say what it installed where, got %q", out.String())
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "built ./cmd/emberloop" {
-		t.Errorf("emberloop = %q, want the new build", got)
+	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/emberloop" {
+		t.Errorf("el = %q, want the new build", got)
 	}
 
 	if err := save(map[string]Worker{
@@ -367,8 +367,8 @@ func TestRunInstallRefusesUnknownFlagsWithUsage(t *testing.T) {
 // nothing and leaves no temp files behind.
 func TestInstallFailedBuildReplacesNothingAndLeavesNoTemps(t *testing.T) {
 	dir := installTestState(t)
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
-	writeInstallSentinel(t, dir, "emberloop-mcp", "old-mcp")
+	writeInstallSentinel(t, dir, "el", "old-pig")
+	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
 	builds := 0
 	exec := func(cmd string, args []string, o ExecOpts) (Result, error) {
 		if cmd == "go" {
@@ -410,11 +410,11 @@ func TestInstallFailedBuildReplacesNothingAndLeavesNoTemps(t *testing.T) {
 		}
 		t.Errorf("a failed install must leave no temp files, dir holds %v", names)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "old-pig" {
-		t.Errorf("a failed install must replace nothing, emberloop = %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
+		t.Errorf("a failed install must replace nothing, el = %q", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-mcp"); got != "old-mcp" {
-		t.Errorf("a failed install must replace nothing, emberloop-mcp = %q", got)
+	if got := readInstallFile(t, dir, "el-mcp"); got != "old-mcp" {
+		t.Errorf("a failed install must replace nothing, el-mcp = %q", got)
 	}
 }
 
@@ -422,14 +422,14 @@ func TestInstallFailedBuildReplacesNothingAndLeavesNoTemps(t *testing.T) {
 // build runs is refused before anything is replaced.
 func TestInstallRechecksLivenessAfterTheBuild(t *testing.T) {
 	dir := installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
+	src := os.Getenv("EL_SOURCE_DIR")
 	if err := save(map[string]Worker{
 		"07-late": {ID: "07-late", Pane: "w1:p7"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
-	writeInstallSentinel(t, dir, "emberloop-mcp", "old-mcp")
+	writeInstallSentinel(t, dir, "el", "old-pig")
+	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
 	// The first pane list is empty; every later one shows the pane, the way
 	// a pane started mid-build reads.
 	lists := 0
@@ -451,11 +451,11 @@ func TestInstallRechecksLivenessAfterTheBuild(t *testing.T) {
 	if !strings.Contains(err.Error(), "07-late") {
 		t.Errorf("the refusal must name the late agent, got: %v", err)
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "old-pig" {
-		t.Errorf("a refused install must replace nothing, emberloop = %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
+		t.Errorf("a refused install must replace nothing, el = %q", got)
 	}
-	if got := readInstallFile(t, dir, "emberloop-mcp"); got != "old-mcp" {
-		t.Errorf("a refused install must replace nothing, emberloop-mcp = %q", got)
+	if got := readInstallFile(t, dir, "el-mcp"); got != "old-mcp" {
+		t.Errorf("a refused install must replace nothing, el-mcp = %q", got)
 	}
 }
 
@@ -465,9 +465,9 @@ func TestInstallRechecksLivenessAfterTheBuild(t *testing.T) {
 // clobbered.
 func TestInstallFailedRenameRestoresWhatItReplaced(t *testing.T) {
 	dir := installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
-	writeInstallSentinel(t, dir, "emberloop", "old-pig")
-	if err := os.MkdirAll(filepath.Join(dir, "emberloop-mcp"), 0o755); err != nil {
+	src := os.Getenv("EL_SOURCE_DIR")
+	writeInstallSentinel(t, dir, "el", "old-pig")
+	if err := os.MkdirAll(filepath.Join(dir, "el-mcp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -475,11 +475,11 @@ func TestInstallFailedRenameRestoresWhatItReplaced(t *testing.T) {
 	if err == nil {
 		t.Fatal("a rename onto a directory must fail the install")
 	}
-	if got := readInstallFile(t, dir, "emberloop"); got != "old-pig" {
-		t.Errorf("a failed swap must restore emberloop, got %q", got)
+	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
+		t.Errorf("a failed swap must restore el, got %q", got)
 	}
-	if info, err := os.Stat(filepath.Join(dir, "emberloop-mcp")); err != nil || !info.IsDir() {
-		t.Errorf("a failed swap must not clobber the directory at emberloop-mcp: %v", err)
+	if info, err := os.Stat(filepath.Join(dir, "el-mcp")); err != nil || !info.IsDir() {
+		t.Errorf("a failed swap must not clobber the directory at el-mcp: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -499,10 +499,10 @@ func TestInstallFailedRenameRestoresWhatItReplaced(t *testing.T) {
 // the exec seam.
 func TestInstallLinksHerdrPlugin(t *testing.T) {
 	installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
+	src := os.Getenv("EL_SOURCE_DIR")
 	plugin := t.TempDir()
-	t.Setenv("EMBERLOOP_HERDR_PLUGIN_DIR", plugin)
-	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"emberloop\"\n"), 0o644); err != nil {
+	t.Setenv("EL_HERDR_PLUGIN_DIR", plugin)
+	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"el\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var linked []string
@@ -525,10 +525,10 @@ func TestInstallLinksHerdrPlugin(t *testing.T) {
 // install.
 func TestInstallPluginLinkFailureWarns(t *testing.T) {
 	installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
+	src := os.Getenv("EL_SOURCE_DIR")
 	plugin := t.TempDir()
-	t.Setenv("EMBERLOOP_HERDR_PLUGIN_DIR", plugin)
-	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"emberloop\"\n"), 0o644); err != nil {
+	t.Setenv("EL_HERDR_PLUGIN_DIR", plugin)
+	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"el\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -548,7 +548,7 @@ func TestInstallPluginLinkFailureWarns(t *testing.T) {
 
 // The user-facing install step documents the keybinding line the user adds.
 func TestInstallUsageDocumentsTheKeybinding(t *testing.T) {
-	for _, want := range []string{"[[keys.command]]", "plugin_action", "emberloop.compress"} {
+	for _, want := range []string{"[[keys.command]]", "plugin_action", "el.compress"} {
 		if !strings.Contains(installUsage, want) {
 			t.Errorf("install usage must document %q", want)
 		}
@@ -559,7 +559,7 @@ func TestInstallUsageDocumentsTheKeybinding(t *testing.T) {
 // install — it runs the install itself.
 func TestInstallIgnoresLiveTopLevelSession(t *testing.T) {
 	installTestState(t)
-	src := os.Getenv("EMBERLOOP_SOURCE_DIR")
+	src := os.Getenv("EL_SOURCE_DIR")
 	if err := WriteAgentState(AgentState{ID: "top-1", Type: "orchestrator", Pane: "w1:p1", SessionID: "sess-1"}); err != nil {
 		t.Fatal(err)
 	}

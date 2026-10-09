@@ -1,14 +1,14 @@
-# AGENTS.md — emberloop-web
+# AGENTS.md — el-web
 
 ## Purpose
 
 Enderbloom Web: local Daemon (Go) plus embedded browser UI driving
 claude and pig Sessions behind one `Backend` interface. See
-`.scratch/enderbloom-web/spec.md`.
+`.scratch/archive/enderbloom-web/spec.md`.
 
 ## Ownership
 
-Owns `emberloop-web/`. May import emberloop core packages through the
+Owns `emberloop-web/`. May import el core packages through the
 `replace example.com/emberloop => ../emberloop` in `go.mod`, so the module
 builds only beside a sibling `emberloop/` checkout; core never imports it.
 No herdr. Ticket files are preview input plus the driver's only write target:
@@ -27,9 +27,14 @@ the driver ticks boxes and marks done, nothing else writes them.
   with the fake Backend (create, prompt, replay, guard, restart, UI);
   `lifecycle_test.go` covers the cap, idle release, restart resume and
   read-only paths the same way; `steer_test.go` covers steer, follow-up,
-  queue list/clear and the claude Steer-to-Follow-up degradation at the
-  same seam; `spawn_test.go` covers spawn, nesting, grouped delivery and
-  scout read-only at the same seam; `runs_test.go` covers spec discovery and
+  queue list/clear and the claude Steer injection and its Follow-up
+  fallback at the same seam; `spawn_test.go` covers spawn, nesting, grouped delivery and
+  scout read-only at the same seam; `submitgate_test.go` covers the child submit gate
+  with the flag on (submit untouched, reminded-then-submits, give-up notice,
+  kill and interrupt skips) plus settle delivery with it off (last message,
+  submit text, failed status) at the same seam; `steer_child_test.go` covers a parent
+  steering its own child on both tool paths, non-child and scout refusals at
+  the same seam; `runs_test.go` covers spec discovery and
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
   with a fake Backend and fake git (order, cap, box ticks, dirty and
   conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
@@ -43,18 +48,63 @@ the driver ticks boxes and marks done, nothing else writes them.
   (env-gated) with a real pig.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
   ExtraTools plus the per-Session spawn tool (scouts: ExtraTools without
-  spawn), models from the SDK catalog, one SDK stack per live Session
+  spawn), models from the SDK catalog filtered to providers with usable auth
+  (`CheckProviderAuth` over `auth.json`, env keys, OAuth; `?current=` keeps
+  one unlisted model visible), one SDK stack per live Session
   released on idle or DELETE and reloaded through `Runtime.Resume`.
   Steer and Follow-up use the SDK native queues (`QueuedMessages`/
   `ClearQueued` expose them); the Daemon merges them with its own pending
   list. Backends register per harness; the fake stays default.
+- `pigacp.go` is the default pig Backend (`EL_PIG_SDK=1` or a missing
+  `pig`/`el-mcp`/`bunx` falls back to the SDK Backend): it runs the pi-acp
+  adapter (`bunx pi-acp@0.0.34`, `npx -y` fallback) through the generalized
+  `ClaudeBackend` ACP path, so pig Sessions behave like claude ones. Each
+  Session gets its own pig agent dir under
+  `<stateDir>/enderbloom/pig-acp/<id>/agent` (symlinks to the user's pig
+  auth/models/sessions/extensions, never `herdr-report`, plus a generated
+  `settings.json` with `compaction.enabled=false` and `quietStartup`, and an
+  `mcp.json` (direct exposure): the single `el-mcp` server under the Session's
+  role (`--role web`, `--role web-worker` for spawned group children,
+  `--role scout` for scouts); the user's own MCP servers are not merged. A
+  generated `bin/pi` shim (first on PATH, hides `--version`) re-executes the
+  Daemon binary as `pig-shim` (`pigshim.go`), which runs `pig --no-builtin-tools`
+  and owns a unix socket (`EL_PIG_STEER_SOCK`) that injects native `steer`,
+  `follow_up` and `clear_queue` rpc commands and reports the queue, so
+  `PigACPBackend` is a `steerBackend`. Compression is off for ACP pig: the
+  Backend is not a `compactBackend`, the Session GET reports
+  `compressible:false` and the UI hides the Compress button.
+- `restart.go` (`Idle`, `Shutdown`) and `cmd/emberloop-web/restart.go` restart the
+  Daemon in place: every `-restart-check` (default 1m, 0 off) it compares its
+  binary on disk with the one it started from and, after the change held for
+  two ticks and the Daemon is idle (no Session mid-turn, starting, resuming or
+  releasing, no Run driving), closes live agent processes and `exec`s itself
+  with the same args, keeping pid and address.
 - `claude.go` holds the claude ACP Backend (pinned adapter, shared
-  new/load stripping set, allow-once auto-approve) with stub-transport
+  new/load stripping set, el system prompt replacing the Claude Code
+  preset and the caveman ultra register (system prompt plus a per-turn
+  `UserPromptSubmit` reminder hook via inline `settings`), `_session/steering`, allow-once auto-approve) with stub-transport
   tests in `claude_*_test.go` and a `-tags live` probe for the real adapter.
+  Project context (`contextfiles.go`, table-tested in `contextfiles_test.go`)
+  injects the Session WorkDir's AGENTS.md/CLAUDE.md chain (outermost-first,
+  global pig agent-dir file first, 64 KB cap with truncation note) into the
+  system prompt on create and resume, scouts included; `settingSources`
+  stays empty.
+- `titles.go` names root Sessions for the list: the first prompt starts one
+  background, one-off title call (`Title` on a Backend: claude a throwaway
+  ACP session with a string `systemPrompt`, no MCP, no tools; pig a bare
+  `Provider.Stream` completion), stored as `title` in `meta.json`.
+  Claude Sessions title with haiku while `session_titles` (default on) allows it;
+  pig Sessions title with the pig model of the `pig-title` role (harness
+  must be pig) and stay untitled without one. Scouts and Subagents are
+  skipped, failures leave the `harness · id` label, and
+  `EL_SESSION_TITLES=0` turns all naming off (it also locks the claude
+  switch in the settings page). `main_test.go` keeps it off for
+  the package; the title tests switch it on.
 - `GET /api/models?harness=` offers models per harness (claude: opus,
-  sonnet, haiku). Creating a claude Session with another model is 400;
-  creating one without the claude Backend wired, or when the adapter
-  fails to start, is 500 with no Session left behind.
+  sonnet, haiku; pig: only authed providers, plus `?current=`). Creating a
+  claude Session with another model is 400; creating one without the claude
+  Backend wired, or when the adapter fails to start, is 500 with no Session
+  left behind.
 - Lifecycle (`lifecycle.go`, `daemon.go`): the Daemon caps live Sessions at
   the global `max_workers` setting (env, settings file, default 3; over-cap
   creates and resumes are 429), releases a settled (idle or failed)
@@ -67,15 +117,18 @@ the driver ticks boxes and marks done, nothing else writes them.
   (`resumable`/`resumeNote` on session GET, read-only banner in the UI);
   a new send there is 409. The settings endpoint (`settings.go`) reads and
   writes `max_workers` next to roles, reporting `max_workers_from_env` when
-  `EMBERLOOP_MAX_WORKERS` wins; a write takes effect on the live cap with
+  `EL_MAX_WORKERS` wins; a write takes effect on the live cap with
   no restart, and Run Sessions share the one cap with chat Sessions. The
   settings page edits the field and locks it with a note under the override.
 - Steering is `POST /api/sessions/{id}/steer|followup` with `{"text"}`.
   `POST .../prompt` accepts an optional `mode` (prompt, steer, followup).
   Live idle Sessions start a turn at once; mid-turn messages queue: pig
   steers and follow-ups in the SDK native queues, everything else in the
-  Daemon pending list. A mid-turn claude Steer degrades to a Follow-up and
-  the transcript says so. Prompt Events carry the delivery in `mode`
+  Daemon pending list. A mid-turn claude Steer is injected through the adapter's
+  `_session/steering`; when that is unavailable or no turn runs it degrades
+  to a Follow-up. Messages that queue behind a turn in the Daemon pending list
+  are delivered together as one blank-line separated message (one prompt
+  Event; `followup` unless they all share a mode). Prompt Events carry the delivery in `mode`
   (empty for plain prompts, else steer or followup).
 - `GET /api/sessions/{id}/queue` lists not-yet-delivered messages as
   `{"queue":[{"mode","text"}]}` (pig native queues first); `DELETE` on the
@@ -83,6 +136,12 @@ the driver ticks boxes and marks done, nothing else writes them.
   Steer, follow-up and prompt-on-working answers are 202 with
   `{"seq","queued"}` (queued Daemon messages add `"position"`); unknown
   Sessions are 404, empty text is 400, ended Sessions are 410 on send.
+- Voice input: the browser records in live segments (fresh MediaRecorder per segment, closed on silence pause or timer), `stt.go` (`POST /api/stt`, raw audio body, `{"text"}` back) forwards each to OpenRouter `openai/gpt-transcribe` (`EL_STT_MODEL` overrides) with the key `systemone.APIKey` finds (`OPENROUTER_API_KEY`, else the one pig holds via `pig auth login`, else the openrouter `api_key` in `~/.pig/agent/auth.json` when pig is not on PATH); the key never reaches the browser. With `?format=1` each transcript goes through the cleanup model `openai/gpt-4o-mini` (`EL_STT_FORMAT_MODEL` overrides; fail open to raw text), which fixes punctuation/casing/filler with the transcript pinned as untrusted data. The Composer appends each part to the draft in order (pending dimmed, failed parts skipped, typed text kept). No key is 503, an upstream failure is 502 with its message, `GET /api/stt` reports `{enabled,model,formatModel}`. Audio is capped at 25 MB per segment. The mic needs a secure context, so a plain http tailnet IP has no mic: use `tailscale serve`.
+- Interrupt: `POST /api/sessions/{id}/interrupt` drops every queued message, then asks an `interruptBackend` to stop the running turn (ACP `session/cancel` for claude and pig ACP, `Session.RequestAbort` for the SDK Backend). The turn ends idle and the Session stays usable; an idle Session answers `{"interrupted":false}`. The Composer shows a Stop button while the Session works.
+- Image attachments: `POST /api/sessions/{id}/prompt` takes `images: [{mime,data}]` (base64; png, jpeg, gif, webp; 8 per message, 5 MB each; text may be empty). Only `images.go` `imageBackend` Backends take them (pig via `SendContent`, claude via ACP image blocks); others fail the turn with an error Event. The prompt Event stores `images` as a count, never the bytes. A pig message with images takes the native queue too (`imageSteerBackend`: the shim forwards pig RPC image blocks); other harnesses keep a mid-turn image message in the Daemon pending list as a Follow-up. `steer` and `followup` routes stay text-only.
+- `sudo.go` gates sudo: the shared `bash` tool (claude through el-mcp, which gets `EL_WEB_PARENT` and `EL_WEB_DAEMON_URL`; pig through `PigBackend.SudoGate`) posts any command that uses sudo to `POST /api/sessions/{id}/sudo` instead of running it, and the model is told the request went to the user. The UI card (`sudo_request` Event, updated by `sudo_resolved`) offers Approve or Deny via `POST /api/sessions/{id}/sudo/{rid}` with an optional password. Approved commands run in the background (`sudo -n`, or `sudo -S` with the password, held in memory only); the output returns to the Session as a TOON `sudo_result:` Follow-up, shown as a result card. Requests live in memory: a Daemon restart expires pending ones.
+- `read` returns images: `pigtools.go` turns the shared tool's images into `ai.ImageContent` (a model without image input gets pig's placeholder); claude gets MCP image blocks from el-mcp.
+- `push.go` is Web Push (stdlib, RFC 8291 + VAPID): `GET /api/push/key`, `POST|DELETE /api/push/subscribe`; the VAPID key and subscriptions persist in `enderbloom/push/`. A root chat turn going working to idle or failed notifies every subscription; gone ones (404, 410) drop. Browsers allow push only in a secure context, so a plain http tailnet IP cannot subscribe: use `tailscale serve` (https) with `-allow-host`. `web/public/sw.js` shows the notification.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
   `meta.json` (now carrying the resume token plus `parentId`, `groupId`,
   `scout`) plus append-only `events.jsonl`; Groups persist as
@@ -94,21 +153,44 @@ the driver ticks boxes and marks done, nothing else writes them.
   whole call is 429 with no half Group. The session list nests children
   under `parentId` and each opens its own transcript. The last member to
   settle delivers one grouped result to the parent as a Steer (queued when
-  the parent works); the parent transcript also keeps one
+  the parent works); each member's line carries its submit text when one
+  exists, else its last assistant message (whole final reply), with a
+  `[failed]` mark on failed children. The parent transcript also keeps one
   `subagent_spawned` Event per child and one `subagent_finished` Event per
-  Group. Delivery is exactly-once per Group: a parent that cannot resume
+  Group. Children settle on their turn alone: the shared stop gate
+  (`el.DecideGate` in `submitgate.go`) runs only while `el.WebSubmitEnabled`
+  holds (off: no submit tool, no reminders, no give-up notice); interrupts,
+  kills and ended Sessions skip it either way. Delivery is exactly-once per Group: a parent that cannot resume
   (cap, ended) still gets its `subagent_finished` marker, but the grouped
   Steer is dropped, and a Group mid-flight across a restart is never
   redelivered; member transcripts stay readable either way. Scouts are
   read-only: sends and nested spawns are 403, the UI hides the composer
-  with a banner, pig scout loadouts carry no spawn tool, and claude scout
-  Sessions run the base server under `--role scout` with no spawn server.
-- `spawn` is Daemon-hosted (`spawn.go`, `spawnmcp.go`): pig takes it as a
-  per-Session ExtraTool bound to its own id, claude through a per-Session
-  `emberloop-spawn` MCP server (the Daemon binary in `spawn-server` mode,
-  parent and Daemon URL in its env) alongside the base `emberloop-mcp`
-  server. The existing MCP server never calls back; all Group state stays
-  in the Daemon.
+  with a banner, pig scout loadouts carry none of spawn, steer, check or
+  cancel, and claude scout Sessions run the single el server under `--role
+  scout` (no Daemon tools at all).
+- `spawn`, `steer`, `check` and `cancel` are Daemon-hosted
+  (`spawn.go` for the routes, `emberloop/tools/webproxy.go` for the thin HTTP
+  proxies the single `el-mcp` server serves; `submit` stays registered there
+  but unoffered while `el.WebSubmitEnabled` is false): pig takes the four as
+  per-Session ExtraTools bound to its own id, claude through the base server
+  under the Session's role. Top-level parents run `--role web` (spawn, steer,
+  check, cancel), spawned group children `--role web-worker`
+  (spawn; nesting kept, but no steer, check or cancel), scouts
+  `--role scout` (read-only). A proxy registers only when its role allows
+  it and `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL` bind the server to the Session,
+  and never reaches an execute script. `steer` (`SteerChild`: only the
+  recorded parent, scouts refused) routes a working child as steer and an
+  idle or released one as follow-up (resuming first) through the same resume
+  plus routeLive path the UI sends use. `check` (`CheckChildren`/`CheckChild`:
+  only the recorded parent, scouts readable) peeks without messaging: one
+  summary line per child, or one child plus its last twenty Events; grouped
+  results still arrive on their own, so check never polls. `cancel`
+  (`CancelChild`: only the recorded parent, scouts stoppable) reuses the
+  interrupt route, and kill ends through the same end DELETE serves.
+  The submit route (`POST /api/sessions/{id}/submit`, kept for Runs and the
+  flag-on gate) still records a result the grouped text prefers when one
+  exists. The existing
+  MCP server never calls back; all Group state stays in the Daemon.
 - `runs.go` serves the Runs picker off core spec resolution and ticket
   reading (`GET /api/specs` lists specs with title and ticket count,
   `GET /api/specs/preview` returns number, title, blockers and checkbox
@@ -165,11 +247,21 @@ the driver ticks boxes and marks done, nothing else writes them.
 In `emberloop-web/`: `go vet ./... && go test ./...`. Wired into the repo check.
 In `emberloop-web/web/`: `npm test` (vitest) and `npm run build`. The JS
 suite is not in the repo check; the check covers Go only.
-The live probe is env-gated, never in the check: `EMBERLOOP_LIVE_PIG=1` with
+The live probe is env-gated, never in the check: `EL_LIVE_PIG=1` with
 `PIG_LIVE_MODEL` set to a healthy provider/model runs `TestLivePigBackend`.
+The pig ACP live probe is `EL_LIVE_PIG_ACP=1` with `PIG_ACP_SPAWN_BIN` set
+to a built Daemon binary (`TestLivePigACP`).
 
 ## Child DOX Index
 
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary
+
+## E2E suite
+
+`web/e2e/` holds the browser suite on [tester-army/e2e](https://github.com/tester-army/e2e):
+real Chromium against a throwaway Daemon (`serve.sh`: fake backend, fresh state
+dir, fixture repos in `/tmp/el-e2e`). No model, no API key. Run it with
+`npm run test:e2e` from `web/` (it builds the UI first). It sits on top of the
+Vitest component tests and `go test`; it is not part of the main check.

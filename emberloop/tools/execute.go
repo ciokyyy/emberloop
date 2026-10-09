@@ -1,9 +1,9 @@
-// Execute runs a Python script that calls emberloop's native and MCP tools as functions.
+// Execute runs a Python script that calls el's native and MCP tools as functions.
 // Each call is a fresh `python3 -I` process with no state kept between calls.
-// Emberloop creates a private temp directory holding a unix socket and a generated
+// El creates a private temp directory holding a unix socket and a generated
 // `tools` module, and puts the script beside it so `import tools` resolves
 // through the script's own directory even under -I (which ignores
-// PYTHONPATH). `tools.<name>(**kwargs)` sends one JSON line per call; emberloop
+// PYTHONPATH). `tools.<name>(**kwargs)` sends one JSON line per call; el
 // runs the real tool and returns the result string, or an error the script
 // sees as `tools.ToolError`. `tools.search` and `tools.help` answer from a
 // spec baked into the module, with no round trip.
@@ -12,12 +12,12 @@
 // role's resolved toolset minus execute itself and the orchestration tools,
 // so a disabled tool is not callable and renames show under their new names.
 // For review and scout the Python runs inside the bubblewrap sandbox with the
-// bridge directory as the only writable bind; emberloop serves the socket outside
+// bridge directory as the only writable bind; el serves the socket outside
 // it, so `check` can still write its own caches while the script can write
 // nothing. The temp directory and socket are removed after every call, and a
 // timeout kills the whole process group.
 //
-// Test hooks: EMBERLOOP_PYTHON overrides the python3 path outright.
+// Test hooks: EL_PYTHON overrides the python3 path outright.
 package tools
 
 import (
@@ -49,12 +49,12 @@ const (
 	executeFrameBytes = 8 << 20
 )
 
-// pythonPath resolves the interpreter execute runs: EMBERLOOP_PYTHON wins for
+// pythonPath resolves the interpreter execute runs: EL_PYTHON wins for
 // tests, otherwise the shared bin-dir-then-PATH resolver. A miss is a
-// *SandboxUnavailableError naming `emberloop deps`, the command that installs
+// *SandboxUnavailableError naming `el deps`, the command that installs
 // it.
 func pythonPath() (string, error) {
-	if p := os.Getenv("EMBERLOOP_PYTHON"); p != "" {
+	if p := os.Getenv("EL_PYTHON"); p != "" {
 		if isExecutable(p) {
 			return p, nil
 		}
@@ -63,12 +63,12 @@ func pythonPath() (string, error) {
 				return abs, nil
 			}
 		}
-		return "", &SandboxUnavailableError{Binary: "python3", Reason: fmt.Sprintf("EMBERLOOP_PYTHON=%q is not executable", p)}
+		return "", &SandboxUnavailableError{Binary: "python3", Reason: fmt.Sprintf("EL_PYTHON=%q is not executable", p)}
 	}
 	return ResolveBinary("python3")
 }
 
-// executeTool is the unbound placeholder tools.All serves: emberloop replaces it
+// executeTool is the unbound placeholder tools.All serves: el replaces it
 // per role with a bound NewExecute carrying that role's allowed tools, so the
 // MCP tool list and the stub generator cannot disagree. Served directly it
 // refuses instead of running with no allowlist.
@@ -76,7 +76,7 @@ type executeTool struct{}
 
 func (executeTool) Name() string { return "execute" }
 func (executeTool) Description() string {
-	return "Run a Python script (stdlib only) that calls emberloop tools as functions, so one call replaces many and only what the script prints enters context.\n\n" +
+	return "Run a Python script (stdlib only) that calls el tools as functions, so one call replaces many and only what the script prints enters context.\n\n" +
 		"Behind execute: grep, git, check.\n\n" +
 		"import tools\nprint(tools.grep(pattern=\"TODO\"))\n\n" +
 		"tools.search(query) lists matching tools with signatures; tools.help(name) shows one tool. A failing tool call raises tools.ToolError.\n\n" +
@@ -103,7 +103,10 @@ type boundExecute struct {
 }
 
 // Orchestration names never reach a script: submitting or spawning from
-// inside execute would bypass the harness that owns the turn.
+// inside execute would bypass the harness that owns the turn. Daemon proxies
+// never reach one either, by mark rather than by name: the web check proxy
+// shares its name with the repo-checks tool, which stays script-callable for
+// the herdr roles.
 var executeExcluded = map[string]bool{
 	"execute": true, "spawn": true, "finish": true, "tell": true, "submit": true,
 }
@@ -111,6 +114,11 @@ var executeExcluded = map[string]bool{
 // ExecuteExcluded reports whether name is an orchestration tool that never
 // reaches a script.
 func ExecuteExcluded(name string) bool { return executeExcluded[name] }
+
+// ExecuteExcludedTool reports whether t never reaches a script: an
+// orchestration name, or a Daemon-hosted tool steering, peeking, stopping,
+// spawning or submitting outside the harness that owns the turn.
+func ExecuteExcludedTool(t Tool) bool { return executeExcluded[t.Name()] || IsDaemonProxy(t) }
 
 // NewExecute builds the execute tool for one role: allowed is the role's
 // resolved toolset (both buckets, renames applied) and only what is not
@@ -120,7 +128,7 @@ func NewExecute(allowed []Tool, desc string, sandboxed bool) Tool {
 	byName := map[string]Tool{}
 	var kept []Tool
 	for _, t := range allowed {
-		if executeExcluded[t.Name()] {
+		if ExecuteExcludedTool(t) {
 			continue
 		}
 		if _, dup := byName[t.Name()]; dup {
@@ -161,7 +169,7 @@ type MCPServerLine struct {
 // short summary, tool count) and nothing more: never schemas.
 func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) string {
 	var b strings.Builder
-	b.WriteString("Run a Python script (stdlib only) that calls emberloop tools as functions, so one call replaces many and only what the script prints enters context.\n\n")
+	b.WriteString("Run a Python script (stdlib only) that calls el tools as functions, so one call replaces many and only what the script prints enters context.\n\n")
 	if len(names) == 0 && len(servers) == 0 {
 		b.WriteString("No tools are behind execute for this role.\n")
 	} else if len(names) == 0 {
@@ -186,7 +194,7 @@ func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) stri
 
 	b.WriteString("\nimport tools\nprint(tools.grep(pattern=\"TODO\"))\n\n")
 	if len(mainNames) > 0 {
-		fmt.Fprintf(&b, "Also callable as tools.<name>(...): %s (these are served as separate tools; call them here to batch).\n\n", strings.Join(mainNames, ", "))
+		fmt.Fprintf(&b, "Also callable as tools.<name>(...): %s (separate tools; call them here to batch).\n\n", strings.Join(mainNames, ", "))
 	}
 	has := map[string]bool{}
 	for _, n := range names {
@@ -195,7 +203,7 @@ func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) stri
 	for _, n := range mainNames {
 		has[n] = true
 	}
-	b.WriteString("Prefer execute over several separate calls when one result feeds the next, when you loop over many items, or when you need only a filtered slice of a big output. Independent single calls are fine as parallel tool calls.\n\nRun every Python script here. Never run python or python3 through bash, not even with a heredoc: execute has the same subprocess and file access and also reaches the tools. To change files, use edit, not a script.\n")
+	b.WriteString("Use execute when one result feeds the next, when you loop over many items, or when you need only a slice of big output. Independent single calls: use parallel tool calls instead.\n\nRun every Python script here, never python or python3 through bash (execute also reaches the tools). To change files, use edit, not a script.\n")
 	if has["grep"] {
 		b.WriteString("\n# loop: one call, not N\nfor p in [\"TODO\", \"FIXME\"]:\n    print(p, tools.grep(pattern=p, max_results=5))\n")
 	}
@@ -203,8 +211,8 @@ func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) stri
 		b.WriteString("\n# filter: print only the answer\nout = tools.bash(command=\"go test ./... 2>&1\")\nprint([l for l in out.splitlines() if \"FAIL\" in l])\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("tools.search(query) lists matching tools with signatures; tools.help(name) shows one tool. " +
-		"A failing tool call raises tools.ToolError: catch it or the traceback comes back.")
+	b.WriteString("tools.search(query) finds tools; tools.help(name) shows one. " +
+		"A failing call raises tools.ToolError: catch it or the traceback returns.")
 	return b.String()
 }
 
@@ -231,7 +239,7 @@ func (e boundExecute) Execute(ctx context.Context, root string, raw json.RawMess
 	if err != nil {
 		return "", err
 	}
-	dir, err := os.MkdirTemp("", "emberloop-execute-*")
+	dir, err := os.MkdirTemp("", "el-execute-*")
 	if err != nil {
 		return "", err
 	}
@@ -617,12 +625,12 @@ func buildToolsModule(sockPath string, allowed []Tool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(`"""Emberloop native tools as functions: one call replaces many tool turns."""
+	return fmt.Sprintf(`"""El native tools as functions: one call replaces many tool turns."""
 import json as _json
 import socket as _socket
 
 class ToolError(Exception):
-    """A emberloop tool call failed; the message is the tool's error."""
+    """A el tool call failed; the message is the tool's error."""
 
 _SOCKET_PATH = %q
 _SPECS = _json.loads(%q)
@@ -663,7 +671,7 @@ def call(tool, **kwargs):
 
 def __getattr__(name):
     # A tool the role does not have (disabled, or never allowed) still routes
-    # through the bridge, so emberloop refuses it and the script sees a catchable
+    # through the bridge, so el refuses it and the script sees a catchable
     # ToolError instead of an AttributeError.
     if name.startswith("__"):
         raise AttributeError(name)

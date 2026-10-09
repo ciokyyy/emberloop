@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 	"example.com/emberloop/tools"
 )
 
-// Seam: the context report — the numbers the `emberloop context` command
+// Seam: the context report — the numbers the `el context` command
 // prints for one transcript. Expected strings are worked from the
 // fixture, never the implementation.
 func TestContextReportPrintsNumbers(t *testing.T) {
@@ -32,7 +32,7 @@ func TestContextReportPrintsNumbers(t *testing.T) {
 		"context: 9400 tokens",
 		"4% of 200000",
 		"outstanding tool calls: 1",
-		"mcp__emberloop__bash 30",
+		"mcp__el__bash 30",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report %q lacks %q", out, want)

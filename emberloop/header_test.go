@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Header strip tests (ticket 04): the strip is a pure function of a
 // snapshot and a width, so every tier, state and theme asserts here.
@@ -34,7 +34,7 @@ func wideSnapshot() HeaderSnapshot {
 		},
 		CompressCount: 2,
 		State:         HeaderWorking,
-		Running:       ToolCall{Name: "mcp__emberloop__read", Arg: "/home/dev/emberloop/header.go"},
+		Running:       ToolCall{Name: "mcp__el__read", Arg: "/home/dev/emberloop/header.go"},
 		Now:           time.Unix(0, 0),
 		Usage: UsageSet{Has: true, Windows: []UsageWindow{
 			{Label: "5h", Pct: 37, ResetsAt: 6000}, {Label: "wk", Pct: 14, ResetsAt: 4 * 86400},

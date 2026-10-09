@@ -152,7 +152,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) View() string {
 	var b strings.Builder
-	b.WriteString(accent.Render("emberloop installer") + "\n")
+	b.WriteString(accent.Render("el installer") + "\n")
 	b.WriteString(dim.Render("herdr, the binaries, the plugin, keys and configs always install.") + "\n\n")
 	switch m.phase {
 	case phaseSelect:

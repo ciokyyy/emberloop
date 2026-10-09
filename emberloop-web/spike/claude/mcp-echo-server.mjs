@@ -1,5 +1,5 @@
 // Minimal stdio MCP server: one tool, spike_echo. Stands in for the
-// emberloop MCP server so the probe proves MCP-only stripping.
+// el MCP server so the probe proves MCP-only stripping.
 import readline from "node:readline";
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });

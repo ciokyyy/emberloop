@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"io"
@@ -14,7 +14,7 @@ import (
 // Raw passthrough mode (input-queue ticket 04): a toggle key hands the
 // keyboard to the child for its own dialogs and menus. While raw mode is on
 // the wrapper keeps a conservative dirty flag: any forwarded byte except a
-// bare Enter marks the child's box dirty; Enter, Ctrl+C or a emberloop clear
+// bare Enter marks the child's box dirty; Enter, Ctrl+C or a el clear
 // resets it. Injections hold while dirty and deliver right away when clean.
 // After 10 s with no keystroke the wrapper sends six Ctrl+U, then delivers.
 // Ctrl+C is never a clear sequence.
@@ -28,14 +28,14 @@ const rawToggleByte = 0x0f
 // three-line draft in both claude and pig and is harmless on an empty box.
 const rawClearByte = 0x15
 
-// rawClearRepeats is how many Ctrl+U form one emberloop clear.
+// rawClearRepeats is how many Ctrl+U form one el clear.
 const rawClearRepeats = 6
 
 // rawStaleTimeout is how long raw mode may sit dirty with no keystroke
 // before the wrapper clears and delivers.
 const rawStaleTimeout = 10 * time.Second
 
-// harnessKeys is one harness's input sequences: how emberloop clears its box,
+// harnessKeys is one harness's input sequences: how el clears its box,
 // which key inserts a newline in raw passthrough, which key interrupts,
 // and whether it accepts bracketed paste. The stale path consumes clear
 // today; newline, interrupt and bracketedPaste pin the probed raw-handoff
@@ -97,8 +97,8 @@ func isRawToggle(p []byte) bool {
 }
 
 // isRawReset says whether one forwarded chunk resets the dirty flag: a bare
-// Enter or Ctrl+C, as a legacy byte or a CSI-u report. A emberloop clear resets
-// through emberloopClear.
+// Enter or Ctrl+C, as a legacy byte or a CSI-u report. A el clear resets
+// through elClear.
 func isRawReset(p []byte) bool {
 	key, ok := singleKey(p)
 	return ok && (key == "\r" || key == "\x03")
@@ -158,8 +158,8 @@ func (m *rawMode) observeForward(p []byte) {
 	m.isDirty = true
 }
 
-// emberloopClear resets the flag after the wrapper sent the clear sequence.
-func (m *rawMode) emberloopClear() {
+// elClear resets the flag after the wrapper sent the clear sequence.
+func (m *rawMode) elClear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.isDirty = false
@@ -208,9 +208,9 @@ func (m *rawMode) canClear() bool {
 func renderRawHint(width int, dark bool, profile termenv.Profile) string {
 	renderer := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(profile))
 	renderer.SetColorProfile(profile)
-	pal := EmberloopMocha()
+	pal := ElMocha()
 	if !dark {
-		pal = EmberloopLatte()
+		pal = ElLatte()
 	}
 	hintStyle := renderer.NewStyle().Foreground(lipgloss.Color(pal.Dim))
 	bgStyle := renderer.NewStyle().Background(lipgloss.Color(pal.StripBg))

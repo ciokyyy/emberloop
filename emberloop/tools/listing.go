@@ -11,7 +11,7 @@ import (
 // directories end in "/", files carry their size, symlinks end in "@". offset
 // and limit page through the entries the way they page through a file's
 // lines; the header always counts every entry. describe, when set, may add a
-// short description after a directory's name (the emberloop:// skill index uses
+// short description after a directory's name (the el:// skill index uses
 // it). A directory holding a SKILL.md ends with a hint naming it, so reading
 // a skill's directory leads straight to the skill.
 func listDir(display, full string, offset, limit int, describe func(name string) string) (string, error) {

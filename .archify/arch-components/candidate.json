@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "emberloop components",
+    "output": ".archify/arch-components/emberloop-components.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "you", "type": "external", "label": "You", "sublabel": "spec file", "pos": [40, 200], "size": [120, 60] },
+    { "id": "cli", "type": "frontend", "label": "emberloop", "sublabel": "CLI + header strip", "pos": [270, 200], "size": [150, 60] },
+    { "id": "agent", "type": "backend", "label": "pig / claude", "sublabel": "orchestrator + workers", "pos": [510, 200], "size": [160, 60] },
+    { "id": "mcp", "type": "cloud", "label": "emberloop-mcp", "sublabel": "tools over MCP", "pos": [760, 200], "size": [150, 60] },
+    { "id": "db", "type": "database", "label": "SQLite state", "sublabel": "usage, agents", "pos": [1000, 200], "size": [140, 60] },
+    { "id": "graph", "type": "cloud", "label": "code graph", "sublabel": "codebase-memory-mcp", "pos": [750, 60], "size": [170, 60] },
+    { "id": "tui", "type": "frontend", "label": "emberloop-tui", "sublabel": "dashboard", "pos": [1000, 340], "size": [140, 60] },
+    { "id": "worktrees", "type": "database", "label": "Git worktrees", "sublabel": "one per ticket", "pos": [760, 340], "size": [150, 60] },
+    { "id": "herdr", "type": "security", "label": "herdr", "sublabel": "panes + compress plugin", "pos": [260, 340], "size": [170, 60] },
+    { "id": "report", "type": "backend", "label": "herdr-report", "sublabel": "pig extension", "pos": [510, 340], "size": [160, 60] }
+  ],
+  "boundaries": [],
+  "connections": [
+    { "id": "you-cli", "from": "you", "to": "cli", "label": "implement", "variant": "emphasis" },
+    { "id": "cli-agent", "from": "cli", "to": "agent", "label": "launches", "variant": "emphasis" },
+    { "id": "agent-mcp", "from": "agent", "to": "mcp", "label": "MCP", "variant": "emphasis" },
+    { "id": "mcp-db", "from": "mcp", "to": "db", "label": "records" },
+    { "id": "mcp-graph", "from": "mcp", "to": "graph", "label": "optional", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "mcp-worktrees", "from": "mcp", "to": "worktrees", "label": "create, merge", "fromSide": "bottom", "toSide": "top" },
+    { "id": "tui-db", "from": "tui", "to": "db", "label": "reads", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "cli-herdr", "from": "cli", "to": "herdr", "label": "pane per agent", "fromSide": "bottom", "toSide": "top" },
+    { "id": "report-herdr", "from": "report", "to": "herdr", "label": "pane state" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Entry", "items": ["emberloop wraps the agent and draws the status strip", "Agents reach emberloop tools through emberloop-mcp"] },
+    { "dot": "amber", "title": "Shared state", "items": ["SQLite holds usage and agent records", "The dashboard only reads it"] },
+    { "dot": "emerald", "title": "Optional", "items": ["The code graph serves reviewers and scouts when installed"] }
+  ]
+}

@@ -54,7 +54,7 @@ describe('SettingsPage max_workers', () => {
     const { container } = render(SettingsPage);
     const input = await within(container).findByLabelText('Maximum workers');
     expect(input.disabled).toBe(true);
-    expect(within(container).getByText(/EMBERLOOP_MAX_WORKERS/)).toBeTruthy();
+    expect(within(container).getByText(/EL_MAX_WORKERS/)).toBeTruthy();
   });
 
   it('surfaces a rejected value as an error', async () => {
@@ -88,4 +88,94 @@ describe('SettingsPage max_workers', () => {
     expect('max_workers' in seen.body).toBe(false);
   });
 
+});
+
+describe('SettingsPage session names', () => {
+  async function dirtyAndSave(container) {
+    const input = await within(container).findByLabelText('Maximum workers');
+    await fireEvent.input(input, { target: { value: '4' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+  }
+
+  it('shows the saved pig naming model and sends it back', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, roles: { 'pig-title': { harness: 'pig', model: 'auto' } }, session_titles: true }, seen });
+    const { container } = render(SettingsPage);
+    const model = await within(container).findByLabelText('Pig naming model');
+    expect(model.textContent).toMatch(/auto/i);
+    await dirtyAndSave(container);
+    expect(seen.body.roles['pig-title']).toEqual({ harness: 'pig', model: 'auto' });
+    expect(seen.body.session_titles).toBe(true);
+  });
+
+  it('leaves unconfigured roles out of the save', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, roles: { worker: { harness: 'claude', model: 'opus', effort: 'high' } } }, seen });
+    const { container } = render(SettingsPage);
+    await dirtyAndSave(container);
+    expect(Object.keys(seen.body.roles).sort()).toEqual(['pig-title', 'worker']);
+  });
+
+  it('no pig model clears the role and claude naming off is saved', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, session_titles: false }, seen });
+    const { container } = render(SettingsPage);
+    await within(container).findByLabelText('Name claude Sessions');
+    await dirtyAndSave(container);
+    expect(seen.body.roles['pig-title']).toEqual({ harness: '', model: '' });
+    expect(seen.body.session_titles).toBe(false);
+  });
+
+  it('an environment override locks the toggle and stays out of the save', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, session_titles: true, session_titles_from_env: true }, seen });
+    const { container } = render(SettingsPage);
+    expect(await within(container).findByText(/EL_SESSION_TITLES/)).toBeTruthy();
+    await dirtyAndSave(container);
+    expect('session_titles' in seen.body).toBe(false);
+  });
+});
+
+describe('SettingsPage context compression', () => {
+  it('shows saved values and sends the edited ones', async () => {
+    const seen = {};
+    stubSettings({
+      settings: { ...base, compress: { auto_compress: false, compress_threshold_percent: 70, compress_cooldown: 3, compress_instructions: 'keep ids' } },
+      seen,
+    });
+    const { container } = render(SettingsPage);
+    const threshold = await within(container).findByLabelText('Threshold %');
+    expect(threshold.value).toBe('70');
+    expect(within(container).getByLabelText('Turns').value).toBe('3');
+    expect(within(container).getByLabelText('Summary focus').value).toBe('keep ids');
+    expect(within(container).getByLabelText('Auto-compress').textContent).toMatch(/off/i);
+
+    await fireEvent.input(within(container).getByLabelText('Summary focus'), { target: { value: 'keep paths' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.compress).toEqual({
+      auto_compress: false,
+      compress_threshold_percent: 70,
+      compress_cooldown: 3,
+      compress_instructions: 'keep paths',
+    });
+  });
+
+  it('uses the defaults when the Daemon sends none', async () => {
+    stubSettings({ settings: base });
+    const { container } = render(SettingsPage);
+    expect((await within(container).findByLabelText('Threshold %')).value).toBe('80');
+    expect(within(container).getByLabelText('Turns').value).toBe('5');
+    expect(within(container).getByLabelText('Auto-compress').textContent).toMatch(/on/i);
+  });
+
+  it('disables threshold and cooldown while auto-compress is off', async () => {
+    stubSettings({ settings: { ...base, compress: { auto_compress: false } } });
+    const { container } = render(SettingsPage);
+    expect((await within(container).findByLabelText('Threshold %')).disabled).toBe(true);
+    expect(within(container).getByLabelText('Turns').disabled).toBe(true);
+  });
 });

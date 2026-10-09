@@ -39,9 +39,9 @@ type Step struct {
 
 // binaries are the three programs built from the repo.
 var binaries = []struct{ name, dir, pkg string }{
-	{"emberloop", "emberloop", "./cmd/emberloop"},
-	{"emberloop-mcp", "emberloop", "./cmd/emberloop-mcp"},
-	{"emberloop-tui", "emberloop-tui", "./cmd/emberloop-tui"},
+	{"el", "el", "./cmd/emberloop"},
+	{"el-mcp", "el", "./cmd/emberloop-mcp"},
+	{"el-tui", "el-tui", "./cmd/emberloop-tui"},
 }
 
 // Steps lists the install steps for the given choices, in run order.
@@ -49,17 +49,17 @@ func Steps(c Choices) []Step {
 	steps := []Step{
 		{"Check build tools", checkTools},
 		{"Install herdr", installHerdr},
-		{"Build emberloop binaries", buildBinaries},
+		{"Build el binaries", buildBinaries},
 		{"Link herdr plugin", linkPlugin},
 		{"Add herdr compress key", addKey},
 		{"Migrate old wick-pig data", migrateOld},
-		{"Write emberloop settings", writeSettings},
+		{"Write el settings", writeSettings},
 	}
 	if c.Pig {
 		steps = append(steps,
 			Step{"Check pig", checkPig},
 			Step{"Link pig extensions", linkPigExtensions},
-			Step{"Register emberloop MCP with pig", registerPigMCP},
+			Step{"Register el MCP with pig", registerPigMCP},
 		)
 	}
 	if c.Claude {
@@ -183,7 +183,7 @@ func addKey(e *Env) (string, error) {
 	case "present":
 		return "key already bound", nil
 	case "conflict":
-		return "", warning{"prefix+shift+c is taken in " + path + ": bind command emberloop.compress to another key"}
+		return "", warning{"prefix+shift+c is taken in " + path + ": bind command el.compress to another key"}
 	}
 	if e.DryRun {
 		return "dry run: would append the key to " + path, nil
@@ -206,7 +206,7 @@ func addKey(e *Env) (string, error) {
 }
 
 func writeSettings(e *Env) (string, error) {
-	path := os.Getenv("EMBERLOOP_SETTINGS")
+	path := os.Getenv("EL_SETTINGS")
 	if path == "" {
 		path = filepath.Join(e.Home, ".emberloop", "settings.json")
 	}
@@ -275,12 +275,12 @@ func registerPigMCP(e *Env) (string, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
-	out, err := mergeMCPServer(raw, filepath.Join(e.BinDir, "emberloop-mcp"))
+	out, err := mergeMCPServer(raw, filepath.Join(e.BinDir, "el-mcp"))
 	if err != nil {
 		return "", err
 	}
 	if e.DryRun {
-		return "dry run: would write emberloop to " + path, nil
+		return "dry run: would write el to " + path, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
@@ -288,12 +288,12 @@ func registerPigMCP(e *Env) (string, error) {
 	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return "", err
 	}
-	return "wrote emberloop entry to " + path, nil
+	return "wrote el entry to " + path, nil
 }
 
 func checkClaude(e *Env) (string, error) {
 	if e.has("claude") {
-		return "claude found: emberloop passes its MCP config and hooks per run", nil
+		return "claude found: el passes its MCP config and hooks per run", nil
 	}
 	if _, err := e.sh("", "sh", "-c", "curl -fsSL https://claude.ai/install.sh | bash"); err != nil {
 		return "", warning{"claude install failed: " + err.Error()}
@@ -317,7 +317,7 @@ func installBun(e *Env) (string, error) {
 // FinalCommands run after the TUI exits, on the plain terminal, because they
 // may ask for a sudo password.
 func FinalCommands(e *Env) [][]string {
-	bin := filepath.Join(e.BinDir, "emberloop")
+	bin := filepath.Join(e.BinDir, "el")
 	return [][]string{
 		{bin, "deps"},
 		{bin, "skills", "install"},
@@ -360,7 +360,7 @@ func copyTree(src, dst string) error {
 }
 
 // migrateOld copies the settings, skill library and state of the project's
-// former name into the emberloop locations. The old files stay in place.
+// former name into the el locations. The old files stay in place.
 func migrateOld(e *Env) (string, error) {
 	pairs := [][2]string{
 		{filepath.Join(e.Home, ".wick-pig"), filepath.Join(e.Home, ".emberloop")},

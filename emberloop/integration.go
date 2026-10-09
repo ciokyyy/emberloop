@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// SpecRun is what `emberloop implement <spec>` works from: the spec, where its
+// SpecRun is what `el implement <spec>` works from: the spec, where its
 // tickets live, and the integration branch every worker of the run merges into.
 type SpecRun struct {
 	Spec    string // absolute path of the spec file

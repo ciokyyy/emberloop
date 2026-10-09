@@ -1,9 +1,11 @@
-package emberloop
+package el
 
 import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"example.com/emberloop/tools"
 )
 
 // plan is a planning session: file tools plus spawn, so it can start scouts. It
@@ -110,17 +112,17 @@ func TestUnknownRoleIsAnError(t *testing.T) {
 	}
 }
 
-// RoleFromEnv is the launcher's channel: emberloop and the harnesses always
-// set EMBERLOOP_ROLE, so an empty value means a emberloop-mcp started by hand with no
+// RoleFromEnv is the launcher's channel: el and the harnesses always
+// set EL_ROLE, so an empty value means a el-mcp started by hand with no
 // role. That is refused at startup: there is no silent fallback.
 func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
-	t.Setenv("EMBERLOOP_ROLE", "plan")
+	t.Setenv("EL_ROLE", "plan")
 	if got := RoleFromEnv(); got != "plan" {
 		t.Errorf("RoleFromEnv() = %q, want the env role plan", got)
 	}
-	t.Setenv("EMBERLOOP_ROLE", "")
+	t.Setenv("EL_ROLE", "")
 	if got := RoleFromEnv(); got != "" {
-		t.Errorf("a hand-started emberloop-mcp = %q, want empty (refused at startup)", got)
+		t.Errorf("a hand-started el-mcp = %q, want empty (refused at startup)", got)
 	}
 }
 
@@ -130,7 +132,7 @@ func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
 // literal, not RoleNames(), so the test can catch a role missing from either
 // side.
 func TestMissingRoleNamesEveryRole(t *testing.T) {
-	want := []string{"agent", "full", "implement", "plan", "review", "scout", "work"}
+	want := []string{"agent", "full", "implement", "plan", "review", "scout", "web", "web-worker", "work"}
 	if got := RoleNames(); !reflect.DeepEqual(got, want) {
 		t.Errorf("RoleNames() = %v, want %v", got, want)
 	}
@@ -283,5 +285,164 @@ func TestRoleToolsetsPerRole(t *testing.T) {
 		if got := toolNames(execute); !equalNames(got, tc.execute) {
 			t.Errorf("%s execute = %v, want %v", tc.role, got, tc.execute)
 		}
+	}
+}
+
+// The web Daemon serves one el MCP server per Session, bound through the
+// environment: the role decides which Daemon tools ride along. A top-level
+// parent manages its children but never submits, a spawned worker spawns its
+// own (nesting kept) but never steers, peeks at or stops, and a scout only
+// reads: submit stays registered for web-worker and scout but is unoffered
+// while WebSubmitEnabled is false. Children never hold the parent's full
+// set, and without the binding every role resolves as for herdr.
+func TestWebRoleMatrixUnderDaemon(t *testing.T) {
+	hermeticSettings(t)
+	t.Setenv("EL_WEB_PARENT", "sess-parent")
+	t.Setenv("EL_WEB_DAEMON_URL", "http://127.0.0.1:9")
+	cases := []struct {
+		role          string
+		main, execute []string
+		proxies       []string
+	}{
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}, []string{"check", "grep", "git"}, []string{"spawn"}},
+		{"scout", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"grep", "git"}, []string{}},
+	}
+	// No test in this package runs parallel and no other test enables the
+	// flag, so the default-off read here needs no save/restore.
+	if WebSubmitEnabled {
+		t.Fatal("WebSubmitEnabled must default false")
+	}
+	for _, tc := range cases {
+		main, execute, err := ResolvedTools(tc.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := toolNames(main); !equalNames(got, tc.main) {
+			t.Errorf("%s main = %v, want %v", tc.role, got, tc.main)
+		}
+		if got := toolNames(execute); !equalNames(got, tc.execute) {
+			t.Errorf("%s execute = %v, want %v", tc.role, got, tc.execute)
+		}
+		byName := map[string]tools.Tool{}
+		for _, tl := range append(append([]tools.Tool(nil), main...), execute...) {
+			byName[tl.Name()] = tl
+		}
+		for _, name := range tc.proxies {
+			tl, ok := byName[name]
+			if !ok {
+				t.Errorf("%s must serve Daemon tool %q", tc.role, name)
+				continue
+			}
+			if !tools.IsDaemonProxy(tl) {
+				t.Errorf("%s tool %q must be the Daemon proxy, not a core tool", tc.role, name)
+			}
+		}
+	}
+	// The worker keeps the repo checks behind execute; only the parent's
+	// check is the child peek.
+	_, workerExecute, err := ResolvedTools("web-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range workerExecute {
+		if tl.Name() == "check" && tools.IsDaemonProxy(tl) {
+			t.Errorf("web-worker check behind execute must stay the repo checks, not a proxy")
+		}
+	}
+	// While the flag is off no web role serves submit anywhere.
+	for _, role := range []string{"web", "web-worker", "scout"} {
+		main, execute, err := ResolvedTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tl := range append(main, execute...) {
+			if tl.Name() == "submit" {
+				t.Errorf("%s must not serve submit while WebSubmitEnabled is false", role)
+			}
+		}
+	}
+	// Full never takes proxies, even bound: it is the herdr tool set.
+	bound, boundExecute, err := ResolvedTools("full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range append(bound, boundExecute...) {
+		if tools.IsDaemonProxy(tl) {
+			t.Errorf("full must not serve Daemon proxy %q", tl.Name())
+		}
+	}
+}
+
+// With the flag on the web matrix is the old one: web-worker settles
+// through submit and scouts settle only. The flag is the test hook for the
+// Daemon gate tests too; it is restored so the default-off tests keep it.
+func TestWebRoleMatrixWithSubmitEnabled(t *testing.T) {
+	hermeticSettings(t)
+	t.Setenv("EL_WEB_PARENT", "sess-parent")
+	t.Setenv("EL_WEB_DAEMON_URL", "http://127.0.0.1:9")
+	WebSubmitEnabled = true
+	t.Cleanup(func() { WebSubmitEnabled = false })
+	cases := []struct {
+		role          string
+		main, execute []string
+		proxies       []string
+	}{
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit"}},
+		{"scout", []string{"read", "find", "websearch", "ctx_search", "submit", "execute"}, []string{"grep", "git"}, []string{"submit"}},
+	}
+	for _, tc := range cases {
+		main, execute, err := ResolvedTools(tc.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := toolNames(main); !equalNames(got, tc.main) {
+			t.Errorf("%s main = %v, want %v", tc.role, got, tc.main)
+		}
+		if got := toolNames(execute); !equalNames(got, tc.execute) {
+			t.Errorf("%s execute = %v, want %v", tc.role, got, tc.execute)
+		}
+		byName := map[string]tools.Tool{}
+		for _, tl := range append(append([]tools.Tool(nil), main...), execute...) {
+			byName[tl.Name()] = tl
+		}
+		for _, name := range tc.proxies {
+			tl, ok := byName[name]
+			if !ok {
+				t.Errorf("%s must serve Daemon tool %q", tc.role, name)
+				continue
+			}
+			if !tools.IsDaemonProxy(tl) {
+				t.Errorf("%s tool %q must be the Daemon proxy, not a core tool", tc.role, name)
+			}
+		}
+	}
+}
+
+// Without the Daemon binding the web roles resolve as for herdr: no Daemon
+// tool anywhere, the repo checks behind execute.
+func TestWebRolesUnboundServeNoProxies(t *testing.T) {
+	hermeticSettings(t)
+	for _, role := range []string{"web", "web-worker", "scout"} {
+		main, execute, err := ResolvedTools(role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tl := range append(main, execute...) {
+			if tools.IsDaemonProxy(tl) {
+				t.Errorf("unbound %s must not serve Daemon proxy %q", role, tl.Name())
+			}
+		}
+	}
+	main, execute, err := ResolvedTools("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := toolNames(main); !equalNames(got, []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}) {
+		t.Errorf("unbound web main = %v", got)
+	}
+	if got := toolNames(execute); !equalNames(got, []string{"check", "grep", "git"}) {
+		t.Errorf("unbound web execute = %v", got)
 	}
 }

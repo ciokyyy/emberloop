@@ -1,14 +1,14 @@
 package tools
 
 // All is every file tool this package serves, in loadout order. execute is
-// the unbound placeholder here: emberloop replaces it per role with a bound
+// the unbound placeholder here: el replaces it per role with a bound
 // NewExecute carrying that role's allowed tools.
 func All() []Tool {
 	return []Tool{readTool{}, editTool{}, writeTool{}, bashTool{}, findTool{}, websearchTool{}, grepTool{}, gitTool{}, checkTool{}, backgroundTool{}, ctxSearchTool{}, executeTool{}}
 }
 
 // Named returns the tools called names, in the order given. Unknown names are
-// skipped: a type that lists a tool the emberloop host serves (spawn, submit) is not
+// skipped: a type that lists a tool the el host serves (spawn, submit) is not
 // an error here.
 func Named(names ...string) []Tool {
 	byName := map[string]Tool{}

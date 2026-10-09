@@ -12,10 +12,13 @@ Follow these for every UI change.
 - Look: ChatGPT neutral surfaces plus Apple softness (system font, large
   radii, blurred translucent chrome, pill buttons). Tokens live in
   `src/app.css`; never hardcode colors.
-- shadcn-svelte everywhere: every interactive control (button, select,
-  dialog, input, badge, ...) comes from `src/lib/ui/`, built on bits-ui.
+- shadcn-svelte everywhere: every interactive control (button, combobox,
+  select, dialog, input, badge, ...) comes from `src/lib/ui/`, built on bits-ui.
   Never use a raw `<select>`, `<dialog>` or unstyled `<input>`. Add a missing
   primitive to `src/lib/ui/` first.
+- Pickers use `src/lib/ui/combobox.svelte` (Popover + Command with search and a
+  TanStack-virtualized list); `src/lib/ui/select.svelte` stays a plain bits-ui
+  Select for simple fixed lists.
 - Icons come from `@lucide/svelte`.
 - Motion everywhere: new blocks use `animate-rise`, overlays use
   `tw-animate-css` (`animate-in`/`fade-in-0`/`zoom-in-95`), interactive
@@ -23,14 +26,14 @@ Follow these for every UI change.
   is honored in `app.css`.
 - Models show display names (`modelLabel` in `harnesses.js`); the Daemon owns
   the model list (`GET /api/models`).
-- Dev: `npm run dev` proxies `/api` to the Daemon on 127.0.0.1:8899.
+- Dev: `bun run dev` runs the Daemon (127.0.0.1:8910) and Vite (5190, proxies `/api`) together. Prod: `bun run prod` builds, then runs the Daemon (8920) and `vite preview` (8921, proxies `/api`). Override with `API_PORT` / `UI_PORT` per script.
 
 ## API base URL
 
 Same-origin by default. To point the static build at another Daemon:
 
 - build time: `VITE_API_BASE=http://127.0.0.1:PORT npm run build`
-- runtime: set `window.__EMBERLOOP_API_BASE__` before the bundle loads
+- runtime: set `window.__EL_API_BASE__` before the bundle loads
 
 ## Source map
 
@@ -41,21 +44,24 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/harnesses.js` — harness catalogue for the new-Session dialog
 - `src/lib/Card.svelte` — transcript card for every Event kind
 - `src/lib/SessionList.svelte` — Session tree with per-Session status
-- `src/lib/Composer.svelte` — floating composer with mode badge
+- `src/lib/Composer.svelte` — floating composer with mode badge and a Stop button (`onStop`, `POST /interrupt`) while working
 - `src/lib/NewSessionDialog.svelte` — harness / model / working directory
 - `src/lib/RunsView.svelte` — repo picker, spec list, ticket preview table, Run start plus live Ticket table with Worker links to the Session view and per-Ticket reviewer verdict, tip freshness and refusal columns
 - `src/lib/SettingsPage.svelte` — role harness/model/effort groups plus the max_workers field, locked with a note under the environment override
-- `src/lib/DetailsPane.svelte` — collapsible Session metadata
+- `src/lib/stt.js` — voice input: mic records live segments (fresh MediaRecorder each, silence/timer close) posted one per call to the Daemon `POST /api/stt` (OpenRouter gpt-transcribe, `EL_STT_MODEL` overrides; `?format=1` runs the gpt-4o-mini cleanup pass, `EL_STT_FORMAT_MODEL` overrides; key stays on the Daemon: env or pig). Composer appends each part to the draft in order with a dim pending preview and a cleanup toggle. Needs https or localhost
+- `src/lib/images.js` — image attachments: file picker and paste in the Composer, read to base64, sent through `postPrompt(id, text, { mode, images })`
+- `Card.svelte` sudo cards (`sudo`, `sudoresult`): Approve/Deny with optional password; `events.js` merges `sudo_resolved` into the request card and parses the TOON `sudo_result:` prompt
+- `src/lib/Notifications.svelte`, `src/lib/push.js`, `public/sw.js` — push opt-in on the settings page, subscribe client, service worker
+- `src/lib/ui/combobox.svelte` — picker (Popover + Command, virtualized list)
+- `src/lib/ui/select.svelte` — plain bits-ui Select for simple fixed lists
 - `src/lib/ui/button.svelte` — shadcn-svelte-idiom button variants
-- `src/lib/ui/cn.js` — class merging (`clsx` + `tailwind-merge`)
 
 ## Tests
 
 `npm test` runs vitest: Event-to-card mapping and grouping
 (`events.test.js`), composer mode resolvers (`composer.test.js`),
 mounted Composer badge and send behavior (`Composer.test.js`), harness
-model filtering (`harnesses.test.js`), Card rendering per kind
+model filtering (`harnesses.test.js`), the virtualized picker open/filter/pick,
+keyboard, empty state and windowing (`ui/combobox.test.js`), Card rendering per kind
 (`Card.test.js`), Runs picker, preview, Start and live table with Worker
 links plus the reviewer verdict columns against a mocked API (`RunsView.test.js`),
-settings max_workers edit, validation and locked state against a mocked API
-(`SettingsPage.test.js`), and sidebar navigation to Runs (`App.test.js`).

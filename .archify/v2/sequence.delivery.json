@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "2189e6f0-fbfb-4939-bc80-3d843f573073",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/home/cioky/Projects/emberloop/.archify/v2/sequence.json",
+  "output": "/home/cioky/Projects/emberloop/.archify/v2/sequence.html",
+  "specification": {
+    "sha256": "78705050bba3403ae31f509bbcea40e47141172deae399474efd46696394ce3b",
+    "bytes": 3853
+  },
+  "artifact": {
+    "sha256": "461eb27bd48c122fb42a7ed35a27ee7697f7e5072cfc556f1d80b397f0efc0ff",
+    "bytes": 756865
+  }
+}

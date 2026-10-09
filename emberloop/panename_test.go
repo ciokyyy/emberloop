@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -29,7 +29,7 @@ func TestPaneNameForTypeMapsAgentTypes(t *testing.T) {
 
 // A one-shot read-only launch carries no agent type in its env: the pane
 // name is cosmetic and must not change runtime behaviour (stop gate,
-// execute and readhint branch on an empty EMBERLOOP_AGENT_TYPE).
+// execute and readhint branch on an empty EL_AGENT_TYPE).
 func TestReadOnlyLaunchEnvCarriesNoAgentType(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	g := newFakeGrid()
@@ -50,8 +50,8 @@ func TestReadOnlyLaunchEnvCarriesNoAgentType(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range cmd.Env {
-		if strings.HasPrefix(e, "EMBERLOOP_AGENT_TYPE=") {
-			t.Errorf("one-shot read-only launch must carry no EMBERLOOP_AGENT_TYPE, got %q", e)
+		if strings.HasPrefix(e, "EL_AGENT_TYPE=") {
+			t.Errorf("one-shot read-only launch must carry no EL_AGENT_TYPE, got %q", e)
 		}
 	}
 	var renames [][]string
@@ -81,7 +81,7 @@ func TestScoutSpawnNamesItsPaneScout(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &scoutExec{g: g, writeOn: 1}
 	spawnExec = ex.run
 	spawn, _ := spawnToolForRole(t, "implement")
@@ -112,7 +112,7 @@ func TestWorkerSpawnNamesItsPaneImplementer(t *testing.T) {
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	var calls []string
 	base := spawnToolFake()
 	spawnExec = func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -120,7 +120,7 @@ func TestWorkerSpawnNamesItsPaneImplementer(t *testing.T) {
 		return base(cmd, args, o)
 	}
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "20-x.md")
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
@@ -189,7 +189,7 @@ func TestRepromptedAgentKeepsItsName(t *testing.T) {
 	if err := WriteAgentState(sess); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	t.Setenv("HERDR_PANE_ID", "wP")
 	var calls [][]string
 	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -254,7 +254,7 @@ func TestFailedRenameNeverFailsSpawn(t *testing.T) {
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	base := spawnToolFake()
 	spawnExec = func(cmd string, args []string, o ExecOpts) (Result, error) {
 		if len(args) > 1 && args[0] == "pane" && args[1] == "rename" {
@@ -263,7 +263,7 @@ func TestFailedRenameNeverFailsSpawn(t *testing.T) {
 		return base(cmd, args, o)
 	}
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "21-x.md")
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {

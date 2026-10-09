@@ -1,23 +1,112 @@
 <!-- Transcript card: one visual block per grouped Event run. -->
 <script>
   import Markdown from './Markdown.svelte';
-  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot } from '@lucide/svelte';
-  let { block } = $props();
+  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal } from '@lucide/svelte';
+  import Button from './ui/button.svelte';
+  import Input from './ui/input.svelte';
+  import { decideSudo } from './api.js';
+  let { block, sessionId = null } = $props();
+  let sudoPassword = $state('');
+  let sudoBusy = $state(false);
+  let sudoError = $state('');
+  const sudo = $derived(block.sudo ?? {});
+  async function decide(action) {
+    sudoBusy = true;
+    sudoError = '';
+    try {
+      await decideSudo(sessionId, sudo.id, action, action === 'approve' ? sudoPassword : '');
+      sudoPassword = '';
+    } catch (e) {
+      sudoError = e.message;
+    } finally {
+      sudoBusy = false;
+    }
+  }
   // One-line hint of what the tool was asked: first line of the input.
   const firstReply = $derived(String(block.members?.[0]?.reply ?? block.body ?? '').replace(/\s+/g, ' ').slice(0, 110));
   const preview = $derived(String(block.input ?? '').replace(/\s+/g, ' ').trim().slice(0, 120));
+  const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n ?? 0));
+  const compaction = $derived(block.compaction ?? {});
+  const saved = $derived(compaction.tokensBefore > 0 && compaction.tokensAfter > 0 ? Math.max(0, Math.round((1 - compaction.tokensAfter / compaction.tokensBefore) * 100)) : null);
   const diffLines = $derived(block.card === 'diff' ? String(block.body ?? '').split('\n') : []);
 </script>
 
 {#if block.card === 'user'}
   <div class="flex animate-rise justify-end" data-card="user">
-    <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed text-foreground">
+    <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
       {#if block.title && block.title !== 'You'}
         <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
       {/if}
       {block.body}
+      {#if block.pending === 'sending'}
+        <div class="mt-0.5 text-[11px] text-muted-foreground">Sending…</div>
+      {/if}
     </div>
   </div>
+{:else if block.card === 'sudo'}
+  <div class="animate-rise overflow-hidden rounded-2xl border border-amber-500/40 bg-card text-card-foreground" data-card="sudo" data-state={sudo.state}>
+    <div class="flex items-center gap-2.5 px-4 py-2.5 text-sm">
+      <ShieldAlert class="size-4 shrink-0 text-amber-400" />
+      <span class="font-medium">Sudo request</span>
+      <span class="ml-auto rounded-full bg-muted px-2 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+        {sudo.state === 'pending' ? 'waiting for you' : sudo.state}
+      </span>
+    </div>
+    <div class="border-t bg-background/40 p-3.5">
+      <div class="mb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Command{#if sudo.cwd}<span class="ml-2 font-mono normal-case">in {sudo.cwd}</span>{/if}</div>
+      <pre class="max-h-56 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-sm leading-relaxed whitespace-pre-wrap" data-testid="sudo-command">{sudo.command}</pre>
+      {#if sudo.state === 'pending'}
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <Input type="password" autocomplete="off" bind:value={sudoPassword} placeholder="sudo password (optional)" aria-label="sudo password" class="h-9 max-w-64 flex-1" />
+          <Button size="default" disabled={sudoBusy} onclick={() => decide('approve')}>Approve</Button>
+          <Button size="default" variant="outline" disabled={sudoBusy} onclick={() => decide('deny')}>Deny</Button>
+        </div>
+        <p class="mt-1.5 text-xs text-muted-foreground">Without a password, sudo must already be passwordless. The password is used once and never stored.</p>
+      {/if}
+      {#if sudoError}<p role="alert" class="mt-2 text-xs text-destructive">{sudoError}</p>{/if}
+    </div>
+  </div>
+{:else if block.card === 'sudoresult'}
+  <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="sudoresult" open>
+    <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <Terminal class="size-4 shrink-0 text-muted-foreground" />
+      <span class="font-medium">Sudo {sudo.status}</span>
+      {#if sudo.status !== 'denied'}<span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">exit {sudo.exit}</span>{/if}
+      <span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{sudo.command}</span>
+      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+    </summary>
+    <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
+      <pre class="max-h-40 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-sm whitespace-pre-wrap">{sudo.command}</pre>
+      {#if sudo.output}<pre class="max-h-96 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">{sudo.output}</pre>{/if}
+    </div>
+  </details>
+{:else if block.card === 'compaction'}
+  <details class="group animate-rise overflow-hidden rounded-2xl border bg-card/60 text-card-foreground" data-card="compaction" data-state={compaction.state}>
+    <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      {#if compaction.state === 'running'}
+        <Loader class="size-4 animate-spin text-muted-foreground" />
+        <span class="font-medium">Compressing context…</span>
+      {:else if compaction.state === 'failed'}
+        <XCircle class="size-4 text-destructive" />
+        <span class="font-medium">Compression failed</span>
+        <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{compaction.error ?? ''}</span>
+      {:else}
+        <Shrink class="size-4 text-green-400" />
+        <span class="font-medium">Context compressed</span>
+        {#if compaction.reason && compaction.reason !== 'manual'}<span class="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">auto</span>{/if}
+        <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {fmtTokens(compaction.tokensBefore)} → {fmtTokens(compaction.tokensAfter)} tokens{#if saved !== null} · −{saved}%{/if}
+        </span>
+        {#if block.body}<ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />{/if}
+      {/if}
+    </summary>
+    {#if block.body && compaction.state === 'done'}
+      <div class="border-t px-4 py-3 text-sm leading-6 text-muted-foreground">
+        <div class="mb-1 text-[11px] font-medium uppercase tracking-wide">Summary kept in context</div>
+        <Markdown text={block.body} />
+      </div>
+    {/if}
+  </details>
 {:else if block.card === 'status'}
   <div class="flex animate-rise justify-center" data-card="status">
     <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">Session {block.title}</span>
@@ -28,7 +117,7 @@
       <span class="flex size-5 shrink-0 items-center justify-center">
         {#if block.status === 'failed'}
           <XCircle class="size-4 text-destructive" />
-        {:else if block.status === 'completed'}
+        {:else if block.status === 'completed' || block.status === 'complete'}
           <CheckCircle2 class="size-4 text-green-400" />
         {:else}
           <Loader class="size-4 animate-spin text-muted-foreground" />

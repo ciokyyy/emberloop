@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -65,7 +65,72 @@ func baseToolsFor(role string) ([]tools.Tool, error) {
 			out = append(out, t)
 		}
 	}
+	out = withWebProxies(role, out)
 	return out, nil
+}
+
+// WebSubmitEnabled offers the submit tool to web Daemon spawn children
+// (web-worker, scout) and runs the Daemon submit gate for them. It is false:
+// a spawned child's Group result is delivered when the child settles idle
+// (or fails/ends), carrying its submit text when one exists, else its last
+// assistant message. The herdr-era submit tool and the Run worker/reviewer
+// submit route are untouched by this flag. Re-enabling is one line: set it
+// true (tests flip it per test, never globally).
+var WebSubmitEnabled = false
+
+// webProxyRoles is the Daemon-tool matrix for the single el MCP server: which
+// Daemon-hosted tools each web role serves. A top-level parent manages its
+// children (spawn, steer, check, cancel; submit it never needs), a spawned
+// worker spawns its own (nesting kept) but never steers, peeks at or stops,
+// and a scout only reads. Submit stays listed for web-worker and scout so a
+// one-line re-enable restores it, but withWebProxies filters it while
+// WebSubmitEnabled is false. Children never hold the parent's full set.
+var webProxyRoles = map[string][]string{
+	"web":        {"spawn", "steer", "check", "cancel"},
+	"web-worker": {"spawn", "submit"},
+	"scout":      {"submit"},
+}
+
+// withWebProxies serves the Daemon-hosted tools for one web role, but only
+// when the process is bound to a Daemon Session: without EL_WEB_PARENT and
+// EL_WEB_DAEMON_URL the role resolves exactly as for the herdr harness, so
+// pig's in-process loadout and hand-started servers never see them. A proxy
+// replaces the same-named core tool (check): the role cannot serve both the
+// repo checks and the child peek under one name, and the Daemon tool wins.
+func withWebProxies(role string, base []tools.Tool) []tools.Tool {
+	names, ok := webProxyRoles[role]
+	if !ok {
+		return base
+	}
+	if _, _, ok := tools.WebDaemonBinding(); !ok {
+		return base
+	}
+	if !WebSubmitEnabled {
+		kept := names[:0:0]
+		for _, n := range names {
+			if n != "submit" {
+				kept = append(kept, n)
+			}
+		}
+		names = kept
+	}
+	drop := map[string]bool{}
+	for _, n := range names {
+		drop[n] = true
+	}
+	out := make([]tools.Tool, 0, len(base)+len(names))
+	for _, t := range base {
+		if drop[t.Name()] {
+			continue
+		}
+		out = append(out, t)
+	}
+	for _, n := range names {
+		if p := tools.WebProxyTool(n); p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // resolveRoleTools applies settings to one role's base list plus its MCP
@@ -117,6 +182,12 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 			enabled, placement, rename = true, tools.PlacementMain, ""
 		}
 		placement = validPlacement(placement, warn)
+		// Daemon proxies always serve in the main list: they are the Session's
+		// own management tools, and a settings placement written for the
+		// same-named core tool (check) must not bury them behind execute.
+		if tools.IsDaemonProxy(t) {
+			placement = tools.PlacementMain
+		}
 		final := name
 		if rename != "" {
 			final = rename
@@ -285,5 +356,5 @@ func warnSettingsOnce(msg string) {
 		return
 	}
 	warnedSettings.seen[msg] = true
-	log.Printf("emberloop: %s", msg)
+	log.Printf("el: %s", msg)
 }

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // herdrAgentSource names the wrapper as the reporter of a claude pane. It
 // must not start with "herdr:"; the pig extension reports under its own
 // source, and the two are never active for one pane.
-const herdrAgentSource = "emberloop"
+const herdrAgentSource = "el"
 
 // agentReporter tells herdr that a wrapped child is an agent and what it is
 // doing. A wrapped claude is no longer the pane's foreground process, so

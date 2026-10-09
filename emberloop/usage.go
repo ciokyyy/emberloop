@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"bufio"
@@ -17,7 +17,7 @@ import (
 
 // UsageRecord is one line in an agent's usage log: the raw per-request token
 // breakdown with the harness-reported cost exactly as reported. No price table
-// and no emberloop-side cost calculation: a missing cost stays missing.
+// and no el-side cost calculation: a missing cost stays missing.
 // Kind is "request" for per-request rows; ticket 04's find-call rows use
 // "find", and claude's cumulative cost-state snapshots use "cost", so a
 // reader summing tokens knows which rows are per-request.
@@ -45,7 +45,7 @@ type UsageParser interface {
 }
 
 // UsageParserFor returns the parser for a harness, or false for one whose
-// transcript carries no usage emberloop reads.
+// transcript carries no usage el reads.
 func UsageParserFor(harness string) (UsageParser, bool) {
 	switch harness {
 	case "pig":
@@ -237,10 +237,10 @@ func stamp(ts string) string {
 // usageDir holds the tailer's resume state (byte offsets and seen keys) and
 // the legacy per-agent usage logs the database import reads on first open.
 // New usage records land in the database, not in per-agent JSONL: the old
-// files stay until prune removes them. EMBERLOOP_STATE_DIR redirects the
+// files stay until prune removes them. EL_STATE_DIR redirects the
 // directory the way it redirects the rest of the state dir.
 func usageDir() string {
-	if dir := os.Getenv("EMBERLOOP_STATE_DIR"); dir != "" {
+	if dir := os.Getenv("EL_STATE_DIR"); dir != "" {
 		return filepath.Join(dir, "usage")
 	}
 	return filepath.Join(filepath.Dir(statePath), "usage")
@@ -308,11 +308,11 @@ func saveUsageTail(agent string, st usageTailState) error {
 	return os.Rename(tmp, usageTailPath(agent))
 }
 
-// dbPath is the state database file: under EMBERLOOP_STATE_DIR when set, else
+// dbPath is the state database file: under EL_STATE_DIR when set, else
 // beside the worker store, so tests isolating statePath stay hermetic the
 // way usageDir does.
 func dbPath() string {
-	if dir := os.Getenv("EMBERLOOP_STATE_DIR"); dir != "" {
+	if dir := os.Getenv("EL_STATE_DIR"); dir != "" {
 		return statedb.DBPathForDir(dir)
 	}
 	return filepath.Join(filepath.Dir(statePath), statedb.DBFileName)
@@ -448,22 +448,22 @@ func TailUsage(transcriptPath, agent, harness string) (int, error) {
 // session tail
 // ---------------------------------------------------------------------------
 
-// usageTailEnv names a harness session for its emberloop-mcp: the harness, the id
+// usageTailEnv names a harness session for its el-mcp: the harness, the id
 // the transcript file carries, and the session dir when the harness takes
 // one. An empty session id means no transcript to tail (a headless or bare
 // run), and the tailer stays off.
 func usageTailEnv(harness, sessionID, dir string) []string {
-	env := []string{"EMBERLOOP_HARNESS=" + harness}
+	env := []string{"EL_HARNESS=" + harness}
 	if sessionID != "" {
-		env = append(env, "EMBERLOOP_SESSION_ID="+sessionID)
+		env = append(env, "EL_SESSION_ID="+sessionID)
 	}
 	if dir != "" {
-		env = append(env, "EMBERLOOP_SESSION_DIR="+dir)
+		env = append(env, "EL_SESSION_DIR="+dir)
 	}
 	return env
 }
 
-// UsageTailConfig is what the session's own emberloop process needs to tail its
+// UsageTailConfig is what the session's own el process needs to tail its
 // harness's transcript: the harness, the session id naming the transcript,
 // the agent id owning the usage log, and the session dir for harnesses that
 // take one.
@@ -476,14 +476,14 @@ type UsageTailConfig struct {
 
 // UsageTailFromEnv reads the tail config from the session environment the
 // harness launch sets. ok is false when this process serves no harness
-// session with a tail-able transcript (a manual emberloop-mcp run, a headless
+// session with a tail-able transcript (a manual el-mcp run, a headless
 // session, an unknown harness), and the tailer stays off.
 func UsageTailFromEnv() (cfg UsageTailConfig, ok bool) {
 	cfg = UsageTailConfig{
-		Harness:   os.Getenv("EMBERLOOP_HARNESS"),
-		SessionID: os.Getenv("EMBERLOOP_SESSION_ID"),
-		AgentID:   os.Getenv("EMBERLOOP_AGENT_ID"),
-		Dir:       os.Getenv("EMBERLOOP_SESSION_DIR"),
+		Harness:   os.Getenv("EL_HARNESS"),
+		SessionID: os.Getenv("EL_SESSION_ID"),
+		AgentID:   os.Getenv("EL_AGENT_ID"),
+		Dir:       os.Getenv("EL_SESSION_DIR"),
 	}
 	if cfg.Harness == "" || cfg.SessionID == "" || cfg.AgentID == "" {
 		return UsageTailConfig{}, false
@@ -505,7 +505,7 @@ func TailUsageFile(cfg UsageTailConfig) error {
 	// The agent's current harness session wins over the id the tailer
 	// started with: a restart gives the same agent a new transcript,
 	// while the rows keep accumulating on the agent id. No state (an
-	// agent that never restarted through emberloop) tails the launch id.
+	// agent that never restarted through el) tails the launch id.
 	sessionID := cfg.SessionID
 	if cfg.AgentID != "" {
 		if s, ok, err := ReadAgentState(cfg.AgentID); err == nil && ok && s.SessionID != "" {
@@ -526,7 +526,7 @@ func TailUsageFile(cfg UsageTailConfig) error {
 var usageTailEvery = 5 * time.Second
 
 // RunUsageTail tails the harness transcript until stop closes, for the
-// session's own emberloop process. A failed pass is skipped, not fatal: the
+// session's own el process. A failed pass is skipped, not fatal: the
 // records stay in the transcript for the next tick or the final pass. The
 // caller runs one last TailUsageFile after the harness settles, so requests
 // written after the final tick still land.

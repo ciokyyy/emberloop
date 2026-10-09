@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -189,12 +189,12 @@ func resolveCompressTarget(agentID, pane string) (compressTarget, error) {
 }
 
 // topLevelLaunchFor rebuilds the top-level session's launch for the fresh
-// session id carrying the handoff, the way emberloop started it: its role,
+// session id carrying the handoff, the way el started it: its role,
 // directory, model and effort.
 func topLevelLaunchFor(st AgentState, handoff string) func(newSessionID string) (Session, Launch, error) {
 	return func(next string) (Session, Launch, error) {
 		if st.Cwd == "" {
-			return Session{}, Launch{}, fmt.Errorf("agent %q recorded no working directory: restart emberloop to enable compress", st.ID)
+			return Session{}, Launch{}, fmt.Errorf("agent %q recorded no working directory: restart el to enable compress", st.ID)
 		}
 		role := st.Role
 		if role == "" {
@@ -295,7 +295,7 @@ func CompressPaneWithForce(run Exec, pane string, s tools.Settings, force bool) 
 	}, tgt.launchFor(handoff))
 }
 
-// TopLevelSession is what the top-level emberloop records at startup so the
+// TopLevelSession is what the top-level el records at startup so the
 // compress key reaches it: the stable agent id, the herdr pane, how the
 // session runs, and the harness session id a restart replaces.
 type TopLevelSession struct {

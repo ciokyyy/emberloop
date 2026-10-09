@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,7 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	el "example.com/emberloop"
 )
 
 // ClaudeAdapterPackage pins the ACP adapter. Ticket 01 ruled out any
@@ -21,16 +25,37 @@ const ClaudeAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.88.0"
 func ClaudeModels() []string { return []string{"opus", "sonnet", "haiku"} }
 
 // claudeDisallowedTools removes every native tool the model could call, so
-// only the emberloop MCP tools remain. Proven by the ticket-01 spike.
+// only the el MCP tools remain. Proven by the ticket-01 spike.
 var claudeDisallowedTools = []string{
 	"Task", "Agent", "Bash", "BashOutput", "KillShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit",
 	"Glob", "Grep", "WebFetch", "WebSearch", "ToolSearch", "Skill", "TodoWrite", "ExitPlanMode",
 	"EnterPlanMode", "AskUserQuestion", "SlashCommand", "ListMcpResources", "ReadMcpResource",
+	"ListAgents", "ListPeers", "SendMessage", "SendUserMessage", "Brief", "TaskStop", "TaskOutput",
+	"ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool",
 }
 
-// claudeAllowedTools is the MCP prefix every emberloop tool carries, the same
+// claudeAllowedTools is the MCP prefix every el tool carries, the same
 // policy the wick claude harness launches with. Bare entries auto-approve.
-var claudeAllowedTools = []string{"mcp__emberloop", "mcp__emberloop-spawn"}
+var claudeAllowedTools = []string{"mcp__el"}
+
+// claudeSystemPrompt is the base Session system prompt: el's rule set.
+// Project context arrives as injected content via claudeSystemPromptFor,
+// never as a read-these-files instruction.
+// Web children settle on their turn alone (no submit tool), so while
+// el.WebSubmitEnabled is false the two shared submit-settlement lines are
+// reworded for the Daemon: delivery on settle, last message as the result.
+func claudeSystemPrompt() string {
+	p := el.SystemPrompt()
+	if !el.WebSubmitEnabled {
+		p = strings.ReplaceAll(p,
+			"one notice with every result arrives when the last agent of that call has submitted.",
+			"one notice with every result arrives when the last agent of that call settles.")
+		p = strings.ReplaceAll(p,
+			" A spawned agent yields right after submit: end the turn at once, with no text.",
+			" A spawned agent ends its turn when the work is done: its last message is delivered as its result.")
+	}
+	return p
+}
 
 // claudeStrippingOptions builds the full _meta.claudeCode.options set. One
 // builder serves session/new and session/load: the spike showed a load
@@ -39,17 +64,48 @@ func claudeStrippingOptions(model string) map[string]any {
 	opts := map[string]any{
 		"settingSources":  []string{},
 		"strictMcpConfig": true,
-		// Every tool left is an emberloop MCP tool the user already chose:
+		// Every tool left is an el MCP tool the user already chose:
 		// auto-allow all of them instead of asking.
 		"permissionMode":                  "bypassPermissions",
 		"allowDangerouslySkipPermissions": true,
 		"allowedTools":                    append([]string{}, claudeAllowedTools...),
 		"disallowedTools":                 append([]string{}, claudeDisallowedTools...),
+		// tools: [] drops every built-in tool the SDK ships, including ones newer
+		// than the deny list (Cron*, worktree, RemoteTrigger, ReportFindings).
+		"tools": []string{},
+		// Nothing to list or preload: no skills, plugins or subagents.
+		"skills":                 []string{},
+		"plugins":                []string{},
+		"agents":                 map[string]any{},
+		"promptSuggestions":      false,
+		"agentProgressSummaries": false,
 	}
 	if model != "" {
 		opts["model"] = model
 	}
+	if st := claudeInlineSettings(); st != nil {
+		opts["settings"] = st
+	}
 	return opts
+}
+
+// claudeInlineSettings is the inline settings object the CLI harness passes
+// with --settings, which still applies under settingSources []: the caveman
+// ultra reminder on every user message (UserPromptSubmit), as the harness and
+// the pig extension deliver it, so the register in the system prompt is not
+// outvoted by the latest message. ACP has no other hook. The hook needs the
+// el binary; without it on PATH the system-prompt layer alone remains.
+func claudeInlineSettings() map[string]any {
+	bin, err := exec.LookPath("el")
+	if err != nil {
+		return nil
+	}
+	return map[string]any{
+		"awaySummaryEnabled": false,
+		"hooks": map[string]any{"UserPromptSubmit": []any{map[string]any{
+			"hooks": []any{map[string]any{"type": "command", "command": bin + " voice-reminder hook"}},
+		}}},
+	}
 }
 
 // claudeAdapterEnv carries the same disabling variables the wick claude
@@ -58,7 +114,7 @@ func claudeStrippingOptions(model string) map[string]any {
 func claudeAdapterEnv() []string {
 	return []string{
 		// Load every MCP tool up front: with deferral the model must first
-		// call ToolSearch to see the emberloop tools.
+		// call ToolSearch to see the el tools.
 		"ENABLE_TOOL_SEARCH=false",
 		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=1",
 		"CLAUDE_CODE_DISABLE_CLAUDE_MDS=1",
@@ -71,6 +127,13 @@ func claudeAdapterEnv() []string {
 		"CLAUDE_CODE_DISABLE_MOUSE=1",
 		"DISABLE_TELEMETRY=1",
 		"DISABLE_ERROR_REPORTING=1",
+		// Bundled skills, workflows, agent view, cron and checkpoints only add
+		// listings and bookkeeping the stripped tool set cannot use.
+		"CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1",
+		"CLAUDE_CODE_DISABLE_WORKFLOWS=1",
+		"CLAUDE_CODE_DISABLE_AGENT_VIEW=1",
+		"CLAUDE_CODE_DISABLE_CRON=1",
+		"CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1",
 	}
 }
 
@@ -119,11 +182,10 @@ type ClaudeBackend struct {
 	mcpName    string
 	mcpCommand string
 	mcpArgs    []string
-	// spawnCommand starts the Daemon-hosted spawn MCP server (the Daemon
-	// binary in spawn-server mode); spawnDaemonAddr is the Daemon it calls
-	// back over loopback HTTP. Unset keeps Sessions on the base server only.
-	spawnCommand    []string
-	spawnDaemonAddr string
+	// daemonAddr is the loopback Daemon the single el MCP server calls back
+	// over HTTP for the Daemon-hosted tools and sudo approvals. Empty leaves
+	// Sessions with an unbound base server.
+	daemonAddr string
 	// allowedTools overrides the default MCP allow-list; the live probe
 	// points it at the echo server's tool.
 	allowedTools []string
@@ -136,6 +198,15 @@ type ClaudeBackend struct {
 	promptTimeout time.Duration
 
 	newConn func() (acpConn, error)
+
+	// plain turns the Backend into a plain ACP client for a non-claude
+	// adapter (pi-acp over pig): no claude _meta stripping set, and the
+	// Session's model is chosen after session/new through
+	// session/set_config_option.
+	plain bool
+	// newConnFor, when set, starts the adapter for one Daemon Session, so
+	// the process can carry per-Session environment.
+	newConnFor func(sessionID string) (acpConn, error)
 
 	mu       sync.Mutex
 	sessions map[string]*claudeState
@@ -170,8 +241,8 @@ func (b *ClaudeBackend) applyTimeouts(conn acpConn) {
 
 func NewClaudeBackend() *ClaudeBackend {
 	return &ClaudeBackend{
-		mcpName:        "emberloop",
-		mcpCommand:     "emberloop-mcp",
+		mcpName:        "el",
+		mcpCommand:     "el-mcp",
 		adapterCommand: []string{"npx", "-y", ClaudeAdapterPackage},
 		sessions:       map[string]*claudeState{},
 	}
@@ -180,7 +251,7 @@ func NewClaudeBackend() *ClaudeBackend {
 // newStubClaudeBackend wires a stub connection factory for tests.
 func newStubClaudeBackend(newConn func() (acpConn, error)) *ClaudeBackend {
 	return &ClaudeBackend{
-		mcpName:        "emberloop",
+		mcpName:        "el",
 		mcpCommand:     "/abs/stub-mcp",
 		adapterCommand: []string{"stub-adapter"},
 		newConn:        newConn,
@@ -188,31 +259,42 @@ func newStubClaudeBackend(newConn func() (acpConn, error)) *ClaudeBackend {
 	}
 }
 
-// strippingMeta returns the full _meta set for this Backend: the shared
-// builder with this Backend's allow-list.
+// strippingMeta returns the full _meta set for this Backend with the base
+// prompt (the title path, which overwrites the prompt anyway).
 func (b *ClaudeBackend) strippingMeta(model string) map[string]any {
+	return b.strippingMetaFor(model, "")
+}
+
+// strippingMetaFor is strippingMeta with the Session WorkDir's project
+// context injected into the system prompt. settingSources stays []: context
+// arrives as content, never as project settings.
+func (b *ClaudeBackend) strippingMetaFor(model, workDir string) map[string]any {
+	if b.plain {
+		return nil
+	}
 	allowed := b.allowedTools
 	if allowed == nil {
 		allowed = claudeAllowedTools
 	}
 	opts := claudeStrippingOptions(model)
 	opts["allowedTools"] = append([]string{}, allowed...)
-	return map[string]any{"claudeCode": map[string]any{"options": opts}}
+	// The whole Claude Code preset is replaced: el's own rules plus the
+	// injected project context, as the CLI harness does with --system-prompt.
+	return map[string]any{
+		"claudeCode":   map[string]any{"options": opts},
+		"systemPrompt": claudeSystemPromptFor(workDir),
+	}
 }
 
 // StartSession spawns the adapter and creates the stripped ACP session. It
 // returns only after session/new answers, so the MCP tools are connected
 // before the first prompt can go out.
 func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
-	mcp, err := b.mcpServersFor(meta.ID, meta.Scout)
+	mcp, err := b.mcpServersFor(meta.ID, elRoleFor(meta))
 	if err != nil {
 		return err
 	}
-	newConn := b.newConn
-	if newConn == nil {
-		cfg := append([]string{}, b.adapterCommand...)
-		newConn = func() (acpConn, error) { return spawnACPConn(cfg) }
-	}
+	newConn := b.connFactory(meta.ID)
 	conn, err := newConn()
 	if err != nil {
 		return fmt.Errorf("start claude adapter: %w", err)
@@ -227,9 +309,13 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		b.drop(meta.ID, conn)
 		return err
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.strippingMeta(meta.Model))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.strippingMetaFor(meta.Model, meta.WorkDir))
 	if err != nil {
 		err = fmt.Errorf("acp session/new: %w", err)
+		b.drop(meta.ID, conn)
+		return err
+	}
+	if err := b.applyModel(conn, acpID, meta.Model); err != nil {
 		b.drop(meta.ID, conn)
 		return err
 	}
@@ -242,16 +328,12 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 
 // LoadSession restarts the adapter around a known ACP session id. It repeats
 // the full stripping set: without it the loaded session re-asks permission.
-func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd string, scout bool) error {
-	mcp, err := b.mcpServersFor(daemonID, scout)
+func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd, role string) error {
+	mcp, err := b.mcpServersFor(daemonID, role)
 	if err != nil {
 		return err
 	}
-	newConn := b.newConn
-	if newConn == nil {
-		cfg := append([]string{}, b.adapterCommand...)
-		newConn = func() (acpConn, error) { return spawnACPConn(cfg) }
-	}
+	newConn := b.connFactory(daemonID)
 	conn, err := newConn()
 	if err != nil {
 		return fmt.Errorf("restart claude adapter: %w", err)
@@ -266,14 +348,51 @@ func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd string, scout bo
 		b.drop(daemonID, conn)
 		return err
 	}
-	if err := conn.LoadSession(acpID, cwd, mcp, b.strippingMeta(model)); err != nil {
+	if err := conn.LoadSession(acpID, cwd, mcp, b.strippingMetaFor(model, cwd)); err != nil {
 		err = fmt.Errorf("acp session/load: %w", err)
+		b.drop(daemonID, conn)
+		return err
+	}
+	if err := b.applyModel(conn, acpID, model); err != nil {
 		b.drop(daemonID, conn)
 		return err
 	}
 	b.mu.Lock()
 	st.signalReady()
 	b.mu.Unlock()
+	return nil
+}
+
+// connFactory picks how the adapter process starts for one Daemon Session.
+func (b *ClaudeBackend) connFactory(sessionID string) func() (acpConn, error) {
+	if b.newConnFor != nil {
+		return func() (acpConn, error) { return b.newConnFor(sessionID) }
+	}
+	if b.newConn != nil {
+		return b.newConn
+	}
+	cfg := append([]string{}, b.adapterCommand...)
+	return func() (acpConn, error) { return spawnACPConn(cfg) }
+}
+
+// acpModelSetter is the optional seam to pick the Session's model after
+// session/new, for adapters that take it as a config option.
+type acpModelSetter interface {
+	SetModel(acpID, model string) error
+}
+
+// applyModel selects the Session's model on a plain adapter.
+func (b *ClaudeBackend) applyModel(conn acpConn, acpID, model string) error {
+	if !b.plain || model == "" {
+		return nil
+	}
+	ms, ok := conn.(acpModelSetter)
+	if !ok {
+		return nil
+	}
+	if err := ms.SetModel(acpID, model); err != nil {
+		return fmt.Errorf("acp set model %q: %w", model, err)
+	}
 	return nil
 }
 
@@ -378,12 +497,74 @@ func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 	if meta.ResumeToken == "" {
 		return fmt.Errorf("claude: no saved session to resume")
 	}
-	return b.LoadSession(meta.ID, meta.ResumeToken, meta.Model, meta.WorkDir, meta.Scout)
+	return b.LoadSession(meta.ID, meta.ResumeToken, meta.Model, meta.WorkDir, elRoleFor(meta))
+}
+
+// acpSteerer is the optional steering seam of an acpConn: the adapter
+// advertised _session/steering and Steer injects into the running turn.
+type acpSteerer interface {
+	SteeringSupported() bool
+	Steer(acpID, text string) (bool, error)
+}
+
+// SteerLive injects text into the Session's running turn. It reports false
+// when the adapter cannot steer, no turn runs, or the call failed; the caller
+// then falls back to a Follow-up.
+func (b *ClaudeBackend) SteerLive(sessionID, text string, images []Image) bool {
+	b.mu.Lock()
+	st, ok := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !ok || st.acpID == "" {
+		return false
+	}
+	sc, ok := st.conn.(acpSteerer)
+	if !ok || !sc.SteeringSupported() {
+		return false
+	}
+	if len(images) > 0 {
+		is, ok := st.conn.(acpImageSteerer)
+		if !ok {
+			return false
+		}
+		injected, err := is.SteerImages(st.acpID, text, images)
+		return err == nil && injected
+	}
+	injected, err := sc.Steer(st.acpID, text)
+	return err == nil && injected
+}
+
+// acpCanceller is the optional conn seam that stops the running turn.
+type acpCanceller interface {
+	Cancel(acpID string) error
+}
+
+// Interrupt asks the adapter to cancel the Session's running turn. The
+// pending prompt call then returns with stopReason cancelled and the turn
+// ends idle through the normal path.
+func (b *ClaudeBackend) Interrupt(sessionID string) bool {
+	b.mu.Lock()
+	st, ok := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !ok || st.acpID == "" {
+		return false
+	}
+	c, ok := st.conn.(acpCanceller)
+	return ok && c.Cancel(st.acpID) == nil
+}
+
+// acpImageSteerer is the optional seam for a Steer that carries images.
+type acpImageSteerer interface {
+	SteerImages(acpID, text string, images []Image) (bool, error)
 }
 
 // OnPrompt runs after the prompt Event is stored. It waits for MCP-ready,
 // sends the prompt, and streams normalized Events through appendEvent.
 func (b *ClaudeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
+	b.OnPromptImages(sessionID, text, nil, appendEvent)
+}
+
+// OnPromptImages is OnPrompt with image attachments sent as ACP image blocks.
+func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, appendEvent func(kind, text, status string)) {
 	b.mu.Lock()
 	st, ok := b.sessions[sessionID]
 	b.mu.Unlock()
@@ -410,14 +591,23 @@ func (b *ClaudeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, 
 	// so no Daemon guard serializes them.
 	appendEvent("status", "", "working")
 	tracker := newToolTracker()
-	if _, perr := conn.Prompt(acpID, text, acpCallbacks{
+	cbs := acpCallbacks{
 		OnUpdate: func(update map[string]any) {
 			mapACPUpdate(update, appendEvent, tracker)
 		},
 		OnPermission: func(toolName, optionID string) {
 			appendEvent("permission", toolName+" auto-approved as "+optionID, "auto-approved")
 		},
-	}); perr != nil {
+	}
+	var perr error
+	if len(images) == 0 {
+		_, perr = conn.Prompt(acpID, text, cbs)
+	} else if ip, ok := conn.(acpImagePrompter); ok {
+		_, perr = ip.PromptImages(acpID, text, images, cbs)
+	} else {
+		perr = errors.New("claude adapter cannot take images")
+	}
+	if perr != nil {
 		appendEvent("error", perr.Error(), "")
 		appendEvent("status", "", "failed")
 		return
@@ -425,26 +615,38 @@ func (b *ClaudeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, 
 	appendEvent("status", "", "idle")
 }
 
-// SetSpawnServer serves the spawn tool to claude Sessions through a
-// Daemon-hosted MCP server: command starts it (the Daemon binary in
-// spawn-server mode) and daemonAddr is the loopback Daemon it calls back.
-func (b *ClaudeBackend) SetSpawnServer(command []string, daemonAddr string) {
+// SetDaemonAddr binds the single el MCP server to the loopback Daemon it
+// calls back for the Daemon-hosted tools and sudo approvals.
+func (b *ClaudeBackend) SetDaemonAddr(daemonAddr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.spawnCommand = append([]string(nil), command...)
-	b.spawnDaemonAddr = daemonAddr
+	b.daemonAddr = daemonAddr
 }
 
 func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
-	return b.mcpServersFor("", false)
+	return b.mcpServersFor("", "web")
 }
 
-// mcpServersFor lists the base emberloop MCP server plus, when configured,
-// the Daemon-hosted spawn server bound to one Session: its parent env names
-// the spawning Session, so the Daemon always knows the parent. Scout
-// Sessions get neither spawn nor write tools: the base server runs under
-// the read-only scout role and the spawn server is skipped.
-func (b *ClaudeBackend) mcpServersFor(sessionID string, scout bool) ([]acpMCPServer, error) {
+// elRoleFor is the el MCP role one Session's server runs under: spawned group
+// members run as workers (base tools plus, nesting kept, spawn), scouts stay
+// read-only, everything else runs as a top-level parent (base tools plus
+// spawn, steer, check and cancel). Submit stays registered for web-worker
+// and scout but is unoffered while el.WebSubmitEnabled is false.
+func elRoleFor(meta SessionMeta) string {
+	if meta.Scout {
+		return "scout"
+	}
+	if meta.GroupID != "" {
+		return "web-worker"
+	}
+	return "web"
+}
+
+// mcpServersFor lists the single el MCP server for one Session: the base
+// tools plus, when the role allows, the Daemon-hosted tools, all bound to
+// the Session through the parent and Daemon URL in its env. Scout Sessions
+// run the read-only role with no Daemon management tools.
+func (b *ClaudeBackend) mcpServersFor(sessionID, role string) ([]acpMCPServer, error) {
 	cmd := b.mcpCommand
 	if !filepath.IsAbs(cmd) {
 		abs, err := exec.LookPath(cmd)
@@ -455,25 +657,22 @@ func (b *ClaudeBackend) mcpServersFor(sessionID string, scout bool) ([]acpMCPSer
 	}
 	name := b.mcpName
 	if name == "" {
-		name = "emberloop"
+		name = "el"
 	}
 	args := b.mcpArgs
-	if scout {
-		args = []string{"--role", "scout"}
+	if len(args) == 0 {
+		args = []string{"--role", role}
 	}
-	out := []acpMCPServer{{Name: name, Command: cmd, Args: args}}
-	if len(b.spawnCommand) > 0 && sessionID != "" && !scout {
-		out = append(out, acpMCPServer{
-			Name:    "emberloop-spawn",
-			Command: b.spawnCommand[0],
-			Args:    append([]string(nil), b.spawnCommand[1:]...),
-			Env: [][2]string{
-				{"EMBERLOOP_WEB_PARENT", sessionID},
-				{"EMBERLOOP_WEB_DAEMON_URL", b.spawnDaemonAddr},
-			},
-		})
+	base := acpMCPServer{Name: name, Command: cmd, Args: args}
+	// The server gates sudo commands through the Daemon and serves the
+	// Daemon-hosted tools of its role, both keyed on this binding.
+	if b.daemonAddr != "" && sessionID != "" {
+		base.Env = [][2]string{
+			{"EL_WEB_PARENT", sessionID},
+			{"EL_WEB_DAEMON_URL", b.daemonAddr},
+		}
 	}
-	return out, nil
+	return []acpMCPServer{base}, nil
 }
 
 // mapACPUpdate normalizes one session/update payload. Plans and slash
@@ -706,16 +905,25 @@ type acpProcessConn struct {
 	readDone      chan struct{}
 	ctlTimeout    time.Duration
 	promptTimeout time.Duration
+	// lastRx is the unix-nano time of the last message from the adapter.
+	lastRx atomic.Int64
 	// closeTimeout bounds the wait for a deaf adapter before Kill.
 	closeTimeout time.Duration
+	// steering is set by Initialize from _meta.steering.supported.
+	steering bool
 }
 
 func spawnACPConn(command []string) (acpConn, error) {
+	return spawnACPConnEnv(command, append(os.Environ(), claudeAdapterEnv()...))
+}
+
+// spawnACPConnEnv starts one adapter process with exactly this environment.
+func spawnACPConnEnv(command, env []string) (acpConn, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("empty adapter command")
 	}
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Env = append(os.Environ(), claudeAdapterEnv()...)
+	cmd.Env = env
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -749,6 +957,7 @@ func (c *acpProcessConn) read(sc *bufio.Scanner) {
 		if len(strings.TrimSpace(string(line))) == 0 {
 			continue
 		}
+		c.lastRx.Store(time.Now().UnixNano())
 		var msg acpWireMsg
 		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
@@ -881,16 +1090,30 @@ func (c *acpProcessConn) callTimeout(method string, params any, timeout time.Dur
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	// The timeout is an idle bound: any adapter message (stream chunk, tool
+	// update, permission ask) restarts the wait, so a healthy long turn is
+	// never cut by wall clock. Only a silent adapter fails the call.
+	start := time.Now()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	select {
-	case r := <-ch:
-		return r.result, r.err
-	case <-timer.C:
-		c.mu.Lock()
-		delete(c.wait, id)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("acp %s timed out after %s", method, timeout)
+	for {
+		select {
+		case r := <-ch:
+			return r.result, r.err
+		case <-timer.C:
+			last := time.Unix(0, c.lastRx.Load())
+			if last.Before(start) {
+				last = start
+			}
+			if idle := time.Since(last); idle < timeout {
+				timer.Reset(timeout - idle)
+				continue
+			}
+			c.mu.Lock()
+			delete(c.wait, id)
+			c.mu.Unlock()
+			return nil, fmt.Errorf("acp %s timed out after %s", method, timeout)
+		}
 	}
 }
 
@@ -901,14 +1124,29 @@ func (c *acpProcessConn) setCallbacks(cb acpCallbacks) {
 }
 
 func (c *acpProcessConn) Initialize() error {
-	_, err := c.call("initialize", map[string]any{
+	raw, err := c.call("initialize", map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
 			"fs":       map[string]any{"readTextFile": true, "writeTextFile": true},
 			"terminal": false,
 		},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Meta struct {
+			Steering struct {
+				Supported bool `json:"supported"`
+			} `json:"steering"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(raw, &resp) == nil {
+		c.mu.Lock()
+		c.steering = resp.Meta.Steering.Supported
+		c.mu.Unlock()
+	}
+	return nil
 }
 
 func mcpParams(mcp []acpMCPServer) []any {
@@ -938,6 +1176,14 @@ func (c *acpProcessConn) NewSession(cwd string, mcp []acpMCPServer, meta map[str
 	return resp.SessionID, nil
 }
 
+// SetModel picks the model through the adapter's model config option.
+func (c *acpProcessConn) SetModel(acpID, model string) error {
+	_, err := c.call("session/set_config_option", map[string]any{
+		"sessionId": acpID, "configId": "model", "value": model,
+	})
+	return err
+}
+
 func (c *acpProcessConn) LoadSession(acpID, cwd string, mcp []acpMCPServer, meta map[string]any) error {
 	_, err := c.call("session/load", map[string]any{
 		"sessionId": acpID, "cwd": cwd, "mcpServers": mcpParams(mcp), "_meta": meta,
@@ -945,6 +1191,27 @@ func (c *acpProcessConn) LoadSession(acpID, cwd string, mcp []acpMCPServer, meta
 	return err
 }
 func (c *acpProcessConn) Prompt(acpID, text string, cb acpCallbacks) (string, error) {
+	return c.promptBlocks(acpID, []any{map[string]any{"type": "text", "text": text}}, cb)
+}
+
+// acpImagePrompter is the optional conn seam for prompts with attachments.
+type acpImagePrompter interface {
+	PromptImages(acpID, text string, images []Image, cb acpCallbacks) (string, error)
+}
+
+// PromptImages sends the text, then one ACP image block per attachment.
+func (c *acpProcessConn) PromptImages(acpID, text string, images []Image, cb acpCallbacks) (string, error) {
+	blocks := []any{}
+	if text != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": text})
+	}
+	for _, img := range images {
+		blocks = append(blocks, map[string]any{"type": "image", "mimeType": strings.ToLower(img.Mime), "data": img.Data})
+	}
+	return c.promptBlocks(acpID, blocks, cb)
+}
+
+func (c *acpProcessConn) promptBlocks(acpID string, blocks []any, cb acpCallbacks) (string, error) {
 	c.setCallbacks(cb)
 	timeout := c.promptTimeout
 	if timeout <= 0 {
@@ -952,7 +1219,7 @@ func (c *acpProcessConn) Prompt(acpID, text string, cb acpCallbacks) (string, er
 	}
 	raw, err := c.callTimeout("session/prompt", map[string]any{
 		"sessionId": acpID,
-		"prompt":    []any{map[string]any{"type": "text", "text": text}},
+		"prompt":    blocks,
 	}, timeout)
 	if err != nil {
 		return "", err
@@ -964,6 +1231,50 @@ func (c *acpProcessConn) Prompt(acpID, text string, cb acpCallbacks) (string, er
 		return "", err
 	}
 	return resp.StopReason, nil
+}
+
+// SteeringSupported reports whether the adapter advertised _session/steering
+// in its initialize reply.
+func (c *acpProcessConn) SteeringSupported() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.steering
+}
+
+// Steer injects text into the turn that is running. The adapter answers
+// injected, or promptRequired when no turn runs; promptRequired is opted into
+// so the adapter never starts a detached turn the Daemon cannot track.
+func (c *acpProcessConn) Steer(acpID, text string) (bool, error) {
+	return c.SteerImages(acpID, text, nil)
+}
+
+// SteerImages is Steer with one ACP image block per attachment.
+func (c *acpProcessConn) SteerImages(acpID, text string, images []Image) (bool, error) {
+	blocks := []any{map[string]any{"type": "text", "text": text}}
+	for _, img := range images {
+		blocks = append(blocks, map[string]any{"type": "image", "mimeType": strings.ToLower(img.Mime), "data": img.Data})
+	}
+	raw, err := c.call("_session/steering", map[string]any{
+		"sessionId": acpID,
+		"prompt":    blocks,
+		"_meta":     map[string]any{"steering": map[string]any{"idleBehavior": "promptRequired"}},
+	})
+	if err != nil {
+		return false, err
+	}
+	var resp struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return false, err
+	}
+	return resp.Outcome == "injected", nil
+}
+
+// Cancel sends the session/cancel notification (no id, no reply).
+func (c *acpProcessConn) Cancel(acpID string) error {
+	return c.writeRaw(map[string]any{"jsonrpc": "2.0", "method": "session/cancel",
+		"params": map[string]any{"sessionId": acpID}})
 }
 
 func (c *acpProcessConn) Close() error {
@@ -1013,7 +1324,7 @@ func (tr *toolTracker) get(id string) *trackedTool {
 }
 
 func (t *trackedTool) json(id, status string) string {
-	return compactJSON(map[string]any{"id": id, "name": t.Name, "input": t.Input, "output": t.Output, "status": status})
+	return ToolCall{ID: id, Name: t.Name, Input: t.Input, Output: t.Output, Status: status}.Text()
 }
 
 func prettyJSON(v any) string {

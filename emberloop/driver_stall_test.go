@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -347,7 +347,7 @@ func TestDriverLiveWorldNotifiesAndReadsTranscripts(t *testing.T) {
 	if len(notified) != 1 {
 		t.Fatalf("herdr calls = %d, want 1 notification", len(notified))
 	}
-	want := []string{"notification", "show", "emberloop: ticket 01-first needs you", "--body", "ticket 01-first needs you: stalled with no submit after 3 nudges"}
+	want := []string{"notification", "show", "el: ticket 01-first needs you", "--body", "ticket 01-first needs you: stalled with no submit after 3 nudges"}
 	if !equalIDs(notified[0], want) {
 		t.Errorf("notify args = %q, want %q", notified[0], want)
 	}

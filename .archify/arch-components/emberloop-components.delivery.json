@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "18f0b592-0042-4028-9adf-da3a982ce3ac",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/home/cioky/Projects/emberloop/.archify/arch-components/candidate.json",
+  "output": "/home/cioky/Projects/emberloop/.archify/arch-components/emberloop-components.html",
+  "specification": {
+    "sha256": "bb3eee6723a6a98c9de91edf3fe14ad1c473a86bbffed0ab8968fe401cea2624",
+    "bytes": 3024
+  },
+  "artifact": {
+    "sha256": "039f98941d62d2d584f00881ceb2326c1deab5e3bb0804d7018242fba44df705",
+    "bytes": 762264
+  }
+}

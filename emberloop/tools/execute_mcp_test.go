@@ -52,7 +52,7 @@ func TestExecuteStubExposesMCPToolsByNameAndNamespace(t *testing.T) {
 // Seam: search and help cover MCP tools, matching names and descriptions.
 func TestExecuteStubSearchAndHelpCoverMCPTools(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{
 		mcpStubFake{server: "gh", name: "gh_search", original: "search_repos", result: "hits"},
 	}, "test execute", false)
@@ -76,7 +76,7 @@ func TestExecuteStubSearchAndHelpCoverMCPTools(t *testing.T) {
 // call raises ToolError naming the server.
 func TestExecuteScriptCallsMCPToolThroughNamespace(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{
 		mcpStubFake{server: "gh", name: "gh_search", original: "search_repos", result: "three hits"},
 		mcpStubFake{server: "gh", name: "broken", original: "broken", err: errors.New(`mcp server "gh": tool "broken" failed: boom`)},
@@ -120,7 +120,7 @@ func TestExecuteDescriptionListsMCPServers(t *testing.T) {
 // serves it under the new name with the server namespace intact.
 func TestExecuteStubRenamedMCPToolKeepsServer(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{
 		Renamed(mcpStubFake{server: "gh", name: "search_repos", original: "search_repos", result: "hits"}, "gh_search"),
 	}, "test execute", false)

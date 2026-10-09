@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func GateListedGraph(listed map[string][]tools.Tool, call tools.GraphStatusCall,
 }
 
 // RoleToolsWithMCP returns the tools a role serves in its main list with an
-// explicit MCP listing, the way emberloop-mcp serves them. It is the main list of
+// explicit MCP listing, the way el-mcp serves them. It is the main list of
 // ResolvedToolsWithMCP: the MCP server serves exactly this.
 func RoleToolsWithMCP(role string, mcp map[string][]tools.Tool) ([]tools.Tool, error) {
 	main, _, err := ResolvedToolsWithMCP(role, mcp)

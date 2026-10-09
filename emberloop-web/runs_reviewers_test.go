@@ -166,7 +166,7 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		t.Fatalf("worker transcript misses the findings")
 	}
 
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "work.go", "package main\n")
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "fix nil")
@@ -209,7 +209,7 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", settings)
+	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -235,7 +235,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	branch := "implement/01-first"
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
@@ -282,7 +282,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	branch := "implement/01-first"
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
 	prompted := "1111111111111111111111111111111111111111"
@@ -322,7 +322,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	branch := "implement/01-first"
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
 	prompted := "1111111111111111111111111111111111111111"
@@ -397,7 +397,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	t1 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "work.go", "package main\n")
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "second")

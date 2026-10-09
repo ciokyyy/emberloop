@@ -1,15 +1,22 @@
 {
-  "name": "emberloop-web-ui",
+  "name": "el-web-ui",
   "private": true,
   "version": "0.0.1",
   "type": "module",
   "scripts": {
     "build": "vite build",
     "test": "vitest run",
-    "dev": "vite"
+    "test:e2e": "vite build && npm --prefix e2e install --no-audit --no-fund && npm --prefix e2e test",
+    "dev:api": "cd .. && go run ./cmd/emberloop-web -addr 127.0.0.1:8910",
+    "dev:ui": "API_PORT=8910 UI_PORT=5190 vite",
+    "dev": "bun run --parallel dev:api dev:ui",
+    "prod:api": "cd .. && go build -o bin/el-web ./cmd/emberloop-web && ./bin/el-web -addr 127.0.0.1:8920",
+    "prod:ui": "API_PORT=8920 UI_PORT=8921 vite preview",
+    "prod": "vite build && bun run --parallel prod:api prod:ui"
   },
   "dependencies": {
     "@lucide/svelte": "^1.53.0",
+    "@tanstack/svelte-virtual": "^3.13.39",
     "bits-ui": "^2.19.5",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.16",

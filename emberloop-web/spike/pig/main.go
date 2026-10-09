@@ -1,9 +1,9 @@
 // Spike probe: pig Backend through the embedded Go SDK.
 //
 // Creates a Session stripped to one marker tool (the stand-in for the
-// emberloop MCP tool set), subscribes to every event, sends a prompt,
+// el MCP tool set), subscribes to every event, sends a prompt,
 // calls QueueSteer and QueueFollowUp mid-run, and prints it all.
-// Findings go to .scratch/enderbloom-web/spike-findings.md.
+// Findings go to .scratch/archive/enderbloom-web/spike-findings.md.
 package main
 
 import (
@@ -21,11 +21,11 @@ import (
 	"github.com/MichaelKinsy/PiG/coding"
 )
 
-// echoTool stands in for one emberloop MCP tool: the only tool the
+// echoTool stands in for one el MCP tool: the only tool the
 // stripped Session may offer.
 type echoTool struct{ calls *int }
 
-func (t echoTool) Name() string  { return "mcp__emberloop__spike_echo" }
+func (t echoTool) Name() string  { return "mcp__el__spike_echo" }
 func (t echoTool) Label() string { return "spike echo" }
 func (t echoTool) Schema() ai.ToolSchema {
 	return ai.ToolSchema{

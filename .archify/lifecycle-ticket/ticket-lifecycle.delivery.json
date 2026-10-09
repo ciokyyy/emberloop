@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "e3ab82bc-367f-4cdb-964f-6040d4eea35c",
+  "status": "current",
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/candidate.json",
+  "output": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/ticket-lifecycle.html",
+  "specification": {
+    "sha256": "1879600db94b80c82f6fc6acf95a0efe70beee5d0523fb82350109a910eb5c14",
+    "bytes": 2438
+  },
+  "artifact": {
+    "sha256": "5777a25a9c50e63a8d20b183e72bb37e16a363d6c0b64c3d6e6615e187c13d29",
+    "bytes": 760065
+  }
+}

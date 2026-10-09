@@ -4,9 +4,9 @@
 # worker's branch, not by trusting the parent's report.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-EMBERLOOP=/home/cioky/Projects/emberloop/emberloop
+EL=/home/cioky/Projects/emberloop/emberloop
 REPORT=/home/cioky/Projects/emberloop/herdr-report
-DIR=/tmp/emberloop-tell
+DIR=/tmp/el-tell
 
 rm -rf "$DIR" ~/.pig/state/emberloop; mkdir -p "$DIR/.scratch/tell/issues"
 printf 'alpha\nbeta\n' > "$DIR/app.txt"
@@ -14,13 +14,13 @@ cat > "$DIR/.scratch/tell/issues/01-tell.md" <<'TICKET'
 Change line 1 of app.txt from alpha to GAMMA.
 TICKET
 git -C "$DIR" init -q
-git -C "$DIR" -c user.email=w@x -c user.name=emberloop add -A >/dev/null
-git -C "$DIR" -c user.email=w@x -c user.name=emberloop commit -qm base
+git -C "$DIR" -c user.email=w@x -c user.name=el add -A >/dev/null
+git -C "$DIR" -c user.email=w@x -c user.name=el commit -qm base
 
-cd "$DIR" && timeout 420 env EMBERLOOP_HERDR_REPORT="$REPORT" \
-  pig --no-skills -e "$EMBERLOOP" -p '
+cd "$DIR" && timeout 420 env EL_HERDR_REPORT="$REPORT" \
+  pig --no-skills -e "$EL" -p '
 Do these in order, no other tool calls:
-1. spawn with agents=[{"type": "worker", "ticket": "/tmp/emberloop-tell/.scratch/tell/issues/01-tell.md", "repo": "/tmp/emberloop-tell"}].
+1. spawn with agents=[{"type": "worker", "ticket": "/tmp/el-tell/.scratch/tell/issues/01-tell.md", "repo": "/tmp/el-tell"}].
 2. bash with command "sleep 20", so the worker is well into its turn.
 3. tell with agent set to the id the spawn returned, and text:
    "Stop working on the ticket. Instead create a file named TELLMARKER.txt containing exactly the text marker-received and nothing else, commit it, then stop."

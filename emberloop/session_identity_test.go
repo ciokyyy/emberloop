@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -113,7 +113,7 @@ func TestScoutLaunchRecordsItsCurrentSession(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("ReadAgentState: %v %v", ok, err)
 	}
-	launched := envIn(ex.lines[0], "EMBERLOOP_SESSION_ID")
+	launched := envIn(ex.lines[0], "EL_SESSION_ID")
 	if launched == "" {
 		t.Fatal("the scout launch names no harness session")
 	}
@@ -156,10 +156,10 @@ func TestTailUsageFollowsTheCurrentSession(t *testing.T) {
 	t.Setenv("HOME", home)
 	// A private state dir: usage rows never collide with another test's
 	// agent, even when the environment shares one database.
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_HARNESS", "pig")
-	t.Setenv("EMBERLOOP_SESSION_ID", "sess-old")
-	t.Setenv("EMBERLOOP_AGENT_ID", "agent-rot")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_HARNESS", "pig")
+	t.Setenv("EL_SESSION_ID", "sess-old")
+	t.Setenv("EL_AGENT_ID", "agent-rot")
 	cfg, ok := UsageTailFromEnv()
 	if !ok {
 		t.Fatal("tail config must resolve from the session environment")
@@ -176,7 +176,7 @@ func TestTailUsageFollowsTheCurrentSession(t *testing.T) {
 		t.Fatalf("rows after the old session = %d, want 1", len(got))
 	}
 	// The restart gives the same agent a new harness session id. The
-	// tailer still holds the old config, the way a running emberloop-mcp does.
+	// tailer still holds the old config, the way a running el-mcp does.
 	if err := WriteAgentState(AgentState{ID: "agent-rot", SessionID: "sess-new"}); err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -23,7 +23,7 @@ func (r *recorder) run(cmd string, args []string, _ ExecOpts) (Result, error) {
 }
 
 // fakeHerdr answers the herdr calls ReadOnly makes. On pane run it plays the
-// agent: it reads the launch file the way `emberloop exec` would and writes a
+// agent: it reads the launch file the way `el exec` would and writes a
 // pig transcript, at the dir and id the launch names, whose last message is
 // the report.
 func fakeHerdr(cmd string, args []string, report string, git Result) Result {
@@ -167,7 +167,7 @@ func TestReadOnlyFindsTheCallersTabFromItsPane(t *testing.T) {
 
 func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	got := skillPrompt("grilling", "the auth plan", true)
-	for _, want := range []string{"emberloop://matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout", "spawn"} {
+	for _, want := range []string{"el://matt-pocock/grilling/SKILL.md", "Input: the auth plan", "scout", "spawn"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
@@ -177,13 +177,13 @@ func TestSkillCommandsPointAtTheSkillFile(t *testing.T) {
 	}
 }
 
-// Every session is pointed at the emberloop:// address the read tool serves, since
+// Every session is pointed at the el:// address the read tool serves, since
 // no harness loads the library itself any more.
 func TestSkillCommandNamesNoAbsolutePath(t *testing.T) {
-	t.Setenv("EMBERLOOP_SKILLS_DIR", "/skills")
+	t.Setenv("EL_SKILLS_DIR", "/skills")
 	got := skillPrompt("grilling", "", true)
-	if !strings.Contains(got, "emberloop://matt-pocock/grilling/SKILL.md") {
-		t.Errorf("a skill command must name the emberloop:// address, got:\n%s", got)
+	if !strings.Contains(got, "el://matt-pocock/grilling/SKILL.md") {
+		t.Errorf("a skill command must name the el:// address, got:\n%s", got)
 	}
 	if strings.Contains(got, "/skills/matt-pocock") {
 		t.Errorf("a skill command must name no absolute library path:\n%s", got)
@@ -201,8 +201,8 @@ func TestReadOnlyDoesNotWidenReadAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, call := range rec.calls {
-		if strings.Contains(strings.Join(call, " "), "EMBERLOOP_READ_ALLOW") {
-			t.Fatalf("reviewer launch still sets EMBERLOOP_READ_ALLOW: %v", call)
+		if strings.Contains(strings.Join(call, " "), "EL_READ_ALLOW") {
+			t.Fatalf("reviewer launch still sets EL_READ_ALLOW: %v", call)
 		}
 	}
 }
@@ -214,7 +214,7 @@ func TestReadOnlyKeepsTheModelOnANonPigHarness(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("EMBERLOOP_READONLY_HARNESS", "claude")
+	t.Setenv("EL_READONLY_HARNESS", "claude")
 
 	rec := &recorder{reply: claudeHerdr(home, "looks fine")}
 	if _, err := ReadOnly(rec.run, "/repo", "claude-sonnet", "look"); err != nil {
@@ -223,10 +223,10 @@ func TestReadOnlyKeepsTheModelOnANonPigHarness(t *testing.T) {
 	found := false
 	for _, c := range rec.calls {
 		joined := strings.Join(c, " ")
-		if !strings.Contains(joined, "emberloop exec ") {
+		if !strings.Contains(joined, "el exec ") {
 			continue
 		}
-		if flagIn(joined[strings.Index(joined, "emberloop exec "):], "--model") == "claude-sonnet" {
+		if flagIn(joined[strings.Index(joined, "el exec "):], "--model") == "claude-sonnet" {
 			found = true
 		}
 	}

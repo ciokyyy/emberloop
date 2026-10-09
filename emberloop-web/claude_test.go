@@ -1,11 +1,16 @@
 package web
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	el "example.com/emberloop"
 )
 
 // stubConn is the fake ACP adapter: canned updates, captured params, no
@@ -121,15 +126,15 @@ func TestNewAndLoadShareFullStrippingSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustStripped(t, stub.newMeta, "sonnet")
-	if len(stub.newMCP) != 1 || stub.newMCP[0].Name != "emberloop" {
-		t.Fatalf("mcp servers = %+v, want one emberloop server", stub.newMCP)
+	if len(stub.newMCP) != 1 || stub.newMCP[0].Name != "el" {
+		t.Fatalf("mcp servers = %+v, want one el server", stub.newMCP)
 	}
 	if stub.newMCP[0].Command != "/abs/stub-mcp" {
 		t.Fatalf("mcp command = %q, want absolute", stub.newMCP[0].Command)
 	}
 
 	be2 := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	if err := be2.LoadSession("d2", "acp-session-1", "opus", meta.WorkDir, false); err != nil {
+	if err := be2.LoadSession("d2", "acp-session-1", "opus", meta.WorkDir, "web"); err != nil {
 		t.Fatal(err)
 	}
 	mustStripped(t, stub.loadMeta, "opus")
@@ -155,7 +160,7 @@ func mustStripped(t *testing.T, meta map[string]any, model string) {
 		t.Fatalf("strictMcpConfig = %v, want true", opts["strictMcpConfig"])
 	}
 	allowed, _ := opts["allowedTools"].([]string)
-	if !reflect.DeepEqual(allowed, []string{"mcp__emberloop", "mcp__emberloop-spawn"}) {
+	if !reflect.DeepEqual(allowed, []string{"mcp__el"}) {
 		t.Fatalf("allowedTools = %v", allowed)
 	}
 	disallowed, ok := opts["disallowedTools"].([]string)
@@ -185,7 +190,7 @@ func TestPromptStreamsNormalizedEvents(t *testing.T) {
 		chunk("hello "),
 		chunk("world"),
 		{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": "thinking"}},
-		{"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Spike Echo", "name": "mcp__emberloop__echo",
+		{"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "Spike Echo", "name": "mcp__el__echo",
 			"rawInput": map[string]any{"text": "alpha"}},
 		{"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed",
 			"content": []any{map[string]any{"type": "content", "content": map[string]any{"type": "text", "text": "echo:alpha"}}}},
@@ -232,14 +237,14 @@ func TestPromptStreamsNormalizedEvents(t *testing.T) {
 func TestPermissionAutoApprovedAndLogged(t *testing.T) {
 	stub := &stubConn{permissions: []stubPermission{
 		{
-			toolName: "mcp__emberloop__echo",
+			toolName: "mcp__el__echo",
 			options: []any{
 				map[string]any{"optionId": "allow-once", "name": "Yes", "kind": "allow_once"},
 				map[string]any{"optionId": "reject", "name": "No", "kind": "reject_once"},
 			},
 		},
 		{
-			toolName: "mcp__emberloop__other",
+			toolName: "mcp__el__other",
 			options: []any{
 				map[string]any{"optionId": "reject", "name": "No", "kind": "reject_once"},
 				map[string]any{"optionId": "allow-always", "name": "Always", "kind": "allow_always"},
@@ -403,5 +408,102 @@ func TestPromptAfterDropDuringStartReportsFailed(t *testing.T) {
 	}
 	if seen["status"] != "|failed" {
 		t.Fatalf("status events = %v", got)
+	}
+}
+
+// Every claude Session carries the caveman ultra per-turn reminder as an
+// inline UserPromptSubmit hook, and the system prompt holds the ultra layer.
+func TestClaudeSessionsCarryVoiceReminder(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "el")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	meta := newStubClaudeBackend(nil).strippingMeta("sonnet")
+	opts := meta["claudeCode"].(map[string]any)["options"].(map[string]any)
+	raw, _ := json.Marshal(opts["settings"])
+	if !strings.Contains(string(raw), "UserPromptSubmit") || !strings.Contains(string(raw), bin+" voice-reminder hook") {
+		t.Fatalf("settings = %s, want the voice-reminder hook", raw)
+	}
+	if sp, _ := meta["systemPrompt"].(string); !strings.Contains(sp, "level: ultra") {
+		t.Fatalf("systemPrompt lacks the ultra register: %q", sp)
+	}
+	t.Setenv("PATH", t.TempDir())
+	opts = newStubClaudeBackend(nil).strippingMeta("sonnet")["claudeCode"].(map[string]any)["options"].(map[string]any)
+	if _, ok := opts["settings"]; ok {
+		t.Fatal("settings set without an el binary")
+	}
+}
+
+// Claude Sessions get one bound el server: the Session's kind picks the role
+// (top-level web, spawned group child web-worker, scout read-only), and the
+// binding carries the Session the Daemon tools and sudo approvals act under.
+// Scouts and children never see a second server.
+func TestClaudeMCPServesSingleBoundServer(t *testing.T) {
+	b := newStubClaudeBackend(nil)
+	b.SetDaemonAddr("http://127.0.0.1:9")
+	for _, tc := range []struct {
+		meta SessionMeta
+		role string
+	}{
+		{SessionMeta{ID: "top"}, "web"},
+		{SessionMeta{ID: "kid", ParentID: "top", GroupID: "g"}, "web-worker"},
+		{SessionMeta{ID: "look", ParentID: "top", GroupID: "g", Scout: true}, "scout"},
+	} {
+		if got := elRoleFor(tc.meta); got != tc.role {
+			t.Errorf("elRoleFor(%+v) = %q, want %q", tc.meta, got, tc.role)
+		}
+		servers, err := b.mcpServersFor(tc.meta.ID, elRoleFor(tc.meta))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(servers) != 1 || servers[0].Name != "el" {
+			t.Fatalf("servers = %+v, want one el server", servers)
+		}
+		if len(servers[0].Args) != 2 || servers[0].Args[0] != "--role" || servers[0].Args[1] != tc.role {
+			t.Errorf("server args = %v, want --role %s", servers[0].Args, tc.role)
+		}
+		env := map[string]string{}
+		for _, kv := range servers[0].Env {
+			env[kv[0]] = kv[1]
+		}
+		if env["EL_WEB_PARENT"] != tc.meta.ID || env["EL_WEB_DAEMON_URL"] != "http://127.0.0.1:9" {
+			t.Errorf("server env = %v, want the Session plus the Daemon URL", env)
+		}
+	}
+	// Unbound, the listing is still the bare base server.
+	bare := newStubClaudeBackend(nil)
+	servers, err := bare.mcpServersFor("sess-1", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 || len(servers[0].Env) != 0 {
+		t.Fatalf("unbound servers = %+v, want one bare server", servers)
+	}
+}
+
+// The claude system prompt rewords the shared submit-settlement lines while
+// the flag is off: delivery on settle, last message as the result. With the
+// flag on the shared wording stays verbatim.
+func TestClaudeSystemPromptFollowsSubmitFlag(t *testing.T) {
+	if el.WebSubmitEnabled {
+		t.Fatal("WebSubmitEnabled must default false")
+	}
+	off := claudeSystemPrompt()
+	if strings.Contains(off, "yields right after submit") {
+		t.Fatalf("flag-off prompt still tells children to submit: %q", off)
+	}
+	if !strings.Contains(off, "arrives when the last agent of that call settles.") {
+		t.Fatalf("flag-off prompt missing settle delivery: %q", off)
+	}
+	if !strings.Contains(off, "its last message is delivered as its result.") {
+		t.Fatalf("flag-off prompt missing last-message result: %q", off)
+	}
+	el.WebSubmitEnabled = true
+	t.Cleanup(func() { el.WebSubmitEnabled = false })
+	on := claudeSystemPrompt()
+	if !strings.Contains(on, "has submitted.") || !strings.Contains(on, "yields right after submit") {
+		t.Fatalf("flag-on prompt must keep the shared submit wording: %q", on)
 	}
 }

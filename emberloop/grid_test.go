@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -54,7 +54,7 @@ var gridIsolation string
 func resetGrid() {
 	if statePath == defaultStatePath {
 		if gridIsolation == "" {
-			dir, err := os.MkdirTemp("", "emberloop-grid-test")
+			dir, err := os.MkdirTemp("", "el-grid-test")
 			if err != nil {
 				panic(err)
 			}
@@ -630,8 +630,8 @@ func TestGridPlacementSurvivesSimultaneousSessions(t *testing.T) {
 	t.Cleanup(func() { statePath = oldState })
 
 	herdrDir := t.TempDir()
-	t.Setenv("EMBERLOOP_CONCURRENCY_HERDR", herdrDir)
-	t.Setenv("EMBERLOOP_CONCURRENCY_STATE", stateFile)
+	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	saveConcurrencyHerdr(concurrencyHerdrState{
 		Tabs:   map[string]string{"callers": "w1:t1"},
@@ -646,11 +646,11 @@ func TestGridPlacementSurvivesSimultaneousSessions(t *testing.T) {
 		ids[i] = fmt.Sprintf("grid-%d", i+1)
 	}
 	results := runConcurrencyHelpersTogether(t, "grid-place", ids, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE":    stateFile,
-		"EMBERLOOP_CONCURRENCY_HERDR":    herdrDir,
-		"EMBERLOOP_CONCURRENCY_TAB":      "w1:t1",
-		"EMBERLOOP_CONCURRENCY_OVERFLOW": "scouts",
-		"EMBERLOOP_CONCURRENCY_DELAY_MS": "50",
+		"EL_CONCURRENCY_STATE":    stateFile,
+		"EL_CONCURRENCY_HERDR":    herdrDir,
+		"EL_CONCURRENCY_TAB":      "w1:t1",
+		"EL_CONCURRENCY_OVERFLOW": "scouts",
+		"EL_CONCURRENCY_DELAY_MS": "50",
 	}, nil)
 
 	slots := map[string]string{}
@@ -703,8 +703,8 @@ func TestGridOverflowCreatesOneTabAcrossSessions(t *testing.T) {
 	t.Cleanup(func() { statePath = oldState })
 
 	herdrDir := t.TempDir()
-	t.Setenv("EMBERLOOP_CONCURRENCY_HERDR", herdrDir)
-	t.Setenv("EMBERLOOP_CONCURRENCY_STATE", stateFile)
+	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	saveConcurrencyHerdr(concurrencyHerdrState{
 		Tabs:   map[string]string{"callers": "w1:t1", "other": "w1:t2"},
@@ -722,10 +722,10 @@ func TestGridOverflowCreatesOneTabAcrossSessions(t *testing.T) {
 		"ov-t2-a": "w1:t2", "ov-t2-b": "w1:t2",
 	}
 	results := runConcurrencyHelpersTogether(t, "grid-place", ids, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE":    stateFile,
-		"EMBERLOOP_CONCURRENCY_HERDR":    herdrDir,
-		"EMBERLOOP_CONCURRENCY_OVERFLOW": "scouts",
-		"EMBERLOOP_CONCURRENCY_DELAY_MS": "50",
+		"EL_CONCURRENCY_STATE":    stateFile,
+		"EL_CONCURRENCY_HERDR":    herdrDir,
+		"EL_CONCURRENCY_OVERFLOW": "scouts",
+		"EL_CONCURRENCY_DELAY_MS": "50",
 	}, tabFor)
 
 	placed := map[string]string{}
@@ -786,8 +786,8 @@ func TestGridDirectAndOverflowPlacementsShareOneTab(t *testing.T) {
 	t.Cleanup(func() { statePath = oldState })
 
 	herdrDir := t.TempDir()
-	t.Setenv("EMBERLOOP_CONCURRENCY_HERDR", herdrDir)
-	t.Setenv("EMBERLOOP_CONCURRENCY_STATE", stateFile)
+	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	saveConcurrencyHerdr(concurrencyHerdrState{
 		Tabs:   map[string]string{"callers": "w1:t1", "scouts": "w1:t3"},
@@ -805,10 +805,10 @@ func TestGridDirectAndOverflowPlacementsShareOneTab(t *testing.T) {
 		"ov-o-a": "w1:t1", "ov-o-b": "w1:t1", "ov-o-c": "w1:t1",
 	}
 	results := runConcurrencyHelpersTogether(t, "grid-place", ids, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE":    stateFile,
-		"EMBERLOOP_CONCURRENCY_HERDR":    herdrDir,
-		"EMBERLOOP_CONCURRENCY_OVERFLOW": "scouts",
-		"EMBERLOOP_CONCURRENCY_DELAY_MS": "50",
+		"EL_CONCURRENCY_STATE":    stateFile,
+		"EL_CONCURRENCY_HERDR":    herdrDir,
+		"EL_CONCURRENCY_OVERFLOW": "scouts",
+		"EL_CONCURRENCY_DELAY_MS": "50",
 	}, tabFor)
 
 	placed := map[string]string{}

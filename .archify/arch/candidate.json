@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "emberloop run",
+    "output": ".archify/arch/emberloop-run.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "you", "type": "external", "label": "You", "sublabel": "spec file", "pos": [40, 200], "size": [120, 60] },
+    { "id": "orch", "type": "frontend", "label": "Orchestrator", "sublabel": "pig or claude", "pos": [250, 200], "size": [140, 60] },
+    { "id": "worker", "type": "backend", "label": "Worker", "sublabel": "one git worktree per ticket", "pos": [480, 200], "size": [170, 60] },
+    { "id": "review", "type": "security", "label": "Two reviewers", "sublabel": "spec + standards", "pos": [740, 200], "size": [150, 60] },
+    { "id": "gate", "type": "messagebus", "label": "Gate", "sublabel": "vet + test", "pos": [980, 200], "size": [120, 60] },
+    { "id": "branch", "type": "database", "label": "Spec branch", "sublabel": "merged tickets", "pos": [1190, 200], "size": [130, 60] },
+    { "id": "mcp", "type": "cloud", "label": "emberloop-mcp", "sublabel": "tools over MCP", "pos": [250, 360], "size": [140, 60] },
+    { "id": "state", "type": "database", "label": "SQLite state", "sublabel": "usage, agents", "pos": [250, 500], "size": [140, 60] },
+    { "id": "tui", "type": "frontend", "label": "emberloop-tui", "sublabel": "dashboard", "pos": [480, 500], "size": [150, 60] }
+  ],
+  "boundaries": [],
+  "connections": [
+    { "id": "you-orch", "from": "you", "to": "orch", "label": "spec", "variant": "emphasis" },
+    { "id": "orch-worker", "from": "orch", "to": "worker", "label": "spawn", "variant": "emphasis" },
+    { "id": "worker-review", "from": "worker", "to": "review", "label": "done" },
+    { "id": "review-gate", "from": "review", "to": "gate", "label": "both pass" },
+    { "id": "gate-branch", "from": "gate", "to": "branch", "label": "merge", "variant": "emphasis" },
+    { "id": "review-worker", "from": "review", "to": "worker", "label": "findings", "variant": "dashed", "fromSide": "top", "toSide": "top" },
+    { "id": "orch-mcp", "from": "orch", "to": "mcp", "label": "MCP", "fromSide": "bottom", "toSide": "top" },
+    { "id": "mcp-state", "from": "mcp", "to": "state", "fromSide": "bottom", "toSide": "top" },
+    { "id": "tui-state", "from": "tui", "to": "state", "label": "reads", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Loop", "items": ["Findings return to the same worker", "Reviewers keep context across passes"] },
+    { "dot": "emerald", "title": "Merge rule", "items": ["Ticket merges only after gate and both reviewers pass"] }
+  ]
+}

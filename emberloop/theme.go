@@ -1,13 +1,13 @@
-package emberloop
+package el
 
 // Shared theme (ticket 06): one palette definition drives the strip, the
 // generated claude and pig themes, and the pane colors (OSC). Catppuccin
-// Mocha for dark terminals, Latte for light ones. EmberloopPalette is the single
+// Mocha for dark terminals, Latte for light ones. ElPalette is the single
 // source: the strip reads its roles through the headerColor vars in
 // header.go, and the generators and the OSC setter assemble from the same
 // struct, so no consumer keeps an independent hex table. Generated files
-// live under emberloop's state dir and reach the child only through per-run
-// launch flags (and, for claude, two emberloop-named theme files in its config dir), so the
+// live under el's state dir and reach the child only through per-run
+// launch flags (and, for claude, two el-named theme files in its config dir), so the
 // user's saved theme choice is never changed. Mocha is live-verified in
 // herdr; Latte is generated from the same source and is not verified.
 
@@ -19,10 +19,10 @@ import (
 	"strings"
 )
 
-// EmberloopHue is one agent identity hue: the Mocha hex for dark terminals, the
+// ElHue is one agent identity hue: the Mocha hex for dark terminals, the
 // Latte hex for light ones. Green, yellow and red stay out, so identity
 // never reads as status.
-type EmberloopHue struct {
+type ElHue struct {
 	Dark  string
 	Light string
 }
@@ -137,9 +137,9 @@ type pigThemeColors struct {
 	BashMode        string `json:"bashMode"`
 }
 
-// EmberloopPalette is the full shared palette for one variant: every token the
+// ElPalette is the full shared palette for one variant: every token the
 // strip, the generators and the OSC setter need, from one Catppuccin source.
-type EmberloopPalette struct {
+type ElPalette struct {
 	StripBg string
 	Text    string
 	Dim     string
@@ -151,7 +151,7 @@ type EmberloopPalette struct {
 	Tool    string
 	Idle    string
 	BarDim  string
-	Hues    [7]EmberloopHue
+	Hues    [7]ElHue
 	// Generator and OSC tokens: the claude and pig theme tables and the
 	// pane colors for this variant.
 	ClaudeName    string
@@ -167,9 +167,9 @@ type EmberloopPalette struct {
 	PaneANSI      [16]string
 }
 
-// EmberloopMocha is the dark variant: Catppuccin Mocha.
-func EmberloopMocha() EmberloopPalette {
-	return EmberloopPalette{
+// ElMocha is the dark variant: Catppuccin Mocha.
+func ElMocha() ElPalette {
+	return ElPalette{
 		StripBg: "#181825",
 		Text:    "#cdd6f4",
 		Dim:     "#6c7086",
@@ -181,7 +181,7 @@ func EmberloopMocha() EmberloopPalette {
 		Tool:    "#89b4fa",
 		Idle:    "#94e2d5",
 		BarDim:  "#313244",
-		Hues: [7]EmberloopHue{
+		Hues: [7]ElHue{
 			{"#cba6f7", "#8839ef"}, // mauve: the orchestrator
 			{"#f5c2e7", "#ea76cb"}, // pink
 			{"#b4befe", "#7287fd"}, // lavender
@@ -190,7 +190,7 @@ func EmberloopMocha() EmberloopPalette {
 			{"#f2cdcd", "#dd7878"}, // flamingo
 			{"#eba0ac", "#e64553"}, // maroon
 		},
-		ClaudeName: "Emberloop (Catppuccin Mocha)",
+		ClaudeName: "El (Catppuccin Mocha)",
 		ClaudeBase: "dark",
 		Claude: claudeThemeOverrides{
 			Claude: "#cba6f7", Text: "#cdd6f4", InverseText: "#181825",
@@ -205,7 +205,7 @@ func EmberloopMocha() EmberloopPalette {
 			BashMessageBackground: "#2a2a3c", MemoryBackground: "#2a2a3c",
 			UserMessageHover: "#45475a", SelectionBg: "#585b70",
 		},
-		PigName: "emberloop-mocha", PigAppearance: "dark",
+		PigName: "el-mocha", PigAppearance: "dark",
 		PigVars: pigThemeVars{
 			Text: "#cdd6f4", Muted: "#a6adc8", Dim: "#6c7086",
 			Mauve: "#cba6f7", Blue: "#89b4fa", Green: "#a6e3a1",
@@ -248,11 +248,11 @@ func EmberloopMocha() EmberloopPalette {
 	}
 }
 
-// EmberloopLatte is the light variant: Catppuccin Latte, generated from the same
+// ElLatte is the light variant: Catppuccin Latte, generated from the same
 // source as Mocha. Not live-verified (spec: Out of Scope).
-func EmberloopLatte() EmberloopPalette {
-	m := EmberloopMocha()
-	return EmberloopPalette{
+func ElLatte() ElPalette {
+	m := ElMocha()
+	return ElPalette{
 		StripBg:    "#e6e9ef",
 		Text:       "#4c4f69",
 		Dim:        "#9ca0b0",
@@ -265,7 +265,7 @@ func EmberloopLatte() EmberloopPalette {
 		Idle:       "#179299",
 		BarDim:     "#ccd0da",
 		Hues:       m.Hues,
-		ClaudeName: "Emberloop (Catppuccin Latte)",
+		ClaudeName: "El (Catppuccin Latte)",
 		ClaudeBase: "light",
 		Claude: claudeThemeOverrides{
 			Claude: "#8839ef", Text: "#4c4f69", InverseText: "#e6e9ef",
@@ -280,7 +280,7 @@ func EmberloopLatte() EmberloopPalette {
 			BashMessageBackground: "#e4e7f0", MemoryBackground: "#e4e7f0",
 			UserMessageHover: "#bcc0cc", SelectionBg: "#acb0be",
 		},
-		PigName: "emberloop-latte", PigAppearance: "light",
+		PigName: "el-latte", PigAppearance: "light",
 		PigVars: pigThemeVars{
 			Text: "#4c4f69", Muted: "#6c6f85", Dim: "#9ca0b0",
 			Mauve: "#8839ef", Blue: "#1e66f5", Green: "#40a02b",
@@ -323,12 +323,12 @@ func EmberloopLatte() EmberloopPalette {
 	}
 }
 
-// emberloopVariant selects the palette variant: Mocha for dark, Latte for light.
-func emberloopVariant(dark bool) EmberloopPalette {
+// elVariant selects the palette variant: Mocha for dark, Latte for light.
+func elVariant(dark bool) ElPalette {
 	if dark {
-		return EmberloopMocha()
+		return ElMocha()
 	}
-	return EmberloopLatte()
+	return ElLatte()
 }
 
 // ThemeVariant names a generated theme: mocha for dark, latte for light.
@@ -339,9 +339,9 @@ func ThemeVariant(dark bool) string {
 	return "latte"
 }
 
-// ThemeName is the theme name inside a generated file: emberloop-mocha or
-// emberloop-latte, so the strip, claude, pig and the pane cannot drift.
-func ThemeName(dark bool) string { return "emberloop-" + ThemeVariant(dark) }
+// ThemeName is the theme name inside a generated file: el-mocha or
+// el-latte, so the strip, claude, pig and the pane cannot drift.
+func ThemeName(dark bool) string { return "el-" + ThemeVariant(dark) }
 
 // ClaudeThemeRef is the theme reference passed to claude through the launch
 // settings JSON: custom:<name>, as in the theme probe.
@@ -358,7 +358,7 @@ type claudeTheme struct {
 // ClaudeTheme builds the generated claude theme for the variant, from the
 // shared palette.
 func ClaudeTheme(dark bool) claudeTheme {
-	v := emberloopVariant(dark)
+	v := elVariant(dark)
 	return claudeTheme{Name: v.ClaudeName, Base: v.ClaudeBase, Overrides: v.Claude}
 }
 
@@ -374,7 +374,7 @@ type pigTheme struct {
 // PigTheme builds the generated pig theme for the variant, from the shared
 // palette.
 func PigTheme(dark bool) pigTheme {
-	v := emberloopVariant(dark)
+	v := elVariant(dark)
 	return pigTheme{Name: v.PigName, Appearance: v.PigAppearance, Vars: v.PigVars, Colors: v.PigColors}
 }
 
@@ -398,7 +398,7 @@ func PigThemeJSON(dark bool) (string, error) { return marshalTheme(PigTheme(dark
 func claudeThemeFile(dark bool) string { return "claude-" + ThemeVariant(dark) + ".json" }
 func pigThemeFile(dark bool) string    { return "pig-" + ThemeVariant(dark) + ".json" }
 
-// DefaultThemeDir is where generated theme files live: emberloop's state dir.
+// DefaultThemeDir is where generated theme files live: el's state dir.
 func DefaultThemeDir() string { return filepath.Join(filepath.Dir(statePath), "themes") }
 
 // EnsureThemeFiles writes the generated claude and pig themes (both
@@ -471,7 +471,7 @@ type ThemePaneColors struct {
 // palette. The Mocha values are the approved probe (run-themed.sh); Latte
 // mirrors its structure with the Latte source.
 func PaneColors(dark bool) ThemePaneColors {
-	v := emberloopVariant(dark)
+	v := elVariant(dark)
 	return ThemePaneColors{FG: v.PaneFG, BG: v.PaneBG, Cursor: v.PaneCursor, ANSI: v.PaneANSI}
 }
 
@@ -560,7 +560,7 @@ func claudeConfigRoot() string {
 }
 
 // InstallClaudeThemes writes the generated claude themes into <root>/themes
-// under emberloop's own slug names, where Claude Code resolves custom:<slug>.
+// under el's own slug names, where Claude Code resolves custom:<slug>.
 // This adds two files and changes nothing else: the theme choice travels in
 // the launch settings, and the user's saved selection stays untouched. A
 // per-run CLAUDE_CONFIG_DIR is not an option: a fresh config directory has

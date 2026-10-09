@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -42,22 +42,22 @@ func pigBigUsageLine(msgID string, input int64, callID, name string) string {
 // finished call, nothing outstanding.
 func overThresholdIdle() string {
 	return `{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}` + "\n" +
-		pigBigUsageLine("a1", 300000, "call_1", "mcp__emberloop__read") +
-		pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok")
+		pigBigUsageLine("a1", 300000, "call_1", "mcp__el__read") +
+		pigResultLine("r1", "call_1", "mcp__el__read", "ok")
 }
 
 // overThresholdOpen is a session past the threshold with call_1 still
 // running: the trigger must wait for its result.
 func overThresholdOpen() string {
 	return `{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}` + "\n" +
-		pigBigUsageLine("a1", 300000, "call_1", "mcp__emberloop__read")
+		pigBigUsageLine("a1", 300000, "call_1", "mcp__el__read")
 }
 
 // underThreshold is a quiet session: nothing to compress.
 func underThreshold() string {
 	return `{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}` + "\n" +
-		pigBigUsageLine("a1", 5000, "call_1", "mcp__emberloop__read") +
-		pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok")
+		pigBigUsageLine("a1", 5000, "call_1", "mcp__el__read") +
+		pigResultLine("r1", "call_1", "mcp__el__read", "ok")
 }
 
 // The trigger fires over the threshold at a boundary, waits while a tool
@@ -153,7 +153,7 @@ func TestMaybeAutoCompressWaitsForTheBoundary(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	}()
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	next, did, err := MaybeAutoCompress(fake.run, "pane-1", autoSettings())
@@ -559,7 +559,7 @@ func TestMaybeAutoCompressSkipsRotatedSession(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	}()
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	next, did, err := MaybeAutoCompress(fake.run, "pane-1", autoSettings())

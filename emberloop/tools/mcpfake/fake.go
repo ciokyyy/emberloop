@@ -26,8 +26,8 @@ const HelperTestName = "TestMcpFakeHelperProcess"
 // Mode and config travel to the child in the environment, so the re-executed
 // test binary needs no new flags.
 const (
-	envMode   = "EMBERLOOP_MCPFAKE"
-	envConfig = "EMBERLOOP_MCPFAKE_CONFIG"
+	envMode   = "EL_MCPFAKE"
+	envConfig = "EL_MCPFAKE_CONFIG"
 )
 
 // ToolDef is one tool the fake lists.

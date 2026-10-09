@@ -15,17 +15,17 @@ import (
 	"example.com/emberloop/tools/systemone"
 )
 
-const settingsUsage = `usage: emberloop settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>|strip-symbols <nerd|unicode|ascii>|strip-separator <powerline|powerline-thin|rounded|slash|pipe|none>]
-       emberloop settings models [--refresh] [--harness h]
-       emberloop settings role <slot> harness|model|effort <value>
-       emberloop settings search provider|mode <value>
-       emberloop settings tool <name> enabled|placement|rename <value>
-       emberloop settings tool <name> role <role> enabled|placement <value>
-       emberloop settings mcp-server <name> command|args|placement|summary|include|exclude <value>
-       emberloop settings mcp-server <name> env <KEY=VALUE>
-       emberloop settings mcp-server <name> rename <ORIG=NEW>
-       emberloop settings mcp-server <name> role <role> enabled|placement <value>
-       emberloop settings mcp-server remove <name>`
+const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>|strip-symbols <nerd|unicode|ascii>|strip-separator <powerline|powerline-thin|rounded|slash|pipe|none>]
+       el settings models [--refresh] [--harness h]
+       el settings role <slot> harness|model|effort <value>
+       el settings search provider|mode <value>
+       el settings tool <name> enabled|placement|rename <value>
+       el settings tool <name> role <role> enabled|placement <value>
+       el settings mcp-server <name> command|args|placement|summary|include|exclude <value>
+       el settings mcp-server <name> env <KEY=VALUE>
+       el settings mcp-server <name> rename <ORIG=NEW>
+       el settings mcp-server <name> role <role> enabled|placement <value>
+       el settings mcp-server remove <name>`
 
 // defaultThreshold is find's passage cutoff when nothing is stored, shared
 // with the dashboard's Settings tab.
@@ -33,12 +33,12 @@ const defaultThreshold = tools.DefaultThreshold
 
 // defaultHarness is the harness a slot with nothing stored launches with; the
 // resolver's built-in default is the single source for it.
-const defaultHarness = emberloop.DefaultHarness
+const defaultHarness = el.DefaultHarness
 
 // modelSource lists the models one harness offers. refresh rebuilds the list
 // from the harness instead of reading the cache. A function value, so the
 // command's tests need no agent CLI.
-type modelSource func(harness string, refresh bool) ([]emberloop.Model, error)
+type modelSource func(harness string, refresh bool) ([]el.Model, error)
 
 // runSettings serves the settings subcommand. argv is empty to print what is in
 // force; models is the harness listing, injected so tests run no CLI. Edits
@@ -173,9 +173,9 @@ func listHarnessModels(argv []string, out io.Writer, models modelSource) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("models takes no arguments\n%s", settingsUsage)
 	}
-	names := emberloop.HarnessNames()
+	names := el.HarnessNames()
 	if *harness != "" {
-		if emberloop.Registered(*harness) == nil {
+		if el.Registered(*harness) == nil {
 			return fmt.Errorf("unknown harness %q (have %s)\n%s", *harness, strings.Join(names, ", "), settingsUsage)
 		}
 		names = []string{*harness}
@@ -192,7 +192,7 @@ func listHarnessModels(argv []string, out io.Writer, models modelSource) error {
 }
 
 // printModels shows a harness's models, the effort levels each takes beside it.
-func printModels(out io.Writer, harness string, list []emberloop.Model) {
+func printModels(out io.Writer, harness string, list []el.Model) {
 	fmt.Fprintf(out, "%s:\n", harness)
 	if len(list) == 0 {
 		fmt.Fprintln(out, "  (no models)")
@@ -220,8 +220,8 @@ func setCompressThreshold(s *tools.Settings, argv []string) error {
 		value = argv[0]
 	case 2:
 		harness, value = argv[0], argv[1]
-		if emberloop.Registered(harness) == nil {
-			return fmt.Errorf("unknown harness %q (have %s)\n%s", harness, strings.Join(emberloop.HarnessNames(), ", "), settingsUsage)
+		if el.Registered(harness) == nil {
+			return fmt.Errorf("unknown harness %q (have %s)\n%s", harness, strings.Join(el.HarnessNames(), ", "), settingsUsage)
 		}
 	default:
 		return fmt.Errorf("compress-threshold needs [harness] and tokens\n%s", settingsUsage)
@@ -254,13 +254,13 @@ func setCompressModel(s *tools.Settings, argv []string) error {
 		return fmt.Errorf("compress-model needs a harness and a model\n%s", settingsUsage)
 	}
 	harness, model := argv[0], argv[1]
-	if emberloop.Registered(harness) == nil {
-		return fmt.Errorf("unknown harness %q (have %s)\n%s", harness, strings.Join(emberloop.HarnessNames(), ", "), settingsUsage)
+	if el.Registered(harness) == nil {
+		return fmt.Errorf("unknown harness %q (have %s)\n%s", harness, strings.Join(el.HarnessNames(), ", "), settingsUsage)
 	}
 	if strings.TrimSpace(model) == "" {
 		return fmt.Errorf("compress-model needs a model\n%s", settingsUsage)
 	}
-	window := emberloop.ModelWindow(model, s.ContextWindows())
+	window := el.ModelWindow(model, s.ContextWindows())
 	threshold := s.EffectiveCompressThreshold(harness)
 	if window < threshold {
 		return fmt.Errorf("compress-model %q window %d cannot hold the %d %s threshold; raise the window first\n%s", model, window, threshold, harness, settingsUsage)
@@ -478,8 +478,8 @@ func setRole(s *tools.Settings, argv []string, models modelSource) (string, erro
 	var err error
 	switch field {
 	case "harness":
-		if emberloop.Registered(value) == nil {
-			return "", fmt.Errorf("unknown harness %q (have %s)\n%s", value, strings.Join(emberloop.HarnessNames(), ", "), settingsUsage)
+		if el.Registered(value) == nil {
+			return "", fmt.Errorf("unknown harness %q (have %s)\n%s", value, strings.Join(el.HarnessNames(), ", "), settingsUsage)
 		}
 		// Compare against the harness in force: an unset slot already means the
 		// built-in default, so naming that default is not a change.
@@ -512,7 +512,7 @@ func setRole(s *tools.Settings, argv []string, models modelSource) (string, erro
 // for; when the cached list does not hold it, the list is rebuilt once before
 // giving up. trusted is false when no list could be built at all -- that is no
 // verdict, so the caller allows the value.
-func modelsFor(src modelSource, harness, want string) (list []emberloop.Model, trusted bool) {
+func modelsFor(src modelSource, harness, want string) (list []el.Model, trusted bool) {
 	list, err := src(harness, false)
 	if err != nil || len(list) == 0 {
 		return nil, false
@@ -527,18 +527,18 @@ func modelsFor(src modelSource, harness, want string) (list []emberloop.Model, t
 }
 
 // hasModel finds one model by id.
-func hasModel(list []emberloop.Model, id string) (emberloop.Model, bool) {
+func hasModel(list []el.Model, id string) (el.Model, bool) {
 	for _, m := range list {
 		if m.ID == id {
 			return m, true
 		}
 	}
-	return emberloop.Model{}, false
+	return el.Model{}, false
 }
 
 // anyOffers reports whether any model of a harness takes an effort, the check
 // for an effort saved with no model beside it.
-func anyOffers(list []emberloop.Model, effort string) bool {
+func anyOffers(list []el.Model, effort string) bool {
 	for _, m := range list {
 		if contains(m.Efforts, effort) {
 			return true
@@ -564,7 +564,7 @@ func checkModel(models modelSource, harness, id string) (string, error) {
 		return fmt.Sprintf("%s: cannot list models; model %q saved unchecked\n", harness, id), nil
 	}
 	if _, ok := hasModel(list, id); !ok {
-		return "", fmt.Errorf("%s does not offer model %q; see `emberloop settings models --harness %s`\n%s",
+		return "", fmt.Errorf("%s does not offer model %q; see `el settings models --harness %s`\n%s",
 			harness, id, harness, settingsUsage)
 	}
 	return "", nil
@@ -595,7 +595,7 @@ func checkEffort(models modelSource, harness, model, effort string) (string, err
 		return "", fmt.Errorf("model %q on %s does not take effort %q (have %s)\n%s",
 			model, harness, effort, strings.Join(m.Efforts, ", "), settingsUsage)
 	case !known && model == "" && !anyOffers(list, effort):
-		return "", fmt.Errorf("%s takes no effort %q; see `emberloop settings models --harness %s`\n%s",
+		return "", fmt.Errorf("%s takes no effort %q; see `el settings models --harness %s`\n%s",
 			harness, effort, harness, settingsUsage)
 	}
 	return "", nil
@@ -930,12 +930,12 @@ func checkPlacement(value string) error {
 
 // checkToolRole rejects a role no session serves tools under.
 func checkToolRole(role string) error {
-	for _, valid := range emberloop.RoleNames() {
+	for _, valid := range el.RoleNames() {
 		if role == valid {
 			return nil
 		}
 	}
-	return fmt.Errorf("unknown role %q (have %s)\n%s", role, strings.Join(emberloop.RoleNames(), ", "), settingsUsage)
+	return fmt.Errorf("unknown role %q (have %s)\n%s", role, strings.Join(el.RoleNames(), ", "), settingsUsage)
 }
 
 // printSettings shows the stored choices, or the default in force when one is
@@ -1192,6 +1192,6 @@ func orDefault[T comparable](value, fallback T) T {
 
 // cachedModels is the live model source for the settings command: each
 // harness's list, read from the state dir's cache and rebuilt on --refresh.
-func cachedModels(harness string, refresh bool) ([]emberloop.Model, error) {
-	return emberloop.CachedModels(harness, emberloop.OSExec, refresh)
+func cachedModels(harness string, refresh bool) ([]el.Model, error) {
+	return el.CachedModels(harness, el.OSExec, refresh)
 }

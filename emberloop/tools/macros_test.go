@@ -2,7 +2,7 @@ package tools
 
 // Seam: the settings file. Macros live there as name/kind/template entries;
 // load, merge, save and validation all run through LoadSettings and
-// MergeSettings with a temp EMBERLOOP_SETTINGS file, never the real home.
+// MergeSettings with a temp EL_SETTINGS file, never the real home.
 
 import (
 	"os"
@@ -54,7 +54,7 @@ func TestParseMacroCallPlainTextIsNotACall(t *testing.T) {
 	}
 }
 
-// Only emberloop's own built-ins count: anything else is a normal message.
+// Only el's own built-ins count: anything else is a normal message.
 func TestIsBuiltinMacroOnlyNamesCompress(t *testing.T) {
 	if !IsBuiltinMacro("compress") {
 		t.Error("compress must read as the built-in")
@@ -71,7 +71,7 @@ func TestMacrosLoadFromSettingsFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", path)
+	t.Setenv("EL_SETTINGS", path)
 	s := LoadSettings()
 	if len(s.Macros) != 1 || s.Macros[0].Name != "review" {
 		t.Fatalf("macros = %+v, want the one review entry", s.Macros)
@@ -104,7 +104,7 @@ func TestValidateMacrosRejectsDuplicates(t *testing.T) {
 	}
 }
 
-// A macro shadowing a built-in warns, and emberloop's macro wins.
+// A macro shadowing a built-in warns, and el's macro wins.
 func TestValidateMacrosWarnsOnBuiltinShadow(t *testing.T) {
 	s := Settings{Macros: []MacroSetting{
 		{Name: "compress", Kind: "prompt", Template: "summarize {{args}}"},
@@ -117,7 +117,7 @@ func TestValidateMacrosWarnsOnBuiltinShadow(t *testing.T) {
 		t.Fatalf("warnings = %q, want the compress collision named", warnings)
 	}
 	if _, ok := s.LookupMacro("compress"); ok {
-		t.Error("a shadowing entry must not shadow the built-in: emberloop wins")
+		t.Error("a shadowing entry must not shadow the built-in: el wins")
 	}
 }
 
@@ -160,7 +160,7 @@ func TestMergeSettingsProjectMacrosWin(t *testing.T) {
 // Macros survive a settings save: unknown keys are not the only round trip.
 func TestMacrosSurviveSave(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s.json")
-	t.Setenv("EMBERLOOP_SETTINGS", path)
+	t.Setenv("EL_SETTINGS", path)
 	want := Settings{Macros: []MacroSetting{{Name: "review", Kind: "prompt", Template: "review {{args}}"}}}
 	if err := SaveSettings(want); err != nil {
 		t.Fatal(err)

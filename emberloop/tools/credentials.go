@@ -15,7 +15,7 @@ import (
 //
 // The cleaned path and, when it exists, its symlink-resolved path are both
 // checked, so a link into a secret is refused the same as the secret itself.
-// Both the filesystem read and a emberloop:// read call this, so the deny list
+// Both the filesystem read and a el:// read call this, so the deny list
 // holds whichever address scheme reached the file.
 func refuseCredential(target, full string) error {
 	for _, path := range []string{full, resolveForDeny(full)} {

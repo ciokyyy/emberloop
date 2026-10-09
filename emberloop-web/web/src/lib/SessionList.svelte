@@ -1,7 +1,7 @@
 <!-- Session tree: newest activity first, Subagents nested under parents. -->
 <script>
   import Badge from './ui/badge.svelte';
-  let { sessions = [], currentId = null, onSelect = () => {} } = $props();
+  let { sessions = [], currentId = null, onSelect = () => {}, empty = 'No Sessions yet. Create one to start.' } = $props();
 
   const STATUS_DOT = {
     idle: 'bg-zinc-400',
@@ -37,8 +37,8 @@
     class:bg-accent={s.id === currentId}
   >
     <span class="h-2 w-2 shrink-0 rounded-full {STATUS_DOT[s.status] ?? STATUS_DOT.idle}" title={s.status}></span>
-    <span class="min-w-0 flex-1 truncate font-medium">{s.harness} · {short(s.id)}{#if s.scout}<Badge class="ml-1 px-1.5 py-0 text-[10px]">scout</Badge>{/if}</span>
-    <span class="shrink-0 text-xs text-muted-foreground">{s.status}</span>
+    <span class="min-w-0 flex-1 truncate font-medium" title={s.title ? `${s.harness} · ${short(s.id)}` : undefined}>{s.title || `${s.harness} · ${short(s.id)}`}{#if s.scout}<Badge class="ml-1 px-1.5 py-0 text-[10px]">scout</Badge>{/if}</span>
+    {#if s.status === 'failed' || s.status === 'ended'}<span class="shrink-0 text-xs text-muted-foreground">{s.status}</span>{/if}
   </button>
 {/snippet}
 
@@ -51,6 +51,6 @@
       </div>
     {/each}
   {:else}
-    <p class="px-3 py-4 text-sm text-muted-foreground">No Sessions yet. Create one to start.</p>
+    {#if empty}<p class="px-3 py-4 text-sm text-muted-foreground">{empty}</p>{/if}
   {/each}
 </nav>

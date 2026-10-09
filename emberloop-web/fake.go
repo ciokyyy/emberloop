@@ -1,25 +1,64 @@
 package web
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // FakeBackend replays scripted Events for tests and the walking skeleton.
 // Delay holds a turn open: queue tests set it so a Steer or Follow-up can
-// arrive while the Session still works.
+// arrive while the Session still works. Turns are interruptible, so cancel
+// tests can stop a working Session the way the interrupt route does.
 type FakeBackend struct {
 	Delay time.Duration
+
+	mu   sync.Mutex
+	stop map[string]chan struct{}
 }
 
 func NewFakeBackend() *FakeBackend { return &FakeBackend{} }
 
 func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
+	ch := make(chan struct{})
+	f.mu.Lock()
+	if f.stop == nil {
+		f.stop = map[string]chan struct{}{}
+	}
+	f.stop[sessionID] = ch
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		if cur, ok := f.stop[sessionID]; ok && cur == ch {
+			delete(f.stop, sessionID)
+		}
+		f.mu.Unlock()
+	}()
 	appendEvent("status", "", "working")
 	delay := f.Delay
 	if delay <= 0 {
 		delay = 5 * time.Millisecond
 	}
-	time.Sleep(delay)
-	appendEvent("assistant_chunk", "fake reply to: "+text, "")
-	appendEvent("status", "", "idle")
+	select {
+	case <-time.After(delay):
+		appendEvent("assistant_chunk", "fake reply to: "+text, "")
+		appendEvent("status", "", "idle")
+	case <-ch:
+		appendEvent("status", "", "idle")
+	}
+}
+
+// Interrupt stops a running fake turn: the sleeper wakes and settles idle
+// with no reply. It reports whether a turn was running.
+func (f *FakeBackend) Interrupt(sessionID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ch, ok := f.stop[sessionID]
+	if !ok {
+		return false
+	}
+	delete(f.stop, sessionID)
+	close(ch)
+	return true
 }
 
 func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 
 // CompressPrompt is the pinned combined summarizer prompt: the Matt Pocock
 // handoff structure with caveman ultra for prose. Code, paths, errors and
-// IDs stay verbatim. Stored with emberloop, never read from the skill library at
+// IDs stay verbatim. Stored with el, never read from the skill library at
 // runtime, so the summary shape cannot drift under a compress.
 const CompressPrompt = `Summarize the session transcript below into a handoff for the agent that continues this work. Write prose the caveman ultra way: drop articles, filler, pleasantries and hedging. Fragments over full sentences. State each fact once. No preamble or recap. Code, paths, errors and IDs stay exact and verbatim, never paraphrased. No tool output pruned, no tail appended: the handoff is the whole context the next session gets.
 

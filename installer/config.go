@@ -13,14 +13,14 @@ const herdrKeyBlock = `
 [[keys.command]]
 key = "prefix+shift+c"
 type = "plugin_action"
-command = "emberloop.compress"
+command = "el.compress"
 `
 
 // addHerdrKeybinding appends the compress keybinding to a herdr config.
 // It returns the new text and a status: "added", "present", or "conflict"
 // when the key already runs another command (the file is then unchanged).
 func addHerdrKeybinding(src string) (string, string) {
-	if strings.Contains(src, `"emberloop.compress"`) {
+	if strings.Contains(src, `"el.compress"`) {
 		return src, "present"
 	}
 	if strings.Contains(src, `key = "prefix+shift+c"`) {
@@ -46,23 +46,23 @@ func mergeMCPServer(raw []byte, command string) ([]byte, error) {
 		servers = map[string]any{}
 	}
 	// The project's former name registered "wick-mcp" as "wick". That entry
-	// fails to start in every emberloop session, so it goes.
+	// fails to start in every el session, so it goes.
 	if old, ok := servers["wick"].(map[string]any); ok {
 		if cmd, _ := old["command"].(string); filepath.Base(cmd) == "wick-mcp" {
 			delete(servers, "wick")
 		}
 	}
-	servers["emberloop"] = map[string]any{
+	servers["el"] = map[string]any{
 		"command":     command,
 		"exposure":    "direct",
-		"description": "emberloop's own tools: read, edit, write, bash, find, background, worker orchestration",
+		"description": "el's own tools: read, edit, write, bash, find, background, worker orchestration",
 		"timeout":     600,
 	}
 	doc["mcpServers"] = servers
 	return json.MarshalIndent(doc, "", "  ")
 }
 
-// mergeGraphEnabled sets graph.enabled in an emberloop settings file and
+// mergeGraphEnabled sets graph.enabled in an el settings file and
 // keeps every other key.
 func mergeGraphEnabled(raw []byte, enabled bool) ([]byte, error) {
 	doc := map[string]any{}

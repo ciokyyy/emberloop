@@ -1,5 +1,5 @@
 {
-  "name": "Emberloop (Catppuccin Mocha)",
+  "name": "El (Catppuccin Mocha)",
   "base": "dark",
   "overrides": {
     "claude": "#cba6f7",

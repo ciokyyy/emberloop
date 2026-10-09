@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -55,7 +55,7 @@ func gridLock(tab string) *sync.Mutex {
 }
 
 // withGridLock holds one tab's grid lock while fn runs. Sessions are separate
-// emberloop-mcp processes, so the in-process mutex alone cannot serialize what
+// el-mcp processes, so the in-process mutex alone cannot serialize what
 // they do to shared state: the file lock holds across all of them. One lock
 // per tab, so splits in different tabs still run at the same time.
 func withGridLock(tab string, fn func() error) error {
@@ -496,7 +496,7 @@ func workspaceOf(tab string) string {
 
 // closeOverflowTabs closes every overflow tab that belongs to the tab labelled
 // base: base (2), base (3), and any higher number, even when one in between is
-// already gone. The base tab is the caller's to close. emberloop owns its tabs, but
+// already gone. The base tab is the caller's to close. el owns its tabs, but
 // a missing one is not an error.
 func closeOverflowTabs(run Exec, tab, base string) {
 	if tab == "" || base == "" {

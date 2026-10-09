@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "bffb5959-7eb3-437a-bafa-63da94dff0f9",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/home/cioky/Projects/emberloop/.archify/sequence-run/candidate.json",
+  "output": "/home/cioky/Projects/emberloop/.archify/sequence-run/ticket-sequence.html",
+  "specification": {
+    "sha256": "b568aea6c36f4bf82ac696743ab1f5242ed34b4d52e83a5ff74588d2368942f7",
+    "bytes": 3077
+  },
+  "artifact": {
+    "sha256": "a941dde08fe7e9d16435f5994b5b07ca902f706cb20457bd0bd32ce321b467af",
+    "bytes": 755270
+  }
+}

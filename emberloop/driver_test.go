@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"errors"
@@ -990,8 +990,8 @@ func TestDriverReportsAnUnknownCheckboxAndStillMerges(t *testing.T) {
 func TestTickDriverTicketFileTicksBoxesAndLeavesEditUncommitted(t *testing.T) {
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	ticket := filepath.Join(repo, "01-first.md")
 	writeFile(t, ticket, "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n- [ ] second box\n")
 	gitOut(t, repo, "add", ".")
@@ -1592,7 +1592,7 @@ func TestDriverLiveWorldNotifiesThroughHerdr(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("herdr calls = %d, want 1", len(calls))
 	}
-	want := []string{"notification", "show", "emberloop: ticket 01-first needs you", "--body", message}
+	want := []string{"notification", "show", "el: ticket 01-first needs you", "--body", message}
 	got := calls[0][1:]
 	if len(got) != len(want) {
 		t.Fatalf("args = %q, want %q", got, want)

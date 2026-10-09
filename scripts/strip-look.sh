@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Probe for ticket 10 (beautify strip): run pig under `emberloop wrap` with
+# Probe for ticket 10 (beautify strip): run pig under `el wrap` with
 # each symbol preset (nerd, unicode, ascii) and each separator, and record
 # what reads well and what does not.
 #
-# Prerequisites: built emberloop on PATH, a herdr session with one free pane,
+# Prerequisites: built el on PATH, a herdr session with one free pane,
 # the pig CLI logged in, and a Nerd Font active in the terminal showing the
 # pane (the nerd preset is boxes without one; unicode is the default and
 # stays correct). Each check is manual: the script types the commands, a
@@ -31,7 +31,7 @@ run_preset() {
   local settings
   settings="$(mktemp)"
   printf '{"context":{"strip_symbols":"%s","strip_separator":"%s"}}' "$symbols" "$separator" >"$settings"
-  herdr pane run "$PANE" "EMBERLOOP_SETTINGS='$settings' emberloop wrap --harness pig --agent probe-strip --type worker -- pig"
+  herdr pane run "$PANE" "EL_SETTINGS='$settings' el wrap --harness pig --agent probe-strip --type worker -- pig"
 }
 
 cat <<'CHECKS'
@@ -39,7 +39,7 @@ Confirm per preset, then record pass/fail plus what reads well and what
 does not in the ticket:
 1. nerd/powerline: one icon per segment, powerline gaps between segments,
    rounded caps around the agent chip and the state field, segment colors
-   from the emberloop palette (model mauve, cost peach, tools blue)
+   from the el palette (model mauve, cost peach, tools blue)
 2. nerd with each other separator (powerline-thin, rounded, slash, pipe,
    none): the gap glyph changes, nothing else moves, no box glyphs
 3. unicode (default): the current plain-symbol look, unchanged when the
@@ -48,7 +48,7 @@ does not in the ticket:
 5. narrow: shrink the pane; segments drop whole (tools, compress count,
    model, cost) keeping percent and state, never a split glyph
 6. rows: `strip-rows 1` keeps one row in every preset
-EMBERLOOP_HEADER_STRIP=0 anywhere restores the old unwrapped behavior.
+EL_HEADER_STRIP=0 anywhere restores the old unwrapped behavior.
 CHECKS
 
 echo "== nerd/powerline =="

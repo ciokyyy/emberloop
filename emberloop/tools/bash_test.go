@@ -59,8 +59,8 @@ func TestRTKRewriteWrapsAKnownCommand(t *testing.T) {
 // Seam: bash uses the overflow store above the threshold instead of
 // truncating: a handle comes back and the full output is pageable.
 func TestBashLargeOutputStoredWithHandle(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "100")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "100")
 	out, err := run(t, bashTool{}, t.TempDir(), map[string]any{"command": "seq 1 50"})
 	if err != nil {
 		t.Fatal(err)

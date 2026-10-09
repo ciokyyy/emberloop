@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Header wrapper tests (ticket 04): geometry, the child-output filter and
 // the snapshot builder are pure or temp-dir bound, so no live agent runs.
@@ -159,7 +159,7 @@ func TestBuildHeaderSnapshot(t *testing.T) {
 	if !snap.HasCost || snap.Cost != 2.0 {
 		t.Errorf("cost = %v %v, want 2.0 reported", snap.Cost, snap.HasCost)
 	}
-	if len(snap.TopTools) != 3 || snap.TopTools[0].Name != "mcp__emberloop__bash" {
+	if len(snap.TopTools) != 3 || snap.TopTools[0].Name != "mcp__el__bash" {
 		t.Errorf("top tools = %+v, want the fixture's three", snap.TopTools)
 	}
 	if snap.CompressCount != 1 {

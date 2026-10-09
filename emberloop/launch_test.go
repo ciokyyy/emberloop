@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -41,7 +41,7 @@ func TestLaunchFileHoldsTheFullPromptVerbatim(t *testing.T) {
 
 // The typed pane line is one shell-agnostic line: no newline even for a
 // multi-line prompt, no env prefix (fish has no VAR=val form), just
-// `emberloop exec <file>`.
+// `el exec <file>`.
 func TestPrepareLaunchTypesASingleExecLine(t *testing.T) {
 	isolateState(t)
 	prompt := "first line\nsecond line with \"quotes\" and $dollar"
@@ -52,10 +52,10 @@ func TestPrepareLaunchTypesASingleExecLine(t *testing.T) {
 	if strings.Contains(launch.Line, "\n") {
 		t.Errorf("pane run types one line, got %q", launch.Line)
 	}
-	if !strings.HasPrefix(launch.Line, "emberloop exec ") {
+	if !strings.HasPrefix(launch.Line, "el exec ") {
 		t.Errorf("the typed line must be the exec line, got %q", launch.Line)
 	}
-	if strings.Contains(launch.Line, "EMBERLOOP_ROLE=") {
+	if strings.Contains(launch.Line, "EL_ROLE=") {
 		t.Errorf("the typed line must carry no env assignments (fish has no VAR=val form), got %q", launch.Line)
 	}
 	if strings.Contains(launch.Line, prompt) {
@@ -80,7 +80,7 @@ func TestPrepareLaunchTypesASingleExecLine(t *testing.T) {
 	}
 }
 
-// `emberloop exec` runs the binary with the exact argv and env from the file,
+// `el exec` runs the binary with the exact argv and env from the file,
 // preserving newlines and quotes.
 func TestExecRunsTheLaunchWithExactArgvAndEnv(t *testing.T) {
 	dir := t.TempDir()
@@ -89,13 +89,13 @@ func TestExecRunsTheLaunchWithExactArgvAndEnv(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"i=0\n" +
 		"for a in \"$@\"; do echo \"arg$i=$a\" >> " + out + "; i=$((i+1)); done\n" +
-		"echo \"env=$EMBERLOOP_PROMPT\" >> " + out + "\n"
+		"echo \"env=$EL_PROMPT\" >> " + out + "\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	isolateState(t)
 	prompt := "say \"hi\"\nsecond line $HOME `tick`"
-	cmd := Command{Bin: bin, Args: []string{"--", prompt}, Env: []string{"EMBERLOOP_PROMPT=" + prompt}}
+	cmd := Command{Bin: bin, Args: []string{"--", prompt}, Env: []string{"EL_PROMPT=" + prompt}}
 	path, err := writeLaunch(Session{ID: "exec-1"}, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestExecRunsTheLaunchWithExactArgvAndEnv(t *testing.T) {
 	}
 }
 
-// Every agent emberloop launches gets its full brief or prompt as its first
+// Every agent el launches gets its full brief or prompt as its first
 // message, instead of "Read <file> and follow it exactly". The brief and
 // prompt files are still written, for the archive, but the agent is not told
 // to read them.
@@ -126,7 +126,7 @@ func TestWorkerGetsItsFullBriefAsTheFirstMessage(t *testing.T) {
 			statePath = filepath.Join(t.TempDir(), "workers.json")
 			t.Setenv("HERDR_PANE_ID", "")
 			t.Setenv("HERDR_TAB_ID", "")
-			t.Setenv("EMBERLOOP_AGENT_ID", "")
+			t.Setenv("EL_AGENT_ID", "")
 			var launched string
 			var late string
 			base := spawnToolFake()
@@ -143,7 +143,7 @@ func TestWorkerGetsItsFullBriefAsTheFirstMessage(t *testing.T) {
 			spawnGap = 0
 			resolverSettings(t, "")
 			t.Setenv("HERDR_WORKSPACE_ID", "w1")
-			t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+			t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 			repo := t.TempDir()
 			ticket := filepath.Join(repo, "20-x.md")
 			if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
@@ -158,7 +158,7 @@ func TestWorkerGetsItsFullBriefAsTheFirstMessage(t *testing.T) {
 			if launched == "" {
 				t.Fatal("the worker was never launched")
 			}
-			if !strings.HasPrefix(launched, "emberloop exec ") {
+			if !strings.HasPrefix(launched, "el exec ") {
 				t.Fatalf("the typed line must be the exec line, got %q", launched)
 			}
 			file, ok := execFileFromLine(launched)
@@ -232,14 +232,14 @@ func TestScoutGetsItsFullPromptAsTheFirstMessage(t *testing.T) {
 		t.Fatalf("launched %d scouts, want 1", len(ex.lines))
 	}
 	line := ex.lines[0]
-	if !strings.HasPrefix(line, "emberloop exec ") {
+	if !strings.HasPrefix(line, "el exec ") {
 		t.Fatalf("the typed line must be the exec line, got %q", line)
 	}
 	if strings.Contains(line, "follow it exactly") {
 		t.Errorf("the typed line must not tell the agent to read a file, got %q", line)
 	}
 	// The launch file must still exist after the launch returns: the pane's
-	// `emberloop exec` reads it at startup, so launchPlacedAgent may only drop
+	// `el exec` reads it at startup, so launchPlacedAgent may only drop
 	// the MCP config right away (cleanupMCP), never the launch itself.
 	file, ok := execFileFromLine(line)
 	if !ok {
@@ -338,7 +338,7 @@ func TestPigSessionLogsToolCountsPerRequest(t *testing.T) {
 	}
 	isolateState(t)
 	run := func(bin, session string) string {
-		cmd := Command{Bin: bin, Env: []string{"EMBERLOOP_SESSION_ID=" + session}}
+		cmd := Command{Bin: bin, Env: []string{"EL_SESSION_ID=" + session}}
 		path, err := writeLaunch(Session{ID: session}, cmd)
 		if err != nil {
 			t.Fatal(err)
@@ -361,11 +361,11 @@ func TestPigSessionLogsToolCountsPerRequest(t *testing.T) {
 		t.Errorf("each line must lead with a timestamp, got %q", lines[0])
 	}
 
-	t.Setenv("EMBERLOOP_PIG_TOOLS_LOG", "0")
+	t.Setenv("EL_PIG_TOOLS_LOG", "0")
 	if _, err := os.Stat(run(fake, "tools-off")); err == nil {
-		t.Error("EMBERLOOP_PIG_TOOLS_LOG=0 must leave no log")
+		t.Error("EL_PIG_TOOLS_LOG=0 must leave no log")
 	}
-	t.Setenv("EMBERLOOP_PIG_TOOLS_LOG", "")
+	t.Setenv("EL_PIG_TOOLS_LOG", "")
 	other := filepath.Join(dir, "claude")
 	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -386,8 +386,8 @@ func TestPigToolsLogWithoutStrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	isolateState(t)
-	t.Setenv("EMBERLOOP_HEADER_STRIP", "0")
-	cmd := Command{Bin: fake, Env: []string{"EMBERLOOP_SESSION_ID=nostrip"}}
+	t.Setenv("EL_HEADER_STRIP", "0")
+	cmd := Command{Bin: fake, Env: []string{"EL_SESSION_ID=nostrip"}}
 	path, err := writeLaunch(Session{ID: "nostrip"}, cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +397,7 @@ func TestPigToolsLogWithoutStrip(t *testing.T) {
 	}
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(statePath), "debug", "nostrip.tools.log"))
 	if err != nil {
-		t.Fatalf("EMBERLOOP_HEADER_STRIP=0 must keep the tools log: %v", err)
+		t.Fatalf("EL_HEADER_STRIP=0 must keep the tools log: %v", err)
 	}
 	if !strings.Contains(string(raw), "tools=8") {
 		t.Errorf("log must hold the child's line, got %q", raw)
@@ -413,7 +413,7 @@ func TestExecRecordsChildExitInAgentState(t *testing.T) {
 	path, err := writeLaunch(Session{ID: "s1", AgentID: "dead1"}, Command{
 		Bin:  "sh",
 		Args: []string{"-c", "echo last words >&2; exit 3"},
-		Env:  []string{"EMBERLOOP_AGENT_ID=dead1", "EMBERLOOP_SESSION_ID=s1"},
+		Env:  []string{"EL_AGENT_ID=dead1", "EL_SESSION_ID=s1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +444,7 @@ func TestExecRecordsChildStderrUnwrapped(t *testing.T) {
 	path, err := writeLaunch(Session{ID: "s3", AgentID: "dead3"}, Command{
 		Bin:  bin,
 		Args: []string{},
-		Env:  []string{"EMBERLOOP_AGENT_ID=dead3", "EMBERLOOP_SESSION_ID=s3"},
+		Env:  []string{"EL_AGENT_ID=dead3", "EL_SESSION_ID=s3"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -470,7 +470,7 @@ func TestExecRecordsChildSignalInAgentState(t *testing.T) {
 	path, err := writeLaunch(Session{ID: "s2", AgentID: "dead2"}, Command{
 		Bin:  "sh",
 		Args: []string{"-c", "kill -TERM $$"},
-		Env:  []string{"EMBERLOOP_AGENT_ID=dead2", "EMBERLOOP_SESSION_ID=s2"},
+		Env:  []string{"EL_AGENT_ID=dead2", "EL_SESSION_ID=s2"},
 	})
 	if err != nil {
 		t.Fatal(err)

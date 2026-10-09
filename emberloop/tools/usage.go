@@ -16,8 +16,8 @@ import (
 // one line per call) stays on disk for the database's one-time import and
 // until prune removes it.
 //
-// stateDir is emberloop's state directory: the worker store's directory. Tests
-// point it at a temp dir through EMBERLOOP_STATE_DIR, the way EMBERLOOP_SETTINGS
+// stateDir is el's state directory: the worker store's directory. Tests
+// point it at a temp dir through EL_STATE_DIR, the way EL_SETTINGS
 // redirects settings.
 func stateDir() string {
 	return statedb.StateDir()
@@ -47,7 +47,7 @@ type FindUsage struct {
 }
 
 // LogFindCall records one find call against the agent's usage rows. An empty
-// agent means the call ran outside any session (bare emberloop-mcp, tests that
+// agent means the call ran outside any session (bare el-mcp, tests that
 // chose not to set one): with no agent to attribute to, it writes nothing
 // and reports success.
 func LogFindCall(rec FindUsage) error {

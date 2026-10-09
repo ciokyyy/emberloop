@@ -2,7 +2,7 @@
 // endpoint, the one place a decisions model (Jev) can be asked a typed
 // question. A chat-completions call to a decisions model returns 400.
 //
-// Ported from emberloop's apps/backend/systemone, keeping only the noul question
+// Ported from el's apps/backend/systemone, keeping only the noul question
 // the find cascade asks.
 package systemone
 
@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -159,10 +160,47 @@ func APIKey(ctx context.Context) string {
 		return k
 	}
 	out, err := exec.CommandContext(ctx, "pig", "auth", "print-api-key", "--provider", "openrouter").Output()
+	if err == nil {
+		if k := strings.TrimSpace(string(out)); k != "" {
+			return k
+		}
+	}
+	return pigAuthKey()
+}
+
+// authFile is the file pig keeps its provider keys in. A var so tests can
+// point it elsewhere.
+var authFile = func() string {
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return filepath.Join(home, ".pig", "agent", "auth.json")
+}
+
+// pigAuthKey reads the openrouter api_key straight from pig's auth file, for
+// when pig is not on PATH (a systemd Daemon). Any problem returns "".
+func pigAuthKey() string {
+	path := authFile()
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var auth map[string]struct {
+		Type string `json:"type"`
+		Key  string `json:"key"`
+	}
+	if json.Unmarshal(raw, &auth) != nil {
+		return ""
+	}
+	entry := auth["openrouter"]
+	if entry.Type != "api_key" {
+		return ""
+	}
+	return strings.TrimSpace(entry.Key)
 }
 
 // ListModels returns the ids of OpenRouter's decisions-modality models. The

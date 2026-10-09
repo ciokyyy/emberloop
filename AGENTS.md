@@ -7,9 +7,10 @@ worktrees, judge them with persistent reviewers, and merge through a gate
 module; `emberloop-web/` is the browser UI and Daemon module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
 extensions, and `herdr-emberloop/` is the herdr compress plugin; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
 live
-probes that need running agents; `.scratch/retro-hardening/` holds this
+probes that need running agents; `.scratch/archive/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
-`CLAUDE.md`, which imports this file. The repo check is `.emberloop/check`
+`CLAUDE.md`, which imports this file; Daemon claude Sessions load no
+CLAUDE.md and get a system-prompt pointer to this file instead. The repo check is `.emberloop/check`
 (`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../emberloop-tui && go vet ./... && go test ./... && cd ../installer && go vet ./... && go test ./... && cd ../emberloop-web && go vet ./... && go test ./...`).
 
 ## DOX contract
@@ -53,8 +54,9 @@ child it belongs to, and every entry must resolve to a file.
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends)
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
-- `.scratch/retro-hardening/AGENTS.md` — the spec and ticket area for this run
-- `.scratch/enderbloom-web/AGENTS.md` — the spec and ticket area for Enderbloom Web (browser UI and Daemon, planned module `emberloop-web`)
-- `.scratch/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
+- `.scratch/archive/retro-hardening/AGENTS.md` — the spec and ticket area for this run
+- `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Enderbloom Web (browser UI and Daemon, planned module `el-web`)
+- `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
 - `GLOSSARY.md` — Enderbloom Web terms (Daemon, Session, Backend, Subagent, Group, Steer, Follow-up, Event, Event log)
+- `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el install` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK

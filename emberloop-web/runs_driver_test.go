@@ -424,7 +424,7 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 			sess = tk.WorkerSession
 		}
 	}
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "dirty.txt", "dirty\n")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
@@ -487,7 +487,7 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 			sess = tk.WorkerSession
 		}
 	}
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "conflict.txt", "worker\n")
 	testGit(t, worktree, "add", "conflict.txt")
 	testGit(t, worktree, "commit", "-m", "worker change")
@@ -531,7 +531,7 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", settings)
+	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -546,7 +546,7 @@ func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -657,7 +657,7 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 	base := testGit(t, repo, "rev-parse", "HEAD")
 	base = strings.TrimSpace(base)
 	branch := "implement/01-first"
-	worktree := filepath.Join(repo, ".emberloop-worktrees", "01-first")
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, base)
 	writeFile(t, worktree, "worker.txt", "worker\n")
 	testGit(t, worktree, "add", "worker.txt")

@@ -42,7 +42,7 @@ const urlBrowserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.
 const defaultJinaBase = "https://r.jina.ai/"
 
 func urlTimeout() time.Duration {
-	if s := strings.TrimSpace(os.Getenv("EMBERLOOP_URL_TIMEOUT")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("EL_URL_TIMEOUT")); s != "" {
 		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			return d
 		}
@@ -51,7 +51,7 @@ func urlTimeout() time.Duration {
 }
 
 func urlBodyCap() int64 {
-	if s := strings.TrimSpace(os.Getenv("EMBERLOOP_URL_MAX_BODY")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("EL_URL_MAX_BODY")); s != "" {
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 0 {
 			return n
 		}
@@ -63,9 +63,9 @@ func jinaKey() string { return os.Getenv("JINA_API_KEY") }
 
 // jinaBase is the reader endpoint the target URL is appended to: the default
 // is the public Jina reader; tests point it at a fake server via
-// EMBERLOOP_JINA_ENDPOINT.
+// EL_JINA_ENDPOINT.
 func jinaBase() string {
-	if s := strings.TrimSpace(os.Getenv("EMBERLOOP_JINA_ENDPOINT")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("EL_JINA_ENDPOINT")); s != "" {
 		return s
 	}
 	return defaultJinaBase
@@ -80,7 +80,7 @@ func jinaRequestURL(target string) string {
 	return base + "/" + target
 }
 
-func allowLoopback() bool { return os.Getenv("EMBERLOOP_URL_ALLOW_LOOPBACK") == "1" }
+func allowLoopback() bool { return os.Getenv("EL_URL_ALLOW_LOOPBACK") == "1" }
 
 // isURLTarget reports whether a read path is a URL: http(s):// (including a
 // collapsed https:/host from path normalisation) or a bare www. link.
@@ -554,7 +554,7 @@ type tierResult struct {
 // connection may proceed. It mirrors the URL check at dial time so a host
 // that resolves public at check time but connects private (DNS rebinding)
 // is still refused before any request bytes go out. Loopback is allowed only
-// under EMBERLOOP_URL_ALLOW_LOOPBACK=1 (tests).
+// under EL_URL_ALLOW_LOOPBACK=1 (tests).
 func remoteIPBlocked(ip net.IP) string {
 	if ip == nil {
 		return ""
@@ -757,16 +757,16 @@ func fetchJina(ctx context.Context, target string) (tierResult, error) {
 var browserNames = []string{"chrome-headless-shell", "chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"}
 
 // browserBinaries lists every usable tier-3 browser in launch order.
-// EMBERLOOP_CHROME_BIN names the exact binary (the operator full-Chrome fallback
+// EL_CHROME_BIN names the exact binary (the operator full-Chrome fallback
 // path, and the test seam); otherwise every resolvable name above is tried
 // shell-first, so a page the shell cannot render falls back to full Chrome.
 // A miss keeps the clear "not installed" error tier 3 always returned.
 func browserBinaries() ([]string, error) {
-	if p := strings.TrimSpace(os.Getenv("EMBERLOOP_CHROME_BIN")); p != "" {
+	if p := strings.TrimSpace(os.Getenv("EL_CHROME_BIN")); p != "" {
 		if isExecutable(p) {
 			return []string{p}, nil
 		}
-		return nil, fmt.Errorf("browser tier (tier 3) not installed: EMBERLOOP_CHROME_BIN=%q is not executable; install chrome-headless-shell with `emberloop deps`", p)
+		return nil, fmt.Errorf("browser tier (tier 3) not installed: EL_CHROME_BIN=%q is not executable; install chrome-headless-shell with `el deps`", p)
 	}
 	var bins []string
 	for _, name := range browserNames {
@@ -775,7 +775,7 @@ func browserBinaries() ([]string, error) {
 		}
 	}
 	if len(bins) == 0 {
-		return nil, fmt.Errorf("browser tier (tier 3) not installed: no chrome-headless-shell or Chrome/Chromium in %s or PATH; install with `emberloop deps`", BinDir())
+		return nil, fmt.Errorf("browser tier (tier 3) not installed: no chrome-headless-shell or Chrome/Chromium in %s or PATH; install with `el deps`", BinDir())
 	}
 	return bins, nil
 }
@@ -783,7 +783,7 @@ func browserBinaries() ([]string, error) {
 // browserHostBlockRules keeps tier-3 navigation off local ranges inside the
 // browser, which does its own DNS: every private, link-local and
 // unspecified IPv4 literal resolves to NOTFOUND there, and loopback too
-// unless EMBERLOOP_URL_ALLOW_LOOPBACK=1 lifts it (the same flag that lifts it
+// unless EL_URL_ALLOW_LOOPBACK=1 lifts it (the same flag that lifts it
 // for tiers 1-2).
 func browserHostBlockRules() string {
 	rules := []string{
@@ -825,7 +825,7 @@ func resolveBrowserURL(ctx context.Context, target string) (string, error) {
 // (root, containers without userns): untrusted page JS otherwise keeps
 // Chrome's own sandbox.
 func chromeSandboxArgs() []string {
-	if os.Geteuid() == 0 || os.Getenv("EMBERLOOP_CHROME_NO_SANDBOX") == "1" {
+	if os.Geteuid() == 0 || os.Getenv("EL_CHROME_NO_SANDBOX") == "1" {
 		return []string{"--no-sandbox"}
 	}
 	return nil
@@ -867,7 +867,7 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 // rendered HTML. Each run gets a fresh profile directory, removed
 // afterwards, and WaitDelay bounds pipe waits past a timeout kill.
 func runBrowserOnce(ctx context.Context, bin, target string) (string, bool, error) {
-	profile, err := os.MkdirTemp("", "emberloop-chrome-*")
+	profile, err := os.MkdirTemp("", "el-chrome-*")
 	if err != nil {
 		return "", false, err
 	}

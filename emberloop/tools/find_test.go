@@ -43,7 +43,7 @@ func findArgs() map[string]any {
 
 func TestFindLexicalFallbackLocatesTheFile(t *testing.T) {
 	dir := project(t)
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "none.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "none.json"))
 	out, err := run(t, findTool{lexicalOnly: true}, dir, findArgs())
 	if err != nil || !strings.Contains(out, "auth.go") {
 		t.Fatalf("out = %q, err = %v", out, err)
@@ -57,7 +57,7 @@ func TestFindLexicalFallbackLocatesTheFile(t *testing.T) {
 
 func TestFindUsesTheDecisionModelScores(t *testing.T) {
 	dir := project(t)
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "none.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "none.json"))
 	out, err := run(t, findTool{provider: fixedJudge{0.85}}, dir, findArgs())
 	if err != nil || !strings.Contains(out, "auth.go") || !strings.Contains(out, "0.85") {
 		t.Fatalf("out = %q, err = %v", out, err)
@@ -80,14 +80,14 @@ func TestMergePassageRangesJoinsOverlaps(t *testing.T) {
 }
 
 func TestSettingsRoundTripAndEnvWins(t *testing.T) {
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "s.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "s.json"))
 	if err := SaveSettings(Settings{DecisionModel: "typesafe/jev-1.14", Threshold: 0.3}); err != nil {
 		t.Fatal(err)
 	}
 	if s := LoadSettings(); s.DecisionModel != "typesafe/jev-1.14" || s.Threshold != 0.3 {
 		t.Fatalf("got %+v", s)
 	}
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "respan/span-01")
+	t.Setenv("EL_DECISION_MODEL", "respan/span-01")
 	if s := LoadSettings(); s.DecisionModel != "respan/span-01" {
 		t.Fatalf("env did not win: %+v", s)
 	}

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -92,7 +92,7 @@ func TestSecondRowShowsClaudeUsage(t *testing.T) {
 }
 
 func TestClaudeStopGateCarriesStatusLine(t *testing.T) {
-	if !strings.Contains(claudeStopGate, `"statusLine":{"type":"command","command":"emberloop claude-status"}`) {
+	if !strings.Contains(claudeStopGate, `"statusLine":{"type":"command","command":"el claude-status"}`) {
 		t.Error("claude settings lack the statusLine command")
 	}
 }
@@ -117,7 +117,7 @@ func TestStatusLineStoresLiveTranscriptForResume(t *testing.T) {
 	if err := os.WriteFile(tr, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_AGENT_ID", "a1")
+	t.Setenv("EL_AGENT_ID", "a1")
 	in := `{"session_id":"s2","transcript_path":` + strconv.Quote(tr) + `}`
 	if err := RunClaudeStatus(strings.NewReader(in), dir); err != nil {
 		t.Fatal(err)

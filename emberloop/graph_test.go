@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -23,12 +23,12 @@ func graphFakeSettings(t *testing.T, cfg mcpfake.Config) (tools.Settings, string
 	log := filepath.Join(t.TempDir(), "graph-methods.log")
 	cfg.LogPath = log
 	command, args, env := mcpfake.Helper(t, cfg)
-	t.Setenv("EMBERLOOP_GRAPH_TEST_COMMAND", command)
+	t.Setenv("EL_GRAPH_TEST_COMMAND", command)
 	raw, err := json.Marshal(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_GRAPH_TEST_ARGS", string(raw))
+	t.Setenv("EL_GRAPH_TEST_ARGS", string(raw))
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
@@ -67,7 +67,7 @@ func TestGraphExposedSetPerRole(t *testing.T) {
 		"work": false, "plan": false, "full": false, "agent": false,
 	} {
 		if role == "agent" {
-			t.Setenv("EMBERLOOP_AGENT_TYPE", "reviewer-spec")
+			t.Setenv("EL_AGENT_TYPE", "reviewer-spec")
 		}
 		main, execute, err := ResolvedToolsWithMCP(role, listed)
 		if err != nil {
@@ -94,11 +94,11 @@ func TestGraphExposedSetPerRole(t *testing.T) {
 // same resolution the server serves.
 func TestGraphMissingExposesNothing(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EMBERLOOP_BIN_DIR", t.TempDir())
+	t.Setenv("EL_BIN_DIR", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
-	t.Setenv("EMBERLOOP_GRAPH_TEST_COMMAND", "")
-	t.Setenv("EMBERLOOP_GRAPH_TEST_ARGS", "")
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_GRAPH_TEST_COMMAND", "")
+	t.Setenv("EL_GRAPH_TEST_ARGS", "")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	s := tools.WithGraphServer(tools.EffectiveSettings(t.TempDir()))
 	if _, ok := s.MCPServers[tools.GraphServerName]; ok {
 		t.Fatal("missing binary must register no graph server")
@@ -108,7 +108,7 @@ func TestGraphMissingExposesNothing(t *testing.T) {
 	listed := MCPSnapshot(reg)
 	for _, role := range []string{"review", "scout", "work", "agent"} {
 		if role == "agent" {
-			t.Setenv("EMBERLOOP_AGENT_TYPE", "reviewer-spec")
+			t.Setenv("EL_AGENT_TYPE", "reviewer-spec")
 		}
 		main, execute, err := ResolvedToolsWithMCP(role, listed)
 		if err != nil {
@@ -271,7 +271,7 @@ func TestGraphReindexBeforeScoutSpawn(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &scoutExec{g: g, writeOn: 1}
 	spawnExec = ex.run
 	oldDeliver := deliverExec
@@ -358,10 +358,10 @@ func TestGraphFailureNeverBlocks(t *testing.T) {
 // With no binary and no override every lifecycle call is a silent no-op.
 func TestGraphUnavailableSkipsSilently(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EMBERLOOP_BIN_DIR", t.TempDir())
+	t.Setenv("EL_BIN_DIR", t.TempDir())
 	t.Setenv("PATH", t.TempDir())
-	t.Setenv("EMBERLOOP_GRAPH_TEST_COMMAND", "")
-	t.Setenv("EMBERLOOP_GRAPH_TEST_ARGS", "")
+	t.Setenv("EL_GRAPH_TEST_COMMAND", "")
+	t.Setenv("EL_GRAPH_TEST_ARGS", "")
 	useRealGraphDial(t)
 	tree := filepath.Join(t.TempDir(), "tree")
 	if _, err := graphIndex(context.Background(), tree); err != nil {
@@ -387,8 +387,8 @@ func graphGitRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

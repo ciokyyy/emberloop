@@ -1,7 +1,7 @@
-package emberloop
+package el
 
 // Row macros (input-queue ticket 03): the input row's own commands. A
-// submitted row text of the form "/name args..." first checks emberloop's
+// submitted row text of the form "/name args..." first checks el's
 // built-ins (/compress calls the existing compress request for the wrapped
 // session, whatever the harness), then the prompt macros in settings (the
 // {{args}} template expands and enqueues like typed text, through the same
@@ -78,11 +78,11 @@ func warnRowCompress(sink io.Writer, err error) {
 	if sink == nil {
 		sink = os.Stderr
 	}
-	fmt.Fprintf(sink, "emberloop: /compress: %v\n", err)
+	fmt.Fprintf(sink, "el: /compress: %v\n", err)
 }
 
 // reportMacroValidation reports duplicate and shadowing macros at settings
-// load: rejects read as errors, built-in shadows as warnings. Emberloop's macro
+// load: rejects read as errors, built-in shadows as warnings. El's macro
 // wins every collision, so the row runs with the valid entries only.
 func reportMacroValidation(sink io.Writer, s tools.Settings) {
 	if sink == nil {
@@ -90,9 +90,9 @@ func reportMacroValidation(sink io.Writer, s tools.Settings) {
 	}
 	_, warnings, err := s.ValidateMacros()
 	if err != nil {
-		fmt.Fprintf(sink, "emberloop: macros: %v\n", err)
+		fmt.Fprintf(sink, "el: macros: %v\n", err)
 	}
 	for _, warning := range warnings {
-		fmt.Fprintf(sink, "emberloop: macros: %s\n", warning)
+		fmt.Fprintf(sink, "el: macros: %s\n", warning)
 	}
 }

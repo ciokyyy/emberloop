@@ -101,7 +101,7 @@ func truncateHeadTail(text string, head, tail int) string {
 
 // overflowSession is the session a stored output is attributed to: the
 // calling agent, or empty outside any session.
-func overflowSession() string { return os.Getenv("EMBERLOOP_AGENT_ID") }
+func overflowSession() string { return os.Getenv("EL_AGENT_ID") }
 
 func splitOverflowLines(content string) []string {
 	s := strings.ReplaceAll(content, "\r\n", "\n")

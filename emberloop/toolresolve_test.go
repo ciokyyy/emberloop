@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -18,13 +18,17 @@ import (
 // configuration.
 func hermeticSettings(t *testing.T) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
+	// A Daemon binding would resolve Daemon tools into the web roles, so an
+	// exact tool list never depends on the shell the test runs in.
+	t.Setenv("EL_WEB_PARENT", "")
+	t.Setenv("EL_WEB_DAEMON_URL", "")
 }
 
 // writeSettingsFile points the global store at a temp file holding body.
@@ -34,13 +38,15 @@ func writeSettingsFile(t *testing.T, body string) {
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", p)
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SETTINGS", p)
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
+	t.Setenv("EL_WEB_PARENT", "")
+	t.Setenv("EL_WEB_DAEMON_URL", "")
 }
 
 // fakeTool is a named tool for the resolution tests.
@@ -380,7 +386,7 @@ func TestRoleToolsHonoursTheProjectLayer(t *testing.T) {
 	if err := os.WriteFile(project, []byte(`{"tools":{"bash":{"enabled":false}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", project)
+	t.Setenv("EL_PROJECT_SETTINGS", project)
 	served, err := RoleTools("work")
 	if err != nil {
 		t.Fatal(err)

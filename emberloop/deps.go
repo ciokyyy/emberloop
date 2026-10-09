@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"archive/tar"
@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-// `emberloop deps` installs and verifies every external dependency.
+// `el deps` installs and verifies every external dependency.
 //
 // Required: python3 (3.9+), rg, git, bwrap. Optional: the code graph binary
 // (codebase-memory-mcp), unless graph.enabled is false in settings. Missing
@@ -30,8 +30,8 @@ import (
 // the exact command is printed and run through sudo only when attached to a
 // terminal, otherwise printed and the command exits non-zero. The graph
 // binary downloads from its GitHub release tarball for the platform,
-// verified against the release checksums.txt SHA-256, into the emberloop bin
-// directory (EMBERLOOP_BIN_DIR overrides). Its own install.sh never runs and no
+// verified against the release checksums.txt SHA-256, into the el bin
+// directory (EL_BIN_DIR overrides). Its own install.sh never runs and no
 // agent client config is touched. Every dependency is proved after install and
 // printed one line with version and status; a failing required dependency
 // fails the command while the graph only warns. A second run changes nothing
@@ -57,7 +57,7 @@ const DefaultGraphReleaseBase = "https://github.com/DeusData/codebase-memory-mcp
 
 // DepsConfig tunes InstallDeps. Zero values mean the real environment.
 type DepsConfig struct {
-	// BinDir overrides the emberloop bin directory; empty means tools.BinDir().
+	// BinDir overrides the el bin directory; empty means tools.BinDir().
 	BinDir string
 	// IsTerminal reports whether sudo may prompt; nil checks stdin.
 	IsTerminal func() bool
@@ -298,7 +298,7 @@ func depsFirstLine(s string) string {
 	return s
 }
 
-// resolveDep finds dep in the emberloop bin directory first, then PATH, through
+// resolveDep finds dep in the el bin directory first, then PATH, through
 // the shared tools.ResolveBinary order so the installer and the tools agree
 // on what "installed" means. A DepsConfig.BinDir override is checked first
 // for tests; otherwise resolution is exactly the shared helper.
@@ -596,7 +596,7 @@ func probeGraphMCP(path string) (string, error) {
 		"params": map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "emberloop", "version": "deps"},
+			"clientInfo":      map[string]any{"name": "el", "version": "deps"},
 		},
 	}
 	raw, _ := json.Marshal(req)
@@ -756,16 +756,16 @@ func InstallDeps(out io.Writer, cfg DepsConfig) error {
 }
 
 // depsUsage documents the installer.
-const depsUsage = `usage: emberloop deps
+const depsUsage = `usage: el deps
 
   Check python3 (3.9+), rg, git, bwrap and the code graph binary, install
   what is missing with the system package manager, download the graph binary
-  verified by SHA-256 into the emberloop bin directory, and prove each one.
+  verified by SHA-256 into the el bin directory, and prove each one.
   Prints one line per dependency with its version and status; exits non-zero
   when a required dependency fails (the graph only warns). A second run
   changes nothing.`
 
-// RunDeps serves `emberloop deps`.
+// RunDeps serves `el deps`.
 func RunDeps(argv []string, out io.Writer) error {
 	for _, a := range argv {
 		switch a {

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -94,7 +94,7 @@ func columnStarts(header string) []int {
 
 // claudeInitializeRequest is the control request that makes claude report what
 // it can run. It is not a user message, so the answer costs nothing.
-const claudeInitializeRequest = `{"type":"control_request","request_id":"emberloop-models","request":{"subtype":"initialize"}}` + "\n"
+const claudeInitializeRequest = `{"type":"control_request","request_id":"el-models","request":{"subtype":"initialize"}}` + "\n"
 
 // Models asks claude for its model list over stream-json. No prompt is sent and
 // stdin closes, so the process answers and exits without a turn.

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 )
 
 // The background tool is served by the tools package, which imports nothing
-// from emberloop, so emberloop installs its grid there once, at startup. Every site that
+// from el, so el installs its grid there once, at startup. Every site that
 // builds a tool set -- RoleTools, a spawned agent's tools, AllTools -- then gets
 // the same placer without having to remember it.
 func init() {

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -20,7 +20,7 @@ func executeSandboxed(role string) bool {
 	case "review", "scout":
 		return true
 	case "agent":
-		typ := os.Getenv("EMBERLOOP_AGENT_TYPE")
+		typ := os.Getenv("EL_AGENT_TYPE")
 		if typ == "" {
 			return false
 		}
@@ -130,7 +130,7 @@ func boundExecuteTool(role string, s tools.Settings, main, execute []tools.Tool,
 	}
 	var mainNames []string
 	for _, t := range main {
-		if !isMCPTool(t) && !tools.ExecuteExcluded(t.Name()) {
+		if !isMCPTool(t) && !tools.ExecuteExcludedTool(t) {
 			mainNames = append(mainNames, t.Name())
 		}
 	}

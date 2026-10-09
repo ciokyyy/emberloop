@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"bytes"
@@ -315,9 +315,9 @@ func (r *inputRow) render(width int, dark bool, profile termenv.Profile) string 
 	renderer := lipgloss.NewRenderer(io.Discard, termenv.WithProfile(profile))
 	renderer.SetColorProfile(profile)
 
-	pal := EmberloopMocha()
+	pal := ElMocha()
 	if !dark {
-		pal = EmberloopLatte()
+		pal = ElLatte()
 	}
 
 	promptStyle := renderer.NewStyle().Foreground(lipgloss.Color(pal.Accent)).Bold(true)

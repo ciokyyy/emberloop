@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -116,7 +116,7 @@ type hookBlock struct {
 	Reason   string `json:"reason"`
 }
 
-// RunStopGate serves `emberloop stop-gate`: claude's Stop hook. It reads the
+// RunStopGate serves `el stop-gate`: claude's Stop hook. It reads the
 // hook JSON on in, asks the shared decision, and either writes the block JSON
 // to out or lets the stop through. A stop it gives up on writes nothing and
 // sends the parent a "stopped without submitting" notice the way that agent's
@@ -129,10 +129,10 @@ func RunStopGate(in io.Reader, out io.Writer) error {
 	// Only a spawned agent has a submit tool to gate: a top-level or one-shot
 	// read-only session has no agent type, so nothing to gate. Every session
 	// now carries an agent id, so the id alone no longer marks one.
-	if os.Getenv("EMBERLOOP_AGENT_TYPE") == "" {
+	if os.Getenv("EL_AGENT_TYPE") == "" {
 		return nil
 	}
-	id := os.Getenv("EMBERLOOP_AGENT_ID")
+	id := os.Getenv("EL_AGENT_ID")
 	if id == "" {
 		return nil
 	}
@@ -185,7 +185,7 @@ const (
 	pigGateGiveUp = "giveup"
 )
 
-// RunPigGate serves `emberloop pig-gate <event>`: the pig extension's half of
+// RunPigGate serves `el pig-gate <event>`: the pig extension's half of
 // the shared stop gate. The event is one attempted settle as JSON; the answer
 // comes back as JSON for the extension to enforce, because only the extension
 // can hold a pig agent at its settle. A give-up is delivered from here, the
@@ -198,10 +198,10 @@ func RunPigGate(event string, out io.Writer) error {
 	// Only a spawned agent has a submit tool to gate: a top-level or one-shot
 	// read-only session has no agent type, so nothing to gate. Every session
 	// now carries an agent id, so the id alone no longer marks one.
-	if os.Getenv("EMBERLOOP_AGENT_TYPE") == "" {
+	if os.Getenv("EL_AGENT_TYPE") == "" {
 		return json.NewEncoder(out).Encode(PigGateDecision{Outcome: pigGateAllow})
 	}
-	id := os.Getenv("EMBERLOOP_AGENT_ID")
+	id := os.Getenv("EL_AGENT_ID")
 	if id == "" {
 		return json.NewEncoder(out).Encode(PigGateDecision{Outcome: pigGateAllow})
 	}
@@ -377,7 +377,7 @@ func excerpt(text string, fallback func() string) string {
 // joins its group's single notice, a member whose group already delivered or
 // any other agent with Deliver set is delivered as an individual notice.
 func giveUpWithoutSubmit(id, excerpt string) error {
-	typ := os.Getenv("EMBERLOOP_AGENT_TYPE")
+	typ := os.Getenv("EL_AGENT_TYPE")
 	if typ == "" {
 		st, _, err := ReadAgentState(id)
 		if err != nil {

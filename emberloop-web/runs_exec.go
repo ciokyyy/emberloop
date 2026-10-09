@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 )
 
 // Run statuses: a Run is running while its driver loop polls, done when
@@ -110,8 +110,8 @@ type runState struct {
 	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
 	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
 	Rows          map[string]savedRow                `json:"rows,omitempty"`
-	SpecRun       emberloop.SpecRun                  `json:"-"`
-	Driver        *emberloop.DriverRun               `json:"-"`
+	SpecRun       el.SpecRun                         `json:"-"`
+	Driver        *el.DriverRun                      `json:"-"`
 	notify        chan struct{}                      `json:"-"`
 	unpause       chan struct{}                      `json:"-"`
 	driving       bool                               `json:"-"`
@@ -297,17 +297,17 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spec is required", http.StatusBadRequest)
 		return
 	}
-	specRun, err := emberloop.ResolveSpec(req.Spec)
+	specRun, err := el.ResolveSpec(req.Spec)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	files, err := emberloop.ReadDriverFiles(specRun)
+	files, err := el.ReadDriverFiles(specRun)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	previews := emberloop.PreviewTickets(specRun, files)
+	previews := el.PreviewTickets(specRun, files)
 	for _, p := range previews {
 		if p.Error != "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": p.Error})
@@ -382,7 +382,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Reprompted:    map[string]int{},
 		Rows:          map[string]savedRow{},
 		SpecRun:       specRun,
-		Driver:        emberloop.NewDriverRun(nil),
+		Driver:        el.NewDriverRun(nil),
 		notify:        make(chan struct{}),
 		unpause:       make(chan struct{}),
 		driving:       true,
@@ -408,14 +408,14 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 
 // driveRun runs the core deterministic driver against the web-backed world
 // to a stable state, then records the outcome on the Run.
-func (d *Daemon) driveRun(id string, world emberloop.DriverWorld) {
+func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	d.mu.Lock()
 	rs, ok := d.runs[id]
 	d.mu.Unlock()
 	if !ok {
 		return
 	}
-	res, err := emberloop.RunDriver(rs.SpecRun, world)
+	res, err := el.RunDriver(rs.SpecRun, world)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rs, ok = d.runs[id]
@@ -436,11 +436,11 @@ func (d *Daemon) driveRun(id string, world emberloop.DriverWorld) {
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 }
-func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) emberloop.DriverWorld {
+func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) el.DriverWorld {
 	if max <= 0 {
 		max = defaultMaxRunning
 	}
-	return emberloop.DriverWorld{
+	return el.DriverWorld{
 		Files:      files,
 		MaxWorkers: max,
 		// HasWorker names started Tickets from the recorded Worker
@@ -458,7 +458,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			defer d.mu.Unlock()
 			return rs.Merged[ticketID]
 		},
-		StartWorker: func(tk emberloop.DriverTicket) error {
+		StartWorker: func(tk el.DriverTicket) error {
 			return d.runStartWorker(rs.ID, tk)
 		},
 		Tip: func(ticketID string) string {
@@ -475,7 +475,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			}
 			return sha
 		},
-		Reviews: func(ticketID string) map[string]emberloop.DriverReview {
+		Reviews: func(ticketID string) map[string]el.DriverReview {
 			d.ensureReviewers(rs.ID, ticketID)
 			return d.runReviews(rs.ID, ticketID)
 		},
@@ -501,9 +501,9 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			if path == "" {
 				return boxes, nil
 			}
-			return emberloop.TickDriverTicketFile(path, boxes)
+			return el.TickDriverTicketFile(path, boxes)
 		},
-		Finish: func(ticketID string) (emberloop.DriverFinish, error) {
+		Finish: func(ticketID string) (el.DriverFinish, error) {
 			return d.runFinishWorker(rs.ID, ticketID)
 		},
 		Required: append([]string(nil), requiredReviewerTypes...),
@@ -535,16 +535,16 @@ func ticketPath(rs *runState, ticketID string) string {
 
 // runReviews returns one Ticket's reviewer verdicts as the driver sees them:
 // each type's submitted status at the tip it was given at.
-func (d *Daemon) runReviews(runID, ticketID string) map[string]emberloop.DriverReview {
+func (d *Daemon) runReviews(runID, ticketID string) map[string]el.DriverReview {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rs, ok := d.runs[runID]
 	if !ok {
-		return map[string]emberloop.DriverReview{}
+		return map[string]el.DriverReview{}
 	}
-	out := map[string]emberloop.DriverReview{}
+	out := map[string]el.DriverReview{}
 	for typ, r := range rs.Reviews[ticketID] {
-		out[typ] = emberloop.DriverReview{Verdict: r.Verdict, At: r.At}
+		out[typ] = el.DriverReview{Verdict: r.Verdict, At: r.At}
 	}
 	return out
 }
@@ -821,14 +821,14 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	}
 	d.mu.Unlock()
 	d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
-	go d.runTurn(meta.ID, be, prompt)
+	go d.runTurn(meta.ID, be, prompt, nil)
 	return nil
 }
 
 // runStartWorker creates the Ticket's worktree and branch and its Worker
 // Session, a Subagent of the Run, and runs the Ticket prompt on it. A
 // refused live-Session cap retries briefly before failing the Run.
-func (d *Daemon) runStartWorker(runID string, tk emberloop.DriverTicket) error {
+func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 	// A paused Run starts nothing new: wait for the Resume while holding
 	// no lock, so the Resume itself never blocks on this worker. Running
 	// Workers stay live and untouched meanwhile.
@@ -840,9 +840,9 @@ func (d *Daemon) runStartWorker(runID string, tk emberloop.DriverTicket) error {
 		return fmt.Errorf("unknown run %q", runID)
 	}
 	repo, harness, model := rs.Repo, rs.Harness, rs.Model
-	workerID := emberloop.WorkerID(tk.Path)
+	workerID := el.WorkerID(tk.Path)
 	branch := "implement/" + workerID
-	worktree := filepath.Join(repo, ".emberloop-worktrees", workerID)
+	worktree := filepath.Join(repo, ".el-worktrees", workerID)
 	d.mu.Unlock()
 
 	cleanup := func() {
@@ -934,7 +934,7 @@ func (d *Daemon) runStartWorker(runID string, tk emberloop.DriverTicket) error {
 		}
 		d.mu.Unlock()
 		d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
-		go d.runTurn(meta.ID, be, prompt)
+		go d.runTurn(meta.ID, be, prompt, nil)
 		return nil
 	}
 }
@@ -975,32 +975,32 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
 // target without changing their content. On a merge the
 // ticket is marked done and committed on the target, and the worktree is
 // removed; the Worker Session stays for its transcript.
-func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish, error) {
+func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
 		d.mu.Unlock()
-		return emberloop.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
+		return el.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
 	}
 	repo, branch, worktree, target, _, path := rs.Repo, rs.Branches[ticketID], rs.Worktrees[ticketID], rs.Targets[ticketID], rs.Bases[ticketID], ticketPath(rs, ticketID)
 	submitStatus := ""
 	if rec, ok := d.submits[rs.Sessions[ticketID]]; ok && rec != nil {
 		submitStatus = rec.Status
 	}
-	workerID := emberloop.WorkerID(ticketID)
+	workerID := el.WorkerID(ticketID)
 	d.mu.Unlock()
 	if branch == "" || worktree == "" {
-		return emberloop.DriverFinish{}, fmt.Errorf("ticket %s has no worker", ticketID)
+		return el.DriverFinish{}, fmt.Errorf("ticket %s has no worker", ticketID)
 	}
 	if submitStatus != "" && submitStatus != "done" {
-		return emberloop.DriverFinish{Merged: false, Detail: fmt.Sprintf("worker submitted %q, waiting for done; submit done with the completed checkboxes", submitStatus)}, nil
+		return el.DriverFinish{Merged: false, Detail: fmt.Sprintf("worker submitted %q, waiting for done; submit done with the completed checkboxes", submitStatus)}, nil
 	}
 	d.ensureReviewers(runID, ticketID)
 	d.mu.Lock()
 	rs, ok = d.runs[runID]
 	if !ok {
 		d.mu.Unlock()
-		return emberloop.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
+		return el.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
 	}
 	verdicts := map[string]storedReview{}
 	for typ, r := range rs.Reviews[ticketID] {
@@ -1013,19 +1013,19 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 	d.mu.Unlock()
 	tip, gerr := runGit(repo, "rev-parse", branch)
 	if gerr != nil || tip == "" {
-		return emberloop.DriverFinish{}, fmt.Errorf("ticket %s has no tip; start its worker again", ticketID)
+		return el.DriverFinish{}, fmt.Errorf("ticket %s has no tip; start its worker again", ticketID)
 	}
 	if !reviewGateReady(sessions, verdicts) {
-		return emberloop.DriverFinish{}, nil
+		return el.DriverFinish{}, nil
 	}
 	if why := reviewGateDetail(verdicts, tip); why != "" {
 		// No verdict judged the current tip: the Ticket is under review,
 		// not refused, so there is no new refusal to tell. A fresh
 		// changes verdict is still told unchanged below.
 		if noneFreshAtTip(verdicts, tip) {
-			return emberloop.DriverFinish{}, nil
+			return el.DriverFinish{}, nil
 		}
-		return emberloop.DriverFinish{Merged: false, Detail: why}, nil
+		return el.DriverFinish{Merged: false, Detail: why}, nil
 	}
 	// A detached repo has no target branch: rebase onto the repo HEAD as it
 	// stands at finish, since another Ticket may have moved it after this
@@ -1035,50 +1035,50 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 	if onto == "" {
 		sha, gerr := runGit(repo, "rev-parse", "HEAD")
 		if gerr != nil || sha == "" {
-			return emberloop.DriverFinish{}, fmt.Errorf("ticket %s has no merge base; start its worker again", ticketID)
+			return el.DriverFinish{}, fmt.Errorf("ticket %s has no merge base; start its worker again", ticketID)
 		}
 		onto = sha
 	}
-	sha, kept, err := emberloop.MergeCheckedBranch(emberloop.OSExec, repo, worktree, branch, onto, target, "have it commit them and submit done again")
+	sha, kept, err := el.MergeCheckedBranch(el.OSExec, repo, worktree, branch, onto, target, "have it commit them and submit done again")
 	if err != nil {
-		return emberloop.DriverFinish{}, err
+		return el.DriverFinish{}, err
 	}
 	if kept != "" {
-		return emberloop.DriverFinish{Merged: false, Detail: kept}, nil
+		return el.DriverFinish{Merged: false, Detail: kept}, nil
 	}
 	if path != "" {
-		changed, err := emberloop.MarkDriverTicketDone(path)
+		changed, err := el.MarkDriverTicketDone(path)
 		if err != nil {
 			// A ticket without a Status line is not one finish completes,
 			// the way the CLI completion leaves it alone: the merge still
 			// stands and the boxes already ticked stay.
 			if !strings.Contains(err.Error(), "has no status line") {
-				return emberloop.DriverFinish{}, err
+				return el.DriverFinish{}, err
 			}
 		} else if changed {
 			rel, err := filepath.Rel(repo, path)
 			if err != nil {
-				return emberloop.DriverFinish{}, err
+				return el.DriverFinish{}, err
 			}
 			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return emberloop.DriverFinish{}, fmt.Errorf("ticket %s is outside the repo", ticketID)
+				return el.DriverFinish{}, fmt.Errorf("ticket %s is outside the repo", ticketID)
 			}
 			if _, err := runGit(repo, "add", "--", rel); err != nil {
-				return emberloop.DriverFinish{}, err
+				return el.DriverFinish{}, err
 			}
 			if staged, err := runStagedDiff(repo, rel); err != nil {
-				return emberloop.DriverFinish{}, err
+				return el.DriverFinish{}, err
 			} else if staged {
 				if out, err := runGitCommitDone(repo, rel, workerID); err != nil {
 					if !strings.Contains(out+err.Error(), "nothing to commit") {
-						return emberloop.DriverFinish{}, err
+						return el.DriverFinish{}, err
 					}
 				}
 			}
 		}
 	}
 	if _, err := runGit(repo, "worktree", "remove", "--force", worktree); err != nil {
-		return emberloop.DriverFinish{}, err
+		return el.DriverFinish{}, err
 	}
 	d.mu.Lock()
 	if rs, ok := d.runs[runID]; ok {
@@ -1087,7 +1087,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (emberloop.DriverFinish
 		d.broadcastRunLocked(rs)
 	}
 	d.mu.Unlock()
-	return emberloop.DriverFinish{Merged: true, SHA: sha}, nil
+	return el.DriverFinish{Merged: true, SHA: sha}, nil
 }
 
 // reviewGateReady says the finish may judge the gate: every required
@@ -1159,7 +1159,7 @@ func shortSHA(sha string) string {
 // Session link, both Reviewer verdicts with tip freshness, and the last
 // refusal per Ticket. Callers hold d.mu.
 func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
-	rows := map[string]emberloop.DriverRow{}
+	rows := map[string]el.DriverRow{}
 	if rs.Driver != nil {
 		for _, row := range rs.Driver.Snapshot() {
 			rows[row.ID] = row
@@ -1216,6 +1216,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 
 // broadcastRunLocked wakes the Run's SSE streams; callers hold d.mu.
 func (d *Daemon) broadcastRunLocked(rs *runState) {
+	d.live.publish("runs", "run:"+rs.ID)
 	notify := rs.notify
 	rs.notify = make(chan struct{})
 	close(notify)
@@ -1418,6 +1419,7 @@ func (d *Daemon) runFile(id string) string {
 
 // persistRun saves one Run beside the group files; callers hold d.mu.
 func (d *Daemon) persistRun(rs *runState) {
+	defer d.live.publish("runs", "run:"+rs.ID)
 	dir := filepath.Join(d.stateDir, "enderbloom", "runs")
 	_ = os.MkdirAll(dir, 0o755)
 	b, _ := json.Marshal(rs)
@@ -1497,7 +1499,7 @@ func (d *Daemon) loadRuns() {
 		if rs.Rows == nil {
 			rs.Rows = map[string]savedRow{}
 		}
-		rs.Driver = emberloop.NewDriverRun(nil)
+		rs.Driver = el.NewDriverRun(nil)
 		rs.notify = make(chan struct{})
 		rs.unpause = make(chan struct{})
 		cp := rs
@@ -1596,14 +1598,14 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	spec := rs.Spec
 	d.mu.Unlock()
-	specRun, err := emberloop.ResolveSpec(spec)
+	specRun, err := el.ResolveSpec(spec)
 	if err != nil {
 		// The Run exists; its spec no longer resolves. That is Daemon
 		// state, not a missing Run.
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	files, err := emberloop.ReadDriverFiles(specRun)
+	files, err := el.ReadDriverFiles(specRun)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1627,7 +1629,7 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 		close(rs.unpause)
 	}
 	rs.unpause = make(chan struct{})
-	var world emberloop.DriverWorld
+	var world el.DriverWorld
 	startDriver := !rs.driving
 	if startDriver {
 		rs.driving = true

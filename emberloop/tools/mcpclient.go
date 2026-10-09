@@ -20,7 +20,7 @@ import (
 // The MCP client speaks the same newline-delimited JSON-RPC the hand-written
 // server in mcp/ does, with no third-party library. A Client owns one server
 // child process; a Registry holds one client per configured server for the
-// emberloop-mcp process. Nothing starts until a tool is listed or called, the
+// el-mcp process. Nothing starts until a tool is listed or called, the
 // tools/list answer is cached for the session, and Close kills every child.
 const (
 	mcpProtocolVersion = "2024-11-05"
@@ -215,7 +215,7 @@ func (c *Client) spawn(ctx context.Context) error {
 	if err := c.roundTrip(initCtx, "initialize", map[string]any{
 		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "emberloop", "version": "1"},
+		"clientInfo":      map[string]any{"name": "el", "version": "1"},
 	}, &res); err != nil {
 		c.mu.Lock()
 		c.killLocked()
@@ -595,7 +595,7 @@ func (t *mcpTool) Execute(ctx context.Context, _ string, args json.RawMessage) (
 	return t.client.CallTool(ctx, t.original, args)
 }
 
-// Registry holds one client per configured server for the emberloop-mcp process.
+// Registry holds one client per configured server for the el-mcp process.
 // Servers are never shared across sessions: build one registry per process
 // and Close it when the process ends.
 type Registry struct {

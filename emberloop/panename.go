@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -36,7 +36,7 @@ func AgentPaneName(t AgentType) string { return PaneNameForType(t.Name) }
 
 // placedPaneName is the pane name of a session launchPlacedAgent placed: the
 // session's agent type, or scout for a one-shot read-only run with no type.
-// The session itself is untouched, so the launch env carries no EMBERLOOP_AGENT_TYPE
+// The session itself is untouched, so the launch env carries no EL_AGENT_TYPE
 // it did not already have.
 func placedPaneName(s Session) string {
 	if s.AgentType == "" {
@@ -76,7 +76,7 @@ func defaultWorkerType(t string) string {
 // TopLevelChipName is the strip chip of a top-level session. A typed agent
 // keeps its type's name. An untyped session is the orchestrator only when it
 // runs the implement role, which is how the orchestrator launches; any other
-// role (a bare `emberloop claude` plans, `--role full` has every tool) shows
+// role (a bare `el claude` plans, `--role full` has every tool) shows
 // its own role name, so the chip never claims a job the session does not do.
 func TopLevelChipName(agentType, role string) string {
 	if agentType != "" {

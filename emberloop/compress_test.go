@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -13,7 +13,7 @@ import (
 // Seam: handoff sanity — the summary passes before any restart. Expected
 // values come from the pinned prompt's own sections, never the summarizer.
 func TestCheckHandoffAcceptsFullSummary(t *testing.T) {
-	handoff := "## Task\nDo the thing\n\n## Context\nRepo emberloop.\n\n## Progress\nRead a.md.\n\n## Next steps\nEdit b.md.\n\n## Reference\n`emberloop context`\n"
+	handoff := "## Task\nDo the thing\n\n## Context\nRepo el.\n\n## Progress\nRead a.md.\n\n## Next steps\nEdit b.md.\n\n## Reference\n`el context`\n"
 	if err := CheckHandoff(handoff); err != nil {
 		t.Errorf("full handoff rejected: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestCompressPromptIsPinnedWithTheHandoffSections(t *testing.T) {
 			t.Errorf("pinned prompt lacks %q", section)
 		}
 	}
-	if strings.Contains(CompressPrompt, "emberloop://") {
+	if strings.Contains(CompressPrompt, "el://") {
 		t.Error("pinned prompt must not read the skill library at runtime")
 	}
 }
@@ -88,7 +88,7 @@ func (f *summarizeFake) run(cmd string, args []string, _ ExecOpts) (Result, erro
 	return Result{Stdout: f.handoff}, nil
 }
 
-const summarizeHandoff = "## Task\nDo the thing\n\n## Context\nRepo emberloop.\n\n## Progress\nRead a.md.\n\n## Next steps\nEdit b.md.\n\n## Reference\n`emberloop context`\n"
+const summarizeHandoff = "## Task\nDo the thing\n\n## Context\nRepo el.\n\n## Progress\nRead a.md.\n\n## Next steps\nEdit b.md.\n\n## Reference\n`el context`\n"
 
 // writeSummarizeTranscript writes a small pig transcript and returns its path.
 func writeSummarizeTranscript(t *testing.T) string {
@@ -96,8 +96,8 @@ func writeSummarizeTranscript(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "sess.jsonl")
 	writeLines(t, path,
 		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`+"\n"+
-			pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+
-			pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+			pigCallLine("s1", "a1", "call_1", "mcp__el__read")+
+			pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	return path
 }
 
@@ -157,7 +157,7 @@ func TestSummarizeCarriesLongTranscriptsWhole(t *testing.T) {
 	isolateState(t)
 	long := strings.Repeat("y", 200000)
 	path := filepath.Join(t.TempDir(), "sess.jsonl")
-	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", long))
+	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", long))
 	fake := &summarizeFake{handoff: summarizeHandoff}
 	if _, err := SummarizeSession(fake.run, "pig", path, "pig-cheap", 2000000); err != nil {
 		t.Fatalf("summarize: %v", err)
@@ -204,7 +204,7 @@ func TestSummarize228kTranscriptWithOpenRouterDeepSeek(t *testing.T) {
 	isolateState(t)
 	long := strings.Repeat("x", 912000) // ~228k tokens rendered
 	path := filepath.Join(t.TempDir(), "sess.jsonl")
-	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", long))
+	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", long))
 	fake := &summarizeFake{handoff: summarizeHandoff}
 	model := "openrouter/deepseek/deepseek-v4-flash-0731"
 	window := ModelWindow(model, nil)
@@ -340,8 +340,8 @@ func TestCompressPaneSummarizesAndRestarts(t *testing.T) {
 	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
 	oldID := writeCompressWorker(t,
 		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`+"\n"+
-			pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+
-			pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+			pigCallLine("s1", "a1", "call_1", "mcp__el__read")+
+			pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	next, err := CompressPane(fake.run, "pane-1", compressSettings())
 	if err != nil {
@@ -386,7 +386,7 @@ func TestCompressPaneContinuesAnInterruptedStep(t *testing.T) {
 	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
 	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 2*time.Second
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
-	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	// The open tool call lands while the restart waits at the boundary.
 	go func() {
 		time.Sleep(40 * time.Millisecond)
@@ -396,7 +396,7 @@ func TestCompressPaneContinuesAnInterruptedStep(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	}()
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	if _, err := CompressPane(fake.run, "pane-1", compressSettings()); err != nil {
@@ -415,7 +415,7 @@ func TestCompressPaneContinuesAnInterruptedStep(t *testing.T) {
 // no relaunch, identity unchanged.
 func TestCompressPaneRefusesWithoutModel(t *testing.T) {
 	isolateState(t)
-	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__read")+pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	if _, err := CompressPane(fake.run, "pane-1", tools.Settings{}); err == nil {
 		t.Fatal("unset model must refuse")
@@ -439,7 +439,7 @@ func TestCompressPaneFailureKeepsOldSession(t *testing.T) {
 	oldPoll, oldWait := pollEvery, paneStopWait
 	pollEvery, paneStopWait = 5*time.Millisecond, 50*time.Millisecond
 	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
-	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__read")+pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: "no sections here"}
 	if _, err := CompressPane(fake.run, "pane-1", compressSettings()); err == nil {
 		t.Fatal("bad summary must report")

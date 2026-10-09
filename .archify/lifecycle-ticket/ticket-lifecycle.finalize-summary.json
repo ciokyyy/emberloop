@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "lifecycle",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/candidate.json",
+    "sha256": "1879600db94b80c82f6fc6acf95a0efe70beee5d0523fb82350109a910eb5c14",
+    "bytes": 2438
+  },
+  "artifact": {
+    "path": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/ticket-lifecycle.html",
+    "sha256": "5777a25a9c50e63a8d20b183e72bb37e16a363d6c0b64c3d6e6615e187c13d29",
+    "bytes": 760065
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/ticket-lifecycle.finalize.json",
+    "summaryReceipt": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/ticket-lifecycle.finalize-summary.json",
+    "browserCheckReceipt": "/home/cioky/Projects/emberloop/.archify/lifecycle-ticket/ticket-lifecycle.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.0.1",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-07T12:53:11.491Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 3598
+}

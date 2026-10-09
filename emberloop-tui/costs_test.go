@@ -43,7 +43,7 @@ func costsFixture(t *testing.T) (stateDir, repo string) {
 	writeSpec(t, repo, "alpha", []ticketFile{{"01-one.md", "ready-for-agent"}})
 	specPath := filepath.Join(repo, ".scratch", "alpha", "spec.md")
 	issues := filepath.Join(repo, ".scratch", "alpha", "issues")
-	wt := filepath.Join(repo, ".emberloop-worktrees", "01-one")
+	wt := filepath.Join(repo, ".el-worktrees", "01-one")
 
 	writeJSON(t, filepath.Join(stateDir, "workers.json"), map[string]any{
 		"01-one": map[string]any{
@@ -78,7 +78,7 @@ func costsFixture(t *testing.T) (stateDir, repo string) {
 	writeLines(t, filepath.Join(stateDir, "archive", "alpha", "01-one", "memory.jsonl"), []string{
 		`{"agent":"01-one","at":"2026-10-06T10:00:00Z","pid":10,"name":"pig","rss":1000}`,
 		`{"agent":"01-one","at":"2026-10-06T10:05:00Z","pid":10,"name":"pig","rss":2000}`,
-		`{"agent":"01-one","at":"2026-10-06T10:05:00Z","pid":11,"name":"emberloop-mcp","rss":500}`,
+		`{"agent":"01-one","at":"2026-10-06T10:05:00Z","pid":11,"name":"el-mcp","rss":500}`,
 	})
 	writeLines(t, filepath.Join(stateDir, "archive", "alpha", "orch", "memory.jsonl"), []string{
 		`{"agent":"orch","at":"2026-10-06T10:05:00Z","pid":20,"name":"claude","rss":4000}`,

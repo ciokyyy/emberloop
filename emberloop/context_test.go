@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -103,7 +103,7 @@ func TestTopThreeToolsByResultSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []ToolSize{{"mcp__emberloop__bash", 30}, {"mcp__emberloop__grep", 20}, {"mcp__emberloop__read", 10}}
+	want := []ToolSize{{"mcp__el__bash", 30}, {"mcp__el__grep", 20}, {"mcp__el__read", 10}}
 	if len(snap.TopTools) != len(want) {
 		t.Fatalf("pig top = %+v, want %+v", snap.TopTools, want)
 	}

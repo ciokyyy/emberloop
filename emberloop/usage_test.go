@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -227,7 +227,7 @@ func TestClaudeCostStateBecomesPerModelCostRows(t *testing.T) {
 	}
 }
 
-// Seam 2: the usage tail — the session's own emberloop process tails the harness
+// Seam 2: the usage tail — the session's own el process tails the harness
 // transcript from a stored byte offset and appends new records to the
 // agent's log. Fake transcript appended in steps, the way the archive copier
 // tests do it.
@@ -385,8 +385,8 @@ func TestTailUsageScopesDedupeKeysPerAgent(t *testing.T) {
 	}
 }
 
-// Seam 3: wiring — the harness launch tells its emberloop-mcp which transcript to
-// tail, and the tail loop follows it. The session's own emberloop process tails
+// Seam 3: wiring — the harness launch tells its el-mcp which transcript to
+// tail, and the tail loop follows it. The session's own el process tails
 // as requests happen; the final pass when it settles is a plain re-tail.
 
 func envValue(env []string, key string) (string, bool) {
@@ -406,7 +406,7 @@ func TestHarnessCommandsExportUsageTailIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"EMBERLOOP_HARNESS=pig", "EMBERLOOP_SESSION_ID=sess-1", "EMBERLOOP_SESSION_DIR=/tmp/sess"} {
+	for _, want := range []string{"EL_HARNESS=pig", "EL_SESSION_ID=sess-1", "EL_SESSION_DIR=/tmp/sess"} {
 		k, v, _ := strings.Cut(want, "=")
 		if got, ok := envValue(pig.Env, k); !ok || got != v {
 			t.Errorf("pig env %q = %q, want %q", k, got, v)
@@ -416,17 +416,17 @@ func TestHarnessCommandsExportUsageTailIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := envValue(label.Env, "EMBERLOOP_SESSION_ID"); got != "01-x" {
+	if got, _ := envValue(label.Env, "EL_SESSION_ID"); got != "01-x" {
 		t.Errorf("pig label session id = %q, want 01-x", got)
 	}
-	if _, ok := envValue(label.Env, "EMBERLOOP_SESSION_DIR"); ok {
-		t.Errorf("pig with no dir must not set EMBERLOOP_SESSION_DIR: %q", label.Env)
+	if _, ok := envValue(label.Env, "EL_SESSION_DIR"); ok {
+		t.Errorf("pig with no dir must not set EL_SESSION_DIR: %q", label.Env)
 	}
 	bare, err := BuildCommand("pig", Session{Role: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := envValue(bare.Env, "EMBERLOOP_SESSION_ID"); ok {
+	if _, ok := envValue(bare.Env, "EL_SESSION_ID"); ok {
 		t.Errorf("a session with no id has no transcript to tail: %q", bare.Env)
 	}
 	// Claude's transcript is named by its session id; without one there is
@@ -435,7 +435,7 @@ func TestHarnessCommandsExportUsageTailIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The tail identity must also reach emberloop-mcp through the MCP config:
+	// The tail identity must also reach el-mcp through the MCP config:
 	// claude starts its MCP servers from that config's env map, not from
 	// its own process env, so Command.Env alone would leave the tailer off.
 	cfgRaw, err := os.ReadFile(mcpConfigPath(Session{Role: "review", ID: "sess-9", Dir: "/tmp/x"}))
@@ -450,45 +450,45 @@ func TestHarnessCommandsExportUsageTailIdentity(t *testing.T) {
 	if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
 		t.Fatalf("claude MCP config is not JSON: %v", err)
 	}
-	mcpEnv := cfg.Servers["emberloop"].Env
-	for _, want := range []string{"EMBERLOOP_HARNESS=claude", "EMBERLOOP_SESSION_ID=sess-9"} {
+	mcpEnv := cfg.Servers["el"].Env
+	for _, want := range []string{"EL_HARNESS=claude", "EL_SESSION_ID=sess-9"} {
 		k, v, _ := strings.Cut(want, "=")
 		if mcpEnv[k] != v {
 			t.Errorf("claude MCP config env %q = %q, want %q", k, mcpEnv[k], v)
 		}
 	}
-	for _, want := range []string{"EMBERLOOP_HARNESS=claude", "EMBERLOOP_SESSION_ID=sess-9"} {
+	for _, want := range []string{"EL_HARNESS=claude", "EL_SESSION_ID=sess-9"} {
 		k, v, _ := strings.Cut(want, "=")
 		if got, ok := envValue(claude.Env, k); !ok || got != v {
 			t.Errorf("claude env %q = %q, want %q", k, got, v)
 		}
 	}
-	if _, ok := envValue(claude.Env, "EMBERLOOP_SESSION_DIR"); ok {
+	if _, ok := envValue(claude.Env, "EL_SESSION_DIR"); ok {
 		t.Errorf("claude takes no session dir: %q", claude.Env)
 	}
 	noid, err := BuildCommand("claude", Session{Role: "review", Label: "01-x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := envValue(noid.Env, "EMBERLOOP_SESSION_ID"); ok {
+	if _, ok := envValue(noid.Env, "EL_SESSION_ID"); ok {
 		t.Errorf("claude with no session id has no transcript to tail: %q", noid.Env)
 	}
 }
 
 func TestUsageTailFromEnvStaysOffWithoutASession(t *testing.T) {
-	t.Setenv("EMBERLOOP_HARNESS", "pig")
-	t.Setenv("EMBERLOOP_SESSION_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "w1")
+	t.Setenv("EL_HARNESS", "pig")
+	t.Setenv("EL_SESSION_ID", "")
+	t.Setenv("EL_AGENT_ID", "w1")
 	if _, ok := UsageTailFromEnv(); ok {
 		t.Error("no session id means no transcript: the tailer stays off")
 	}
-	t.Setenv("EMBERLOOP_SESSION_ID", "s1")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_SESSION_ID", "s1")
+	t.Setenv("EL_AGENT_ID", "")
 	if _, ok := UsageTailFromEnv(); ok {
 		t.Error("no agent id means no log owner: the tailer stays off")
 	}
-	t.Setenv("EMBERLOOP_AGENT_ID", "w1")
-	t.Setenv("EMBERLOOP_HARNESS", "nope")
+	t.Setenv("EL_AGENT_ID", "w1")
+	t.Setenv("EL_HARNESS", "nope")
 	if _, ok := UsageTailFromEnv(); ok {
 		t.Error("unknown harness means no parser: the tailer stays off")
 	}
@@ -498,9 +498,9 @@ func TestUsageTailLoopFollowsATranscript(t *testing.T) {
 	isolateState(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("EMBERLOOP_HARNESS", "pig")
-	t.Setenv("EMBERLOOP_SESSION_ID", "tail-1")
-	t.Setenv("EMBERLOOP_AGENT_ID", "agent-1")
+	t.Setenv("EL_HARNESS", "pig")
+	t.Setenv("EL_SESSION_ID", "tail-1")
+	t.Setenv("EL_AGENT_ID", "agent-1")
 	cfg, ok := UsageTailFromEnv()
 	if !ok {
 		t.Fatal("tail config must resolve from the session environment")
@@ -533,10 +533,10 @@ func TestUsageTailLoopFollowsATranscript(t *testing.T) {
 	}
 }
 
-func TestTailUsageHonoursEmberloopStateDir(t *testing.T) {
+func TestTailUsageHonoursElStateDir(t *testing.T) {
 	isolateState(t)
 	dir := t.TempDir()
-	t.Setenv("EMBERLOOP_STATE_DIR", dir)
+	t.Setenv("EL_STATE_DIR", dir)
 	transcript := filepath.Join(t.TempDir(), "sess.jsonl")
 	writeLines(t, transcript, pigLine("m1", 5))
 	if n, err := TailUsage(transcript, "w1", "pig"); n != 1 || err != nil {
@@ -544,7 +544,7 @@ func TestTailUsageHonoursEmberloopStateDir(t *testing.T) {
 	}
 	got := readUsageLog(t, "w1")
 	if len(got) != 1 || got[0].Input != 5 {
-		t.Fatalf("database under EMBERLOOP_STATE_DIR holds %+v, want the tailed request", got)
+		t.Fatalf("database under EL_STATE_DIR holds %+v, want the tailed request", got)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "usage", "w1.jsonl")); !os.IsNotExist(err) {
 		t.Errorf("no per-agent JSONL may be written: stat err = %v", err)

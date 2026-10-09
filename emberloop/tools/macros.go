@@ -1,12 +1,12 @@
 package tools
 
-// Emberloop macros (input-queue ticket 03): the row's own commands. A macro is a
+// El macros (input-queue ticket 03): the row's own commands. A macro is a
 // name, a kind (a prompt template or a built-in action) and a template with
 // one {{args}} slot. Typing a registered macro in the row expands and
 // delivers it, or runs the action; /compress ships as the first built-in and
 // calls the existing compress request. Text starting with a slash that names
 // no macro is a normal message. A macro shadowing a built-in warns at
-// settings load, and emberloop's macro wins.
+// settings load, and el's macro wins.
 
 import (
 	"fmt"
@@ -41,7 +41,7 @@ func NormalizeMacroName(v string) string {
 func NormalizeMacroKind(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
 
 // IsBuiltinMacro reports whether name calls a built-in action macro. The
-// check is exact after normalization: emberloop's macros win on a collision.
+// check is exact after normalization: el's macros win on a collision.
 // Built-ins take no arguments: trailing words on a /compress call are ignored.
 func IsBuiltinMacro(name string) bool {
 	return NormalizeMacroName(name) == MacroBuiltinCompress
@@ -77,7 +77,7 @@ func ExpandMacro(template, args string) string {
 
 // validPromptMacros keeps the usable prompt entries of s.Macros in order:
 // named, kind prompt, non-empty template, first of its name, and never a
-// built-in shadow (emberloop's macro wins there).
+// built-in shadow (el's macro wins there).
 func (s Settings) validPromptMacros() []MacroSetting {
 	seen := map[string]bool{}
 	var out []MacroSetting
@@ -113,7 +113,7 @@ func (s Settings) LookupMacro(name string) (MacroSetting, bool) {
 // ValidateMacros checks s.Macros at settings load. A duplicate name, an
 // empty name, an unknown kind, an unknown built-in, or an empty prompt
 // template is rejected (the first usable entry wins); a user entry naming a
-// built-in warns and is dropped, since emberloop's macro wins the collision.
+// built-in warns and is dropped, since el's macro wins the collision.
 func (s Settings) ValidateMacros() (valid []MacroSetting, warnings []string, err error) {
 	seen := map[string]bool{}
 	var errs []string
@@ -126,7 +126,7 @@ func (s Settings) ValidateMacros() (valid []MacroSetting, warnings []string, err
 		case seen[name]:
 			errs = append(errs, fmt.Sprintf("duplicate macro %q: keeping the first entry", name))
 		case IsBuiltinMacro(name):
-			warnings = append(warnings, fmt.Sprintf("macro %q shadows the built-in: emberloop's macro wins", name))
+			warnings = append(warnings, fmt.Sprintf("macro %q shadows the built-in: el's macro wins", name))
 			seen[name] = true
 		case kind == MacroKindBuiltin:
 			errs = append(errs, fmt.Sprintf("unknown built-in macro %q: dropped", name))

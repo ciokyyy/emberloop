@@ -58,13 +58,37 @@ func TestHelperACPAdapter(t *testing.T) {
 		}
 		switch m.Method {
 		case "initialize":
-			send(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{}})
+			res := map[string]any{}
+			if mode == "steer" {
+				res["_meta"] = map[string]any{"steering": map[string]any{"supported": true}}
+			}
+			send(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": res})
+		case "_session/steering":
+			meta, _ := m.Params["_meta"].(map[string]any)
+			st, _ := meta["steering"].(map[string]any)
+			outcome := "promptRequired"
+			if m.Params["sessionId"] == "acp-1" && st["idleBehavior"] == "promptRequired" {
+				outcome = "injected"
+			}
+			send(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{"outcome": outcome}})
 		case "session/new":
 			send(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{"sessionId": "acp-1"}})
 		case "session/load":
 			send(map[string]any{"jsonrpc": "2.0", "id": *m.ID, "result": map[string]any{}})
 		case "session/prompt":
 			promptID := *m.ID
+			if mode == "slowturn" {
+				// A healthy long turn: traffic every 100ms for 700ms, longer than the idle bound.
+				for i := 0; i < 7; i++ {
+					time.Sleep(100 * time.Millisecond)
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+						"sessionId": "acp-1",
+						"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "."}},
+					}})
+				}
+				send(map[string]any{"jsonrpc": "2.0", "id": promptID, "result": map[string]any{"stopReason": "end_turn"}})
+				continue
+			}
 			send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 				"sessionId": "acp-1",
 				"update": map[string]any{
@@ -195,4 +219,50 @@ func TestACPCloseKillsDeafAdapter(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("close hung on deaf adapter")
 	}
+}
+
+// Initialize reads the advertised steering capability and Steer speaks
+// _session/steering with the promptRequired opt-in.
+func TestACPWireSteering(t *testing.T) {
+	conn := spawnHelperConn(t, "steer")
+	defer conn.Close()
+	if err := conn.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	sc, ok := conn.(acpSteerer)
+	if !ok || !sc.SteeringSupported() {
+		t.Fatal("steering capability not read from initialize")
+	}
+	injected, err := sc.Steer("acp-1", "go left")
+	if err != nil || !injected {
+		t.Fatalf("Steer = %v, %v; want injected", injected, err)
+	}
+}
+
+// An adapter that does not advertise steering reports it unsupported.
+func TestACPWireNoSteeringByDefault(t *testing.T) {
+	conn := spawnHelperConn(t, "speak")
+	defer conn.Close()
+	if err := conn.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	if conn.(acpSteerer).SteeringSupported() {
+		t.Fatal("steering reported without the capability")
+	}
+}
+
+// The prompt timeout bounds silence, not wall clock: a turn that keeps
+// streaming outlives the bound.
+func TestACPPromptTimeoutIsIdleBound(t *testing.T) {
+	conn := spawnHelperConn(t, "slowturn")
+	pc, ok := conn.(*acpProcessConn)
+	if !ok {
+		t.Fatal("not a process conn")
+	}
+	pc.promptTimeout = 300 * time.Millisecond
+	stop, err := conn.Prompt("acp-1", "go", acpCallbacks{})
+	if err != nil || stop != "end_turn" {
+		t.Fatalf("prompt = %q, %v; want end_turn after 700ms of traffic", stop, err)
+	}
+	_ = conn.Close()
 }

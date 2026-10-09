@@ -16,7 +16,7 @@ import (
 func TestWebsearchParallelMergesProviders(t *testing.T) {
 	s := startSearchServers(t)
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "parallel")
+	t.Setenv("EL_SEARCH_MODE", "parallel")
 	out, err := callWebsearch(t, map[string]any{"query": "golang sqlite"})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestWebsearchParallelFusesSharedUrlsFirst(t *testing.T) {
 		{"title":"Exa Only","url":"https://example.com/exa","text":"e"},
 		{"title":"Shared","url":"https://example.com/shared","text":"both"}]}`
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "parallel")
+	t.Setenv("EL_SEARCH_MODE", "parallel")
 	out, err := callWebsearch(t, map[string]any{"query": "golang sqlite"})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestWebsearchParallelSurvivesOneFailure(t *testing.T) {
 	s.braveCode = http.StatusInternalServerError
 	s.braveBody = "boom"
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "parallel")
+	t.Setenv("EL_SEARCH_MODE", "parallel")
 	out, err := callWebsearch(t, map[string]any{"query": "golang sqlite"})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestWebsearchParallelSurvivesOneFailure(t *testing.T) {
 func TestWebsearchParallelNamedProviderRunsAlone(t *testing.T) {
 	s := startSearchServers(t)
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "parallel")
+	t.Setenv("EL_SEARCH_MODE", "parallel")
 	out, err := callWebsearch(t, map[string]any{"query": "golang sqlite", "provider": "brave"})
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestWebsearchParallelNamedProviderRunsAlone(t *testing.T) {
 func TestWebsearchParallelCaches(t *testing.T) {
 	s := startSearchServers(t)
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "parallel")
+	t.Setenv("EL_SEARCH_MODE", "parallel")
 	if _, err := callWebsearch(t, map[string]any{"query": "golang sqlite"}); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestWebsearchSchemaHasNoMode(t *testing.T) {
 func TestWebsearchParallelFooterShowsBothQuotas(t *testing.T) {
 	s := startSearchServers(t)
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "parallel")
+	t.Setenv("EL_SEARCH_MODE", "parallel")
 	out, err := callWebsearch(t, map[string]any{"query": "golang sqlite"})
 	if err != nil {
 		t.Fatal(err)

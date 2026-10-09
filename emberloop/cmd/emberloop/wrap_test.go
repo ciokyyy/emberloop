@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// `emberloop wrap` needs a known harness and a command; without a terminal
+// `el wrap` needs a known harness and a command; without a terminal
 // the child runs plainly, which is what the success path asserts here.
 
 func TestWrapRejectsUnknownHarness(t *testing.T) {

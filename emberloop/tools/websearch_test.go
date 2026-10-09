@@ -94,16 +94,16 @@ func startSearchServers(t *testing.T) *searchServers {
 // call touches no live provider, no real state dir and no real settings.
 func searchEnv(t *testing.T, s *searchServers) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing-project.json"))
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing-project.json"))
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	t.Setenv("BRAVE_API_KEY", "brave-test-key")
 	t.Setenv("EXA_API_KEY", "exa-test-key")
-	t.Setenv("EMBERLOOP_BRAVE_ENDPOINT", s.brave.URL)
-	t.Setenv("EMBERLOOP_EXA_ENDPOINT", s.exa.URL)
-	t.Setenv("EMBERLOOP_SEARCH_TIMEOUT", "5s")
+	t.Setenv("EL_BRAVE_ENDPOINT", s.brave.URL)
+	t.Setenv("EL_EXA_ENDPOINT", s.exa.URL)
+	t.Setenv("EL_SEARCH_TIMEOUT", "5s")
 }
 
 func callWebsearch(t *testing.T, args map[string]any) (string, error) {
@@ -263,7 +263,7 @@ func TestWebsearchNamedMissingKeyErrors(t *testing.T) {
 func TestWebsearchDefaultProviderFromSettings(t *testing.T) {
 	s := startSearchServers(t)
 	searchEnv(t, s)
-	settingsPath := os.Getenv("EMBERLOOP_SETTINGS")
+	settingsPath := os.Getenv("EL_SETTINGS")
 	if err := os.WriteFile(settingsPath, []byte(`{"search":{"provider":"exa"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestWebsearchDefaultProviderFromSettings(t *testing.T) {
 func TestWebsearchAutoFallsBackOnTimeout(t *testing.T) {
 	s := startSearchServers(t)
 	searchEnv(t, s)
-	t.Setenv("EMBERLOOP_SEARCH_TIMEOUT", "50ms")
+	t.Setenv("EL_SEARCH_TIMEOUT", "50ms")
 	s.brave.Close()
 	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&s.braveHits, 1)
@@ -293,7 +293,7 @@ func TestWebsearchAutoFallsBackOnTimeout(t *testing.T) {
 		}
 	}))
 	t.Cleanup(hang.Close)
-	t.Setenv("EMBERLOOP_BRAVE_ENDPOINT", hang.URL)
+	t.Setenv("EL_BRAVE_ENDPOINT", hang.URL)
 	out, err := callWebsearch(t, map[string]any{"query": "golang sqlite"})
 	if err != nil {
 		t.Fatal(err)

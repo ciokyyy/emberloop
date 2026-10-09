@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 // DefaultHarness is the harness a slot with nothing chosen launches with.
 const DefaultHarness = "pig"
 
-// The settings slots emberloop resolves at a launch site, named as tools.RoleSlots
+// The settings slots el resolves at a launch site, named as tools.RoleSlots
 // spells them. The orchestrator slot is resolved in the launcher's own package.
 const (
 	slotImplementer = "implementer"
@@ -67,11 +67,11 @@ func firstSet(values ...string) string {
 	return ""
 }
 
-// readonlyHarnessChoice is EMBERLOOP_READONLY_HARNESS as the resolver's flag layer.
+// readonlyHarnessChoice is EL_READONLY_HARNESS as the resolver's flag layer.
 // It is kept as a high-precedence override for compatibility, so it wins over
 // whatever slot or agent type the launch would otherwise use.
 func readonlyHarnessChoice() Choice {
-	if h := os.Getenv("EMBERLOOP_READONLY_HARNESS"); h != "" {
+	if h := os.Getenv("EL_READONLY_HARNESS"); h != "" {
 		return Choice{Harness: h}
 	}
 	return Choice{}

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -972,7 +972,7 @@ func driverUnknownOrNil(unknown map[string][]string) map[string][]string {
 
 // RunDriverCheck reads the spec's tickets from disk, checks the graph through
 // RunDriver, and prints the start order, one ticket id per line. It is what
-// `emberloop implement <spec> --driver --check` runs.
+// `el implement <spec> --driver --check` runs.
 func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
 	files, err := readDriverFiles(spec)
 	if err != nil {
@@ -1011,13 +1011,13 @@ func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
 	// Every worker records the spec, the way workers spawned from an
 	// implement session do. Restored on return: the variable is process
 	// global and the value belongs to this run.
-	oldSpec, hadSpec := os.LookupEnv("EMBERLOOP_SPEC")
-	_ = os.Setenv("EMBERLOOP_SPEC", spec.Spec)
+	oldSpec, hadSpec := os.LookupEnv("EL_SPEC")
+	_ = os.Setenv("EL_SPEC", spec.Spec)
 	defer func() {
 		if hadSpec {
-			_ = os.Setenv("EMBERLOOP_SPEC", oldSpec)
+			_ = os.Setenv("EL_SPEC", oldSpec)
 		} else {
-			_ = os.Unsetenv("EMBERLOOP_SPEC")
+			_ = os.Unsetenv("EL_SPEC")
 		}
 	}()
 	res, err := RunDriver(spec, liveDriverWorld(spec, repo, files))
@@ -1220,7 +1220,7 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 		// herdr notification show <title> [--body TEXT], per herdr
 		// notification --help.
 		Notify: func(ticketID, message string) error {
-			res, err := notifyExec(herdrBin(), []string{"notification", "show", "emberloop: ticket " + ticketID + " needs you", "--body", message}, ExecOpts{Timeout: 30 * time.Second})
+			res, err := notifyExec(herdrBin(), []string{"notification", "show", "el: ticket " + ticketID + " needs you", "--body", message}, ExecOpts{Timeout: 30 * time.Second})
 			if err != nil {
 				return err
 			}

@@ -11,12 +11,12 @@ import (
 	"example.com/emberloop/tools"
 )
 
-const contextUsage = `usage: emberloop context [--harness h] [--dir d] <session-id>
+const contextUsage = `usage: el context [--harness h] [--dir d] <session-id>
 
 Print one session's context numbers: model, context tokens against the
 window, compress threshold, outstanding tool calls and top tools.`
 
-// runContext serves `emberloop context`: the core slice verifiable without
+// runContext serves `el context`: the core slice verifiable without
 // a header strip or a supervisor. dir overrides the session directory a
 // harness that takes one reads from; without --harness every registered
 // harness is tried in name order.
@@ -32,9 +32,9 @@ func runContext(argv []string, out io.Writer) error {
 		return fmt.Errorf("context needs a session id\n%s", contextUsage)
 	}
 	id := fs.Arg(0)
-	names := emberloop.HarnessNames()
+	names := el.HarnessNames()
 	if *harness != "" {
-		if emberloop.Registered(*harness) == nil {
+		if el.Registered(*harness) == nil {
 			return fmt.Errorf("unknown harness %q (have %s)\n%s", *harness, strings.Join(names, ", "), contextUsage)
 		}
 		names = []string{*harness}
@@ -42,12 +42,12 @@ func runContext(argv []string, out io.Writer) error {
 	cwd, _ := os.Getwd()
 	settings := tools.EffectiveSettings(cwd)
 	for _, name := range names {
-		h := emberloop.Registered(name)
-		path := emberloop.FindSession(h.SessionRoot(emberloop.Session{Dir: *dir}), id)
+		h := el.Registered(name)
+		path := el.FindSession(h.SessionRoot(el.Session{Dir: *dir}), id)
 		if path == "" {
 			continue
 		}
-		return emberloop.WriteContextReport(out, name, id, path, settings)
+		return el.WriteContextReport(out, name, id, path, settings)
 	}
 	return fmt.Errorf("no transcript for session %q\n%s", id, contextUsage)
 }

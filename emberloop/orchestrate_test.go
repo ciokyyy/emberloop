@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -78,7 +78,7 @@ func runSpawnTool(t *testing.T) (string, error) {
 	// herdr and hang the test waiting for its own pane to go idle.
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 
 	repo := t.TempDir()
 	ticket := filepath.Join(repo, "20-x.md")
@@ -88,7 +88,7 @@ func runSpawnTool(t *testing.T) (string, error) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	// Keep this test about the spawn: a report warning here would make "must
 	// not warn" fail for a reason unrelated to the tab.
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	spawn, _ := spawnToolForRole(t, "implement")
 	return spawn(repo, map[string]any{"agents": []any{
 		map[string]any{"type": "worker", "ticket": ticket},
@@ -123,12 +123,12 @@ func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
 	t.Cleanup(func() { statePath, spawnGap, spawnExec = oldState, oldGap, oldExec })
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 
 	// No env var and a fresh HOME: the lookup has nowhere to find the
 	// extension, which is the case ticket 19 hit.
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "")
+	t.Setenv("EL_HERDR_REPORT", "")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 
 	repo := t.TempDir()
@@ -151,7 +151,7 @@ func TestSpawnWorkerWarnsWhenReportExtensionIsMissing(t *testing.T) {
 	}
 }
 
-// The worker reaches its brief, and through it the emberloop:// skill addresses,
+// The worker reaches its brief, and through it the el:// skill addresses,
 // with read. The brief lives beside the worker store, outside the worktree;
 // read opens any absolute path, so the launch needs no read exception.
 func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
@@ -160,7 +160,7 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	spawnGap = 0
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	var launched string
 	base := spawnToolFake()
 	spawnExec = func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -175,9 +175,9 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	if err := os.WriteFile(ticket, []byte("# x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SPEC", "/repo/.scratch/p/spec.md")
+	t.Setenv("EL_SPEC", "/repo/.scratch/p/spec.md")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	spawn, _ := spawnToolForRole(t, "implement")
 	if _, err := spawn(repo, map[string]any{"agents": []any{
 		map[string]any{"type": "worker", "ticket": ticket},
@@ -187,7 +187,7 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 	if launched == "" {
 		t.Fatal("the worker was never launched")
 	}
-	if strings.Contains(launched, "EMBERLOOP_READ_ALLOW") {
+	if strings.Contains(launched, "EL_READ_ALLOW") {
 		t.Errorf("worker launch must not carry a read exception; read opens any path:\n%s", launched)
 	}
 	// Spawned from an implement session, the worker records its spec.
@@ -196,6 +196,6 @@ func TestWorkerLaunchCanReadItsBrief(t *testing.T) {
 		t.Fatal(err)
 	}
 	if w.Spec != "/repo/.scratch/p/spec.md" {
-		t.Errorf("worker spec = %q, want the session's EMBERLOOP_SPEC", w.Spec)
+		t.Errorf("worker spec = %q, want the session's EL_SPEC", w.Spec)
 	}
 }

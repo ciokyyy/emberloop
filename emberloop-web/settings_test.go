@@ -22,8 +22,8 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 	if err := os.WriteFile(settings, []byte(settingsBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", settings)
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_SETTINGS", settings)
+	t.Setenv("EL_MAX_WORKERS", "")
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	t.Cleanup(srv.Close)
@@ -86,7 +86,7 @@ func TestSettingsReadReturnsMaxWorkersAndEnvFlag(t *testing.T) {
 		t.Fatalf("settings = %+v, want max_workers 5 with no env override", out)
 	}
 
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "2")
+	t.Setenv("EL_MAX_WORKERS", "2")
 	out, _ = getSettingsView(t, srv.URL)
 	if out.MaxWorkers != 2 || !out.MaxWorkersFromEnv {
 		t.Fatalf("settings under env = %+v, want max_workers 2 from env", out)
@@ -206,7 +206,7 @@ func TestSettingsWriteChangesLiveCap(t *testing.T) {
 // the file without moving the live cap.
 func TestSettingsEnvOverrideWinsOverWrite(t *testing.T) {
 	srv, settings := settingsServer(t, `{"max_workers": 5, "roles": {}}`)
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "1")
+	t.Setenv("EL_MAX_WORKERS", "1")
 
 	out, code := putSettingsBody(t, srv.URL, `{"max_workers": 3}`)
 	if code != http.StatusOK {
@@ -227,5 +227,53 @@ func TestSettingsEnvOverrideWinsOverWrite(t *testing.T) {
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
 	if got := d.MaxRunning(); got != 1 {
 		t.Fatalf("live cap under env = %d, want 1", got)
+	}
+}
+
+// The title role is optional: an empty role clears it, and session_titles
+// round-trips next to the roles; the view reports the env lock.
+func TestSettingsTitleRoleAndSwitch(t *testing.T) {
+	srv, file := settingsServer(t, `{"roles":{"worker":{"harness":"pig","model":"x"}}}`)
+	t.Setenv("EL_SESSION_TITLES", "")
+
+	out, code := putSettingsBody(t, srv.URL, `{"roles":{"pig-title":{"harness":"pig","model":"x"}},"session_titles":false}`)
+	if code != http.StatusOK || out.Roles["pig-title"].Model != "x" || out.Roles["worker"].Model != "x" {
+		t.Fatalf("put title = %+v (%d)", out, code)
+	}
+	raw, _ := os.ReadFile(file)
+	if !strings.Contains(string(raw), `"session_titles": false`) {
+		t.Fatalf("settings file lacks session_titles: %s", raw)
+	}
+	var view struct {
+		SessionTitles        bool `json:"session_titles"`
+		SessionTitlesFromEnv bool `json:"session_titles_from_env"`
+	}
+	resp, _ := http.Get(srv.URL + "/api/settings")
+	_ = json.NewDecoder(resp.Body).Decode(&view)
+	resp.Body.Close()
+	if view.SessionTitles || view.SessionTitlesFromEnv {
+		t.Fatalf("view = %+v, want off and not env-locked", view)
+	}
+
+	out, code = putSettingsBody(t, srv.URL, `{"roles":{"pig-title":{"harness":"","model":""}}}`)
+	if code != http.StatusOK {
+		t.Fatalf("clear status = %d", code)
+	}
+	if _, ok := out.Roles["pig-title"]; ok || out.Roles["worker"].Model != "x" {
+		t.Fatalf("clear left roles = %+v", out.Roles)
+	}
+	if _, code := putSettingsBody(t, srv.URL, `{"roles":{"pig-title":{"harness":"pig","model":""}}}`); code != http.StatusBadRequest {
+		t.Fatalf("half-empty role status = %d, want 400", code)
+	}
+	if _, code := putSettingsBody(t, srv.URL, `{"roles":{"pig-title":{"harness":"claude","model":"haiku"}}}`); code != http.StatusBadRequest {
+		t.Fatalf("claude pig-title status = %d, want 400", code)
+	}
+
+	t.Setenv("EL_SESSION_TITLES", "0")
+	resp, _ = http.Get(srv.URL + "/api/settings")
+	_ = json.NewDecoder(resp.Body).Decode(&view)
+	resp.Body.Close()
+	if !view.SessionTitlesFromEnv {
+		t.Fatal("env override not reported")
 	}
 }

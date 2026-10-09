@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// Seam: top-level session with emberloop input row. Tests sizing, draft isolation,
+// Seam: top-level session with el input row. Tests sizing, draft isolation,
 // injection holding, stale draft timeout with fake clock, submission ordering,
 // steering vs queueing, multiline, paste, history and interrupts.
 
@@ -122,7 +122,7 @@ func TestWrapInputRowTypingNeverReachesChildUntilSubmit(t *testing.T) {
 	<-wrapped
 }
 
-// 3. A queued emberloop injection is not delivered while row holds a draft.
+// 3. A queued el injection is not delivered while row holds a draft.
 // After user submits, user message delivers before pending injection.
 func TestWrapInputRowHoldsInjectionsUntilSubmit(t *testing.T) {
 	spawnTestState(t)

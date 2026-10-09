@@ -1,4 +1,4 @@
-// Package tui is the emberloop dashboard: a bubbletea terminal UI in its own Go
+// Package tui is the el dashboard: a bubbletea terminal UI in its own Go
 // module so the core stays dependency-free. The deep module is the Snapshot
 // read model — repos holding their specs, each with run status, ticket
 // progress and per-ticket status — which later tickets extend with agents,

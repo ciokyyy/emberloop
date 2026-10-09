@@ -1,5 +1,10 @@
 package tools
 
+import (
+	"context"
+	"encoding/json"
+)
+
 // renamed serves an inner tool under a new name. Description and schema stay
 // the original's, so agents see the same capability under the name settings
 // chose. The read-only mark follows the inner tool, so the MCP server keeps
@@ -21,6 +26,15 @@ func (r renamed) ReadOnly() bool {
 	return false
 }
 
+// DaemonProxy follows the inner tool, so a renamed Daemon proxy stays out of
+// execute scripts like the original.
+func (r renamed) DaemonProxy() bool {
+	if p, ok := r.Tool.(DaemonProxy); ok {
+		return p.DaemonProxy()
+	}
+	return false
+}
+
 // OriginalName is the inner tool's server-side name, or "" for a native
 // tool: the execute stub and the role resolution read the original through
 // a rename instead of losing the MCP marker.
@@ -38,4 +52,9 @@ func (r renamed) MCPServer() string {
 		return s.MCPServer()
 	}
 	return ""
+}
+
+// ExecuteMulti forwards images from the inner tool.
+func (r renamed) ExecuteMulti(ctx context.Context, root string, args json.RawMessage) (string, []Image, error) {
+	return ExecuteMulti(ctx, r.Tool, root, args)
 }

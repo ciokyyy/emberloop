@@ -73,14 +73,14 @@ func TestImplementRefusesHeadless(t *testing.T) {
 }
 
 // A top-level session with no flags resolves the orchestrator slot; a flag
-// still wins over it. This is the slot `emberloop implement` launches with.
+// still wins over it. This is the slot `el implement` launches with.
 func TestTopLevelSessionResolvesTheOrchestratorSlot(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"high"}}}`)
-	if got := topLevelChoice(emberloop.Choice{}); got.Harness != "claude" || got.Model != "opus" || got.Effort != "high" {
+	if got := topLevelChoice(el.Choice{}); got.Harness != "claude" || got.Model != "opus" || got.Effort != "high" {
 		t.Errorf("orchestrator slot = %+v, want claude/opus/high", got)
 	}
-	over := topLevelChoice(emberloop.Choice{Harness: "pig", Model: "m", Effort: "low"})
+	over := topLevelChoice(el.Choice{Harness: "pig", Model: "m", Effort: "low"})
 	if over.Harness != "pig" || over.Model != "m" || over.Effort != "low" {
 		t.Errorf("flags must win = %+v, want pig/m/low", over)
 	}
@@ -91,7 +91,7 @@ func TestTopLevelSessionResolvesTheOrchestratorSlot(t *testing.T) {
 func TestClaudeFlagDropsThePigOrchestratorSlotModel(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"pig-model","effort":"high"}}}`)
-	if got := topLevelChoice(emberloop.Choice{Harness: "claude"}); got != (emberloop.Choice{Harness: "claude", Model: "sonnet"}) {
+	if got := topLevelChoice(el.Choice{Harness: "claude"}); got != (el.Choice{Harness: "claude", Model: "sonnet"}) {
 		t.Errorf("orchestrator slot with --claude = %+v, want {claude}", got)
 	}
 }
@@ -107,7 +107,7 @@ func TestEffortFlagReachesTheHarness(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+out+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_PIG", script)
+	t.Setenv("EL_PIG", script)
 	if err := run([]string{"-p", "--effort", "high", "what is it"}); err != nil {
 		t.Fatalf("run with --effort: %v", err)
 	}
@@ -131,8 +131,8 @@ func indexOf(values []string, want string) int {
 	return -1
 }
 
-// `emberloop exec` is the one line every pane types: it takes exactly one
-// launch file. The argv/env round trip itself is covered in the emberloop package;
+// `el exec` is the one line every pane types: it takes exactly one
+// launch file. The argv/env round trip itself is covered in the el package;
 // here the dispatch and its usage error are pinned.
 func TestExecNeedsExactlyOneLaunchFile(t *testing.T) {
 	for _, argv := range [][]string{{"exec"}, {"exec", "a", "b"}} {
@@ -148,9 +148,9 @@ func TestExecFailsOnAMissingLaunchFile(t *testing.T) {
 	}
 }
 
-// `emberloop install` is the one command that replaces the installed binaries.
+// `el install` is the one command that replaces the installed binaries.
 // Here its dispatch and its usage error are pinned; the gate itself is
-// covered in the emberloop package. The unknown flag fails before any exec, so
+// covered in the el package. The unknown flag fails before any exec, so
 // this runs no herdr and no builder.
 func TestInstallRefusesUnknownFlags(t *testing.T) {
 	if err := run([]string{"install", "--bogus"}); err == nil || !strings.Contains(err.Error(), "usage") {
@@ -158,9 +158,9 @@ func TestInstallRefusesUnknownFlags(t *testing.T) {
 	}
 }
 
-// `emberloop tui` opens the dashboard with no arguments. Here its dispatch
+// `el tui` opens the dashboard with no arguments. Here its dispatch
 // and its usage error are pinned; the binary lookup and starter are covered
-// in the emberloop package. The unknown arg fails before any exec, so this starts
+// in the el package. The unknown arg fails before any exec, so this starts
 // no terminal.
 func TestTuiRefusesArgs(t *testing.T) {
 	if err := run([]string{"tui", "--bogus"}); err == nil || !strings.Contains(err.Error(), "usage") {
@@ -168,8 +168,8 @@ func TestTuiRefusesArgs(t *testing.T) {
 	}
 }
 
-// `emberloop deps` checks external dependencies. Here its dispatch and usage
-// error are pinned; the installer itself is covered in the emberloop package. The
+// `el deps` checks external dependencies. Here its dispatch and usage
+// error are pinned; the installer itself is covered in the el package. The
 // unknown flag fails before any install or download.
 func TestDepsRefusesUnknownFlags(t *testing.T) {
 	if err := run([]string{"deps", "--bogus"}); err == nil {

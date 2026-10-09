@@ -14,7 +14,7 @@ import (
 func TestOverflowThresholdDefaultsAbout8KB(t *testing.T) {
 	dir := t.TempDir()
 	globalProjectEnv(t, dir, `{}`, "")
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 	if got := EffectiveSettings(dir).EffectiveOverflowThresholdBytes(); got != 8192 {
 		t.Fatalf("default threshold = %d, want 8192", got)
 	}
@@ -23,16 +23,16 @@ func TestOverflowThresholdDefaultsAbout8KB(t *testing.T) {
 func TestOverflowThresholdFromFileEnvAndProject(t *testing.T) {
 	dir := t.TempDir()
 	globalProjectEnv(t, dir, `{"overflow":{"threshold_bytes":4096}}`, "")
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 	if got := EffectiveSettings(dir).EffectiveOverflowThresholdBytes(); got != 4096 {
 		t.Fatalf("file threshold = %d, want 4096", got)
 	}
 
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "1024")
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "1024")
 	if got := EffectiveSettings(dir).EffectiveOverflowThresholdBytes(); got != 1024 {
 		t.Fatalf("env threshold = %d, want 1024", got)
 	}
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 
 	pdir := t.TempDir()
 	globalProjectEnv(t, pdir, `{"overflow":{"threshold_bytes":4096}}`, `{"overflow":{"threshold_bytes":2048}}`)
@@ -47,8 +47,8 @@ func TestOverflowThresholdFromFileEnvAndProject(t *testing.T) {
 // Seam: overflow helper — output under the threshold is byte-identical;
 // over it a handle and summary come back and the bytes are stored.
 func TestOverflowUnderThresholdPassesThrough(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 	content := "short output\nwith two lines\n"
 	out, stored, err := MaybeOverflow(t.TempDir(), "s1", "bash", "text/plain", content, "")
 	if err != nil || stored || out != content {
@@ -57,8 +57,8 @@ func TestOverflowUnderThresholdPassesThrough(t *testing.T) {
 }
 
 func TestOverflowOverThresholdStoresAndSummarizes(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "100")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "100")
 	var b strings.Builder
 	b.WriteString("# Caching notes\n\n")
 	for i := 1; i <= 30; i++ {
@@ -94,8 +94,8 @@ func TestOverflowOverThresholdStoresAndSummarizes(t *testing.T) {
 
 // Seam: intent — a helper call with an intent returns matching chunks inline.
 func TestOverflowIntentReturnsMatchingChunks(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "100")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "100")
 	content := "# Apples\n\napple harvest in autumn\n\n# Engines\n\nengine torque and pistons\n"
 	content += strings.Repeat("filler words to push past the threshold line\n", 20)
 	out, stored, err := MaybeOverflow(t.TempDir(), "s1", "bash", "text/plain", content, "engine torque")
@@ -121,8 +121,8 @@ func handleFromSummary(t *testing.T, out string) string {
 // Seam: ctx_search — several queries at once, scoped to a handle, plain
 // when nothing matches.
 func TestCtxSearchQueriesScopedAndPlain(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "50")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "50")
 	root := t.TempDir()
 	outA, _, err := MaybeOverflow(root, "s1", "bash", "text/plain", "alpha uniqueword beta\n\n"+strings.Repeat("pad pad pad pad\n", 10), "")
 	if err != nil {
@@ -152,8 +152,8 @@ func TestCtxSearchQueriesScopedAndPlain(t *testing.T) {
 }
 
 func TestCtxSearchDefaultLimitThree(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "50")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "50")
 	root := t.TempDir()
 	var b strings.Builder
 	for i := 1; i <= 6; i++ {
@@ -180,8 +180,8 @@ func TestCtxSearchDefaultLimitThree(t *testing.T) {
 
 // Seam: read handle — ctx:<id>:<range> pages the stored output.
 func TestReadCtxHandlePagesStoredOutput(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "50")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "50")
 	root := t.TempDir()
 	var b strings.Builder
 	for i := 1; i <= 30; i++ {
@@ -214,11 +214,11 @@ func TestReadCtxHandlePagesStoredOutput(t *testing.T) {
 func TestOverflowOmittedWhenUnsetKeptWhenSet(t *testing.T) {
 	dir := t.TempDir()
 	globalProjectEnv(t, dir, `{}`, "")
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 	if err := SaveSettings(LoadSettings()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err := os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestOverflowOmittedWhenUnsetKeptWhenSet(t *testing.T) {
 	if err := SaveSettings(LoadSettings()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err = os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err = os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}

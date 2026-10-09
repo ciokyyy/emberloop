@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -425,7 +425,7 @@ func Spawn(run Exec, in SpawnInput) (*Worker, error) {
 	// is nowhere to put the ticket's tab, so nothing is created first.
 	workspace := os.Getenv("HERDR_WORKSPACE_ID")
 	if workspace == "" {
-		return nil, fmt.Errorf("HERDR_WORKSPACE_ID is not set: emberloop spawns workers into the herdr workspace it runs in")
+		return nil, fmt.Errorf("HERDR_WORKSPACE_ID is not set: el spawns workers into the herdr workspace it runs in")
 	}
 
 	id := WorkerID(in.Ticket)
@@ -1019,7 +1019,7 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 		// a failed delete is logged and never fails the finish.
 		graphDeleteForWorktree(w.Worktree)
 		// The worker's per-session files go with it: the MCP config and the
-		// launch file `emberloop exec` read at startup. Either is already gone when
+		// launch file `el exec` read at startup. Either is already gone when
 		// the agent consumed it; what remains is the backup for a launch that
 		// never started.
 		CleanupSession(Session{ID: w.SessionID, Label: id})

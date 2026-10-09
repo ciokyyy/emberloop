@@ -6,9 +6,9 @@ A pig extension that teaches herdr a running pig pane is an agent: it
 reports pane state so the pane appears in `herdr agent list` under its own
 name and stays addressable by `herdr agent prompt`. It also carries the stop
 gate (`gate.go`): a spawned agent cannot settle without calling submit, with
-the shared decision living in `emberloop pig-gate` so every harness follows
+the shared decision living in `el pig-gate` so every harness follows
 one set of rules. `voice.go` adds the register's per-turn reminder to every
-turn (text from `emberloop voice-reminder`).
+turn (text from `el voice-reminder`).
 
 ## Ownership
 

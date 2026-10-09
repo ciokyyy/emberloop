@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -63,7 +63,7 @@ func TestExecuteRoleGating(t *testing.T) {
 // answers under its new name.
 func TestExecuteHonoursDisabledAndRenamed(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"grep":{"enabled":false},"find":{"rename":"seek"}}}`)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
 	main, _, err := ResolvedTools("work")
 	if err != nil {
@@ -85,7 +85,7 @@ func TestExecuteHonoursDisabledAndRenamed(t *testing.T) {
 // Seam: renamed tools appear under the new name in search and help.
 func TestExecuteRenamedToolInStub(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"grep":{"rename":"rip"}}}`)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
 	main, execute, err := ResolvedTools("work")
 	if err != nil {
@@ -107,7 +107,7 @@ func TestExecuteRenamedToolInStub(t *testing.T) {
 // Seam: orchestration tools and execute itself are not callable from a script.
 func TestExecuteExcludesOrchestration(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
 	main, _, err := ResolvedTools("plan")
 	if err != nil {
@@ -131,7 +131,7 @@ func TestExecuteExcludesOrchestration(t *testing.T) {
 // Seam: Guard limits still apply to the tools a script calls.
 func TestExecuteHonoursGuard(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
 	inner := tools.Named("write")
 	if len(inner) != 1 {
@@ -170,7 +170,7 @@ func TestReviewExecuteIsSandboxed(t *testing.T) {
 	if _, err := tools.ResolveBinary("python3"); err != nil {
 		t.Skipf("python3 not installed, skipping execute test: %v", err)
 	}
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	if err := tools.EnsureHealthy(root); err != nil {
 		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
@@ -236,12 +236,12 @@ func TestAgentTypeSandboxedByCheckout(t *testing.T) {
 // and git live only inside it, and the script cannot write.
 func TestScoutAgentExecuteIsSandboxed(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "scout")
-	t.Setenv("EMBERLOOP_AGENT_ID", "s1")
+	t.Setenv("EL_AGENT_TYPE", "scout")
+	t.Setenv("EL_AGENT_ID", "s1")
 	if _, err := tools.ResolveBinary("python3"); err != nil {
 		t.Skipf("python3 not installed, skipping execute test: %v", err)
 	}
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	if err := tools.EnsureHealthy(root); err != nil {
 		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
@@ -293,7 +293,7 @@ func (f mcpListedFake) OriginalName() string { return f.original }
 // in the stub under its configured name.
 func TestExecuteIncludesMCPTools(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
 	listed := map[string][]tools.Tool{"gh": {mcpListedFake{name: "gh_search", original: "search_repositories"}}}
 	main, execute, err := ResolvedToolsWithMCP("work", listed)

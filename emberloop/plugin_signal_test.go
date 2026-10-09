@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -9,11 +9,11 @@ import (
 )
 
 // Seam (ticket 08): the plugin action's signal — compress.sh sends the
-// focused pane from the action context to `emberloop request-compress`. A
-// fake emberloop on the path records the call; no live herdr runs.
+// focused pane from the action context to `el request-compress`. A
+// fake el on the path records the call; no live herdr runs.
 
 // pluginScript is the shipped action, resolved from this package: the
-// herdr-emberloop directory beside the emberloop module.
+// herdr-emberloop directory beside the el module.
 func pluginScript(t *testing.T) string {
 	t.Helper()
 	script := filepath.Join("..", "herdr-emberloop", "compress.sh")
@@ -23,13 +23,13 @@ func pluginScript(t *testing.T) string {
 	return script
 }
 
-// fakeEmberloopPig plants a stub binary recording its argv, one call per line,
-// and returns its path for EMBERLOOP_PIG_BIN.
-func fakeEmberloopPig(t *testing.T) (bin, calls string) {
+// fakeElPig plants a stub binary recording its argv, one call per line,
+// and returns its path for EL_PIG_BIN.
+func fakeElPig(t *testing.T) (bin, calls string) {
 	t.Helper()
 	dir := t.TempDir()
 	calls = filepath.Join(dir, "calls")
-	stub := filepath.Join(dir, "emberloop")
+	stub := filepath.Join(dir, "el")
 	body := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\n"
 	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
@@ -39,10 +39,10 @@ func fakeEmberloopPig(t *testing.T) (bin, calls string) {
 
 func runCompressAction(t *testing.T, contextJSON string) (string, int, string) {
 	t.Helper()
-	bin, calls := fakeEmberloopPig(t)
+	bin, calls := fakeElPig(t)
 	cmd := exec.Command("bash", pluginScript(t))
 	cmd.Env = append(os.Environ(),
-		"EMBERLOOP_PIG_BIN="+bin,
+		"EL_PIG_BIN="+bin,
 		`HERDR_PLUGIN_CONTEXT_JSON=`+contextJSON,
 	)
 	out, err := cmd.CombinedOutput()

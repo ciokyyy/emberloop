@@ -15,6 +15,7 @@ export function parseToolText(text = '') {
         args: typeof args === 'string' ? args : JSON.stringify(args),
         output: String(output ?? ''),
         id: obj.id ? String(obj.id) : '',
+        server: obj.server ? String(obj.server) : '',
         status: obj.status ? String(obj.status) : '',
       };
     }
@@ -54,15 +55,72 @@ export function parseReport(text = '') {
   return { title: n === 1 ? 'Subagent report' : `${n} subagent reports`, body: m[2].trim(), members };
 }
 
+// parseSudoResult reads the TOON message the Daemon sends after a sudo
+// request settled: "sudo_result:" then indented key: value lines, text values
+// as quoted JSON strings. Anything else is not a sudo result.
+export function parseSudoResult(text = '') {
+  const t = String(text);
+  if (!t.startsWith('sudo_result:')) return null;
+  const out = { id: '', status: '', exit: 0, command: '', output: '' };
+  for (const line of t.split('\n').slice(1)) {
+    const m = /^\s+(\w+): ([\s\S]*)$/.exec(line);
+    if (!m) continue;
+    const [, key, raw] = m;
+    let val = raw;
+    if (raw.startsWith('"')) {
+      try {
+        val = JSON.parse(raw);
+      } catch {
+        val = raw;
+      }
+    }
+    if (key === 'request') out.id = val;
+    else if (key === 'exit') out.exit = Number(val);
+    else if (key in out) out[key] = val;
+  }
+  return out;
+}
+
+// parseSudoRequest reads the JSON Text of sudo_request and sudo_resolved.
+export function parseSudoRequest(text) {
+  try {
+    const r = JSON.parse(text);
+    return r && typeof r === 'object' ? r : {};
+  } catch {
+    return {};
+  }
+}
+
+// parseCompaction reads the JSON Text of a compaction Event; a malformed
+// payload still renders as a compaction with no numbers.
+export function parseCompaction(text) {
+  try {
+    const c = JSON.parse(text);
+    return c && typeof c === 'object' ? c : {};
+  } catch {
+    return {};
+  }
+}
+
+// withImageNote appends the attachment count to a user message body.
+export function withImageNote(text, count) {
+  if (!count) return text;
+  const note = `_${count} image${count > 1 ? 's' : ''} attached_`;
+  return text ? `${text}\n\n${note}` : note;
+}
+
 export function cardForEvent(e) {
   const text = e.text ?? '';
   switch (e.kind) {
     case 'prompt': {
+      const sr = parseSudoResult(text);
+      if (sr) return { card: 'sudoresult', title: 'Sudo result', body: sr.output, collapsed: true, sudo: sr };
       const r = parseReport(text);
       if (r) return { card: 'report', title: r.title, body: r.body, collapsed: true, members: r.members };
-      if (e.mode === 'steer') return { card: 'user', title: 'Steer', body: text, collapsed: false };
-      if (e.mode === 'followup') return { card: 'user', title: 'Follow-up', body: text, collapsed: false };
-      return { card: 'user', title: 'You', body: text, collapsed: false };
+      const body = withImageNote(text, e.images);
+      if (e.mode === 'steer') return { card: 'user', title: 'Steer', body, collapsed: false };
+      if (e.mode === 'followup') return { card: 'user', title: 'Follow-up', body, collapsed: false };
+      return { card: 'user', title: 'You', body, collapsed: false };
     }
     case 'assistant_chunk':
       return { card: 'assistant', title: 'Agent', body: text, collapsed: false };
@@ -71,11 +129,25 @@ export function cardForEvent(e) {
     case 'tool_call_started':
     case 'tool_call_updated': {
       const t = parseToolText(text);
-      const mcp = splitMcpName(t.name);
+      const mcp = t.server ? { server: t.server, name: t.name } : splitMcpName(t.name);
       t.name = mcp.name;
       const body = [t.args, t.output].filter(Boolean).join('\n');
       return { card: 'tool', title: t.name, body, collapsed: true, server: mcp.server, toolId: t.id, status: t.status, input: t.args, output: t.output };
     }
+    case 'compaction_started': {
+      const c = parseCompaction(text);
+      return { card: 'compaction', title: 'Compressing context', body: '', collapsed: true, compaction: { ...c, state: 'running' } };
+    }
+    case 'compaction': {
+      const c = parseCompaction(text);
+      return { card: 'compaction', title: 'Context compressed', body: c.summary ?? '', collapsed: true, compaction: { ...c, state: c.aborted || c.error ? 'failed' : 'done' } };
+    }
+    case 'sudo_request': {
+      const r = parseSudoRequest(text);
+      return { card: 'sudo', title: 'Sudo request', body: r.command ?? '', collapsed: false, sudo: { ...r, state: r.state || 'pending' } };
+    }
+    case 'sudo_resolved':
+      return { card: 'none', title: 'sudo', body: '', collapsed: false, sudo: parseSudoRequest(text) };
     case 'usage':
       return { card: 'none', title: 'usage', body: text, collapsed: false };
     case 'diff':
@@ -102,6 +174,15 @@ export function groupTranscript(events) {
   const blocks = [];
   for (const e of events) {
     const c = cardForEvent(e);
+    // A resolved Event updates its request card in place.
+    if (e.kind === 'sudo_resolved') {
+      const open = blocks.findLast((b) => b.card === 'sudo' && b.sudo?.id === c.sudo?.id);
+      if (open) {
+        open.sudo = { ...open.sudo, ...c.sudo };
+        open.events.push(e);
+      }
+      continue;
+    }
     if (c.card === 'none') continue;
     if (c.toolId) {
       const hit = blocks.findLast((b) => b.toolId === c.toolId);
@@ -117,6 +198,25 @@ export function groupTranscript(events) {
       }
     }
     const last = blocks[blocks.length - 1];
+    // The end of a compaction replaces its running card in place.
+    if (c.card === 'compaction' && e.kind === 'compaction') {
+      const open = blocks.findLast((b) => b.card === 'compaction' && b.compaction?.state === 'running');
+      if (open) {
+        Object.assign(open, { title: c.title, body: c.body, compaction: c.compaction });
+        open.events.push(e);
+        continue;
+      }
+    }
+    // Thinking arrives as paragraph chunks split by whitespace-only
+    // separators: join consecutive ones, drop a leading blank.
+    if (c.card === 'thinking') {
+      if (last?.card === 'thinking') {
+        last.body += c.body;
+        last.events.push(e);
+        continue;
+      }
+      if (!c.body.trim()) continue;
+    }
     if (c.card === 'assistant' && last?.card === 'assistant') {
       last.body += c.body;
       last.events.push(e);
@@ -131,7 +231,7 @@ export function groupTranscript(events) {
       continue;
     }
     if (c.card === 'tool' && last?.card === 'tool') last.open = false;
-    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, open: e.kind === 'tool_call_started', events: [e] });
+    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, open: e.kind === 'tool_call_started', events: [e] });
   }
   return blocks;
 }

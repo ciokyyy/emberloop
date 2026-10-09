@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 )
 
 // postRunAction posts to a Run action (pause, resume) and returns the Run
@@ -383,7 +383,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 // outside these defensive branches: both error instead of touching a nil Run.
 func TestRunStartUnknownRunErrors(t *testing.T) {
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
-	if err := d.runStartWorker("no-such-run", emberloop.DriverTicket{ID: "01-first"}); err == nil {
+	if err := d.runStartWorker("no-such-run", el.DriverTicket{ID: "01-first"}); err == nil {
 		t.Fatalf("runStartWorker unknown run = nil, want error")
 	}
 	if err := d.runStartReviewer("no-such-run", "01-first", reviewerSpecType, "tip"); err == nil {

@@ -1,10 +1,10 @@
-id = "emberloop"
-name = "emberloop compress"
+id = "el"
+name = "el compress"
 version = "0.1.0"
 # The manifest uses only fields that 0.8.0 already parsed. A higher floor would
 # make the local binary refuse to link it, and nothing here needs a newer API.
 min_herdr_version = "0.8.0"
-description = "Compress the focused emberloop agent pane: summarize the session and restart it in place"
+description = "Compress the focused el agent pane: summarize the session and restart it in place"
 platforms = ["linux", "macos"]
 
 [[actions]]

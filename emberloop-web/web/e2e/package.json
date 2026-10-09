@@ -1,0 +1,12 @@
+{
+  "name": "el-web-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "e2e run"
+  },
+  "devDependencies": {
+    "@e2e-dev/web": "^0.13.0",
+    "e2e": "^0.18.0"
+  }
+}

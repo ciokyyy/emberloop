@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Seam: the input queue and the strip pending count. No socket, no PTY, no
 // live agent: the queue is a FIFO of steer/queue items, and the strip renders
@@ -274,7 +274,7 @@ func TestPumpAcceptedItemPops(t *testing.T) {
 	}
 }
 
-// Emberloop injections are held while the row holds a draft; a user submit goes
+// El injections are held while the row holds a draft; a user submit goes
 // before pending injections and delivers first.
 func TestPumpHoldsInjectionsWhileDraft(t *testing.T) {
 	oldSettle := submitSettle

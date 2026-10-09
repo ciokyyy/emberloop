@@ -1,6 +1,6 @@
 // Package mcp serves tools.Tool values over MCP's stdio transport
 // (newline-delimited JSON-RPC), so any harness that speaks MCP gets the same
-// tools. Protocol handling follows emberloop's apps/backend/mcpfacade/mcp.go.
+// tools. Protocol handling follows el's apps/backend/mcpfacade/mcp.go.
 package mcp
 
 import (
@@ -22,7 +22,7 @@ import (
 // binary changed since the server started. It names the cause and the fix:
 // the install gate is what prevents this, and a restart picks up the new
 // binary. The server never restarts itself: that would drop session state.
-const staleNotice = "note: this emberloop server is stale: its binary changed since it started; restart the session to pick up the installed binary."
+const staleNotice = "note: this el server is stale: its binary changed since it started; restart the session to pick up the installed binary."
 
 // defaultProtocol answers a client that names no version. A client that does
 // name one gets it echoed: the tools/list and tools/call shapes this server
@@ -173,7 +173,7 @@ func (s *server) handle(req request) {
 		s.reply(req.ID, map[string]any{
 			"protocolVersion": p.ProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "emberloop", "version": "1"},
+			"serverInfo":      map[string]any{"name": "el", "version": "1"},
 		}, nil)
 	case "ping":
 		s.reply(req.ID, map[string]any{}, nil)
@@ -215,7 +215,7 @@ func (s *server) call(ctx context.Context, req request) {
 	if len(p.Arguments) == 0 {
 		p.Arguments = json.RawMessage("{}")
 	}
-	text, err := t.Execute(ctx, s.root, p.Arguments)
+	text, images, err := tools.ExecuteMulti(ctx, t, s.root, p.Arguments)
 	isError := err != nil
 	if isError {
 		text = err.Error()
@@ -227,8 +227,12 @@ func (s *server) call(ctx context.Context, req request) {
 			text += "\n" + staleNotice
 		}
 	}
+	content := []map[string]any{{"type": "text", "text": text}}
+	for _, img := range images {
+		content = append(content, map[string]any{"type": "image", "data": img.Data, "mimeType": img.MimeType})
+	}
 	s.reply(req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
+		"content": content,
 		"isError": isError,
 	}, nil)
 }
@@ -248,10 +252,10 @@ func (s *server) isStale() bool {
 }
 
 // binaryPath is the installed binary the staleness check compares against.
-// EMBERLOOP_BINARY_PATH overrides it, so a test can point it at a temp file and
+// EL_BINARY_PATH overrides it, so a test can point it at a temp file and
 // replace that file mid-call; otherwise it is this process's executable.
 func binaryPath() string {
-	if p := os.Getenv("EMBERLOOP_BINARY_PATH"); p != "" {
+	if p := os.Getenv("EL_BINARY_PATH"); p != "" {
 		return p
 	}
 	exe, err := os.Executable()

@@ -1,11 +1,12 @@
 <!-- Settings page: harness, model and effort per role, grouped like Apple Settings. -->
 <script>
   import { ArrowLeft, Check } from '@lucide/svelte';
-  import { HARNESSES, modelsForHarness, modelLabel } from './harnesses.js';
+  import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
   import Button from './ui/button.svelte';
-  import Input from './ui/input.svelte';
-  import Select from './ui/select.svelte';
+  import FloatingInput from './ui/floating-input.svelte';
+  import Combobox from './ui/combobox.svelte';
+  import Notifications from './Notifications.svelte';
   let { onBack = () => {} } = $props();
 
   const GROUPS = [
@@ -31,9 +32,18 @@
   const ROLES = GROUPS.flatMap((g) => g.roles);
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
   const effortItems = ['low', 'medium', 'high', 'max'].map((e) => ({ value: e, label: e[0].toUpperCase() + e.slice(1) }));
+  // The pig naming model is optional: "None" clears the role, so pig Sessions stay unnamed.
+  const onOffItems = [
+    { value: 'on', label: 'On' },
+    { value: 'off', label: 'Off' },
+  ];
 
   let roles = $state({});
   let maxWorkers = $state('3');
+  let pigTitle = $state('none');
+  let sessionTitles = $state('on');
+  let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '' });
+  let titlesLocked = $state(false);
   let locked = $state(false);
   let saved = $state('');
   let catalogue = $state({});
@@ -42,7 +52,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, maxWorkers });
+  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -67,6 +77,17 @@
       roles = next;
       maxWorkers = body.max_workers != null ? String(body.max_workers) : '3';
       locked = !!body.max_workers_from_env;
+      const t = body.roles?.['pig-title'];
+      pigTitle = t?.harness === 'pig' && t?.model ? t.model : 'none';
+      sessionTitles = body.session_titles === false ? 'off' : 'on';
+      titlesLocked = !!body.session_titles_from_env;
+      const c = body.compress ?? {};
+      compress = {
+        auto: c.auto_compress === false ? 'off' : 'on',
+        threshold: String(c.compress_threshold_percent ?? 80),
+        cooldown: String(c.compress_cooldown ?? 5),
+        instructions: c.compress_instructions ?? '',
+      };
       saved = snapshot();
     } catch (e) {
       error = e.message;
@@ -76,25 +97,33 @@
   }
   load();
 
-  const itemsFor = (harness, current) => {
-    const list = catalogue[harness] ?? [];
-    const all = current && !list.includes(current) ? [current, ...list] : list;
-    return all.map((m) => ({ value: m, label: modelLabel(harness, m) }));
-  };
+  const itemsFor = (harness, current) => modelItems(harness, catalogue[harness] ?? [], current);
 
   function pickHarness(role, harness) {
     roles[role].harness = harness;
     roles[role].model = catalogue[harness]?.[0] ?? '';
   }
 
+  const pigTitleItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', pigTitle === 'none' ? '' : pigTitle)];
+
   async function save() {
     saving = true;
     error = '';
     try {
       // Locked means the field holds the env value, not the file value:
-      // leave max_workers out so the save never writes the env cap
-      // into the file.
-      const payload = locked ? { roles } : { roles, max_workers: Number(maxWorkers) };
+      // leave the env-owned keys out so a save never writes them into the file.
+      const pigTitleRole = pigTitle === 'none' ? { harness: '', model: '' } : { harness: 'pig', model: pigTitle };
+      // A role with no model was never configured: leave it out instead of failing the whole save.
+      const configured = Object.fromEntries(Object.entries(roles).filter(([, r]) => r.model));
+      const payload = { roles: { ...configured, 'pig-title': pigTitleRole } };
+      if (!locked) payload.max_workers = Number(maxWorkers);
+      if (!titlesLocked) payload.session_titles = sessionTitles === 'on';
+      payload.compress = {
+        auto_compress: compress.auto === 'on',
+        compress_threshold_percent: Number(compress.threshold),
+        compress_cooldown: Number(compress.cooldown),
+        compress_instructions: compress.instructions,
+      };
       const savedBody = await putSettings(payload);
       maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
       locked = !!savedBody.max_workers_from_env;
@@ -112,6 +141,9 @@
     const prev = JSON.parse(saved);
     roles = prev.roles;
     maxWorkers = prev.maxWorkers;
+    pigTitle = prev.pigTitle;
+    sessionTitles = prev.sessionTitles;
+    compress = prev.compress;
   }
 </script>
 
@@ -141,22 +173,89 @@
             <p class="text-xs text-muted-foreground">How many Sessions run at once. Chat and Runs share the one cap.</p>
           </div>
           <div class="flex flex-col gap-2 rounded-2xl border bg-card p-4">
-            <label class="flex flex-col gap-1 text-sm font-medium" for="max-workers">Maximum workers</label>
-            <Input
+            <FloatingInput
               id="max-workers"
-              aria-label="Maximum workers"
+              label="Maximum workers"
               type="number"
               min="1"
               step="1"
-              class="h-10 max-w-40"
+              class="max-w-56"
               bind:value={maxWorkers}
               disabled={locked}
             />
             {#if locked}
-              <p class="text-xs text-muted-foreground">Set by the EMBERLOOP_MAX_WORKERS environment variable. Unset it to edit here.</p>
+              <p class="text-xs text-muted-foreground">Set by the EL_MAX_WORKERS environment variable. Unset it to edit here.</p>
             {:else}
               <p class="text-xs text-muted-foreground">Applies immediately, no restart.</p>
             {/if}
+          </div>
+        </section>
+        <section class="animate-rise flex flex-col gap-2" data-testid="compress-settings">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Context compression</h2>
+            <p class="text-xs text-muted-foreground">Pig Sessions summarize older history in place when the context window fills. Use the Compress button under the chat to do it by hand.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Auto-compress</div>
+                <div class="text-xs text-muted-foreground">Runs after a turn when the context passes the threshold.</div>
+              </div>
+              <Combobox class="h-10" aria-label="Auto-compress" bind:value={compress.auto} items={onOffItems} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Threshold</div>
+                <div class="text-xs text-muted-foreground">Percent of the model's context window, 10 to 99.</div>
+              </div>
+              <FloatingInput id="compress-threshold" label="Threshold %" type="number" min="10" max="99" step="1" bind:value={compress.threshold} disabled={compress.auto === 'off'} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Cooldown</div>
+                <div class="text-xs text-muted-foreground">Turns to wait after a compression before the next automatic one.</div>
+              </div>
+              <FloatingInput id="compress-cooldown" label="Turns" type="number" min="0" step="1" bind:value={compress.cooldown} disabled={compress.auto === 'off'} />
+            </div>
+            <div class="grid items-start gap-3 p-4">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Summary focus</div>
+                <div class="text-xs text-muted-foreground">Optional instructions for every summary, such as what to always keep.</div>
+              </div>
+              <textarea
+                aria-label="Summary focus"
+                rows="3"
+                maxlength="2000"
+                bind:value={compress.instructions}
+                placeholder="Keep file paths, open decisions and failing tests."
+                class="w-full resize-y rounded-xl border border-input bg-transparent px-3.5 py-2.5 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
+              ></textarea>
+            </div>
+          </div>
+        </section>
+        <Notifications />
+        <section class="animate-rise flex flex-col gap-2">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Session names</h2>
+            <p class="text-xs text-muted-foreground">Each new Session gets a short title from its first prompt, in one cheap call with no tools.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Name claude Sessions</div>
+                <div class="text-xs text-muted-foreground">
+                  {#if titlesLocked}Set by the EL_SESSION_TITLES environment variable. Unset it to edit here.{:else}Titled by Haiku. Turn off to keep the harness and id label.{/if}
+                </div>
+              </div>
+              <Combobox class="h-10" aria-label="Name claude Sessions" bind:value={sessionTitles} items={onOffItems} disabled={titlesLocked} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Pig naming model</div>
+                <div class="text-xs text-muted-foreground">Pig Sessions stay unnamed until you pick a model.</div>
+              </div>
+              <Combobox class="h-10" aria-label="Pig naming model" bind:value={pigTitle} items={pigTitleItems()} placeholder="Select a model" />
+            </div>
           </div>
         </section>
         {#each GROUPS as g (g.title)}
@@ -172,21 +271,21 @@
                     <div class="text-sm font-medium">{r.label}</div>
                     <div class="text-xs text-muted-foreground">{r.hint}</div>
                   </div>
-                  <Select
+                  <Combobox
                     class="h-10"
                     aria-label={`${r.label} harness`}
                     value={roles[r.id].harness}
                     items={harnessItems}
                     onValueChange={(v) => pickHarness(r.id, v)}
                   />
-                  <Select
+                  <Combobox
                     class="h-10"
                     aria-label={`${r.label} model`}
                     bind:value={roles[r.id].model}
                     items={itemsFor(roles[r.id].harness, roles[r.id].model)}
                     placeholder="Select a model"
                   />
-                  <Select class="h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
+                  <Combobox class="h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
                 </div>
               {/each}
             </div>

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"io"
@@ -144,7 +144,7 @@ func sgrOf(hex, bg string) string {
 // sequences are encoded from the palette tokens through the shared
 // renderer, so a segment on the wrong token fails.
 func TestRenderStripSegmentColors(t *testing.T) {
-	mocha, latte := EmberloopMocha(), EmberloopLatte()
+	mocha, latte := ElMocha(), ElLatte()
 	dark := renderStrip(wideSnapshot(), 100, "nerd", "powerline")
 	for _, hex := range []string{mocha.Accent, mocha.Cost, mocha.Tool, mocha.Dim, mocha.Warm} {
 		if want := sgrOf(hex, mocha.StripBg); !strings.Contains(dark, want) {

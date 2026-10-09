@@ -26,7 +26,7 @@ drives it over ACP on stdio.
 ## Claude Backend live probe (ticket 04)
 
 ```sh
-cd .. && EMBERLOOP_LIVE=claude go test -tags live -run TestLiveClaudeBackend . 2>&1 | tee spike/claude-backend-run.log
+cd .. && EL_LIVE=claude go test -tags live -run TestLiveClaudeBackend . 2>&1 | tee spike/claude-backend-run.log
 ```
 
 Drives `ClaudeBackend` against the real pinned adapter with the echo

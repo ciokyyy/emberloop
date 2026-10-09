@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"archive/tar"
@@ -78,7 +78,7 @@ func TestDepsPackageTable(t *testing.T) {
 // and exits non-zero instead of calling sudo.
 func TestDepsWithoutTerminalPrintsAndFails(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("EMBERLOOP_BIN_DIR", dir)
+	t.Setenv("EL_BIN_DIR", dir)
 	// An empty PATH with no managers and no deps: detection finds nothing,
 	// and with no terminal nothing may run.
 	t.Setenv("PATH", t.TempDir())
@@ -234,8 +234,8 @@ func depsEnabledSettings() *tools.Settings {
 func depsHermeticPath(t *testing.T, fake string) {
 	t.Helper()
 	t.Setenv("PATH", fake+":/usr/bin:/bin")
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "project-settings.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "project-settings.json"))
 }
 
 // Seam (ticket 19): installer — each dependency gets a proof line with its
@@ -244,7 +244,7 @@ func TestDepsProofLinesAndRequiredFailure(t *testing.T) {
 	fake := depsFakePath(t, "")
 	depsHermeticPath(t, fake)
 	binDir := t.TempDir()
-	t.Setenv("EMBERLOOP_BIN_DIR", binDir)
+	t.Setenv("EL_BIN_DIR", binDir)
 	var out strings.Builder
 	cfg := DepsConfig{BinDir: binDir, Settings: depsDisabledSettings(), IsTerminal: func() bool { return true }, Worktree: t.TempDir()}
 	if err := InstallDeps(&out, cfg); err != nil {
@@ -258,7 +258,7 @@ func TestDepsProofLinesAndRequiredFailure(t *testing.T) {
 	}
 	old := depsFakePath(t, "Python 3.8.0")
 	depsHermeticPath(t, old)
-	t.Setenv("EMBERLOOP_BIN_DIR", t.TempDir())
+	t.Setenv("EL_BIN_DIR", t.TempDir())
 	var out2 strings.Builder
 	cfg2 := DepsConfig{BinDir: t.TempDir(), Settings: depsDisabledSettings(), IsTerminal: func() bool { return true }, Worktree: t.TempDir()}
 	// The old fake must win: prepend it and drop the good one by using only it plus system path.
@@ -276,7 +276,7 @@ func TestDepsGraphOnlyWarns(t *testing.T) {
 	fake := depsFakePath(t, "")
 	depsHermeticPath(t, fake)
 	binDir := t.TempDir()
-	t.Setenv("EMBERLOOP_BIN_DIR", binDir)
+	t.Setenv("EL_BIN_DIR", binDir)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
@@ -296,7 +296,7 @@ func TestDepsGraphDisabledSkipsDownload(t *testing.T) {
 	fake := depsFakePath(t, "")
 	depsHermeticPath(t, fake)
 	binDir := t.TempDir()
-	t.Setenv("EMBERLOOP_BIN_DIR", binDir)
+	t.Setenv("EL_BIN_DIR", binDir)
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -346,9 +346,9 @@ func TestDepsTerminalRunsInstallThroughSudo(t *testing.T) {
 	depsWriteFake(t, dir, "sudo", "#!/bin/sh\necho \"$@\" > \""+sudoRecord+"\"\nexec \"$@\"\n")
 	depsWriteFake(t, dir, "apt-get", "#!/bin/sh\necho \"$@\" > \""+aptRecord+"\"\nexit 0\n")
 	t.Setenv("PATH", dir)
-	t.Setenv("EMBERLOOP_BIN_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "proj.json"))
+	t.Setenv("EL_BIN_DIR", t.TempDir())
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "proj.json"))
 	var out strings.Builder
 	cfg := DepsConfig{BinDir: t.TempDir(), Settings: depsEnabledSettings(), IsTerminal: func() bool { return true }, Worktree: t.TempDir()}
 	if err := InstallDeps(&out, cfg); err == nil {
@@ -371,7 +371,7 @@ func TestDepsSecondRunChangesNothing(t *testing.T) {
 	fake := depsFakePath(t, "")
 	depsHermeticPath(t, fake)
 	binDir := t.TempDir()
-	t.Setenv("EMBERLOOP_BIN_DIR", binDir)
+	t.Setenv("EL_BIN_DIR", binDir)
 	depsWriteFake(t, binDir, GraphBinaryName, "#!/bin/sh\nread line\necho '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\"}}'\n")
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -454,9 +454,9 @@ func TestDepsWithoutTerminalWithManagerPrintsCommand(t *testing.T) {
 	depsWriteFake(t, dir, "sudo", "#!/bin/sh\necho ran > \""+sudoRecord+"\"\nexit 0\n")
 	depsWriteFake(t, dir, "apt-get", "#!/bin/sh\necho ran > \""+aptRecord+"\"\nexit 0\n")
 	t.Setenv("PATH", dir)
-	t.Setenv("EMBERLOOP_BIN_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "proj.json"))
+	t.Setenv("EL_BIN_DIR", t.TempDir())
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "proj.json"))
 	var out strings.Builder
 	cfg := DepsConfig{BinDir: t.TempDir(), Settings: depsEnabledSettings(), IsTerminal: func() bool { return false }, Worktree: t.TempDir()}
 	if err := InstallDeps(&out, cfg); err == nil {

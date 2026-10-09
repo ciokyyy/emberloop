@@ -20,7 +20,7 @@ func reviewersScoutsFixture(t *testing.T) (stateDir, repo string) {
 	writeSpec(t, repo, "alpha", []ticketFile{{"01-one.md", "ready-for-agent"}})
 	specPath := filepath.Join(repo, ".scratch", "alpha", "spec.md")
 	issues := filepath.Join(repo, ".scratch", "alpha", "issues")
-	wt := filepath.Join(repo, ".emberloop-worktrees", "01-one")
+	wt := filepath.Join(repo, ".el-worktrees", "01-one")
 
 	writeJSON(t, filepath.Join(stateDir, "workers.json"), map[string]any{
 		"01-one": map[string]any{

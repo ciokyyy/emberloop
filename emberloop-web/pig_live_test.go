@@ -15,11 +15,11 @@ import (
 	"github.com/MichaelKinsy/PiG/ai"
 )
 
-// liveEchoTool is the probe's stand-in for the emberloop MCP tool set: the
+// liveEchoTool is the probe's stand-in for the el MCP tool set: the
 // only tool the stripped live Session may offer.
 type liveEchoTool struct{ calls *atomic.Int64 }
 
-func (t liveEchoTool) Name() string  { return "mcp__emberloop__live_echo" }
+func (t liveEchoTool) Name() string  { return "mcp__el__live_echo" }
 func (t liveEchoTool) Label() string { return "live echo" }
 func (t liveEchoTool) Schema() ai.ToolSchema {
 	return ai.ToolSchema{
@@ -43,12 +43,12 @@ func (t liveEchoTool) ExecutionMode() agent.ToolExecutionMode { return agent.Too
 
 // TestLivePigBackend proves the ticket with a real pig: a stripped Session
 // answers, executes a tool, takes a follow-up after the turn, and closes
-// cleanly. Not in the main check: set EMBERLOOP_LIVE_PIG=1 and PIG_LIVE_MODEL
+// cleanly. Not in the main check: set EL_LIVE_PIG=1 and PIG_LIVE_MODEL
 // to a healthy provider/model (the ticket-01 spike's deepseek model stalls
 // tool-call turns, so it cannot prove execution).
 func TestLivePigBackend(t *testing.T) {
-	if os.Getenv("EMBERLOOP_LIVE_PIG") == "" {
-		t.Skip("set EMBERLOOP_LIVE_PIG=1 and PIG_LIVE_MODEL for the real-pig probe")
+	if os.Getenv("EL_LIVE_PIG") == "" {
+		t.Skip("set EL_LIVE_PIG=1 and PIG_LIVE_MODEL for the real-pig probe")
 	}
 	model := os.Getenv("PIG_LIVE_MODEL")
 	if model == "" {
@@ -63,7 +63,7 @@ func TestLivePigBackend(t *testing.T) {
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "pig", model, t.TempDir())
-	if names := pb.ToolNames(id); len(names) != 1 || names[0] != "mcp__emberloop__live_echo" {
+	if names := pb.ToolNames(id); len(names) != 1 || names[0] != "mcp__el__live_echo" {
 		t.Fatalf("live session tools = %q, want only the echo tool", names)
 	}
 

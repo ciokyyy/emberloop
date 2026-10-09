@@ -58,7 +58,7 @@ func startJinaFake(t *testing.T, status int, body string) *jinaFake {
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("EMBERLOOP_JINA_ENDPOINT", srv.URL+"/")
+	t.Setenv("EL_JINA_ENDPOINT", srv.URL+"/")
 	return &jinaFake{server: srv, hits: &hits, auth: authP, path: pathP, status: status, body: body}
 }
 
@@ -66,14 +66,14 @@ func (f *jinaFake) count() int { return int(atomic.LoadInt32(f.hits)) }
 
 func allowLocal(t *testing.T) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_URL_ALLOW_LOOPBACK", "1")
-	t.Setenv("EMBERLOOP_URL_TIMEOUT", "")
-	t.Setenv("EMBERLOOP_URL_MAX_BODY", "")
+	t.Setenv("EL_URL_ALLOW_LOOPBACK", "1")
+	t.Setenv("EL_URL_TIMEOUT", "")
+	t.Setenv("EL_URL_MAX_BODY", "")
 }
 
 func blockLocal(t *testing.T) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_URL_ALLOW_LOOPBACK", "")
+	t.Setenv("EL_URL_ALLOW_LOOPBACK", "")
 }
 
 func readURLPath(t *testing.T, path string) (string, error) {
@@ -325,7 +325,7 @@ func TestReadURLChallengeAndThinEscalate(t *testing.T) {
 
 func TestReadURLTimeoutEscalates(t *testing.T) {
 	allowLocal(t)
-	t.Setenv("EMBERLOOP_URL_TIMEOUT", "200ms")
+	t.Setenv("EL_URL_TIMEOUT", "200ms")
 	jf := startJinaFake(t, 200, jinaLong("Jina after timeout"))
 	t.Setenv("JINA_API_KEY", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -471,7 +471,7 @@ func TestReadURLCredentialsSkipJina(t *testing.T) {
 }
 
 func TestReadURLTokenParamsSkipJina(t *testing.T) {
-	t.Setenv("EMBERLOOP_CHROME_BIN", filepath.Join(t.TempDir(), "no-such-browser"))
+	t.Setenv("EL_CHROME_BIN", filepath.Join(t.TempDir(), "no-such-browser"))
 	allowLocal(t)
 	jf := startJinaFake(t, 200, "must not be used")
 	t.Setenv("JINA_API_KEY", "")
@@ -508,7 +508,7 @@ func TestReadURLOversizeCapped(t *testing.T) {
 	allowLocal(t)
 	jf := startJinaFake(t, 200, "unused")
 	t.Setenv("JINA_API_KEY", "")
-	t.Setenv("EMBERLOOP_URL_MAX_BODY", "200")
+	t.Setenv("EL_URL_MAX_BODY", "200")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte(strings.Repeat("oversize-body-words ", 100) + "\n"))
@@ -531,8 +531,8 @@ func TestReadURLLargePageUsesOverflowStore(t *testing.T) {
 	allowLocal(t)
 	_ = startJinaFake(t, 200, "unused")
 	t.Setenv("JINA_API_KEY", "")
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		for i := 1; i <= 350; i++ {
@@ -577,7 +577,7 @@ func TestReadURLLargePageUsesOverflowStore(t *testing.T) {
 
 func TestReadURLTier3NotInstalled(t *testing.T) {
 	allowLocal(t)
-	t.Setenv("EMBERLOOP_CHROME_BIN", filepath.Join(t.TempDir(), "no-such-browser"))
+	t.Setenv("EL_CHROME_BIN", filepath.Join(t.TempDir(), "no-such-browser"))
 	_ = startJinaFake(t, 503, "jina down")
 	t.Setenv("JINA_API_KEY", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -645,14 +645,14 @@ func TestPeelURLSelectors(t *testing.T) {
 	}
 }
 func TestJinaDefaultEndpoint(t *testing.T) {
-	t.Setenv("EMBERLOOP_JINA_ENDPOINT", "")
+	t.Setenv("EL_JINA_ENDPOINT", "")
 	if got := jinaBase(); got != "https://r.jina.ai/" {
 		t.Fatalf("jinaBase() = %q, want the public reader", got)
 	}
 	if got, want := jinaRequestURL("https://example.com/page"), "https://r.jina.ai/https://example.com/page"; got != want {
 		t.Fatalf("jinaRequestURL = %q, want %q", got, want)
 	}
-	t.Setenv("EMBERLOOP_JINA_ENDPOINT", "http://127.0.0.1:9999/custom/")
+	t.Setenv("EL_JINA_ENDPOINT", "http://127.0.0.1:9999/custom/")
 	if got, want := jinaRequestURL("https://example.com/page"), "http://127.0.0.1:9999/custom/https://example.com/page"; got != want {
 		t.Fatalf("jinaRequestURL with override = %q, want %q", got, want)
 	}
@@ -679,7 +679,7 @@ func TestReadURLRawPDFSuffixReturnsRaw(t *testing.T) {
 }
 
 func TestRemoteIPBlocked(t *testing.T) {
-	t.Setenv("EMBERLOOP_URL_ALLOW_LOOPBACK", "")
+	t.Setenv("EL_URL_ALLOW_LOOPBACK", "")
 	for _, ip := range []string{"127.0.0.1", "::1", "10.0.0.1", "192.168.1.1", "169.254.169.254", "0.0.0.0"} {
 		if reason := remoteIPBlocked(parseIPForTest(t, ip)); reason == "" {
 			t.Errorf("remoteIPBlocked(%s) = allowed, want refused", ip)
@@ -688,7 +688,7 @@ func TestRemoteIPBlocked(t *testing.T) {
 	if reason := remoteIPBlocked(parseIPForTest(t, "8.8.8.8")); reason != "" {
 		t.Errorf("remoteIPBlocked(8.8.8.8) = %q, want allowed", reason)
 	}
-	t.Setenv("EMBERLOOP_URL_ALLOW_LOOPBACK", "1")
+	t.Setenv("EL_URL_ALLOW_LOOPBACK", "1")
 	if reason := remoteIPBlocked(parseIPForTest(t, "127.0.0.1")); reason != "" {
 		t.Errorf("loopback with allow flag = %q, want allowed", reason)
 	}
@@ -704,8 +704,8 @@ func TestReadURLLargePageWithSelectorAnswersInline(t *testing.T) {
 	allowLocal(t)
 	_ = startJinaFake(t, 200, "unused")
 	t.Setenv("JINA_API_KEY", "")
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES", "")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_OVERFLOW_THRESHOLD_BYTES", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		for i := 1; i <= 350; i++ {
@@ -740,7 +740,7 @@ func startBrowserFake(t *testing.T, body string) string {
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_CHROME_BIN", bin)
+	t.Setenv("EL_CHROME_BIN", bin)
 	return argsFile
 }
 
@@ -834,13 +834,13 @@ func TestReadURLTier3Timeout(t *testing.T) {
 	allowLocal(t)
 	_ = startJinaFake(t, 503, "jina down")
 	t.Setenv("JINA_API_KEY", "")
-	t.Setenv("EMBERLOOP_URL_TIMEOUT", "200ms")
+	t.Setenv("EL_URL_TIMEOUT", "200ms")
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "chrome-headless-shell")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_CHROME_BIN", bin)
+	t.Setenv("EL_CHROME_BIN", bin)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		_, _ = w.Write([]byte("denied"))
@@ -857,7 +857,7 @@ func TestReadURLTier3OversizeCapped(t *testing.T) {
 	allowLocal(t)
 	_ = startJinaFake(t, 503, "jina down")
 	t.Setenv("JINA_API_KEY", "")
-	t.Setenv("EMBERLOOP_URL_MAX_BODY", "200")
+	t.Setenv("EL_URL_MAX_BODY", "200")
 	startBrowserFake(t, "<html><body><p>"+strings.Repeat("browser oversize words ", 100)+"</p></body></html>")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
@@ -886,7 +886,7 @@ func TestReadURLTier3LaunchFailureReportsStderr(t *testing.T) {
 	_ = startJinaFake(t, 503, "jina down")
 	t.Setenv("JINA_API_KEY", "")
 	bin := writeExecFake(t, t.TempDir(), "chrome-headless-shell", "#!/bin/sh\necho boom happened >&2\nexit 3\n")
-	t.Setenv("EMBERLOOP_CHROME_BIN", bin)
+	t.Setenv("EL_CHROME_BIN", bin)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		_, _ = w.Write([]byte("denied"))
@@ -904,7 +904,7 @@ func TestReadURLTier3EmptyPage(t *testing.T) {
 	_ = startJinaFake(t, 503, "jina down")
 	t.Setenv("JINA_API_KEY", "")
 	bin := writeExecFake(t, t.TempDir(), "chrome-headless-shell", "#!/bin/sh\nexit 0\n")
-	t.Setenv("EMBERLOOP_CHROME_BIN", bin)
+	t.Setenv("EL_CHROME_BIN", bin)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		_, _ = w.Write([]byte("denied"))
@@ -928,7 +928,7 @@ func TestReadURLTier3ShellFallbackToFullChrome(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeExecFake(t, dir, "chromium", "#!/bin/sh\ncat "+bodyFile+"\n")
-	t.Setenv("EMBERLOOP_BIN_DIR", dir)
+	t.Setenv("EL_BIN_DIR", dir)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		_, _ = w.Write([]byte("denied"))
@@ -957,7 +957,7 @@ func TestReadURLTier3ShellFirstWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeExecFake(t, dir, "chromium", "#!/bin/sh\ncat "+otherBody+"\n")
-	t.Setenv("EMBERLOOP_BIN_DIR", dir)
+	t.Setenv("EL_BIN_DIR", dir)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		_, _ = w.Write([]byte("denied"))
@@ -996,7 +996,7 @@ func TestReadURLTier3LaunchArgs(t *testing.T) {
 			t.Errorf("browser args missing %q:\n%s", want, args)
 		}
 	}
-	if os.Geteuid() == 0 || os.Getenv("EMBERLOOP_CHROME_NO_SANDBOX") == "1" {
+	if os.Geteuid() == 0 || os.Getenv("EL_CHROME_NO_SANDBOX") == "1" {
 		if !strings.Contains(args, "--no-sandbox") {
 			t.Errorf("root must pass --no-sandbox:\n%s", args)
 		}
@@ -1039,14 +1039,14 @@ func TestReadURLTier3RedirectResolvedBeforeLaunch(t *testing.T) {
 }
 
 func TestBrowserHostBlockRules(t *testing.T) {
-	t.Setenv("EMBERLOOP_URL_ALLOW_LOOPBACK", "")
+	t.Setenv("EL_URL_ALLOW_LOOPBACK", "")
 	blocked := browserHostBlockRules()
 	for _, want := range []string{"MAP 10.* ~NOTFOUND", "MAP 192.168.* ~NOTFOUND", "MAP 169.254.* ~NOTFOUND", "MAP 127.* ~NOTFOUND", "MAP 0.0.0.0 ~NOTFOUND", "MAP 172.31.* ~NOTFOUND"} {
 		if !strings.Contains(blocked, want) {
 			t.Errorf("rules missing %q: %s", want, blocked)
 		}
 	}
-	t.Setenv("EMBERLOOP_URL_ALLOW_LOOPBACK", "1")
+	t.Setenv("EL_URL_ALLOW_LOOPBACK", "1")
 	if strings.Contains(browserHostBlockRules(), "MAP 127.* ~NOTFOUND") {
 		t.Errorf("allow-loopback must lift only the loopback rule: %s", browserHostBlockRules())
 	}
@@ -1061,7 +1061,7 @@ func TestReadURLTier3ErrorPageRefused(t *testing.T) {
 	t.Setenv("JINA_API_KEY", "")
 	bin := writeExecFake(t, t.TempDir(), "chrome-headless-shell",
 		"#!/bin/sh\nprintf '%s\\n' '<html><body class=\"main-frame-error\"><div>ERR_NAME_NOT_RESOLVED</div><p>"+strings.Repeat("Navigation error words with plenty of descriptive text. ", 6)+"</p></body></html>'\n")
-	t.Setenv("EMBERLOOP_CHROME_BIN", bin)
+	t.Setenv("EL_CHROME_BIN", bin)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
 		_, _ = w.Write([]byte("denied"))

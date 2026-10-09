@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Strip wiring for launched and top-level sessions (ticket 04): the source
 // comes from the launch command's own environment, so spawned panes and the
@@ -32,11 +32,11 @@ func LaunchStripSource(cmd Command) HeaderSource {
 		}
 	}
 	return HeaderSource{
-		AgentID:    env["EMBERLOOP_AGENT_ID"],
-		AgentType:  env["EMBERLOOP_AGENT_TYPE"],
-		AgentName:  PaneNameForType(env["EMBERLOOP_AGENT_TYPE"]),
-		Harness:    env["EMBERLOOP_HARNESS"],
-		SessionID:  env["EMBERLOOP_SESSION_ID"],
+		AgentID:    env["EL_AGENT_ID"],
+		AgentType:  env["EL_AGENT_TYPE"],
+		AgentName:  PaneNameForType(env["EL_AGENT_TYPE"]),
+		Harness:    env["EL_HARNESS"],
+		SessionID:  env["EL_SESSION_ID"],
 		SessionDir: dir,
 	}
 }

@@ -1,8 +1,8 @@
-package emberloop
+package el
 
 // The strip's activity label: the tool an agent is running now, or the one
-// it just finished, in a few words with a glyph per tool. emberloop's own tools
-// arrive as mcp__emberloop__read and the like; the label drops that plumbing and
+// it just finished, in a few words with a glyph per tool. el's own tools
+// arrive as mcp__el__read and the like; the label drops that plumbing and
 // says what the agent is doing: `▤ reading header.go`, `⑂ spawning scout`.
 
 import (
@@ -28,6 +28,8 @@ var toolStyles = map[string]toolStyle{
 	"ctx_search": {"⌕", "searching output", "searched output"},
 	"websearch":  {"◎", "searching the web", "searched the web"},
 	"spawn":      {"⑂", "spawning", "spawned"},
+	"steer":      {"➤", "steering", "steered"},
+	"cancel":     {"✕", "cancelling", "cancelled"},
 	"git":        {"⎇", "git", "git"},
 	"check":      {"✓", "checking", "checked"},
 	"execute":    {"λ", "executing", "executed"},

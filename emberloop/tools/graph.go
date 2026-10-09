@@ -2,7 +2,7 @@
 // server, with automatic per-worktree indexing driven by the harness.
 //
 // The binary is optional: graph.enabled=false in settings or a missing binary
-// synthesizes nothing and breaks nothing. Emberloop finds it in the emberloop bin
+// synthesizes nothing and breaks nothing. El finds it in the el bin
 // directory first, then on PATH, or at graph.binary in settings, through the
 // shared ResolveBinary order the installer, grep and the sandbox share. Its
 // own `install` command never runs and no agent client config is touched.
@@ -16,7 +16,7 @@
 //
 // Lifecycle calls (index_repository, index_status, delete_project) go through
 // the same client; the harness in the parent package drives them invisibly to
-// agents. EMBERLOOP_GRAPH_TEST_COMMAND (with EMBERLOOP_GRAPH_TEST_ARGS as a JSON argv
+// agents. EL_GRAPH_TEST_COMMAND (with EL_GRAPH_TEST_ARGS as a JSON argv
 // list) overrides the synthesized command for tests, so the fake MCP server
 // stands in for the binary.
 package tools
@@ -106,7 +106,7 @@ func GraphProjectSlug(worktree string) string {
 }
 
 // ResolveGraphBinary finds the graph binary: graph.binary in settings first
-// (an executable path or anything on PATH), then the emberloop bin directory,
+// (an executable path or anything on PATH), then the el bin directory,
 // then PATH. Empty means absent, never an error.
 func ResolveGraphBinary(s Settings) string {
 	if s.Graph.Binary != "" {
@@ -123,17 +123,17 @@ func ResolveGraphBinary(s Settings) string {
 	return ""
 }
 
-// graphTestCommand is the test seam: EMBERLOOP_GRAPH_TEST_COMMAND names the fake
-// server command outright, with EMBERLOOP_GRAPH_TEST_ARGS carrying its argv as a
+// graphTestCommand is the test seam: EL_GRAPH_TEST_COMMAND names the fake
+// server command outright, with EL_GRAPH_TEST_ARGS carrying its argv as a
 // JSON list. The fake's mode config travels in the process environment, which
 // the client passes to the child.
 func graphTestCommand() (string, []string, bool) {
-	cmd := os.Getenv("EMBERLOOP_GRAPH_TEST_COMMAND")
+	cmd := os.Getenv("EL_GRAPH_TEST_COMMAND")
 	if cmd == "" {
 		return "", nil, false
 	}
 	var args []string
-	if raw := strings.TrimSpace(os.Getenv("EMBERLOOP_GRAPH_TEST_ARGS")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("EL_GRAPH_TEST_ARGS")); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &args)
 	}
 	return cmd, args, true

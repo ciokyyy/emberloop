@@ -8,7 +8,7 @@ import (
 
 func TestAddHerdrKeybinding(t *testing.T) {
 	out, st := addHerdrKeybinding("onboarding = false")
-	if st != "added" || !strings.Contains(out, `command = "emberloop.compress"`) || !strings.HasPrefix(out, "onboarding = false\n") {
+	if st != "added" || !strings.Contains(out, `command = "el.compress"`) || !strings.HasPrefix(out, "onboarding = false\n") {
 		t.Fatalf("add: %q %q", st, out)
 	}
 	again, st := addHerdrKeybinding(out)
@@ -23,7 +23,7 @@ func TestAddHerdrKeybinding(t *testing.T) {
 
 func TestMergeMCPServerKeepsOthers(t *testing.T) {
 	in := `{"mcpServers":{"other":{"command":"x"},"wick":{"command":"wick-mcp"}},"keep":1}`
-	out, err := mergeMCPServer([]byte(in), "/bin/emberloop-mcp")
+	out, err := mergeMCPServer([]byte(in), "/bin/el-mcp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,13 +37,13 @@ func TestMergeMCPServerKeepsOthers(t *testing.T) {
 	if _, ok := doc["mcpServers"]["wick"]; ok {
 		t.Fatalf("old wick entry kept: %s", out)
 	}
-	if doc["mcpServers"]["emberloop"]["command"] != "/bin/emberloop-mcp" {
+	if doc["mcpServers"]["el"]["command"] != "/bin/el-mcp" {
 		t.Fatalf("entry missing: %s", out)
 	}
 	if _, err := mergeMCPServer([]byte("{nope"), "x"); err == nil {
 		t.Fatal("invalid JSON must fail")
 	}
-	if out, err := mergeMCPServer(nil, "x"); err != nil || !strings.Contains(string(out), "emberloop") {
+	if out, err := mergeMCPServer(nil, "x"); err != nil || !strings.Contains(string(out), "el") {
 		t.Fatalf("empty input: %v %s", err, out)
 	}
 }

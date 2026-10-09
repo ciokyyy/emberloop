@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 	"example.com/emberloop/tools"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -21,12 +21,12 @@ import (
 // settingsStub answers canned model lists per harness and counts refreshes,
 // the way the harness cache behaves behind CachedModels.
 type settingsStub struct {
-	lists     map[string][]emberloop.Model
+	lists     map[string][]el.Model
 	refreshes map[string]int
 	listErr   map[string]error
 }
 
-func (s *settingsStub) models(harness string, refresh bool) ([]emberloop.Model, error) {
+func (s *settingsStub) models(harness string, refresh bool) ([]el.Model, error) {
 	if refresh {
 		s.refreshes[harness]++
 	}
@@ -41,10 +41,10 @@ func (s *settingsStub) models(harness string, refresh bool) ([]emberloop.Model, 
 // through the same functions the CLI uses.
 func testSettingsBackend(t *testing.T, stub *settingsStub, archiveBytes *int64) SettingsBackend {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
 	return SettingsBackend{
 		Load:        func() (tools.Settings, error) { return tools.LoadSettings(), nil },
 		Save:        tools.SaveSettings,
@@ -56,7 +56,7 @@ func testSettingsBackend(t *testing.T, stub *settingsStub, archiveBytes *int64) 
 
 func writeSettingsFile(t *testing.T, body string) {
 	t.Helper()
-	if err := os.WriteFile(os.Getenv("EMBERLOOP_SETTINGS"), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(os.Getenv("EL_SETTINGS"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -86,7 +86,7 @@ func plainView(m Model) string { return ansiStrip.ReplaceAllString(m.View(), "")
 // reads as the default in force, and the decision model, threshold and
 // archive size are listed too.
 func TestSettingsTabListsSlotsWithSources(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "deepseek/flash", Efforts: []string{"off", "high"}}},
 		"claude": {{ID: "opus", Efforts: []string{"low", "high"}}},
 	}, refreshes: map[string]int{}}
@@ -113,7 +113,7 @@ func TestSettingsTabListsSlotsWithSources(t *testing.T) {
 // still offers, and resets what it does not with a notice. Both persist
 // through the shared save, so the CLI reads them back.
 func TestSettingsHarnessSwitchKeepsValidAndResetsInvalid(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m", Efforts: []string{"off", "high"}}},
 		"claude": {{ID: "m", Efforts: []string{"off", "high"}}, {ID: "opus", Efforts: []string{"low"}}},
 	}, refreshes: map[string]int{}}
@@ -149,7 +149,7 @@ func TestSettingsHarnessSwitchKeepsValidAndResetsInvalid(t *testing.T) {
 // it, typing enters free text, and an effort the new model does not take is
 // cleared with a notice.
 func TestSettingsModelPickerPicksAndFreesText(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m", Efforts: []string{"off", "high"}}},
 		"claude": {{ID: "opus", Efforts: []string{"low", "high"}}, {ID: "haiku"}},
 	}, refreshes: map[string]int{}}
@@ -194,7 +194,7 @@ func TestSettingsModelPickerPicksAndFreesText(t *testing.T) {
 // bracketed; moving across levels never saves, enter applies. A model with
 // no levels shows no row.
 func TestSettingsEffortRowAppliesLevels(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m", Efforts: []string{"off"}}},
 		"claude": {{ID: "opus", Efforts: []string{"low", "high", "max"}}},
 	}, refreshes: map[string]int{}}
@@ -224,7 +224,7 @@ func TestSettingsEffortRowAppliesLevels(t *testing.T) {
 
 // A model with no levels shows no effort row at all.
 func TestSettingsEffortRowHiddenWithoutLevels(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m"}},
 		"claude": {{ID: "solo"}},
 	}, refreshes: map[string]int{}}
@@ -244,7 +244,7 @@ func TestSettingsEffortRowHiddenWithoutLevels(t *testing.T) {
 // Clicks change values too: the harness cycles, the model opens the picker
 // and an option picks, and a level applies.
 func TestSettingsClicksChangeHarnessModelAndEffort(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m", Efforts: []string{"off", "high"}}},
 		"claude": {{ID: "opus", Efforts: []string{"low", "high"}}, {ID: "haiku"}},
 	}, refreshes: map[string]int{}}
@@ -294,7 +294,7 @@ func (e errTest) Error() string { return string(e) }
 // `r` rebuilds every harness's model list, so new models show up; a
 // harness that cannot be listed keeps its cached list with a notice.
 func TestSettingsRefreshRebuildsModelLists(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m", Efforts: []string{"off"}}},
 		"claude": {{ID: "opus", Efforts: []string{"low"}}},
 	}, refreshes: map[string]int{}}
@@ -315,7 +315,7 @@ func TestSettingsRefreshRebuildsModelLists(t *testing.T) {
 		t.Fatalf("a clean refresh needs a notice, got %q", m.settings.notice)
 	}
 
-	stub.lists["claude"] = []emberloop.Model{{ID: "opus", Efforts: []string{"low"}}, {ID: "haiku"}}
+	stub.lists["claude"] = []el.Model{{ID: "opus", Efforts: []string{"low"}}, {ID: "haiku"}}
 	stub.listErr = map[string]error{"pig": errTestUnavailable}
 	m, cmd = pressKey(m, "r")
 	updated, _ = m.Update(cmd())
@@ -334,7 +334,7 @@ func TestSettingsRefreshRebuildsModelLists(t *testing.T) {
 // The decision model and threshold edit through free text and persist
 // through the shared save; a bad threshold is rejected without saving.
 func TestSettingsDecisionAndThresholdEdit(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m"}},
 		"claude": {{ID: "opus"}},
 	}, refreshes: map[string]int{}}
@@ -381,7 +381,7 @@ func TestSettingsDecisionAndThresholdEdit(t *testing.T) {
 // A poll tick re-reads the file, so a CLI edit shows up; an open editor or
 // picker holds its own state through the tick.
 func TestSettingsPollReloadsEditedFile(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m"}},
 		"claude": {{ID: "opus"}},
 	}, refreshes: map[string]int{}}
@@ -423,7 +423,7 @@ func TestSettingsPollReloadsEditedFile(t *testing.T) {
 // In the picker every rune reaches free text — even one that is a hotkey
 // elsewhere — while arrows move the highlight.
 func TestSettingsPickerFreeTextKeepsHotkeyRunes(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m"}},
 		"claude": {{ID: "opus"}, {ID: "haiku"}},
 	}, refreshes: map[string]int{}}
@@ -453,7 +453,7 @@ func TestSettingsPickerFreeTextKeepsHotkeyRunes(t *testing.T) {
 
 // A saved value reads back with its file source at once, not a tick later.
 func TestSettingsSavedValueShowsFileSource(t *testing.T) {
-	stub := &settingsStub{lists: map[string][]emberloop.Model{
+	stub := &settingsStub{lists: map[string][]el.Model{
 		"pig":    {{ID: "m"}},
 		"claude": {{ID: "opus"}},
 	}, refreshes: map[string]int{}}

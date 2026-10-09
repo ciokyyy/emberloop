@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -53,7 +53,7 @@ func liveDeliverReply(cmd string, args []string) Result {
 // call as herdr answers a pane it does not know. A test that needs herdr
 // injects its own Exec.
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "emberloop-test-herdr")
+	dir, err := os.MkdirTemp("", "el-test-herdr")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -64,7 +64,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	for _, k := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "EMBERLOOP_AGENT_ID", "EMBERLOOP_AGENT_TYPE"} {
+	for _, k := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "EL_AGENT_ID", "EL_AGENT_TYPE"} {
 		os.Unsetenv(k)
 	}
 	os.Setenv("HERDR_BIN_PATH", stub)

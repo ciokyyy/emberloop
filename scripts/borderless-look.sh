@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Probe for ticket 08 (borderless look): run claude and pig under
-# `emberloop wrap` with the borderless defaults, then with the rule line and
+# `el wrap` with the borderless defaults, then with the rule line and
 # frame restored, and record what reads well and what does not.
 #
-# Prerequisites: built emberloop on PATH, a herdr session with two free
+# Prerequisites: built el on PATH, a herdr session with two free
 # panes, the agent CLIs logged in, and the theme probe applied
-# (.scratch/input-queue/theme/run-borderless.sh for the pane palette plus
-# the emberloopb themes for the agents). Each check is manual: the script types
+# (.scratch/archive/input-queue/theme/run-borderless.sh for the pane palette plus
+# the elb themes for the agents). Each check is manual: the script types
 # the commands, a human confirms the behavior and records it in the ticket
 # (live-probe result box). Never runs in the automated check.
 set -uo pipefail
@@ -19,8 +19,8 @@ if [[ -z "$PANE_PIG" || -z "$PANE_CLAUDE" ]]; then
 fi
 
 echo "== borderless defaults (soft edge, no frame) =="
-herdr pane run "$PANE_PIG" "emberloop wrap --harness pig --agent probe-pig --type worker -- pig --theme /tmp/inprobe/pigthemeb --use-theme emberloopb"
-herdr pane run "$PANE_CLAUDE" "emberloop wrap --harness claude --agent probe-claude --type worker -- claude --settings '{\"theme\":\"custom:emberloopb\"}'"
+herdr pane run "$PANE_PIG" "el wrap --harness pig --agent probe-pig --type worker -- pig --theme /tmp/inprobe/pigthemeb --use-theme elb"
+herdr pane run "$PANE_CLAUDE" "el wrap --harness claude --agent probe-claude --type worker -- claude --settings '{\"theme\":\"custom:elb\"}'"
 
 cat <<'CHECKS'
 Confirm per pane, then record pass/fail plus what reads well and what does
@@ -33,11 +33,11 @@ not in the ticket:
 4. contrast: the strip background sits one step off the pane background
 5. resize: resize the pane, child and soft edge follow (reduced height)
 6. alt-screen: run `vim` under wrap, use it, quit; the soft strip returns
-Then restore the old look and compare (EMBERLOOP_SETTINGS with
+Then restore the old look and compare (EL_SETTINGS with
 {"context":{"strip_rule":true,"strip_frame":true}}):
 7. rule: the agent-hue dash line returns above the strip
 8. frame: the hue columns return beside the screen; the child narrows by two
 Record: which of soft/rule reads calmer, whether the input box still
 competes with the strip, and any terminal where the tints blur together.
-EMBERLOOP_HEADER_STRIP=0 anywhere restores the old unwrapped behavior.
+EL_HEADER_STRIP=0 anywhere restores the old unwrapped behavior.
 CHECKS

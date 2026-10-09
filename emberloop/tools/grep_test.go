@@ -400,7 +400,7 @@ func TestGrepResolvesRgThroughTheSharedResolver(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_BIN_DIR", dir)
+	t.Setenv("EL_BIN_DIR", dir)
 	if got := rgPath(); got != fake {
 		t.Fatalf("rgPath() = %q, want the bin-directory fake %q", got, fake)
 	}

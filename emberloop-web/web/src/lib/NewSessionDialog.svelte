@@ -1,10 +1,10 @@
 <!-- New-Session dialog: harness, model (from the Daemon), working directory. -->
 <script>
-  import { HARNESSES, modelsForHarness, modelLabel, DEFAULT_WORK_DIR } from './harnesses.js';
+  import { HARNESSES, modelsForHarness, modelItems, DEFAULT_WORK_DIR } from './harnesses.js';
   import { getModels } from './api.js';
   import Button from './ui/button.svelte';
   import Dialog from './ui/dialog.svelte';
-  import Select from './ui/select.svelte';
+  import Combobox from './ui/combobox.svelte';
   import Input from './ui/input.svelte';
 
   let { open = false, busy = false, error = '', onClose = () => {}, onCreate = () => {} } = $props();
@@ -14,20 +14,22 @@
   let workDir = $state(DEFAULT_WORK_DIR);
 
   const harnessItems = HARNESSES.map((h) => ({ value: h.id, label: h.label }));
-  const modelItems = $derived(models.map((m) => ({ value: m, label: modelLabel(harness, m) })));
+  const modelOptions = $derived(modelItems(harness, models, model));
 
   // The Daemon owns the model catalogue: ask it, fall back to the static list.
+  // The current selection travels as ?current= so it stays visible even when
+  // its provider holds no auth; a missing list never resets the choice.
   async function loadModels(id) {
     let list = modelsForHarness(id);
     try {
-      const body = await getModels(id);
+      const body = await getModels(id, id === harness ? model : '');
       if (body.models?.length) list = body.models;
     } catch {
       // Keep the static fallback.
     }
     if (id !== harness) return;
     models = list;
-    if (!list.includes(model)) model = list[0] ?? '';
+    if (!model) model = list[0] ?? '';
   }
 
   function pickHarness(id) {
@@ -52,11 +54,11 @@
   <form onsubmit={submit} class="flex flex-col gap-4">
     <div class="flex flex-col gap-1.5">
       <span id="harness-label" class="text-sm font-medium">Harness</span>
-      <Select aria-labelledby="harness-label" value={harness} items={harnessItems} onValueChange={pickHarness} />
+      <Combobox aria-labelledby="harness-label" value={harness} items={harnessItems} onValueChange={pickHarness} />
     </div>
     <div class="flex flex-col gap-1.5">
       <span id="model-label" class="text-sm font-medium">Model</span>
-      <Select aria-labelledby="model-label" bind:value={model} items={modelItems} placeholder="Select a model" />
+      <Combobox aria-labelledby="model-label" bind:value={model} items={modelOptions} placeholder="Select a model" />
     </div>
     <div class="flex flex-col gap-1.5">
       <label for="workdir" class="text-sm font-medium">Working directory</label>

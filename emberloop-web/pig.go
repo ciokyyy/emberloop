@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/MichaelKinsy/PiG/agent"
 	"github.com/MichaelKinsy/PiG/ai"
@@ -31,15 +34,50 @@ type PigBackend struct {
 	// Spawn creates Subagents under one parent. The Daemon wires it to
 	// its own Spawn; nil keeps Sessions tool-free.
 	Spawn func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error)
+	// SteerChild messages one Subagent of the calling Session. The Daemon
+	// wires it to its SteerChild; nil keeps Sessions steer-free.
+	SteerChild func(parentID, childID, text string) (string, error)
+	// CheckChild peeks at the calling Session's Subagents. The Daemon wires
+	// it to its CheckChildren (empty child) and CheckChild; nil keeps
+	// Sessions check-free.
+	CheckChild func(parentID, childID string) (string, error)
+	// CancelChild stops one Subagent of the calling Session. The Daemon
+	// wires it to its CancelChild; nil keeps Sessions cancel-free.
+	CancelChild func(parentID, childID string, kill bool) (string, error)
+	// SudoGate builds the per-Session gate that routes sudo bash commands to
+	// user approval; nil runs them unasked.
+	SudoGate func(sessionID string) func(ctx context.Context, root, command string) (string, bool)
+	// SharedTools serves the el tools package (the same tools
+	// el-mcp serves claude) to every Session, by role.
+	SharedTools bool
+	// LogDir, when set, receives one pig-<session>.log per Session: every SDK
+	// event, each stall decision and each recovery, one JSON line each. A
+	// worker whose provider stream dies leaves no error in its transcript, so
+	// this is the only trace of where it stopped.
+	LogDir string
 }
 
 type pigSession struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	sess   *coding.Session
-	rt     *coding.Runtime
-	svcs   *coding.Services
-	unsub  func()
+	// lastEvent is the unix-nano time of the newest SDK event; tools counts
+	// tool executions in flight. The stall watchdog reads both.
+	lastEvent atomic.Int64
+	tools     atomic.Int32
+	// textTail is true while the newest SDK output is assistant text with no
+	// tool call after it: a turn that goes silent then has already answered.
+	textTail atomic.Bool
+	// interrupted is set by Interrupt; the turn then ends idle, not failed.
+	interrupted atomic.Bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	sess        *coding.Session
+	rt          *coding.Runtime
+	svcs        *coding.Services
+	unsub       func()
+	// meta and emit rebuild the stack in place when the SDK wedges inside a
+	// provider stream (see recoverWedged).
+	meta SessionMeta
+	emit func(kind, text, status string)
+	log  *pigLog
 }
 
 func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
@@ -47,15 +85,38 @@ func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
 }
 
 // sessionTools is the stripped loadout for one Session: the configured
-// ExtraTools plus the Daemon spawn tool bound to this Session's id, so the
-// Daemon knows the parent of anything it spawns. Scouts keep the ExtraTools
-// without spawn: nothing they call can write.
+// ExtraTools plus the Daemon spawn, steer, check and cancel tools bound to
+// this Session's id, so the Daemon knows the parent of anything it spawns,
+// messages, peeks at or stops. Scouts keep the ExtraTools without any of
+// the four: nothing they call can write, and they have no children to read.
 func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	tools := append([]agent.AgentTool(nil), b.extra...)
-	if b.Spawn != nil && !meta.Scout {
-		tools = append(tools, &spawnAgentTool{parent: meta.ID, spawn: b.Spawn})
+	if b.SharedTools {
+		var gate func(ctx context.Context, root, command string) (string, bool)
+		if b.SudoGate != nil && !meta.Scout {
+			gate = b.SudoGate(meta.ID)
+		}
+		if shared, err := elToolsFor(meta, gate); err == nil {
+			tools = append(tools, shared...)
+		} else {
+			fmt.Fprintln(os.Stderr, "el-web: shared tools:", err)
+		}
+	}
+	if !meta.Scout {
+		if b.Spawn != nil {
+			tools = append(tools, &spawnAgentTool{parent: meta.ID, spawn: b.Spawn})
+		}
+		if b.SteerChild != nil {
+			tools = append(tools, &steerAgentTool{parent: meta.ID, steer: b.SteerChild})
+		}
+		if b.CheckChild != nil {
+			tools = append(tools, &checkAgentTool{parent: meta.ID, check: b.CheckChild})
+		}
+		if b.CancelChild != nil {
+			tools = append(tools, &cancelAgentTool{parent: meta.ID, cancel: b.CancelChild})
+		}
 	}
 	return tools
 }
@@ -73,7 +134,7 @@ func (t *spawnAgentTool) Label() string { return "spawn subagents" }
 func (t *spawnAgentTool) Schema() ai.ToolSchema {
 	return ai.ToolSchema{
 		Name:        t.Name(),
-		Description: "Spawn Subagents that work in parallel and report back as one grouped result. Each agent takes a prompt and a type (worker or scout); scouts are read-only.",
+		Description: "Spawn Subagents that work in parallel and report back as one grouped result. Each agent takes a prompt and a type (worker or scout); scouts are read-only. Returned ids can be steered with the steer tool, peeked at with check, or stopped with cancel.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -90,6 +151,130 @@ func (t *spawnAgentTool) Schema() ai.ToolSchema {
 		},
 	}
 }
+
+// steerAgentTool is the Daemon steer tool as a pig ExtraTool. One instance
+// serves one Session: Execute messages the caller's own Subagent by id. A
+// running child is steered at its next safe step, an idle one starts as a
+// follow-up, and a released one resumes first.
+type steerAgentTool struct {
+	parent string
+	steer  func(parentID, childID, text string) (string, error)
+}
+
+func (t *steerAgentTool) Name() string  { return "steer" }
+func (t *steerAgentTool) Label() string { return "message a subagent" }
+func (t *steerAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Message a Subagent you spawned by its Session id. A running worker is steered at its next safe step without interrupting your turn; an idle one starts as a follow-up; a released one resumes first. Only your own children; scouts are read-only. See also check (peek without messaging) and cancel (stop a turn).",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "string"},
+				"message": map[string]any{"type": "string"},
+			},
+			"required": []string{"id", "message"},
+		},
+	}
+}
+func (t *steerAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		ID      string `json:"id"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || req.ID == "" || req.Message == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("steer: id and message are required")
+	}
+	outcome, err := t.steer(t.parent, req.ID, req.Message)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: outcome}},
+	}, nil
+}
+func (t *steerAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
+// checkAgentTool is the Daemon check tool as a pig ExtraTool. One instance
+// serves one Session: Execute peeks at the caller's own Subagents, listing
+// them all when id is empty, else one child's summary plus recent Events.
+type checkAgentTool struct {
+	parent string
+	check  func(parentID, childID string) (string, error)
+}
+
+func (t *checkAgentTool) Name() string  { return "check" }
+func (t *checkAgentTool) Label() string { return "peek at subagents" }
+func (t *checkAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Peek at Subagents you spawned without messaging them: with no id lists your own children, with an id shows one child's status plus its recent events. Results already arrive as one grouped result, so do not poll; use check only to peek. Only your own children.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string"},
+			},
+		},
+	}
+}
+func (t *checkAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("check: bad arguments")
+	}
+	outcome, err := t.check(t.parent, req.ID)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: outcome}},
+	}, nil
+}
+func (t *checkAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
+// cancelAgentTool is the Daemon cancel tool as a pig ExtraTool. One instance
+// serves one Session: Execute stops the caller's own Subagent mid-turn
+// without touching the caller, ending its Session too when kill is set.
+type cancelAgentTool struct {
+	parent string
+	cancel func(parentID, childID string, kill bool) (string, error)
+}
+
+func (t *cancelAgentTool) Name() string  { return "cancel" }
+func (t *cancelAgentTool) Label() string { return "stop a subagent" }
+func (t *cancelAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Stop a Subagent you spawned: interrupts its current turn without touching your own; kill also ends its Session. Only your own children; scouts can be stopped but not messaged. Prefer check to see what it is doing first.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":   map[string]any{"type": "string"},
+				"kill": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"id"},
+		},
+	}
+}
+func (t *cancelAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		ID   string `json:"id"`
+		Kill bool   `json:"kill"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || req.ID == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("cancel: id is required")
+	}
+	outcome, err := t.cancel(t.parent, req.ID, req.Kill)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: outcome}},
+	}, nil
+}
+func (t *cancelAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
 
 func (t *spawnAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
 	var req struct {
@@ -131,7 +316,74 @@ func PigModels() []string {
 	return pigModelsCache
 }
 
-func (b *PigBackend) Models() []string { return PigModels() }
+func (b *PigBackend) Models() []string {
+	b.mu.Lock()
+	dir := b.AgentDir
+	b.mu.Unlock()
+	return PigAvailableModels(dir)
+}
+
+// PigAvailableModels lists the catalog models whose providers hold usable
+// auth (a stored credential in <agentDir>/auth.json, an environment key, or
+// an OAuth login), checked through the SDK's own CheckProviderAuth, so the
+// picker never offers a model the harness cannot run. The test-faux provider
+// counts as available only with PIG_TEST_FAUX=1, mirroring creation.
+func PigAvailableModels(agentDir string) []string {
+	if agentDir == "" {
+		agentDir = coding.DefaultAgentDir()
+	}
+	var creds ai.CredentialStore = emptyCredentialStore{}
+	if store, err := ai.NewAuthStorage(filepath.Join(agentDir, "auth.json")); err == nil {
+		creds = store
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	authed := make(map[string]bool, len(ai.ListProviders()))
+	for _, p := range ai.ListProviders() {
+		authed[p] = pigProviderAuthed(ctx, p, creds)
+	}
+	var out []string
+	for _, m := range ai.ListModels("") {
+		if authed[m.Provider] {
+			out = append(out, m.Provider+"/"+m.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// pigProviderAuthed reports whether the SDK can run the provider now. A nil
+// check (or error) means no usable auth: no stored credential, no environment
+// key, no OAuth login.
+func pigProviderAuthed(ctx context.Context, provider string, creds ai.CredentialStore) bool {
+	if provider == "test-faux" {
+		return os.Getenv("PIG_TEST_FAUX") == "1"
+	}
+	auth, err := ai.BuiltinProviderAuth(provider)
+	if err != nil {
+		return false
+	}
+	check, err := ai.CheckProviderAuth(ctx, provider, auth, creds, ai.DefaultProviderAuthContext())
+	if err != nil {
+		return false
+	}
+	return check != nil
+}
+
+// emptyCredentialStore holds no credentials, so only ambient environment auth
+// checks pass. It covers an unreadable auth.json without refusing the listing.
+type emptyCredentialStore struct{}
+
+func (emptyCredentialStore) Read(context.Context, string) (*ai.Credential, error) {
+	return nil, nil
+}
+func (emptyCredentialStore) List(context.Context) ([]ai.CredentialInfo, error) {
+	return nil, nil
+}
+func (emptyCredentialStore) Modify(_ context.Context, _ string, _ func(*ai.Credential) (*ai.Credential, error)) (*ai.Credential, error) {
+	return nil, nil
+}
+func (emptyCredentialStore) Delete(context.Context, string) error { return nil }
 
 // CreateSession builds the SDK stack (Services, Runtime, Session) for one
 // Daemon Session and subscribes the normalized Event stream. An unknown
@@ -172,6 +424,12 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		return fmt.Errorf("pig: session %s already exists", meta.ID)
 	}
 	b.subscribe(meta.ID, sess, rt, svcs, emit)
+	b.sessions[meta.ID].meta = meta
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		names = append(names, t.Name()+"/"+fmt.Sprint(t.ExecutionMode()))
+	}
+	b.sessions[meta.ID].log.write("create", map[string]any{"model": meta.Model, "workDir": meta.WorkDir, "scout": meta.Scout, "parent": meta.ParentID, "extraTools": names})
 	return nil
 }
 
@@ -205,12 +463,48 @@ func buildPigServices(agentDir string, extra []agent.AgentTool, meta SessionMeta
 // Callers hold b.mu.
 func (b *PigBackend) subscribe(id string, sess *coding.Session, rt *coding.Runtime, svcs *coding.Services, emit func(kind, text, status string)) {
 	ctx, cancel := context.WithCancel(context.Background())
+	ps := &pigSession{ctx: ctx, cancel: cancel, sess: sess, rt: rt, svcs: svcs, emit: emit, log: newPigLog(b.LogDir, id)}
+	ps.lastEvent.Store(time.Now().UnixNano())
+	ps.log.write("subscribe", map[string]any{"pigSession": sess.ID()})
 	unsub := sess.Subscribe(func(e agent.AgentEvent) {
+		ps.lastEvent.Store(time.Now().UnixNano())
+		ps.log.event(e)
+		switch e.(type) {
+		case agent.ToolExecutionStartEvent:
+			ps.tools.Add(1)
+			ps.textTail.Store(false)
+		case agent.ToolExecutionEndEvent:
+			ps.tools.Add(-1)
+		}
 		for _, ne := range mapAgentEvent(e) {
+			switch ne.kind {
+			case "assistant_chunk":
+				ps.textTail.Store(true)
+			case "thinking_chunk", "tool_call_started":
+				ps.textTail.Store(false)
+			}
 			emit(ne.kind, ne.text, ne.status)
 		}
+		if _, ok := e.(agent.TurnEndEvent); ok {
+			// Report usage as each model turn ends, not only when the whole
+			// prompt ends: a long or failed worker turn would otherwise show
+			// "no usage yet" for its whole life.
+			if u := sess.ContextUsage(); u != nil && u.ContextWindow > 0 && u.Tokens != nil {
+				emit("usage", usageText(*u.Tokens, u.ContextWindow), "")
+			}
+		}
+		if u := sess.ContextUsage(); u != nil {
+			for _, ne := range compactionNormEvents(e, u.ContextWindow) {
+				emit(ne.kind, ne.text, ne.status)
+			}
+		} else {
+			for _, ne := range compactionNormEvents(e, 0) {
+				emit(ne.kind, ne.text, ne.status)
+			}
+		}
 	})
-	b.sessions[id] = &pigSession{ctx: ctx, cancel: cancel, sess: sess, rt: rt, svcs: svcs, unsub: unsub}
+	ps.unsub = unsub
+	b.sessions[id] = ps
 }
 
 // OnPrompt runs one turn to completion. Chunks and tool calls already
@@ -218,6 +512,11 @@ func (b *PigBackend) subscribe(id string, sess *coding.Session, rt *coding.Runti
 // A close mid-turn drops the status edges: the Daemon owns the ended state
 // and ended is terminal there, so a late idle or failed must not regress it.
 func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
+	b.OnPromptImages(sessionID, text, nil, appendEvent)
+}
+
+// OnPromptImages is OnPrompt with image attachments sent as content blocks.
+func (b *PigBackend) OnPromptImages(sessionID, text string, images []Image, appendEvent func(kind, text, status string)) {
 	b.mu.Lock()
 	ps, ok := b.sessions[sessionID]
 	b.mu.Unlock()
@@ -226,7 +525,94 @@ func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, tex
 		return
 	}
 	appendEvent("status", "", "working")
-	_, sendErr := ps.sess.Send(ps.ctx, text)
+	ps.log.write("prompt", map[string]any{"chars": len(text), "images": len(images), "text": clip(text, 200)})
+	var sendErr error
+	var turnCtx context.Context
+	var endTurn context.CancelFunc
+	// A model stream can go silent mid-turn (seen with opencode-go workers:
+	// one status line, then nothing). Cancel it and ask the model to
+	// continue, up to pigStallRetries times, before failing the turn. The
+	// retry only runs when the stalled Send returned, so the Session is not
+	// wedged inside the provider stream.
+	for attempt := 0; ; attempt++ {
+		turnCtx, endTurn = context.WithCancel(ps.ctx)
+		ps.textTail.Store(false)
+		stall := watchPigStall(turnCtx, ps)
+		type sendResult struct{ err error }
+		done := make(chan sendResult, 1)
+		sess := ps.sess
+		ps.log.write("send", map[string]any{"attempt": attempt, "chars": len(text)})
+		go func(prompt string, imgs []Image) {
+			var err error
+			if len(imgs) == 0 {
+				_, err = sess.Send(turnCtx, prompt)
+			} else {
+				_, err = sess.SendContent(turnCtx, userBlocks(prompt, imgs))
+			}
+			ps.log.write("send_returned", map[string]any{"attempt": attempt, "error": fmt.Sprint(err)})
+			done <- sendResult{err}
+		}(text, images)
+		stalled, wedged := false, false
+		select {
+		case r := <-done:
+			sendErr = r.err
+		case <-stall:
+			ps.log.write("stall", map[string]any{"attempt": attempt, "textTail": ps.textTail.Load(), "toolsInFlight": ps.tools.Load(), "idleMs": time.Since(time.Unix(0, ps.lastEvent.Load())).Milliseconds()})
+			// The SDK can wedge inside a provider stream and ignore its
+			// context, so cancel once and stop waiting: the Send goroutine is
+			// abandoned and the stack is closed when the Session releases.
+			endTurn()
+			if ps.textTail.Load() {
+				// The model already gave its final text and the provider stream
+				// never closed (PiG awaitContinuation never resolves; seen with
+				// opencode-go workers). The answer is complete, so end the turn
+				// as done instead of failing a finished worker.
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+				}
+				ps.log.write("stall_tail_done", map[string]any{"attempt": attempt, "note": "stream silent after text; turn ended as done, no stop event seen"})
+				sendErr = nil
+				break
+			}
+			stalled = true
+			select {
+			case <-done:
+				sendErr = fmt.Errorf("stalled")
+			case <-time.After(3 * time.Second):
+				sendErr = fmt.Errorf("pig: model stream stalled for %s with no events; turn cancelled", pigStallTimeout)
+				wedged = true
+			}
+		}
+		if (stalled || wedged) && attempt < pigStallRetries && b.alive(sessionID) {
+			appendEvent("error", fmt.Sprintf("pig: model stream stalled for %s with no events; asking it to continue (%d/%d)", pigStallTimeout, attempt+1, pigStallRetries), "")
+			if wedged {
+				// Send never returned, so this stack is stuck inside the
+				// provider stream and a prompt to it would queue behind the
+				// hang. Rebuild the stack from the saved pig Session and ask
+				// the fresh one to continue.
+				fresh, err := b.recoverWedged(sessionID)
+				if err != nil {
+					ps.log.write("recover_failed", map[string]any{"error": err.Error()})
+					sendErr = fmt.Errorf("pig: model stream stalled for %s and the session could not be rebuilt: %v", pigStallTimeout, err)
+					break
+				}
+				ps = fresh
+			}
+			text, images = "Your previous response stopped without finishing. Continue the task from where you left off.", nil
+			endTurn()
+			continue
+		}
+		if stalled {
+			sendErr = fmt.Errorf("pig: model stream stalled for %s with no events; turn cancelled", pigStallTimeout)
+		}
+		break
+	}
+	endTurn()
+	if ps.interrupted.Swap(false) {
+		sendErr = nil
+	}
+	ps.log.write("turn_end", map[string]any{"error": fmt.Sprint(sendErr), "alive": b.alive(sessionID)})
 	if !b.alive(sessionID) {
 		if sendErr != nil {
 			appendEvent("error", sendErr.Error(), "")
@@ -235,10 +621,58 @@ func (b *PigBackend) OnPrompt(sessionID, text string, appendEvent func(kind, tex
 	}
 	if sendErr != nil {
 		appendEvent("error", sendErr.Error(), "")
+		if used, size, ok := b.ContextUsage(sessionID); ok {
+			appendEvent("usage", usageText(used, size), "")
+		}
 		appendEvent("status", "", "failed")
 		return
 	}
+	if used, size, ok := b.ContextUsage(sessionID); ok {
+		appendEvent("usage", usageText(used, size), "")
+	}
 	appendEvent("status", "", "idle")
+}
+
+// pigStallTimeout is how long a working turn may go without any SDK event
+// while no tool runs. The SDK can hang inside a provider stream with no
+// error (seen in the field: awaitContinuation never returns), and a hung
+// turn would hold its Session working and its cap slot forever.
+const pigStallTimeout = 90 * time.Second
+
+// pigTailStallTimeout is the shorter silence allowed once the model has
+// already written its final text: the provider stream then just failed to close.
+const pigTailStallTimeout = 20 * time.Second
+
+// pigStallRetries is how many times a stalled turn is nudged to continue.
+const pigStallRetries = 2
+
+// watchPigStall closes the returned channel when the stream goes quiet for
+// pigStallTimeout with no tool in flight. It stops when the turn context
+// ends.
+func watchPigStall(turn context.Context, ps *pigSession) <-chan struct{} {
+	fired := make(chan struct{})
+	ps.lastEvent.Store(time.Now().UnixNano())
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-turn.Done():
+				return
+			case <-t.C:
+				idle := time.Since(time.Unix(0, ps.lastEvent.Load()))
+				limit := pigStallTimeout
+				if ps.textTail.Load() {
+					limit = pigTailStallTimeout
+				}
+				if ps.tools.Load() == 0 && idle > limit {
+					close(fired)
+					return
+				}
+			}
+		}
+	}()
+	return fired
 }
 
 // Steer delivers text at the next tool boundary through the SDK queue.
@@ -251,6 +685,44 @@ func (b *PigBackend) Steer(sessionID, text string) {
 	if ps, ok := b.sessions[sessionID]; ok {
 		ps.sess.QueueSteer(text, nil)
 	}
+}
+
+// SteerImages and FollowUpImages queue with image attachments.
+func (b *PigBackend) SteerImages(sessionID, text string, images []Image) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if ps, ok := b.sessions[sessionID]; ok {
+		ps.sess.QueueSteer(text, imageContents(images))
+	}
+}
+
+func (b *PigBackend) FollowUpImages(sessionID, text string, images []Image) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if ps, ok := b.sessions[sessionID]; ok {
+		ps.sess.QueueFollowUp(text, imageContents(images))
+	}
+}
+
+func imageContents(images []Image) []ai.ImageContent {
+	out := make([]ai.ImageContent, 0, len(images))
+	for _, img := range images {
+		out = append(out, ai.ImageContent{Data: img.Data, MimeType: strings.ToLower(img.Mime)})
+	}
+	return out
+}
+
+// Interrupt aborts the running SDK turn.
+func (b *PigBackend) Interrupt(sessionID string) bool {
+	b.mu.Lock()
+	ps, ok := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !ok {
+		return false
+	}
+	ps.interrupted.Store(true)
+	ps.sess.RequestAbort()
+	return true
 }
 
 func (b *PigBackend) FollowUp(sessionID, text string) {
@@ -317,9 +789,19 @@ func (b *PigBackend) closePig(ps *pigSession) {
 	if ps.unsub != nil {
 		ps.unsub()
 	}
-	_ = ps.sess.Close()
-	_ = ps.rt.Close()
-	ps.svcs.Close()
+	// A wedged SDK stack can block Close forever: bound the wait and leave
+	// the rest to a background goroutine.
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_ = ps.sess.Close()
+		_ = ps.rt.Close()
+		ps.svcs.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+	}
 }
 
 func (b *PigBackend) alive(sessionID string) bool {
@@ -408,6 +890,7 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 		return nil
 	}
 	b.subscribe(meta.ID, sess, rt, svcs, emit)
+	b.sessions[meta.ID].meta = meta
 	return nil
 }
 
@@ -455,44 +938,27 @@ func mapAgentEvent(e agent.AgentEvent) []normEvent {
 				return nil
 			}
 			return []normEvent{{kind: "thinking_chunk", text: se.Delta}}
-		case ai.ToolCallStartEvent:
-			return []normEvent{{kind: "tool_call_started", text: partialToolName(e.Message, se.ContentIndex)}}
-		case ai.ToolCallDeltaEvent:
-			return []normEvent{{kind: "tool_call_updated", text: se.Delta}}
-		case ai.ToolCallEndEvent:
-			args, _ := json.Marshal(se.ToolCall.Arguments)
-			return []normEvent{{kind: "tool_call_updated", text: se.ToolCall.Name + " " + string(args)}}
 		}
+	// Tool frames stream as partial JSON and repeat the call: only the
+	// execution events carry a stable id, so only they become Events, in
+	// the same {id,name,input,output,status} shape claude emits.
 	case agent.ToolExecutionStartEvent:
-		return []normEvent{{kind: "tool_call_started", text: e.ToolName}}
+		return []normEvent{{kind: "tool_call_started", text: pigToolJSON(e.ToolCallID, e.ToolName, string(e.Args), "", "running")}}
 	case agent.ToolExecutionUpdateEvent:
-		return []normEvent{{kind: "tool_call_updated", text: toolResultText(e.PartialResult)}}
+		return []normEvent{{kind: "tool_call_updated", text: pigToolJSON(e.ToolCallID, e.ToolName, "", toolResultText(e.PartialResult), "running")}}
 	case agent.ToolExecutionEndEvent:
-		text := toolResultText(e.Result)
+		status := "completed"
 		if e.IsError {
-			text = "error: " + text
+			status = "failed"
 		}
-		return []normEvent{{kind: "tool_call_updated", text: text}}
+		return []normEvent{{kind: "tool_call_updated", text: pigToolJSON(e.ToolCallID, e.ToolName, "", toolResultText(e.Result), status)}}
 	}
 	return nil
 }
 
-func partialToolName(msg agent.AgentMessage, idx int) string {
-	if msg.Assistant == nil {
-		return ""
-	}
-	blocks := msg.Assistant.Content
-	if idx >= 0 && idx < len(blocks) {
-		if call, ok := blocks[idx].(ai.ToolCall); ok {
-			return call.Name
-		}
-	}
-	for _, block := range blocks {
-		if call, ok := block.(ai.ToolCall); ok {
-			return call.Name
-		}
-	}
-	return ""
+// pigToolJSON is the shared ToolCall Event text.
+func pigToolJSON(id, name, input, output, status string) string {
+	return ToolCall{ID: id, Name: name, Input: input, Output: output, Status: status}.Text()
 }
 
 func toolResultText(r agent.AgentToolResult) string {
@@ -503,4 +969,61 @@ func toolResultText(r agent.AgentToolResult) string {
 		}
 	}
 	return out
+}
+
+// userBlocks builds the user content for a prompt with attachments: the text
+// first (when any), then one image block each.
+func userBlocks(text string, images []Image) []ai.UserContentBlock {
+	out := make([]ai.UserContentBlock, 0, len(images)+1)
+	if text != "" {
+		out = append(out, ai.TextContent{Text: text})
+	}
+	for _, img := range images {
+		out = append(out, ai.ImageContent{Data: img.Data, MimeType: strings.ToLower(img.Mime)})
+	}
+	return out
+}
+
+// recoverWedged replaces a stack stuck inside a provider stream. It takes the
+// pig Session id from the stuck stack, closes that stack (bounded, so a
+// wedged Close cannot hold the turn), and resumes the saved Session into a
+// fresh one under the same Daemon id.
+func (b *PigBackend) recoverWedged(id string) (*pigSession, error) {
+	b.mu.Lock()
+	old, ok := b.sessions[id]
+	if ok {
+		delete(b.sessions, id)
+	}
+	b.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("session closed")
+	}
+	tokenCh := make(chan string, 1)
+	go func() { tokenCh <- old.sess.ID() }()
+	var token string
+	select {
+	case token = <-tokenCh:
+	case <-time.After(2 * time.Second):
+	}
+	if token == "" {
+		token = old.meta.ResumeToken
+	}
+	if token == "" {
+		b.closePig(old)
+		return nil, fmt.Errorf("no saved pig Session to resume")
+	}
+	old.log.write("recover", map[string]any{"pigSession": token})
+	b.closePig(old)
+	meta := old.meta
+	meta.ResumeToken = token
+	if err := b.ResumeSession(meta, old.emit); err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	fresh, ok := b.sessions[id]
+	b.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("session closed during rebuild")
+	}
+	return fresh, nil
 }

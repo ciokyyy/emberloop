@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // DOX index test (ticket 16): the AGENTS.md tree cannot rot silently.
 // Every AGENTS.md must be listed in its parent doc's Child DOX Index, and
@@ -137,7 +137,7 @@ func doxTreeProblems(root string) []string {
 }
 
 // doxRepoRoot finds the checkout root from a package directory: the first
-// ancestor holding a emberloop subdirectory (the main Go package).
+// ancestor holding an emberloop subdirectory (the main Go package).
 func doxRepoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -175,10 +175,10 @@ func (f *fakeReviewers) run(cmd string, args []string, opts ExecOpts) (Result, e
 		cmd := launchCmd(line)
 		p.harness = cmd.Bin
 		for _, e := range cmd.Env {
-			if v, ok := strings.CutPrefix(e, "EMBERLOOP_AGENT_ID="); ok {
+			if v, ok := strings.CutPrefix(e, "EL_AGENT_ID="); ok {
 				p.id = v
 			}
-			if v, ok := strings.CutPrefix(e, "EMBERLOOP_AGENT_TYPE="); ok {
+			if v, ok := strings.CutPrefix(e, "EL_AGENT_TYPE="); ok {
 				p.typ = v
 			}
 		}
@@ -366,19 +366,19 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 		statePath, spawnGap, pollEvery = old, oldGap, oldPoll
 	})
 	// Hermetic panes: the runner itself sits in a herdr pane, so HERDR_* and
-	// EMBERLOOP_AGENT_ID leak in from the outside. A review spawn with no parent
+	// EL_AGENT_ID leak in from the outside. A review spawn with no parent
 	// pane records none and delivers nowhere; a test that wants a parent
 	// sets them after this returns.
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	// Hermetic settings: a missing temp file and no read-only override, so
 	// the reviewers resolve the built-in pig default unless a test says more.
 	resolverSettings(t, "")
 	repo = t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	writeFile(t, filepath.Join(repo, "a.go"), "package a\n")
 	gitOut(t, repo, "add", ".")
 	gitOut(t, repo, "commit", "-qm", "base")
@@ -462,19 +462,19 @@ func TestReviewersDoNotCopyTheWorkerModel(t *testing.T) {
 	}
 }
 
-// EMBERLOOP_READONLY_HARNESS is a resolver flag layer: it overrides the slot's
+// EL_READONLY_HARNESS is a resolver flag layer: it overrides the slot's
 // harness, so a reviewer on a machine with the variable set still launches
 // with it.
 func TestReadonlyHarnessOverridesTheReviewerSlot(t *testing.T) {
 	_, tree := reviewRepo(t)
 	resolverSettings(t, `{"roles":{"code-review":{"harness":"claude","model":"slot-model"}}}`)
-	t.Setenv("EMBERLOOP_READONLY_HARNESS", "pig")
+	t.Setenv("EL_READONLY_HARNESS", "pig")
 	f := newFakeReviewers(answers(verdictPass, verdictPass))
 	if _, err := reviewSpawn(t, f, tree, map[string]any{"type": reviewerStandards}); err != nil {
 		t.Fatal(err)
 	}
 	if got := binIn(f.paneOf(t, reviewerStandards).line); got != "pig" {
-		t.Errorf("reviewer harness = %q, want pig from EMBERLOOP_READONLY_HARNESS", got)
+		t.Errorf("reviewer harness = %q, want pig from EL_READONLY_HARNESS", got)
 	}
 }
 
@@ -1662,7 +1662,7 @@ func TestRunChecksFallsBackToTheFirstName(t *testing.T) {
 func TestStrandedReviewerGroupResolvesWithFreshVerdict(t *testing.T) {
 	_, tree := reviewRepo(t)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	oldDeliver := deliverExec
 	rec := &recorder{reply: liveDeliverReply}
 	deliverExec = rec.run
@@ -1760,5 +1760,32 @@ func TestReplacementSeatKeepsTheDeadSeatOnlyInTheCurrentTicketTab(t *testing.T) 
 	moved := replacementSeat(prev, readOnlyPlace{Tab: "w:t15", Overflow: "x (2)"})
 	if moved.Tab != "w:t15" || moved.Slot != 0 {
 		t.Errorf("respawned worker tab: got %s slot %d, want the new ticket tab, no slot", moved.Tab, moved.Slot)
+	}
+}
+
+// A follow-up never carries a huge one-file diff inline: the block becomes a
+// stub naming the full diff file, and small blocks stay whole.
+func TestElideBigBlocks(t *testing.T) {
+	old := maxInlineBlock
+	maxInlineBlock = 100
+	t.Cleanup(func() { maxInlineBlock = old })
+
+	small := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n+small change\n"
+	big := "diff --git a/dist/app.js b/dist/app.js\n--- a/dist/app.js\n+++ b/dist/app.js\n+" + strings.Repeat("x", 500) + "\n"
+	got := elideBigBlocks(small+big+small, "/tmp/full.diff")
+
+	if strings.Contains(got, strings.Repeat("x", 50)) {
+		t.Fatalf("big block was carried inline: %q", got)
+	}
+	for _, want := range []string{"diff --git a/dist/app.js b/dist/app.js", "elided", "/tmp/full.diff", "+small change"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if n := strings.Count(got, "+small change"); n != 2 {
+		t.Fatalf("small blocks kept %d times, want 2", n)
+	}
+	if elideBigBlocks(small, "/tmp/full.diff") != small {
+		t.Fatal("a diff under the cap changed")
 	}
 }

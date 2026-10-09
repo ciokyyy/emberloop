@@ -253,8 +253,8 @@ func TestQueuedSteerDeliversLabeledAfterTurn(t *testing.T) {
 	}
 }
 
-// Slice 5: a Steer to a working claude Session degrades to a Follow-up and
-// the transcript labels it so.
+// Slice 5: a Steer to a working claude Session degrades to a Follow-up; the
+// transcript shows it as one, with the text untouched.
 func TestClaudeSteerDegradesToFollowup(t *testing.T) {
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
@@ -270,8 +270,8 @@ func TestClaudeSteerDegradesToFollowup(t *testing.T) {
 		t.Fatalf("steer status = %d, want 202", code)
 	}
 	q := getQueue(t, srv.URL, id)
-	if len(q) != 1 || q[0].Mode != "followup" || q[0].Text != "go left" {
-		t.Fatalf("claude queue = %+v, want one degraded followup", q)
+	if len(q) != 1 || q[0].Mode != "steer" || q[0].Text != "go left" {
+		t.Fatalf("claude queue = %+v, want one held steer", q)
 	}
 
 	close(stub.blockPrompt)
@@ -288,8 +288,8 @@ func TestClaudeSteerDegradesToFollowup(t *testing.T) {
 	if found.Mode != "followup" {
 		t.Fatalf("degraded steer mode = %q, want followup", found.Mode)
 	}
-	if !strings.Contains(found.Text, "degraded to follow-up") {
-		t.Fatalf("degraded steer unlabeled: %q", found.Text)
+	if found.Text != "go left" {
+		t.Fatalf("degraded steer text = %q, want it unlabeled", found.Text)
 	}
 }
 
@@ -537,4 +537,156 @@ func TestSendDuringTransitionAnswers409(t *testing.T) {
 		t.Fatalf("send after transition status = %d, want 202", code)
 	}
 	waitStatus(t, srv.URL, id, "idle", 30*time.Second)
+}
+
+// steerStub is a stubConn whose adapter advertises _session/steering.
+type steerStub struct {
+	*stubConn
+	outcome bool
+	steered []string
+}
+
+func (s *steerStub) SteeringSupported() bool { return true }
+
+func (s *steerStub) Steer(acpID, text string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steered = append(s.steered, text)
+	return s.outcome, nil
+}
+
+// A Steer to a working claude Session whose adapter advertises steering is
+// injected: it is not queued and the transcript keeps the steer label.
+func TestClaudeSteerInjectsWhenAdapterSupportsIt(t *testing.T) {
+	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}, outcome: true}
+	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
+	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	sendPrompt(t, srv.URL, id, "slow job")
+	waitStatus(t, srv.URL, id, "working", 5*time.Second)
+
+	if code, _ := postMode(t, srv.URL, id, "steer", "go left"); code != http.StatusAccepted {
+		t.Fatalf("steer status = %d, want 202", code)
+	}
+	// The Steer is held until a tool call finishes, never injected mid-tool.
+	stub.mu.Lock()
+	n := len(stub.steered)
+	stub.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("steer injected before a tool call finished: %v", stub.steered)
+	}
+	if q := getQueue(t, srv.URL, id); len(q) != 1 || q[0].Mode != "steer" {
+		t.Fatalf("held steer queue = %+v, want one steer", q)
+	}
+	d.appendEvent(id, "tool_call_updated", `{"id":"t1","name":"bash","status":"completed"}`, "")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		stub.mu.Lock()
+		steered := append([]string{}, stub.steered...)
+		stub.mu.Unlock()
+		if len(steered) == 1 && steered[0] == "go left" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("adapter steered = %v, want [go left]", steered)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if q := getQueue(t, srv.URL, id); len(q) != 0 {
+		t.Fatalf("injected steer left a queue: %+v", q)
+	}
+	close(stub.blockPrompt)
+	events := readSSE(t, srv.URL, id, 0, 5, 10*time.Second)
+	for _, e := range events {
+		if e.Kind == "prompt" && strings.Contains(e.Text, "go left") {
+			if e.Mode != "steer" || strings.Contains(e.Text, "degraded") {
+				t.Fatalf("injected steer event = %+v, want plain steer", e)
+			}
+			return
+		}
+	}
+	t.Fatalf("injected steer missing in %+v", events)
+}
+
+// promptRequired from the adapter (no turn running) falls back to a labelled
+// Follow-up.
+func TestClaudeSteerFallsBackWhenNotInjected(t *testing.T) {
+	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}}
+	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
+	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	sendPrompt(t, srv.URL, id, "slow job")
+	waitStatus(t, srv.URL, id, "working", 5*time.Second)
+
+	if code, _ := postMode(t, srv.URL, id, "steer", "go left"); code != http.StatusAccepted {
+		t.Fatalf("steer status = %d, want 202", code)
+	}
+	q := getQueue(t, srv.URL, id)
+	if len(q) != 1 || q[0].Mode != "steer" || q[0].Text != "go left" {
+		t.Fatalf("queue = %+v, want one held steer", q)
+	}
+	close(stub.blockPrompt)
+	// Let the turn and its Follow-up finish before TempDir cleanup.
+	readSSE(t, srv.URL, id, 0, 7, 10*time.Second)
+}
+
+// Session meta replaces the Claude Code preset with el's prompt. Project
+// context arrives as injected content only when a WorkDir is present, never
+// as a read-these-files instruction.
+func TestClaudeMetaCarriesSystemPrompt(t *testing.T) {
+	meta := newStubClaudeBackend(nil).strippingMeta("sonnet")
+	sp, _ := meta["systemPrompt"].(string)
+	if !strings.Contains(sp, "level: ultra") {
+		t.Fatalf("systemPrompt = %q, want the el rules", sp)
+	}
+	if strings.Contains(sp, "Before editing, read") {
+		t.Fatalf("systemPrompt tells the agent to read files itself: %q", sp)
+	}
+}
+
+// Messages queued behind a running turn go out as one message, in order.
+func TestQueuedMessagesMergeIntoOne(t *testing.T) {
+	stub := &stubConn{blockPrompt: make(chan struct{})}
+	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
+	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	sendPrompt(t, srv.URL, id, "slow job")
+	waitStatus(t, srv.URL, id, "working", 5*time.Second)
+	postMode(t, srv.URL, id, "steer", "go left")
+	postMode(t, srv.URL, id, "followup", "then test")
+	postMode(t, srv.URL, id, "steer", "and lint")
+	if q := getQueue(t, srv.URL, id); len(q) != 3 {
+		t.Fatalf("queue = %+v, want 3 entries before delivery", q)
+	}
+
+	close(stub.blockPrompt)
+	events := readSSE(t, srv.URL, id, 0, 7, 10*time.Second)
+	stub.mu.Lock()
+	prompts := append([]string{}, stub.prompts...)
+	stub.mu.Unlock()
+	want := "go left\n\nthen test\n\nand lint"
+	if len(prompts) != 2 || prompts[1] != want {
+		t.Fatalf("adapter prompts = %q, want [slow job %q]", prompts, want)
+	}
+	n := 0
+	for _, e := range events {
+		if e.Kind == "prompt" && e.Text == want {
+			n++
+			if e.Mode != "followup" {
+				t.Fatalf("merged mode = %q, want followup for mixed modes", e.Mode)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("merged prompt events = %d in %+v", n, events)
+	}
 }

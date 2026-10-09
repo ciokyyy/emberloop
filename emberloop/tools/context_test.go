@@ -16,7 +16,7 @@ func writeContextSettings(t *testing.T, body string) Settings {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, p)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestCompressThresholdGlobalAndPerHarness(t *testing.T) {
 
 func TestCompressThresholdEnvWins(t *testing.T) {
 	s := writeContextSettings(t, `{"context":{"compress_threshold":150000}}`)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "50000")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "50000")
 	s = LoadSettings()
 	if got := s.EffectiveCompressThreshold("pig"); got != 50000 {
 		t.Errorf("env threshold = %d, want 50000", got)
@@ -77,7 +77,7 @@ func TestContextProjectMergesByKey(t *testing.T) {
 	dir := t.TempDir()
 	global := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, global)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	if err := os.WriteFile(global, []byte(`{"context":{"compress_threshold":150000,"windows":{"a":1,"b":2}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestContextProjectMergesByKey(t *testing.T) {
 // and per-harness values alike.
 func TestCompressThresholdEnvBeatsHarnessOverride(t *testing.T) {
 	s := writeContextSettings(t, `{"context":{"compress_threshold":150000,"harness_thresholds":{"pig":300000}}}`)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "50000")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "50000")
 	s = LoadSettings()
 	if got := s.EffectiveCompressThreshold("pig"); got != 50000 {
 		t.Errorf("pig threshold = %d, want env 50000", got)
@@ -118,7 +118,7 @@ func TestNegativeProjectValuesAreIgnored(t *testing.T) {
 	dir := t.TempDir()
 	global := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, global)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	if err := os.WriteFile(global, []byte(`{"context":{"compress_threshold":150000,"windows":{"a":1}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestAutoCompressProjectMerges(t *testing.T) {
 	dir := t.TempDir()
 	global := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, global)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	if err := os.WriteFile(global, []byte(`{"context":{"auto_compress":false,"compress_cooldown":9}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}

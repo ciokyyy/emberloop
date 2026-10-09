@@ -16,12 +16,12 @@ func globalProjectEnv(t *testing.T, dir, globalBody, projectBody string) {
 	if err := os.WriteFile(g, []byte(globalBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SETTINGS", g)
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_SETTINGS", g)
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
 	if projectBody == "" {
-		t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+		t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
 		return
 	}
 	p := filepath.Join(dir, ".emberloop", "settings.json")
@@ -31,7 +31,7 @@ func globalProjectEnv(t *testing.T, dir, globalBody, projectBody string) {
 	if err := os.WriteFile(p, []byte(projectBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", p)
+	t.Setenv("EL_PROJECT_SETTINGS", p)
 }
 
 // The project file wins field by field: a project threshold beats the global
@@ -128,14 +128,14 @@ func TestEffectiveSettingsMCPServersMergeByKey(t *testing.T) {
 func TestEffectiveSettingsEnvWinsOverTheProjectFile(t *testing.T) {
 	dir := t.TempDir()
 	globalProjectEnv(t, dir, `{"threshold":0.3}`, `{"threshold":0.5}`)
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "0.7")
+	t.Setenv("EL_FIND_THRESHOLD", "0.7")
 	if got := EffectiveSettings(dir).Threshold; got != 0.7 {
 		t.Fatalf("env threshold lost, got %v", got)
 	}
 }
 
 // Unknown keys survive at the top level and inside tool and server entries,
-// so a save never drops what a newer emberloop wrote.
+// so a save never drops what a newer el wrote.
 func TestSaveSettingsKeepsUnknownKeysEverywhere(t *testing.T) {
 	dir := t.TempDir()
 	globalProjectEnv(t, dir,
@@ -146,7 +146,7 @@ func TestSaveSettingsKeepsUnknownKeysEverywhere(t *testing.T) {
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err := os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestSaveSettingsDoesNotWriteTheProjectFile(t *testing.T) {
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err := os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestSaveSettingsKeepsUnknownOverrideFields(t *testing.T) {
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err := os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestGraphSettingsDecodeMergeAndRoundTrip(t *testing.T) {
 	if err := SaveSettings(g); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err := os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestSaveSettingsOmitsAnUnsetGraph(t *testing.T) {
 	if err := SaveSettings(s); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(os.Getenv("EMBERLOOP_SETTINGS"))
+	raw, err := os.ReadFile(os.Getenv("EL_SETTINGS"))
 	if err != nil {
 		t.Fatal(err)
 	}

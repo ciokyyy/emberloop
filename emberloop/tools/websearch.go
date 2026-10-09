@@ -41,14 +41,14 @@ import (
 const (
 	// defaultBraveEndpoint and defaultExaEndpoint are the provider APIs the
 	// adapters call. Tests point them at fake servers through
-	// EMBERLOOP_BRAVE_ENDPOINT and EMBERLOOP_EXA_ENDPOINT.
+	// EL_BRAVE_ENDPOINT and EL_EXA_ENDPOINT.
 	defaultBraveEndpoint = "https://api.search.brave.com"
 	defaultExaEndpoint   = "https://api.exa.ai"
 	// defaultSearchCount is the result count when count is absent or not
 	// positive; maxSearchCount keeps one call inside both providers' page.
 	defaultSearchCount = 10
 	maxSearchCount     = 20
-	// defaultSearchTimeout bounds one provider call; EMBERLOOP_SEARCH_TIMEOUT
+	// defaultSearchTimeout bounds one provider call; EL_SEARCH_TIMEOUT
 	// overrides it (a Go duration), so tests own the clock.
 	defaultSearchTimeout = 15 * time.Second
 	// providerBodyLimit caps one provider response body: search answers are
@@ -296,10 +296,10 @@ func providerKeys() map[string]string {
 	}
 }
 
-// searchTimeout bounds one provider call: EMBERLOOP_SEARCH_TIMEOUT (a Go
+// searchTimeout bounds one provider call: EL_SEARCH_TIMEOUT (a Go
 // duration) wins, so tests own the clock; garbage reads as the default.
 func searchTimeout() time.Duration {
-	if s := strings.TrimSpace(os.Getenv("EMBERLOOP_SEARCH_TIMEOUT")); s != "" {
+	if s := strings.TrimSpace(os.Getenv("EL_SEARCH_TIMEOUT")); s != "" {
 		if d, err := time.ParseDuration(s); err == nil && d > 0 {
 			return d
 		}

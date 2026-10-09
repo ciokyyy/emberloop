@@ -29,16 +29,16 @@ set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
 
 REPO=$(git rev-parse --show-toplevel 2>/dev/null || true)
-[ -d "$REPO/emberloop" ] || { echo "FAIL - run from the worktree root"; exit 1; }
+[ -d "$REPO/el" ] || { echo "FAIL - run from the worktree root"; exit 1; }
 for bin in herdr go timeout python3 git; do
   command -v "$bin" >/dev/null || { echo "FAIL - need $bin on PATH"; exit 1; }
 done
 
-DIR=$(mktemp -d /tmp/emberloop-driver-probe.XXXXXX)
-BIN="$DIR/driver-bin/emberloop"
-LOG1="/tmp/emberloop-driver-probe-first.$$.log"
-LOG2="/tmp/emberloop-driver-probe-second.$$.log"
-BRANCHES_AT_KILL="/tmp/emberloop-driver-probe-branches.$$.txt"
+DIR=$(mktemp -d /tmp/el-driver-probe.XXXXXX)
+BIN="$DIR/driver-bin/el"
+LOG1="/tmp/el-driver-probe-first.$$.log"
+LOG2="/tmp/el-driver-probe-second.$$.log"
+BRANCHES_AT_KILL="/tmp/el-driver-probe-branches.$$.txt"
 SPEC="$DIR/.scratch/probe"
 ISSUES="$SPEC/issues"
 WID=""
@@ -57,13 +57,13 @@ trap cleanup EXIT
 
 echo "== build the driver from this checkout =="
 mkdir -p "$DIR/driver-bin"
-(cd "$REPO/emberloop" && go build -o "$BIN" ./cmd/emberloop) || { echo "FAIL - driver build failed"; exit 1; }
+(cd "$REPO/el" && go build -o "$BIN" ./cmd/emberloop) || { echo "FAIL - driver build failed"; exit 1; }
 
 echo "== throwaway repo and two-ticket spec =="
 mkdir -p "$ISSUES"
 git -C "$DIR" init -qb master
-git -C "$DIR" config user.email "probe@emberloop"
-git -C "$DIR" config user.name "emberloop probe"
+git -C "$DIR" config user.email "probe@el"
+git -C "$DIR" config user.name "el probe"
 git -C "$DIR" commit -q --allow-empty -m base
 cat > "$SPEC/spec.md" <<'SPEC'
 # Probe spec

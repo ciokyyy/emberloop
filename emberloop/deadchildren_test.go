@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"strings"
@@ -43,8 +43,8 @@ func TestLiveChildOwingAResultIsPending(t *testing.T) {
 // and the error, instead of an allow with no message.
 func TestErroredTurnNotifiesParentWithError(t *testing.T) {
 	rec := spawnAgent(t, true)
-	t.Setenv("EMBERLOOP_AGENT_ID", "c1")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "scout")
+	t.Setenv("EL_AGENT_ID", "c1")
+	t.Setenv("EL_AGENT_TYPE", "scout")
 	if err := WriteAgentState(AgentState{ID: "c1", Type: "scout", Pane: "live-pane", ParentID: "p", Parent: "pP", Deliver: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +107,8 @@ func TestDeadChildYieldsExactlyOneLostNotice(t *testing.T) {
 // the stop with nothing delivered.
 func TestLiveChildStillLetsParentStop(t *testing.T) {
 	rec := spawnAgent(t, true)
-	t.Setenv("EMBERLOOP_AGENT_ID", "wp")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "worker")
+	t.Setenv("EL_AGENT_ID", "wp")
+	t.Setenv("EL_AGENT_TYPE", "worker")
 	if err := WriteAgentState(AgentState{ID: "c1", Type: "scout", Pane: "live-pane", ParentID: "wp", Parent: "pP", Deliver: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,8 +132,8 @@ func TestLiveChildStillLetsParentStop(t *testing.T) {
 // stopping text-only with nobody told.
 func TestStopGateBlocksAWorkerWithOnlyDeadChildren(t *testing.T) {
 	spawnAgent(t, true)
-	t.Setenv("EMBERLOOP_AGENT_ID", "wp")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "worker")
+	t.Setenv("EL_AGENT_ID", "wp")
+	t.Setenv("EL_AGENT_TYPE", "worker")
 	deliverExec = (&recorder{reply: func(cmd string, args []string) Result {
 		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {
 			return Result{Code: 1, Stdout: `{"error":{"code":"pane_not_found"}}`}
@@ -259,8 +259,8 @@ func TestStopGateBlocksWithOnlyDeadGroupedChildren(t *testing.T) {
 	g := newFakeGrid()
 	rec := groupTestState(t, g)
 	_ = rec
-	t.Setenv("EMBERLOOP_AGENT_ID", "wp2")
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "worker")
+	t.Setenv("EL_AGENT_ID", "wp2")
+	t.Setenv("EL_AGENT_TYPE", "worker")
 	oldDeliver := deliverExec
 	rec2 := &recorder{reply: func(cmd string, args []string) Result {
 		if len(args) > 2 && args[0] == "pane" && args[1] == "process-info" {

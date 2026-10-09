@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Every emberloop session reads the register as part of its system prompt, under
+// Every el session reads the register as part of its system prompt, under
 // both harnesses, so no role or agent type is left out and no skill body can
 // outrank it.
 func TestSystemPromptCarriesTheRegisterOnBothHarnesses(t *testing.T) {
@@ -53,7 +53,7 @@ func TestRegisterIsThePluginSkillAtUltra(t *testing.T) {
 
 // The per-turn reminder is the plugin's ultra line, and both harnesses send
 // it: claude through a UserPromptSubmit hook, pig through the extension that
-// asks `emberloop voice-reminder`.
+// asks `el voice-reminder`.
 func TestVoiceReminderReachesEveryTurn(t *testing.T) {
 	want := "CAVEMAN MODE ACTIVE (ultra). Enforce this reply: Drop articles, filler, pleasantries, hedging, and excess conjunctions. " +
 		"Prefer fragments over full natural-prose sentences. State each fact once. No preamble or recap. " +
@@ -93,7 +93,7 @@ func TestVoiceReminderReachesEveryTurn(t *testing.T) {
 	if !strings.Contains(claudeStopGate, `"awaySummaryEnabled":false`) {
 		t.Error("claude settings must turn the away recap off")
 	}
-	if got := cfg.Hooks["UserPromptSubmit"]; len(got) != 1 || got[0].Hooks[0].Command != "emberloop voice-reminder hook" {
+	if got := cfg.Hooks["UserPromptSubmit"]; len(got) != 1 || got[0].Hooks[0].Command != "el voice-reminder hook" {
 		t.Errorf("claude settings must run the reminder hook on every prompt, got %+v", got)
 	}
 }
@@ -133,7 +133,7 @@ func TestSubmitIsTheWholeAnswer(t *testing.T) {
 // Declined findings travel in the submit summary: the parent reads that and
 // never a worker's closing message, so the brief must not ask for one.
 func TestBriefPutsDeclinedFindingsInTheSubmitSummary(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
 		t.Fatal(err)

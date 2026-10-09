@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -48,19 +48,19 @@ func spawnTestState(t *testing.T) {
 		waitForDeliveries(3 * time.Second)
 		statePath, spawnGap, spawnExec, pollEvery = oldState, oldGap, oldExec, oldPoll
 	})
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
+	t.Setenv("EL_MAX_WORKERS", "")
 	// Hermetic panes: the runner itself sits in a herdr pane, so HERDR_* and
-	// EMBERLOOP_AGENT_ID leak in. A spawn with no parent records none; a test
+	// EL_AGENT_ID leak in. A spawn with no parent records none; a test
 	// that wants a parent sets them after this returns.
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
 	t.Setenv("HERDR_WORKSPACE_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	resolverSettings(t, "")
 }
 
 // launchCmd resolves a pane-run line to the command it runs: the typed line
-// is `emberloop exec <launch-file>`, so the binary, args and env live in the
+// is `el exec <launch-file>`, so the binary, args and env live in the
 // file, not the line.
 func launchCmd(line string) Command {
 	file, ok := execFileFromLine(line)
@@ -75,7 +75,7 @@ func launchCmd(line string) Command {
 	return cmd
 }
 
-// envIn reads an environment assignment (EMBERLOOP_AGENT_ID=...) out of a launch:
+// envIn reads an environment assignment (EL_AGENT_ID=...) out of a launch:
 // the typed line names the launch file, which holds the env.
 func envIn(line, key string) string {
 	for _, e := range launchCmd(line).Env {
@@ -117,7 +117,7 @@ type scoutExec struct {
 
 func (s *scoutExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == herdrBin() && len(args) > 1 && args[0] == "pane" && args[1] == "run" {
-		id := envIn(args[3], "EMBERLOOP_AGENT_ID")
+		id := envIn(args[3], "EL_AGENT_ID")
 		s.mu.Lock()
 		s.ids = append(s.ids, id)
 		s.lines = append(s.lines, args[3])
@@ -149,7 +149,7 @@ func TestSpawnThreeScoutsReturnsTheirReportsInOrder(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &scoutExec{g: g, writeOn: 3}
 	spawnExec = ex.run
 	oldDeliver := deliverExec
@@ -230,13 +230,13 @@ func TestScoutRunsReadOnlyInTheCallersGrid(t *testing.T) {
 	if len(ex.ids) != 1 || ex.ids[0] == "" {
 		t.Fatalf("the scout launch carried no agent id: %v", ex.ids)
 	}
-	if strings.Contains(ex.lines[0], "EMBERLOOP_READ_ALLOW") {
+	if strings.Contains(ex.lines[0], "EL_READ_ALLOW") {
 		t.Errorf("a scout launch must not carry a read exception:\n%s", ex.lines[0])
 	}
-	if got := envIn(ex.lines[0], "EMBERLOOP_AGENT_TYPE"); got != "scout" {
+	if got := envIn(ex.lines[0], "EL_AGENT_TYPE"); got != "scout" {
 		t.Errorf("the scout launch must name its type, got %q", got)
 	}
-	if got := envIn(ex.lines[0], "EMBERLOOP_ROLE"); got != "agent" {
+	if got := envIn(ex.lines[0], "EL_ROLE"); got != "agent" {
 		t.Errorf("the scout launch must run the agent role, got %q", got)
 	}
 }
@@ -275,7 +275,7 @@ func TestScoutStateRecordsHarnessModelAndEffort(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	resolverSettings(t, `{"roles":{"scout":{"harness":"pig","model":"scout-model","effort":"low"}}}`)
 	ex := &scoutExec{g: g, writeOn: 1}
 	spawnExec = ex.run
@@ -380,12 +380,12 @@ func TestSpawnFindsTheCallersTabFromItsPane(t *testing.T) {
 	}
 }
 
-// A spawned agent's emberloop-mcp serves its type's tools, plus submit, and nothing
+// A spawned agent's el-mcp serves its type's tools, plus submit, and nothing
 // that writes: scout is read-only, with grep and git reachable only inside
 // its sandboxed execute.
 func TestScoutAgentServesReadOnlyToolsAndSubmit(t *testing.T) {
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "scout")
-	t.Setenv("EMBERLOOP_AGENT_ID", "a1")
+	t.Setenv("EL_AGENT_TYPE", "scout")
+	t.Setenv("EL_AGENT_ID", "a1")
 	served, err := RoleTools("agent")
 	if err != nil {
 		t.Fatal(err)
@@ -611,9 +611,9 @@ type mixedExec struct {
 func (m *mixedExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == herdrBin() && len(args) > 3 && args[0] == "pane" && args[1] == "run" {
 		line := args[3]
-		if envIn(line, "EMBERLOOP_AGENT_TYPE") == "scout" {
+		if envIn(line, "EL_AGENT_TYPE") == "scout" {
 			m.mu.Lock()
-			m.scouts = append(m.scouts, envIn(line, "EMBERLOOP_AGENT_ID"))
+			m.scouts = append(m.scouts, envIn(line, "EL_AGENT_ID"))
 			m.launched++
 			ready := m.launched == 2
 			ids := append([]string{}, m.scouts...)
@@ -645,9 +645,9 @@ func TestMixedSpawnReturnsScoutsAndStartsTheWorker(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &mixedExec{g: g}
 	spawnExec = ex.run
 	oldDeliver := deliverExec
@@ -708,7 +708,7 @@ type firstScoutExec struct {
 func (s *firstScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == herdrBin() && len(args) > 3 && args[0] == "pane" && args[1] == "run" {
 		s.mu.Lock()
-		s.ids = append(s.ids, envIn(args[3], "EMBERLOOP_AGENT_ID"))
+		s.ids = append(s.ids, envIn(args[3], "EL_AGENT_ID"))
 		n, first := len(s.ids), s.ids[0]
 		s.mu.Unlock()
 		if n == 1 {
@@ -736,7 +736,7 @@ func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &firstScoutExec{g: g}
 	spawnExec = ex.run
 
@@ -805,8 +805,8 @@ func TestBlockingSpawnAutoBackgroundsPastTheBudget(t *testing.T) {
 // A worker agent serves every file tool, submit, and the spawn it uses to run
 // its reviewer types. It never serves the review tool itself.
 func TestWorkerAgentServesItsToolsAndSubmit(t *testing.T) {
-	t.Setenv("EMBERLOOP_AGENT_TYPE", "worker")
-	t.Setenv("EMBERLOOP_AGENT_ID", "w1")
+	t.Setenv("EL_AGENT_TYPE", "worker")
+	t.Setenv("EL_AGENT_ID", "w1")
 	served, err := RoleTools("agent")
 	if err != nil {
 		t.Fatal(err)
@@ -836,7 +836,7 @@ type noneScoutExec struct {
 func (s *noneScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if cmd == herdrBin() && len(args) > 3 && args[0] == "pane" && args[1] == "run" {
 		s.mu.Lock()
-		s.ids = append(s.ids, envIn(args[3], "EMBERLOOP_AGENT_ID"))
+		s.ids = append(s.ids, envIn(args[3], "EL_AGENT_ID"))
 		s.mu.Unlock()
 		return Result{Stdout: "{}"}, nil
 	}
@@ -846,7 +846,7 @@ func (s *noneScoutExec) run(cmd string, args []string, opts ExecOpts) (Result, e
 // Two group members clear from the parent's pending list one at a time, as
 // each submits, and the group delivers exactly once, after the second: the
 // state is derived from the children, so a notice landing in its own
-// emberloop-mcp process can never leave a delivered child behind.
+// el-mcp process can never leave a delivered child behind.
 func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 	spawnTestState(t)
 	oldDeliver := deliverExec
@@ -857,7 +857,7 @@ func TestTwoBackgroundedChildrenClearIndependently(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &noneScoutExec{g: g}
 	spawnExec = ex.run
 
@@ -932,7 +932,7 @@ func (p *persistentExec) run(cmd string, args []string, opts ExecOpts) (Result, 
 		switch args[1] {
 		case "run":
 			p.mu.Lock()
-			id := envIn(args[3], "EMBERLOOP_AGENT_ID")
+			id := envIn(args[3], "EL_AGENT_ID")
 			p.byPane[args[2]] = id
 			p.launched++
 			p.mu.Unlock()
@@ -998,7 +998,7 @@ func TestPersistentTypeIsRepromptedNotRelaunched(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	t.Setenv("HERDR_PANE_ID", "parentPane")
 	ex := newPersistentExec(g)
 	spawnExec = ex.run
@@ -1092,7 +1092,7 @@ func TestNonPersistentTypeIsRelaunched(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	t.Setenv("HERDR_PANE_ID", "wP")
 	ex := newPersistentExec(g)
 	spawnExec = ex.run
@@ -1175,8 +1175,8 @@ func TestPersistentWorktreeTypeIsRepromptedNotRelaunched(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_AGENT_ID", "parent1")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &worktreeExec{g: g}
 	spawnExec = ex.run
 
@@ -1261,7 +1261,7 @@ func TestFailedSpawnLeavesAReusedAgentRunning(t *testing.T) {
 	spawnTestState(t)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := newPersistentExec(g)
 	spawnExec = ex.run
 
@@ -1312,8 +1312,8 @@ func TestFailedSpawnLeavesAReusedWorktreeAgentAlone(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_AGENT_ID", "parent1")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &worktreeExec{g: g}
 	spawnExec = ex.run
 
@@ -1437,7 +1437,7 @@ func TestSpawnedWorkerEntryCarriesItsTicket(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	spawnExec = (&mixedExec{g: g}).run
 
 	repo := t.TempDir()

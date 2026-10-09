@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
-  import Input from './ui/input.svelte';
+  import FloatingInput from './ui/floating-input.svelte';
   import { listSpecs, previewSpec, startRun, getRun, openRunStream, pauseRun, resumeRun } from './api.js';
 
   let { workDir = '', onOpenSession = null } = $props();
@@ -164,10 +164,7 @@
       load();
     }}
   >
-    <label class="flex min-w-0 flex-1 flex-col gap-1 text-sm">
-      Repo directory
-      <Input bind:value={repo} placeholder="/path/to/repo" />
-    </label>
+    <FloatingInput class="min-w-0 flex-1" label="Repo directory" bind:value={repo} placeholder="/path/to/repo" />
     <Button type="submit" class="self-end">Find specs</Button>
   </form>
 

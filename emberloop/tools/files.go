@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,13 +29,14 @@ func (readTool) Name() string   { return "read" }
 func (readTool) ReadOnly() bool { return true }
 func (readTool) Description() string {
 	return "Read a file, with line numbers and a 4-hex snapshot tag to anchor edits. The tag goes stale if the file changes; re-read rather than editing against it. " +
-		"Any absolute path works, except credential files. A directory returns a listing, a glob (*.md) the matching paths. emberloop:// files are plain text: they cannot be edited. " +
+		"Any absolute path works, except credential files. A directory returns a listing, a glob (*.md) the matching paths. el:// files are plain text: they cannot be edited. " +
 		"Also reads http(s):// and www. links through a tiered reader (native fetch, then Jina, then a headless browser): HTML becomes Markdown, JSON is pretty-printed, " +
-		"text and Markdown pass through; append :N, :N-M, :N+M, comma lists or :raw for line selectors or the unshaped body."
+		"text and Markdown pass through; append :N, :N-M, :N+M, comma lists or :raw for line selectors or the unshaped body. " +
+		"A local PNG, JPEG, GIF or WebP file (up to 5 MB) comes back as an attached image you can see."
 }
 func (readTool) Schema() map[string]any {
 	return obj(map[string]any{
-		"path":   map[string]any{"type": "string", "description": "File, directory, glob, emberloop:// address, or http(s):// / www. URL to read."},
+		"path":   map[string]any{"type": "string", "description": "File, directory, glob, el:// address, or http(s):// / www. URL to read."},
 		"offset": map[string]any{"type": "integer", "description": "First line (or entry), 1-based."},
 		"limit":  map[string]any{"type": "integer", "description": "Maximum lines (or entries)."},
 	}, "path")
@@ -50,16 +52,23 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	if p.Path == "" {
 		return "", errors.New("path is required")
 	}
+	// An image file cannot be shown through the text-only path: say so rather
+	// than dump bytes. Image-aware hosts call ExecuteMulti instead.
+	if _, desc, ok, err := loadImage(root, p.Path); err != nil {
+		return "", err
+	} else if ok {
+		return desc + " but this host cannot show images.", nil
+	}
 	// ctx: handles page stored tool output (the overflow store): ctx:<id>
 	// reads from the top, ctx:<id>:<range> reads that line range.
 	if _, _, ok := ParseCtxHandle(p.Path); ok {
 		return readCtxHandle(p.Path, p.Offset, p.Limit)
 	}
-	// emberloop:// addresses reach a namespace under the skills root: the library a
-	// session loads a skill from. It is served here rather than in the emberloop
+	// el:// addresses reach a namespace under the skills root: the library a
+	// session loads a skill from. It is served here rather than in the el
 	// package because the tools package serves both hosts and cannot import it.
-	if strings.HasPrefix(p.Path, emberloopScheme) {
-		return readEmberloop(p.Path, p.Offset, p.Limit)
+	if strings.HasPrefix(p.Path, elScheme) {
+		return readEl(p.Path, p.Offset, p.Limit)
 	}
 	// URLs read through the tiered reader (native, then Jina, then the
 	// browser tier). Selectors (:N, :raw) trail the URL.
@@ -72,27 +81,27 @@ func (readTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 	return readPlain(root, p.Path, p.Offset, p.Limit)
 }
 
-// emberloopScheme is the virtual address read serves the skills library under.
-const emberloopScheme = "emberloop://"
+// elScheme is the virtual address read serves the skills library under.
+const elScheme = "el://"
 
-// emberloopSkillsRoot is where the namespaces live. It mirrors emberloop.skillsRoot, read
+// elSkillsRoot is where the namespaces live. It mirrors el.skillsRoot, read
 // from the environment rather than imported, so the tools package stays free of
-// the emberloop package.
-func emberloopSkillsRoot() string {
-	if dir := os.Getenv("EMBERLOOP_SKILLS_DIR"); dir != "" {
+// the el package.
+func elSkillsRoot() string {
+	if dir := os.Getenv("EL_SKILLS_DIR"); dir != "" {
 		return dir
 	}
 	return filepath.Join(os.Getenv("HOME"), ".emberloop", "skills")
 }
 
-// readEmberloop serves emberloop://<namespace>/<path>. The namespace names a directory
+// readEl serves el://<namespace>/<path>. The namespace names a directory
 // under the skills root; a path that resolves outside that directory, by ".."
 // or by symlink, is refused. A directory returns an index of what it holds;
 // a file reads as usual.
-func readEmberloop(addr string, offset, limit int) (string, error) {
-	namespace, rest := splitEmberloop(addr)
-	root := emberloopSkillsRoot()
-	namespaces := emberloopNamespaces(root)
+func readEl(addr string, offset, limit int) (string, error) {
+	namespace, rest := splitEl(addr)
+	root := elSkillsRoot()
+	namespaces := elNamespaces(root)
 	nsDir := ""
 	for _, name := range namespaces {
 		if name == namespace {
@@ -102,20 +111,29 @@ func readEmberloop(addr string, offset, limit int) (string, error) {
 	}
 	if nsDir == "" {
 		if len(namespaces) == 0 {
-			return "", fmt.Errorf("unknown emberloop namespace %q: no namespaces are installed under %s", namespace, root)
+			return "", fmt.Errorf("unknown el namespace %q: no namespaces are installed under %s", namespace, root)
 		}
-		return "", fmt.Errorf("unknown emberloop namespace %q; have %s", namespace, strings.Join(namespaces, ", "))
+		return "", fmt.Errorf("unknown el namespace %q; have %s", namespace, strings.Join(namespaces, ", "))
 	}
-	full, err := emberloopInside(nsDir, rest)
+	full, err := elInside(nsDir, rest)
 	if err != nil {
 		return "", err
 	}
 	info, err := os.Stat(full)
+	// A page is addressed without its extension (el://docs/update reads
+	// update.md), the way the docs link to each other.
+	if errors.Is(err, fs.ErrNotExist) && filepath.Ext(full) == "" {
+		if withMD, mdErr := elInside(nsDir, rest+".md"); mdErr == nil {
+			if mdInfo, statErr := os.Stat(withMD); statErr == nil {
+				full, info, err = withMD, mdInfo, nil
+			}
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", addr, err)
 	}
 	if info.IsDir() {
-		return emberloopIndex(addr, full, offset, limit)
+		return elIndex(addr, full, offset, limit)
 	}
 	if err := refuseCredential(addr, full); err != nil {
 		return "", err
@@ -123,17 +141,17 @@ func readEmberloop(addr string, offset, limit int) (string, error) {
 	return renderFile(addr, full, offset, limit, true)
 }
 
-// splitEmberloop breaks the address after the scheme into namespace and the rest of
+// splitEl breaks the address after the scheme into namespace and the rest of
 // the path. The namespace is the first segment; the rest may be empty.
-func splitEmberloop(addr string) (namespace, rest string) {
-	body := strings.TrimPrefix(addr, emberloopScheme)
+func splitEl(addr string) (namespace, rest string) {
+	body := strings.TrimPrefix(addr, elScheme)
 	namespace, rest, _ = strings.Cut(body, "/")
 	return namespace, rest
 }
 
-// emberloopNamespaces lists the directories directly under the skills root. A
+// elNamespaces lists the directories directly under the skills root. A
 // symlink to a directory is not one: only a real directory is a namespace.
-func emberloopNamespaces(root string) []string {
+func elNamespaces(root string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil
@@ -147,16 +165,16 @@ func emberloopNamespaces(root string) []string {
 	return names
 }
 
-// emberloopInside resolves rel under dir, following symlinks, and refuses a result
+// elInside resolves rel under dir, following symlinks, and refuses a result
 // that leaves dir. A missing leaf is returned as given — the caller reports it
 // as a missing file, and there is nothing outside dir to read.
-func emberloopInside(dir, rel string) (string, error) {
+func elInside(dir, rel string) (string, error) {
 	rel = filepath.Clean(strings.TrimSpace(rel))
 	if rel == "." {
 		rel = ""
 	}
 	if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%q is outside the emberloop namespace", rel)
+		return "", fmt.Errorf("%q is outside the el namespace", rel)
 	}
 	realDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -169,20 +187,20 @@ func emberloopInside(dir, rel string) (string, error) {
 	}
 	inside, err := filepath.Rel(realDir, resolved)
 	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%q resolves outside the emberloop namespace", rel)
+		return "", fmt.Errorf("%q resolves outside the el namespace", rel)
 	}
 	return full, nil
 }
 
-// emberloopIndex lists a emberloop:// directory in the shared listing format. A
+// elIndex lists a el:// directory in the shared listing format. A
 // subdirectory that holds a SKILL.md gets the description from its
 // frontmatter after its name, so the namespace reads as an index of skills.
-func emberloopIndex(addr, dir string, offset, limit int) (string, error) {
+func elIndex(addr, dir string, offset, limit int) (string, error) {
 	return listDir(addr, dir, offset, limit, func(name string) string {
 		// The SKILL.md is resolved the same way a read of it would be, so a
 		// symlink pointing out of the namespace is skipped rather than read
 		// for its description.
-		skill, err := emberloopInside(dir, filepath.Join(name, "SKILL.md"))
+		skill, err := elInside(dir, filepath.Join(name, "SKILL.md"))
 		if err != nil {
 			return ""
 		}
@@ -274,7 +292,7 @@ func (editTool) Execute(_ context.Context, root string, args json.RawMessage) (s
 // write
 // ---------------------------------------------------------------------------
 
-// writeTool is ported from emberloop's apps/backend/tools/write.go: the file, whole,
+// writeTool is ported from el's apps/backend/tools/write.go: the file, whole,
 // in one call, for a session with nothing to anchor an edit to.
 type writeTool struct{}
 

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -232,9 +232,9 @@ func assertFileLines(t *testing.T, path string, want int) {
 }
 
 // Seam 4 (ticket 05): session wiring — every launched session tells its
-// emberloop-mcp who it is (session id, harness, model, effort), so the session's
-// own emberloop process can snapshot the blobs and tail the transcript.
-func TestEverySessionTellsItsEmberloopProcessWhoItIs(t *testing.T) {
+// el-mcp who it is (session id, harness, model, effort), so the session's
+// own el process can snapshot the blobs and tail the transcript.
+func TestEverySessionTellsItsElProcessWhoItIs(t *testing.T) {
 	isolateState(t)
 	for _, harness := range HarnessNames() {
 		cmd, err := BuildCommand(harness, Session{
@@ -250,10 +250,10 @@ func TestEverySessionTellsItsEmberloopProcessWhoItIs(t *testing.T) {
 			env[k] = v
 		}
 		for k, want := range map[string]string{
-			"EMBERLOOP_SESSION_ID": "sess-1",
-			"EMBERLOOP_HARNESS":    harness,
-			"EMBERLOOP_MODEL":      "m1",
-			"EMBERLOOP_EFFORT":     "high",
+			"EL_SESSION_ID": "sess-1",
+			"EL_HARNESS":    harness,
+			"EL_MODEL":      "m1",
+			"EL_EFFORT":     "high",
 		} {
 			if env[k] != want {
 				t.Errorf("%s: %s = %q, want %q in %q", harness, k, env[k], want, cmd.Env)
@@ -261,10 +261,10 @@ func TestEverySessionTellsItsEmberloopProcessWhoItIs(t *testing.T) {
 		}
 		// Only pig takes a session dir: its transcript lives under it, so
 		// only pig sessions name it. Claude takes none.
-		if dir, ok := env["EMBERLOOP_SESSION_DIR"]; ok != (harness == "pig") || (ok && dir != "/sessions") {
-			t.Errorf("%s: EMBERLOOP_SESSION_DIR = %q, present = %v", harness, dir, ok)
+		if dir, ok := env["EL_SESSION_DIR"]; ok != (harness == "pig") || (ok && dir != "/sessions") {
+			t.Errorf("%s: EL_SESSION_DIR = %q, present = %v", harness, dir, ok)
 		}
-		// The MCP config claude serves its emberloop-mcp must carry the same
+		// The MCP config claude serves its el-mcp must carry the same
 		// identity: the child reads env, not the launch line.
 		if harness == "claude" {
 			cfg, err := readLaunchConfig(cmd)
@@ -272,8 +272,8 @@ func TestEverySessionTellsItsEmberloopProcessWhoItIs(t *testing.T) {
 				t.Fatal(err)
 			}
 			for k, want := range map[string]string{
-				"EMBERLOOP_SESSION_ID": "sess-1",
-				"EMBERLOOP_HARNESS":    "claude",
+				"EL_SESSION_ID": "sess-1",
+				"EL_HARNESS":    "claude",
 			} {
 				if cfg[k] != want {
 					t.Errorf("claude MCP env %s = %q, want %q", k, cfg[k], want)
@@ -283,20 +283,20 @@ func TestEverySessionTellsItsEmberloopProcessWhoItIs(t *testing.T) {
 	}
 }
 
-// Seam 5 (ticket 05): the session's own emberloop process snapshots the blobs at
+// Seam 5 (ticket 05): the session's own el process snapshots the blobs at
 // start and tails its harness transcript — exercised here through the same
-// env-driven helpers emberloop-mcp runs, against a fake pig session dir.
+// env-driven helpers el-mcp runs, against a fake pig session dir.
 func TestArchiverSnapshotsAndTailsItsOwnTranscript(t *testing.T) {
 	isolateState(t)
 	sessDir := t.TempDir()
-	t.Setenv("EMBERLOOP_AGENT_ID", "01-archive")
-	t.Setenv("EMBERLOOP_SESSION_ID", "sess-archive")
-	t.Setenv("EMBERLOOP_SESSION_DIR", sessDir)
-	t.Setenv("EMBERLOOP_HARNESS", "pig")
-	t.Setenv("EMBERLOOP_ROLE", "review")
-	t.Setenv("EMBERLOOP_MODEL", "m1")
-	t.Setenv("EMBERLOOP_EFFORT", "high")
-	t.Setenv("EMBERLOOP_SPEC", "/repo/.scratch/run-records/spec.md")
+	t.Setenv("EL_AGENT_ID", "01-archive")
+	t.Setenv("EL_SESSION_ID", "sess-archive")
+	t.Setenv("EL_SESSION_DIR", sessDir)
+	t.Setenv("EL_HARNESS", "pig")
+	t.Setenv("EL_ROLE", "review")
+	t.Setenv("EL_MODEL", "m1")
+	t.Setenv("EL_EFFORT", "high")
+	t.Setenv("EL_SPEC", "/repo/.scratch/archive/run-records/spec.md")
 	served, err := RoleTools("review")
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +333,7 @@ func TestArchiverSnapshotsAndTailsItsOwnTranscript(t *testing.T) {
 }
 
 // readLaunchConfig decodes the MCP config a claude launch wrote for its
-// emberloop-mcp: the env the child reads.
+// el-mcp: the env the child reads.
 func readLaunchConfig(cmd Command) (map[string]string, error) {
 	path := ""
 	for i, a := range cmd.Args {
@@ -356,7 +356,7 @@ func readLaunchConfig(cmd Command) (map[string]string, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, err
 	}
-	return cfg.Servers["emberloop"].Env, nil
+	return cfg.Servers["el"].Env, nil
 }
 
 var errNoConfig = errConfig("no --mcp-config in the launch")
@@ -425,8 +425,8 @@ func TestTranscriptCopyRepairsATornTail(t *testing.T) {
 // that run: its session inherits the spawner's spec, so its transcript copy
 // and session record land under archive/<run>, never archive/adhoc.
 func TestSpawnedAgentsInheritTheRunSpec(t *testing.T) {
-	const spec = "/repo/.scratch/run-records/spec.md"
-	t.Setenv("EMBERLOOP_SPEC", spec)
+	const spec = "/repo/.scratch/archive/run-records/spec.md"
+	t.Setenv("EL_SPEC", spec)
 	// Scouts inherit the spec through their launch env.
 	spawnTestState(t)
 	g := newFakeGrid()
@@ -442,8 +442,8 @@ func TestSpawnedAgentsInheritTheRunSpec(t *testing.T) {
 	if len(ex.lines) != 1 {
 		t.Fatalf("launched %d scouts, want 1", len(ex.lines))
 	}
-	if got := envIn(ex.lines[0], "EMBERLOOP_SPEC"); got != spec {
-		t.Errorf("scout EMBERLOOP_SPEC = %q, want %q", got, spec)
+	if got := envIn(ex.lines[0], "EL_SPEC"); got != spec {
+		t.Errorf("scout EL_SPEC = %q, want %q", got, spec)
 	}
 	// Read-only sessions carry the caller's spec.
 	if sess := readOnlySession("id-1", t.TempDir(), "", ""); sess.Spec != spec {
@@ -456,8 +456,8 @@ func TestSpawnedAgentsInheritTheRunSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, typ := range []string{reviewerStandards, reviewerSpec} {
-		if got := envIn(f.paneOf(t, typ).line, "EMBERLOOP_SPEC"); got != spec {
-			t.Errorf("%s reviewer EMBERLOOP_SPEC = %q, want %q", typ, got, spec)
+		if got := envIn(f.paneOf(t, typ).line, "EL_SPEC"); got != spec {
+			t.Errorf("%s reviewer EL_SPEC = %q, want %q", typ, got, spec)
 		}
 	}
 }
@@ -501,12 +501,12 @@ func TestTranscriptCopyRebuildsAShortenedCopy(t *testing.T) {
 func TestFirstCopyRecordsTheTranscriptSource(t *testing.T) {
 	isolateState(t)
 	sessDir := t.TempDir()
-	t.Setenv("EMBERLOOP_AGENT_ID", "01-source")
-	t.Setenv("EMBERLOOP_SESSION_ID", "sess-source")
-	t.Setenv("EMBERLOOP_SESSION_DIR", sessDir)
-	t.Setenv("EMBERLOOP_HARNESS", "pig")
-	t.Setenv("EMBERLOOP_ROLE", "review")
-	t.Setenv("EMBERLOOP_SPEC", "/repo/.scratch/run-records/spec.md")
+	t.Setenv("EL_AGENT_ID", "01-source")
+	t.Setenv("EL_SESSION_ID", "sess-source")
+	t.Setenv("EL_SESSION_DIR", sessDir)
+	t.Setenv("EL_HARNESS", "pig")
+	t.Setenv("EL_ROLE", "review")
+	t.Setenv("EL_SPEC", "/repo/.scratch/archive/run-records/spec.md")
 	served, err := RoleTools("review")
 	if err != nil {
 		t.Fatal(err)

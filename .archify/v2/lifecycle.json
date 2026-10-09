@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": { "title": "Ticket lifecycle", "output": ".archify/v2/lifecycle.html", "quality_profile": "showcase" },
+  "lanes": [
+    { "id": "main", "label": "Happy path" },
+    { "id": "rework", "label": "Rework + blocked" },
+    { "id": "terminal", "label": "Outcomes" }
+  ],
+  "states": [
+    { "id": "queued", "type": "start", "label": "Queued", "sublabel": "worker cap reached", "lane": "main", "col": 0 },
+    { "id": "implementing", "type": "active", "label": "Implementing", "sublabel": "worker in worktree", "lane": "main", "col": 1 },
+    { "id": "review", "type": "decision", "label": "In review", "sublabel": "spec + standards", "lane": "main", "col": 2 },
+    { "id": "ready", "type": "waiting", "label": "Ready", "sublabel": "all passed at tip", "lane": "main", "col": 3 },
+    { "id": "merged", "type": "success", "label": "Merged", "sublabel": "ff-only, ticket done", "lane": "main", "col": 4 },
+    { "id": "blocked", "type": "waiting", "label": "Blocked", "sublabel": "worker submitted blocked", "lane": "rework", "col": 1 },
+    { "id": "changes", "type": "active", "label": "Changes", "sublabel": "findings sent back", "lane": "rework", "col": 2 },
+    { "id": "cancelled", "type": "failure", "label": "Cancelled", "sublabel": "pane closed, worktree stays", "lane": "terminal", "col": 1 },
+    { "id": "kept", "type": "waiting", "label": "Kept", "sublabel": "finish refused", "lane": "terminal", "col": 3 },
+    { "id": "discarded", "type": "failure", "label": "Discarded", "sublabel": "finish merge=false", "lane": "terminal", "col": 4 }
+  ],
+  "transitions": [
+    { "from": "queued", "to": "implementing", "label": "slot free" },
+    { "from": "implementing", "to": "review", "label": "done" },
+    { "from": "review", "to": "ready", "label": "all pass" },
+    { "from": "ready", "to": "merged", "variant": "emphasis", "label": "finish" },
+    { "from": "implementing", "to": "blocked", "variant": "dashed" },
+    { "from": "blocked", "to": "implementing", "label": "tell" },
+    { "from": "review", "to": "changes", "label": "findings" },
+    { "from": "changes", "to": "implementing", "variant": "dashed", "label": "fix" },
+    { "from": "implementing", "to": "cancelled", "variant": "security" },
+    { "from": "cancelled", "to": "queued", "variant": "dashed", "label": "respawn" },
+    { "from": "ready", "to": "kept", "variant": "security", "label": "refused" },
+    { "from": "kept", "to": "ready", "variant": "dashed", "label": "retry" },
+    { "from": "ready", "to": "discarded", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Rework", "items": ["Reviewer findings return to the same worker", "A fresh pass at the new tip is required"] },
+    { "dot": "rose", "title": "Outcomes", "items": ["Merged and discarded delete the worktree", "Kept and cancelled leave worktree and branch for later"] }
+  ]
+}

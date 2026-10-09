@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Header wrapper geometry, child-output filter and snapshot builder
 // (ticket 04). The PTY runner that draws the strip around a live child is
@@ -24,7 +24,7 @@ import (
 // stay exact.
 const StripFootprint = 1
 
-// InputRowHeight is the terminal rows reserved for the emberloop input row (ticket 02).
+// InputRowHeight is the terminal rows reserved for the el input row (ticket 02).
 const InputRowHeight = 1
 
 // ChildSize is the terminal size the agent child runs at: the full width

@@ -90,7 +90,7 @@ type CascadeSearcher struct {
 	threshold float64
 	workDir   string
 	// agentID and findCallID attribute decision calls in the agent's usage
-	// log (ticket 04). They are set per Search from EMBERLOOP_AGENT_ID and a
+	// log (ticket 04). They are set per Search from EL_AGENT_ID and a
 	// fresh id; empty means this search logs nothing.
 	agentID    string
 	findCallID string
@@ -393,7 +393,7 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 	// to attribute to, and the search logs nothing. Both fields reset first,
 	// so a reused searcher never attributes to a previous search's agent.
 	c.agentID, c.findCallID = "", ""
-	if agent := os.Getenv("EMBERLOOP_AGENT_ID"); agent != "" {
+	if agent := os.Getenv("EL_AGENT_ID"); agent != "" {
 		c.agentID, c.findCallID = agent, newFindCallID()
 	}
 	searchRoot := c.workDir

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 // WriteContextReport prints one session's context numbers: the model, the
 // context size against the window with the percent, the compress
 // threshold, the outstanding tool calls and the top tools by result size.
-// It is the `emberloop context` command's output, so the slice is
+// It is the `el context` command's output, so the slice is
 // verifiable without a header strip or a supervisor.
 func WriteContextReport(out io.Writer, harness, sessionID, transcriptPath string, s tools.Settings) error {
 	if Registered(harness) == nil {

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"testing"
@@ -14,11 +14,11 @@ func TestLaunchStripSource(t *testing.T) {
 		Bin:  "pig",
 		Args: []string{"--session-id", "s1", "--session-dir", "/tmp/sess"},
 		Env: []string{
-			"EMBERLOOP_AGENT_ID=w1",
-			"EMBERLOOP_AGENT_TYPE=worker",
-			"EMBERLOOP_AGENT_LABEL=ticket-1",
-			"EMBERLOOP_SESSION_ID=s1",
-			"EMBERLOOP_HARNESS=pig",
+			"EL_AGENT_ID=w1",
+			"EL_AGENT_TYPE=worker",
+			"EL_AGENT_LABEL=ticket-1",
+			"EL_SESSION_ID=s1",
+			"EL_HARNESS=pig",
 		},
 	}
 	src := LaunchStripSource(cmd)
@@ -33,7 +33,7 @@ func TestLaunchStripSource(t *testing.T) {
 // A bare session has no agent identity: the chip falls back to the
 // orchestrator in the render.
 func TestLaunchStripSourceBare(t *testing.T) {
-	src := LaunchStripSource(Command{Bin: "pig", Env: []string{"EMBERLOOP_HARNESS=pig"}})
+	src := LaunchStripSource(Command{Bin: "pig", Env: []string{"EL_HARNESS=pig"}})
 	if src.AgentName != "" || src.Harness != "pig" {
 		t.Errorf("bare source = %+v, want empty name with pig", src)
 	}
@@ -42,7 +42,7 @@ func TestLaunchStripSourceBare(t *testing.T) {
 // Every wrapped launch serves the control channel: without it tell and the
 // shared delivery path would fall back to herdr send-text.
 func TestWrapConfigServesCtrl(t *testing.T) {
-	cmd := Command{Bin: "pig", Args: []string{"a"}, Env: []string{"EMBERLOOP_AGENT_ID=w1"}}
+	cmd := Command{Bin: "pig", Args: []string{"a"}, Env: []string{"EL_AGENT_ID=w1"}}
 	cfg := wrapConfigFor(cmd, LaunchStripSource(cmd), tools.Settings{})
 	if !cfg.ServeCtrl {
 		t.Error("wrapped launches must serve the control channel")

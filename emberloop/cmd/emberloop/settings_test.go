@@ -19,22 +19,22 @@ import (
 func settingsFile(t *testing.T) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "settings.json")
-	t.Setenv("EMBERLOOP_SETTINGS", p)
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_DECISION_MODEL", "")
-	t.Setenv("EMBERLOOP_FIND_THRESHOLD", "")
-	t.Setenv("EMBERLOOP_MAX_WORKERS", "")
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SETTINGS", p)
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_DECISION_MODEL", "")
+	t.Setenv("EL_FIND_THRESHOLD", "")
+	t.Setenv("EL_MAX_WORKERS", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	return p
 }
 
-func noModels(string, bool) ([]emberloop.Model, error) { return nil, nil }
+func noModels(string, bool) ([]el.Model, error) { return nil, nil }
 
 // modelList answers a fixed list per harness; a harness with no entry cannot
 // be listed, which is what a machine without that CLI looks like.
-func modelList(byHarness map[string][]emberloop.Model) modelSource {
-	return func(harness string, refresh bool) ([]emberloop.Model, error) {
+func modelList(byHarness map[string][]el.Model) modelSource {
+	return func(harness string, refresh bool) ([]el.Model, error) {
 		list, ok := byHarness[harness]
 		if !ok {
 			return nil, fmt.Errorf("cannot list %s models", harness)
@@ -97,7 +97,7 @@ func TestSettingsRejectsBadThreshold(t *testing.T) {
 func TestSettingsModelsListsHarnessModels(t *testing.T) {
 	settingsFile(t)
 	var out bytes.Buffer
-	src := modelList(map[string][]emberloop.Model{
+	src := modelList(map[string][]el.Model{
 		"pig":    {{ID: "deepseek-flash", Efforts: []string{"off", "high"}}},
 		"claude": {{ID: "opus", Label: "Opus 5.5", Efforts: []string{"low", "high"}}},
 	})
@@ -117,14 +117,14 @@ func TestSettingsModelsListsHarnessModels(t *testing.T) {
 func TestSettingsModelsFiltersAndRefreshes(t *testing.T) {
 	settingsFile(t)
 	refreshes := 0
-	src := func(harness string, refresh bool) ([]emberloop.Model, error) {
+	src := func(harness string, refresh bool) ([]el.Model, error) {
 		if refresh {
 			refreshes++
 		}
 		if harness != "claude" {
 			return nil, fmt.Errorf("cannot list %s models", harness)
 		}
-		return []emberloop.Model{{ID: "opus"}}, nil
+		return []el.Model{{ID: "opus"}}, nil
 	}
 	var out bytes.Buffer
 	if err := runSettings([]string{"models", "--harness", "claude", "--refresh"}, &out, src); err != nil {
@@ -151,11 +151,11 @@ func TestSettingsModelsRejectsAnUnknownHarness(t *testing.T) {
 // command: the other harnesses still print.
 func TestSettingsModelsReportsAHarnessItCannotList(t *testing.T) {
 	settingsFile(t)
-	src := func(harness string, refresh bool) ([]emberloop.Model, error) {
+	src := func(harness string, refresh bool) ([]el.Model, error) {
 		if harness == "claude" {
 			return nil, fmt.Errorf("claude not installed")
 		}
-		return []emberloop.Model{{ID: "deepseek-flash"}}, nil
+		return []el.Model{{ID: "deepseek-flash"}}, nil
 	}
 	var out bytes.Buffer
 	if err := runSettings([]string{"models"}, &out, src); err != nil {
@@ -243,7 +243,7 @@ func TestSettingsSetsRoleFields(t *testing.T) {
 func TestSettingsChangingRoleHarnessClearsWhatTheNewHarnessLacks(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"m","effort":"high"}}}`)
-	src := modelList(map[string][]emberloop.Model{"claude": {{ID: "opus", Efforts: []string{"low", "high"}}}})
+	src := modelList(map[string][]el.Model{"claude": {{ID: "opus", Efforts: []string{"low", "high"}}}})
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, src); err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestSettingsChangingRoleHarnessClearsWhatTheNewHarnessLacks(t *testing.T) {
 func TestSettingsChangingRoleHarnessKeepsWhatTheNewHarnessOffers(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"pig","model":"opus","effort":"high"}}}`)
-	src := modelList(map[string][]emberloop.Model{"claude": {{ID: "opus", Efforts: []string{"low", "high", "max"}}}})
+	src := modelList(map[string][]el.Model{"claude": {{ID: "opus", Efforts: []string{"low", "high", "max"}}}})
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "harness", "claude"}, &out, src); err != nil {
 		t.Fatal(err)
@@ -277,7 +277,7 @@ func TestSettingsChangingRoleHarnessKeepsWhatTheNewHarnessOffers(t *testing.T) {
 func TestSettingsRejectsAModelTheHarnessDoesNotOffer(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude"}}}`)
-	src := modelList(map[string][]emberloop.Model{"claude": {{ID: "haiku"}, {ID: "opus"}}})
+	src := modelList(map[string][]el.Model{"claude": {{ID: "haiku"}, {ID: "opus"}}})
 	var out bytes.Buffer
 	err := runSettings([]string{"role", "orchestrator", "model", "gpt-9"}, &out, src)
 	if err == nil || !strings.Contains(err.Error(), "gpt-9") {
@@ -294,12 +294,12 @@ func TestSettingsRefreshesOnceBeforeRejectingAModel(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude"}}}`)
 	calls := 0
-	src := func(harness string, refresh bool) ([]emberloop.Model, error) {
+	src := func(harness string, refresh bool) ([]el.Model, error) {
 		calls++
 		if refresh {
-			return []emberloop.Model{{ID: "opus"}}, nil
+			return []el.Model{{ID: "opus"}}, nil
 		}
-		return []emberloop.Model{{ID: "haiku"}}, nil
+		return []el.Model{{ID: "haiku"}}, nil
 	}
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "model", "opus"}, &out, src); err != nil {
@@ -318,7 +318,7 @@ func TestSettingsRefreshesOnceBeforeRejectingAModel(t *testing.T) {
 func TestSettingsAllowsFreeTextWhenTheListCannotBeBuilt(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude"}}}`)
-	src := func(string, bool) ([]emberloop.Model, error) { return nil, fmt.Errorf("claude not installed") }
+	src := func(string, bool) ([]el.Model, error) { return nil, fmt.Errorf("claude not installed") }
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "model", "mystery-model"}, &out, src); err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestSettingsAllowsFreeTextWhenTheListCannotBeBuilt(t *testing.T) {
 func TestSettingsChecksTheEffortAgainstTheModel(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"haiku"}}}`)
-	src := modelList(map[string][]emberloop.Model{"claude": {
+	src := modelList(map[string][]el.Model{"claude": {
 		{ID: "haiku"},
 		{ID: "opus", Efforts: []string{"low", "high", "max"}},
 	}})
@@ -444,7 +444,7 @@ func TestSettingsRolePrintsTheNewValue(t *testing.T) {
 // offers: one some model takes is saved, one none takes is rejected.
 func TestSettingsChecksAnEffortWithNoModelChosen(t *testing.T) {
 	settingsFile(t)
-	src := modelList(map[string][]emberloop.Model{"claude": {
+	src := modelList(map[string][]el.Model{"claude": {
 		{ID: "haiku"},
 		{ID: "opus", Efforts: []string{"low", "high"}},
 	}})
@@ -468,7 +468,7 @@ func TestSettingsChecksAnEffortWithNoModelChosen(t *testing.T) {
 func TestSettingsHarnessSwitchAndAnEffortWithNoModel(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"scout":{"harness":"pig","effort":"high"}}}`)
-	src := modelList(map[string][]emberloop.Model{"claude": {
+	src := modelList(map[string][]el.Model{"claude": {
 		{ID: "haiku"},
 		{ID: "opus", Efforts: []string{"low", "high"}},
 	}})
@@ -501,12 +501,12 @@ func TestSettingsRefreshesOnceBeforeRejectingAnEffort(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus"}}}`)
 	calls := 0
-	src := func(harness string, refresh bool) ([]emberloop.Model, error) {
+	src := func(harness string, refresh bool) ([]el.Model, error) {
 		calls++
 		if refresh {
-			return []emberloop.Model{{ID: "opus", Efforts: []string{"low", "high", "max"}}}, nil
+			return []el.Model{{ID: "opus", Efforts: []string{"low", "high", "max"}}}, nil
 		}
-		return []emberloop.Model{{ID: "opus", Efforts: []string{"low", "high"}}}, nil
+		return []el.Model{{ID: "opus", Efforts: []string{"low", "high"}}}, nil
 	}
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "effort", "max"}, &out, src); err != nil {
@@ -524,7 +524,7 @@ func TestSettingsRefreshesOnceBeforeRejectingAnEffort(t *testing.T) {
 func TestSettingsChangingTheModelClearsAnEffortItDoesNotTake(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"opus","effort":"max"}}}`)
-	src := modelList(map[string][]emberloop.Model{"claude": {
+	src := modelList(map[string][]el.Model{"claude": {
 		{ID: "opus", Efforts: []string{"low", "high", "max"}},
 		{ID: "haiku"},
 	}})
@@ -546,9 +546,9 @@ func TestSettingsRefreshesOnceForAnEffortOnAFreeTextModel(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"roles":{"orchestrator":{"harness":"claude","model":"custom-1"}}}`)
 	calls := 0
-	src := func(harness string, refresh bool) ([]emberloop.Model, error) {
+	src := func(harness string, refresh bool) ([]el.Model, error) {
 		calls++
-		return []emberloop.Model{{ID: "opus", Efforts: []string{"low", "high"}}}, nil
+		return []el.Model{{ID: "opus", Efforts: []string{"low", "high"}}}, nil
 	}
 	var out bytes.Buffer
 	if err := runSettings([]string{"role", "orchestrator", "effort", "high"}, &out, src); err != nil {
@@ -788,7 +788,7 @@ func TestSettingsPrintsProjectSources(t *testing.T) {
 	write(t, p, `{"max_workers":5,"roles":{"scout":{"model":"global-m"}}}`)
 	project := filepath.Join(t.TempDir(), "project.json")
 	write(t, project, `{"max_workers":7,"roles":{"scout":{"model":"project-m"}},"tools":{"bash":{"roles":{"scout":{"enabled":false}}}}}`)
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", project)
+	t.Setenv("EL_PROJECT_SETTINGS", project)
 	var out bytes.Buffer
 	if err := runSettings(nil, &out, noModels); err != nil {
 		t.Fatal(err)

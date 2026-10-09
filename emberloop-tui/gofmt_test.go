@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-// Formatting gate for the dashboard module, mirroring emberloop's: every Go
+// Formatting gate for the dashboard module, mirroring el's: every Go
 // file under this module must already be gofmt-clean. The detector itself
-// (unformatted file, syntax error, empty dir) is pinned in emberloop's
+// (unformatted file, syntax error, empty dir) is pinned in el's
 // gofmt_test.go; here only the tree check runs.
 
 // gofmtBinary locates the gofmt binary: first on PATH, then beside the

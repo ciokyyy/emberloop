@@ -10,7 +10,7 @@ import (
 )
 
 // roleSetting is one role's harness and model, as stored under "roles" in
-// the shared emberloop settings file. Unknown fields (effort) round-trip.
+// the shared el settings file. Unknown fields (effort) round-trip.
 type roleSetting struct {
 	Harness string `json:"harness"`
 	Model   string `json:"model"`
@@ -74,10 +74,10 @@ func roleFor(name string) (string, string) {
 	return r.Harness, r.Model
 }
 
-// envMaxWorkers reports the EMBERLOOP_MAX_WORKERS override when it sets a
+// envMaxWorkers reports the EL_MAX_WORKERS override when it sets a
 // positive cap. The environment wins over the settings file.
 func envMaxWorkers() (int, bool) {
-	w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EMBERLOOP_MAX_WORKERS")))
+	w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS")))
 	if err != nil || w <= 0 {
 		return 0, false
 	}
@@ -89,9 +89,12 @@ func envMaxWorkers() (int, bool) {
 func settingsView() map[string]any {
 	_, fromEnv := envMaxWorkers()
 	return map[string]any{
-		"roles":                readRoles(),
-		"max_workers":          maxRunningFromSettings(),
-		"max_workers_from_env": fromEnv,
+		"roles":                   readRoles(),
+		"max_workers":             maxRunningFromSettings(),
+		"max_workers_from_env":    fromEnv,
+		"session_titles":          sessionTitlesSetting(),
+		"session_titles_from_env": titlesFromEnv(),
+		"compress":                readCompressSettings(),
 	}
 }
 
@@ -100,12 +103,19 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		writeJSON(w, http.StatusOK, settingsView())
 	case "PUT":
+		defer d.live.publish("settings")
 		var body struct {
-			Roles      map[string]roleSetting `json:"roles"`
-			MaxWorkers *int                   `json:"max_workers"`
+			Roles         map[string]roleSetting `json:"roles"`
+			MaxWorkers    *int                   `json:"max_workers"`
+			SessionTitles *bool                  `json:"session_titles"`
+			Compress      *compressPatch         `json:"compress"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if msg := body.Compress.validate(); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
 		if body.MaxWorkers != nil && *body.MaxWorkers <= 0 {
@@ -113,6 +123,14 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for name, rs := range body.Roles {
+			// An empty role clears it (pig Sessions then stay unnamed).
+			if rs.Harness == "" && rs.Model == "" {
+				continue
+			}
+			if name == pigTitleRole && rs.Harness != "pig" {
+				http.Error(w, "role "+name+": harness must be pig", http.StatusBadRequest)
+				return
+			}
 			if rs.Harness != "claude" && rs.Harness != "pig" {
 				http.Error(w, "role "+name+": harness must be claude or pig", http.StatusBadRequest)
 				return
@@ -134,6 +152,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.Roles != nil {
 			merged := readRoles()
 			for name, rs := range body.Roles {
+				if rs.Harness == "" && rs.Model == "" {
+					delete(merged, name)
+					continue
+				}
 				merged[name] = rs
 			}
 			raw, _ := json.Marshal(merged)
@@ -143,6 +165,11 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			raw, _ := json.Marshal(*body.MaxWorkers)
 			all["max_workers"] = raw
 		}
+		if body.SessionTitles != nil {
+			raw, _ := json.Marshal(*body.SessionTitles)
+			all["session_titles"] = raw
+		}
+		body.Compress.apply(all)
 		out, _ := json.MarshalIndent(all, "", "  ")
 		p := settingsFile()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

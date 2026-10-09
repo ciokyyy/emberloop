@@ -10,7 +10,7 @@ schema, execute over a workspace root), `all.go` (the `All()` registry),
 handles), `readurl.go` (the tiered URL reader `read`
 serves: native fetch, then Jina, then the tier-3 browser
 (`chrome-headless-shell` first, full Chrome/Chromium fallback, per-request
-`--dump-dom` via `EMBERLOOP_CHROME_BIN` or the shared resolver; rendered HTML
+`--dump-dom` via `EL_CHROME_BIN` or the shared resolver; rendered HTML
 re-enters the tier-1 shaping; oversize
 bodies go to the overflow store, not a file, while an explicitly narrowed
 view that fits still answers inline),
@@ -23,9 +23,15 @@ the `ctx:` handle reader), `background.go`, `find.go`
 via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
 (the Python bridge: a fresh `python3 -I` per call, a socket plus a generated
 `tools` module in a private temp dir, `ToolError` on refusal, `search`/`help`
-discovery, stdout-then-stderr through the overflow store; sandboxed for
-read-only roles; MCP tools serve under their configured names and as
-`tools.<server>.<name>`, with one description line per server), `websearch.go`
+  discovery, stdout-then-stderr through the overflow store; sandboxed for
+  read-only roles; MCP tools serve under their configured names and as
+  `tools.<server>.<name>`, with one description line per server),
+  `webproxy.go` (the Daemon-hosted tools the single el server serves under the
+  web Daemon: spawn, steer, check and cancel as thin HTTP proxies
+  bound by `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL`, registered only for the web
+  roles that allow them, marked so `execute` never serves them; submit stays
+  defined but unoffered while `WebSubmitEnabled` in `toolresolve.go` is false),
+  `websearch.go`
 (the provider-neutral search tool: Brave then Exa under auto, a 15-minute
 answer cache, quota rows; adapters and response parsing live in
 `websearch_providers.go`), `git.go` (read-only inspection: diff, log, show,
@@ -41,10 +47,11 @@ frame, rule, padding, symbols and separator, the auto-compress switch and
 cooldown, the model window overrides, the per-harness compress models
 (covered by `context_test.go`), and their merge), `macros.go` (the row macro
 registry: name/kind/template entries, `{{args}}` expansion, load-time
-validation where emberloop's built-ins win), `rename.go` (serve a tool under a new name, forwarding its MCP markers),
+validation where emberloop's built-ins win), `rename.go` (serve a tool under a new name, forwarding its MCP markers and images),
+`image.go` (`Multimodal`: a tool returns images next to text; `read` attaches a local PNG/JPEG/GIF/WebP up to 5 MB; MCP hosts get an image content block, pig an `ai.ImageContent`, a text-only caller a note), `sudogate.go` (`SudoGate` hook: `bash` hands sudo commands to a host for user approval; unset means unchanged),
 `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
-self-test, `emberloop deps` error), `mcpclient.go` (the stdio JSON-RPC client
+self-test, `el deps` error), `mcpclient.go` (the stdio JSON-RPC client
 and per-process server registry behind the same resolution), `graph.go` (the
 graph server synthesis: path-slug projects, binary resolution, the exposed
 tool include over the hidden management set, per-role placement, and the
@@ -77,7 +84,7 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   Answers cache 15 minutes keyed by query, resolved provider and arguments
   (`fresh` bypasses); each live call writes one quota row with only what
   the provider reported, and the footer reads the latest row that reports
-  something. `EMBERLOOP_BRAVE_ENDPOINT` and `EMBERLOOP_EXA_ENDPOINT` redirect the
+  something. `EL_BRAVE_ENDPOINT` and `EL_EXA_ENDPOINT` redirect the
   adapters at test fakes.
 - Tool output above `overflow.threshold_bytes` (about 8KB by default) is
   stored with a `ctx:` handle instead of entering context; `ctx_search`
@@ -85,10 +92,11 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 - `execute` serves exactly the role's resolved toolset minus itself and the
   orchestration tools, native and MCP alike: a disabled tool is uncallable,
   renames show under their new names, MCP tools answer as
-  `tools.<server>.<name>` too, and `Guard` wrappers stay on the instances it
-  calls.
+  `tools.<server>.<name>` too, Daemon proxies never reach a script (by mark,
+  so the same-named repo checks stay callable), and `Guard` wrappers stay on
+  the instances it calls.
 - The sandbox never runs a command unsandboxed: missing bwrap or a failed
-  self-test is a typed error naming `emberloop deps`.
+  self-test is a typed error naming `el deps`.
 - Binaries resolve from the emberloop bin directory first, then PATH, through the
   shared resolver the installer, grep, the sandbox runner, execute and the
   graph use.

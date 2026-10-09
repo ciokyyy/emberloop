@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"io"
@@ -82,9 +82,9 @@ func TestRawDirtyTransitions(t *testing.T) {
 	}
 	m.observeForward([]byte("\r"))
 	m.observeForward([]byte("y"))
-	m.emberloopClear()
+	m.elClear()
 	if m.dirty() {
-		t.Fatal("emberloop clear must reset dirty")
+		t.Fatal("el clear must reset dirty")
 	}
 }
 

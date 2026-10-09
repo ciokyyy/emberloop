@@ -43,7 +43,7 @@ func TestSandboxDeniesWrites(t *testing.T) {
 	if err != nil {
 		t.Skipf("no home directory: %v", err)
 	}
-	outside := fmt.Sprintf("/etc/emberloop-sandbox-probe-%d", os.Getpid())
+	outside := fmt.Sprintf("/etc/el-sandbox-probe-%d", os.Getpid())
 	homeProbe := filepath.Join(home, fmt.Sprintf(".emberloop-sandbox-probe-%d", os.Getpid()))
 	t.Cleanup(func() {
 		os.Remove(outside)
@@ -156,7 +156,7 @@ func TestSandboxTimeoutKillsProcessGroup(t *testing.T) {
 }
 
 func TestSandboxMissingBwrapIsTypedError(t *testing.T) {
-	t.Setenv("EMBERLOOP_BWRAP", filepath.Join(t.TempDir(), "no-such-bwrap"))
+	t.Setenv("EL_BWRAP", filepath.Join(t.TempDir(), "no-such-bwrap"))
 	cfg := SandboxConfig{Worktree: t.TempDir(), BridgeDir: t.TempDir(), Timeout: 30 * time.Second}
 	_, err := RunSandbox(context.Background(), cfg, "bash", "-c", "echo should-never-run")
 	if err == nil {
@@ -166,8 +166,8 @@ func TestSandboxMissingBwrapIsTypedError(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("err type = %T, want *SandboxUnavailableError", err)
 	}
-	if !strings.Contains(err.Error(), "emberloop deps") {
-		t.Errorf("err = %q, want it to name emberloop deps", err)
+	if !strings.Contains(err.Error(), "el deps") {
+		t.Errorf("err = %q, want it to name el deps", err)
 	}
 	if !IsSandboxUnavailable(err) {
 		t.Errorf("IsSandboxUnavailable(%v) = false, want true", err)
@@ -176,7 +176,7 @@ func TestSandboxMissingBwrapIsTypedError(t *testing.T) {
 
 func TestSandboxForcedSelfTestFailureRefuses(t *testing.T) {
 	requireBwrap(t)
-	t.Setenv("EMBERLOOP_SANDBOX_FORCE_FAIL", "1")
+	t.Setenv("EL_SANDBOX_FORCE_FAIL", "1")
 	worktree := t.TempDir()
 	bridge := t.TempDir()
 	canary := filepath.Join(bridge, "canary.txt")
@@ -190,8 +190,8 @@ func TestSandboxForcedSelfTestFailureRefuses(t *testing.T) {
 	if !errors.As(err, &unavailable) {
 		t.Fatalf("err type = %T, want *SandboxUnavailableError", err)
 	}
-	if !strings.Contains(err.Error(), "emberloop deps") {
-		t.Errorf("err = %q, want it to name emberloop deps", err)
+	if !strings.Contains(err.Error(), "el deps") {
+		t.Errorf("err = %q, want it to name el deps", err)
 	}
 	if _, statErr := os.Stat(canary); statErr == nil {
 		t.Error("command ran despite the failed self-test: it must never run unsandboxed")
@@ -204,7 +204,7 @@ func TestResolveBinaryPrefersBinDir(t *testing.T) {
 	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_BIN_DIR", dir)
+	t.Setenv("EL_BIN_DIR", dir)
 	got, err := ResolveBinary("bwrap")
 	if err != nil {
 		t.Fatal(err)
@@ -215,11 +215,11 @@ func TestResolveBinaryPrefersBinDir(t *testing.T) {
 }
 
 func TestResolveBinaryMissingNamesDeps(t *testing.T) {
-	t.Setenv("EMBERLOOP_BIN_DIR", filepath.Join(t.TempDir(), "empty-bin"))
+	t.Setenv("EL_BIN_DIR", filepath.Join(t.TempDir(), "empty-bin"))
 	t.Setenv("PATH", t.TempDir())
 	_, err := ResolveBinary("no-such-tool-xyz")
-	if !IsSandboxUnavailable(err) || !strings.Contains(err.Error(), "emberloop deps") {
-		t.Fatalf("err = %v, want the typed error naming emberloop deps", err)
+	if !IsSandboxUnavailable(err) || !strings.Contains(err.Error(), "el deps") {
+		t.Fatalf("err = %v, want the typed error naming el deps", err)
 	}
 }
 

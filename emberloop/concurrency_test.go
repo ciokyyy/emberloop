@@ -1,8 +1,8 @@
-package emberloop
+package el
 
 // Reusable multi-process concurrency helper.
 //
-// Several emberloop sessions are separate emberloop-mcp processes, so an in-process
+// Several el sessions are separate el-mcp processes, so an in-process
 // mutex cannot serialize what they do to shared state. A goroutine test
 // cannot reproduce that: every goroutine shares the mutex. This helper
 // starts N real helper processes (the test binary re-executed with
@@ -38,7 +38,7 @@ type concurrencyHerdrState struct {
 	Next   int                 `json:"next"`
 }
 
-func concurrencyHerdrDir() string { return os.Getenv("EMBERLOOP_CONCURRENCY_HERDR") }
+func concurrencyHerdrDir() string { return os.Getenv("EL_CONCURRENCY_HERDR") }
 
 func concurrencyHerdrFile() string { return filepath.Join(concurrencyHerdrDir(), "herdr.json") }
 
@@ -90,11 +90,11 @@ func logConcurrencyCall(args []string) {
 // state update for each call happens under a cross-process lock, so the
 // fake itself never corrupts; the caller's own check-then-act race (two
 func concurrencyHerdrExec() Exec {
-	// EMBERLOOP_CONCURRENCY_DELAY_MS slows every fake herdr call, so helpers that
+	// EL_CONCURRENCY_DELAY_MS slows every fake herdr call, so helpers that
 	// start together still overlap in the caller's check-then-act window: a
 	// fast helper would otherwise finish before a slow one arrives and no
 	// race would show.
-	delayMS, _ := strconv.Atoi(os.Getenv("EMBERLOOP_CONCURRENCY_DELAY_MS"))
+	delayMS, _ := strconv.Atoi(os.Getenv("EL_CONCURRENCY_DELAY_MS"))
 	delay := time.Duration(delayMS) * time.Millisecond
 	return func(cmd string, args []string, opts ExecOpts) (Result, error) {
 		if delay > 0 && cmd == herdrBin() {
@@ -242,18 +242,18 @@ func concurrencyHerdrExec() Exec {
 
 // TestConcurrencyHelperProcess is the helper entry point: the parent
 // re-executes the test binary with -test.run=TestConcurrencyHelperProcess and
-// EMBERLOOP_CONCURRENCY_MODE set. A normal `go test` run has no mode and skips.
+// EL_CONCURRENCY_MODE set. A normal `go test` run has no mode and skips.
 func TestConcurrencyHelperProcess(t *testing.T) {
-	mode := os.Getenv("EMBERLOOP_CONCURRENCY_MODE")
+	mode := os.Getenv("EL_CONCURRENCY_MODE")
 	if mode == "" {
 		t.Skip("no helper mode")
 	}
-	statePath = os.Getenv("EMBERLOOP_CONCURRENCY_STATE")
+	statePath = os.Getenv("EL_CONCURRENCY_STATE")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	run := concurrencyHerdrExec()
-	repo := os.Getenv("EMBERLOOP_CONCURRENCY_REPO")
-	id := os.Getenv("EMBERLOOP_CONCURRENCY_ID")
-	result := os.Getenv("EMBERLOOP_CONCURRENCY_RESULT")
+	repo := os.Getenv("EL_CONCURRENCY_REPO")
+	id := os.Getenv("EL_CONCURRENCY_ID")
+	result := os.Getenv("EL_CONCURRENCY_RESULT")
 
 	writeResult := func(err error, extra map[string]string) {
 		out := map[string]string{"id": id}
@@ -270,7 +270,7 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 	// every helper overlaps every other one in the work below. Without it a
 	// fast helper finishes before a slow one starts and a check-then-act
 	// race never shows.
-	if os.Getenv("EMBERLOOP_CONCURRENCY_BARRIER") != "" {
+	if os.Getenv("EL_CONCURRENCY_BARRIER") != "" {
 		waitConcurrencyBarrier(t, id)
 	}
 	switch mode {
@@ -301,7 +301,7 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 		barrier := filepath.Join(concurrencyHerdrDir(), "barrier")
 		_ = os.MkdirAll(barrier, 0o755)
 		_ = os.WriteFile(filepath.Join(barrier, "ready-"+id), []byte("ready"), 0o644)
-		if want := os.Getenv("EMBERLOOP_CONCURRENCY_WANT"); want != "" {
+		if want := os.Getenv("EL_CONCURRENCY_WANT"); want != "" {
 			wantN, _ := strconv.Atoi(want)
 			deadline := time.Now().Add(10 * time.Second)
 			for {
@@ -316,8 +316,8 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 				time.Sleep(5 * time.Millisecond)
 			}
 		}
-		tree := os.Getenv("EMBERLOOP_CONCURRENCY_TREE")
-		typ := os.Getenv("EMBERLOOP_CONCURRENCY_TYPE")
+		tree := os.Getenv("EL_CONCURRENCY_TREE")
+		typ := os.Getenv("EL_CONCURRENCY_TYPE")
 		types := mustLoadAgentTypes(repo)
 		rt, ok := types[typ]
 		if !ok {
@@ -334,8 +334,8 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 		// One grid placement in the shared tab, the way a scout or reviewer
 		// launch places its pane. The result carries the slot the session
 		// took, so the parent can tell two sessions that took the same one.
-		tab := os.Getenv("EMBERLOOP_CONCURRENCY_TAB")
-		overflow := os.Getenv("EMBERLOOP_CONCURRENCY_OVERFLOW")
+		tab := os.Getenv("EL_CONCURRENCY_TAB")
+		overflow := os.Getenv("EL_CONCURRENCY_OVERFLOW")
 		if overflow == "" {
 			overflow = "scouts"
 		}
@@ -352,7 +352,7 @@ func TestConcurrencyHelperProcess(t *testing.T) {
 	case "spacing":
 		// Two processes calling spaceSpawns at the same instant must take
 		// successive slots: the gap comes from the env so the test controls it.
-		if g := os.Getenv("EMBERLOOP_CONCURRENCY_GAP"); g != "" {
+		if g := os.Getenv("EL_CONCURRENCY_GAP"); g != "" {
 			if d, err := time.ParseDuration(g); err == nil {
 				spawnGap = d
 			}
@@ -400,13 +400,13 @@ func runConcurrencyHelpers(t *testing.T, mode string, ids []string, env map[stri
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			result := filepath.Join(os.Getenv("EMBERLOOP_CONCURRENCY_HERDR"), "result-"+id+".json")
+			result := filepath.Join(os.Getenv("EL_CONCURRENCY_HERDR"), "result-"+id+".json")
 			args := []string{"-test.run", "TestConcurrencyHelperProcess", "-test.count=1"}
 			cmd := exec.Command(os.Args[0], args...)
 			cmd.Env = append(os.Environ(),
-				"EMBERLOOP_CONCURRENCY_MODE="+mode,
-				"EMBERLOOP_CONCURRENCY_ID="+id,
-				"EMBERLOOP_CONCURRENCY_RESULT="+result,
+				"EL_CONCURRENCY_MODE="+mode,
+				"EL_CONCURRENCY_ID="+id,
+				"EL_CONCURRENCY_RESULT="+result,
 			)
 			for k, v := range env {
 				cmd.Env = append(cmd.Env, k+"="+v)
@@ -424,7 +424,7 @@ func runConcurrencyHelpers(t *testing.T, mode string, ids []string, env map[stri
 	}
 	out := make([]map[string]string, len(ids))
 	for i, id := range ids {
-		result := filepath.Join(os.Getenv("EMBERLOOP_CONCURRENCY_HERDR"), "result-"+id+".json")
+		result := filepath.Join(os.Getenv("EL_CONCURRENCY_HERDR"), "result-"+id+".json")
 		raw, err := os.ReadFile(result)
 		if err != nil {
 			t.Fatalf("helper %s wrote no result: %v\n%s", id, err, outputs[i])
@@ -446,11 +446,11 @@ func runConcurrencyHelpers(t *testing.T, mode string, ids []string, env map[stri
 // the parent to release the start barrier, so every helper overlaps every
 // other one in the mode's work. A staggered start would let a fast helper
 // finish before a slow one arrives and a check-then-act race would never
-// show. tabFor optionally overrides EMBERLOOP_CONCURRENCY_TAB per helper, so one
+// show. tabFor optionally overrides EL_CONCURRENCY_TAB per helper, so one
 // run can place from several tabs at once.
 func runConcurrencyHelpersTogether(t *testing.T, mode string, ids []string, env map[string]string, tabFor map[string]string) []map[string]string {
 	t.Helper()
-	dir := os.Getenv("EMBERLOOP_CONCURRENCY_HERDR")
+	dir := os.Getenv("EL_CONCURRENCY_HERDR")
 	_ = os.Remove(filepath.Join(dir, "start"))
 	for _, id := range ids {
 		_ = os.Remove(filepath.Join(dir, "ready-"+id))
@@ -466,16 +466,16 @@ func runConcurrencyHelpersTogether(t *testing.T, mode string, ids []string, env 
 			args := []string{"-test.run", "TestConcurrencyHelperProcess", "-test.count=1"}
 			cmd := exec.Command(os.Args[0], args...)
 			cmd.Env = append(os.Environ(),
-				"EMBERLOOP_CONCURRENCY_MODE="+mode,
-				"EMBERLOOP_CONCURRENCY_ID="+id,
-				"EMBERLOOP_CONCURRENCY_RESULT="+result,
-				"EMBERLOOP_CONCURRENCY_BARRIER=1",
+				"EL_CONCURRENCY_MODE="+mode,
+				"EL_CONCURRENCY_ID="+id,
+				"EL_CONCURRENCY_RESULT="+result,
+				"EL_CONCURRENCY_BARRIER=1",
 			)
 			for k, v := range env {
 				cmd.Env = append(cmd.Env, k+"="+v)
 			}
 			if tab, ok := tabFor[id]; ok {
-				cmd.Env = append(cmd.Env, "EMBERLOOP_CONCURRENCY_TAB="+tab)
+				cmd.Env = append(cmd.Env, "EL_CONCURRENCY_TAB="+tab)
 			}
 			out, err := cmd.CombinedOutput()
 			outputs[i] = string(out)
@@ -538,14 +538,14 @@ func TestWorkerStoreSurvivesSimultaneousSessions(t *testing.T) {
 	t.Cleanup(func() { statePath = oldState })
 
 	herdrDir := t.TempDir()
-	t.Setenv("EMBERLOOP_CONCURRENCY_HERDR", herdrDir)
-	t.Setenv("EMBERLOOP_CONCURRENCY_STATE", stateFile)
+	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +562,7 @@ func TestWorkerStoreSurvivesSimultaneousSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("EMBERLOOP_CONCURRENCY_REPO", repo)
+	t.Setenv("EL_CONCURRENCY_REPO", repo)
 
 	// Readers loop while writers write: any half-written file fails the JSON
 	// decode and is reported as corruption.
@@ -588,9 +588,9 @@ func TestWorkerStoreSurvivesSimultaneousSessions(t *testing.T) {
 	}
 
 	runConcurrencyHelpers(t, "worker-spawn", ids, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE": stateFile,
-		"EMBERLOOP_CONCURRENCY_REPO":  repo,
-		"EMBERLOOP_CONCURRENCY_HERDR": herdrDir,
+		"EL_CONCURRENCY_STATE": stateFile,
+		"EL_CONCURRENCY_REPO":  repo,
+		"EL_CONCURRENCY_HERDR": herdrDir,
 	})
 	close(stop)
 	readers.Wait()
@@ -651,9 +651,9 @@ func TestWorkerStoreSurvivesSimultaneousSessions(t *testing.T) {
 		}()
 	}
 	runConcurrencyHelpers(t, "worker-finish", ids, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE": stateFile,
-		"EMBERLOOP_CONCURRENCY_REPO":  repo,
-		"EMBERLOOP_CONCURRENCY_HERDR": herdrDir,
+		"EL_CONCURRENCY_STATE": stateFile,
+		"EL_CONCURRENCY_REPO":  repo,
+		"EL_CONCURRENCY_HERDR": herdrDir,
 	})
 	close(stop2)
 	readers.Wait()
@@ -689,8 +689,8 @@ func TestConcurrentReviewerSpawnProducesOneReviewer(t *testing.T) {
 	t.Cleanup(func() { statePath = oldState })
 
 	herdrDir := t.TempDir()
-	t.Setenv("EMBERLOOP_CONCURRENCY_HERDR", herdrDir)
-	t.Setenv("EMBERLOOP_CONCURRENCY_STATE", stateFile)
+	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	resolverSettings(t, "")
 	resetGrid()
@@ -701,8 +701,8 @@ func TestConcurrentReviewerSpawnProducesOneReviewer(t *testing.T) {
 
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -768,12 +768,12 @@ func TestConcurrentReviewerSpawnProducesOneReviewer(t *testing.T) {
 	// Phase 1: the race. Two processes spawn reviewer-standards for tree1 at
 	// once, behind a barrier so their check-then-launch windows overlap.
 	runConcurrencyHelpers(t, "reviewer-spawn", []string{"rv-a", "rv-b"}, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE": stateFile,
-		"EMBERLOOP_CONCURRENCY_REPO":  repo,
-		"EMBERLOOP_CONCURRENCY_HERDR": herdrDir,
-		"EMBERLOOP_CONCURRENCY_TREE":  tree1,
-		"EMBERLOOP_CONCURRENCY_TYPE":  reviewerStandards,
-		"EMBERLOOP_CONCURRENCY_WANT":  "2",
+		"EL_CONCURRENCY_STATE": stateFile,
+		"EL_CONCURRENCY_REPO":  repo,
+		"EL_CONCURRENCY_HERDR": herdrDir,
+		"EL_CONCURRENCY_TREE":  tree1,
+		"EL_CONCURRENCY_TYPE":  reviewerStandards,
+		"EL_CONCURRENCY_WANT":  "2",
 	})
 	have := reviewersOf(tree1)
 	if len(have) != 1 {
@@ -835,12 +835,12 @@ func TestLaunchesAreSpacedAcrossSessions(t *testing.T) {
 	spawnGap = time.Second
 	t.Cleanup(func() { statePath, spawnGap = oldState, oldGap })
 	herdrDir := t.TempDir()
-	t.Setenv("EMBERLOOP_CONCURRENCY_HERDR", herdrDir)
-	t.Setenv("EMBERLOOP_CONCURRENCY_STATE", stateFile)
+	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
+	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	results := runConcurrencyHelpers(t, "spacing", []string{"a", "b"}, map[string]string{
-		"EMBERLOOP_CONCURRENCY_STATE": stateFile,
-		"EMBERLOOP_CONCURRENCY_HERDR": herdrDir,
-		"EMBERLOOP_CONCURRENCY_GAP":   "1s",
+		"EL_CONCURRENCY_STATE": stateFile,
+		"EL_CONCURRENCY_HERDR": herdrDir,
+		"EL_CONCURRENCY_GAP":   "1s",
 	})
 	at := make([]int64, 2)
 	for i, r := range results {

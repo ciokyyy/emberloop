@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -137,7 +137,7 @@ func queuedIDs() []string {
 func drainWorkerQueue(run Exec) {
 	_ = withFileLock("worker-launch", func() error {
 		pruneDeadWorkers(run)
-		sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("EMBERLOOP_AGENT_ID"))
+		sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("EL_AGENT_ID"))
 		var entry queuedWorker
 		_ = withFileLock("worker-queue", func() error {
 			store, err := loadWorkersLocked()

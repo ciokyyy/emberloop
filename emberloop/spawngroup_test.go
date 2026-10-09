@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func groupTestState(t *testing.T, g *fakeGrid) *recorder {
 	spawnTestState(t)
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	oldDeliver := deliverExec
 	rec := &recorder{reply: liveDeliverReply}
 	deliverExec = rec.run
@@ -111,7 +111,7 @@ func TestSpawnGroupNoticeDeliveredAtOnceToBusyParent(t *testing.T) {
 	spawnTestState(t)
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	oldDeliver := deliverExec
 	t.Cleanup(func() { deliverExec = oldDeliver })
 	var mu sync.Mutex
@@ -347,7 +347,7 @@ func TestTellClaimRemovesMemberFromWaitingGroup(t *testing.T) {
 func TestReviewerGroupDeliversOneNoticeWithBothVerdicts(t *testing.T) {
 	_, tree := reviewRepo(t)
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	oldDeliver := deliverExec
 	rec := &recorder{reply: func(cmd string, args []string) Result {
 		// Reviewer panes live in the fake, not the recorder: every pane the

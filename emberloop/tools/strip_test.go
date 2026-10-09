@@ -94,7 +94,7 @@ func TestStripProjectMerges(t *testing.T) {
 	dir := t.TempDir()
 	global := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, global)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	globalBody := `{"context":{"strip_rows":1,"strip_frame":false,"strip_rule":false,"compress_models":{"pig":"g","claude":"g"}}}`
 	if err := os.WriteFile(global, []byte(globalBody), 0o644); err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestStripSymbolsProjectMerges(t *testing.T) {
 	dir := t.TempDir()
 	global := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, global)
-	t.Setenv("EMBERLOOP_COMPRESS_THRESHOLD", "")
+	t.Setenv("EL_COMPRESS_THRESHOLD", "")
 	if err := os.WriteFile(global, []byte(`{"context":{"strip_symbols":"ascii","strip_separator":"slash"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}

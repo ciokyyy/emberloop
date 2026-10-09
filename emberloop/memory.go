@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Memory sampling lives in the session's own emberloop process (the emberloop-mcp
+// Memory sampling lives in the session's own el process (the el-mcp
 // attached to the harness), so samples are written whether or not the TUI is
 // open, and stop when the session ends with the process.
 //
@@ -20,8 +20,8 @@ import (
 //
 //	<state>/archive/<run>/<agent>/memory.jsonl
 //
-// one line per process per sample. run is the spec slug from EMBERLOOP_SPEC, or
-// "local" for a session outside a run; agent is EMBERLOOP_AGENT_ID.
+// one line per process per sample. run is the spec slug from EL_SPEC, or
+// "local" for a session outside a run; agent is EL_AGENT_ID.
 
 // MemorySample is one process in one tick: who it belongs to, when it was
 // taken, and the process's RSS in bytes.
@@ -37,7 +37,7 @@ type MemorySample struct {
 const MemorySampleInterval = 5 * time.Second
 
 // SampleProcessTree returns one row per process in the harness tree rooted at
-// harnessPid: the harness itself, emberloop-mcp, and anything they started. The
+// harnessPid: the harness itself, el-mcp, and anything they started. The
 // walk follows /proc/<pid>/task/*/children links, so a tick reads only the
 // tree: one children file per thread plus one stat file per process, a
 // handful of file reads. A process that vanishes mid-walk is skipped, never
@@ -160,9 +160,9 @@ func AppendMemorySamples(path string, rows []MemorySample) error {
 }
 
 // MemoryRunSlug is the archive run for this process: the spec slug from
-// EMBERLOOP_SPEC, or "local" for a session outside a run.
+// EL_SPEC, or "local" for a session outside a run.
 func MemoryRunSlug() string {
-	if spec := os.Getenv("EMBERLOOP_SPEC"); spec != "" {
+	if spec := os.Getenv("EL_SPEC"); spec != "" {
 		return specSlug(spec)
 	}
 	return "local"

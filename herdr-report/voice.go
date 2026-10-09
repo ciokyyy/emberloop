@@ -7,14 +7,14 @@ import (
 )
 
 // voiceCustomType labels the message the reminder rides in, so a reader can
-// tell emberloop's reminder from one the user wrote.
-const voiceCustomType = "emberloop-voice"
+// tell el's reminder from one the user wrote.
+const voiceCustomType = "el-voice"
 
-// voiceRunner asks emberloop for the per-turn reminder text. It is a type, not a
-// call, so a test answers for it instead of running emberloop.
+// voiceRunner asks el for the per-turn reminder text. It is a type, not a
+// call, so a test answers for it instead of running el.
 type voiceRunner func(ctx sdk.Context) (string, error)
 
-// execVoice is the real voiceRunner: `emberloop voice-reminder`, the one source
+// execVoice is the real voiceRunner: `el voice-reminder`, the one source
 // of the text, so the pig and claude harnesses read the same words.
 func execVoice(ctx sdk.Context) (string, error) {
 	res, err := ctx.Exec(gateBin(), []string{"voice-reminder"})

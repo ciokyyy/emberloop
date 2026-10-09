@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -16,7 +16,7 @@ func TestWorkerCapQueuesBeyondCapAndDrainsOnFinish(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &worktreeExec{g: g}
 	spawnExec = ex.run
 
@@ -107,7 +107,7 @@ func TestFailedSpawnTearsDownAConcurrentlyDrainedWorker(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &worktreeExec{g: g}
 	spawnExec = ex.run
 	repo := t.TempDir()
@@ -155,7 +155,7 @@ func TestEachWorkerOfOneSpawnIsItsOwnGroup(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &worktreeExec{g: g}
 	spawnExec = ex.run
 

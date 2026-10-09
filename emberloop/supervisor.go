@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -124,7 +124,7 @@ func RestartPane(run Exec, req PaneRestart, launchFor func(newSessionID string) 
 	// re-assert it for the agent's type. Silent by contract, never blocking.
 	reassertPaneName(run, req.AgentID, req.Pane)
 	// The agent reads its MCP config at startup; the launch file stays for
-	// the pane's `emberloop exec` to consume.
+	// the pane's `el exec` to consume.
 	cleanupMCP(sess)
 	// The child is live on next from here: record first, so a late-delivery
 	// error still leaves the state on the session the pane runs.

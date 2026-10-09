@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -60,7 +60,7 @@ func TestWorkerCapIgnoresADeadPane(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
 	spawnExec = ex.run
 
@@ -112,7 +112,7 @@ func TestWorkerCapKeepsLiveAndErroredPanes(t *testing.T) {
 			g := newFakeGrid()
 			t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 			t.Setenv("HERDR_WORKSPACE_ID", "w1")
-			t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+			t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 			ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
 			spawnExec = ex.run
 			repo := t.TempDir()
@@ -160,8 +160,8 @@ func TestDeadPaneWorkerIsCancelledByThePrune(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -226,9 +226,9 @@ func TestCancelledWorkerNotifiesParentOnce(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "parent1")
+	t.Setenv("EL_AGENT_ID", "parent1")
 	ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
 	spawnExec = ex.run
 	oldDeliver := deliverExec
@@ -287,8 +287,8 @@ func TestRespawnReusesCancelledWorktreeAndBranch(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestDrainStartsQueuedWorkerAfterThePrune(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
 	spawnExec = ex.run
 	repo := t.TempDir()
@@ -398,7 +398,7 @@ func TestDrainDropsStaleQueueEntries(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
 	spawnExec = ex.run
 	repo := t.TempDir()
@@ -462,9 +462,9 @@ func TestOrchestratorSpawnReportsCancelledWorker(t *testing.T) {
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/fake/herdr-report")
+	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
 	t.Setenv("HERDR_PANE_ID", "wP")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 	ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
 	spawnExec = ex.run
 	oldDeliver := deliverExec
@@ -529,8 +529,8 @@ func TestSpawnRefusesAStrayWorktreePath(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -563,8 +563,8 @@ func TestRespawnReusesCancelledBranchWithCommits(t *testing.T) {
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -617,8 +617,8 @@ func TestRespawnReusesCancelledBranchWithCommits(t *testing.T) {
 func TestWorktreeRegisteredThroughSymlink(t *testing.T) {
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

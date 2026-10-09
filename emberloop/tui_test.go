@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// Seam (tui 01): the dashboard binary — `emberloop tui` execs the emberloop-tui
+// Seam (tui 01): the dashboard binary — `el tui` execs the el-tui
 // installed beside it, falling back to PATH, and fails naming install when
 // there is none. The starter is injected so tests never launch a terminal.
 
-// fakeTUIBin drops an executable emberloop-tui onto PATH, so the lookup finds it
+// fakeTUIBin drops an executable el-tui onto PATH, so the lookup finds it
 // everywhere except beside the test binary.
 func fakeTUIBin(t *testing.T) string {
 	t.Helper()
@@ -38,7 +38,7 @@ func TestFindTUIBinaryFallsBackToPATH(t *testing.T) {
 func TestFindTUIBinaryMissingNamesInstall(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, err := FindTUIBinary(); err == nil {
-		t.Fatal("with no emberloop-tui anywhere the lookup must fail")
+		t.Fatal("with no el-tui anywhere the lookup must fail")
 	} else if !strings.Contains(err.Error(), "install") {
 		t.Errorf("the failure must point at install, got: %v", err)
 	}

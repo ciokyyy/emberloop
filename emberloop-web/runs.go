@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 )
 
 // specEntry is one discovered spec: its spec file, title and ticket count.
@@ -18,7 +18,8 @@ type specEntry struct {
 
 // specScanDepth is how deep the spec scan looks under a repo directory:
 // deep enough for a spec area like .scratch/<name>/spec.md, shallow enough
-// to stay out of vendored trees.
+// to stay out of vendored trees. A directory named archive is skipped, so
+// archived specs under .scratch/archive/ never show up.
 const specScanDepth = 4
 
 // handleSpecs lists the specs under a repo directory.
@@ -60,7 +61,7 @@ func discoverSpecs(repo string) ([]specEntry, error) {
 		}
 		for _, e := range entries {
 			name := e.Name()
-			if name == ".git" || name == "node_modules" {
+			if name == ".git" || name == "node_modules" || name == "archive" {
 				continue
 			}
 			if e.IsDir() {
@@ -78,7 +79,7 @@ func discoverSpecs(repo string) ([]specEntry, error) {
 	entries := []specEntry{}
 	seen := map[string]bool{}
 	for _, c := range candidates {
-		run, err := emberloop.ResolveSpec(c)
+		run, err := el.ResolveSpec(c)
 		if err != nil {
 			continue
 		}
@@ -86,12 +87,12 @@ func discoverSpecs(repo string) ([]specEntry, error) {
 			continue
 		}
 		seen[run.Spec] = true
-		files, err := emberloop.ReadDriverFiles(run)
+		files, err := el.ReadDriverFiles(run)
 		if err != nil {
 			continue
 		}
-		count := len(emberloop.PreviewTickets(run, files))
-		entries = append(entries, specEntry{Spec: run.Spec, Title: emberloop.SpecTitle(run.Spec), Tickets: count})
+		count := len(el.PreviewTickets(run, files))
+		entries = append(entries, specEntry{Spec: run.Spec, Title: el.SpecTitle(run.Spec), Tickets: count})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Spec < entries[j].Spec })
 	return entries, nil
@@ -109,23 +110,23 @@ func (d *Daemon) handleSpecPreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spec is required", http.StatusBadRequest)
 		return
 	}
-	run, err := emberloop.ResolveSpec(arg)
+	run, err := el.ResolveSpec(arg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	files, err := emberloop.ReadDriverFiles(run)
+	files, err := el.ReadDriverFiles(run)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	previews := emberloop.PreviewTickets(run, files)
+	previews := el.PreviewTickets(run, files)
 	if previews == nil {
-		previews = []emberloop.TicketPreview{}
+		previews = []el.TicketPreview{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"spec":    run.Spec,
-		"title":   emberloop.SpecTitle(run.Spec),
+		"title":   el.SpecTitle(run.Spec),
 		"tickets": previews,
 	})
 }

@@ -1,11 +1,11 @@
-package emberloop
+package el
 
 // Header strip (ticket 04): every agent pane shows its context use against
 // the window with a gradient bar, an estimated cost, the top tools, the
 // model, the compress count and the state. This file holds the pure render
 // function: a snapshot and a width in, a styled string out. The PTY wrapper
 // that draws it around a live child lives in header_wrap.go; the mockup in
-// .scratch/context-compress/mockup.html is the visual reference.
+// .scratch/archive/context-compress/mockup.html is the visual reference.
 
 import (
 	"fmt"
@@ -104,30 +104,30 @@ type headerColor struct {
 // OSC setter. Threshold colors stay green, yellow and red; no agent hue
 // uses them.
 var (
-	headerStripBg = headerColor{EmberloopMocha().StripBg, EmberloopLatte().StripBg}
-	headerText    = headerColor{EmberloopMocha().Text, EmberloopLatte().Text}
-	headerDim     = headerColor{EmberloopMocha().Dim, EmberloopLatte().Dim}
-	headerAccent  = headerColor{EmberloopMocha().Accent, EmberloopLatte().Accent}
-	headerCalm    = headerColor{EmberloopMocha().Calm, EmberloopLatte().Calm}
-	headerWarm    = headerColor{EmberloopMocha().Warm, EmberloopLatte().Warm}
-	headerHot     = headerColor{EmberloopMocha().Hot, EmberloopLatte().Hot}
-	headerCost    = headerColor{EmberloopMocha().Cost, EmberloopLatte().Cost}
-	headerTool    = headerColor{EmberloopMocha().Tool, EmberloopLatte().Tool}
-	headerIdle    = headerColor{EmberloopMocha().Idle, EmberloopLatte().Idle}
-	headerBarDim  = headerColor{EmberloopMocha().BarDim, EmberloopLatte().BarDim}
+	headerStripBg = headerColor{ElMocha().StripBg, ElLatte().StripBg}
+	headerText    = headerColor{ElMocha().Text, ElLatte().Text}
+	headerDim     = headerColor{ElMocha().Dim, ElLatte().Dim}
+	headerAccent  = headerColor{ElMocha().Accent, ElLatte().Accent}
+	headerCalm    = headerColor{ElMocha().Calm, ElLatte().Calm}
+	headerWarm    = headerColor{ElMocha().Warm, ElLatte().Warm}
+	headerHot     = headerColor{ElMocha().Hot, ElLatte().Hot}
+	headerCost    = headerColor{ElMocha().Cost, ElLatte().Cost}
+	headerTool    = headerColor{ElMocha().Tool, ElLatte().Tool}
+	headerIdle    = headerColor{ElMocha().Idle, ElLatte().Idle}
+	headerBarDim  = headerColor{ElMocha().BarDim, ElLatte().BarDim}
 )
 
 // agentHues is the fixed identity set from the shared palette: mauve first
 // for the orchestrator, then one hue per other agent by hash. Green, yellow
 // and red stay out, so identity never reads as status.
 var agentHues = []headerColor{
-	{EmberloopMocha().Hues[0].Dark, EmberloopMocha().Hues[0].Light}, // mauve: the orchestrator
-	{EmberloopMocha().Hues[1].Dark, EmberloopMocha().Hues[1].Light}, // pink
-	{EmberloopMocha().Hues[2].Dark, EmberloopMocha().Hues[2].Light}, // lavender
-	{EmberloopMocha().Hues[3].Dark, EmberloopMocha().Hues[3].Light}, // sapphire
-	{EmberloopMocha().Hues[4].Dark, EmberloopMocha().Hues[4].Light}, // sky
-	{EmberloopMocha().Hues[5].Dark, EmberloopMocha().Hues[5].Light}, // flamingo
-	{EmberloopMocha().Hues[6].Dark, EmberloopMocha().Hues[6].Light}, // maroon
+	{ElMocha().Hues[0].Dark, ElMocha().Hues[0].Light}, // mauve: the orchestrator
+	{ElMocha().Hues[1].Dark, ElMocha().Hues[1].Light}, // pink
+	{ElMocha().Hues[2].Dark, ElMocha().Hues[2].Light}, // lavender
+	{ElMocha().Hues[3].Dark, ElMocha().Hues[3].Light}, // sapphire
+	{ElMocha().Hues[4].Dark, ElMocha().Hues[4].Light}, // sky
+	{ElMocha().Hues[5].Dark, ElMocha().Hues[5].Light}, // flamingo
+	{ElMocha().Hues[6].Dark, ElMocha().Hues[6].Light}, // maroon
 }
 
 // AgentHue picks an agent's stable hue from the identity set: the hash of

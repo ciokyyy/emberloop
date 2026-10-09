@@ -83,3 +83,59 @@ describe('groupTranscript tool runs', () => {
     expect(blocks[1].body).toContain('b');
   });
 });
+
+describe('compaction cards', () => {
+  const started = JSON.stringify({ reason: 'manual' });
+  const done = JSON.stringify({ reason: 'threshold', tokensBefore: 180000, tokensAfter: 24000, summary: '## Task\nship it' });
+  const failed = JSON.stringify({ reason: 'manual', aborted: true, error: 'model unavailable' });
+
+  it('a started compaction renders as a running card', () => {
+    const c = cardForEvent(ev(1, 'compaction_started', started));
+    expect(c.card).toBe('compaction');
+    expect(c.compaction.state).toBe('running');
+  });
+  it('the end event replaces the running card in place', () => {
+    const blocks = groupTranscript([ev(1, 'prompt', 'hi'), ev(2, 'compaction_started', started), ev(3, 'compaction', done)]);
+    const cards = blocks.filter((b) => b.card === 'compaction');
+    expect(cards).toHaveLength(1);
+    expect(cards[0].compaction).toMatchObject({ state: 'done', tokensBefore: 180000, tokensAfter: 24000 });
+    expect(cards[0].body).toContain('ship it');
+  });
+  it('an aborted or errored compaction is a failed card', () => {
+    const blocks = groupTranscript([ev(1, 'compaction_started', started), ev(2, 'compaction', failed)]);
+    expect(blocks[0].compaction.state).toBe('failed');
+    expect(blocks[0].compaction.error).toBe('model unavailable');
+  });
+  it('an end event with no started event still renders one card', () => {
+    expect(groupTranscript([ev(1, 'compaction', done)])).toHaveLength(1);
+  });
+  it('malformed payload still renders a card with no numbers', () => {
+    const blocks = groupTranscript([ev(1, 'compaction', 'not json')]);
+    expect(blocks[0].card).toBe('compaction');
+  });
+  it('usage stays hidden from the transcript', () => {
+    expect(groupTranscript([ev(1, 'usage', '{"used":1,"size":2}')])).toHaveLength(0);
+  });
+});
+
+import { parseSudoResult, groupTranscript as groupSudo } from './events.js';
+
+describe('sudo cards', () => {
+  it('parses the TOON result message', () => {
+    const r = parseSudoResult('sudo_result:\n  request: sudo-1\n  status: approved\n  exit: 0\n  command: "sudo ls"\n  output: "a\\nb"');
+    expect(r).toEqual({ id: 'sudo-1', status: 'approved', exit: 0, command: 'sudo ls', output: 'a\nb' });
+    expect(parseSudoResult('hello')).toBeNull();
+  });
+  it('updates the request card in place when resolved', () => {
+    const req = { seq: 1, kind: 'sudo_request', text: JSON.stringify({ id: 's1', command: 'sudo ls', state: 'pending' }) };
+    const res = { seq: 2, kind: 'sudo_resolved', text: JSON.stringify({ id: 's1', command: 'sudo ls', state: 'running' }) };
+    const blocks = groupSudo([req, res]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].card).toBe('sudo');
+    expect(blocks[0].sudo.state).toBe('running');
+  });
+  it('shows a sudo_result prompt as a result card', () => {
+    const blocks = groupSudo([{ seq: 3, kind: 'prompt', text: 'sudo_result:\n  request: s1\n  status: denied\n  exit: -1\n  command: "sudo x"\n  output: "no"' }]);
+    expect(blocks[0].card).toBe('sudoresult');
+  });
+});

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"example.com/emberloop/tools"
 )
 
-// Code graph lifecycle (ticket 20): emberloop indexes each worktree automatically
+// Code graph lifecycle (ticket 20): el indexes each worktree automatically
 // and removes its project when the worktree goes, invisibly to agents.
 //
 // A worker's worktree is indexed asynchronously once Spawn creates it; just
@@ -35,7 +35,7 @@ var graphLifecycleDial func(ctx context.Context, worktree, tool string, args map
 
 // errGraphUnavailable skips a lifecycle call silently: the graph is disabled
 // or its binary is absent, so there is nothing to index into.
-var errGraphUnavailable = errors.New("emberloop: code graph unavailable")
+var errGraphUnavailable = errors.New("el: code graph unavailable")
 
 // Lifecycle bounds: the creation index runs in the background, the pre-spawn
 // re-index paces a reviewer launch, and the deletion is one fast call.
@@ -103,7 +103,7 @@ func graphIndex(ctx context.Context, worktree string) (string, error) {
 			Project string `json:"project"`
 		}
 		if json.Unmarshal([]byte(text), &body) == nil && body.Project != "" && body.Project != slug {
-			log.Printf("emberloop: code graph indexed %s as %q, not %q", abs, body.Project, slug)
+			log.Printf("el: code graph indexed %s as %q, not %q", abs, body.Project, slug)
 		}
 	}
 	return text, err
@@ -190,7 +190,7 @@ func graphResolveProjectName(ctx context.Context, abs, slug string) string {
 
 // graphIndexWorktreeAsync indexes the worktree in the background once Spawn
 // has created it. Failures are logged and forgotten. The host is always the
-// session's emberloop-mcp process (the spawn tool and the worker-queue drain both
+// session's el-mcp process (the spawn tool and the worker-queue drain both
 // run inside it), which outlives the index, so the goroutine is never cut
 // short by an exiting CLI.
 func graphIndexWorktreeAsync(worktree string) {
@@ -201,7 +201,7 @@ func graphIndexWorktreeAsync(worktree string) {
 		ctx, cancel := context.WithTimeout(context.Background(), graphIndexTimeout)
 		defer cancel()
 		if _, err := graphIndex(ctx, worktree); err != nil {
-			log.Printf("emberloop: code graph index of %s failed: %v", worktree, err)
+			log.Printf("el: code graph index of %s failed: %v", worktree, err)
 		}
 	}()
 }
@@ -216,7 +216,7 @@ func graphReindexForSpawn(worktree string) {
 	ctx, cancel := context.WithTimeout(context.Background(), graphReindexTimeout)
 	defer cancel()
 	if _, err := graphIndex(ctx, worktree); err != nil {
-		log.Printf("emberloop: code graph re-index of %s failed: %v", worktree, err)
+		log.Printf("el: code graph re-index of %s failed: %v", worktree, err)
 	}
 }
 
@@ -229,6 +229,6 @@ func graphDeleteForWorktree(worktree string) {
 	ctx, cancel := context.WithTimeout(context.Background(), graphDeleteTimeout)
 	defer cancel()
 	if err := graphDelete(ctx, worktree); err != nil {
-		log.Printf("emberloop: code graph delete of %s failed: %v", worktree, err)
+		log.Printf("el: code graph delete of %s failed: %v", worktree, err)
 	}
 }

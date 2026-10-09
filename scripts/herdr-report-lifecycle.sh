@@ -17,7 +17,7 @@ echo "pane: $PANE  workspace: $WID"
 
 # argv[0] is the program, and pane run types argv into the shell as one line, so
 # the prompt is pre-quoted as a single argument.
-herdr pane run "$PANE" env EMBERLOOP_AGENT_LABEL=$LABEL pig --no-skills --no-tools \
+herdr pane run "$PANE" env EL_AGENT_LABEL=$LABEL pig --no-skills --no-tools \
   -e "$REPORT" -p '"Write 150 numbered lines about the history of the bicycle."' >/dev/null 2>&1
 
 state() {

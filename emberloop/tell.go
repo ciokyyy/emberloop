@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -52,8 +52,8 @@ func tellAgentCtx(ctx context.Context, run Exec, id, text string) (string, error
 	// background: a vanished member with no further submit is finalized
 	// after this call ends instead of waiting forever. The dead-child sweep
 	// runs beside it, so a cancelled worker is reported here too.
-	sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("EMBERLOOP_AGENT_ID"))
-	sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("EMBERLOOP_AGENT_ID"))
+	sweepOpenGroups(os.Getenv("HERDR_PANE_ID"), os.Getenv("EL_AGENT_ID"))
+	sweepDeadChildren(os.Getenv("HERDR_PANE_ID"), os.Getenv("EL_AGENT_ID"))
 	st, ok, err := ReadAgentState(id)
 	if err != nil {
 		return "", err

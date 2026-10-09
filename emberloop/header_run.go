@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Header strip PTY runner (ticket 04): WrapChild runs an agent command on a
 // PTY sized to the terminal minus the strip rows and its top rule, forwards
@@ -11,7 +11,7 @@ package emberloop
 // palette at start and resets it on exit, on signals and across restarts
 // (each restart is a new WrapChild, so it sets again).
 //
-// Signal note: SIGINT, SIGTERM or SIGHUP on emberloop reset the pane palette
+// Signal note: SIGINT, SIGTERM or SIGHUP on el reset the pane palette
 // and re-raise to the default disposition, so the process still exits with
 // the signal. A relaunch after a compress restart sets the palette again.
 
@@ -67,7 +67,7 @@ type WrapConfig struct {
 	TermW       int // terminal width; 0 detects from Stdout
 	TermH       int // terminal height; 0 detects from Stdout
 	Poll        time.Duration
-	ThemeDir    string // generated theme files; default emberloop's state dir
+	ThemeDir    string // generated theme files; default el's state dir
 	ThemeDark   *bool  // variant override; default detects from Stdout
 	// ServeCtrl serves the input-queue control channel for the source agent:
 	// production launchers set it, so tell and the shared delivery path
@@ -85,7 +85,7 @@ type WrapConfig struct {
 	// HERDR_PANE_ID when HERDR_ENV is 1. Both exist for tests.
 	Report func(args []string)
 	PaneID string
-	// InputRow draws the emberloop input row between the child screen and the strip
+	// InputRow draws the el input row between the child screen and the strip
 	// for the user's top-level session (ticket 02).
 	InputRow bool
 	// Clock injects a fake clock for testing row timeouts and queue pumps.
@@ -196,7 +196,7 @@ func WrapChild(cfg WrapConfig) error {
 			if errSink == nil {
 				errSink = os.Stderr
 			}
-			fmt.Fprintf(errSink, "emberloop: control channel unavailable: %v\n", err)
+			fmt.Fprintf(errSink, "el: control channel unavailable: %v\n", err)
 		}
 	}
 	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) && cfg.Start == nil {
@@ -265,11 +265,11 @@ func WrapChild(cfg WrapConfig) error {
 	return w.currentWait()
 }
 
-// HeaderStripDisabled is the rollout escape hatch: EMBERLOOP_HEADER_STRIP=0 runs
+// HeaderStripDisabled is the rollout escape hatch: EL_HEADER_STRIP=0 runs
 // every child plainly, with no reserved rows and no strip. The default is
 // the strip everywhere; the spike in scripts/ decides whether it stays.
 func HeaderStripDisabled() bool {
-	return os.Getenv("EMBERLOOP_HEADER_STRIP") == "0"
+	return os.Getenv("EL_HEADER_STRIP") == "0"
 }
 
 // RunPlainCommand runs a child with the stdio directly: the no-terminal
@@ -932,7 +932,7 @@ func (w *wrapper) checkStaleAndStep() {
 	if queued && w.raw != nil && w.raw.isEnabled() && w.raw.stale() && w.raw.canClear() {
 		if seq, ok := rawClearSequence(w.cfg.Source.Harness); ok {
 			_, _ = w.writeChild(seq)
-			w.raw.emberloopClear()
+			w.raw.elClear()
 		}
 	}
 	pump := w.pump
@@ -1261,7 +1261,7 @@ func realStart(bin string, args, env []string, w, h int, stderr io.Writer) (wrap
 // themedChildCommand adds the per-run theme launch when the child is the
 // harness binary itself (wrap passes the harness through): pig gains its
 // theme file in the args, claude its theme reference in the launch settings
-// plus two emberloop-named theme files in its config directory. Any other binary runs
+// plus two el-named theme files in its config directory. Any other binary runs
 // untouched, and a theme failure runs the child unthemed rather than
 // refusing the session.
 func themedChildCommand(cfg WrapConfig, dark bool) (string, []string, []string) {
@@ -1277,7 +1277,7 @@ func themedChildCommand(cfg WrapConfig, dark bool) (string, []string, []string) 
 		if stderr == nil {
 			stderr = os.Stderr
 		}
-		fmt.Fprintf(stderr, "emberloop: theme disabled: %v\n", err)
+		fmt.Fprintf(stderr, "el: theme disabled: %v\n", err)
 		return cfg.Bin, cfg.Args, cfg.Env
 	}
 	env := append(append([]string{}, cfg.Env...), mustThemeEnv(cfg, dark)...)
@@ -1293,7 +1293,7 @@ func mustThemeEnv(cfg WrapConfig, dark bool) []string {
 		if stderr == nil {
 			stderr = os.Stderr
 		}
-		fmt.Fprintf(stderr, "emberloop: theme env disabled: %v\n", err)
+		fmt.Fprintf(stderr, "el: theme env disabled: %v\n", err)
 		return nil
 	}
 	return env
@@ -1360,7 +1360,7 @@ func (w *wrapper) clearBelowChildLocked() {
 // own claude hook runs only when HERDR_ENV=1 and, on SessionStart, takes the
 // pane's agent session. Once taken, herdr silently refuses every later
 // report-agent from the wrapper, which is the only way herdr can see a
-// wrapped claude (the foreground process is emberloop), so the pane freezes
+// wrapped claude (the foreground process is el), so the pane freezes
 // at its first state and then shows no agent. The wrapper reports instead.
 func withoutHerdrClaudeHook(env []string) []string {
 	out := make([]string, 0, len(env))

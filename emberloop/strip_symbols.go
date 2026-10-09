@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Strip symbols (ticket 10): the header strip reads as a row of colored
 // segments in the manner of omp's status line — one icon per segment, a

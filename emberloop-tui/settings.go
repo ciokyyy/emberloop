@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 	"example.com/emberloop/tools"
 	"example.com/emberloop/tools/systemone"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -26,22 +26,22 @@ import (
 type SettingsBackend struct {
 	Load        func() (tools.Settings, error)
 	Save        func(tools.Settings) error
-	Models      func(harness string, refresh bool) ([]emberloop.Model, error)
+	Models      func(harness string, refresh bool) ([]el.Model, error)
 	Harnesses   func() []string
 	ArchiveSize func() int64
 }
 
 // LiveBackend wires the tab to the global settings file, the harness model
-// caches and the archive, the way `emberloop settings` reads them.
+// caches and the archive, the way `el settings` reads them.
 func LiveBackend() SettingsBackend {
 	return SettingsBackend{
 		Load: func() (tools.Settings, error) { return tools.LoadSettings(), nil },
 		Save: tools.SaveSettings,
-		Models: func(harness string, refresh bool) ([]emberloop.Model, error) {
-			return emberloop.CachedModels(harness, emberloop.OSExec, refresh)
+		Models: func(harness string, refresh bool) ([]el.Model, error) {
+			return el.CachedModels(harness, el.OSExec, refresh)
 		},
-		Harnesses:   emberloop.HarnessNames,
-		ArchiveSize: emberloop.ArchiveSize,
+		Harnesses:   el.HarnessNames,
+		ArchiveSize: el.ArchiveSize,
 	}
 }
 
@@ -65,13 +65,13 @@ type settingsState struct {
 	loaded       bool
 	values       tools.Settings
 	harnesses    []string
-	lists        map[string][]emberloop.Model
+	lists        map[string][]el.Model
 	listErr      map[string]string
 	archiveBytes int64
 	row, col     int
 	pickerOpen   bool
 	pickerSlot   string
-	pickerItems  []emberloop.Model
+	pickerItems  []el.Model
 	pickerIndex  int
 	editing      settingsEdit
 	editSlot     string
@@ -108,7 +108,7 @@ func roleSource(value string) string {
 // effectiveHarness is the harness a slot launches with: the stored one, or
 // the resolver's built-in default when nothing is stored.
 func (s *settingsState) effectiveHarness(slot string) string {
-	return orSetting(s.values.Roles[slot].Harness, emberloop.DefaultHarness)
+	return orSetting(s.values.Roles[slot].Harness, el.DefaultHarness)
 }
 
 // effortLevels is the row the tab shows under a slot: the selected model's
@@ -146,13 +146,13 @@ func (s *settingsState) maxCol(row int) int {
 }
 
 // findSettingsModel finds one model by id.
-func findSettingsModel(list []emberloop.Model, id string) (emberloop.Model, bool) {
+func findSettingsModel(list []el.Model, id string) (el.Model, bool) {
 	for _, m := range list {
 		if m.ID == id {
 			return m, true
 		}
 	}
-	return emberloop.Model{}, false
+	return el.Model{}, false
 }
 
 // loadSettingsTab loads the file, the harness names, every harness's cached
@@ -172,7 +172,7 @@ func (m *Model) loadSettingsTab() {
 	if s.backend.Harnesses != nil {
 		s.harnesses = s.backend.Harnesses()
 	}
-	s.lists = map[string][]emberloop.Model{}
+	s.lists = map[string][]el.Model{}
 	s.listErr = map[string]string{}
 	if s.backend.Models != nil {
 		for _, h := range s.harnesses {
@@ -223,7 +223,7 @@ func (m Model) viewSettings() string {
 		role := s.values.Roles[slot]
 		fmt.Fprintf(&b, "%s: harness %s (%s), model %s (%s), effort %s (%s)\n",
 			slot,
-			m.settingsZone(settingsHarnessZone(slot), r, 0, orSetting(role.Harness, emberloop.DefaultHarness)),
+			m.settingsZone(settingsHarnessZone(slot), r, 0, orSetting(role.Harness, el.DefaultHarness)),
 			roleSource(role.Harness),
 			m.settingsZone(settingsModelZone(slot), r, 1, orSetting(role.Model, "-")),
 			roleSource(role.Model),
@@ -474,7 +474,7 @@ func (m Model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // settingsRefreshMsg carries rebuilt model lists back: successes replace
 // the cache, failures keep it.
 type settingsRefreshMsg struct {
-	lists map[string][]emberloop.Model
+	lists map[string][]el.Model
 	errs  map[string]string
 }
 
@@ -488,7 +488,7 @@ func (m Model) refreshModelsCmd() tea.Cmd {
 		harnesses = be.Harnesses()
 	}
 	return func() tea.Msg {
-		msg := settingsRefreshMsg{lists: map[string][]emberloop.Model{}, errs: map[string]string{}}
+		msg := settingsRefreshMsg{lists: map[string][]el.Model{}, errs: map[string]string{}}
 		if be.Models == nil {
 			return msg
 		}
@@ -508,7 +508,7 @@ func (m Model) refreshModelsCmd() tea.Cmd {
 // cached list with a notice naming the harness.
 func (s *settingsState) applyRefresh(msg settingsRefreshMsg) {
 	if s.lists == nil {
-		s.lists = map[string][]emberloop.Model{}
+		s.lists = map[string][]el.Model{}
 	}
 	for h, list := range msg.lists {
 		s.lists[h] = list
@@ -758,7 +758,7 @@ func (s *settingsState) listTrusted(harness string) bool {
 // changes, mirroring the settings command: the ones the new harness
 // offers, cleared otherwise with a notice; an unlistable harness keeps both
 // with a warning.
-func carrySettingsRole(list []emberloop.Model, trusted bool, slot, harness string, role tools.Role) (tools.Role, string) {
+func carrySettingsRole(list []el.Model, trusted bool, slot, harness string, role tools.Role) (tools.Role, string) {
 	out := tools.Role{Harness: harness}
 	if role.Model == "" && role.Effort == "" {
 		return out, ""
@@ -811,7 +811,7 @@ func settingsContains(levels []string, want string) bool {
 }
 
 // settingsAnyOffers reports whether any model of a harness takes an effort.
-func settingsAnyOffers(list []emberloop.Model, effort string) bool {
+func settingsAnyOffers(list []el.Model, effort string) bool {
 	for _, m := range list {
 		if settingsContains(m.Efforts, effort) {
 			return true

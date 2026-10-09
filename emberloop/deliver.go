@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -97,8 +97,8 @@ func withPaneLock(pane string, fn func() error) error {
 	return withFileLock("pane-"+pane, fn)
 }
 
-// withFileLock runs fn while holding a file lock named key. emberloop's agents run
-// in separate emberloop-mcp processes, so an in-process mutex cannot serialize what
+// withFileLock runs fn while holding a file lock named key. el's agents run
+// in separate el-mcp processes, so an in-process mutex cannot serialize what
 // they do to a shared file; a file lock holds across all of them.
 func withFileLock(key string, fn func() error) error {
 	dir := filepath.Join(filepath.Dir(statePath), "locks")

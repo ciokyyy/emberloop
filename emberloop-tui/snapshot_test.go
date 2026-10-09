@@ -384,7 +384,7 @@ func TestSnapshotTicketsDeriveEveryStatus(t *testing.T) {
 			"harness": "pig",
 		}
 	}
-	wt := func(id string) string { return filepath.Join(repo, ".emberloop-worktrees", id) }
+	wt := func(id string) string { return filepath.Join(repo, ".el-worktrees", id) }
 	addWorker("02-working", "02-working.md", "pane-working", wt("02-working"))
 	addWorker("03-retrying", "03-retrying.md", "pane-retrying", wt("03-retrying"))
 	addWorker("04-idle", "04-idle.md", "pane-idle", wt("04-idle"))

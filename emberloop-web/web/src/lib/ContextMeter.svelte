@@ -1,6 +1,9 @@
 <!-- Composer footer: model name plus a context-window ring. -->
 <script>
-  let { model = '', usage = null } = $props();
+  import { Shrink } from '@lucide/svelte';
+  import Button from './ui/button.svelte';
+  // onCompress is set only for Sessions that can compress (pig). busy disables it.
+  let { model = '', usage = null, onCompress = null, busy = false, compressing = false } = $props();
   const R = 7;
   const C = 2 * Math.PI * R;
   const pct = $derived(usage ? Math.min(100, Math.round((usage.used / usage.size) * 100)) : 0);
@@ -10,6 +13,11 @@
 
 <div class="flex items-center justify-between gap-3 px-3 text-xs text-muted-foreground" data-testid="context-meter">
   <span class="truncate">{model}</span>
+  {#if onCompress}
+    <Button variant="ghost" size="sm" class="ml-auto h-6 gap-1 px-2 text-xs" disabled={busy || compressing} onclick={onCompress} title={busy ? 'Compress when the Session is idle' : 'Summarize older history to free context'}>
+      <Shrink class="size-3.5" />{compressing ? 'Compressing…' : 'Compress'}
+    </Button>
+  {/if}
   {#if usage}
     <span class="flex items-center gap-1.5 {tone}" title="{usage.used} of {usage.size} tokens">
       <svg viewBox="0 0 20 20" class="size-4 -rotate-90" aria-hidden="true">

@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/base64"

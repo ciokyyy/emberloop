@@ -1,8 +1,8 @@
-# AGENTS.md — emberloop-tui
+# AGENTS.md — el-tui
 
 ## Purpose
 
-The emberloop dashboard: `emberloop tui` opens it in the current pane. The Runs
+The el dashboard: `el tui` opens it in the current pane. The Runs
 tab lists specs grouped by repo (current first), each with running/ended
 status, merged/total progress, live tokens, reported cost and memory, with
 the selected spec's tickets beside them carrying a derived status glyph
@@ -39,9 +39,9 @@ mode passes the driver's park command, tests a fake over canned rows.
 
 ## Local Contracts
 
-- The core stays dependency-free: `emberloop` never imports this module. The
-  `tui` subcommand execs the installed `emberloop-tui` binary beside it (or on
-  PATH); `emberloop install` ships all three binaries.
+- The core stays dependency-free: `el` never imports this module. The
+  `tui` subcommand execs the installed `el-tui` binary beside it (or on
+  PATH); `el install` ships all three binaries.
 - Running is decided by the orchestrator pane being alive in herdr, never by
   the run record's end time. A herdr failure keeps the last snapshot and
   retries; merged never exceeds total.

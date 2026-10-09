@@ -1,8 +1,8 @@
-// emberloop-tui opens the emberloop dashboard in the current terminal: specs grouped
+// el-tui opens the el dashboard in the current terminal: specs grouped
 // by repo with live run status and ticket progress, refreshed every second.
 //
-//	emberloop-tui [--state-dir D] [--repo R]
-//	emberloop-tui --driver-run <spec> [--repo R] [--state-dir D]
+//	el-tui [--state-dir D] [--repo R]
+//	el-tui --driver-run <spec> [--repo R] [--state-dir D]
 package main
 
 import (
@@ -14,20 +14,20 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 	tui "example.com/emberloop-tui"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "emberloop-tui:", err)
+		fmt.Fprintln(os.Stderr, "el-tui:", err)
 		os.Exit(2)
 	}
 }
 
 func run(argv []string) error {
-	fs := flag.NewFlagSet("emberloop-tui", flag.ContinueOnError)
-	stateDir := fs.String("state-dir", "", "emberloop state directory (default "+tui.DefaultStateDir()+")")
+	fs := flag.NewFlagSet("el-tui", flag.ContinueOnError)
+	stateDir := fs.String("state-dir", "", "el state directory (default "+tui.DefaultStateDir()+")")
 	repo := fs.String("repo", "", "current repo (default: the git top level)")
 	driverRun := fs.String("driver-run", "", "run a spec through the deterministic driver with the live ticket table")
 	if err := fs.Parse(argv); err != nil {
@@ -47,12 +47,12 @@ func run(argv []string) error {
 	}
 	if *driverRun != "" {
 		if fs.NArg() != 0 {
-			return fmt.Errorf("usage: emberloop-tui --driver-run <spec> [--repo R] [--state-dir D]")
+			return fmt.Errorf("usage: el-tui --driver-run <spec> [--repo R] [--state-dir D]")
 		}
 		return runDriverPane(*driverRun, current, dir)
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: emberloop-tui [--state-dir D] [--repo R]")
+		return fmt.Errorf("usage: el-tui [--state-dir D] [--repo R]")
 	}
 	// One Reader across ticks: usage rows are read from the state database
 	// past the row-id high-water mark, so the one-second poll only folds
@@ -77,16 +77,16 @@ func run(argv []string) error {
 // and git. The loop's final report prints on exit only when the loop finished
 // first.
 func runDriverPane(specArg, repo, stateDir string) error {
-	spec, err := emberloop.ResolveSpec(specArg)
+	spec, err := el.ResolveSpec(specArg)
 	if err != nil {
 		return err
 	}
-	files, err := emberloop.ReadDriverFiles(spec)
+	files, err := el.ReadDriverFiles(spec)
 	if err != nil {
 		return err
 	}
-	run := emberloop.NewDriverRun(nil)
-	world := emberloop.LiveDriverWorld(spec, repo, files)
+	run := el.NewDriverRun(nil)
+	world := el.LiveDriverWorld(spec, repo, files)
 	world.Run = run
 	world.Sleep = time.Sleep
 	reader := new(tui.Reader)
@@ -99,11 +99,11 @@ func runDriverPane(specArg, repo, stateDir string) error {
 	}
 	model := tui.NewRunModel(load)
 	model.SetJumpExec(execRunner)
-	model.SetPark(func(path string) error { return emberloop.ParkDriverTicketFile(path) })
+	model.SetPark(func(path string) error { return el.ParkDriverTicketFile(path) })
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	done := make(chan tui.RunDoneMsg, 1)
 	go func() {
-		res, err := emberloop.RunDriver(spec, world)
+		res, err := el.RunDriver(spec, world)
 		msg := tui.RunDoneMsg{Err: err}
 		if err == nil {
 			msg.Report = res.Report
@@ -122,7 +122,7 @@ func runDriverPane(specArg, repo, stateDir string) error {
 		fmt.Fprint(os.Stdout, msg.Report)
 		return nil
 	default:
-		fmt.Fprintln(os.Stderr, "emberloop: run pane closed; loop stopped, workers keep running, start again to resume")
+		fmt.Fprintln(os.Stderr, "el: run pane closed; loop stopped, workers keep running, start again to resume")
 		return nil
 	}
 }

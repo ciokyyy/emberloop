@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Ticket 12 red slice 1: padding defaults come from settings.
 // Empty settings mean two columns left/right and one row at the bottom;

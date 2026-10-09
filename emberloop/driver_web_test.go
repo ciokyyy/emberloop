@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -63,9 +63,9 @@ func TestMarkDriverTicketDoneMarksStatusAndBoxes(t *testing.T) {
 
 func gitTestEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "emberloop-test")
+	t.Setenv("GIT_AUTHOR_NAME", "el-test")
 	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "emberloop-test")
+	t.Setenv("GIT_COMMITTER_NAME", "el-test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("HOME", t.TempDir())

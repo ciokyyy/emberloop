@@ -189,7 +189,7 @@ const (
 )
 
 // Settings are the user's choices that tools read at call time. They live in
-// the user's emberloop directory, beside the skills, so pig, the MCP server and
+// the user's el directory, beside the skills, so pig, the MCP server and
 // the TUI all read the same file.
 type Settings struct {
 	// Search holds the websearch defaults: which provider answers and whether
@@ -201,7 +201,7 @@ type Settings struct {
 	// the pinned Jev.
 	DecisionModel string `json:"decision_model,omitempty"`
 	// Threshold is find's passage cutoff. Zero means 0.20.
-	// ponytail: 0.20 is the value old emberloop measured against jev-1.13; a different
+	// ponytail: 0.20 is the value old el measured against jev-1.13; a different
 	// decisions model may need its own, so re-measure before trusting it.
 	Threshold float64 `json:"threshold,omitempty"`
 	// MaxWorkers caps how many workers run at once. Zero means the default.
@@ -226,27 +226,27 @@ type Settings struct {
 	Macros []MacroSetting `json:"macros,omitempty"`
 	// Graph tunes the optional code graph binary.
 	Graph GraphSetting `json:"graph,omitempty"`
-	// extra holds top-level keys emberloop does not know yet, so a save writes them
+	// extra holds top-level keys el does not know yet, so a save writes them
 	// back and the file can grow without a version bump. Never written from the
 	// struct itself; SaveSettings merges it in.
 	extra map[string]json.RawMessage
-	// overflowExtra holds keys inside the overflow object that emberloop does not
-	// know yet. SaveSettings merges them back, so new keys survive an old emberloop.
+	// overflowExtra holds keys inside the overflow object that el does not
+	// know yet. SaveSettings merges them back, so new keys survive an old el.
 	overflowExtra map[string]json.RawMessage
-	// roleExtra holds keys inside a role object that emberloop does not know yet,
+	// roleExtra holds keys inside a role object that el does not know yet,
 	// keyed by slot then field. SaveSettings merges it into Roles.
 	roleExtra map[string]map[string]json.RawMessage
-	// searchExtra holds keys inside the search object that emberloop does not know
-	// yet. SaveSettings merges it back, so new search keys survive an old emberloop.
+	// searchExtra holds keys inside the search object that el does not know
+	// yet. SaveSettings merges it back, so new search keys survive an old el.
 	searchExtra map[string]json.RawMessage
-	// contextExtra holds keys inside the context object that emberloop does not
-	// know yet. SaveSettings merges them back, so new keys survive an old emberloop.
+	// contextExtra holds keys inside the context object that el does not
+	// know yet. SaveSettings merges them back, so new keys survive an old el.
 	contextExtra map[string]json.RawMessage
 	// toolExtra holds unknown fields inside a tools entry, keyed by tool then
 	// field; mcpExtra the same for an mcp_servers entry. toolRoleExtra holds
 	// unknown fields inside a tool's per-role override, keyed by tool, role
 	// then field; mcpRoleExtra the same for a server override. A save writes
-	// them back, so new keys at any level survive an old emberloop.
+	// them back, so new keys at any level survive an old el.
 	toolExtra     map[string]map[string]json.RawMessage
 	mcpExtra      map[string]map[string]json.RawMessage
 	toolRoleExtra map[string]map[string]map[string]json.RawMessage
@@ -745,10 +745,10 @@ func cloneInt64Map(m map[string]int64) map[string]int64 {
 	return out
 }
 
-// SettingsPath is where settings are saved. EMBERLOOP_SETTINGS overrides it for
+// SettingsPath is where settings are saved. EL_SETTINGS overrides it for
 // tests and for a second profile.
 func SettingsPath() string {
-	if p := os.Getenv("EMBERLOOP_SETTINGS"); p != "" {
+	if p := os.Getenv("EL_SETTINGS"); p != "" {
 		return p
 	}
 	return filepath.Join(os.Getenv("HOME"), ".emberloop", "settings.json")
@@ -761,46 +761,46 @@ func oldSettingsPath() string {
 }
 
 // LoadSettings reads the file; a missing or unreadable file is the defaults.
-// When EMBERLOOP_SETTINGS is unset and the new file is absent, the old state-dir
-// file is read instead. EMBERLOOP_DECISION_MODEL, EMBERLOOP_FIND_THRESHOLD,
-// EMBERLOOP_MAX_WORKERS, EMBERLOOP_SEARCH_PROVIDER, EMBERLOOP_SEARCH_MODE and
-// EMBERLOOP_OVERFLOW_THRESHOLD_BYTES win over the file.
+// When EL_SETTINGS is unset and the new file is absent, the old state-dir
+// file is read instead. EL_DECISION_MODEL, EL_FIND_THRESHOLD,
+// EL_MAX_WORKERS, EL_SEARCH_PROVIDER, EL_SEARCH_MODE and
+// EL_OVERFLOW_THRESHOLD_BYTES win over the file.
 func LoadSettings() Settings {
 	var s Settings
 	if raw, err := os.ReadFile(SettingsPath()); err == nil {
 		s = decodeSettings(raw)
-	} else if os.Getenv("EMBERLOOP_SETTINGS") == "" {
+	} else if os.Getenv("EL_SETTINGS") == "" {
 		// An explicit override is the whole world: it must not quietly read the
 		// machine's old file too, or a hermetic test reads the developer's data.
 		if raw, err := os.ReadFile(oldSettingsPath()); err == nil {
 			s = decodeSettings(raw)
 		}
 	}
-	if m := os.Getenv("EMBERLOOP_DECISION_MODEL"); m != "" {
+	if m := os.Getenv("EL_DECISION_MODEL"); m != "" {
 		s.DecisionModel = m
 		s.setSource("decision_model", "env")
 	}
-	if t, err := strconv.ParseFloat(os.Getenv("EMBERLOOP_FIND_THRESHOLD"), 64); err == nil && t > 0 {
+	if t, err := strconv.ParseFloat(os.Getenv("EL_FIND_THRESHOLD"), 64); err == nil && t > 0 {
 		s.Threshold = t
 		s.setSource("threshold", "env")
 	}
-	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EMBERLOOP_MAX_WORKERS"))); err == nil && w > 0 {
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS"))); err == nil && w > 0 {
 		s.MaxWorkers = w
 		s.setSource("max_workers", "env")
 	}
-	if p := strings.ToLower(strings.TrimSpace(os.Getenv("EMBERLOOP_SEARCH_PROVIDER"))); validSearchProvider(p) {
+	if p := strings.ToLower(strings.TrimSpace(os.Getenv("EL_SEARCH_PROVIDER"))); validSearchProvider(p) {
 		s.searchSetting().Provider = p
 		s.setSource("search.provider", "env")
 	}
-	if m := strings.ToLower(strings.TrimSpace(os.Getenv("EMBERLOOP_SEARCH_MODE"))); validSearchMode(m) {
+	if m := strings.ToLower(strings.TrimSpace(os.Getenv("EL_SEARCH_MODE"))); validSearchMode(m) {
 		s.searchSetting().Mode = m
 		s.setSource("search.mode", "env")
 	}
-	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EMBERLOOP_OVERFLOW_THRESHOLD_BYTES"))); err == nil && b > 0 {
+	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_OVERFLOW_THRESHOLD_BYTES"))); err == nil && b > 0 {
 		s.Overflow = &OverflowSettings{ThresholdBytes: b}
 		s.setSource("overflow.threshold_bytes", "env")
 	}
-	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EMBERLOOP_COMPRESS_THRESHOLD"))); err == nil && b > 0 {
+	if b, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_COMPRESS_THRESHOLD"))); err == nil && b > 0 {
 		s.contextSetting().CompressThreshold = int64(b)
 		s.setSource("context.compress_threshold", "env")
 	}
@@ -1137,7 +1137,7 @@ func (s *Settings) RemoveMCPServer(name string) {
 	delete(s.mcpRoleExtra, name)
 }
 
-// SaveSettings writes the file, creating its directory. Keys emberloop does not
+// SaveSettings writes the file, creating its directory. Keys el does not
 // know survive the round trip, at the top level, inside a role object and
 // inside a tools or mcp_servers entry. It writes the global file: call it
 // with global settings, never merged ones, or project values leak upward.
@@ -1454,9 +1454,9 @@ func mergeOverrideExtras(fields map[string]json.RawMessage, key string, override
 }
 
 // ProjectSettingsPath is the per-project settings file under root.
-// EMBERLOOP_PROJECT_SETTINGS overrides it, so tests can point it at a temp file.
+// EL_PROJECT_SETTINGS overrides it, so tests can point it at a temp file.
 func ProjectSettingsPath(root string) string {
-	if p := os.Getenv("EMBERLOOP_PROJECT_SETTINGS"); p != "" {
+	if p := os.Getenv("EL_PROJECT_SETTINGS"); p != "" {
 		return p
 	}
 	return filepath.Join(root, filepath.FromSlash(ProjectSettingsRel))

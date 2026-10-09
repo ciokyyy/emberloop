@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spike for ticket 04 (header strip): run claude and pig under
-# `emberloop wrap` in live panes and confirm the wrapper keeps them usable.
+# `el wrap` in live panes and confirm the wrapper keeps them usable.
 #
-# Prerequisites: built emberloop on PATH, a herdr session with two free
+# Prerequisites: built el on PATH, a herdr session with two free
 # panes, and the agent CLIs logged in. Each check is manual: the script
 # types the commands, a human confirms the behavior and records it in the
 # ticket (spike result box). Never runs in the automated check.
@@ -17,19 +17,19 @@ fi
 
 # A fake agent for the smoke pass: prints, reads one line, resizes, uses
 # alt-screen, then exits. Run this first; the live harnesses second.
-cat > /tmp/emberloop-strip-fake.sh <<'FAKE'
+cat > /tmp/el-strip-fake.sh <<'FAKE'
 #!/usr/bin/env bash
 echo "fake agent ready"
 printf '\e[?1049hTop of alt screen\e[?1049l\n'
 read -r line
 echo "heard: $line"
 FAKE
-chmod +x /tmp/emberloop-strip-fake.sh
+chmod +x /tmp/el-strip-fake.sh
 
 echo "== pig pane $PANE_PIG =="
-herdr pane run "$PANE_PIG" "emberloop wrap --harness pig --agent spike-pig --type worker -- /tmp/emberloop-strip-fake.sh"
+herdr pane run "$PANE_PIG" "el wrap --harness pig --agent spike-pig --type worker -- /tmp/el-strip-fake.sh"
 echo "== claude pane $PANE_CLAUDE =="
-herdr pane run "$PANE_CLAUDE" "EMBERLOOP_HARNESS=claude emberloop wrap --agent spike-claude --type worker -- /tmp/emberloop-strip-fake.sh"
+herdr pane run "$PANE_CLAUDE" "EL_HARNESS=claude el wrap --agent spike-claude --type worker -- /tmp/el-strip-fake.sh"
 
 cat <<'CHECKS'
 Confirm per pane, then record pass/fail in the ticket:
@@ -40,7 +40,7 @@ Confirm per pane, then record pass/fail in the ticket:
 5. alt-screen: the fake's alt-screen flip keeps the strip behind it
 6. herdr: `herdr agent list` still detects the live pig/claude session
 Then replace the panes' commands with the real agents:
-  herdr pane run <pig> 'emberloop exec <launch>'  # unchanged: exec wraps now
+  herdr pane run <pig> 'el exec <launch>'  # unchanged: exec wraps now
   and use claude/pig for five minutes (edits, tool calls, a TUI app).
-EMBERLOOP_HEADER_STRIP=0 anywhere restores the old unwrapped behavior.
+EL_HEADER_STRIP=0 anywhere restores the old unwrapped behavior.
 CHECKS

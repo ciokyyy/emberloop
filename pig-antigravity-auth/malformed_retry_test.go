@@ -256,10 +256,10 @@ func TestThoughtOnlyStopAfterSpawnResultIsNormalEnd(t *testing.T) {
 		tool    string
 		wantErr bool
 	}{
-		{"mcp__emberloop__spawn", false},
-		{"mcp__emberloop__tell", false},
-		{"mcp__emberloop__finish", false},
-		{"mcp__emberloop__execute", true},
+		{"mcp__el__spawn", false},
+		{"mcp__el__tell", false},
+		{"mcp__el__finish", false},
+		{"mcp__el__execute", true},
 	} {
 		serveSequence(t, []string{body}, nil, nil)
 		tr := map[string]any{"messages": []any{

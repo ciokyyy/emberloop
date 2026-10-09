@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -99,8 +99,8 @@ func TestRequestCompressAtBoundaryCompressesAtOnce(t *testing.T) {
 	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
 	oldID := writeCompressWorker(t,
 		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`+"\n"+
-			pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+
-			pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+			pigCallLine("s1", "a1", "call_1", "mcp__el__read")+
+			pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	next, err := RequestCompress(fake.run, "pane-1", compressSettings())
 	if err != nil {
@@ -122,7 +122,7 @@ func TestRequestCompressMidToolCallQueuesToTheBoundary(t *testing.T) {
 	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
 	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 5*time.Second
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
-	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	go func() {
 		time.Sleep(60 * time.Millisecond)
 		root := filepath.Join(os.Getenv("HOME"), ".pig", "agent", "sessions")
@@ -131,7 +131,7 @@ func TestRequestCompressMidToolCallQueuesToTheBoundary(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	}()
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	done := make(chan struct{})
@@ -164,7 +164,7 @@ func TestRequestCompressSecondPressForces(t *testing.T) {
 	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
 	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 5*time.Second
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
-	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	markCompressQueued("w1")
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	start := time.Now()
@@ -192,7 +192,7 @@ func TestCompressPaneForceSkipsTheBoundary(t *testing.T) {
 	oldPoll, oldWait, oldTimeout := pollEvery, paneStopWait, restartBoundaryTimeout
 	pollEvery, paneStopWait, restartBoundaryTimeout = 5*time.Millisecond, 50*time.Millisecond, 300*time.Millisecond
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
-	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	next, err := CompressPaneWithForce(fake.run, "pane-1", compressSettings(), true)
 	if err != nil {
@@ -213,7 +213,7 @@ func TestCompressPaneWithoutForceWaitsPastTheOldBound(t *testing.T) {
 	oldPoll, oldWait := pollEvery, paneStopWait
 	pollEvery, paneStopWait = 5*time.Millisecond, 50*time.Millisecond
 	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
-	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	go func() {
 		time.Sleep(400 * time.Millisecond)
 		root := filepath.Join(os.Getenv("HOME"), ".pig", "agent", "sessions")
@@ -222,7 +222,7 @@ func TestCompressPaneWithoutForceWaitsPastTheOldBound(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	}()
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	done := make(chan struct{})
@@ -252,7 +252,7 @@ func TestCompressWaiterStopsWhenForced(t *testing.T) {
 	oldPoll := pollEvery
 	pollEvery = 5 * time.Millisecond
 	defer func() { pollEvery = oldPoll }()
-	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	done := make(chan error, 1)
 	go func() {
@@ -338,8 +338,8 @@ func TestRequestCompressCoversTopLevel(t *testing.T) {
 	}
 	writeLines(t, filepath.Join(root, oldID+".jsonl"),
 		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`+"\n"+
-			pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+
-			pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+			pigCallLine("s1", "a1", "call_1", "mcp__el__read")+
+			pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	cwd := t.TempDir()
 	if err := WriteTopLevelState(TopLevelSession{AgentID: "top-1", Pane: "top-pane", Harness: "pig", Model: "m", Effort: "e", Role: "plan", Cwd: cwd, SessionID: oldID}); err != nil {
 		t.Fatal(err)

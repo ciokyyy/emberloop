@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// `emberloop install` is the only path that replaces the installed emberloop
-// binaries (emberloop, emberloop-mcp and emberloop-tui). Nothing else in this package writes to
+// `el install` is the only path that replaces the installed el
+// binaries (el, el-mcp and el-tui). Nothing else in this package writes to
 // the install directory, so a running session never changes behaviour under
 // itself except through this gate: while any agent of a run is live, the
 // install is refused, naming the agents; --force installs anyway and warns
@@ -36,11 +36,11 @@ type InstallResult struct {
 // with a fake multiplexer and builder.
 var installExec Exec = OSExec
 
-// installDir is where the emberloop binaries live. The install updates the
+// installDir is where the el binaries live. The install updates the
 // directory the running binary came from, so it follows a relocated setup;
-// EMBERLOOP_INSTALL_DIR points it at a temp dir in tests.
+// EL_INSTALL_DIR points it at a temp dir in tests.
 func installDir() string {
-	if dir := os.Getenv("EMBERLOOP_INSTALL_DIR"); dir != "" {
+	if dir := os.Getenv("EL_INSTALL_DIR"); dir != "" {
 		return dir
 	}
 	if exe, err := os.Executable(); err == nil && exe != "" {
@@ -49,12 +49,12 @@ func installDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".local", "bin")
 }
 
-// installSourceDir is the checkout the install builds from: the emberloop
-// module directory — run `emberloop install` from the emberloop source — or
-// EMBERLOOP_SOURCE_DIR when set, which is what tests use. Sibling modules (the
+// installSourceDir is the checkout the install builds from: the el
+// module directory — run `el install` from the el source — or
+// EL_SOURCE_DIR when set, which is what tests use. Sibling modules (the
 // TUI) resolve against it, so it must be the module dir, not the repo root.
 func installSourceDir() string {
-	if dir := os.Getenv("EMBERLOOP_SOURCE_DIR"); dir != "" {
+	if dir := os.Getenv("EL_SOURCE_DIR"); dir != "" {
 		return dir
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -155,13 +155,13 @@ func liveInstallAgents(run Exec) ([]string, error) {
 // directory relative to the main module ("" for the main module itself),
 // pkg the package within it. The TUI is a sibling module, not a package of
 // the main one, so its build runs in ../emberloop-tui. It ships here too, so the
-// `emberloop tui` launcher finds its binary beside emberloop. Every target is
+// `el tui` launcher finds its binary beside el. Every target is
 // built to a temp file first, and the installed set is swapped only when
 // all built, so a failed build replaces nothing.
 var installTargets = []struct{ name, pkg, dir string }{
-	{"emberloop", "./cmd/emberloop", ""},
-	{"emberloop-mcp", "./cmd/emberloop-mcp", ""},
-	{"emberloop-tui", "./cmd/emberloop-tui", "../emberloop-tui"},
+	{"el", "./cmd/emberloop", ""},
+	{"el-mcp", "./cmd/emberloop-mcp", ""},
+	{"el-tui", "./cmd/emberloop-tui", "../emberloop-tui"},
 }
 
 // refuseInstall is why the binaries stay put: unknown liveness, or the live
@@ -178,7 +178,7 @@ func refuseInstall(live []string, checkErr error) error {
 // file holding the new build, and the installed path it renames over.
 type staged struct{ tmp, dst string }
 
-// InstallBinaries rebuilds emberloop, emberloop-mcp and emberloop-tui from the source
+// InstallBinaries rebuilds el, el-mcp and el-tui from the source
 // checkout and installs them into installDir. While any agent of a run is live it
 // refuses instead, naming the agents, and changes nothing: the live check
 // runs before any build, so a refused install never even builds. Liveness
@@ -239,21 +239,27 @@ func InstallBinaries(run Exec, opts InstallOptions) (InstallResult, error) {
 	if len(live) > 0 || len(relive) > 0 || checkErr != nil || recheckErr != nil {
 		res.Warning = "warning: running sessions keep the old binary until they restart"
 	}
-	if w := linkHerdrPlugin(run); w != "" {
-		if res.Warning != "" {
-			res.Warning += "\n" + w
-		} else {
-			res.Warning = w
+	warn := func(w string) {
+		if w == "" {
+			return
 		}
+		if res.Warning != "" {
+			res.Warning += "\n"
+		}
+		res.Warning += w
+	}
+	warn(linkHerdrPlugin(run))
+	if _, err := SyncAgentDocs(); err != nil {
+		warn("warning: could not refresh el://docs: " + err.Error())
 	}
 	return res, nil
 }
 
 // herdrPluginDir is the herdr plugin checkout the install links: the
-// herdr-emberloop directory beside the emberloop module the install builds from.
-// EMBERLOOP_HERDR_PLUGIN_DIR points it at a temp dir in tests.
+// herdr-emberloop directory beside the el module the install builds from.
+// EL_HERDR_PLUGIN_DIR points it at a temp dir in tests.
 func herdrPluginDir() string {
-	if dir := os.Getenv("EMBERLOOP_HERDR_PLUGIN_DIR"); dir != "" {
+	if dir := os.Getenv("EL_HERDR_PLUGIN_DIR"); dir != "" {
 		return dir
 	}
 	return filepath.Join(installSourceDir(), "..", "herdr-emberloop")
@@ -346,15 +352,15 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// installUsage documents the one command that replaces the installed emberloop
+// installUsage documents the one command that replaces the installed el
 // binaries, links the herdr compress plugin, and the gate around it.
-const installUsage = `usage: emberloop install [--force]
+const installUsage = `usage: el install [--force]
 
-  Rebuild emberloop, emberloop-mcp and emberloop-tui from this source checkout and install them.
+  Rebuild el, el-mcp and el-tui from this source checkout and install them.
   Refuses while any agent of a run is live (worker, reviewer or scout),
   naming the agents, and changes nothing. --force installs anyway: running
   sessions keep the old binary until they restart. Ends with the same step
-  as emberloop deps, proving every external dependency.
+  as el deps, proving every external dependency.
 
   The install also links the herdr-emberloop plugin (the compress action for the
   focused pane). Bind it to one key in ~/.config/herdr/config.toml, then
@@ -363,18 +369,18 @@ const installUsage = `usage: emberloop install [--force]
   [[keys.command]]
   key = "prefix+shift+c"
   type = "plugin_action"
-  command = "emberloop.compress"
+  command = "el.compress"
 
-  This is the only way to replace the installed emberloop binaries.`
+  This is the only way to replace the installed el binaries.`
 
-// runInstallDeps is the dependency step at the end of `emberloop install`.
+// runInstallDeps is the dependency step at the end of `el install`.
 // A var so tests stub it with a fake instead of real package installs and
 // downloads.
 var runInstallDeps = func(out io.Writer) error {
 	return InstallDeps(out, DepsConfig{})
 }
 
-// RunInstall serves `emberloop install`. It rebuilds every binary through
+// RunInstall serves `el install`. It rebuilds every binary through
 // the gate: live agents refuse with their names, --force installs anyway
 // and prints the stale-session warning.
 func RunInstall(argv []string, out io.Writer) error {
@@ -394,7 +400,7 @@ func RunInstall(argv []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "installed emberloop, emberloop-mcp and emberloop-tui into %s\n", res.Dir)
+	fmt.Fprintf(out, "installed el, el-mcp and el-tui into %s\n", res.Dir)
 	if res.Warning != "" {
 		fmt.Fprintln(out, res.Warning)
 	}

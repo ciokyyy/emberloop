@@ -16,7 +16,7 @@ owns its `_test.go` and the behaviour below):
 
 - Sessions and harnesses: `harness.go` (pig/claude commands, system prompt),
   `voice.go` + `caveman/SKILL.md` (the register: the caveman plugin skill, byte
-  for byte, at ultra; plus the per-turn reminder, `emberloop voice-reminder`),
+  for byte, at ultra; plus the per-turn reminder, `el voice-reminder`),
   `models.go`, `resolve.go`, `background.go`, `exec.go`, `launch.go`
   (pane launch text, the child's exit trace), `supervisor.go` (compress restart
   in the same pane: boundary wait, then the wrapper's own child swap through
@@ -35,7 +35,9 @@ owns its `_test.go` and the behaviour below):
   check), `compress_render.go` (transcript rendered as text in full),
   `commands.go`, `skills.go`, `install.go` (the live-agent gate, top-level
   exempt, the herdr plugin link and the keybinding line, ending with the deps
-  step), `deps.go` (the `emberloop deps` installer)
+  step), `deps.go` (the `el deps` installer), `docs.go` (install copies
+  the checkout's `docs/agent/*.md` into the `docs` namespace, read as
+  `el://docs/<page>`; the system prompt names it)
 - Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),
   `workerqueue.go` (worker-cap queue and drain), `grid.go`, `tile.go`,
@@ -110,7 +112,7 @@ owns its `_test.go` and the behaviour below):
   is `background.go`, `exec.go`
 - Transport: `mcp/` (child doc); binaries are `cmd/emberloop/main.go` (harness
   CLI) and `cmd/emberloop-mcp/main.go` (tool server); `tui.go` execs the installed
-  `emberloop-tui` dashboard for the `tui` subcommand
+  `el-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go` (per-agent record: pane, session, compressed
   count, top-level role and cwd for compress restart, mid-compress claim with
   stale steal the header shows as `compressing…`, `CompressFailed` reason for failed auto-compress), `agenttype.go`
@@ -122,8 +124,8 @@ owns its `_test.go` and the behaviour below):
   per-harness line parsers a new harness registers),
   `context_window.go` (model window table: strips leading `provider/` paths and harness prefixes like
   `antigravity-`, case-insensitive longest prefix match with `deepseek-v4` at 1M and `gemini-` at 1M;
-  settings override via `context.windows` / `emberloop settings window <model> <n>` beats table; unknown models get 200k default),
-  `context_report.go` (the `emberloop context` output)
+  settings override via `context.windows` / `el settings window <model> <n>` beats table; unknown models get 200k default),
+  `context_report.go` (the `el context` output)
 - Header strip: `header.go` (pure strip render: snapshot, width and preset
   in, styled string out, Lip Gloss adaptive palette, width tiers, `N pending`
   beside the state pill, `compress failed: <reason>` pill on refusal/error),
@@ -137,7 +139,7 @@ owns its `_test.go` and the behaviour below):
   an unlisted tool still shows, as a bare name), `claude_usage.go` and
   `usage_providers.go` (the usage windows pinned right on the second row:
   claude pushes its 5h and weekly windows through the statusline command
-  `emberloop claude-status`; the opencode Go plan and Antigravity are polled
+  `el claude-status`; the opencode Go plan and Antigravity are polled
   from their usage endpoints with pig's stored login, one fetch per 90 s
   per account across all panes, cached as `usage-<key>.json` in the state
   dir. A new provider adds a key in `UsageKeyFor` and a fetcher in
@@ -185,13 +187,17 @@ owns its `_test.go` and the behaviour below):
   queue like typed text, unknown slash text stays a message, `/compress` runs
   the compress request through `CompressRun` for any harness); settings carry strip rows, frame, rule,
   symbols and separator, macros, per-harness compress models, the auto-compress switch and cooldown. `exec`,
-  top-level runs and `emberloop wrap` put the child on a PTY under the strip;
-  EMBERLOOP_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
+  top-level runs and `el wrap` put the child on a PTY under the strip;
+  EL_HEADER_STRIP=0 runs plainly. Pig sessions with the tools debug log
   keep the strip: stdin and stdout stay on the PTY while stderr keeps its
   own pipe to the log, one stamped line at a time. Generated theme files
   live under the state dir (`themes/`); golden fixtures are `testdata/theme/`.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
-  `review` and `scout` serve `execute`, `implement` does not), `toolresolve.go`
+  `review` and `scout` serve `execute`, `implement` does not; the web
+  Daemon's `web` parent, `web-worker` child and `scout` roles take their
+  Daemon tools from `tools/webproxy.go`, never the parent's full set;
+  `WebSubmitEnabled` in `toolresolve.go` (off) keeps `submit` unoffered to
+  web children while the herdr-era submit and Run submits stay), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
   `read` refuses an oversized file with `bash` for roles that serve it and
   `tools.grep` in `execute` or offset/limit otherwise), `readhint.go` (that
@@ -229,7 +235,7 @@ owns its `_test.go` and the behaviour below):
 
 - Build and test from this directory: `go build ./...`, `go vet ./...`,
   `go test -skip TestLive ./...`. Never run a live test and never start
-  `emberloop`, `pig`, or `claude` from inside the work.
+  `el`, `pig`, or `claude` from inside the work.
 - Behavioural change needs a test through the tool or command, not
   internals; expected values come from the spec or a worked example.
 

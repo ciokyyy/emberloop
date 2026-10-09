@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -21,10 +21,10 @@ func TestRenderPigTranscriptCarriesEveryVoice(t *testing.T) {
 	for _, want := range []string{
 		"do the thing",
 		"reading first",
-		"mcp__emberloop__read",
+		"mcp__el__read",
 		"call_1",
 		"0123456789",
-		"mcp__emberloop__bash",
+		"mcp__el__bash",
 		"sleep 60",
 	} {
 		if !strings.Contains(got, want) {
@@ -32,7 +32,7 @@ func TestRenderPigTranscriptCarriesEveryVoice(t *testing.T) {
 		}
 	}
 	userAt := strings.Index(got, "do the thing")
-	readAt := strings.Index(got, "mcp__emberloop__read")
+	readAt := strings.Index(got, "mcp__el__read")
 	if userAt < 0 || readAt < 0 || userAt > readAt {
 		t.Errorf("render must keep transcript order:\n%s", got)
 	}
@@ -69,7 +69,7 @@ func TestRenderRefusesUnknownHarness(t *testing.T) {
 
 func TestRenderKeepsLongResultsWhole(t *testing.T) {
 	long := strings.Repeat("x", 20000)
-	line := `{"type":"message","id":"r1","message":{"role":"toolResult","toolCallId":"call_9","toolName":"mcp__emberloop__bash","content":[{"type":"text","text":"` + long + `"}]}}` + "\n"
+	line := `{"type":"message","id":"r1","message":{"role":"toolResult","toolCallId":"call_9","toolName":"mcp__el__bash","content":[{"type":"text","text":"` + long + `"}]}}` + "\n"
 	got, err := RenderTranscript("pig", strings.NewReader(line))
 	if err != nil {
 		t.Fatalf("render: %v", err)

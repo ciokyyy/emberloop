@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Probe for ticket 07 (live probe): run claude and pig under
-# `emberloop wrap --input-row` and confirm the emberloop row, steer and queue
+# `el wrap --input-row` and confirm the el row, steer and queue
 # delivery, the stale clear, raw mode with its dirty flag, the OSC pane
 # colors and the generated themes. It also covers a startup dialog that
 # swallows typed text. Companion to scripts/header-strip-spike.sh, which
 # covers the strip alone; this probe covers the row, queue and theme on
 # top. Injections go through scripts/probe-ctrl.sh.
 #
-# Prerequisites: built emberloop on PATH, a herdr session with two free
+# Prerequisites: built el on PATH, a herdr session with two free
 # panes, and the agent CLIs logged in. Each check is manual: the script
 # types the commands, a human confirms the behavior and records it in the
 # ticket (findings box). Never runs in the automated check.
@@ -33,7 +33,7 @@ if [[ -z "$PANE_PIG" || -z "$PANE_CLAUDE" || "${#PANES[@]}" -ne 2 ]]; then
   exit 2
 fi
 
-command -v emberloop >/dev/null || { echo "FAIL - emberloop not on PATH; build and install first"; exit 1; }
+command -v el >/dev/null || { echo "FAIL - el not on PATH; build and install first"; exit 1; }
 command -v herdr >/dev/null || { echo "FAIL - herdr not on PATH"; exit 1; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -57,7 +57,7 @@ for f in claude-mocha pig-mocha; do
 done
 
 echo "== 1. smoke: fake child under the row (no model) =="
-FAKE="$(mktemp /tmp/emberloop-row-fake.XXXXXX.sh)"
+FAKE="$(mktemp /tmp/el-row-fake.XXXXXX.sh)"
 cat > "$FAKE" <<'FAKE_EOF'
 #!/usr/bin/env bash
 echo "fake agent ready"
@@ -65,7 +65,7 @@ read -r line
 echo "heard: $line"
 FAKE_EOF
 chmod +x "$FAKE"
-herdr pane run "$PANE_PIG" "emberloop wrap --input-row --harness pig --agent probe-fake --type worker -- $FAKE"
+herdr pane run "$PANE_PIG" "el wrap --input-row --harness pig --agent probe-fake --type worker -- $FAKE"
 
 cat <<'CHECKS'
 Confirm in the fake pane, then record pass/fail in ticket 07:
@@ -77,13 +77,13 @@ Kill the fake (Ctrl+C) when done, and delete the fake script.
 CHECKS
 
 echo "== 2. live agents under the row (idle: nothing sent, safe by default) =="
-herdr pane run "$PANE_PIG" "emberloop wrap --input-row --harness pig --agent probe-pig-07 --type worker -- pig"
-herdr pane run "$PANE_CLAUDE" "emberloop wrap --input-row --harness claude --agent probe-claude-07 --type worker -- claude"
+herdr pane run "$PANE_PIG" "el wrap --input-row --harness pig --agent probe-pig-07 --type worker -- pig"
+herdr pane run "$PANE_CLAUDE" "el wrap --input-row --harness claude --agent probe-claude-07 --type worker -- claude"
 
 cat <<'CHECKS'
 Confirm per pane (pig, then claude). Send nothing: do NOT press Enter with
 text, do NOT enqueue. Backspace any draft away afterwards.
-5. row: the emberloop row is visible; the child's own box still renders above it
+5. row: the el row is visible; the child's own box still renders above it
 6. hold: type a draft in the row, do NOT submit; the child shows nothing
    new (spec: typing in the row never reaches the child until submit)
 7. keys (submit-free): Shift+Enter inserts a newline, bracketed paste lands

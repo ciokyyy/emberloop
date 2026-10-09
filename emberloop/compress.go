@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ var summarizeTimeout = 5 * time.Minute
 // process starts.
 func SummarizeSession(run Exec, harness, transcriptPath, model string, window int64) (string, error) {
 	if strings.TrimSpace(model) == "" {
-		return "", fmt.Errorf("no compressModel for harness %q: set one with `emberloop settings compress-model %s <model>`; compression refused", harness, harness)
+		return "", fmt.Errorf("no compressModel for harness %q: set one with `el settings compress-model %s <model>`; compression refused", harness, harness)
 	}
 	raw, err := os.ReadFile(transcriptPath)
 	if err != nil {
@@ -67,7 +67,7 @@ func SummarizeSession(run Exec, harness, transcriptPath, model string, window in
 // writePromptFile files the summarizer prompt: pig reads @files into the
 // initial message, which carries a long transcript past the argv cap.
 func writePromptFile(prompt string) (string, error) {
-	f, err := os.CreateTemp("", "emberloop-compress-*.md")
+	f, err := os.CreateTemp("", "el-compress-*.md")
 	if err != nil {
 		return "", fmt.Errorf("prompt file: %w", err)
 	}

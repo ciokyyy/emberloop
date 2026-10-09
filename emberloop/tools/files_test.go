@@ -78,7 +78,7 @@ func TestBackgroundRefusesWithoutAGrid(t *testing.T) {
 // file, so a test can omit frontmatter.
 func skillsRootWith(t *testing.T, root, namespace string, skills map[string]string) {
 	t.Helper()
-	t.Setenv("EMBERLOOP_SKILLS_DIR", root)
+	t.Setenv("EL_SKILLS_DIR", root)
 	for name, body := range skills {
 		dir := filepath.Join(root, namespace, name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -90,13 +90,13 @@ func skillsRootWith(t *testing.T, root, namespace string, skills map[string]stri
 	}
 }
 
-func TestReadEmberloopIndexesSkills(t *testing.T) {
+func TestReadElIndexesSkills(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{
 		"grilling": "---\nname: grilling\ndescription: Grill a plan with relentless questions.\n---\n\nBody.\n",
 		"research": "---\nname: research\ndescription: Research a topic deeply.\n---\n\nBody.\n",
 	})
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock"})
 	if err != nil {
 		t.Fatalf("index read failed: %v", err)
 	}
@@ -110,38 +110,38 @@ func TestReadEmberloopIndexesSkills(t *testing.T) {
 	}
 }
 
-func TestReadEmberloopReadsAFile(t *testing.T) {
+func TestReadElReadsAFile(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{
 		"grilling": "---\ndescription: Grill a plan.\n---\n\nAsk hard questions.\n",
 	})
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock/grilling/SKILL.md"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock/grilling/SKILL.md"})
 	if err != nil {
 		t.Fatalf("file read failed: %v", err)
 	}
-	if !strings.Contains(out, "Ask hard questions.") || !strings.Contains(out, "[emberloop://matt-pocock/grilling/SKILL.md] 5 lines") {
+	if !strings.Contains(out, "Ask hard questions.") || !strings.Contains(out, "[el://matt-pocock/grilling/SKILL.md] 5 lines") {
 		t.Fatalf("file read = %q", out)
 	}
-	// A emberloop:// file can never be edited, so it carries no tag and no line
+	// A el:// file can never be edited, so it carries no tag and no line
 	// numbers: they would only cost tokens.
 	if strings.Contains(out, "#") || strings.Contains(out, "→") {
-		t.Errorf("a emberloop:// file must be plain text, got:\n%s", out)
+		t.Errorf("a el:// file must be plain text, got:\n%s", out)
 	}
 }
 
-func TestReadEmberloopUnknownNamespaceNamesWhatExists(t *testing.T) {
+func TestReadElUnknownNamespaceNamesWhatExists(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{"grilling": "---\ndescription: x\n---\n"})
-	_, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://local"})
+	_, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://local"})
 	if err == nil || !strings.Contains(err.Error(), "local") || !strings.Contains(err.Error(), "matt-pocock") {
 		t.Fatalf("unknown namespace error = %v", err)
 	}
-	if _, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://local/x"}); err == nil {
+	if _, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://local/x"}); err == nil {
 		t.Fatal("a file under an unknown namespace must be refused")
 	}
 }
 
-func TestReadEmberloopRefusesEscapes(t *testing.T) {
+func TestReadElRefusesEscapes(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{"grilling": "---\ndescription: x\n---\n"})
 	secret := filepath.Join(t.TempDir(), "secret.txt")
@@ -152,8 +152,8 @@ func TestReadEmberloopRefusesEscapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
-		"emberloop://matt-pocock/../../secret.txt",
-		"emberloop://matt-pocock/link.txt",
+		"el://matt-pocock/../../secret.txt",
+		"el://matt-pocock/link.txt",
 	} {
 		out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": path})
 		if err == nil {
@@ -162,13 +162,13 @@ func TestReadEmberloopRefusesEscapes(t *testing.T) {
 	}
 }
 
-func TestReadEmberloopIndexHandlesSkillWithNoDescription(t *testing.T) {
+func TestReadElIndexHandlesSkillWithNoDescription(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{
 		"described": "---\ndescription: Has one.\n---\n",
 		"bare":      "# Just a heading, no frontmatter.\n",
 	})
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestReadRefusesASymlinkIntoACredentialPath(t *testing.T) {
 	}
 }
 
-func TestReadEmberloopIndexSkipsSymlinkedSkillFile(t *testing.T) {
+func TestReadElIndexSkipsSymlinkedSkillFile(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{
 		"ok": "---\ndescription: Fine.\n---\n",
@@ -289,7 +289,7 @@ func TestReadEmberloopIndexSkipsSymlinkedSkillFile(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(evil, "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestReadEmberloopIndexSkipsSymlinkedSkillFile(t *testing.T) {
 
 // A symlinked intermediate directory is the other half of the escape: the leaf
 // is an ordinary file but the path to it leaves the namespace.
-func TestReadEmberloopRefusesSymlinkedDirectory(t *testing.T) {
+func TestReadElRefusesSymlinkedDirectory(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{"ok": "---\ndescription: x\n---\n"})
 	outside := t.TempDir()
@@ -313,17 +313,17 @@ func TestReadEmberloopRefusesSymlinkedDirectory(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "matt-pocock", "escape")); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock/escape/secret.txt"}); err == nil {
+	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock/escape/secret.txt"}); err == nil {
 		t.Fatalf("served %q through a symlinked directory", out)
 	}
 }
 
-func TestReadEmberloopIndexReadsBlockScalarDescription(t *testing.T) {
+func TestReadElIndexReadsBlockScalarDescription(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{
 		"folded": "---\nname: folded\ndescription: >\n  A long description\n  wrapped over lines.\nmetadata:\n  description: should be ignored\n---\n",
 	})
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestReadEmberloopIndexReadsBlockScalarDescription(t *testing.T) {
 
 // The credential deny list is a property of read, not of one address scheme:
 // a .env sitting inside a skill namespace is refused the same as one on disk.
-func TestReadEmberloopRefusesCredentialPaths(t *testing.T) {
+func TestReadElRefusesCredentialPaths(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{"grilling": "---\ndescription: x\n---\n"})
@@ -345,13 +345,13 @@ func TestReadEmberloopRefusesCredentialPaths(t *testing.T) {
 	if err := os.WriteFile(env, []byte("TOKEN=1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock/grilling/.env"}); err == nil {
+	if out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock/grilling/.env"}); err == nil {
 		t.Fatalf("a .env under a namespace must be refused, served %q", out)
 	}
 }
 
 // A directory reads as a one-level listing: directories end in "/", files
-// carry a size. A workspace directory and a emberloop:// directory share it.
+// carry a size. A workspace directory and a el:// directory share it.
 func TestReadListsADirectory(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs", "sub"), 0o755); err != nil {
@@ -394,14 +394,14 @@ func TestReadPagesALargeDirectory(t *testing.T) {
 
 // Reading a skill's directory leads to the skill: the listing ends with a hint
 // naming its SKILL.md.
-func TestReadEmberloopSkillDirectoryPointsAtSkillFile(t *testing.T) {
+func TestReadElSkillDirectoryPointsAtSkillFile(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{"grilling": "---\ndescription: x\n---\n"})
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock/grilling"})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock/grilling"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "SKILL.md  ") || !strings.Contains(out, "read emberloop://matt-pocock/grilling/SKILL.md for the skill") {
+	if !strings.Contains(out, "SKILL.md  ") || !strings.Contains(out, "read el://matt-pocock/grilling/SKILL.md for the skill") {
 		t.Errorf("a skill directory must list and point at SKILL.md:\n%s", out)
 	}
 }
@@ -428,14 +428,32 @@ func TestReadExpandsAGlob(t *testing.T) {
 	}
 }
 
-func TestReadEmberloopFilePagesWithoutTag(t *testing.T) {
+func TestReadElFilePagesWithoutTag(t *testing.T) {
 	root := t.TempDir()
 	skillsRootWith(t, root, "matt-pocock", map[string]string{"s": "one\ntwo\nthree\n"})
-	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "emberloop://matt-pocock/s/SKILL.md", "offset": 2, "limit": 1})
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://matt-pocock/s/SKILL.md", "offset": 2, "limit": 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "[emberloop://matt-pocock/s/SKILL.md] 3 lines\ntwo\n" {
+	if out != "[el://matt-pocock/s/SKILL.md] 3 lines\ntwo\n" {
 		t.Errorf("got %q", out)
+	}
+}
+
+func TestReadElPageWithoutExtension(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "docs", nil)
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "update.md"), []byte("# Update\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://docs/update"})
+	if err != nil || !strings.Contains(out, "# Update") {
+		t.Fatalf("extensionless read = %q, %v", out, err)
+	}
+	if _, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": "el://docs/nope"}); err == nil {
+		t.Fatal("a missing page must still fail")
 	}
 }

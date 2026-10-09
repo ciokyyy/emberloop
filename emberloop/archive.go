@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 
 // Archive layout (ticket 05; the stats indexer reads this).
 //
-// All paths are siblings of the worker store, under emberloop's state directory
+// All paths are siblings of the worker store, under el's state directory
 // (the directory holding workers.json):
 //
 //	blobs/<hex>                          one file per distinct content, named
@@ -51,9 +51,9 @@ import (
 //	                                     <state>/usage/<agent-id>.jsonl).
 //	archive/<run>/<agent>/memory.jsonl   written by ticket 06: memory samples.
 //
-// <run> is the spec slug (specSlug of EMBERLOOP_SPEC), or "adhoc" for a session
-// with no spec. <agent> is EMBERLOOP_AGENT_ID, sanitised for the filesystem the
-// way launch files are. Nothing is ever deleted automatically; `emberloop
+// <run> is the spec slug (specSlug of EL_SPEC), or "adhoc" for a session
+// with no spec. <agent> is EL_AGENT_ID, sanitised for the filesystem the
+// way launch files are. Nothing is ever deleted automatically; `el
 // stats prune` (ticket 07) removes runs and the blobs nothing references.
 
 // blobDir holds one file per distinct content, beside the worker store.
@@ -153,7 +153,7 @@ func RunSlugForSpec(spec string) string {
 	return "adhoc"
 }
 
-// SystemPrompt is the rule set every emberloop session carries, stored once in the
+// SystemPrompt is the rule set every el session carries, stored once in the
 // blob store at session start so its cost can be counted. It is the same
 // prompt the harness commands append to.
 func SystemPrompt() string { return systemPrompt }
@@ -550,23 +550,23 @@ func TranscriptSource(harness, sessionID, agentID, sessionDir string) string {
 }
 
 // archiveEnv reads the archiver's session out of the environment the launcher
-// set (roleEnv plus the launch choice). Empty means a emberloop-mcp started by
+// set (roleEnv plus the launch choice). Empty means a el-mcp started by
 // hand, which archives nothing.
 func archiveEnv() (run, agent, harness, role, sessionID, sessionDir, model, effort string) {
-	agent = os.Getenv("EMBERLOOP_AGENT_ID")
-	sessionID = os.Getenv("EMBERLOOP_SESSION_ID")
+	agent = os.Getenv("EL_AGENT_ID")
+	sessionID = os.Getenv("EL_SESSION_ID")
 	if sessionID == "" {
 		sessionID = agent
 	}
-	return RunSlugForSpec(os.Getenv("EMBERLOOP_SPEC")), agent,
-		os.Getenv("EMBERLOOP_HARNESS"), os.Getenv("EMBERLOOP_ROLE"),
-		sessionID, os.Getenv("EMBERLOOP_SESSION_DIR"),
-		os.Getenv("EMBERLOOP_MODEL"), os.Getenv("EMBERLOOP_EFFORT")
+	return RunSlugForSpec(os.Getenv("EL_SPEC")), agent,
+		os.Getenv("EL_HARNESS"), os.Getenv("EL_ROLE"),
+		sessionID, os.Getenv("EL_SESSION_DIR"),
+		os.Getenv("EL_MODEL"), os.Getenv("EL_EFFORT")
 }
 
 // SnapshotFromEnv stores the calling session's system prompt, served tool
 // definitions and harness flags in the blob store and references them from
-// the session's archive. emberloop-mcp calls it once at startup, so the blobs
+// the session's archive. el-mcp calls it once at startup, so the blobs
 // exist before any request pays for them. A process with no agent id (a
 // hand-started server) records nothing.
 func SnapshotFromEnv(served []tools.Tool) error {
@@ -607,16 +607,16 @@ func CopyFromEnv() (int64, error) {
 	return CopyTranscript(src, run, agent)
 }
 
-// archivePoll is how often the session's own emberloop process tails its harness
+// archivePoll is how often the session's own el process tails its harness
 // transcript into the archive. A var so tests can shrink it.
 var archivePoll = 5 * time.Second
 
 // StartArchiveLoop tails the calling session's harness transcript into its
-// archive until the returned stop is called. emberloop-mcp starts it while it
+// archive until the returned stop is called. el-mcp starts it while it
 // serves and stops it before its final copy, so the archive stays current
 // whether or not the TUI is open. Without an agent id it does nothing.
 func StartArchiveLoop() (stop func()) {
-	if os.Getenv("EMBERLOOP_AGENT_ID") == "" {
+	if os.Getenv("EL_AGENT_ID") == "" {
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())

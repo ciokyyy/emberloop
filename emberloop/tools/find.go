@@ -10,7 +10,7 @@ import (
 	"example.com/emberloop/tools/systemone"
 )
 
-// findTool is ported from emberloop's apps/backend/tools/find.go: semantic grep
+// findTool is ported from el's apps/backend/tools/find.go: semantic grep
 // through the CascadeSearcher, asking a decisions model through OpenRouter's
 // systemone endpoint. With no OpenRouter key it falls back to lexical ranking.
 type findTool struct {

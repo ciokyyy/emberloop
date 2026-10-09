@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 // ToolBudget is the longest any tool may block. A harness cuts an MCP call at
 // its own timeout, and a tool that outlives it fails in the caller while the
 // work goes on behind it. pig's default is 60s; mcp.json raises it per server
-// with "timeout" (seconds), and emberloop's entry sets 600, so this stays well under.
+// with "timeout" (seconds), and el's entry sets 600, so this stays well under.
 const ToolBudget = 4 * time.Minute
 
 // toolBudget is ToolBudget in use, a var only so a test can shrink it.
@@ -23,13 +23,13 @@ var readOnlyTimeout = 10 * time.Minute
 var pollEvery = time.Second
 
 func pigBin() string {
-	if p := os.Getenv("EMBERLOOP_PIG"); p != "" {
+	if p := os.Getenv("EL_PIG"); p != "" {
 		return p
 	}
 	return "pig"
 }
 
-// callerTab is the tab a read-only agent opens in: the tab emberloop itself runs
+// callerTab is the tab a read-only agent opens in: the tab el itself runs
 // in. herdr injects HERDR_TAB_ID; without it, the caller's own pane names the
 // tab, so a session that knows only its pane still places the agent beside it
 // rather than in whichever pane is focused.
@@ -125,13 +125,13 @@ func readOnlySession(id, cwd, model, effort string) Session {
 	return Session{Role: "review", Cwd: cwd, Model: model, Effort: effort, ID: id, AgentID: id, Dir: filepath.Join(readOnlyDir(), "sessions"),
 		// A read-only agent inside a run archives under it: the calling
 		// session carries its spec in the environment.
-		Spec: os.Getenv("EMBERLOOP_SPEC")}
+		Spec: os.Getenv("EL_SPEC")}
 }
 
 // startReadOnly launches a read-only reviewer on prompt in a pane placed by
 // the grid, and leaves it running: the caller decides when the pane closes.
 func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (readOnlyAgent, error) {
-	harness := os.Getenv("EMBERLOOP_READONLY_HARNESS")
+	harness := os.Getenv("EL_READONLY_HARNESS")
 	if harness == "" {
 		harness = "pig"
 	}
@@ -143,7 +143,7 @@ func startReadOnly(run Exec, place readOnlyPlace, cwd, model, prompt string) (re
 // launchPlacedAgent writes prompt to a file for the archive, launches the
 // session with the full prompt as its first message in a pane placed by the
 // grid, and leaves it running. The pane gets one shell-agnostic line,
-// `emberloop exec <launch-file>`, which carries the prompt as a real argument
+// `el exec <launch-file>`, which carries the prompt as a real argument
 // instead of a "read this file" indirection. place names the tab and the
 // overflow label; an empty Tab is the caller's own tab. beforeRun, when given,
 // runs once the pane is placed but before it starts, so a reviewer can record
@@ -166,7 +166,7 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 		return readOnlyAgent{}, err
 	}
 	// The agent reads its MCP config at startup, so the file is dead weight
-	// once it is running. The launch file stays: `emberloop exec` in the pane
+	// once it is running. The launch file stays: `el exec` in the pane
 	// consumes it when the agent starts.
 	defer cleanupMCP(sess)
 	// A scout shares the caller's tab; a reviewer shares its ticket's tab, so
@@ -228,7 +228,7 @@ func launchPlacedAgent(run Exec, place readOnlyPlace, harness string, sess Sessi
 // currentSessionID is the harness session the agent's transcript is
 // written under now: the current id its agent state records, so a restart
 // moves every lookup to the new transcript. No state (an agent that never
-// restarted through emberloop) keeps the launch id.
+// restarted through el) keeps the launch id.
 func (a readOnlyAgent) currentSessionID() string {
 	if a.Session.AgentID != "" {
 		if s, ok, err := ReadAgentState(a.Session.AgentID); err == nil && ok && s.SessionID != "" {

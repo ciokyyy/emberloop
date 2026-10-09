@@ -16,11 +16,11 @@
 //   - the state follows the session: idle at session start, working at agent
 //     start, idle at agent settled, and a release at shutdown so no stale
 //     entry outlives the session.
-//   - EMBERLOOP_AGENT_LABEL separates agents in that list. It does NOT make them
+//   - EL_AGENT_LABEL separates agents in that list. It does NOT make them
 //     addressable: `herdr agent get` and `herdr agent prompt` both answer
 //     agent_not_found for the reported name, and passing the session identity
 //     does not change it. Addressability comes only from `herdr agent rename`,
-//     which emberloop issues once the worker has registered. A worker is always
+//     which el issues once the worker has registered. A worker is always
 //     targeted by its recorded pane id.
 package herdrreport
 
@@ -88,6 +88,11 @@ func Extension() *sdk.Extension {
 		return nil, nil
 	})
 
+	// Every lifecycle event, one JSON line each, so a stalled agent leaves a
+	// trail. Registered after the session_start handler above, so the session
+	// id is captured before the first write names the file.
+	registerLog(e, newAgentLog(func() string { return logPath(name, sessionID) }))
+
 	// The stop gate: the same decision claude asks through its Stop hook,
 	// enforced here the way only a pig extension can — by continuing the agent
 	// with the reminder, and by pinning the submit tool on the pinned attempt.
@@ -114,7 +119,7 @@ func Extension() *sdk.Extension {
 // label is the name herdr displays for this agent. It is not a lookup key:
 // get and prompt reject it unless `herdr agent rename` has set one.
 func label() string {
-	if name := os.Getenv("EMBERLOOP_AGENT_LABEL"); name != "" {
+	if name := os.Getenv("EL_AGENT_LABEL"); name != "" {
 		return name
 	}
 	return defaultLabel

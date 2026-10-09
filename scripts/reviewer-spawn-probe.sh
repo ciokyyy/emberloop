@@ -25,8 +25,8 @@
 #  FAILs step 1 at the readiness wait and points at the dialog.
 #
 # Prerequisites: herdr server running, `pig`, `claude` and `python3` on PATH
-# with a claude login, run from inside an emberloop checkout (the pig session
-# loads this checkout's emberloop extension). Costs two claude reviewer
+# with a claude login, run from inside an el checkout (the pig session
+# loads this checkout's el extension). Costs two claude reviewer
 # starts and leaves both unanswered: EXIT cleanup closes the whole workspace
 # with their panes, nothing merges.
 #
@@ -36,19 +36,19 @@ set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
 
 REPO=$(git rev-parse --show-toplevel 2>/dev/null || true)
-EMBERLOOP="$REPO/emberloop"
+EL="$REPO/el"
 REPORT="$REPO/herdr-report"
 for bin in herdr pig claude; do
   command -v "$bin" >/dev/null || { echo "FAIL - need $bin on PATH"; exit 1; }
 done
-[ -d "$EMBERLOOP" ] || { echo "FAIL - run from inside an emberloop checkout"; exit 1; }
+[ -d "$EL" ] || { echo "FAIL - run from inside an el checkout"; exit 1; }
 
-DIR=$(mktemp -d /tmp/emberloop-reviewer-probe.XXXXXX)
+DIR=$(mktemp -d /tmp/el-reviewer-probe.XXXXXX)
 mkdir -p "$DIR/.scratch/probe/issues"
 printf 'alpha\nbeta\n' > "$DIR/app.txt"
 git -C "$DIR" init -qb master
-git -C "$DIR" -c user.email=w@x -c user.name=emberloop add -A >/dev/null
-git -C "$DIR" -c user.email=w@x -c user.name=emberloop commit -qm base
+git -C "$DIR" -c user.email=w@x -c user.name=el add -A >/dev/null
+git -C "$DIR" -c user.email=w@x -c user.name=el commit -qm base
 printf 'gamma\n' >> "$DIR/app.txt"
 cat > "$DIR/.scratch/probe/issues/01-probe.md" <<'TICKET'
 Do these in order, no other tool calls:
@@ -80,8 +80,8 @@ for p in panes:
 
 # The worker inherits this process's env through every pane launch, so its
 # own reviewer spawns resolve to claude too.
-export EMBERLOOP_READONLY_HARNESS=claude
-export EMBERLOOP_HERDR_REPORT="$REPORT"
+export EL_READONLY_HARNESS=claude
+export EL_HERDR_REPORT="$REPORT"
 
 T_SPAWN=$(date +%s)
 DRIVER_PROMPT=$(cat <<EOF
@@ -91,7 +91,7 @@ Do these in order, no other tool calls:
 A spawn returns at once: the worker result arrives in this pane as a system notice, so end your turn and report that notice when it lands.
 EOF
 )
-timeout 600 pig --no-skills -e "$EMBERLOOP" -p "$DRIVER_PROMPT" >/tmp/emberloop-reviewer-probe-driver.$$.log 2>&1 &
+timeout 600 pig --no-skills -e "$EL" -p "$DRIVER_PROMPT" >/tmp/el-reviewer-probe-driver.$$.log 2>&1 &
 DRIVER=$!
 
 echo "== 1. reviewer in a background tab =="

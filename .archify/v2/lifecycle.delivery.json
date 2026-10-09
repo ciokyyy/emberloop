@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "fbdc1117-32cf-43ce-9a9c-a2e265253ac0",
+  "status": "current",
+  "command": "deliver",
+  "type": "lifecycle",
+  "input": "/home/cioky/Projects/emberloop/.archify/v2/lifecycle.json",
+  "output": "/home/cioky/Projects/emberloop/.archify/v2/lifecycle.html",
+  "specification": {
+    "sha256": "8e8ce3c4c3799b016704418ed3ce734b06d35678f3ba05aafc8fe7ebafca23a0",
+    "bytes": 2913
+  },
+  "artifact": {
+    "sha256": "e6f4bfa98322276b9554bacf3a75b7edae9189b5ccabb35452e88d58ddeaae7a",
+    "bytes": 765536
+  }
+}

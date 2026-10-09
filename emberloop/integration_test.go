@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -42,8 +42,8 @@ func TestSpecSlugFromAFileName(t *testing.T) {
 func TestEnterIntegrationBranchCreatesThenReuses(t *testing.T) {
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "emberloop@test.local")
-	gitOut(t, repo, "config", "user.name", "emberloop")
+	gitOut(t, repo, "config", "user.email", "el@test.local")
+	gitOut(t, repo, "config", "user.name", "el")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

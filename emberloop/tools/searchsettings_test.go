@@ -14,8 +14,8 @@ import (
 // Nothing stored means auto provider and fallback mode.
 func TestSearchDefaultsToAutoFallback(t *testing.T) {
 	settingsEnv(t, filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	s := LoadSettings()
 	if got := s.EffectiveSearchProvider(); got != "auto" {
 		t.Fatalf("provider = %q, want auto", got)
@@ -29,8 +29,8 @@ func TestSearchDefaultsToAutoFallback(t *testing.T) {
 func TestSearchReadsTheFile(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, p)
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	if err := os.WriteFile(p, []byte(`{"search":{"provider":"exa","mode":"parallel"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +50,13 @@ func TestSearchReadsTheFile(t *testing.T) {
 func TestSearchProjectWinsFieldByField(t *testing.T) {
 	global := filepath.Join(t.TempDir(), "global.json")
 	settingsEnv(t, global)
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	if err := os.WriteFile(global, []byte(`{"search":{"provider":"exa","mode":"fallback"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	t.Setenv("EMBERLOOP_PROJECT_SETTINGS", filepath.Join(root, "settings.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(root, "settings.json"))
 	if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(`{"search":{"mode":"parallel"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +76,8 @@ func TestSearchEnvWinsOverFiles(t *testing.T) {
 	if err := os.WriteFile(p, []byte(`{"search":{"provider":"exa","mode":"parallel"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "brave")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "fallback")
+	t.Setenv("EL_SEARCH_PROVIDER", "brave")
+	t.Setenv("EL_SEARCH_MODE", "fallback")
 	s := LoadSettings()
 	if got := s.EffectiveSearchProvider(); got != "brave" {
 		t.Fatalf("provider = %q, want brave from env", got)
@@ -94,8 +94,8 @@ func TestSearchEnvWinsOverFiles(t *testing.T) {
 func TestSearchInvalidValuesReadAsDefault(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, p)
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	if err := os.WriteFile(p, []byte(`{"search":{"provider":"tavily","mode":"turbo"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,8 @@ func TestSearchInvalidValuesReadAsDefault(t *testing.T) {
 func TestSearchRoundTripsThroughSave(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, p)
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	if err := os.WriteFile(p, []byte(`{"search":{"provider":"brave","future":"keep"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -143,8 +143,8 @@ func TestSearchRoundTripsThroughSave(t *testing.T) {
 func TestSaveOmitsSearchWhenUnset(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.json")
 	settingsEnv(t, p)
-	t.Setenv("EMBERLOOP_SEARCH_PROVIDER", "")
-	t.Setenv("EMBERLOOP_SEARCH_MODE", "")
+	t.Setenv("EL_SEARCH_PROVIDER", "")
+	t.Setenv("EL_SEARCH_MODE", "")
 	if err := SaveSettings(LoadSettings()); err != nil {
 		t.Fatal(err)
 	}

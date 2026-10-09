@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -21,11 +21,11 @@ func isolateState(t *testing.T) {
 	// parent would send grouped delivery at the real herdr and hang.
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("HERDR_TAB_ID", "")
-	t.Setenv("EMBERLOOP_AGENT_ID", "")
+	t.Setenv("EL_AGENT_ID", "")
 }
 
 func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
-	t.Setenv("EMBERLOOP_SKILLS_DIR", "/skills")
+	t.Setenv("EL_SKILLS_DIR", "/skills")
 	isolateState(t)
 	for _, name := range HarnessNames() {
 		cmd, err := BuildCommand(name, workerSession())
@@ -43,7 +43,7 @@ func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
 		if strings.Contains(launch.Line, "\n") {
 			t.Errorf("%s: pane run types one line: %q", name, launch.Line)
 		}
-		if !strings.HasPrefix(line, "EMBERLOOP_ROLE=work ") && !strings.Contains(line, " EMBERLOOP_ROLE=work ") {
+		if !strings.HasPrefix(line, "EL_ROLE=work ") && !strings.Contains(line, " EL_ROLE=work ") {
 			t.Errorf("%s: role missing: %q", name, line)
 		}
 		if !strings.HasSuffix(line, `"Read /state/briefs/01-x.md and follow it exactly."`) {
@@ -56,13 +56,13 @@ func TestEveryHarnessBuildsOneShellLineWithRoleFirst(t *testing.T) {
 // about: the one address the read tool serves the library under.
 func TestBothHarnessesCarryTheSkillLibraryAddress(t *testing.T) {
 	isolateState(t)
-	t.Setenv("EMBERLOOP_SKILLS_DIR", "/skills")
+	t.Setenv("EL_SKILLS_DIR", "/skills")
 	for _, name := range HarnessNames() {
 		cmd, err := BuildCommand(name, Session{Role: "full"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(cmd.Line(), "emberloop://matt-pocock") {
+		if !strings.Contains(cmd.Line(), "el://matt-pocock") {
 			t.Errorf("%s: the system prompt must name the skill library, got %q", name, cmd.Line())
 		}
 	}
@@ -71,12 +71,12 @@ func TestBothHarnessesCarryTheSkillLibraryAddress(t *testing.T) {
 // No harness loads global skills: pig keeps --no-skills and loads nothing from
 // the library, so a session sees only what its prompt points it at.
 func TestPigWorkerGetsNoSkillsAndTheReporter(t *testing.T) {
-	t.Setenv("EMBERLOOP_SKILLS_DIR", "/skills")
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/exts/herdr-report")
+	t.Setenv("EL_SKILLS_DIR", "/skills")
+	t.Setenv("EL_HERDR_REPORT", "/exts/herdr-report")
 	cmd, _ := BuildCommand("pig", workerSession())
 	line := cmd.Line()
 	for _, want := range []string{"--no-skills", "-e /exts/herdr-report", "--session-id 01-x",
-		"EMBERLOOP_AGENT_LABEL=01-x", "--no-builtin-tools"} {
+		"EL_AGENT_LABEL=01-x", "--no-builtin-tools"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("missing %q in %s", want, line)
 		}
@@ -103,7 +103,7 @@ func TestClaudeRunsStripped(t *testing.T) {
 		}
 	}
 	// The Stop hook is passed inline, and it still applies under
-	// --setting-sources "": a stop without a submit runs emberloop's gate.
+	// --setting-sources "": a stop without a submit runs el's gate.
 	settings := argValue(cmd.Args, "--settings")
 	var cfg struct {
 		Hooks struct {

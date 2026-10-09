@@ -70,7 +70,7 @@ func TestExecuteRegisteredInAll(t *testing.T) {
 // enters the result.
 func TestExecuteScriptCallsRead(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	var seen fakeExecuteSeen
 	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "file-bytes", seen: &seen}}, "test execute", false)
 	root := t.TempDir()
@@ -106,7 +106,7 @@ func (f errExecuteTool) Execute(context.Context, string, json.RawMessage) (strin
 // uncaught exception returns the traceback tail with the exit status.
 func TestExecuteFailingToolRaisesToolError(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{errExecuteTool{name: "git", msg: "git boom"}}, "test execute", false)
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(`{"code":"import tools\nprint(tools.git(args=[\"log\"]))"}`))
 	if err != nil {
@@ -122,7 +122,7 @@ func TestExecuteFailingToolRaisesToolError(t *testing.T) {
 
 func TestExecuteToolErrorIsCatchable(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{errExecuteTool{name: "git", msg: "git boom"}}, "test execute", false)
 	code := "import tools\ntry:\n    tools.git(args=[\"log\"])\nexcept tools.ToolError as e:\n    print(\"caught:\", e)\n"
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(mustExecuteArgs(t, code)))
@@ -139,7 +139,7 @@ func TestExecuteToolErrorIsCatchable(t *testing.T) {
 
 func TestExecuteUnknownToolRaisesToolError(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "x"}}, "test execute", false)
 	code := "import tools\ntry:\n    tools.nosuchtool()\nexcept tools.ToolError as e:\n    print(\"caught:\", e)\n"
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(mustExecuteArgs(t, code)))
@@ -164,7 +164,7 @@ func mustExecuteArgs(t *testing.T, code string) json.RawMessage {
 // tools.help shows one tool, without spending a tool turn.
 func TestExecuteSearchAndHelp(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{
 		fakeExecuteTool{name: "read", result: "x"},
 		fakeExecuteTool{name: "grep", result: "y"},
@@ -220,7 +220,7 @@ func TestExecuteDescriptionExamplesFollowTheToolList(t *testing.T) {
 // call comes back with what was printed so far, not a hang.
 func TestExecuteTimeoutKillsTheProcess(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute(nil, "test execute", false)
 	start := time.Now()
 	out, err := ex.Execute(context.Background(), t.TempDir(),
@@ -243,8 +243,8 @@ func TestExecuteTimeoutKillsTheProcess(t *testing.T) {
 // Seam: the temp directory and socket are removed after every call.
 func TestExecuteRemovesItsTempDir(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	before, err := filepath.Glob(filepath.Join(os.TempDir(), "emberloop-execute-*"))
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	before, err := filepath.Glob(filepath.Join(os.TempDir(), "el-execute-*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestExecuteRemovesItsTempDir(t *testing.T) {
 		json.RawMessage(mustExecuteArgs(t, "import tools\nprint(tools.read(path=\"a\"))"))); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	after, err := filepath.Glob(filepath.Join(os.TempDir(), "emberloop-execute-*"))
+	after, err := filepath.Glob(filepath.Join(os.TempDir(), "el-execute-*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func requireGit(t *testing.T) {
 func TestExecuteNativeToolkit(t *testing.T) {
 	requirePython(t)
 	requireGit(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("the launch code is 42\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestExecuteNativeToolkit(t *testing.T) {
 // matching chunks come back inline.
 func TestExecuteOverflowStoresAndSummarizes(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	globalProjectEnv(t, root, `{}`, `{"overflow":{"threshold_bytes":200}}`)
 	ex := NewExecute(nil, "test execute", false)
@@ -342,7 +342,7 @@ func TestExecuteOverflowStoresAndSummarizes(t *testing.T) {
 
 func TestExecuteIntentReturnsMatchingChunks(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	globalProjectEnv(t, root, `{}`, `{"overflow":{"threshold_bytes":200}}`)
 	ex := NewExecute(nil, "test execute", false)
@@ -377,7 +377,7 @@ func requireSandbox(t *testing.T, worktree string) {
 // network, yet it can still call tools through the socket.
 func TestExecuteSandboxedScriptIsConfinedButCallsTools(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	requireSandbox(t, root)
 	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "s prompted"}}, "test execute", true)
@@ -404,7 +404,7 @@ func TestExecuteSandboxedScriptIsConfinedButCallsTools(t *testing.T) {
 
 func TestExecuteSandboxedScriptHasNoNetwork(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	requireSandbox(t, root)
 	ex := NewExecute(nil, "test execute", true)
@@ -418,28 +418,28 @@ func TestExecuteSandboxedScriptHasNoNetwork(t *testing.T) {
 	}
 }
 
-// Seam: a broken sandbox refuses naming `emberloop deps` and never runs the
+// Seam: a broken sandbox refuses naming `el deps` and never runs the
 // script unsandboxed.
 func TestExecuteBrokenSandboxRefuses(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_SANDBOX_FORCE_FAIL", "1")
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_SANDBOX_FORCE_FAIL", "1")
 	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "x"}}, "test execute", true)
 	_, err := ex.Execute(context.Background(), t.TempDir(),
 		json.RawMessage(mustExecuteArgs(t, "print(\"must not run\")")))
-	if err == nil || !strings.Contains(err.Error(), "emberloop deps") {
-		t.Fatalf("a broken sandbox must refuse naming emberloop deps, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "el deps") {
+		t.Fatalf("a broken sandbox must refuse naming el deps, got %v", err)
 	}
 }
 
-// Seam: a missing python3 names `emberloop deps`, the command that installs it.
+// Seam: a missing python3 names `el deps`, the command that installs it.
 func TestExecuteMissingPythonNamesDeps(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
-	t.Setenv("EMBERLOOP_PYTHON", filepath.Join(t.TempDir(), "no-python-here"))
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	t.Setenv("EL_PYTHON", filepath.Join(t.TempDir(), "no-python-here"))
 	ex := NewExecute(nil, "test execute", false)
 	_, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(mustExecuteArgs(t, "print(1)")))
-	if err == nil || !strings.Contains(err.Error(), "emberloop deps") {
-		t.Fatalf("a missing python3 must name emberloop deps, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "el deps") {
+		t.Fatalf("a missing python3 must name el deps, got %v", err)
 	}
 }
 
@@ -462,7 +462,7 @@ func TestExecuteStubReservedNames(t *testing.T) {
 // the bridge closes its conns once the script exits.
 func TestExecuteLeftoverChildDoesNotHangTheCall(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "read-ok"}}, "test execute", false)
 	code := "import os, subprocess\n" +
 		"import tools\n" +
@@ -487,7 +487,7 @@ func TestExecuteLeftoverChildDoesNotHangTheCall(t *testing.T) {
 // EOF on the script's side.
 func TestExecuteOversizeRequestFailsClearly(t *testing.T) {
 	requirePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	ex := NewExecute([]Tool{fakeExecuteTool{name: "read", result: "x"}}, "test execute", false)
 	code := "import tools\ntry:\n    tools.read(path=\"" + strings.Repeat("x", 9<<20) + "\")\nexcept tools.ToolError as e:\n    print(\"refused:\", e)\n"
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(mustExecuteArgs(t, code)))

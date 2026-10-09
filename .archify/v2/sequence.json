@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "One ticket, spawn to merge",
+    "output": ".archify/v2/sequence.html",
+    "column_fit": "spread",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "orch",
+      "type": "frontend",
+      "label": "Orchestrator",
+      "sublabel": "pig or claude"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "own worktree"
+    },
+    {
+      "id": "rev",
+      "type": "security",
+      "label": "Reviewers",
+      "sublabel": "spec + standards"
+    },
+    {
+      "id": "branch",
+      "type": "database",
+      "label": "Spec branch",
+      "sublabel": "spec/<slug>"
+    }
+  ],
+  "segments": [
+    {
+      "from": 145,
+      "to": 205,
+      "label": "Implement"
+    },
+    {
+      "from": 210,
+      "to": 265,
+      "label": "Review"
+    },
+    {
+      "from": 270,
+      "to": 325,
+      "label": "Fix"
+    },
+    {
+      "from": 330,
+      "to": 385,
+      "label": "Re-review"
+    },
+    {
+      "from": 390,
+      "to": 475,
+      "label": "Merge"
+    }
+  ],
+  "messages": [
+    {
+      "id": "spawn",
+      "from": "orch",
+      "to": "worker",
+      "y": 160,
+      "label": "spawn ticket",
+      "variant": "emphasis"
+    },
+    {
+      "id": "done1",
+      "from": "worker",
+      "to": "orch",
+      "y": 190,
+      "label": "submit: done",
+      "variant": "return"
+    },
+    {
+      "id": "spawn-rev",
+      "from": "orch",
+      "to": "rev",
+      "y": 220,
+      "label": "spawn reviewers",
+      "variant": "emphasis"
+    },
+    {
+      "id": "changes",
+      "from": "rev",
+      "to": "orch",
+      "y": 250,
+      "label": "verdict: changes",
+      "variant": "return"
+    },
+    {
+      "id": "tell",
+      "from": "orch",
+      "to": "worker",
+      "y": 280,
+      "label": "tell: findings",
+      "variant": "default"
+    },
+    {
+      "id": "done2",
+      "from": "worker",
+      "to": "orch",
+      "y": 310,
+      "label": "submit: done",
+      "variant": "return"
+    },
+    {
+      "id": "rereview",
+      "from": "orch",
+      "to": "rev",
+      "y": 340,
+      "label": "tell: re-review",
+      "variant": "default"
+    },
+    {
+      "id": "pass",
+      "from": "rev",
+      "to": "orch",
+      "y": 370,
+      "label": "verdict: pass at tip",
+      "variant": "return"
+    },
+    {
+      "id": "finish",
+      "from": "orch",
+      "to": "branch",
+      "y": 400,
+      "label": "finish: rebase + ff-only",
+      "variant": "emphasis"
+    },
+    {
+      "id": "merged",
+      "from": "branch",
+      "to": "orch",
+      "y": 430,
+      "label": "merged",
+      "variant": "return"
+    },
+    {
+      "id": "cleanup",
+      "from": "orch",
+      "to": "worker",
+      "y": 460,
+      "label": "drop worktree",
+      "variant": "dashed"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "worker",
+      "from": 158,
+      "to": 195,
+      "type": "backend"
+    },
+    {
+      "participant": "rev",
+      "from": 215,
+      "to": 255,
+      "type": "security"
+    },
+    {
+      "participant": "worker",
+      "from": 275,
+      "to": 315,
+      "type": "backend"
+    },
+    {
+      "participant": "rev",
+      "from": 335,
+      "to": 375,
+      "type": "security"
+    },
+    {
+      "participant": "branch",
+      "from": 395,
+      "to": 435,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Fix loop",
+      "items": [
+        "Findings go back to the same worker with tell",
+        "The loop repeats until every required reviewer passes at the tip"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Merge rule",
+      "items": [
+        "A stale pass is rejected: the verdict must match the current tip",
+        "Rebase conflict, dirty worktree, or missing pass keeps the worker"
+      ]
+    }
+  ]
+}

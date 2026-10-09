@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	emberloop "example.com/emberloop"
+	el "example.com/emberloop"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -16,7 +16,7 @@ import (
 // pane, verdicts at the tip, state entry time, last refusal) plus the
 // ticket's agents for the agents view below the table.
 type RunTicket struct {
-	Row    emberloop.DriverRow
+	Row    el.DriverRow
 	Agents []AgentSnap
 }
 
@@ -81,7 +81,7 @@ type RunDoneMsg struct {
 // agents: each row keeps the run's order and state and carries the agents
 // the snapshot attaches to the same ticket file. Tickets the snapshot no
 // longer names carry no agents.
-func RunLiveRows(rows []emberloop.DriverRow, snap Snap) []RunTicket {
+func RunLiveRows(rows []el.DriverRow, snap Snap) []RunTicket {
 	byPath := map[string]TicketSnap{}
 	for _, repo := range snap.Repos {
 		for _, spec := range repo.Specs {
@@ -244,7 +244,7 @@ func (m *RunModel) parkSelected() tea.Cmd {
 		return nil
 	}
 	row := m.rows[m.cursor].Row
-	if row.State == emberloop.DriverRowMerged || row.State == emberloop.DriverRowDiscarded {
+	if row.State == el.DriverRowMerged || row.State == el.DriverRowDiscarded {
 		m.notice = "ticket already " + runStateLabel(row.State)
 		return nil
 	}
@@ -262,7 +262,7 @@ func (m *RunModel) parkSelected() tea.Cmd {
 }
 
 // runStateLabel is the one place a driver row state becomes its pane text.
-func runStateLabel(s emberloop.DriverRowState) string {
+func runStateLabel(s el.DriverRowState) string {
 	return strings.ReplaceAll(string(s), "-", " ")
 }
 
@@ -280,7 +280,7 @@ func runReviewerShort(typ string) string {
 
 // runVerdicts formats the reviewer verdicts at the current tip in required
 // order: pass or changes at the tip, … while pending or stale.
-func runVerdicts(row emberloop.DriverRow) string {
+func runVerdicts(row el.DriverRow) string {
 	required := row.Required
 	if len(required) == 0 {
 		for typ := range row.Verdicts {
@@ -318,7 +318,7 @@ func formatRunAge(d time.Duration) string {
 }
 
 // runWorker names the ticket's worker, or a dash while queued.
-func runWorker(row emberloop.DriverRow) string {
+func runWorker(row el.DriverRow) string {
 	if row.Worker == "" {
 		return "—"
 	}
@@ -328,7 +328,7 @@ func runWorker(row emberloop.DriverRow) string {
 // runTicketLine is one ticket table row: state, ticket, worker, verdicts
 // and time in state. A needs-you ticket carries its last refusal on the
 // line after, so the pane shows why it needs you.
-func (m RunModel) runTicketLine(row emberloop.DriverRow) string {
+func (m RunModel) runTicketLine(row el.DriverRow) string {
 	age := "—"
 	if !row.Since.IsZero() {
 		age = formatRunAge(m.now().Sub(row.Since))
@@ -348,7 +348,7 @@ func (m RunModel) View() string {
 			mark = "> "
 		}
 		b.WriteString(mark + m.runTicketLine(t.Row) + "\n")
-		if t.Row.State == emberloop.DriverRowNeedsYou && t.Row.LastRefusal != "" {
+		if t.Row.State == el.DriverRowNeedsYou && t.Row.LastRefusal != "" {
 			b.WriteString("    ! " + t.Row.LastRefusal + "\n")
 		}
 	}

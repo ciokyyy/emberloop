@@ -1,8 +1,8 @@
-package emberloop
+package el
 
 // Seam: the theme generators through their JSON and byte output. Expected
 // values come from the approved probe assets in
-// .scratch/input-queue/theme (the borderless emberloopb pair, run-themed.sh),
+// .scratch/archive/input-queue/theme (the borderless elb pair, run-themed.sh),
 // not from the code: the curated tokens below are copied from those files.
 
 import (
@@ -70,7 +70,7 @@ func TestGeneratedMochaMatchesProbe(t *testing.T) {
 // One palette source feeds the strip and both generators: the strip roles
 // equal the generator tokens.
 func TestPaletteFeedsStripAndGenerators(t *testing.T) {
-	mocha, latte := EmberloopMocha(), EmberloopLatte()
+	mocha, latte := ElMocha(), ElLatte()
 	if mocha.StripBg != "#181825" || latte.StripBg != "#e6e9ef" {
 		t.Errorf("strip bg drifts: %q %q", mocha.StripBg, latte.StripBg)
 	}
@@ -132,7 +132,7 @@ func TestLatteVariantExists(t *testing.T) {
 // Generators and OSC read the shared palette struct: no independent hex
 // tables. Spot-check tokens across all three consumers.
 func TestGeneratorsReadPaletteStruct(t *testing.T) {
-	mocha := EmberloopMocha()
+	mocha := ElMocha()
 	if got := ClaudeTheme(true).Overrides; got != mocha.Claude {
 		t.Error("claude mocha drifts from the palette struct")
 	}
@@ -142,7 +142,7 @@ func TestGeneratorsReadPaletteStruct(t *testing.T) {
 	if got := PaneColors(true); got.FG != mocha.PaneFG || got.BG != mocha.PaneBG || got.ANSI != mocha.PaneANSI {
 		t.Error("OSC mocha drifts from the palette struct")
 	}
-	latte := EmberloopLatte()
+	latte := ElLatte()
 	if got := ClaudeTheme(false).Overrides; got != latte.Claude {
 		t.Error("claude latte drifts from the palette struct")
 	}
@@ -234,10 +234,10 @@ func TestThemeLaunchArgs(t *testing.T) {
 			name = pargs[i+1]
 		}
 	}
-	if name != "emberloop-mocha" {
-		t.Errorf("pig use-theme = %q, want emberloop-mocha", name)
+	if name != "el-mocha" {
+		t.Errorf("pig use-theme = %q, want el-mocha", name)
 	}
-	if b, err := os.ReadFile(theme); err != nil || !strings.Contains(string(b), `"emberloop-mocha"`) {
+	if b, err := os.ReadFile(theme); err != nil || !strings.Contains(string(b), `"el-mocha"`) {
 		t.Errorf("pig --theme points at %q, want the generated file", theme)
 	}
 	cargs, err := ThemeLaunchArgs("claude", []string{"--settings", `{"hooks":{}}`}, false, dir)
@@ -252,8 +252,8 @@ func TestThemeLaunchArgs(t *testing.T) {
 			}
 		}
 	}
-	if m["theme"] != "custom:emberloop-latte" {
-		t.Errorf("claude theme = %v, want custom:emberloop-latte", m["theme"])
+	if m["theme"] != "custom:el-latte" {
+		t.Errorf("claude theme = %v, want custom:el-latte", m["theme"])
 	}
 	if _, ok := m["hooks"]; !ok {
 		t.Error("claude launch settings lost the stop gate")

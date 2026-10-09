@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"context"
@@ -19,7 +19,7 @@ func resolveExecuteWithFake(t *testing.T, role string, cfg mcpfake.Config, entry
 	log := filepath.Join(t.TempDir(), "methods.log")
 	cfg.LogPath = log
 	fakeServerSettings(t, cfg, entry)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	s := tools.EffectiveSettings(t.TempDir())
 	reg := tools.NewRegistry(s.MCPServers)
 	t.Cleanup(reg.Close)
@@ -48,8 +48,8 @@ func TestExecuteMCPToolCallEndToEnd(t *testing.T) {
 		mcpfake.Config{Tools: []mcpfake.ToolDef{{Name: "search_repos", Description: "search repos"}}},
 		map[string]any{"summary": "GitHub search"})
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(`{"code":"import tools\n`+
-		`print(tools.search_repos(query=\"emberloop\"))\n`+
-		`print(tools.gh.search_repos(query=\"emberloop\"))\n"}`))
+		`print(tools.search_repos(query=\"el\"))\n`+
+		`print(tools.gh.search_repos(query=\"el\"))\n"}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestExecuteMCPSettingsTakeEffect(t *testing.T) {
 		fakeServerSettings(t, mcpfake.Config{Tools: []mcpfake.ToolDef{
 			{Name: "search_repos"}, {Name: "delete_repo"}, {Name: "get_repo"},
 		}, LogPath: log}, entry)
-		t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+		t.Setenv("EL_STATE_DIR", t.TempDir())
 		s := tools.EffectiveSettings(t.TempDir())
 		reg := tools.NewRegistry(s.MCPServers)
 		t.Cleanup(reg.Close)
@@ -241,7 +241,7 @@ func TestExecuteMCPListAndStubAgree(t *testing.T) {
 func TestExecuteMCPSandboxedReviewCallsThroughSocket(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
-	t.Setenv("EMBERLOOP_STATE_DIR", t.TempDir())
+	t.Setenv("EL_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	if err := tools.EnsureHealthy(root); err != nil {
 		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
@@ -253,7 +253,7 @@ func TestExecuteMCPSandboxedReviewCallsThroughSocket(t *testing.T) {
 		t.Fatalf("review must offer the MCP tool behind execute: %v", execute)
 	}
 	out, err := ex.Execute(context.Background(), root, json.RawMessage(`{"code":"import tools\n`+
-		`print(tools.search_repos(query=\"emberloop\"))\n"}`))
+		`print(tools.search_repos(query=\"el\"))\n"}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

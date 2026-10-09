@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"fmt"
@@ -35,7 +35,7 @@ func TestBoundaryWaitsForRunningToolCall(t *testing.T) {
 	isolateState(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sess.jsonl")
-	writeLines(t, path, pigCallLine("s1", "a1", "call_1", "mcp__emberloop__bash"))
+	writeLines(t, path, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 
 	oldPoll, oldTimeout := pollEvery, restartBoundaryTimeout
 	pollEvery, restartBoundaryTimeout = 5*time.Millisecond, 2*time.Second
@@ -49,7 +49,7 @@ func TestBoundaryWaitsForRunningToolCall(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__bash", "done"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__bash", "done"))
 	}()
 
 	if err := WaitForToolBoundary("pig", path); err != nil {
@@ -162,7 +162,7 @@ func TestRestartKeepsPaneAndAgentIssuesNewSession(t *testing.T) {
 
 	dir := t.TempDir()
 	oldID := "sess-old"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestRestartKeepsPaneAndAgentIssuesNewSession(t *testing.T) {
 	}
 
 	// A second handoff counts again on the same pane and agent.
-	writeLines(t, filepath.Join(dir, next+".jsonl"), pigCallLine("s", "a2", "call_9", "mcp__emberloop__read")+pigResultLine("r9", "call_9", "mcp__emberloop__read", "ok"))
+	writeLines(t, filepath.Join(dir, next+".jsonl"), pigCallLine("s", "a2", "call_9", "mcp__el__read")+pigResultLine("r9", "call_9", "mcp__el__read", "ok"))
 	next2, err := RestartPane(fake.run, PaneRestart{Harness: "pig", Pane: "pane-1", AgentID: "w1", OldSessionID: next, SessionDir: dir, Handoff: "second handoff"}, func(id string) (Session, Launch, error) {
 		sess := template
 		sess.ID = id
@@ -296,7 +296,7 @@ func TestFailedRelaunchKeepsPaneOpen(t *testing.T) {
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
 	dir := t.TempDir()
 	oldID := "sess-old-fail"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	if err := WriteAgentState(AgentState{ID: "w9", Type: "worker", Pane: "pane-9", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestRestartStopsOnlyAfterTheBoundary(t *testing.T) {
 	dir := t.TempDir()
 	oldID := "sess-racing"
 	path := filepath.Join(dir, oldID+".jsonl")
-	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash"))
+	writeLines(t, path, pigCallLine("s", "a1", "call_1", "mcp__el__bash"))
 	if err := WriteAgentState(AgentState{ID: "wr", Type: "worker", Pane: "pane-r", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestRestartStopsOnlyAfterTheBoundary(t *testing.T) {
 			return
 		}
 		defer f.Close()
-		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+		_, _ = f.WriteString(pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 		landed <- time.Now()
 	}()
 	handoff := "racing handoff"
@@ -401,7 +401,7 @@ func TestLaunchForErrorLeavesStateUntouched(t *testing.T) {
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
 	dir := t.TempDir()
 	oldID := "sess-launch-err"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	if err := WriteAgentState(AgentState{ID: "wl", Type: "worker", Pane: "pane-l", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestBoundaryTimeoutStopsNothing(t *testing.T) {
 	}
 	dir := t.TempDir()
 	oldID := "sess-hung"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash"))
 	if err := WriteAgentState(AgentState{ID: "wh", Type: "worker", Pane: "pane-h", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +522,7 @@ func TestRestartKeepsSubmitOnTheAgent(t *testing.T) {
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
 	dir := t.TempDir()
 	oldID := "sess-submit"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	if err := WriteAgentState(AgentState{ID: "ws", Type: "worker", Pane: "pane-s", SessionID: oldID, Deliver: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestRestartReassertsPaneName(t *testing.T) {
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
 	dir := t.TempDir()
 	oldID := "sess-rename"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__read")+pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__read")+pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	if err := WriteAgentState(AgentState{ID: "wn", Type: "worker", Pane: "pane-n", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestRestartPaneUsesWrapperChannelWhenAlive(t *testing.T) {
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
 	dir := t.TempDir()
 	oldID := "sess-old-wrapped"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +641,7 @@ func TestRestartPaneFailureLeavesStateUntouched(t *testing.T) {
 	defer func() { pollEvery, paneStopWait, restartBoundaryTimeout = oldPoll, oldWait, oldTimeout }()
 	dir := t.TempDir()
 	oldID := "sess-old-refused"
-	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__emberloop__bash")+pigResultLine("r1", "call_1", "mcp__emberloop__bash", "ok"))
+	writeLines(t, filepath.Join(dir, oldID+".jsonl"), pigCallLine("s", "a1", "call_1", "mcp__el__bash")+pigResultLine("r1", "call_1", "mcp__el__bash", "ok"))
 	if err := WriteAgentState(AgentState{ID: "w1", Type: "worker", Pane: "pane-1", SessionID: oldID}); err != nil {
 		t.Fatal(err)
 	}

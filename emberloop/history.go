@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"encoding/json"
@@ -49,7 +49,7 @@ type TicketHistory struct {
 	SHA    string `json:"sha,omitempty"`
 	Detail string `json:"detail,omitempty"`
 	Branch string `json:"branch,omitempty"`
-	// Worker is the worker's agent id (its ticket id, the EMBERLOOP_AGENT_ID its
+	// Worker is the worker's agent id (its ticket id, the EL_AGENT_ID its
 	// usage is logged under).
 	Worker  string          `json:"worker,omitempty"`
 	Harness string          `json:"harness,omitempty"`

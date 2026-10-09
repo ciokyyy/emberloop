@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 // Seam: the wrapped child. A blocking fake PTY under a real WrapChild with
 // the input row on: type row text, assert the exact PTY bytes. The /compress
@@ -171,8 +171,8 @@ func TestWrapRowCompressTriggersCompress(t *testing.T) {
 
 	writeCompressWorker(t,
 		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`+"\n"+
-			pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+
-			pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+			pigCallLine("s1", "a1", "call_1", "mcp__el__read")+
+			pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 
 	child := &blockingChild{release: make(chan struct{})}
@@ -424,8 +424,8 @@ func TestWrapRowCompressDoubleSubmitSingleFlights(t *testing.T) {
 
 	writeCompressWorker(t,
 		`{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"do the thing"}]}}`+"\n"+
-			pigCallLine("s1", "a1", "call_1", "mcp__emberloop__read")+
-			pigResultLine("r1", "call_1", "mcp__emberloop__read", "ok"))
+			pigCallLine("s1", "a1", "call_1", "mcp__el__read")+
+			pigResultLine("r1", "call_1", "mcp__el__read", "ok"))
 	fake := &compressFake{t: t, alive: true, group: 4242, handoff: summarizeHandoff}
 	var probes atomic.Int32
 	unblock := make(chan struct{})

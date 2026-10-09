@@ -25,7 +25,7 @@ name = "".join(c if (c.isascii() and (c.isalnum() or c in "-_")) else "-"
                for c in agent) or "lock"
 raw = agent.encode("utf-8")
 path = os.path.join(os.path.expanduser("~"), ".pig", "state",
-                    "emberloop", "agents", f"ctrl-{name}.sock")
+                    "el", "agents", f"ctrl-{name}.sock")
 if len(path) > 100:
     h = 14695981039346656037
     for b in raw:

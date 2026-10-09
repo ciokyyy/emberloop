@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"os"
@@ -23,7 +23,7 @@ func TestShellArgQuotesOnlyWhenNeeded(t *testing.T) {
 }
 
 func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
@@ -35,13 +35,13 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 	}
 	text := string(body)
 
-	for _, want := range []string{"emberloop://matt-pocock/implement/SKILL.md", "emberloop://matt-pocock/tdd/SKILL.md"} {
+	for _, want := range []string{"el://matt-pocock/implement/SKILL.md", "el://matt-pocock/tdd/SKILL.md"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("brief must name %s:\n%s", want, text)
 		}
 	}
-	implement := strings.Index(text, "emberloop://matt-pocock/implement/SKILL.md")
-	tdd := strings.Index(text, "emberloop://matt-pocock/tdd/SKILL.md")
+	implement := strings.Index(text, "el://matt-pocock/implement/SKILL.md")
+	tdd := strings.Index(text, "el://matt-pocock/tdd/SKILL.md")
 	if !(implement < tdd) {
 		t.Errorf("order must be implement -> tdd, got %d/%d", implement, tdd)
 	}
@@ -59,7 +59,7 @@ func TestWriteBriefPointsAtSkillsWithoutCopyingThem(t *testing.T) {
 // review, how to decline a finding it cannot fix, and that ticket files stay
 // untouched while completed checkboxes ride the submit's completed list.
 func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
 		t.Fatal(err)
@@ -84,11 +84,11 @@ func TestBriefNamesSpecReviewRebaseAndFollowUps(t *testing.T) {
 	}
 }
 
-// Every harness reads skills through the read tool under one emberloop:// address:
+// Every harness reads skills through the read tool under one el:// address:
 // no session loads the library itself. The skill references are the same for
 // every harness; only the root-doc line differs (ticket 15 probe).
 func TestBriefIsTheSameForEveryHarness(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	pig, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "pig")
 	if err != nil {
 		t.Fatal(err)
@@ -99,8 +99,8 @@ func TestBriefIsTheSameForEveryHarness(t *testing.T) {
 	}
 	for _, path := range []string{pig, claude} {
 		text := readFile(t, path)
-		if !strings.Contains(text, "emberloop://matt-pocock/implement/SKILL.md") {
-			t.Errorf("brief must name the implement skill by its emberloop:// address:\n%s", text)
+		if !strings.Contains(text, "el://matt-pocock/implement/SKILL.md") {
+			t.Errorf("brief must name the implement skill by its el:// address:\n%s", text)
 		}
 		if strings.Contains(text, "/skills/matt-pocock") {
 			t.Errorf("brief must not name an absolute library path:\n%s", text)
@@ -113,7 +113,7 @@ func TestBriefIsTheSameForEveryHarness(t *testing.T) {
 // claude harness disables setting sources and CLAUDE.md loading, so its
 // workers must be told to read the root AGENTS.md first.
 func TestBriefCarriesRootDocLineOnlyWhereNeeded(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	pig, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "pig")
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestBriefCarriesRootDocLineOnlyWhereNeeded(t *testing.T) {
 }
 
 func TestBackgroundRuleReachesBrief(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "", "", "pig")
 	if err != nil {
@@ -165,11 +165,11 @@ func TestImplementPromptDoesNotReview(t *testing.T) {
 }
 
 // The implement session runs the upstream skill, adapted: it is pointed at the
-// skill by address, and every subagent the skill names maps onto a emberloop tool.
+// skill by address, and every subagent the skill names maps onto a el tool.
 func TestImplementPromptAdaptsImplementSpec(t *testing.T) {
 	got := implementPrompt(testRun)
 	for _, want := range []string{
-		"emberloop://matt-pocock/implement-spec/SKILL.md",
+		"el://matt-pocock/implement-spec/SKILL.md",
 		"/repo/.scratch/p/spec.md", "/repo/.scratch/p/issues", "spec/p",
 		"worker", "scout", "finish", "tell", "end your turn",
 		"carry on", "follow-ups",
@@ -200,7 +200,7 @@ func TestRenderFinishIsProse(t *testing.T) {
 }
 
 func TestReportExtensionPrefersTheEnvVar(t *testing.T) {
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "/exts/from-env")
+	t.Setenv("EL_HERDR_REPORT", "/exts/from-env")
 	if got := reportExtension("/opt/emberloop/bin/pig", "/home/cioky"); got != "/exts/from-env" {
 		t.Errorf("a set env var must win over any directory on disk, got %q", got)
 	}
@@ -209,7 +209,7 @@ func TestReportExtensionPrefersTheEnvVar(t *testing.T) {
 func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
-	bin := filepath.Join(root, "opt", "emberloop", "bin")
+	bin := filepath.Join(root, "opt", "el", "bin")
 	mk := func(p string) string {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			t.Fatal(err)
@@ -217,7 +217,7 @@ func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
 		return p
 	}
 
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "")
+	t.Setenv("EL_HERDR_REPORT", "")
 	exe := filepath.Join(bin, "pig")
 
 	if got := reportExtension(exe, home); got != "" {
@@ -234,7 +234,7 @@ func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
 		t.Errorf("the extension beside the executable must beat the home one, got %q", got)
 	}
 
-	above := mk(filepath.Join(root, "opt", "emberloop", "herdr-report"))
+	above := mk(filepath.Join(root, "opt", "el", "herdr-report"))
 	if got := reportExtension(exe, home); got != above {
 		t.Errorf("../herdr-report must be the first candidate, got %q", got)
 	}
@@ -246,7 +246,7 @@ func TestReportExtensionFallsBackToTheFirstDirectoryThatExists(t *testing.T) {
 func TestReportExtensionWarning(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("EMBERLOOP_HERDR_REPORT", "")
+	t.Setenv("EL_HERDR_REPORT", "")
 
 	if got := reportExtensionWarning("pig"); !strings.Contains(got, "unknown") {
 		t.Errorf("a pig spawn with no extension must warn, got %q", got)
@@ -285,7 +285,7 @@ func TestImplementPromptLeavesTicketsToFinish(t *testing.T) {
 // before editing, and update the owning doc after a contract-changing edit.
 // Review enforces it; the brief only tells the worker to do it.
 func TestBriefCarriesDoxReadAndUpdateRules(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestBriefCarriesDoxReadAndUpdateRules(t *testing.T) {
 // Ticket 18: the worker brief carries one positive execute direction: search
 // and process content with execute.
 func TestBriefDirectsExecute(t *testing.T) {
-	t.Setenv("EMBERLOOP_STATE", filepath.Join(t.TempDir(), "workers.json"))
+	t.Setenv("EL_STATE", filepath.Join(t.TempDir(), "workers.json"))
 	path, err := writeBrief("01-probe", "/repo/.scratch/p/issues/01-probe.md", "/repo/.scratch/p/spec.md", "spec/p", "pig")
 	if err != nil {
 		t.Fatal(err)

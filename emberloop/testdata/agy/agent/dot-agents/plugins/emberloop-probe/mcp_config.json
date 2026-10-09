@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "emberloop-probe": {
+    "el-probe": {
       "command": "<ABS path to testdata/agy/mcp-shim/mcp-shim.sh>",
       "args": [],
       "env": {

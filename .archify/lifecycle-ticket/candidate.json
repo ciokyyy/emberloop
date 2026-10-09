@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Ticket lifecycle",
+    "output": ".archify/lifecycle-ticket/ticket-lifecycle.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "main", "label": "Happy path" },
+    { "id": "loop", "label": "Rework" },
+    { "id": "terminal", "label": "Outcome" }
+  ],
+  "states": [
+    { "id": "spawned", "type": "start", "label": "Spawned", "sublabel": "worker in worktree", "lane": "main", "col": 0, "step": "01" },
+    { "id": "implementing", "type": "active", "label": "Implementing", "sublabel": "code, tdd, check", "lane": "main", "col": 1, "step": "02" },
+    { "id": "submitted", "type": "waiting", "label": "Submitted", "sublabel": "done reported", "lane": "main", "col": 2, "step": "03" },
+    { "id": "review", "type": "decision", "label": "In review", "sublabel": "spec + standards", "lane": "main", "col": 3, "step": "04" },
+    { "id": "gate", "type": "decision", "label": "Gate", "sublabel": "vet + test", "lane": "main", "col": 4, "step": "05" },
+    { "id": "rework", "type": "active", "label": "Rework", "sublabel": "same worker", "lane": "loop", "col": 3 },
+    { "id": "blocked", "type": "waiting", "label": "Blocked", "sublabel": "orchestrator decides", "lane": "loop", "col": 1 },
+    { "id": "merged", "type": "success", "label": "Merged", "sublabel": "into spec branch", "lane": "terminal", "col": 4 }
+  ],
+  "transitions": [
+    { "from": "spawned", "to": "implementing" },
+    { "from": "implementing", "to": "submitted", "label": "done" },
+    { "from": "submitted", "to": "review" },
+    { "from": "review", "to": "gate", "label": "both pass", "variant": "emphasis" },
+    { "from": "gate", "to": "merged", "label": "pass", "variant": "emphasis" },
+    { "from": "review", "to": "rework", "label": "findings", "variant": "dashed" },
+    { "from": "gate", "to": "rework", "label": "fail", "variant": "dashed" },
+    { "from": "rework", "to": "submitted", "label": "done", "variant": "dashed" },
+    { "from": "implementing", "to": "blocked", "label": "blocked", "variant": "security" },
+    { "from": "blocked", "to": "implementing", "label": "unblocked", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Rework loop", "items": ["Findings and gate failures return to the same worker"] },
+    { "dot": "emerald", "title": "Only exit", "items": ["Merged needs a passing gate and both reviewers"] }
+  ]
+}

@@ -9,7 +9,7 @@ import (
 )
 
 // Seam: settings search command — search.provider and search.mode are
-// settable through emberloop settings, validated, and printed with sources.
+// settable through el settings, validated, and printed with sources.
 
 func TestSettingsSearchSetsProvider(t *testing.T) {
 	settingsFile(t)

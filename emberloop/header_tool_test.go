@@ -1,4 +1,4 @@
-package emberloop
+package el
 
 import (
 	"strings"
@@ -13,10 +13,10 @@ func TestToolLabel(t *testing.T) {
 		running bool
 		want    string
 	}{
-		{ToolCall{Name: "mcp__emberloop__read", Arg: "/home/dev/emberloop/header.go"}, true, "▤ reading emberloop/header.go"},
-		{ToolCall{Name: "mcp__emberloop__spawn", Arg: "scout, reviewer-spec"}, true, "⑂ spawning scout, reviewer-spec"},
-		{ToolCall{Name: "mcp__emberloop__edit", Arg: "a/b/c.go"}, false, "✎ edited a/b/c.go"},
-		{ToolCall{Name: "mcp__emberloop__bash", Arg: "go test ./...\nsecond line"}, true, "❯ running go test ./..."},
+		{ToolCall{Name: "mcp__el__read", Arg: "/home/dev/emberloop/header.go"}, true, "▤ reading emberloop/header.go"},
+		{ToolCall{Name: "mcp__el__spawn", Arg: "scout, reviewer-spec"}, true, "⑂ spawning scout, reviewer-spec"},
+		{ToolCall{Name: "mcp__el__edit", Arg: "a/b/c.go"}, false, "✎ edited a/b/c.go"},
+		{ToolCall{Name: "mcp__el__bash", Arg: "go test ./...\nsecond line"}, true, "❯ running go test ./..."},
 		{ToolCall{Name: "Read", Arg: "x.go"}, true, "▤ reading x.go"},
 		{ToolCall{Name: "mcp__other__thing"}, true, "▸ thing"},
 	} {
@@ -42,7 +42,7 @@ func TestShortArgEllipsis(t *testing.T) {
 	}
 }
 
-// Every tool emberloop serves needs a strip label: a glyph and a verb pair in
+// Every tool el serves needs a strip label: a glyph and a verb pair in
 // toolStyles. A new tool without one would show as a bare name.
 func TestEveryServedToolHasAStripLabel(t *testing.T) {
 	names := []string{"spawn", "submit"}
@@ -58,18 +58,18 @@ func TestEveryServedToolHasAStripLabel(t *testing.T) {
 
 func TestSummarizeContextTracksRunningAndLastTool(t *testing.T) {
 	transcript := strings.Join([]string{
-		`{"type":"assistant","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"a","name":"mcp__emberloop__read","input":{"path":"/x/y/z.go"}}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"a","name":"mcp__el__read","input":{"path":"/x/y/z.go"}}]}}`,
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"hello"}]}}`,
-		`{"type":"assistant","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"b","name":"mcp__emberloop__spawn","input":{"agents":[{"type":"scout"},{"type":"reviewer-spec"}]}}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","model":"m","content":[{"type":"tool_use","id":"b","name":"mcp__el__spawn","input":{"agents":[{"type":"scout"},{"type":"reviewer-spec"}]}}]}}`,
 	}, "\n")
 	snap, err := SummarizeContext("claude", strings.NewReader(transcript))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Running.Name != "mcp__emberloop__spawn" || snap.Running.Arg != "scout, reviewer-spec" {
+	if snap.Running.Name != "mcp__el__spawn" || snap.Running.Arg != "scout, reviewer-spec" {
 		t.Errorf("running = %+v", snap.Running)
 	}
-	if snap.Last.Name != "mcp__emberloop__read" || snap.Last.Arg != "/x/y/z.go" || snap.Last.Bytes != 5 {
+	if snap.Last.Name != "mcp__el__read" || snap.Last.Arg != "/x/y/z.go" || snap.Last.Bytes != 5 {
 		t.Errorf("last = %+v", snap.Last)
 	}
 }
