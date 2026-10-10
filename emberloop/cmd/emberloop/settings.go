@@ -21,9 +21,10 @@ const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max
        el settings search provider|mode <value>
        el settings tool <name> enabled|placement|rename <value>
        el settings tool <name> role <role> enabled|placement <value>
-       el settings mcp-server <name> command|args|placement|summary|include|exclude <value>
-       el settings mcp-server <name> env <KEY=VALUE>
+       el settings mcp-server <name> command|args|url|placement|summary|include|exclude <value>
+       el settings mcp-server <name> env|headers <KEY=VALUE>
        el settings mcp-server <name> rename <ORIG=NEW>
+       el settings mcp-server <name> oauth callback-port|client-name|metadata-url|scopes <value>
        el settings mcp-server <name> role <role> enabled|placement <value>
        el settings mcp-server remove <name>`
 
@@ -770,10 +771,12 @@ func setSearch(s *tools.Settings, argv []string) error {
 }
 
 // setMCPServer applies `mcp-server ...` to s: field edits on a named server,
-// or `mcp-server remove <name>`. Lists (args, include, exclude) are comma
-// separated and replace; an empty value clears them. env takes one KEY=VALUE
-// pair (an empty value deletes the key); rename takes one ORIG=NEW pair (an
-// empty NEW deletes the mapping).
+// or `mcp-server remove <name>`. Lists (args, include, exclude, scopes) are
+// comma separated and replace; an empty value clears them. env and headers
+// take one KEY=VALUE pair (an empty value deletes the key); rename takes one
+// ORIG=NEW pair (an empty NEW deletes the mapping). url is the Streamable-HTTP
+// endpoint (set it instead of command); oauth tunes one field of the entry's
+// browser-OAuth block.
 func setMCPServer(s *tools.Settings, argv []string) (string, error) {
 	if len(argv) == 0 {
 		return "", fmt.Errorf("mcp-server needs a name\n%s", settingsUsage)
@@ -824,6 +827,17 @@ func setMCPServer(s *tools.Settings, argv []string) (string, error) {
 		s.MCPServers[name] = e
 		return "", nil
 	}
+	if len(argv) > 1 && argv[1] == "oauth" {
+		if len(argv) != 4 {
+			return "", fmt.Errorf("mcp-server oauth needs a name, a field and a value\n%s", settingsUsage)
+		}
+		e := serverEntry(s, name)
+		if err := setMCPServerOAuth(&e, argv[2], argv[3]); err != nil {
+			return "", fmt.Errorf("%v\n%s", err, settingsUsage)
+		}
+		s.MCPServers[name] = e
+		return "", nil
+	}
 	if len(argv) != 3 {
 		return "", fmt.Errorf("mcp-server needs a name, a field and a value\n%s", settingsUsage)
 	}
@@ -837,19 +851,32 @@ func setMCPServer(s *tools.Settings, argv []string) (string, error) {
 		e.Command = value
 	case "args":
 		e.Args = splitList(value)
-	case "env":
+	case "env", "headers":
 		k, v, ok := strings.Cut(value, "=")
 		if !ok || strings.TrimSpace(k) == "" {
-			return "", fmt.Errorf("env needs KEY=VALUE\n%s", settingsUsage)
+			return "", fmt.Errorf("%s needs KEY=VALUE\n%s", field, settingsUsage)
 		}
-		if e.Env == nil {
-			e.Env = map[string]string{}
-		}
-		if v == "" {
-			delete(e.Env, k)
+		if field == "env" {
+			if e.Env == nil {
+				e.Env = map[string]string{}
+			}
+			if v == "" {
+				delete(e.Env, k)
+			} else {
+				e.Env[k] = v
+			}
 		} else {
-			e.Env[k] = v
+			if e.Headers == nil {
+				e.Headers = map[string]string{}
+			}
+			if v == "" {
+				delete(e.Headers, k)
+			} else {
+				e.Headers[k] = v
+			}
 		}
+	case "url":
+		e.URL = strings.TrimSpace(value)
 	case "placement":
 		if err := checkPlacement(value); err != nil {
 			return "", err
@@ -883,7 +910,7 @@ func setMCPServer(s *tools.Settings, argv []string) (string, error) {
 			e.Rename[orig] = renamed
 		}
 	default:
-		return "", fmt.Errorf("unknown mcp-server field %q (have command, args, env, placement, summary, include, exclude, rename)\n%s", field, settingsUsage)
+		return "", fmt.Errorf("unknown mcp-server field %q (have command, args, url, env, headers, placement, summary, include, exclude, rename, oauth)\n%s", field, settingsUsage)
 	}
 	s.MCPServers[name] = e
 	return "", nil
@@ -895,6 +922,44 @@ func serverEntry(s *tools.Settings, name string) tools.MCPServerSetting {
 		s.MCPServers = map[string]tools.MCPServerSetting{}
 	}
 	return s.MCPServers[name]
+}
+
+// setMCPServerOAuth applies `mcp-server <name> oauth <field> <value>` to e:
+// one field of the entry's oauth block. An empty value clears the field; a
+// cleared block leaves no oauth behind. An unknown field names the four it
+// takes.
+func setMCPServerOAuth(e *tools.MCPServerSetting, field, value string) error {
+	o := e.OAuth
+	if o == nil {
+		o = &tools.MCPOAuthSetting{}
+	}
+	switch field {
+	case "callback-port":
+		if strings.TrimSpace(value) == "" {
+			o.CallbackPort = 0
+			break
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || v < 0 || v > 65535 {
+			return fmt.Errorf("oauth callback-port %q is not a port number", value)
+		}
+		o.CallbackPort = v
+	case "client-name":
+		o.ClientName = strings.TrimSpace(value)
+	case "metadata-url":
+		o.MetadataURL = strings.TrimSpace(value)
+	case "scopes":
+		o.Scopes = splitList(value)
+	default:
+		return fmt.Errorf("unknown mcp-server oauth field %q (have callback-port, client-name, metadata-url, scopes)", field)
+	}
+	empty := o.CallbackPort == 0 && o.ClientName == "" && o.MetadataURL == "" && len(o.Scopes) == 0
+	if empty {
+		e.OAuth = nil
+		return nil
+	}
+	e.OAuth = o
+	return nil
 }
 
 // splitList cuts a comma-separated flag value. Empty entries drop out, and an
@@ -1058,8 +1123,6 @@ func printToolSettings(out io.Writer, s tools.Settings) {
 		sort.Strings(roles)
 		for _, role := range roles {
 			ov := e.Roles[role]
-			// The role line folds the entry, the way the resolver does: an
-			// override the files do not set inherits the entry's value.
 			enabled, enabledSrc := foldEnabled("tools."+name+".roles."+role+".enabled", ov.Enabled, "tools."+name+".enabled", e.Enabled, s)
 			placement, placementSrc := foldPlacement("tools."+name+".roles."+role+".placement", ov.Placement, "tools."+name+".placement", e.Placement, tools.PlacementMain, s)
 			fmt.Fprintf(out, "    %s: enabled %t (%s), placement %s (%s)\n",
@@ -1086,6 +1149,9 @@ func printMCPServers(out io.Writer, s tools.Settings) {
 		line := fmt.Sprintf("  %s: command %q (%s), placement %s (%s)",
 			name, e.Command, s.SourceOf("mcp_servers."+name+".command"),
 			orDefault(e.Placement, tools.PlacementExecute), s.SourceOf("mcp_servers."+name+".placement"))
+		if e.URL != "" {
+			line += fmt.Sprintf(", url %q (%s)", e.URL, s.SourceOf("mcp_servers."+name+".url"))
+		}
 		if e.Args != nil {
 			line += fmt.Sprintf(", args [%s] (%s)", strings.Join(e.Args, " "), s.SourceOf("mcp_servers."+name+".args"))
 		}
@@ -1099,6 +1165,17 @@ func printMCPServers(out io.Writer, s tools.Settings) {
 			}
 			sort.Strings(keys)
 			line += fmt.Sprintf(", env [%s] (%s)", strings.Join(keys, " "), s.SourceOf("mcp_servers."+name+".env"))
+		}
+		if e.Headers != nil {
+			keys := make([]string, 0, len(e.Headers))
+			for k := range e.Headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			line += fmt.Sprintf(", headers [%s] (%s)", strings.Join(keys, " "), s.SourceOf("mcp_servers."+name+".headers"))
+		}
+		if e.OAuth != nil {
+			line += fmt.Sprintf(", oauth {%s} (%s)", strings.Join(oauthPrintFields(e.OAuth), " "), s.SourceOf("mcp_servers."+name+".oauth"))
 		}
 		if e.Include != nil {
 			line += fmt.Sprintf(", include [%s] (%s)", strings.Join(e.Include, " "), s.SourceOf("mcp_servers."+name+".include"))
@@ -1128,6 +1205,25 @@ func printMCPServers(out io.Writer, s tools.Settings) {
 				role, enabled, enabledSrc, placement, placementSrc)
 		}
 	}
+}
+
+// oauthPrintFields renders an oauth block as field=value pairs for the
+// settings printout: values, never secrets (tokens live outside settings).
+func oauthPrintFields(o *tools.MCPOAuthSetting) []string {
+	var out []string
+	if o.CallbackPort != 0 {
+		out = append(out, fmt.Sprintf("callback-port=%d", o.CallbackPort))
+	}
+	if o.ClientName != "" {
+		out = append(out, "client-name="+o.ClientName)
+	}
+	if o.MetadataURL != "" {
+		out = append(out, "metadata-url="+o.MetadataURL)
+	}
+	if len(o.Scopes) > 0 {
+		out = append(out, "scopes="+strings.Join(o.Scopes, ","))
+	}
+	return out
 }
 
 // foldEnabled folds an override flag over its entry flag: the override wins

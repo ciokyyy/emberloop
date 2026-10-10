@@ -551,12 +551,18 @@ func (c *Client) Close() {
 	c.failAllLocked(c.generation, fmt.Errorf("mcp server %q: client is closed", c.name))
 }
 
+// mcpCaller calls one server-side tool by its original name. Both transports
+// satisfy it: the stdio Client and the Streamable-HTTP mcpHTTPClient.
+type mcpCaller interface {
+	CallTool(ctx context.Context, tool string, args json.RawMessage) (string, error)
+}
+
 // mcpTool serves one remote tool as a tools.Tool under its configured name.
 // OriginalName is the server-side name the call goes out with, so the
 // resolution can match include and exclude globs over the original even after
 // a rename.
 type mcpTool struct {
-	client      *Client
+	client      mcpCaller
 	server      string
 	original    string
 	name        string
@@ -569,52 +575,65 @@ func (t *mcpTool) Name() string { return t.name }
 
 // OriginalName is the tool's name on its server, before the rename.
 func (t *mcpTool) OriginalName() string { return t.original }
-
 func (t *mcpTool) Description() string {
 	if t.description == "" {
 		return fmt.Sprintf("MCP tool %q from server %q.", t.original, t.server)
 	}
 	return t.description
 }
-
 func (t *mcpTool) Schema() map[string]any {
 	if t.schema == nil {
 		return map[string]any{"type": "object"}
 	}
 	return t.schema
 }
-
 func (t *mcpTool) ReadOnly() bool { return t.readOnly }
 
 // MCPServer names the configured server the tool was listed from. The
 // execute stub reads it to serve the tool as tools.<server>.<name> beside
 // its configured name; renames forward it through the embedded Tool.
 func (t *mcpTool) MCPServer() string { return t.server }
-
 func (t *mcpTool) Execute(ctx context.Context, _ string, args json.RawMessage) (string, error) {
 	return t.client.CallTool(ctx, t.original, args)
 }
 
 // Registry holds one client per configured server for the el-mcp process.
-// Servers are never shared across sessions: build one registry per process
-// and Close it when the process ends.
+// A server is either a stdio child or a Streamable-HTTP session, chosen by
+// whether its entry sets command or url. Servers are never shared across
+// sessions: build one registry per process and Close it when the process
+// ends.
 type Registry struct {
 	mu          sync.Mutex
 	clients     map[string]*Client
+	httpClients map[string]*mcpHTTPClient
+	bad         map[string]error
 	initTimeout time.Duration
 	callTimeout time.Duration
 }
 
 // NewRegistry holds the configured servers without starting any of them. A
-// nil map is an empty registry.
+// nil map is an empty registry. An entry with url dials a Streamable-HTTP
+// server; one with command spawns a stdio child. An entry with both or
+// neither is held as an error its first use reports.
 func NewRegistry(cfgs map[string]MCPServerSetting) *Registry {
 	r := &Registry{
 		clients:     map[string]*Client{},
+		httpClients: map[string]*mcpHTTPClient{},
+		bad:         map[string]error{},
 		initTimeout: DefaultMCPInitTimeout,
 		callTimeout: DefaultMCPCallTimeout,
 	}
 	for name, cfg := range cfgs {
-		r.clients[name] = newClient(name, cfg, r.initTimeout, r.callTimeout)
+		switch {
+		case cfg.URL != "" && cfg.Command != "":
+			r.bad[name] = fmt.Errorf("mcp server %q: set either command or url, not both", name)
+		case cfg.URL != "":
+			r.httpClients[name] = newMCPHTTPClient(name, cfg, r.initTimeout, r.callTimeout)
+		case cfg.Command != "":
+			r.clients[name] = newClient(name, cfg, r.initTimeout, r.callTimeout)
+		default:
+			r.bad[name] = fmt.Errorf("mcp server %q: no command or url configured", name)
+		}
 	}
 	return r
 }
@@ -628,14 +647,23 @@ func (r *Registry) SetTimeouts(init, call time.Duration) {
 	for _, c := range r.clients {
 		c.setTimeouts(init, call)
 	}
+	for _, c := range r.httpClients {
+		c.setTimeouts(init, call)
+	}
 }
 
 // Servers names every configured server, sorted.
 func (r *Registry) Servers() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]string, 0, len(r.clients))
+	out := make([]string, 0, len(r.clients)+len(r.httpClients)+len(r.bad))
 	for name := range r.clients {
+		out = append(out, name)
+	}
+	for name := range r.httpClients {
+		out = append(out, name)
+	}
+	for name := range r.bad {
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -648,15 +676,27 @@ func (r *Registry) Servers() []string {
 func (r *Registry) Tools(ctx context.Context, server string) ([]Tool, error) {
 	r.mu.Lock()
 	c, ok := r.clients[server]
+	h, hok := r.httpClients[server]
+	bad := r.bad[server]
 	r.mu.Unlock()
-	if !ok {
+	switch {
+	case bad != nil:
+		return nil, bad
+	case ok:
+		remote, err := c.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return shapeTools(c.cfg, server, c, remote), nil
+	case hok:
+		remote, err := h.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return shapeTools(h.cfg, server, h, remote), nil
+	default:
 		return nil, fmt.Errorf("unknown mcp server %q", server)
 	}
-	remote, err := c.ListTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return shapeTools(c.cfg, c, remote), nil
 }
 
 // Snapshot lists every configured server, in sorted order. A server that
@@ -675,18 +715,22 @@ func (r *Registry) Snapshot(ctx context.Context) (map[string][]Tool, []error) {
 	return listed, errs
 }
 
-// Close kills every server child. A registry is done after Close.
+// Close kills every server child and drops every HTTP session. A registry is
+// done after Close.
 func (r *Registry) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, c := range r.clients {
 		c.Close()
 	}
+	for _, c := range r.httpClients {
+		c.Close()
+	}
 }
 
 // shapeTools filters a listing by include and exclude globs over each tool's
 // original name and serves survivors under their renamed names.
-func shapeTools(cfg MCPServerSetting, c *Client, remote []remoteTool) []Tool {
+func shapeTools(cfg MCPServerSetting, server string, caller mcpCaller, remote []remoteTool) []Tool {
 	var out []Tool
 	for _, rt := range remote {
 		if len(cfg.Include) > 0 && !matchMCPGlobs(cfg.Include, rt.name) {
@@ -700,7 +744,7 @@ func shapeTools(cfg MCPServerSetting, c *Client, remote []remoteTool) []Tool {
 			name = renamed
 		}
 		out = append(out, &mcpTool{
-			client: c, server: c.name, original: rt.name, name: name,
+			client: caller, server: server, original: rt.name, name: name,
 			description: rt.description, schema: rt.schema, readOnly: rt.readOnly,
 		})
 	}

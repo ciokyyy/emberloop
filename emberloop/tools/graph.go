@@ -202,11 +202,19 @@ func WithGraphServer(s Settings) Settings {
 func (r *Registry) Call(ctx context.Context, server, tool string, args json.RawMessage) (string, error) {
 	r.mu.Lock()
 	c, ok := r.clients[server]
+	h, hok := r.httpClients[server]
+	bad := r.bad[server]
 	r.mu.Unlock()
-	if !ok {
+	switch {
+	case bad != nil:
+		return "", bad
+	case ok:
+		return c.CallTool(ctx, tool, args)
+	case hok:
+		return h.CallTool(ctx, tool, args)
+	default:
 		return "", fmt.Errorf("unknown mcp server %q", server)
 	}
-	return c.CallTool(ctx, tool, args)
 }
 
 // GraphStatusCall runs one graph-server tool by name; the gate and the

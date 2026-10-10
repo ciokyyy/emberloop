@@ -867,3 +867,77 @@ func TestSettingsRefusesCompressModelWithTooSmallAWindow(t *testing.T) {
 		t.Errorf("refused model must not save, got %q", got)
 	}
 }
+
+// `settings mcp-server` tunes an HTTP server too: url, static headers and
+// the oauth block. The printout shows the url, the header keys (never the
+// secret values) and the oauth fields.
+func TestSettingsSetsMCPServerHTTPFields(t *testing.T) {
+	settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"mcp-server", "didww", "url", "https://api.didww.com/mcp"},
+		{"mcp-server", "didww", "headers", "Authorization=Bearer secret-value"},
+		{"mcp-server", "didww", "oauth", "client-name", "el"},
+		{"mcp-server", "didww", "oauth", "callback-port", "8377"},
+		{"mcp-server", "didww", "oauth", "scopes", "read,write"},
+		{"mcp-server", "didww", "oauth", "metadata-url", "https://auth.example.com/.well-known/oauth-authorization-server"},
+	} {
+		if err := runSettings(argv, &out, noModels); err != nil {
+			t.Fatalf("%v: %v", argv, err)
+		}
+	}
+	got := tools.LoadSettings().MCPServers["didww"]
+	if got.URL != "https://api.didww.com/mcp" {
+		t.Fatalf("server url not saved: %+v", got)
+	}
+	if got.Headers["Authorization"] != "Bearer secret-value" {
+		t.Fatalf("server headers not saved: %+v", got.Headers)
+	}
+	if got.OAuth == nil || got.OAuth.ClientName != "el" || got.OAuth.CallbackPort != 8377 {
+		t.Fatalf("server oauth not saved: %+v", got.OAuth)
+	}
+	if len(got.OAuth.Scopes) != 2 || got.OAuth.Scopes[0] != "read" {
+		t.Fatalf("server oauth scopes not saved: %+v", got.OAuth.Scopes)
+	}
+	if got.OAuth.MetadataURL != "https://auth.example.com/.well-known/oauth-authorization-server" {
+		t.Fatalf("server oauth metadata url not saved: %+v", got.OAuth)
+	}
+	printed := out.String()
+	for _, want := range []string{
+		`url "https://api.didww.com/mcp" (file)`,
+		"headers [Authorization] (file)",
+		"callback-port=8377",
+		"client-name=el",
+		"scopes=read,write",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("printout lacks %q, got:\n%s", want, printed)
+		}
+	}
+	if strings.Contains(printed, "secret-value") {
+		t.Errorf("printout leaks the header secret, got:\n%s", printed)
+	}
+}
+
+// Bad oauth edits fail with the usage and save nothing: an unknown field, a
+// non-port, or the wrong argument count.
+func TestSettingsRejectsBadMCPServerOAuthEdits(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	for _, argv := range [][]string{
+		{"mcp-server", "didww", "oauth", "client-id", "x"},
+		{"mcp-server", "didww", "oauth", "callback-port", "http"},
+		{"mcp-server", "didww", "oauth", "callback-port", "99999"},
+		{"mcp-server", "didww", "oauth", "client-name"},
+		{"mcp-server", "didww", "headers", "NOEQUALS"},
+	} {
+		if err := runSettings(argv, &out, noModels); err == nil {
+			t.Errorf("%v should be an error", argv)
+		} else if !strings.Contains(err.Error(), "usage") {
+			t.Errorf("%v error %q should carry the usage line", argv, err)
+		}
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected server edit must not be saved")
+	}
+}
