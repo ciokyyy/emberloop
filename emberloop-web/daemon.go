@@ -208,6 +208,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/runs/", d.handleRunSub)
 	mux.HandleFunc("/api/projects", d.handleProjects)
 	mux.HandleFunc("/api/projects/", d.handleProjectSub)
+	mux.HandleFunc("/api/quota", d.handleQuota)
+	mux.HandleFunc("/api/quota/refresh", d.handleQuotaRefresh)
 	return guardHosts(mux, d.allowHosts, d.allowTailnet)
 }
 

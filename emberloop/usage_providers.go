@@ -158,10 +158,22 @@ func usageCacheAge(stateDir, key string, now time.Time) time.Duration {
 // one request serves them all. Failure keeps the old cache: a stale number
 // beats a blank one, and the next interval retries.
 func RefreshUsage(ctx context.Context, stateDir, key string, now time.Time) error {
+	return refreshUsage(ctx, stateDir, key, now, false)
+}
+
+// RefreshUsageForce refetches the account behind key even when its cache is
+// still fresh: the quota page's manual refresh. The per-key lock stays, so N
+// viewers still cause one upstream request, and failure still keeps the old
+// cache. Header panes keep calling RefreshUsage.
+func RefreshUsageForce(ctx context.Context, stateDir, key string, now time.Time) error {
+	return refreshUsage(ctx, stateDir, key, now, true)
+}
+
+func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, force bool) error {
 	if key == "" || key == usageKeyClaude {
 		return nil
 	}
-	if usageCacheAge(stateDir, key, now) < usageRefreshEvery {
+	if !force && usageCacheAge(stateDir, key, now) < usageRefreshEvery {
 		return nil
 	}
 	dir := stateDir
@@ -180,7 +192,7 @@ func RefreshUsage(ctx context.Context, stateDir, key string, now time.Time) erro
 		return nil // another pane is fetching
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	if usageCacheAge(stateDir, key, now) < usageRefreshEvery {
+	if !force && usageCacheAge(stateDir, key, now) < usageRefreshEvery {
 		return nil
 	}
 	switch key {

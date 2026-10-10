@@ -43,9 +43,17 @@ the driver ticks boxes and marks done, nothing else writes them.
   reload with nothing spawned, pause, resume without a second Worker, and
   finished Runs staying listed, at the same seam; `RunsView.test.js` covers
   the live Ticket table with Worker links, the verdict columns, and the
-  paused state with its Resume button; `pig_test.go` does the same with the
-  pig Backend on the SDK test-faux provider, and `pig_live_test.go`
-  (env-gated) with a real pig.
+  paused state with its Resume button; `quota_test.go` covers
+  `GET /api/quota` and `POST /api/quota/refresh` with local HTTP stubs for
+  the opencode and Antigravity endpoints (cards, not-configured, stale
+  fallback, forced refresh, Claude re-read, unknown-key 400); `pig_test.go`
+  does the same with the pig Backend on the SDK test-faux provider, and
+  `pig_live_test.go` (env-gated) with a real pig.
+- `quota.go` serves the Quota tab data off el's shared usage cache:
+  `GET /api/quota` (guarded refresh, then read) and
+  `POST /api/quota/refresh` with optional `key` (forced past the age guard,
+  Claude re-reads its file only). Same `{providers:[...]}` shape both ways;
+  per-card `ok` / `not_configured` / `error` with stale windows kept.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
   ExtraTools plus the per-Session spawn tool (scouts: ExtraTools without
   spawn), models from the SDK catalog filtered to providers with usable auth

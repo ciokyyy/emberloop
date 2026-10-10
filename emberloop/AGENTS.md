@@ -143,7 +143,9 @@ owns its `_test.go` and the behaviour below):
   from their usage endpoints with pig's stored login, one fetch per 90 s
   per account across all panes, cached as `usage-<key>.json` in the state
   dir. A new provider adds a key in `UsageKeyFor` and a fetcher in
-  `RefreshUsage`),
+  `RefreshUsage`), `quota_api.go` (the Quota-tab snapshot over the same cache:
+  per-card state, `RefreshQuota` with the force option behind the shared lock,
+  no fetch logic of its own),
   `theme.go` (the shared palette: Catppuccin Mocha and Latte driving the
   strip, the generated claude and pig themes and the OSC pane colors;
   per-run launch flags plus two emberloop-named claude theme files in its config
