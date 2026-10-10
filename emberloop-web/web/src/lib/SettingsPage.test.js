@@ -150,7 +150,7 @@ describe('SettingsPage context compression', () => {
     expect(threshold.value).toBe('70');
     expect(within(container).getByLabelText('Turns').value).toBe('3');
     expect(within(container).getByLabelText('Summary focus').value).toBe('keep ids');
-    expect(within(container).getByLabelText('Auto-compress').textContent).toMatch(/off/i);
+    expect(within(container).getByLabelText('Auto-compress').getAttribute('aria-checked')).toBe('false');
 
     await fireEvent.input(within(container).getByLabelText('Summary focus'), { target: { value: 'keep paths' } });
     await tick();
@@ -169,7 +169,7 @@ describe('SettingsPage context compression', () => {
     const { container } = render(SettingsPage);
     expect((await within(container).findByLabelText('Threshold %')).value).toBe('80');
     expect(within(container).getByLabelText('Turns').value).toBe('5');
-    expect(within(container).getByLabelText('Auto-compress').textContent).toMatch(/on/i);
+    expect(within(container).getByLabelText('Auto-compress').getAttribute('aria-checked')).toBe('true');
   });
 
   it('disables threshold and cooldown while auto-compress is off', async () => {

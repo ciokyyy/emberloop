@@ -3,6 +3,7 @@
   import { ArrowLeft, Check } from '@lucide/svelte';
   import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
+  import Switch from './ui/switch.svelte';
   import Button from './ui/button.svelte';
   import FloatingInput from './ui/floating-input.svelte';
   import Combobox from './ui/combobox.svelte';
@@ -36,10 +37,6 @@
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
   const effortItems = ['low', 'medium', 'high', 'max'].map((e) => ({ value: e, label: e[0].toUpperCase() + e.slice(1) }));
   // The pig naming model is optional: "None" clears the role, so pig Sessions stay unnamed.
-  const onOffItems = [
-    { value: 'on', label: 'On' },
-    { value: 'off', label: 'Off' },
-  ];
 
   let roles = $state({});
   let maxWorkers = $state('3');
@@ -204,7 +201,7 @@
                 <div class="text-sm font-medium">Auto-compress</div>
                 <div class="text-xs text-muted-foreground">Runs after a turn when the context passes the threshold.</div>
               </div>
-              <Combobox class="h-10" aria-label="Auto-compress" bind:value={compress.auto} items={onOffItems} />
+              <Switch aria-label="Auto-compress" checked={compress.auto === 'on'} onCheckedChange={(v) => (compress.auto = v ? 'on' : 'off')} />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">
@@ -254,7 +251,7 @@
                   {#if titlesLocked}Set by the EL_SESSION_TITLES environment variable. Unset it to edit here.{:else}Titled by Haiku. Turn off to keep the harness and id label.{/if}
                 </div>
               </div>
-              <Combobox class="h-10" aria-label="Name claude Sessions" bind:value={sessionTitles} items={onOffItems} disabled={titlesLocked} />
+              <Switch aria-label="Name claude Sessions" checked={sessionTitles === 'on'} onCheckedChange={(v) => (sessionTitles = v ? 'on' : 'off')} disabled={titlesLocked} />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">

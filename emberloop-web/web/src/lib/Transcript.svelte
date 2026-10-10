@@ -136,20 +136,30 @@
   // once. A downward scroll never unpins (mid-glide the gap is large); it
   // re-pins once near the bottom. No flag to leak when a step fires no event.
   let lastTop = 0;
+  let lastHeight = 0;
   let jumpUntil = 0;
+  // Whether the view sits at the end, whatever the pin state: drives the
+  // jump button so it never shows while the user is already down.
+  let nearBottom = $state(true);
   function onScroll() {
     if (!scrollEl) return;
     const top = scrollEl.scrollTop;
+    const height = scrollEl.scrollHeight;
+    // Content that shrinks (a tool stage swapping to a shorter output)
+    // clamps scrollTop down by itself: that is not the user either.
+    const shrunk = height < lastHeight - 1;
     const movedUp = top < lastTop - 1;
     lastTop = top;
+    lastHeight = height;
+    nearBottom = isNearBottom(scrollEl);
     // While a jump to latest runs, rows above the view re-measure and the
     // virtualizer shifts scrollTop up on its own: that is not the user.
     // Wheel, touch and key input still unpin.
-    if (movedUp && performance.now() > jumpUntil) {
+    if (movedUp && !shrunk && !nearBottom && performance.now() > jumpUntil) {
       stuck = false;
       return;
     }
-    if (!stuck && isNearBottom(scrollEl)) stuck = true;
+    if (!stuck && nearBottom && !movedUp) stuck = true;
   }
 
   // Wheel, touch and key input away from the bottom unpin before the next
@@ -195,6 +205,8 @@
     const el = scrollEl;
     if (!node || !el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
+      lastHeight = el.scrollHeight;
+      nearBottom = isNearBottom(el);
       if (stuck) glideToBottom();
     });
     ro.observe(node);
@@ -307,7 +319,7 @@
       {/each}
     {/if}
   </div>
-  {#if !stuck && blocks.length}
+  {#if !stuck && !nearBottom && blocks.length}
     <div class="sticky bottom-2 flex justify-center">
       <Button variant="secondary" size="sm" class="shadow-lg" onclick={jumpLatest}>↓ Latest</Button>
     </div>

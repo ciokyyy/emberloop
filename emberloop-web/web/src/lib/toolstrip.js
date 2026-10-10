@@ -53,6 +53,7 @@ export function outputKind(name = '') {
 // these to @lucide/svelte components.
 export function toolIcon(name = '') {
   const n = String(name ?? '').toLowerCase();
+  if (n === 'thinking') return 'thinking';
   if (n.includes('grep') || n.includes('glob') || n.includes('search')) return 'grep';
   if (n.includes('edit') || n.includes('patch')) return 'edit';
   if (n.includes('write') || n.includes('create')) return 'write';

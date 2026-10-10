@@ -192,3 +192,18 @@ describe('spawn tool call', () => {
     expect(groupTranscript([spawn(1, 'failed')])[0].card).toBe('tool');
   });
 });
+
+describe('thinking inside a tool burst', () => {
+  it('joins the open strip as a thinking run between tools', () => {
+    const ev = (seq, kind, extra) => ({ seq, kind, at: new Date(seq * 1000).toISOString(), ...extra });
+    const blocks = groupTranscript([
+      ev(1, 'tool_call_started', { text: 'bash\n{"command":"ls"}' }),
+      ev(2, 'thinking_chunk', { text: 'plan **next**' }),
+      ev(3, 'tool_call_started', { text: 'read\n{"path":"a"}' }),
+    ]);
+    const strips = blocks.filter((b) => b.card === 'toolstrip');
+    expect(strips).toHaveLength(1);
+    expect(strips[0].runs.map((r) => r.name)).toEqual(['bash', 'thinking', 'read']);
+    expect(strips[0].runs[1].thinking).toBe(true);
+  });
+});

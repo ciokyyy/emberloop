@@ -320,6 +320,20 @@ export function groupTranscript(events, sessionsById = {}, opts = {}) {
     // Thinking arrives as paragraph chunks split by whitespace-only
     // separators: join consecutive ones, drop a leading blank.
     if (c.card === 'thinking') {
+      // Thinking between tool calls joins the open strip as its own run.
+      if (last?.card === 'toolstrip') {
+        const lr = last.runs[last.runs.length - 1];
+        if (lr?.thinking) {
+          lr.output += c.body;
+          lr.events.push(e);
+          last.events.push(e);
+          continue;
+        }
+        if (!c.body.trim()) continue;
+        last.runs.push({ key: e.seq, name: 'thinking', thinking: true, input: '', output: c.body, status: 'completed', events: [e] });
+        last.events.push(e);
+        continue;
+      }
       if (last?.card === 'thinking') {
         last.body += c.body;
         last.events.push(e);

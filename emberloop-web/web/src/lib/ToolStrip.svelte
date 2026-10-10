@@ -15,7 +15,9 @@
     Terminal,
     History,
     Wrench,
+    Brain,
   } from '@lucide/svelte';
+  import Markdown from './Markdown.svelte';
   import {
     highlightCode,
     highlightJson,
@@ -41,7 +43,7 @@
 
   let { block } = $props();
 
-  const glyphs = { read: FileText, grep: Search, edit: Pencil, write: FilePlus, bash: Terminal, tool: Wrench };
+  const glyphs = { read: FileText, grep: Search, edit: Pencil, write: FilePlus, bash: Terminal, tool: Wrench, thinking: Brain };
 
   const runs = $derived(block.runs ?? []);
   const settled = $derived(!!block.settled);
@@ -51,7 +53,7 @@
   const settledDone = $derived(isDone(current?.status));
   const doneCount = $derived(runs.filter((r) => isDone(r.status)).length);
   const progress = $derived(runs.length ? Math.round((doneCount / runs.length) * 100) : 0);
-  const summary = $derived(stripSummary(runs.length, block.elapsedMs ?? 0));
+  const summary = $derived(stripSummary(runs.filter((r) => !r.thinking).length || runs.length, block.elapsedMs ?? 0));
   const reduced = prefersReducedMotion();
   // Previous tools newest-first. A settled strip lists every run; a live one
   // keeps the current run on the stage.
@@ -134,6 +136,9 @@
 {#snippet tokens(segs, line)}{#if line === ''}{' '}{:else}{#each segs as sg}{#if sg.cls}<span class={sg.cls}>{sg.text}</span>{:else}{sg.text}{/if}{/each}{/if}{/snippet}
 
 {#snippet runOutput(run)}
+  {#if run?.thinking}
+    <Markdown text={run.output} class="text-sm text-muted-foreground" />
+  {:else}
   {@const kind = outputKind(run?.name)}
   {@const lines = splitOutputLines(run?.output || meaningfulInput(run?.input))}
   {@const empty = lines.length === 1 && lines[0] === ''}
@@ -178,6 +183,7 @@
       <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(highlightOutput(line), line)}</div>
     {/each}
   {/if}
+  {/if}
 {/snippet}
 
 <div
@@ -193,7 +199,7 @@
     </span>
     <span class="inline-flex min-w-0 items-center gap-1.5 font-medium">
       <HeadGlyph class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="truncate">{current?.name ?? 'tools'}</span>
+      <span class="truncate">{current?.thinking ? 'Thinking' : (current?.name ?? 'tools')}</span>
     </span>
     {#if current?.server}
       <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{current.server}</span>
@@ -259,7 +265,7 @@
               {@render statusIcon(run.status, isDone(run.status) && String(run.status).toLowerCase() !== 'failed' ? 'size-3.5 shrink-0 text-green-400' : String(run.status).toLowerCase() === 'failed' ? 'size-3.5 shrink-0 text-destructive' : 'size-3.5 shrink-0 text-muted-foreground')}
               <span class="inline-flex min-w-0 items-center gap-1.5 font-medium">
                 <RowGlyph class="size-3.5 shrink-0 text-muted-foreground" />
-                <span class="truncate">{run.name}</span>
+                <span class="truncate">{run.thinking ? 'Thinking' : run.name}</span>
               </span>
               {#if toolTarget(run)}
                 <span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{toolTarget(run)}</span>
