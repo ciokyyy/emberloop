@@ -8,8 +8,8 @@
 
 - [ ] Rail shows a Quota entry; `/quota` loads on reload and works with back/forward
 - [ ] Cards show bars colored by header thresholds, countdowns, Antigravity `gemini` and `3p` groups
-- [ ] Not-configured, error (with last values kept) and Claude stale states render
+- [x] Not-configured, error (with last values kept) and Claude stale states render
 - [ ] Per-card refresh and refresh-all call `POST /api/quota/refresh` and show a busy state
-- [ ] The page fetches once per visit and sets no timers; only the buttons update it afterward
-- [ ] vitest covers router, helpers and page behaviour
+- [x] The page fetches once per visit and sets no timers; only the buttons update it afterward
+- [x] vitest covers router, helpers and page behaviour
 - [ ] `emberloop-web/AGENTS.md` and root `AGENTS.md` index updated; repo check passes

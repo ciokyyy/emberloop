@@ -39,8 +39,8 @@ type Step struct {
 
 // binaries are the two programs built from the repo.
 var binaries = []struct{ name, dir, pkg string }{
-	{"el", "el", "./cmd/emberloop"},
-	{"el-mcp", "el", "./cmd/emberloop-mcp"},
+	{"el", "emberloop", "./cmd/emberloop"},
+	{"el-mcp", "emberloop", "./cmd/emberloop-mcp"},
 }
 
 // Steps lists the install steps for the given choices, in run order.

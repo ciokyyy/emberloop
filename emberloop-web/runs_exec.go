@@ -584,6 +584,12 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		Tell: func(ticketID, text string) error {
 			return d.runTellWorker(rs.ID, ticketID, text)
 		},
+		Working: func(ticketID string) bool {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			s, ok := d.sessions[rs.Sessions[ticketID]]
+			return ok && s.meta.Status == "working"
+		},
 		Submits: func(ticketID string) int {
 			return d.runSubmitCount(rs.ID, ticketID)
 		},

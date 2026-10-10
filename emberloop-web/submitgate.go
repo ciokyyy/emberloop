@@ -45,10 +45,30 @@ func (d *Daemon) gateBaseline(id string) (mark int64, harness string, gated bool
 	if len(s.events) > 0 {
 		mark = s.events[len(s.events)-1].Seq
 	}
-	if s.meta.ParentID == "" || s.meta.GroupID == "" {
+	if s.meta.ParentID == "" || (s.meta.GroupID == "" && !d.isRunWorkerLocked(id)) {
 		return mark, "", false
 	}
 	return mark, s.meta.Harness, true
+}
+
+// isRunWorkerLocked reports a Run ticket Worker Session (not a Reviewer);
+// callers hold d.mu. Run Workers are always gated, flag or not: a Worker
+// that ends a turn without submit stalls the whole Run.
+func (d *Daemon) isRunWorkerLocked(id string) bool {
+	s, ok := d.sessions[id]
+	if !ok {
+		return false
+	}
+	rs, ok := d.runs[s.meta.ParentID]
+	if !ok {
+		return false
+	}
+	for _, sid := range rs.Sessions {
+		if sid == id {
+			return true
+		}
+	}
+	return false
 }
 
 // gateSubmittedSince reports a submit Event after mark: the child submitted
@@ -100,7 +120,10 @@ func (d *Daemon) gateTurnStatus(id string) (status string, ok bool) {
 // While el.WebSubmitEnabled is false it returns at once: no reminders, no
 // give-up notice.
 func (d *Daemon) enforceSubmitGate(id string, be Backend, mark int64, harness string) {
-	if !el.WebSubmitEnabled {
+	d.mu.Lock()
+	runWorker := d.isRunWorkerLocked(id)
+	d.mu.Unlock()
+	if !el.WebSubmitEnabled && !runWorker {
 		return
 	}
 	// Pig is the harness that can pin (as in core); the SDK seam decides
@@ -122,7 +145,11 @@ func (d *Daemon) enforceSubmitGate(id string, be Backend, mark int64, harness st
 		case el.GateAllow:
 			return
 		case el.GateGiveUp:
-			d.giveUpWithoutSubmit(id)
+			// A Run Worker records no stopped submit: the driver's
+			// busy-aware stall nudge keeps chasing it.
+			if !runWorker {
+				d.giveUpWithoutSubmit(id)
+			}
 			return
 		case el.GatePin:
 			// A pin forces submit as the next tool call where the harness

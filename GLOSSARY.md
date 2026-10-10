@@ -71,3 +71,11 @@ _Avoid_: Approval
 **Needs-you**:
 The state of a Ticket that the Run cannot advance without the user. The UI shows it as a banner with actions.
 _Avoid_: Alert, escalation
+
+**Compress**:
+Shrinking a Session's harness context by Handoff: a pig model writes a Handoff, the Daemon starts a fresh harness handle for the same Session and sends it. The Session ID and Event log stay.
+_Avoid_: Compact, summarize, reset
+
+**Handoff**:
+The document a pig model writes from a Session's Event log, sent as the first prompt of the new harness handle after a Compress. It is shown as a collapsed block, not as user input.
+_Avoid_: Summary, checkpoint

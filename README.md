@@ -1,8 +1,6 @@
 # emberloop
 
-emberloop runs parallel implement-and-review loops for coding agents inside [herdr](https://github.com/ogulcancelik/herdr). An orchestrator session (pig or Claude Code) splits a spec into tickets, spawns one worker per ticket in its own git worktree, has two persistent reviewers judge each worker, and merges a ticket only after every required reviewer has passed at the ticket's current tip.
-
-Every agent runs in a herdr pane under a two-row status strip that shows model, context use, cost, running tool, queue and usage windows.
+emberloop runs parallel implement-and-review loops for coding agents . An orchestrator session (pig or Claude Code) splits a spec into tickets, spawns one worker per ticket in its own git worktree, has two persistent reviewers judge each worker, and merges a ticket only after every required reviewer has passed at the ticket's current tip.
 
 <p align="center">
   <picture>
@@ -13,7 +11,13 @@ Every agent runs in a herdr pane under a two-row status strip that shows model, 
 
 ## Install
 
-You need Go 1.26 or newer and `git`, `curl`. Run the installer from a clone:
+You need Go 1.26 or newer, `git`, `curl` and `unzip` (bun needs it). On Debian or Ubuntu:
+
+```bash
+sudo apt-get install -y git curl unzip ripgrep bubblewrap
+```
+
+Install Go 1.26 from <https://go.dev/dl/> (the distro package is older). Run the installer from a clone:
 
 ```bash
 git clone <this repository> emberloop
@@ -21,7 +25,7 @@ cd emberloop
 ./install.sh
 ```
 
-The installer is a terminal UI. It asks for three optional parts and installs everything else without asking:
+On a terminal the installer shows a short menu. It asks for three optional parts and installs everything else without asking:
 
 | Choice | What it adds |
 |---|---|
@@ -29,7 +33,7 @@ The installer is a terminal UI. It asks for three optional parts and installs ev
 | claude | the Claude Code CLI, installed with its official script when missing |
 | graph | the code graph MCP (`codebase-memory-mcp`), served to reviewers and scouts |
 
-Always installed: herdr (official script, when missing), the `el` and `el-mcp` binaries in `~/.local/bin`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `el deps` and `el skills install`, run on the plain terminal because `deps` can ask for a sudo password.
+Always installed: the `el` and `el-mcp` binaries in `~/.local/bin`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `el deps` and `el skills install`, run on the plain terminal because `deps` can ask for a sudo password.
 
 Put `~/.local/bin` on your `PATH`. Rerunning the installer changes nothing that is already in place.
 
@@ -45,27 +49,23 @@ Flags skip the UI:
 
 ## Use
 
-Start an orchestrator inside a herdr pane:
+Start an orchestrator and hand it a spec:
 
 ```bash
 el --pig          # or --claude
 emberloop implement specs/my-feature.md
 ```
 
-`implement` needs a herdr pane, because workers report back to their parent through notices typed into that pane. Without a pane it refuses before it creates anything.
+Or drive runs from the browser UI (see [Emberloop](#emberloop)).
 
 Other commands:
 
 | Command | Does |
 |---|---|
 | `el settings` | read and change role slots, models, tools and MCP servers |
-| `el tui` | open the dashboard: runs, tickets, agents, costs, settings (dashboard module archived; needs a previously installed `el-tui`) |
-| `el compress <pane>` | summarize the agent in a pane and restart it there |
 | `el deps` | check and install system dependencies (python3, rg, git, bwrap, graph binary) |
 | `el update` (`el install`) | rebuild the UI unless unchanged, rebuild the binaries from the checkout |
 | `el context <session-id>` | print one session's context numbers |
-
-`el compress <pane>` summarizes the agent in a pane and restarts it there; `el request-compress <pane>` is the same path as a signal, used by the archived herdr compress plugin.
 
 ## How a run works
 
@@ -96,7 +96,7 @@ Two reviewers, one for the spec and one for the repository's standards, keep the
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/components-dark.png">
-    <img src="docs/components-light.png" alt="emberloop components: CLI, MCP server, state dir, herdr, herdr plugin and report extension, skills library, dashboard, installer" width="900">
+    <img src="docs/components-light.png" alt="emberloop components: CLI, MCP server, state dir, skills library, browser UI, installer" width="900">
   </picture>
 </p>
 
@@ -105,7 +105,7 @@ Two reviewers, one for the spec and one for the repository's standards, keep the
 | `emberloop/` | the main Go module: sessions, spawn and grid, reviewers, gate and merge, tools, MCP server, state database |
 | `emberloop-web/` | the browser UI and Daemon module: local Go Daemon plus embedded UI, loopback only |
 | `pig-antigravity-auth/` | a pig extension that adds the `google-antigravity` model provider |
-| `installer/` | the install TUI that `install.sh` runs |
+| `installer/` | the installer that `install.sh` runs |
 | `scripts/` | live probes that need running agents |
 
 ## Emberloop
@@ -119,11 +119,14 @@ go run ./cmd/emberloop-web
 
 The Daemon prints its address; open it in a browser. Default bind is `127.0.0.1:0` (ephemeral port), override with `-addr`; `-state-dir` overrides the state directory. Loopback only: the Daemon refuses a non-loopback bind and rejects requests with a foreign `Host` or `Origin`. No authentication in this version.
 
-## The input row and the queue
+On a remote server (VPS), keep the loopback bind and tunnel the port:
 
-Messages for an agent queue in the wrapper: user messages first, then injected notices, in arrival order. A draft in the input box holds injected messages back so they never interleave with typing.
-
-A draft clears itself only while messages wait behind it. After 10 seconds without a keystroke the wrapper clears the draft and delivers the queue. With an empty queue the draft stays. While messages wait, the strip shows `queued 3 messages · draft clears in 7s`, and the countdown resets on every keystroke.
+```bash
+# on the server
+go run ./cmd/emberloop-web -addr 127.0.0.1:8787
+# on your machine
+ssh -L 8787:127.0.0.1:8787 user@server   # then open http://127.0.0.1:8787
+```
 
 ## Development
 

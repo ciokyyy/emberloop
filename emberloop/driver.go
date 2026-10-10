@@ -613,7 +613,11 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			// while it waits for a submit or its gate: a hung worker is
 			// not invisible. Marking never stops the run; the notification
 			// below retries until it succeeds.
-			if !needsYou[tk.ID] && now.Sub(lastActivity[tk.ID]) >= driverIdleTimeout {
+			idleFor := now.Sub(lastActivity[tk.ID])
+			if busy, ok := lastBusy[tk.ID]; ok && now.Sub(busy) < idleFor {
+				idleFor = now.Sub(busy)
+			}
+			if !needsYou[tk.ID] && idleFor >= driverIdleTimeout {
 				markNeedsYou(tk.ID, fmt.Sprintf("ticket %s needs you: no worker activity for 10 minutes", tk.ID))
 				progress = true
 			}

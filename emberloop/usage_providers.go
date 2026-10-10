@@ -52,14 +52,14 @@ var (
 )
 
 // The Antigravity OAuth client id and secret are not kept in source.
-// pig-antigravity-auth saves them to ~/.emberloop/agy-oauth.json at login; the
+// pig-antigravity-auth saves them to ~/.el/agy-oauth.json at login; the
 // environment overrides the file.
 func agyClient() (id, secret string, err error) {
 	id, secret = strings.TrimSpace(os.Getenv("EL_AGY_CLIENT_ID")), strings.TrimSpace(os.Getenv("EL_AGY_CLIENT_SECRET"))
 	if id != "" && secret != "" {
 		return id, secret, nil
 	}
-	raw, rerr := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".emberloop", "agy-oauth.json"))
+	raw, rerr := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".el", "agy-oauth.json"))
 	var c struct {
 		ID     string `json:"client_id"`
 		Secret string `json:"client_secret"`

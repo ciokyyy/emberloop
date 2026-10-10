@@ -54,6 +54,8 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/archive/retro-hardening/AGENTS.md` — the spec and ticket area for this run
 - `.scratch/project-init/AGENTS.md` — the spec and ticket area for project init and validate
 - `.scratch/quota-tab/AGENTS.md` — the spec and ticket area for the quota tab (account quota page in `emberloop-web`)
+- `.scratch/handoff-compress/AGENTS.md` — the spec and ticket area for Handoff compress (pig-model Handoff restart in `emberloop-web`)
+- `.scratch/emberplugins/AGENTS.md` — the spec and ticket area for Emberplugins (runtime-added pages, jobs and servers in `emberloop-web`)
 - `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
 - `GLOSSARY.md` — Emberloop terms (Daemon, Session, Backend, Subagent, Group, Steer, Follow-up, Event, Event log)
