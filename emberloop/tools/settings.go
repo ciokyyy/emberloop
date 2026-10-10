@@ -98,17 +98,40 @@ type MCPServerRoleOverride struct {
 	Placement string `json:"placement,omitempty"`
 }
 
+// MCPOAuthSetting tunes the browser OAuth flow for an HTTP MCP server (an
+// entry with `url` set). Nil means no OAuth: the server must answer without
+// credentials, the way a static `headers` entry does. CallbackPort is the
+// loopback port the approval callback listens on (zero picks an ephemeral
+// one); ClientName is the name dynamic registration offers; MetadataURL
+// overrides authorization-server discovery outright; Scopes are the scopes
+// the approval asks for. Tokens never live here: they sit per server under
+// the user's home (see mcpoauth.go), so secrets stay out of the settings
+// files.
+type MCPOAuthSetting struct {
+	CallbackPort int      `json:"callback_port,omitempty"`
+	ClientName   string   `json:"client_name,omitempty"`
+	MetadataURL  string   `json:"metadata_url,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+}
+
 // MCPServerSetting registers one outside MCP server. Include and exclude are
 // glob lists over the server's own tool names (empty include means all;
 // exclude wins); rename maps an original name to the name agents see.
 // Placement defaults to execute; a per-role block overrides enabled and
 // placement for that role. Summary is a short human line the execute tool
 // description shows beside the server's tool count. There is no
-// server-level enabled: remove the entry or exclude its tools.
+// server-level enabled: remove the entry or exclude its tools. Command
+// spawns a stdio server; url dials a Streamable-HTTP one instead: set one,
+// never both. Headers ride every HTTP request (static bearer entries belong
+// here); oauth runs the dynamic-registration browser flow for servers that
+// challenge with 401.
 type MCPServerSetting struct {
 	Command   string                           `json:"command,omitempty"`
 	Args      []string                         `json:"args,omitempty"`
 	Env       map[string]string                `json:"env,omitempty"`
+	URL       string                           `json:"url,omitempty"`
+	Headers   map[string]string                `json:"headers,omitempty"`
+	OAuth     *MCPOAuthSetting                 `json:"oauth,omitempty"`
 	Summary   string                           `json:"summary,omitempty"`
 	Placement string                           `json:"placement,omitempty"`
 	Include   []string                         `json:"include,omitempty"`
@@ -839,7 +862,7 @@ func decodeSettings(raw []byte) Settings {
 			// Known key decoded into the struct by encoding/json: nothing to
 			// keep for the next save.
 		case "mcp_servers":
-			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "summary", "placement", "include", "exclude", "rename", "roles"})
+			s.mcpExtra = unknownEntryFields(v, []string{"command", "args", "env", "url", "headers", "oauth", "summary", "placement", "include", "exclude", "rename", "roles"})
 			s.mcpRoleExtra = unknownOverrideFields(v)
 		case "graph":
 			s.graphExtra = unknownGraphFields(v)
@@ -963,11 +986,9 @@ func markToolSources(s *Settings) {
 			{"command", e.Command != ""},
 			{"args", e.Args != nil},
 			{"env", e.Env != nil},
-			{"summary", e.Summary != ""},
-			{"placement", e.Placement != ""},
-			{"include", e.Include != nil},
-			{"exclude", e.Exclude != nil},
-			{"rename", e.Rename != nil},
+			{"url", e.URL != ""},
+			{"headers", e.Headers != nil},
+			{"oauth", e.OAuth != nil},
 		} {
 			if f.set {
 				s.src[base+f.key] = "file"
@@ -1705,6 +1726,27 @@ func mergeMCPServers(global, project map[string]MCPServerSetting, src map[string
 			}
 			src["mcp_servers."+name+".env"] = "project"
 		}
+		if p.URL != "" {
+			base.URL = p.URL
+			src["mcp_servers."+name+".url"] = "project"
+		}
+		if p.Headers != nil {
+			if base.Headers == nil {
+				base.Headers = map[string]string{}
+			}
+			for k, v := range p.Headers {
+				if v == "" {
+					delete(base.Headers, k)
+				} else {
+					base.Headers[k] = v
+				}
+			}
+			src["mcp_servers."+name+".headers"] = "project"
+		}
+		if p.OAuth != nil {
+			base.OAuth = mergeMCPOAuth(base.OAuth, p.OAuth)
+			src["mcp_servers."+name+".oauth"] = "project"
+		}
 		if p.Summary != "" {
 			base.Summary = p.Summary
 			src["mcp_servers."+name+".summary"] = "project"
@@ -1789,6 +1831,13 @@ func cloneMCPServerSetting(e MCPServerSetting) MCPServerSetting {
 			out.Env[k] = v
 		}
 	}
+	if e.Headers != nil {
+		out.Headers = map[string]string{}
+		for k, v := range e.Headers {
+			out.Headers[k] = v
+		}
+	}
+	out.OAuth = cloneMCPOAuth(e.OAuth)
 	if e.Rename != nil {
 		out.Rename = map[string]string{}
 		for k, v := range e.Rename {
@@ -1809,6 +1858,46 @@ func cloneMCPServerSetting(e MCPServerSetting) MCPServerSetting {
 	return out
 }
 
+// mergeMCPOAuth folds a project oauth block over the global one field by
+// field: scalars win when set, scopes win wholesale when set. A copy, so the
+// caller cannot mutate the settings through it.
+func mergeMCPOAuth(global, project *MCPOAuthSetting) *MCPOAuthSetting {
+	var out MCPOAuthSetting
+	if global != nil {
+		out = *global
+		out.Scopes = append([]string(nil), global.Scopes...)
+	}
+	if project == nil {
+		if out.CallbackPort == 0 && out.ClientName == "" && out.MetadataURL == "" && len(out.Scopes) == 0 {
+			return nil
+		}
+		return &out
+	}
+	if project.CallbackPort != 0 {
+		out.CallbackPort = project.CallbackPort
+	}
+	if project.ClientName != "" {
+		out.ClientName = project.ClientName
+	}
+	if project.MetadataURL != "" {
+		out.MetadataURL = project.MetadataURL
+	}
+	if project.Scopes != nil {
+		out.Scopes = append([]string(nil), project.Scopes...)
+	}
+	return &out
+}
+
+// cloneMCPOAuth copies an oauth block, so a merge never shares it with its
+// inputs. Nil stays nil: no block means no OAuth.
+func cloneMCPOAuth(e *MCPOAuthSetting) *MCPOAuthSetting {
+	if e == nil {
+		return nil
+	}
+	out := *e
+	out.Scopes = append([]string(nil), e.Scopes...)
+	return &out
+}
 func cloneSources(src map[string]string) map[string]string {
 	if src == nil {
 		return nil

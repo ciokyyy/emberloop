@@ -41,7 +41,8 @@ plain command or JSON name map, one `{args}` slot, metacharacters refused),
 `hashline.go` (tag-anchored edits),
 `listing.go`, `guard.go`,
 `credentials.go`, `settings.go` (global and project files, the tools,
-mcp_servers, search and graph maps, the macros list, the per-server summary,
+mcp_servers (url/headers/oauth beside command/args/env for HTTP servers),
+search and graph maps, the macros list, the per-server summary,
 the search defaults, the overflow and context thresholds, the strip rows,
 frame, rule, padding, symbols and separator, the auto-compress switch and
 cooldown, the model window overrides, the per-harness compress models
@@ -52,12 +53,17 @@ validation where emberloop's built-ins win), `rename.go` (serve a tool under a n
 `usage.go`, `sandbox.go` (the bubblewrap
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `el deps` error), `mcpclient.go` (the stdio JSON-RPC client
-and per-process server registry behind the same resolution), `graph.go` (the
+and the per-process server registry: one entry per server over either
+transport, behind the same resolution), `mcphttp.go` (the Streamable-HTTP
+client: session ids, JSON or SSE replies, one OAuth retry on 401),
+`mcpoauth.go` (the OAuth flow: discovery, dynamic registration, PKCE browser
+approval, refresh, the per-user token store, reauth-needed), `graph.go` (the
 graph server synthesis: path-slug projects, binary resolution, the exposed
 tool include over the hidden management set, per-role placement, and the
 first-query index-status gate), `systemone/`
-(the decisions-model client the find cascade asks), and `mcpfake/` (the fake
-MCP server the client, execute and graph tests spawn).
+(the decisions-model client the find cascade asks), and `mcpfake/` (the fakes
+the client, execute and graph tests spawn: stdio plus Streamable-HTTP with
+its own authorization server).
 
 ## Ownership
 
@@ -100,12 +106,12 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
 - Binaries resolve from the emberloop bin directory first, then PATH, through the
   shared resolver the installer, grep, the sandbox runner, execute and the
   graph use.
-- The graph is optional: `graph.enabled: false` or a missing binary exposes
-  nothing and errors nothing. When present it serves only the five exposed
-  tools (`search_graph`, `trace_path`, `get_code_snippet`, `get_file_outline`,
-  `get_architecture`), in main for `review` and `scout` and behind `execute`
-  for every other role; the index management tools and `detect_changes`
   never serve.
+- An `mcp_servers` entry sets command (stdio child) or url (Streamable-HTTP),
+  never both. Static HTTP credentials ride `headers`; servers that challenge
+  with 401 use the `oauth` browser flow, whose tokens live per server under
+  the user's home (`EL_MCP_TOKEN_DIR` in tests), never in settings. A dead
+  credential is a reauth-needed error naming the token file, never fatal.
 - `check` shares its timeout (3 minutes), 60-line tail and status strings
   between the tool and the harness spawn-time run; the map's `default`, or
   its first name when no default exists, is what the spawn run executes.
