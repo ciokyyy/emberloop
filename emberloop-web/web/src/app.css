@@ -50,6 +50,27 @@
   --ring: #0a84ff;
 }
 
+/* Streamed text: each new run of characters fades in once. Spans carry a
+   negative delay equal to their age, so a re-render never restarts them. */
+.stream-in {
+  animation: stream-in 0.45s var(--ease-smooth) both;
+}
+@keyframes stream-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-in {
+    animation: none;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -90,11 +111,35 @@
 }
 
 .diff-add {
-  @apply bg-green-500/10 text-green-300;
+  @apply bg-green-500/10;
 }
 .diff-del {
-  @apply bg-red-500/10 text-red-300;
+  @apply bg-red-500/10;
 }
+.diff-hunk {
+  @apply bg-sky-500/10;
+}
+
+/* Tool output token colors (see lib/highlight.js). Soft hues that read on
+   the dark card; every token fades in color changes with the stream. */
+.tk-kw { color: #c4a7ff; }
+.tk-str { color: #a5d6a7; }
+.tk-num { color: #ffb86c; }
+.tk-comment { color: #7d8590; font-style: italic; }
+.tk-fn { color: #82b1ff; }
+.tk-key { color: #7ec8e3; }
+.tk-lit { color: #ff9ac1; }
+.tk-path { color: #79c0ff; }
+.tk-flag { color: #e6c07b; }
+.tk-op { color: #8b949e; }
+.tk-hunk { color: #56d4dd; }
+.tk-dim { color: #6e7681; }
+.tk-err { color: #ff7b72; }
+.tk-warn { color: #e3b341; }
+.tk-ok { color: #7ee787; }
+.tk-bold { font-weight: 600; }
+.tk-add-sign { color: #7ee787; font-weight: 600; }
+.tk-del-sign { color: #ff7b72; font-weight: 600; }
 
 /* Motion: one easing curve app-wide. New transcript blocks and sidebar rows
    rise in; everything interactive transitions. Reduced motion turns it off. */

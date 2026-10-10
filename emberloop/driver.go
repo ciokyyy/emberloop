@@ -123,6 +123,12 @@ type DriverWorld struct {
 	// ticket is never finished or told again, it frees its slot, and only
 	// its dependents wait. Nil means nothing is discarded.
 	Discarded func(ticketID string) bool
+	// RetryGen is the user's retry generation per ticket: a web UI retry
+	// bumps it, and the next pass drops that ticket's needs-you mark, its
+	// retry backoff, its refusal streak and its stall-nudge count, then
+	// dates fresh activity, so the ticket retries at once instead of on the
+	// backoff schedule. Read every pass; nil means no UI retry is wired.
+	RetryGen func(ticketID string) int
 	// Followups holds one worker's follow-ups: the declined findings and
 	// notes its submit named after Follow-ups:. The driver copies them
 	// verbatim into the final report. Nil or empty means the worker left
@@ -143,6 +149,9 @@ type DriverWorld struct {
 	// worker type with its own requires_review gates like finish gates it.
 	// Nil falls back to Required.
 	RequiredFor func(ticketID string) []string
+	// StallNudge is the text a worker idle with no submit is told. Empty
+	// means the CLI default, which tells the worker to spawn its reviewers.
+	StallNudge string
 	// Sleep waits between polls while tickets stay unmerged but nothing
 	// changed. Nil means tests: the run ends at a stable state and no
 	// backoff delay ever gates a retry. A live run passes time.Sleep, so the
@@ -363,6 +372,12 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 	lastNudge := map[string]time.Time{}
 	spawnErr := map[string]string{}
 	nudgeErr := map[string]string{}
+	// seenRetry holds the retry generation the loop already honored per
+	// ticket. A bumped world RetryGen drops that ticket's needs-you mark,
+	// its retry backoff, its refusal streak, its told-refusal wait and its
+	// stall-nudge count, then dates fresh activity, so the ticket retries
+	// at once instead of on the backoff schedule.
+	seenRetry := map[string]int{}
 	// stallAlert latches the third nudge firing per ticket: the merge below
 	// clears the shared needs-you mark, but the run state keeps whether the
 	// stall escalated.
@@ -517,6 +532,34 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			break
 		}
 		for _, tk := range order {
+			// A bumped UI retry generation starts this ticket over: drop
+			// its needs-you mark and alert queue, its retry backoff, its
+			// refusal streak, its told-refusal wait and its stall-nudge
+			// count, then date fresh activity so the idle alert does not
+			// refire at once. The ticket retries on this pass.
+			if world.RetryGen != nil && world.RetryGen(tk.ID) != seenRetry[tk.ID] {
+				seenRetry[tk.ID] = world.RetryGen(tk.ID)
+				delete(needsYou, tk.ID)
+				delete(notifyMsg, tk.ID)
+				delete(notified, tk.ID)
+				delete(notifyErr, tk.ID)
+				delete(notifyStep, tk.ID)
+				delete(nextNotify, tk.ID)
+				delete(backoffStep, tk.ID)
+				delete(nextRetry, tk.ID)
+				delete(streakText, tk.ID)
+				delete(streakCount, tk.ID)
+				delete(told, tk.ID)
+				delete(toldText, tk.ID)
+				delete(waiting, tk.ID)
+				delete(refused, tk.ID)
+				delete(nudges, tk.ID)
+				delete(lastNudge, tk.ID)
+				delete(nudgeErr, tk.ID)
+				delete(stallAlert, tk.ID)
+				lastActivity[tk.ID] = now
+				progress = true
+			}
 			if !started[tk.ID] || merged[tk.ID] || isParked(tk.ID) || isGone(tk.ID) {
 				continue
 			}
@@ -641,7 +684,11 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 						if spawnErr[tk.ID] == "" && world.Transcript != nil {
 							spawnErr[tk.ID] = driverSpawnError(world.Transcript(tk.ID))
 						}
-						if err := world.Tell(tk.ID, driverStallNudge); err != nil {
+						nudge := driverStallNudge
+						if world.StallNudge != "" {
+							nudge = world.StallNudge
+						}
+						if err := world.Tell(tk.ID, nudge); err != nil {
 							nudgeErr[tk.ID] = err.Error()
 						}
 						nudges[tk.ID]++

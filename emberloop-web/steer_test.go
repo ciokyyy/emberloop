@@ -79,6 +79,15 @@ func waitStatus(t *testing.T, base, id, want string, timeout time.Duration) {
 	t.Fatalf("status = %q, want %q", meta.Status, want)
 }
 
+// waitParentIdle waits out a spawn parent's grouped delivery before the
+// test's TempDir is removed: the last child to settle steers the parent, so
+// the parent works briefly after its children go idle, and its writes race
+// TempDir removal when the test returns first.
+func waitParentIdle(t *testing.T, base, parent string) {
+	t.Helper()
+	waitStatus(t, base, parent, "idle", 20*time.Second)
+}
+
 // Slice 1: a Steer on an idle fake Session runs a turn labelled steer.
 func TestSteerOnIdleRunsLabeledTurn(t *testing.T) {
 	d := NewDaemon(t.TempDir(), NewFakeBackend())
@@ -393,7 +402,7 @@ func startChainedSlowTurns(t *testing.T, base, id string) {
 // the steered question delivers as a continuation turn (the scripted
 // backend answers 42).
 func TestPigSteerReachesSessionNatively(t *testing.T) {
-	d, _ := newPigDaemon(t)
+	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -418,12 +427,16 @@ func TestPigSteerReachesSessionNatively(t *testing.T) {
 	if !found {
 		t.Fatalf("steer prompt Event missing or unlabeled")
 	}
+	// Settle before TempDir cleanup: the steered turn's log writes
+	// outlive the test otherwise ("directory not empty").
+	waitStatus(t, srv.URL, id, "idle", 60*time.Second)
+	pb.CloseSession(id)
 }
 
 // A Follow-up to a working pig Session runs after the current turn: same
 // native response shape as a Steer, labelled followup.
 func TestPigFollowupRunsAfterTurn(t *testing.T) {
-	d, _ := newPigDaemon(t)
+	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -448,6 +461,10 @@ func TestPigFollowupRunsAfterTurn(t *testing.T) {
 	if !found {
 		t.Fatalf("followup prompt Event missing or unlabeled")
 	}
+	// Settle before TempDir cleanup: the follow-up turn's log writes
+	// outlive the test otherwise ("directory not empty").
+	waitStatus(t, srv.URL, id, "idle", 60*time.Second)
+	pb.CloseSession(id)
 }
 
 // Queued pig messages clear before delivery: a prompt queued in the Daemon
@@ -494,6 +511,9 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 	if got := pb.QueuedMessages(nativeID); len(got) != 0 {
 		t.Fatalf("native queue after clear = %+v, want empty", got)
 	}
+	// Release both stacks before TempDir cleanup.
+	pb.CloseSession(nativeID)
+	pb.CloseSession(id)
 }
 
 // A send racing a resume or release in flight answers 409 and the Session

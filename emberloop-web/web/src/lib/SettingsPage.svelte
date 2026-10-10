@@ -7,6 +7,9 @@
   import FloatingInput from './ui/floating-input.svelte';
   import Combobox from './ui/combobox.svelte';
   import Notifications from './Notifications.svelte';
+  import InstallApp from './InstallApp.svelte';
+  import SoundSettings from './SoundSettings.svelte';
+  import VoiceSettings from './VoiceSettings.svelte';
   let { onBack = () => {} } = $props();
 
   const GROUPS = [
@@ -224,6 +227,7 @@
               </div>
               <textarea
                 aria-label="Summary focus"
+                name="compress_instructions"
                 rows="3"
                 maxlength="2000"
                 bind:value={compress.instructions}
@@ -234,6 +238,9 @@
           </div>
         </section>
         <Notifications />
+        <InstallApp />
+        <SoundSettings />
+        <VoiceSettings />
         <section class="animate-rise flex flex-col gap-2">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Session names</h2>

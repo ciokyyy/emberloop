@@ -286,6 +286,32 @@ func (b *ClaudeBackend) strippingMetaFor(model, workDir string) map[string]any {
 	}
 }
 
+// claudeEfforts are the reasoning effort levels a claude Session accepts.
+var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+func validClaudeEffort(e string) bool {
+	if e == "" {
+		return true
+	}
+	for _, v := range claudeEfforts {
+		if v == e {
+			return true
+		}
+	}
+	return false
+}
+
+// strippingMetaEffort is strippingMetaFor with the Session's reasoning
+// effort set in the SDK options; an empty effort keeps the model default.
+func (b *ClaudeBackend) strippingMetaEffort(model, effort, workDir string) map[string]any {
+	m := b.strippingMetaFor(model, workDir)
+	if m == nil || effort == "" {
+		return m
+	}
+	m["claudeCode"].(map[string]any)["options"].(map[string]any)["effort"] = effort
+	return m
+}
+
 // StartSession spawns the adapter and creates the stripped ACP session. It
 // returns only after session/new answers, so the MCP tools are connected
 // before the first prompt can go out.
@@ -309,7 +335,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		b.drop(meta.ID, conn)
 		return err
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.strippingMetaFor(meta.Model, meta.WorkDir))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.strippingMetaEffort(meta.Model, meta.Effort, meta.WorkDir))
 	if err != nil {
 		err = fmt.Errorf("acp session/new: %w", err)
 		b.drop(meta.ID, conn)
@@ -329,6 +355,11 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 // LoadSession restarts the adapter around a known ACP session id. It repeats
 // the full stripping set: without it the loaded session re-asks permission.
 func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd, role string) error {
+	return b.loadSessionEffort(daemonID, acpID, model, "", cwd, role)
+}
+
+// loadSessionEffort is LoadSession carrying the Session's reasoning effort.
+func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, role string) error {
 	mcp, err := b.mcpServersFor(daemonID, role)
 	if err != nil {
 		return err
@@ -348,7 +379,7 @@ func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd, role string) er
 		b.drop(daemonID, conn)
 		return err
 	}
-	if err := conn.LoadSession(acpID, cwd, mcp, b.strippingMetaFor(model, cwd)); err != nil {
+	if err := conn.LoadSession(acpID, cwd, mcp, b.strippingMetaEffort(model, effort, cwd)); err != nil {
 		err = fmt.Errorf("acp session/load: %w", err)
 		b.drop(daemonID, conn)
 		return err
@@ -419,6 +450,9 @@ func (b *ClaudeBackend) Models() []string { return ClaudeModels() }
 func (b *ClaudeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	if !validClaudeModel(meta.Model) {
 		return fmt.Errorf("unknown claude model (want opus, sonnet or haiku)")
+	}
+	if !validClaudeEffort(meta.Effort) {
+		return fmt.Errorf("unknown claude effort (want low, medium, high, xhigh or max)")
 	}
 	return b.StartSession(meta)
 }
@@ -497,7 +531,7 @@ func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 	if meta.ResumeToken == "" {
 		return fmt.Errorf("claude: no saved session to resume")
 	}
-	return b.LoadSession(meta.ID, meta.ResumeToken, meta.Model, meta.WorkDir, elRoleFor(meta))
+	return b.loadSessionEffort(meta.ID, meta.ResumeToken, meta.Model, meta.Effort, meta.WorkDir, elRoleFor(meta))
 }
 
 // acpSteerer is the optional steering seam of an acpConn: the adapter
@@ -607,6 +641,7 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 	} else {
 		perr = errors.New("claude adapter cannot take images")
 	}
+	tracker.closeOpen(appendEvent)
 	if perr != nil {
 		appendEvent("error", perr.Error(), "")
 		appendEvent("status", "", "failed")
@@ -730,6 +765,9 @@ func mapACPUpdate(update map[string]any, emit func(kind, text, status string), t
 		}
 		if len(parts) > 0 {
 			t.Output = strings.Join(parts, "\n")
+		}
+		if status == "completed" || status == "failed" {
+			t.Done = true
 		}
 		emit("tool_call_updated", t.json(id, status), status)
 		for _, d := range acpDiffs(update["content"]) {
@@ -1184,6 +1222,22 @@ func (c *acpProcessConn) SetModel(acpID, model string) error {
 	return err
 }
 
+// acpThoughtLevelSetter is the optional seam to pick the Session's thinking
+// level after session/new, for adapters that take it as a config option
+// (pi-acp: thought_level).
+type acpThoughtLevelSetter interface {
+	SetThoughtLevel(acpID, level string) error
+}
+
+// SetThoughtLevel picks the thinking level through the adapter's thought
+// level config option.
+func (c *acpProcessConn) SetThoughtLevel(acpID, level string) error {
+	_, err := c.call("session/set_config_option", map[string]any{
+		"sessionId": acpID, "configId": "thought_level", "value": level,
+	})
+	return err
+}
+
 func (c *acpProcessConn) LoadSession(acpID, cwd string, mcp []acpMCPServer, meta map[string]any) error {
 	_, err := c.call("session/load", map[string]any{
 		"sessionId": acpID, "cwd": cwd, "mcpServers": mcpParams(mcp), "_meta": meta,
@@ -1307,7 +1361,10 @@ func waitClosed(ch <-chan struct{}, timeout time.Duration) bool {
 // known value and every Event carries the whole call as JSON.
 type toolTracker struct{ calls map[string]*trackedTool }
 
-type trackedTool struct{ Name, Input, Output string }
+type trackedTool struct {
+	Name, Input, Output string
+	Done                bool
+}
 
 func newToolTracker() *toolTracker { return &toolTracker{calls: map[string]*trackedTool{}} }
 
@@ -1321,6 +1378,21 @@ func (tr *toolTracker) get(id string) *trackedTool {
 		tr.calls[id] = t
 	}
 	return t
+}
+
+// closeOpen ends every tool call that never reported a terminal status, so
+// a cancelled or failed turn leaves no spinner running in the transcript.
+func (tr *toolTracker) closeOpen(emit func(kind, text, status string)) {
+	if tr == nil {
+		return
+	}
+	for id, t := range tr.calls {
+		if t.Done {
+			continue
+		}
+		t.Done = true
+		emit("tool_call_updated", t.json(id, "failed"), "failed")
+	}
 }
 
 func (t *trackedTool) json(id, status string) string {

@@ -63,7 +63,7 @@ type model struct {
 
 func newModel(env *Env, c Choices) *model {
 	return &model{env: env, opts: []option{
-		{"pig", "Pig harness: MCP entry, herdr-report and Antigravity extensions", c.Pig},
+		{"pig", "Pig harness: MCP entry and Antigravity extension", c.Pig},
 		{"claude", "Claude Code harness: installed if missing, wired per run", c.Claude},
 		{"memory", "Code graph MCP (codebase-memory-mcp) for reviewers and scouts", c.Graph},
 	}}
@@ -153,7 +153,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) View() string {
 	var b strings.Builder
 	b.WriteString(accent.Render("el installer") + "\n")
-	b.WriteString(dim.Render("herdr, the binaries, the plugin, keys and configs always install.") + "\n\n")
+	b.WriteString(dim.Render("the binaries and configs always install.") + "\n\n")
 	switch m.phase {
 	case phaseSelect:
 		b.WriteString("Choose what to install:\n\n")

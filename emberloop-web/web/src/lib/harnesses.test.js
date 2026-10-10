@@ -35,3 +35,17 @@ describe('modelItems', () => {
     expect(splitModel('openrouter/aurora')).toEqual({ provider: 'openrouter', name: 'aurora' });
   });
 });
+
+describe('harnessStyle', () => {
+  it('marks claude terracotta and pig pig-logo teal', async () => {
+    const { harnessStyle } = await import('./harnesses.js');
+    expect(harnessStyle('claude').mark).toBe('C');
+    expect(harnessStyle('pig').accent).toBe('#4fb08f');
+    expect(harnessStyle('pig').tint).toBe('#6fcaa9');
+    expect(harnessStyle('claude').accent).not.toBe(harnessStyle('pig').accent);
+  });
+  it('falls back to an initial mark for unknown harnesses', async () => {
+    const { harnessStyle } = await import('./harnesses.js');
+    expect(harnessStyle('mystery').mark).toBe('M');
+  });
+});

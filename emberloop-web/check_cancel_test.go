@@ -15,8 +15,8 @@ import (
 
 func wirePigFamily(d *Daemon) *PigBackend {
 	pb := NewPigBackend()
-	pb.Spawn = func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error) {
-		gid, kids, code, msg := d.Spawn(parentID, agents)
+	pb.Spawn = func(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, error) {
+		gid, kids, code, msg := d.Spawn(parentID, agents, deliver)
 		if code != 0 {
 			return "", nil, fmt.Errorf("spawn: %s", msg)
 		}
@@ -152,6 +152,7 @@ func TestCheckListsOwnChildren(t *testing.T) {
 			t.Fatalf("check messaged the child: %+v", e)
 		}
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Check with an id shows the child's summary plus its recent events, and the
@@ -191,6 +192,11 @@ func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
 			}
 		}
 	}
+	// The settled child delivers the grouped result to the parent as a
+	// steer, so the parent works briefly before going idle again: wait it
+	// out before the state dir is cleaned up, or its writes race TempDir
+	// removal.
+	waitStatus(t, srv.URL, parent, "idle", 20*time.Second)
 }
 
 // A stranger's id is refused on every check path.
@@ -221,6 +227,7 @@ func TestCheckNonChildRefused(t *testing.T) {
 		!strings.Contains(err.Error(), "not a child") {
 		t.Fatalf("proxy check non-child err = %v, want not-a-child", err)
 	}
+	waitParentIdle(t, srv.URL, owner)
 }
 
 // Both proxy check forms read the bound parent's own children through the
@@ -248,6 +255,7 @@ func TestProxyCheckReadsOwnChildren(t *testing.T) {
 	if !strings.Contains(one, "status=") || !strings.Contains(one, "#") {
 		t.Fatalf("proxy check child = %q, want summary plus events", one)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Cancelling a working child interrupts its turn and drops its queue while
@@ -321,6 +329,7 @@ func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
 	if meta, _ := sessionMeta(t, srv.URL, child); meta.Status != "idle" {
 		t.Fatalf("child status = %q, want idle", meta.Status)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Kill ends the child Session like DELETE does: it reads ended and refuses
@@ -410,6 +419,7 @@ func TestCancelNonChildRefusedScoutStoppable(t *testing.T) {
 		!strings.Contains(outcome, "killed") {
 		t.Fatalf("CancelChild kill own scout = %q (%d), want killed", outcome, code)
 	}
+	waitParentIdle(t, srv.URL, owner)
 }
 
 // The proxy cancel path interrupts a working child through the interrupt route

@@ -24,7 +24,7 @@ func postInterrupt(t *testing.T, base, id string) (int, map[string]any) {
 // Interrupt stops a working pig Session, drops what was queued behind the
 // turn, and leaves the Session idle and usable.
 func TestInterruptStopsWorkingPigSession(t *testing.T) {
-	d, _ := newPigDaemon(t)
+	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -41,6 +41,9 @@ func TestInterruptStopsWorkingPigSession(t *testing.T) {
 	if q := getQueue(t, srv.URL, id); len(q) != 0 {
 		t.Fatalf("queue after interrupt = %v, want empty", q)
 	}
+	// Settle the backend before TempDir cleanup: log writes outlive the
+	// test otherwise ("directory not empty").
+	pb.CloseSession(id)
 }
 
 func TestInterruptIdleSessionReportsFalse(t *testing.T) {
@@ -60,7 +63,7 @@ func TestInterruptIdleSessionReportsFalse(t *testing.T) {
 // A Steer with images reaches the pig native queue instead of degrading to a
 // Follow-up in the Daemon pending list.
 func TestPigSteerWithImagesQueuesNatively(t *testing.T) {
-	d, _ := newPigDaemon(t)
+	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -81,4 +84,9 @@ func TestPigSteerWithImagesQueuesNatively(t *testing.T) {
 			t.Fatalf("image steer labelled %q, want steer", e.Mode)
 		}
 	}
+	// Let the chained turns and the queued image steer settle before
+	// TempDir cleanup: background image and log writes outlive the test
+	// otherwise ("directory not empty").
+	waitStatus(t, srv.URL, id, "idle", 60*time.Second)
+	pb.CloseSession(id)
 }

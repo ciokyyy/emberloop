@@ -5,7 +5,7 @@
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
 EL=/home/cioky/Projects/emberloop/emberloop
-REPORT=/home/cioky/Projects/emberloop/herdr-report
+REPORT=/home/cioky/Projects/emberloop/.scratch/archive/archived-herdr-report
 DIR=/tmp/el-tell2
 
 rm -rf "$DIR" ~/.pig/state/emberloop; mkdir -p "$DIR/.scratch/tell/issues"

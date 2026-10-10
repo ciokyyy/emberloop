@@ -62,3 +62,20 @@ export function modelItems(harness, models, current = '') {
   }
   return items;
 }
+
+// Card identity per harness: a letter mark plus an accent that tints the
+// Subagent card edge and badge for the card's whole life. Claude is
+// terracotta orange; pig is the pig-logo teal-green (done states stay
+// Tailwind green, distinct from teal).
+export const HARNESS_STYLE = {
+  claude: { label: 'Claude', mark: 'C', accent: '#d97757', tint: '#e8a082' },
+  pig: { label: 'Pig', mark: 'P', accent: '#4fb08f', tint: '#6fcaa9' },
+  fake: { label: 'Fake', mark: 'F', accent: '#71717a', tint: '#a1a1aa' },
+};
+
+export function harnessStyle(harnessId) {
+  const s = HARNESS_STYLE[harnessId];
+  if (s) return s;
+  const id = String(harnessId ?? '');
+  return { label: id || 'agent', mark: (id[0] ?? '?').toUpperCase(), accent: '#71717a', tint: '#a1a1aa' };
+}

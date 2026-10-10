@@ -17,13 +17,13 @@ export function pushUnsupported() {
 const toKey = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 
 async function registration() {
-  await navigator.serviceWorker.register('./sw.js');
+  await navigator.serviceWorker.register('/sw.js');
   return navigator.serviceWorker.ready;
 }
 
 export async function pushEnabled() {
   if (pushUnsupported()) return false;
-  const reg = await navigator.serviceWorker.getRegistration('./sw.js');
+  const reg = await navigator.serviceWorker.getRegistration('/sw.js');
   return !!(reg && (await reg.pushManager.getSubscription()));
 }
 
@@ -45,7 +45,7 @@ export async function enablePush() {
 }
 
 export async function disablePush() {
-  const reg = await navigator.serviceWorker.getRegistration('./sw.js');
+  const reg = await navigator.serviceWorker.getRegistration('/sw.js');
   const sub = await reg?.pushManager.getSubscription();
   if (!sub) return;
   await fetch(url('/api/push/subscribe'), {

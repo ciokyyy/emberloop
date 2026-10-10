@@ -33,7 +33,7 @@ type PigBackend struct {
 	extra    []agent.AgentTool
 	// Spawn creates Subagents under one parent. The Daemon wires it to
 	// its own Spawn; nil keeps Sessions tool-free.
-	Spawn func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error)
+	Spawn func(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, error)
 	// SteerChild messages one Subagent of the calling Session. The Daemon
 	// wires it to its SteerChild; nil keeps Sessions steer-free.
 	SteerChild func(parentID, childID, text string) (string, error)
@@ -126,7 +126,7 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 // answers with the Group and its Session ids.
 type spawnAgentTool struct {
 	parent string
-	spawn  func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error)
+	spawn  func(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, error)
 }
 
 func (t *spawnAgentTool) Name() string  { return "spawn" }
@@ -134,15 +134,16 @@ func (t *spawnAgentTool) Label() string { return "spawn subagents" }
 func (t *spawnAgentTool) Schema() ai.ToolSchema {
 	return ai.ToolSchema{
 		Name:        t.Name(),
-		Description: "Spawn Subagents that work in parallel and report back as one grouped result. Each agent takes a prompt and a type (worker or scout); scouts are read-only. Returned ids can be steered with the steer tool, peeked at with check, or stopped with cancel.",
+		Description: "Spawn Subagents that work in parallel and report back. Each agent takes a prompt, an optional name for its card, and a type (worker or scout); scouts are read-only. Deliver selects the parent notices: 'group' (the default) sends one grouped result when the last member settles, 'each' sends one notice per child as it settles. Returned ids can be steered with the steer tool, peeked at with check, or stopped with cancel.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
+				"deliver": map[string]any{"type": "string", "enum": []string{"group", "each"}},
 				"agents": map[string]any{
 					"type": "array",
 					"items": map[string]any{
 						"type":       "object",
-						"properties": map[string]any{"prompt": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}},
+						"properties": map[string]any{"prompt": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}},
 						"required":   []string{"prompt"},
 					},
 				},
@@ -278,12 +279,13 @@ func (t *cancelAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent
 
 func (t *spawnAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
 	var req struct {
-		Agents []SpawnAgent `json:"agents"`
+		Agents  []SpawnAgent `json:"agents"`
+		Deliver string       `json:"deliver,omitempty"`
 	}
 	if err := json.Unmarshal(params, &req); err != nil || len(req.Agents) == 0 {
 		return agent.AgentToolResult{}, fmt.Errorf("spawn: agents is required")
 	}
-	gid, kids, err := t.spawn(t.parent, req.Agents)
+	gid, kids, err := t.spawn(t.parent, req.Agents, req.Deliver)
 	if err != nil {
 		return agent.AgentToolResult{}, err
 	}
@@ -385,10 +387,29 @@ func (emptyCredentialStore) Modify(_ context.Context, _ string, _ func(*ai.Crede
 }
 func (emptyCredentialStore) Delete(context.Context, string) error { return nil }
 
+// pigEfforts are the thinking levels a pig Session accepts: the levels
+// pig --thinking takes.
+var pigEfforts = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+func validPigEffort(e string) bool {
+	if e == "" {
+		return true
+	}
+	for _, v := range pigEfforts {
+		if v == e {
+			return true
+		}
+	}
+	return false
+}
+
 // CreateSession builds the SDK stack (Services, Runtime, Session) for one
 // Daemon Session and subscribes the normalized Event stream. An unknown
 // model or unusable working directory returns an error for a 400.
 func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	if !validPigEffort(meta.Effort) {
+		return fmt.Errorf("pig: unknown effort %q (want off, minimal, low, medium, high, xhigh or max)", meta.Effort)
+	}
 	tools := b.sessionTools(meta)
 	b.mu.Lock()
 	if _, ok := b.sessions[meta.ID]; ok {
@@ -408,6 +429,7 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 	}
 	sess, err := rt.New(coding.SessionStartOptions{
 		Model:              model,
+		ThinkingLevel:      ai.ThinkingLevel(meta.Effort),
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
 		ExtraTools:         tools,
@@ -429,7 +451,7 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 	for _, t := range tools {
 		names = append(names, t.Name()+"/"+fmt.Sprint(t.ExecutionMode()))
 	}
-	b.sessions[meta.ID].log.write("create", map[string]any{"model": meta.Model, "workDir": meta.WorkDir, "scout": meta.Scout, "parent": meta.ParentID, "extraTools": names})
+	b.sessions[meta.ID].log.write("create", map[string]any{"model": meta.Model, "effort": meta.Effort, "workDir": meta.WorkDir, "scout": meta.Scout, "parent": meta.ParentID, "extraTools": names})
 	return nil
 }
 
@@ -874,6 +896,7 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 	}
 	sess, err := rt.Resume(meta.ResumeToken, coding.SessionStartOptions{
 		Model:              model,
+		ThinkingLevel:      ai.ThinkingLevel(meta.Effort),
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
 		ExtraTools:         tools,

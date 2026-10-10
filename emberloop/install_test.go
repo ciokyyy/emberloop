@@ -2,7 +2,6 @@ package el
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +21,16 @@ func installTestState(t *testing.T) string {
 	t.Setenv("EL_INSTALL_DIR", dir)
 	src := t.TempDir()
 	t.Setenv("EL_SOURCE_DIR", src)
-	// The TUI module sits beside the main module in a real checkout; the
-	// builder fake asserts every build dir exists, so the fixture mirrors it.
-	if err := os.MkdirAll(filepath.Join(src, "..", "emberloop-tui"), 0o755); err != nil {
+	// The web module sits beside the main module in a real checkout; the
+	// builder fake asserts every build dir exists, so the fixture mirrors
+	// it. The health probe is stubbed to pass: tests drive the rollback by
+	// overriding it, and no test boots a real binary.
+	if err := os.MkdirAll(filepath.Join(src, "..", "emberloop-web"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	oldProbe := probeWebHealth
+	probeWebHealth = func(string) error { return nil }
+	t.Cleanup(func() { probeWebHealth = oldProbe })
 	return dir
 }
 
@@ -74,35 +78,10 @@ func installPaneExec(t *testing.T, panes ...string) Exec {
 	}
 }
 
-func TestInstallRefusesWhileAWorkerIsLiveAndReplacesNothing(t *testing.T) {
-	dir := installTestState(t)
-	if err := save(map[string]Worker{
-		"07-foo": {ID: "07-foo", Pane: "w1:p1"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	writeInstallSentinel(t, dir, "el", "old-pig")
-	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
-
-	_, err := InstallBinaries(installPaneExec(t, "w1:p1"), InstallOptions{})
-	if err == nil {
-		t.Fatal("install with a live worker must fail")
-	}
-	if !strings.Contains(err.Error(), "07-foo") {
-		t.Errorf("the refusal must name the live agent, got: %v", err)
-	}
-	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
-		t.Errorf("a refused install must replace nothing, el = %q", got)
-	}
-	if got := readInstallFile(t, dir, "el-mcp"); got != "old-mcp" {
-		t.Errorf("a refused install must replace nothing, el-mcp = %q", got)
-	}
-}
-
 // installBuildExec answers `herdr pane list` with panes alive and plays `go
 // build` by writing a marker where -o points, so the test sees what would be
-// installed without a toolchain. Builds run in the source checkout, or in the
-// TUI module under it for the el-tui target.
+// installed without a toolchain. Builds run in the source checkout, or in
+// the web sibling module under it for the update's el-web target.
 func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 	t.Helper()
 	return func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -116,8 +95,8 @@ func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 			if out == "" {
 				return Result{Code: 1, Stderr: "no -o"}, nil
 			}
-			if o.Cwd != src && o.Cwd != filepath.Join(src, "..", "emberloop-tui") {
-				t.Errorf("go build must run in the source checkout %q or its sibling el-tui module, got %q", src, o.Cwd)
+			if o.Cwd != src && o.Cwd != filepath.Join(src, "..", "emberloop-web") {
+				t.Errorf("go build must run in the source checkout %q or the web sibling module under it, got %q", src, o.Cwd)
 			}
 			if info, err := os.Stat(o.Cwd); err != nil || !info.IsDir() {
 				t.Errorf("go build must run in an existing checkout dir, got %q", o.Cwd)
@@ -153,124 +132,9 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/emberloop-mcp" {
 		t.Errorf("el-mcp = %q, want the new build", got)
 	}
-	if got := readInstallFile(t, dir, "el-tui"); got != "built ./cmd/emberloop-tui" {
-		t.Errorf("el-tui = %q, want the new build", got)
-	}
-}
-
-// Seam (ticket 13): install --force — force installs past a live agent and
-// warns that running sessions keep the old binary until they restart.
-func TestInstallForceInstallsPastALiveAgentWithWarning(t *testing.T) {
-	dir := installTestState(t)
-	src := os.Getenv("EL_SOURCE_DIR")
-	if err := save(map[string]Worker{
-		"07-foo": {ID: "07-foo", Pane: "w1:p1"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	writeInstallSentinel(t, dir, "el", "old-pig")
-	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
-
-	res, err := InstallBinaries(installBuildExec(t, src, "w1:p1"), InstallOptions{Force: true})
-	if err != nil {
-		t.Fatalf("a forced install must succeed: %v", err)
-	}
-	if !strings.Contains(res.Warning, "running sessions keep the old binary until they restart") {
-		t.Errorf("a forced install must warn about stale sessions, got %q", res.Warning)
-	}
-	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/emberloop" {
-		t.Errorf("a forced install must replace, el = %q", got)
-	}
-	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/emberloop-mcp" {
-		t.Errorf("a forced install must replace, el-mcp = %q", got)
-	}
-	if got := readInstallFile(t, dir, "el-tui"); got != "built ./cmd/emberloop-tui" {
-		t.Errorf("a forced install must replace, el-tui = %q", got)
-	}
-}
-
-// Seam (ticket 13): install gate — a live reviewer and scout are named, a
-// record whose pane is gone blocks nothing, and one pane is named once even
-// when two stores know it.
-func TestInstallNamesReviewerAndScoutAndIgnoresDeadPanes(t *testing.T) {
-	dir := installTestState(t)
-	tree := filepath.Join(t.TempDir(), "tree")
-	if err := save(map[string]Worker{
-		"07-dead": {ID: "07-dead", Pane: "w1:p9"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := saveReviewers(map[string]map[string]reviewer{
-		tree: {"reviewer-standards": {Pane: "w1:p2"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteAgentState(AgentState{ID: "rev-state", Type: "reviewer-standards", Pane: "w1:p2"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteAgentState(AgentState{ID: "scout-1", Type: "scout", Pane: "w1:p3"}); err != nil {
-		t.Fatal(err)
-	}
-	writeInstallSentinel(t, dir, "el", "old-pig")
-
-	_, err := InstallBinaries(installPaneExec(t, "w1:p2", "w1:p3"), InstallOptions{})
-	if err == nil {
-		t.Fatal("install with live reviewer and scout must fail")
-	}
-	for _, want := range []string{"reviewer-standards", "scout-1"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal must name %q, got: %v", want, err)
-		}
-	}
-	if strings.Contains(err.Error(), "07-dead") {
-		t.Errorf("a record whose pane is gone must not block, got: %v", err)
-	}
-	if n := strings.Count(err.Error(), "w1:p2"); n != 1 {
-		t.Errorf("one pane must be named once, w1:p2 appears %d times in: %v", n, err)
-	}
-	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
-		t.Errorf("a refused install must replace nothing, el = %q", got)
-	}
 }
 
 var errInstallHerdrDown = errors.New("herdr down")
-
-// Seam (ticket 13): install gate — when herdr cannot be asked, the install
-// refuses rather than guesses; --force installs anyway with the warning.
-func TestInstallWithUnknownLivenessRefusesUnlessForced(t *testing.T) {
-	dir := installTestState(t)
-	broken := func(cmd string, args []string, o ExecOpts) (Result, error) {
-		if cmd == "go" {
-			out := ""
-			for i, a := range args {
-				if a == "-o" && i+1 < len(args) {
-					out = args[i+1]
-				}
-			}
-			if err := os.WriteFile(out, []byte("built"), 0o755); err != nil {
-				return Result{}, err
-			}
-			return Result{Code: 0}, nil
-		}
-		return Result{}, errInstallHerdrDown
-	}
-
-	if _, err := InstallBinaries(broken, InstallOptions{}); err == nil {
-		t.Error("an install that cannot check liveness must refuse")
-	} else if !strings.Contains(err.Error(), "cannot check") {
-		t.Errorf("the refusal must say liveness is unknown, got: %v", err)
-	}
-	res, err := InstallBinaries(broken, InstallOptions{Force: true})
-	if err != nil {
-		t.Fatalf("a forced install must succeed: %v", err)
-	}
-	if !strings.Contains(res.Warning, "running sessions keep the old binary until they restart") {
-		t.Errorf("a forced install past unknown liveness must warn, got %q", res.Warning)
-	}
-	if got := readInstallFile(t, dir, "el"); got != "built" {
-		t.Errorf("a forced install must replace, el = %q", got)
-	}
-}
 
 // Seam (ticket 13): install CLI — `el install` refuses live agents by
 // name, installs cleanly, and --force installs with the stale-session
@@ -279,73 +143,6 @@ func installCLIExec(t *testing.T, panes ...string) Exec {
 	t.Helper()
 	src := os.Getenv("EL_SOURCE_DIR")
 	return installBuildExec(t, src, panes...)
-}
-
-func TestRunInstallRefusesLiveAgentsByName(t *testing.T) {
-	oldDeps := runInstallDeps
-	depsCalls := 0
-	runInstallDeps = func(out io.Writer) error { depsCalls++; return nil }
-	t.Cleanup(func() { runInstallDeps = oldDeps })
-	installTestState(t)
-	oldExec := installExec
-	installExec = installCLIExec(t, "w1:p1")
-	t.Cleanup(func() { installExec = oldExec })
-	if err := save(map[string]Worker{
-		"07-foo": {ID: "07-foo", Pane: "w1:p1"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var out strings.Builder
-	err := RunInstall([]string{}, &out)
-	if err == nil {
-		t.Fatal("install with a live worker must fail")
-	}
-	if !strings.Contains(err.Error(), "07-foo") {
-		t.Errorf("the refusal must name the live agent, got: %v", err)
-	}
-	if depsCalls != 0 {
-		t.Errorf("a refused install must not reach the deps step, got %d calls", depsCalls)
-	}
-}
-
-func TestRunInstallInstallsCleanlyAndForceWarns(t *testing.T) {
-	dir := installTestState(t)
-	oldExec := installExec
-	installExec = installCLIExec(t)
-	t.Cleanup(func() { installExec = oldExec })
-	oldDeps := runInstallDeps
-	depsCalls := 0
-	runInstallDeps = func(out io.Writer) error { depsCalls++; return nil }
-	t.Cleanup(func() { runInstallDeps = oldDeps })
-	writeInstallSentinel(t, dir, "el", "old-pig")
-
-	var out strings.Builder
-	if err := RunInstall([]string{}, &out); err != nil {
-		t.Fatalf("clean install must succeed: %v", err)
-	}
-	if !strings.Contains(out.String(), "installed") || !strings.Contains(out.String(), dir) {
-		t.Errorf("a clean install must say what it installed where, got %q", out.String())
-	}
-	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/emberloop" {
-		t.Errorf("el = %q, want the new build", got)
-	}
-
-	if err := save(map[string]Worker{
-		"07-foo": {ID: "07-foo", Pane: "w1:p1"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	installExec = installCLIExec(t, "w1:p1")
-	out.Reset()
-	if err := RunInstall([]string{"--force"}, &out); err != nil {
-		t.Fatalf("a forced install must succeed: %v", err)
-	}
-	if !strings.Contains(out.String(), "running sessions keep the old binary until they restart") {
-		t.Errorf("a forced install must print the stale-session warning, got %q", out.String())
-	}
-	if depsCalls != 2 {
-		t.Errorf("install must run the deps step on each success, got %d calls for 2 installs", depsCalls)
-	}
 }
 
 func TestRunInstallRefusesUnknownFlagsWithUsage(t *testing.T) {
@@ -418,47 +215,6 @@ func TestInstallFailedBuildReplacesNothingAndLeavesNoTemps(t *testing.T) {
 	}
 }
 
-// Seam (ticket 13): install recheck — an agent whose pane appears while the
-// build runs is refused before anything is replaced.
-func TestInstallRechecksLivenessAfterTheBuild(t *testing.T) {
-	dir := installTestState(t)
-	src := os.Getenv("EL_SOURCE_DIR")
-	if err := save(map[string]Worker{
-		"07-late": {ID: "07-late", Pane: "w1:p7"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	writeInstallSentinel(t, dir, "el", "old-pig")
-	writeInstallSentinel(t, dir, "el-mcp", "old-mcp")
-	// The first pane list is empty; every later one shows the pane, the way
-	// a pane started mid-build reads.
-	lists := 0
-	build := installBuildExec(t, src)
-	exec := func(cmd string, args []string, o ExecOpts) (Result, error) {
-		if len(args) >= 2 && args[0] == "pane" && args[1] == "list" {
-			lists++
-			if lists > 1 {
-				return Result{Code: 0, Stdout: `{"result":{"panes":[{"pane_id":"w1:p7"}]}}`}, nil
-			}
-		}
-		return build(cmd, args, o)
-	}
-
-	_, err := InstallBinaries(exec, InstallOptions{})
-	if err == nil {
-		t.Fatal("an agent live after the build must refuse the install")
-	}
-	if !strings.Contains(err.Error(), "07-late") {
-		t.Errorf("the refusal must name the late agent, got: %v", err)
-	}
-	if got := readInstallFile(t, dir, "el"); got != "old-pig" {
-		t.Errorf("a refused install must replace nothing, el = %q", got)
-	}
-	if got := readInstallFile(t, dir, "el-mcp"); got != "old-mcp" {
-		t.Errorf("a refused install must replace nothing, el-mcp = %q", got)
-	}
-}
-
 // Seam (ticket 13): install rollback — when a later rename fails, destinations
 // already replaced are restored, so a half-installed pair is never left. A
 // directory at a destination fails its rename loudly instead of being
@@ -491,79 +247,5 @@ func TestInstallFailedRenameRestoresWhatItReplaced(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Errorf("a failed swap must leave no temps or backups, dir holds %v", names)
-	}
-}
-
-// Seam (ticket 08): install links the shipped compress plugin — with a
-// manifest dir present the install runs `herdr plugin link` at it through
-// the exec seam.
-func TestInstallLinksHerdrPlugin(t *testing.T) {
-	installTestState(t)
-	src := os.Getenv("EL_SOURCE_DIR")
-	plugin := t.TempDir()
-	t.Setenv("EL_HERDR_PLUGIN_DIR", plugin)
-	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"el\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var linked []string
-	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
-		if cmd == herdrBin() && len(args) == 3 && args[0] == "plugin" && args[1] == "link" {
-			linked = append(linked, args[2])
-			return Result{Code: 0}, nil
-		}
-		return installBuildExec(t, src)(cmd, args, o)
-	}
-	if _, err := InstallBinaries(run, InstallOptions{}); err != nil {
-		t.Fatalf("install with a plugin dir must succeed: %v", err)
-	}
-	if len(linked) != 1 || linked[0] != plugin {
-		t.Errorf("install must link the plugin dir once, got %v", linked)
-	}
-}
-
-// A failed plugin link warns with the manual command instead of failing the
-// install.
-func TestInstallPluginLinkFailureWarns(t *testing.T) {
-	installTestState(t)
-	src := os.Getenv("EL_SOURCE_DIR")
-	plugin := t.TempDir()
-	t.Setenv("EL_HERDR_PLUGIN_DIR", plugin)
-	if err := os.WriteFile(filepath.Join(plugin, "herdr-plugin.toml"), []byte("id = \"el\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run := func(cmd string, args []string, o ExecOpts) (Result, error) {
-		if cmd == herdrBin() && len(args) > 1 && args[0] == "plugin" && args[1] == "link" {
-			return Result{Code: 1, Stderr: "no server"}, nil
-		}
-		return installBuildExec(t, src)(cmd, args, o)
-	}
-	res, err := InstallBinaries(run, InstallOptions{})
-	if err != nil {
-		t.Fatalf("a failed link must not fail the install: %v", err)
-	}
-	if !strings.Contains(res.Warning, "herdr plugin link") {
-		t.Errorf("a failed link must warn with the manual command, got %q", res.Warning)
-	}
-}
-
-// The user-facing install step documents the keybinding line the user adds.
-func TestInstallUsageDocumentsTheKeybinding(t *testing.T) {
-	for _, want := range []string{"[[keys.command]]", "plugin_action", "el.compress"} {
-		if !strings.Contains(installUsage, want) {
-			t.Errorf("install usage must document %q", want)
-		}
-	}
-}
-
-// Seam (ticket 08): the user's own top-level session never blocks the
-// install — it runs the install itself.
-func TestInstallIgnoresLiveTopLevelSession(t *testing.T) {
-	installTestState(t)
-	src := os.Getenv("EL_SOURCE_DIR")
-	if err := WriteAgentState(AgentState{ID: "top-1", Type: "orchestrator", Pane: "w1:p1", SessionID: "sess-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InstallBinaries(installBuildExec(t, src, "w1:p1"), InstallOptions{}); err != nil {
-		t.Fatalf("a live top-level session must not block the install: %v", err)
 	}
 }

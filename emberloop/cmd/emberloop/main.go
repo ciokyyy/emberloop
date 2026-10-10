@@ -11,7 +11,9 @@
 //	el exec <launch-file>                                run a launch file the pane typed
 //	el wrap --harness h -- <bin> [args...]              run a command under the header strip
 //	el skills install                                    fill the skill library
-//	el install [--force]                               rebuild and install the el binaries (refuses while agents are live)
+//	el update                                          rebuild the UI unless unchanged, rebuild and install el, el-mcp and el-web; el install is an alias
+//	el logs [-n N] [-f] [--since TIME] [--grep PATTERN]   print the prod Daemon journal
+//	el version|--version                              print the running build's version stamp
 //	el deps                                             check and install external dependencies
 //	el context [--harness h] [--dir d] <session-id>   print one session’s context numbers
 //	el compress [--force] <pane>                   summarize the worker in pane and restart it there
@@ -103,8 +105,18 @@ func run(argv []string) error {
 	if sub == "deps" {
 		return el.RunDeps(argv, os.Stdout)
 	}
-	if sub == "install" {
-		return el.RunInstall(argv, os.Stdout)
+	if sub == "update" || sub == "install" {
+		return el.RunUpdate(argv, os.Stdout)
+	}
+	if sub == "logs" {
+		return el.RunLogs(argv, os.Stdout)
+	}
+	if sub == "restart" {
+		return el.RunRestart(argv, os.Stdout)
+	}
+	if sub == "version" {
+		fmt.Println(el.VersionString())
+		return nil
 	}
 	if sub == "skills" {
 		if len(argv) != 1 || argv[0] != "install" {
@@ -115,6 +127,12 @@ func run(argv []string) error {
 		}
 		fmt.Printf("installed %s into %s\n", "mattpocock/skills", el.SkillLibraryDir())
 		return nil
+	}
+	for _, a := range argv {
+		if a == "--version" || a == "-version" {
+			fmt.Println(el.VersionString())
+			return nil
+		}
 	}
 	fs := flag.NewFlagSet("el", flag.ContinueOnError)
 	harness := fs.String("harness", "", "pig or claude (default: the orchestrator slot)")

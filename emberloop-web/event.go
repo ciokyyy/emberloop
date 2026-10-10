@@ -21,16 +21,22 @@ type Event struct {
 	Status    string `json:"status,omitempty"`
 	Mode      string `json:"mode,omitempty"`
 	// Images counts the attachments of a prompt; the bytes stay out of the log.
-	Images    int       `json:"images,omitempty"`
+	Images int `json:"images,omitempty"`
+	// ImageIDs names the Session-stored images attached to a prompt: the
+	// transcript keeps the stable ids, the bytes live under the Session's
+	// images directory, and the agent receives their file paths at send
+	// time. Inline attachments stay counted in Images; the two ride together.
+	ImageIDs  []string  `json:"imageIds,omitempty"`
 	CreatedAt time.Time `json:"at"`
 }
 
 // QueuedMessage is one not-yet-delivered Steer or Follow-up (or a plain
 // prompt that arrived while the Session worked).
 type QueuedMessage struct {
-	Mode     string `json:"mode"`
-	Text     string `json:"text"`
-	Degraded bool   `json:"degraded,omitempty"`
+	Mode     string   `json:"mode"`
+	Text     string   `json:"text"`
+	ImageIDs []string `json:"imageIds,omitempty"`
+	Degraded bool     `json:"degraded,omitempty"`
 }
 
 // SessionMeta is the small metadata file per Session. ParentID names the
@@ -38,9 +44,17 @@ type QueuedMessage struct {
 // them (one Group per call). Scout marks a read-only Subagent: user sends
 // and nested spawns are refused, and its tool set carries no write tools.
 type SessionMeta struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// Name is the Subagent display name: the spawn `name` field, or the first
+	// four words of its prompt when none was given. The sidebar and the Group
+	// card show it; the raw id stays a tooltip. Empty on root Sessions.
+	Name    string `json:"name,omitempty"`
 	Harness string `json:"harness"`
 	Model   string `json:"model"`
+	// Effort is the reasoning effort chosen at creation (claude: low,
+	// medium, high, xhigh, max; pig: off, minimal, low, medium, high,
+	// xhigh, max); empty keeps the model default.
+	Effort  string `json:"effort,omitempty"`
 	WorkDir string `json:"workDir"`
 	// ProjectID names the recorded Project the Session belongs to, also for
 	// Subagents and Workers whose WorkDir is a worktree.

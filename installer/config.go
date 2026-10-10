@@ -8,30 +8,6 @@ import (
 	"strings"
 )
 
-// herdrKeyBlock is the keybinding the installer appends to herdr's config.
-const herdrKeyBlock = `
-[[keys.command]]
-key = "prefix+shift+c"
-type = "plugin_action"
-command = "el.compress"
-`
-
-// addHerdrKeybinding appends the compress keybinding to a herdr config.
-// It returns the new text and a status: "added", "present", or "conflict"
-// when the key already runs another command (the file is then unchanged).
-func addHerdrKeybinding(src string) (string, string) {
-	if strings.Contains(src, `"el.compress"`) {
-		return src, "present"
-	}
-	if strings.Contains(src, `key = "prefix+shift+c"`) {
-		return src, "conflict"
-	}
-	if src != "" && !strings.HasSuffix(src, "\n") {
-		src += "\n"
-	}
-	return src + herdrKeyBlock, "added"
-}
-
 // mergeMCPServer sets mcpServers.emberloop in a pig mcp.json and keeps every
 // other key. Empty input starts a new file.
 func mergeMCPServer(raw []byte, command string) ([]byte, error) {

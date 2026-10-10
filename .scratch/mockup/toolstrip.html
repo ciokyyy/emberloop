@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<title>Emberloop — live tool strip</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','SF Pro Text','Inter','Segoe UI','system-ui','sans-serif'], mono: ['ui-monospace','SF Mono','JetBrains Mono','Menlo','monospace'] },
+    colors: { background:'#212121', foreground:'#ececec', card:'#2a2a2a', popover:'#2f2f2f', sidebar:'#171717', muted:'#303030', 'muted-foreground':'#9b9ba1', accent:'#383838', border:'#3a3a3c', ring:'#0a84ff' },
+    borderColor: { DEFAULT: '#3a3a3c' },
+    borderRadius: { sm:'0.5rem', md:'0.75rem', lg:'1rem', xl:'1.25rem', '2xl':'1.5rem', '3xl':'1.75rem' },
+  } } }
+</script>
+<style>
+  body { background:#212121; color:#ececec; -webkit-font-smoothing:antialiased; }
+  * { border-color:#3a3a3c; }
+  ::-webkit-scrollbar { width:12px; height:12px; background:transparent }
+  ::-webkit-scrollbar-thumb { border-radius:9999px; border:4px solid transparent; background:rgba(155,155,161,.25); background-clip:content-box }
+  :root { --ease: cubic-bezier(.22,1,.36,1); }
+
+  /* the stage: height animates to the content, capped, then scrolls */
+  #stage { position:relative; overflow:hidden; transition: height .5s var(--ease); }
+  .slide { position:absolute; inset:0 0 auto 0; will-change: transform, opacity, filter; }
+  .slide.in  { animation: slideIn .5s var(--ease) both; }
+  .slide.out { animation: slideOut .35s var(--ease) both; pointer-events:none; }
+  @keyframes slideIn  { from { opacity:0; transform:translateY(14px); filter:blur(4px) } to { opacity:1; transform:none; filter:none } }
+  @keyframes slideOut { from { opacity:1; transform:none } to { opacity:0; transform:translateY(-14px); filter:blur(4px) } }
+
+  .out-body { max-height:220px; overflow:auto; }
+  .line { animation: lineIn .25s var(--ease) both; }
+  @keyframes lineIn { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:none } }
+
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .spin { animation: spin .8s linear infinite; }
+  @keyframes shimmer { from { background-position: -200% 0 } to { background-position: 200% 0 } }
+  .shimmer { background: linear-gradient(90deg, transparent, rgba(255,255,255,.07), transparent); background-size:200% 100%; animation: shimmer 1.6s linear infinite; }
+
+  /* history drawer */
+  #history { display:grid; grid-template-rows:0fr; transition: grid-template-rows .45s var(--ease), opacity .3s; opacity:0; }
+  #history.open { grid-template-rows:1fr; opacity:1; }
+  #history > div { overflow:hidden; }
+  .hrow { animation: lineIn .3s var(--ease) both; }
+  .tick { transition: width .5s var(--ease); }
+</style>
+</head>
+<body class="min-h-dvh p-8 text-sm">
+<div class="mx-auto max-w-3xl space-y-4">
+
+  <div class="ml-auto w-fit max-w-xl rounded-3xl bg-muted px-5 py-3">fix the live audio and run the tests</div>
+  <div class="text-[15px] leading-7">On it. I'll read the Composer, fix the voice flush and run the suite.</div>
+
+  <!-- THE LIVE TOOL STRIP -->
+  <div id="strip" class="overflow-hidden rounded-2xl border bg-card/80">
+    <!-- header: always visible -->
+    <div class="flex items-center gap-2.5 px-3.5 py-2.5">
+      <div id="statusIcon" class="grid size-5 place-items-center"></div>
+      <div id="toolName" class="font-medium"></div>
+      <span id="toolServer" class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">el</span>
+      <span id="toolMeta" class="ml-1 truncate font-mono text-xs text-muted-foreground"></span>
+      <div class="ml-auto flex items-center gap-2">
+        <span id="elapsed" class="font-mono text-[11px] text-muted-foreground"></span>
+        <button id="histBtn" class="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground transition hover:bg-accent hover:text-foreground">
+          <i data-lucide="history" class="size-3.5"></i><span id="count">0</span>
+          <i id="chev" data-lucide="chevron-down" class="size-3.5 transition-transform duration-300"></i>
+        </button>
+      </div>
+    </div>
+    <!-- progress hairline -->
+    <div class="h-px bg-border"><div id="tick" class="tick h-px bg-ring" style="width:0%"></div></div>
+
+    <!-- the swapping stage -->
+    <div id="stage" style="height:0px"></div>
+
+    <!-- history: every previous tool, newest first; click a row to open its output -->
+    <div id="history"><div><div id="histList" class="space-y-1 border-t bg-background/40 p-2"></div></div></div>
+  </div>
+
+  <div id="after" class="text-[15px] leading-7 opacity-0 transition-opacity duration-500">Voice flush fixed, 141 tests pass.</div>
+
+  <div class="flex items-center gap-2 pt-4 text-xs text-muted-foreground">
+    <button id="replay" class="rounded-full bg-muted px-3 py-1.5 text-foreground hover:bg-accent">Replay</button>
+    <button id="faster" class="rounded-full bg-muted px-3 py-1.5 text-foreground hover:bg-accent">Speed: <span id="speedLbl">1×</span></button>
+    <span>One pill. Each new tool swaps the content. Press the clock button for history.</span>
+  </div>
+</div>
+
+<script>
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const TOOLS = [
+    { name:'read', icon:'file-text', meta:'emberloop-web/web/src/lib/Composer.svelte', type:'file', ms:900,
+      lines:['<span class="text-muted-foreground">  84 </span>function liveAppend(out) {','<span class="text-muted-foreground">  85 </span>  text = (text ? text + " " : "") + out;','<span class="text-muted-foreground">  86 </span>}','<span class="text-muted-foreground">  92 </span>while (segFlush &lt; liveSegs.length &amp;&amp; liveSegs[segFlush].state !== "pending") {','<span class="text-muted-foreground">  93 </span>  const s = liveSegs[segFlush];'] },
+    { name:'grep', icon:'search', meta:'liveSegs  ·  emberloop-web/web/src', type:'file', ms:700,
+      lines:['<span class="text-blue-300">Composer.svelte</span>:27  let liveSegs = $state([]);','<span class="text-blue-300">Composer.svelte</span>:95  while (segFlush &lt; liveSegs.length','<span class="text-blue-300">Composer.svelte</span>:272 {#each liveSegs as s}','<span class="text-muted-foreground">3 matches in 1 file</span>'] },
+    { name:'edit', icon:'pencil', meta:'Composer.svelte  +14 −22', type:'diff', ms:1100,
+      lines:['<div class="rounded bg-red-500/10 px-2 text-red-300">- while (segFlush &lt; liveSegs.length &amp;&amp; …pending") {</div>','<div class="rounded bg-red-500/10 px-2 text-red-300">-   const s = liveSegs[segFlush];</div>','<div class="rounded bg-green-500/10 px-2 text-green-300">+ pendingSegs++;</div>','<div class="rounded bg-green-500/10 px-2 text-green-300">+ const out = await transcribe(blob, { format: voiceFormat });</div>','<div class="rounded bg-green-500/10 px-2 text-green-300">+ liveAppend(out);</div>'] },
+    { name:'bash', icon:'terminal', meta:'npx vitest run', type:'stream', ms:3200,
+      lines:['<span class="text-muted-foreground">$</span> npx vitest run','',' ✓ src/lib/stt.test.js (11)',' ✓ src/lib/events.test.js (24)',' ✓ src/lib/Card.test.js (9)',' ✓ src/lib/images.test.js (6)',' ✓ src/lib/ui/combobox.test.js (8)',' ✓ src/lib/Composer.test.js (19)',' ✓ src/lib/RunsView.test.js (7)','',' <span class="text-green-400">Test Files  15 passed (15)</span>','<span class="text-green-400">      Tests  141 passed (141)</span>'] },
+    { name:'write', icon:'file-plus', meta:'docs/agent/webui.md', type:'file', ms:700,
+      lines:['<span class="text-green-300">wrote 71 lines</span> to docs/agent/webui.md'] },
+  ];
+
+  const $ = id => document.getElementById(id);
+  const stage = $('stage'), MAXH = 232;
+  let speed = 1, runId = 0, history = [], cur = null;
+
+  const spinner = '<i data-lucide="loader-circle" class="spin size-4 text-ring"></i>';
+  const check   = '<i data-lucide="circle-check" class="size-4 text-green-400"></i>';
+  const icons = () => lucide.createIcons();
+
+  function bodyHTML(t, lines) {
+    const mono = 'font-mono text-xs leading-5';
+    return `<div class="border-t bg-background/40 p-3.5"><div class="out-body ${mono}">${lines.map(l=>`<div class="line whitespace-pre-wrap">${l}</div>`).join('')}</div></div>`;
+  }
+
+  function setHeader(t, running) {
+    $('statusIcon').innerHTML = running ? spinner : check;
+    $('toolName').innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="${t.icon}" class="size-3.5 text-muted-foreground"></i>${t.name}</span>`;
+    $('toolMeta').textContent = t.meta;
+    icons();
+  }
+
+  // swap the stage: old content slides up and fades, new slides in, height eases to the new size
+  function swapTo(node) {
+    const old = stage.querySelector('.slide:not(.out)');
+    if (old) { old.classList.add('out'); setTimeout(() => old.remove(), 360); }
+    node.classList.add('slide','in');
+    stage.appendChild(node);
+    resize(node);
+  }
+  function resize(node) {
+    const h = Math.min(node.offsetHeight, MAXH);
+    stage.style.height = h + 'px';
+  }
+
+  async function sleep(ms) { await new Promise(r => setTimeout(r, ms / speed)); }
+
+  async function run(my) {
+    history = []; $('count').textContent = '0'; $('histList').innerHTML = '';
+    stage.innerHTML = ''; stage.style.height = '0px'; $('after').style.opacity = 0; $('tick').style.width = '0%';
+    const t0 = performance.now();
+    for (let i = 0; i < TOOLS.length; i++) {
+      if (my !== runId) return;
+      const t = TOOLS[i]; cur = t;
+      setHeader(t, true);
+      $('tick').style.width = ((i) / TOOLS.length * 100) + '%';
+      // a shell of the running state first (shimmer), then lines stream in
+      const holder = document.createElement('div');
+      holder.innerHTML = bodyHTML(t, []);
+      const body = holder.querySelector('.out-body');
+      body.innerHTML = '<div class="shimmer h-4 rounded"></div>';
+      swapTo(holder);
+      await sleep(350);
+      body.innerHTML = '';
+      const per = t.type === 'stream' ? t.ms / t.lines.length : 90;
+      for (const l of t.lines) {
+        if (my !== runId) return;
+        const d = document.createElement('div');
+        d.className = 'line whitespace-pre-wrap'; d.innerHTML = l; body.appendChild(d);
+        resize(holder);                         // height follows the output, smoothly
+        body.scrollTop = body.scrollHeight;    // pinned to newest line
+        await sleep(per);
+      }
+      setHeader(t, false);
+      $('elapsed').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's';
+      history.push({ t, html: body.innerHTML });
+      $('count').textContent = history.length;
+      renderHistory();
+      await sleep(900);
+    }
+    $('tick').style.width = '100%';
+    $('after').style.opacity = 1;
+  }
+
+  function renderHistory() {
+    const list = $('histList'); list.innerHTML = '';
+    [...history].reverse().forEach((h, idx) => {
+      const row = document.createElement('div'); row.className = 'hrow';
+      row.innerHTML = `<button class="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left hover:bg-accent/50"><i data-lucide="circle-check" class="size-3.5 text-green-400"></i><span class="inline-flex items-center gap-1.5 font-medium"><i data-lucide="${h.t.icon}" class="size-3.5 text-muted-foreground"></i>${h.t.name}</span><span class="truncate font-mono text-xs text-muted-foreground">${esc(h.t.meta)}</span><i data-lucide="chevron-right" class="ml-auto size-3.5 text-muted-foreground transition-transform"></i></button>
+        <div class="hidden px-2.5 pb-2"><div class="out-body rounded-xl bg-background/60 p-3 font-mono text-xs leading-5">${h.html}</div></div>`;
+      const btn = row.querySelector('button'), panel = row.children[1], chev = btn.querySelector('[data-lucide="chevron-right"], svg:last-child');
+      btn.onclick = () => { panel.classList.toggle('hidden'); btn.lastElementChild.style.transform = panel.classList.contains('hidden') ? '' : 'rotate(90deg)'; };
+      list.appendChild(row);
+    });
+    icons();
+  }
+
+  let open = false;
+  $('histBtn').onclick = () => {
+    open = !open; $('history').classList.toggle('open', open);
+    $('chev').style.transform = open ? 'rotate(180deg)' : '';
+  };
+  $('replay').onclick = () => { runId++; open = false; $('history').classList.remove('open'); $('chev').style.transform=''; run(runId); };
+  $('faster').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 0.5 : 1; $('speedLbl').textContent = speed + '×'; };
+
+  lucide.createIcons();
+  run(++runId);
+</script>
+</body>
+</html>

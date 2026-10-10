@@ -2,8 +2,7 @@
 
 ## Purpose
 
-Live probes that only mean something against running agents: the herdr
-report lifecycle and idle checks, the read-precedence comparison, the
+Live probes that only mean something against running agents: the read-precedence comparison, the
 tell-worker proofs (live and mid-turn), the header-strip spike (claude
 and pig usable under the wrapper), the input-queue probe (row, steer and
 queue delivery, stale clear, raw mode, OSC colors and themes for claude
@@ -16,8 +15,14 @@ reviewer-spawn probe (a claude reviewer in a background tab gets its first
 prompt within seconds, then still does after a tab move and in an overflow
 tab; measures ready/working latencies through `herdr agent wait`), and the
 driver probe (two trivial tickets through `implement --driver` on a real
-herdr, killed mid-run and resumed with no second worker, printing each
-ticket's state). Each script names its prerequisites in its header comment.
+  herdr, killed mid-run and resumed with no second worker, printing each
+  ticket's state), and the claude-effort probe (two claude Sessions, effort
+  low vs max, answer the same reasoning prompt through the web Daemon;
+  prints thinking totals for a human verdict on the SDK effort option), and
+  the runs-actions probe (a 2-ticket Run through the web Daemon `/api/runs`
+  against real agents, exercising the per-ticket steer, park, retry and
+  discard routes plus the ticket table the needs-you banner reads).
+  Each script names its prerequisites in its header comment.
 
 ## Ownership
 

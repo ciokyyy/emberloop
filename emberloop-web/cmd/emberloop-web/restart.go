@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"syscall"
 	"time"
 
@@ -61,5 +62,35 @@ func watchForUpdate(d *web.Daemon, exe string, every time.Duration) {
 		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
 			fmt.Fprintln(os.Stderr, "restart:", err)
 		}
+	}
+}
+
+// watchForRestartRequest serves the graceful restart: once the Daemon
+// asked for it (POST /api/restart or SIGUSR1) it waits until no Session is
+// mid-turn, at most drain, then closes the agents and re-executes in place.
+// Runs were paused and marked by RequestRestart, so the new Daemon resumes
+// them. Exec failing cancels the request and resumes them here.
+func watchForRestartRequest(d *web.Daemon, exe string, drain time.Duration) {
+	for range d.RestartCh() {
+		fmt.Println("el-web: restart requested, waiting for idle")
+		deadline := time.Now().Add(drain)
+		for !d.Idle() && time.Now().Before(deadline) {
+			time.Sleep(500 * time.Millisecond)
+		}
+		fmt.Println("el-web: restarting")
+		d.Shutdown()
+		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, "restart:", err)
+			d.CancelRestart()
+		}
+	}
+}
+
+// signalRestart turns SIGUSR1 (systemctl reload) into a restart request.
+func signalRestart(d *web.Daemon) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGUSR1)
+	for range ch {
+		d.RequestRestart()
 	}
 }

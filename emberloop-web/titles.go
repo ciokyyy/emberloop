@@ -22,6 +22,9 @@ const (
 	titleInputRunes = 600
 	// titleMaxRunes caps the stored title.
 	titleMaxRunes = 60
+	// titleMaxTokens leaves room for a reasoning model to think before it
+	// writes the title; a tiny cap ends the reply with only thinking.
+	titleMaxTokens = 2048
 	// titleCallTimeout bounds one title call; a title is best-effort.
 	titleCallTimeout = time.Minute
 	// titleDefaultClaudeModel titles claude Sessions when no title role is set.
@@ -212,7 +215,7 @@ func (b *PigBackend) Title(model, prompt string) (string, error) {
 		SystemPrompt: titleSystemPrompt,
 		Messages:     []ai.Message{ai.UserMessage{Content: ai.UserText(prompt), Timestamp: time.Now().UnixMilli()}},
 	})
-	stream, err := m.Provider.Stream(ctx, tc, ai.StreamOptions{MaxTokens: 64, Thinking: ai.ThinkingOff})
+	stream, err := m.Provider.Stream(ctx, tc, ai.StreamOptions{MaxTokens: titleMaxTokens, Thinking: ai.ThinkingOff})
 	if err != nil {
 		return "", err
 	}

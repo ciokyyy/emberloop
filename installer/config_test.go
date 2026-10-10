@@ -6,21 +6,6 @@ import (
 	"testing"
 )
 
-func TestAddHerdrKeybinding(t *testing.T) {
-	out, st := addHerdrKeybinding("onboarding = false")
-	if st != "added" || !strings.Contains(out, `command = "el.compress"`) || !strings.HasPrefix(out, "onboarding = false\n") {
-		t.Fatalf("add: %q %q", st, out)
-	}
-	again, st := addHerdrKeybinding(out)
-	if st != "present" || again != out {
-		t.Fatalf("second run must change nothing: %q", st)
-	}
-	_, st = addHerdrKeybinding("[[keys.command]]\nkey = \"prefix+shift+c\"\ncommand = \"other\"\n")
-	if st != "conflict" {
-		t.Fatalf("conflict status = %q", st)
-	}
-}
-
 func TestMergeMCPServerKeepsOthers(t *testing.T) {
 	in := `{"mcpServers":{"other":{"command":"x"},"wick":{"command":"wick-mcp"}},"keep":1}`
 	out, err := mergeMCPServer([]byte(in), "/bin/el-mcp")

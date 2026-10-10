@@ -85,6 +85,12 @@ type Daemon struct {
 	// sudo holds the pending and settled sudo approval requests (sudo.go).
 	sudoOnce sync.Once
 	sudo     *sudoStore
+	// restartCh fires once after RequestRestart; the binary waits on it,
+	// drains and re-executes. restartReq guards repeats (restart.go).
+	restartCh  chan struct{}
+	restartReq bool
+	// runNow is the driver world's clock seam; nil reads time.Now (runs_exec.go).
+	runNow func() time.Time
 }
 
 type session struct {
@@ -127,6 +133,7 @@ type queuedMsg struct {
 	mode     string
 	text     string
 	images   []Image
+	imageIDs []string
 	degraded bool
 	// held marks a claude Steer waiting for the next tool call to finish.
 	held bool
@@ -158,15 +165,16 @@ type interruptBackend interface {
 // Loaded Sessions hold history only; a new prompt resumes them.
 func NewDaemon(stateDir string, backend Backend) *Daemon {
 	d := &Daemon{
-		stateDir: stateDir,
-		backend:  backend,
-		live:     newLiveHub(),
-		push:     newPushStore(stateDir),
-		sessions: map[string]*session{},
-		backends: map[string]Backend{},
-		groups:   map[string]*spawnGroup{},
-		runs:     map[string]*runState{},
-		submits:  map[string]*submitRec{},
+		stateDir:  stateDir,
+		backend:   backend,
+		live:      newLiveHub(),
+		push:      newPushStore(stateDir),
+		sessions:  map[string]*session{},
+		backends:  map[string]Backend{},
+		groups:    map[string]*spawnGroup{},
+		runs:      map[string]*runState{},
+		submits:   map[string]*submitRec{},
+		restartCh: make(chan struct{}, 1),
 	}
 	d.load()
 	d.loadGroups()
@@ -210,6 +218,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/projects/", d.handleProjectSub)
 	mux.HandleFunc("/api/quota", d.handleQuota)
 	mux.HandleFunc("/api/quota/refresh", d.handleQuotaRefresh)
+	mux.HandleFunc("/api/version", d.handleVersion)
+	mux.HandleFunc("/api/health", d.handleHealth)
 	return guardHosts(mux, d.allowHosts, d.allowTailnet)
 }
 
@@ -465,11 +475,12 @@ func (d *Daemon) finishTurn(id string) {
 			s.active++
 			be := d.backendForLocked(s.meta.Harness)
 			d.mu.Unlock()
-			d.appendPromptEvent(id, next.text, modeLabel(next.mode), len(next.images))
+			d.appendPromptEvent(id, next.text, modeLabel(next.mode), len(next.images), next.imageIDs)
 			if be == nil {
 				continue
 			}
-			promptBackend(be, id, next.text, next.images, func(kind, text, status string) {
+			btext, bimages := d.backendMessage(id, next.text, next.images, next.imageIDs)
+			promptBackend(be, id, btext, bimages, func(kind, text, status string) {
 				d.appendEvent(id, kind, text, status)
 			})
 			continue
@@ -526,20 +537,26 @@ func (d *Daemon) appendModeEvent(id, kind, text, status, mode string) Event {
 	return d.appendModeEventLocked(id, kind, text, status, mode)
 }
 
-// appendPromptEvent stores one prompt Event; images counts the attachments
-// (the bytes go to the Backend, never into the log).
-func (d *Daemon) appendPromptEvent(id, text, mode string, images int) Event {
+// appendPromptEvent stores one prompt Event; images counts the inline
+// attachments and imageIDs names the Session-stored ones (the bytes go to
+// the Backend, never into the log).
+func (d *Daemon) appendPromptEvent(id, text, mode string, images int, imageIDs []string) Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.appendEventLocked(id, "prompt", text, "", mode, images)
+	return d.appendEventLocked(id, "prompt", text, "", mode, images, imageIDs)
+}
+
+// appendPromptEventLocked is appendPromptEvent; callers hold d.mu.
+func (d *Daemon) appendPromptEventLocked(id, text, mode string, images int, imageIDs []string) Event {
+	return d.appendEventLocked(id, "prompt", text, "", mode, images, imageIDs)
 }
 
 // appendModeEventLocked stores one Event; callers hold d.mu.
 func (d *Daemon) appendModeEventLocked(id, kind, text, status, mode string) Event {
-	return d.appendEventLocked(id, kind, text, status, mode, 0)
+	return d.appendEventLocked(id, kind, text, status, mode, 0, nil)
 }
 
-func (d *Daemon) appendEventLocked(id, kind, text, status, mode string, images int) Event {
+func (d *Daemon) appendEventLocked(id, kind, text, status, mode string, images int, imageIDs []string) Event {
 	s, ok := d.sessions[id]
 	if !ok {
 		return Event{}
@@ -558,6 +575,7 @@ func (d *Daemon) appendEventLocked(id, kind, text, status, mode string, images i
 		Status:    status,
 		Mode:      mode,
 		Images:    images,
+		ImageIDs:  imageIDs,
 		CreatedAt: time.Now().UTC(),
 	}
 	s.events = append(s.events, e)
@@ -566,7 +584,7 @@ func (d *Daemon) appendEventLocked(id, kind, text, status, mode string, images i
 		prev := s.meta.Status
 		s.meta.Status = status
 		if prev == "working" && (status == "idle" || status == "failed") {
-			d.pushTurnDone(s.meta, status)
+			d.pushTurnDone(s.meta, status, e.Seq)
 		}
 	}
 	notify := s.notify
@@ -613,11 +631,12 @@ func (d *Daemon) injectHeldSteers(id string, held []queuedMsg) {
 	be := d.claude
 	d.mu.Unlock()
 	for _, m := range held {
-		if be != nil && be.SteerLive(id, m.text, m.images) {
+		btext, bimages := d.backendMessage(id, m.text, m.images, m.imageIDs)
+		if be != nil && be.SteerLive(id, btext, bimages) {
 			d.appendModeEvent(id, "prompt", m.text, "", "steer")
 			continue
 		}
-		d.routeLiveOpt(id, "followup", m.text, m.images, false)
+		d.routeLiveOpt(id, "followup", m.text, m.images, m.imageIDs, false)
 	}
 }
 
@@ -740,7 +759,7 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 // sendMessage resumes a released Session if needed, then routes one prompt,
 // steer or follow-up. It writes the HTTP response itself. Refusals carry
 // the why as {"error"} so the UI can show it.
-func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, text string, images []Image) {
+func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, text string, images []Image, imageIDs []string) {
 	// Scout Subagents are read-only: their spawn prompt is their only turn.
 	d.mu.Lock()
 	if s, ok := d.sessions[id]; ok && s.meta.Scout {
@@ -761,7 +780,14 @@ func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, t
 		writeJSON(w, code, map[string]any{"error": msg})
 		return
 	}
-	res, code := d.routeLiveImages(id, mode, text, images)
+	// Inline attachments are stored under the Session too, so the transcript
+	// and its gallery keep them and the agent gets their file paths; from here
+	// they ride as ids like any other stored image.
+	if len(images) > 0 {
+		imageIDs = append(imageIDs, d.storeInlineImages(id, images)...)
+		images = nil
+	}
+	res, code := d.routeLiveImages(id, mode, text, images, imageIDs)
 	if code != http.StatusAccepted {
 		if code == http.StatusNotFound {
 			http.NotFound(w, r)
@@ -787,19 +813,18 @@ func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, t
 // the turn. Launched turns count in active so finishTurn never releases
 // their process early.
 func (d *Daemon) routeLive(id, mode, text string) (sendResult, int) {
-	return d.routeLiveImages(id, mode, text, nil)
+	return d.routeLiveImages(id, mode, text, nil, nil)
 }
 
-// routeLiveImages is routeLive with image attachments. A message with images
-// never takes a native steer path (those carry text only): mid-turn it waits
-// in the Daemon pending list and arrives as a Follow-up.
-func (d *Daemon) routeLiveImages(id, mode, text string, images []Image) (sendResult, int) {
-	return d.routeLiveOpt(id, mode, text, images, true)
+// routeLiveImages is routeLive with image attachments: inline bytes plus the
+// Session-stored ids resolved to bytes and file paths for the Backend.
+func (d *Daemon) routeLiveImages(id, mode, text string, images []Image, imageIDs []string) (sendResult, int) {
+	return d.routeLiveOpt(id, mode, text, images, imageIDs, true)
 }
 
 // routeLiveOpt is routeLive; inject lets a mid-turn claude Steer try the
 // adapter's _session/steering before it degrades to a Follow-up.
-func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, inject bool) (sendResult, int) {
+func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []string, inject bool) (sendResult, int) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
 	if !ok {
@@ -817,8 +842,10 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, inject bool
 	harness := s.meta.Harness
 	be := d.backendForLocked(harness)
 	degraded := false
+	hasImages := len(images) > 0 || len(imageIDs) > 0
+	btext, bimages := d.backendMessage(id, text, images, imageIDs)
 	_, imgSteer := be.(imageSteerBackend)
-	if len(images) > 0 && s.busy && mode == "steer" && harness != "claude" && !(harness == "pig" && imgSteer) {
+	if hasImages && s.busy && mode == "steer" && harness != "claude" && !(harness == "pig" && imgSteer) {
 		mode = "followup"
 		degraded = true
 	}
@@ -828,7 +855,7 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, inject bool
 		// the message in pending and injects it when a tool call completes.
 		// If the turn ends first, finishTurn delivers it as a Follow-up.
 		if _, ok := be.(*ClaudeBackend); ok && inject {
-			s.pending = append(s.pending, queuedMsg{mode: "steer", text: text, images: images, held: true})
+			s.pending = append(s.pending, queuedMsg{mode: "steer", text: text, images: images, imageIDs: imageIDs, held: true})
 			pos := len(s.pending)
 			d.mu.Unlock()
 			return sendResult{queued: true, position: pos}, http.StatusAccepted
@@ -843,26 +870,26 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, inject bool
 	// is d.mu before the backend lock; no Backend path takes them in
 	// the reverse order. The Event lands at once so the transcript shows
 	// what was queued, even if it is cleared before delivery.
-	if harness == "pig" && s.busy && (len(images) == 0 || imgSteer) && (mode == "steer" || mode == "followup") {
+	if harness == "pig" && s.busy && (!hasImages || imgSteer) && (mode == "steer" || mode == "followup") {
 		if qb, ok := be.(steerBackend); ok {
 			ib, _ := be.(imageSteerBackend)
 			switch {
-			case len(images) > 0 && mode == "steer":
-				ib.SteerImages(id, text, images)
-			case len(images) > 0:
-				ib.FollowUpImages(id, text, images)
+			case len(bimages) > 0 && mode == "steer":
+				ib.SteerImages(id, btext, bimages)
+			case len(bimages) > 0:
+				ib.FollowUpImages(id, btext, bimages)
 			case mode == "steer":
 				qb.Steer(id, text)
 			default:
 				qb.FollowUp(id, text)
 			}
-			e := d.appendModeEventLocked(id, "prompt", text, "", mode)
+			e := d.appendPromptEventLocked(id, text, mode, len(images), imageIDs)
 			d.mu.Unlock()
 			return sendResult{seq: e.Seq, queued: true}, http.StatusAccepted
 		}
 	}
 	if s.busy {
-		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, images: images, degraded: degraded})
+		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded})
 		pos := len(s.pending)
 		d.mu.Unlock()
 		return sendResult{queued: true, position: pos}, http.StatusAccepted
@@ -870,14 +897,25 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, inject bool
 	s.busy = true
 	s.active++
 	d.mu.Unlock()
-	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images))
+	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs)
 	d.maybeTitle(id, text)
 	if be != nil {
-		go d.runTurn(id, be, text, images)
+		go d.runTurn(id, be, btext, bimages)
 	} else {
 		d.finishTurn(id)
 	}
 	return sendResult{seq: e.Seq}, http.StatusAccepted
+}
+
+// backendMessage resolves a message for the Backend turn: Session-stored
+// image ids become inline bytes and their file paths join the text, so the
+// agent sees the pictures and can read the files; the transcript keeps the
+// clean text and the ids. No ids leaves the message untouched.
+func (d *Daemon) backendMessage(id, text string, images []Image, imageIDs []string) (string, []Image) {
+	if len(imageIDs) == 0 {
+		return text, images
+	}
+	return d.imageRefsText(id, text, imageIDs), d.withStoredImages(id, images, imageIDs)
 }
 
 // mergePending folds queued messages into one, in order, joined by a blank
@@ -893,6 +931,7 @@ func mergePending(q []queuedMsg) queuedMsg {
 			parts = append(parts, m.text)
 		}
 		out.images = append(out.images, m.images...)
+		out.imageIDs = append(out.imageIDs, m.imageIDs...)
 		if m.mode != out.mode {
 			out.mode = "followup"
 		}
@@ -1126,17 +1165,22 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		})
 	case sub == "prompt" && r.Method == "POST":
 		var req struct {
-			Text   string  `json:"text"`
-			Mode   string  `json:"mode"`
-			Images []Image `json:"images"`
+			Text     string   `json:"text"`
+			Mode     string   `json:"mode"`
+			Images   []Image  `json:"images"`
+			ImageIDs []string `json:"imageIds"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxPromptBytes)
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Text == "" && len(req.Images) == 0) {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Text == "" && len(req.Images) == 0 && len(req.ImageIDs) == 0) {
 			http.Error(w, "text is required", http.StatusBadRequest)
 			return
 		}
 		if msg := validateImages(req.Images); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+		if bad := d.imageIDsValid(id, req.ImageIDs); bad != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown image: " + bad})
 			return
 		}
 		mode := req.Mode
@@ -1147,7 +1191,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unknown mode (want prompt, steer or followup)", http.StatusBadRequest)
 			return
 		}
-		d.sendMessage(w, r, id, mode, req.Text, req.Images)
+		d.sendMessage(w, r, id, mode, req.Text, req.Images, req.ImageIDs)
 	case (sub == "steer" || sub == "followup") && r.Method == "POST":
 		var req struct {
 			Text string `json:"text"`
@@ -1156,7 +1200,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "text is required", http.StatusBadRequest)
 			return
 		}
-		d.sendMessage(w, r, id, sub, req.Text, nil)
+		d.sendMessage(w, r, id, sub, req.Text, nil, nil)
 	case sub == "interrupt" && r.Method == "POST":
 		stopped, code := d.interrupt(id)
 		if code != http.StatusOK {
@@ -1195,6 +1239,10 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, m)
+	case sub == "images":
+		d.handleSessionImages(w, r, id)
+	case strings.HasPrefix(sub, "images/"):
+		d.handleSessionImageFile(w, r, id, strings.TrimPrefix(sub, "images/"))
 	case sub == "events" && r.Method == "GET":
 		d.serveEvents(w, r, id)
 	default:

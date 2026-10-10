@@ -12,13 +12,14 @@ import (
 // fakeDaemon is the Daemon HTTP contract the proxies call back: spawn,
 // session reads and list, steer/follow-up, queue, interrupt, end and submit.
 type fakeDaemon struct {
-	t        *testing.T
-	spawned  []map[string]any
-	steered  []string
-	ended    []string
-	submits  []map[string]any
-	sessions map[string]fakeSession
-	order    []string
+	t            *testing.T
+	spawned      []map[string]any
+	spawnDeliver string
+	steered      []string
+	ended        []string
+	submits      []map[string]any
+	sessions     map[string]fakeSession
+	order        []string
 }
 
 type fakeSession struct {
@@ -74,7 +75,8 @@ func (d *fakeDaemon) handler() http.Handler {
 		switch {
 		case sub == "spawn" && r.Method == http.MethodPost:
 			var req struct {
-				Agents []map[string]any `json:"agents"`
+				Agents  []map[string]any `json:"agents"`
+				Deliver string           `json:"deliver"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			if len(req.Agents) == 0 {
@@ -86,6 +88,7 @@ func (d *fakeDaemon) handler() http.Handler {
 				return
 			}
 			d.spawned = append(d.spawned, req.Agents...)
+			d.spawnDeliver = req.Deliver
 			d.writeJSON(w, http.StatusCreated, map[string]any{
 				"group":    "g1",
 				"sessions": []map[string]any{{"id": "c1"}, {"id": "c2"}},
@@ -160,6 +163,27 @@ func TestWebProxySpawnPostsAgents(t *testing.T) {
 	}
 	if _, err := proxyCall(t, "spawn", `{"agents":[]}`); err == nil {
 		t.Fatal("empty agents must fail")
+	}
+}
+
+func TestWebProxySpawnPassesNameAndDeliver(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+
+	out, err := proxyCall(t, "spawn", `{"deliver":"each","agents":[{"prompt":"job A","name":"Alpha"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "spawned group g1: c1 c2" {
+		t.Fatalf("spawn = %q", out)
+	}
+	if len(d.spawned) != 1 || d.spawned[0]["name"] != "Alpha" {
+		t.Fatalf("spawned agents = %v, want the name passed through", d.spawned)
+	}
+	if d.spawnDeliver != "each" {
+		t.Fatalf("spawn deliver = %q, want each", d.spawnDeliver)
 	}
 }
 

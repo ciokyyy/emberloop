@@ -156,7 +156,9 @@ func TestWorkerCapKeepsLiveAndErroredPanes(t *testing.T) {
 // cancelled by the prune: its workers.json entry is gone, its worktree and
 // branch stay, and the run history records the cancellation.
 func TestDeadPaneWorkerIsCancelledByThePrune(t *testing.T) {
+	oldState := statePath
 	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
@@ -283,7 +285,9 @@ func TestCancelledWorkerNotifiesParentOnce(t *testing.T) {
 // Spawning a ticket whose worktree and branch survive from a cancelled
 // worker reuses both instead of failing with "already exists".
 func TestRespawnReusesCancelledWorktreeAndBranch(t *testing.T) {
+	oldState := statePath
 	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
@@ -525,7 +529,9 @@ func TestOrchestratorSpawnReportsCancelledWorker(t *testing.T) {
 // A stray directory at the ticket's worktree path is refused, not adopted:
 // only a worktree git lists for the repo is reused.
 func TestSpawnRefusesAStrayWorktreePath(t *testing.T) {
+	oldState := statePath
 	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")
@@ -559,7 +565,9 @@ func TestSpawnRefusesAStrayWorktreePath(t *testing.T) {
 // A cancelled worker that committed before its pane closed keeps its work:
 // the respawn reuses the branch with its commits.
 func TestRespawnReusesCancelledBranchWithCommits(t *testing.T) {
+	oldState := statePath
 	statePath = filepath.Join(t.TempDir(), "workers.json")
+	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 	repo := t.TempDir()
 	gitOut(t, repo, "init", "-q", "-b", "main")

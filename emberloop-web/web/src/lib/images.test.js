@@ -40,7 +40,7 @@ describe('Composer images', () => {
     await vi.waitFor(() => expect(q.getByLabelText('attached images')).toBeTruthy());
     await fireEvent.click(q.getByText('Send'));
     await tick();
-    expect(onSend).toHaveBeenCalledWith('', 'prompt', [{ mime: 'image/png', data: 'iVBORw==' }]);
+    expect(onSend).toHaveBeenCalledWith('', 'prompt', [{ mime: 'image/png', data: 'iVBORw==' }], []);
     expect(q.queryByLabelText('attached images')).toBeNull();
   });
   it('removes one attachment', async () => {

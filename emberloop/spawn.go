@@ -656,6 +656,22 @@ func launchWorktree(run Exec, root string, t AgentType, r spawnRequest) (*spawne
 // across its own herdr calls. A queued worker joins groupID, so its submit
 // joins the group's single notice when the drain starts it.
 func launchWorktreeCapped(run Exec, root string, t AgentType, r spawnRequest, parentID, parentPane, groupID string) (*spawnedAgent, error) {
+	// The ticket is validated before the worker-launch lock: a bad ticket
+	// fails fast without serializing other launchers, and launchWorktree
+	// re-checks the same at launch time.
+	if r.Ticket == "" {
+		return nil, fmt.Errorf("a %s entry needs ticket", t.Name)
+	}
+	if _, err := os.Stat(r.Ticket); err != nil {
+		return nil, fmt.Errorf("cannot read ticket %s: %w", r.Ticket, err)
+	}
+	// Workers live in the workspace the orchestrator runs in: without it
+	// Spawn has nowhere to put the ticket's tab, so refuse before the lock
+	// is taken or the cap or the queue is read. Queueing here would only
+	// store an entry the drain could never launch.
+	if os.Getenv("HERDR_WORKSPACE_ID") == "" {
+		return nil, fmt.Errorf("HERDR_WORKSPACE_ID is not set: el spawns workers into the herdr workspace it runs in")
+	}
 	var out *spawnedAgent
 	err := withFileLock("worker-launch", func() error {
 		// A hand-closed pane frees its slot here, before the cap is read: the

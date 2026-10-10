@@ -1,11 +1,15 @@
 <!-- Transcript card: one visual block per grouped Event run. -->
 <script>
   import Markdown from './Markdown.svelte';
+  import GroupCard from './GroupCard.svelte';
+  import ToolStrip from './ToolStrip.svelte';
   import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
-  import { decideSudo } from './api.js';
-  let { block, sessionId = null } = $props();
+  import { decideSudo, imageSrc } from './api.js';
+  import VoiceBubble from './VoiceBubble.svelte';
+  import { isAudioId, audioMeta } from './voiceMeta.js';
+  let { block, sessionId = null, sessions = [], onOpenSession = () => {} } = $props();
   let sudoPassword = $state('');
   let sudoBusy = $state(false);
   let sudoError = $state('');
@@ -28,16 +32,50 @@
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n ?? 0));
   const compaction = $derived(block.compaction ?? {});
   const saved = $derived(compaction.tokensBefore > 0 && compaction.tokensAfter > 0 ? Math.max(0, Math.round((1 - compaction.tokensAfter / compaction.tokensBefore) * 100)) : null);
+  // Voice recordings ride the image ids ("aud_" prefix): they show as a voice
+  // bubble whose transcript is the message text; the rest stay pictures.
+  const voiceIds = $derived((block.imageIds ?? []).filter(isAudioId));
+  const pictureIds = $derived((block.imageIds ?? []).filter((i) => !isAudioId(i)));
+  let voiceMeta = $state({});
+  $effect(() => {
+    for (const vid of voiceIds) {
+      if (!sessionId || voiceMeta[vid]) continue;
+      audioMeta(sessionId, vid).then((m) => {
+        if (m) voiceMeta = { ...voiceMeta, [vid]: m };
+      });
+    }
+  });
   const diffLines = $derived(block.card === 'diff' ? String(block.body ?? '').split('\n') : []);
 </script>
 
 {#if block.card === 'user'}
-  <div class="flex animate-rise justify-end" data-card="user">
-    <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
+  <div class="flex justify-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-swap={block.noAnim ? 'true' : undefined}>
+    <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
       {#if block.title && block.title !== 'You'}
         <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
       {/if}
-      {block.body}
+      {#if !voiceIds.length}{block.body}{/if}
+      {#each voiceIds as vid (vid)}
+        <div class="w-64 max-w-full text-left" data-testid="voice-message">
+          <VoiceBubble
+            src={sessionId ? imageSrc(sessionId, vid) : ''}
+            peaks={voiceMeta[vid]?.peaks ?? []}
+            durationMs={voiceMeta[vid]?.durationMs ?? 0}
+            transcript={block.body}
+          />
+        </div>
+      {/each}
+      {#if pictureIds.length}
+        <div class="mt-2 flex flex-wrap justify-end gap-1.5">
+          {#each pictureIds as imgId (imgId)}
+            {#if sessionId}
+              <img src={imageSrc(sessionId, imgId)} alt="Attached image" class="h-28 w-28 rounded-xl border object-cover" loading="lazy" />
+            {:else}
+              <span class="rounded-lg bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">image</span>
+            {/if}
+          {/each}
+        </div>
+      {/if}
       {#if block.pending === 'sending'}
         <div class="mt-0.5 text-[11px] text-muted-foreground">Sending…</div>
       {/if}
@@ -111,6 +149,8 @@
   <div class="flex animate-rise justify-center" data-card="status">
     <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">Session {block.title}</span>
   </div>
+{:else if block.card === 'toolstrip'}
+  <ToolStrip block={block} />
 {:else if block.card === 'tool'}
   <details class="group animate-rise overflow-hidden rounded-2xl border bg-card text-card-foreground" data-card="tool">
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
@@ -195,14 +235,21 @@
   <div class="animate-rise rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm" role="alert" data-card="error">
     <span class="font-medium">Error: </span>{block.body}
   </div>
+{:else if block.card === 'group'}
+  <GroupCard block={block} {sessions} {onOpenSession} />
 {:else if block.card === 'subagent'}
-  <div class="animate-rise ml-6 rounded-2xl border border-dashed bg-card px-4 py-2.5 text-sm" data-card="subagent">
+  <div class="animate-rise ml-6 rounded-2xl border border-dashed bg-card px-4 py-2.5 text-sm" data-card="subagent" title={block.childId ?? block.body}>
     <div class="mb-1 text-xs font-medium text-muted-foreground">{block.title}</div>
-    <Markdown text={block.body} />
+    {#if block.childId}
+      {@const short = String(block.childId ?? '').slice(0, 8)}
+      <span class="font-mono text-[11px] text-muted-foreground/60">{short}</span>
+    {:else}
+      <Markdown text={block.body} />
+    {/if}
   </div>
 {:else}
   <div class="animate-rise px-1 py-1 text-[15px] leading-7" data-card={block.card}>
     <div class="mb-1 text-xs font-medium text-muted-foreground">{block.title}</div>
-    <Markdown text={block.body} />
+    <Markdown text={block.body} fade={block.card === 'assistant'} />
   </div>
 {/if}

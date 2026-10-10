@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, within } from '@testing-library/svelte';
 import Card from './Card.svelte';
+
+vi.mock('./api.js', async (orig) => ({
+  ...(await orig()),
+  listImages: vi.fn(async () => ({ images: [{ id: 'aud_1', mediaType: 'audio/webm', peaks: [20, 80], durationMs: 5000 }] })),
+}));
 
 const block = (card, title = 'T', body = 'body text') => ({ key: 1, card, title, body, collapsed: card === 'tool', events: [] });
 
@@ -26,15 +31,20 @@ describe('Card renders every Event kind', () => {
     expect(container.querySelector('[data-card="diff"]')?.textContent).toContain('+new');
   });
   it('user card labels a steer visibly', () => {
-    const { container } = render(Card, { props: { block: { ...block('user', 'Steer', 'go left') } } });
+    const { container } = render(Card, { props: { block: block('user', 'Steer', 'go left') } });
     expect(container.querySelector('[data-card="user"]')?.textContent).toContain('Steer');
   });
   it('user card labels a follow-up visibly', () => {
-    const { container } = render(Card, { props: { block: { ...block('user', 'Follow-up', 'after that') } } });
+    const { container } = render(Card, { props: { block: block('user', 'Follow-up', 'after that') } });
     expect(container.querySelector('[data-card="user"]')?.textContent).toContain('Follow-up');
   });
+  it('an echoed prompt (swap) skips the entrance animation', () => {
+    const { container } = render(Card, { props: { block: { ...block('user', 'You', 'hello'), noAnim: true } } });
+    const card = container.querySelector('[data-card="user"]');
+    expect(card?.getAttribute('data-swap')).toBe('true');
+    expect(card?.className).not.toMatch(/animate-rise/);
+  });
 });
-
 describe('Card compaction', () => {
   const comp = (compaction, body = '') => ({ key: 1, card: 'compaction', title: 'x', body, collapsed: true, compaction, events: [] });
   it('running shows a progress label', () => {
@@ -56,5 +66,54 @@ describe('Card compaction', () => {
   it('failed shows the error', () => {
     const { container } = render(Card, { props: { block: comp({ state: 'failed', error: 'model unavailable' }) } });
     expect(container.querySelector('[data-card="compaction"]')?.textContent).toContain('model unavailable');
+  });
+});
+
+describe('Card subagent and image branches', () => {
+  it('renders a group header with member rows that open the child', async () => {
+    const { fireEvent } = await import('@testing-library/svelte');
+    let opened = null;
+    const { container } = render(Card, {
+      props: {
+        block: { key: 1, card: 'group', title: '2 subagents', groupId: 'g', members: [{ id: 'child-1', name: 'Alpha', harness: 'pig', scout: false, status: 'idle' }], finished: false, events: [] },
+        sessionId: 'parent-1',
+        sessions: [{ id: 'child-1', name: 'Alpha', harness: 'pig', status: 'idle' }],
+        onOpenSession: (id) => (opened = id),
+      },
+    });
+    const group = container.querySelector('[data-card="group"]');
+    expect(group).not.toBeNull();
+    expect(group.textContent).toContain('Alpha');
+    expect(group.textContent).toContain('worker');
+    await fireEvent.click(container.querySelector('[data-child="child-1"]'));
+    expect(opened).toBe('child-1');
+  });
+  it('renders image chips on user messages with attachments', () => {
+    const { container } = render(Card, {
+      props: { block: { ...block('user', 'You', 'see this'), imageIds: ['img1'] }, sessionId: 's1' },
+    });
+    const img = container.querySelector('[data-card="user"] img');
+    expect(img?.getAttribute('src')).toContain('/api/sessions/s1/images/img1');
+  });
+  it('renders a voice message as a bubble with the text as its transcript', async () => {
+    const { container } = render(Card, {
+      props: { block: { ...block('user', 'You', 'what the user said'), imageIds: ['aud_1', 'img1'] }, sessionId: 's1' },
+    });
+    const card = container.querySelector('[data-card="user"]');
+    expect(card.querySelector('[data-testid="voice-bubble"]')).not.toBeNull();
+    expect(card.querySelector('audio').getAttribute('src')).toContain('/api/sessions/s1/images/aud_1');
+    // The text hides behind the Transcript button; the picture stays a picture.
+    expect(card.textContent).not.toContain('what the user said');
+    expect(card.querySelector('[data-testid="voice-bubble"]').getAttribute('title')).toBe('what the user said');
+    expect(card.querySelectorAll('img')).toHaveLength(1);
+    await vi.waitFor(() => expect(card.querySelector('[aria-label="seek voice message"]').children).toHaveLength(2));
+  });
+  it('shows the child name with the id only as a tooltip', () => {
+    const { container } = render(Card, {
+      props: { block: { key: 2, card: 'subagent', title: 'Alpha', body: 'x', childId: 'child-abcdef', events: [] } },
+    });
+    const card = container.querySelector('[data-card="subagent"]');
+    expect(card.textContent).toContain('Alpha');
+    expect(card.getAttribute('title')).toBe('child-abcdef');
   });
 });

@@ -1,3 +1,6 @@
 {
-  "orchestrator_paths": [".scratch/"]
+  "orchestrator_paths": [".scratch/"],
+  "specs": ".scratch",
+  "tickets": "issues",
+  "pipeline": true
 }

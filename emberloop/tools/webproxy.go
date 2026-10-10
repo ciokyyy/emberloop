@@ -50,12 +50,13 @@ func IsDaemonProxy(t Tool) bool {
 func WebProxyTool(name string) Tool {
 	switch name {
 	case "spawn":
-		return webProxy{name: "spawn", desc: "Spawn Subagents that work in parallel and report back as one grouped result. Each agent takes a prompt and a type (worker or scout); scouts are read-only. Returned ids can be steered with the steer tool, peeked at with check, or stopped with cancel.", schema: webProxySchema(map[string]any{
+		return webProxy{name: "spawn", desc: "Spawn Subagents that work in parallel and report back. Each agent takes a prompt, an optional name for its card, and a type (worker or scout); scouts are read-only. Deliver selects the parent notices: 'group' (the default) sends one grouped result when the last member settles, 'each' sends one notice per child as it settles. Returned ids can be steered with the steer tool, peeked at with check, or stopped with cancel.", schema: webProxySchema(map[string]any{
+			"deliver": map[string]any{"type": "string", "enum": []string{"group", "each"}},
 			"agents": map[string]any{
 				"type": "array",
 				"items": map[string]any{
 					"type":       "object",
-					"properties": map[string]any{"prompt": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}},
+					"properties": map[string]any{"prompt": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"}, "type": map[string]any{"type": "string"}},
 					"required":   []string{"prompt"},
 				},
 			},
@@ -156,8 +157,10 @@ func webProxySpawn(ctx context.Context, daemonURL, parentID string, args json.Ra
 	var req struct {
 		Agents []struct {
 			Prompt string `json:"prompt"`
+			Name   string `json:"name,omitempty"`
 			Type   string `json:"type,omitempty"`
 		} `json:"agents"`
+		Deliver string `json:"deliver,omitempty"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return "", fmt.Errorf("spawn: bad arguments")
@@ -165,7 +168,7 @@ func webProxySpawn(ctx context.Context, daemonURL, parentID string, args json.Ra
 	if len(req.Agents) == 0 {
 		return "", fmt.Errorf("spawn: agents is required")
 	}
-	body, _ := json.Marshal(map[string]any{"agents": req.Agents})
+	body, _ := json.Marshal(map[string]any{"agents": req.Agents, "deliver": req.Deliver})
 	resp, err := webProxyPost(ctx, daemonURL+"/api/sessions/"+parentID+"/spawn", "application/json", body)
 	if err != nil {
 		return "", fmt.Errorf("spawn: %s", err.Error())

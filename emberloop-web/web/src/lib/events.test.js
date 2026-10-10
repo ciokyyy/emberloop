@@ -9,7 +9,7 @@ describe('cardForEvent maps every Event kind to a card', () => {
     ['thinking_chunk', 'thinking'],
     ['tool_call_started', 'tool'],
     ['tool_call_updated', 'tool'],
-    ['diff', 'diff'],
+    ['tool_call_finished', 'tool'],
     ['permission', 'permission'],
     ['status', 'status'],
     ['subagent_spawned', 'subagent'],
@@ -59,28 +59,30 @@ describe('groupTranscript', () => {
     const blocks = groupTranscript([ev(1, 'prompt', 'a'), ev(2, 'prompt', 'b')]);
     expect(blocks).toHaveLength(2);
   });
-  it('merges tool started + updates with same name into one collapsed block', () => {
+  it('merges tool started + updates with same name into one strip run', () => {
     const blocks = groupTranscript([
       ev(1, 'tool_call_started', 'read\n{"path":"a"}'),
       ev(2, 'tool_call_updated', 'read\nline1\nline2'),
     ]);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].card).toBe('tool');
-    expect(blocks[0].collapsed).toBe(true);
-    expect(blocks[0].body).toContain('line2');
+    expect(blocks[0].card).toBe('toolstrip');
+    expect(blocks[0].runs).toHaveLength(1);
+    expect(blocks[0].runs[0].output).toContain('line2');
   });
 });
 
 describe('groupTranscript tool runs', () => {
-  it('keeps two sequential calls to the same tool as separate blocks', () => {
+  it('keeps two sequential calls to the same tool as separate runs in one strip', () => {
     const blocks = groupTranscript([
       ev(1, 'tool_call_started', 'read\na'),
       ev(2, 'tool_call_updated', 'read\nout-a'),
       ev(3, 'tool_call_started', 'read\nb'),
     ]);
-    expect(blocks).toHaveLength(2);
-    expect(blocks[0].body).toContain('out-a');
-    expect(blocks[1].body).toContain('b');
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].card).toBe('toolstrip');
+    expect(blocks[0].runs).toHaveLength(2);
+    expect(blocks[0].runs[0].output).toContain('out-a');
+    expect(blocks[0].runs[1].output).toContain('b');
   });
 });
 
@@ -137,5 +139,56 @@ describe('sudo cards', () => {
   it('shows a sudo_result prompt as a result card', () => {
     const blocks = groupSudo([{ seq: 3, kind: 'prompt', text: 'sudo_result:\n  request: s1\n  status: denied\n  exit: -1\n  command: "sudo x"\n  output: "no"' }]);
     expect(blocks[0].card).toBe('sudoresult');
+  });
+});
+
+describe('subagent status and grouping', () => {
+  it('drops idle and working status pills, keeps failed and ended', async () => {
+    const { cardForEvent } = await import('./events.js');
+    expect(cardForEvent(ev(1, 'status', '', 'idle')).card).toBe('none');
+    expect(cardForEvent(ev(1, 'status', '', 'working')).card).toBe('none');
+    expect(cardForEvent(ev(1, 'status', '', 'failed')).card).toBe('status');
+    expect(cardForEvent(ev(1, 'status', '', 'ended')).card).toBe('status');
+  });
+  it('names a spawned card from its payload, never a bare id', async () => {
+    const { cardForEvent } = await import('./events.js');
+    const c = cardForEvent(ev(1, 'subagent_spawned', JSON.stringify({ id: 'abc123', group: 'g1', name: 'Alpha' })));
+    expect(c.card).toBe('subagent');
+    expect(c.title).toBe('Alpha');
+    expect(c.childId).toBe('abc123');
+    expect(c.groupId).toBe('g1');
+  });
+  it('merges one spawn call into one Group header block', async () => {
+    const { groupTranscript } = await import('./events.js');
+    const blocks = groupTranscript([
+      ev(1, 'subagent_spawned', JSON.stringify({ id: 'a', group: 'g', name: 'Alpha' })),
+      ev(2, 'subagent_spawned', JSON.stringify({ id: 'b', group: 'g', name: 'Beta' })),
+    ]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].card).toBe('group');
+    expect(blocks[0].members.map((m) => m.name)).toEqual(['Alpha', 'Beta']);
+  });
+  it('settles the Group block on its finished marker instead of a new card', async () => {
+    const { groupTranscript } = await import('./events.js');
+    const blocks = groupTranscript([
+      ev(1, 'subagent_spawned', JSON.stringify({ id: 'a', group: 'g', name: 'Alpha' })),
+      ev(2, 'subagent_finished', 'g'),
+    ]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].card).toBe('group');
+    expect(blocks[0].finished).toBe(true);
+  });
+  it('carries stored image ids on user blocks', async () => {
+    const { groupTranscript } = await import('./events.js');
+    const blocks = groupTranscript([{ seq: 1, kind: 'prompt', text: 'see this', imageIds: ['img1'] }]);
+    expect(blocks[0].imageIds).toEqual(['img1']);
+  });
+});
+
+describe('spawn tool call', () => {
+  it('is replaced by its Group card unless it failed', () => {
+    const spawn = (seq, status) => ({ seq, kind: 'tool_call_started', text: JSON.stringify({ id: 's', name: 'spawn', input: '{}', status }) });
+    expect(groupTranscript([spawn(1, 'running')]).length).toBe(0);
+    expect(groupTranscript([spawn(1, 'failed')])[0].card).toBe('tool');
   });
 });

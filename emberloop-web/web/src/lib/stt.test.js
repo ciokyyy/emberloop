@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { transcribe, startLiveRecording, STT_MAX_BYTES } from './stt.js';
+import { transcribe, startRecording, makePeaks, STT_MAX_BYTES, WAVE_BARS } from './stt.js';
 
 describe('transcribe', () => {
   beforeEach(() => {
@@ -13,20 +13,21 @@ describe('transcribe', () => {
     vi.restoreAllMocks();
   });
 
-  it('posts one segment with ?format=1 by default and trims', async () => {
+  it('posts the recording with ?format=0 by default and trims', async () => {
     const out = await transcribe(new Blob(['audio'], { type: 'audio/webm;codecs=opus' }));
     expect(out).toBe('hello world');
     expect(fetch).toHaveBeenCalledOnce();
     const [url, opts] = fetch.mock.calls[0];
-    expect(url).toBe('/api/stt?format=1');
+    // The cleanup pass stays off unless asked: it adds a model round trip.
+    expect(url).toBe('/api/stt?format=0');
     expect(opts.method).toBe('POST');
     expect(opts.headers['Content-Type']).toBe('audio/webm;codecs=opus');
     expect(opts.body).toBeInstanceOf(Blob);
   });
 
-  it('skips the cleanup pass with format:false', async () => {
-    await transcribe(new Blob(['audio']), { format: false });
-    expect(fetch.mock.calls[0][0]).toBe('/api/stt?format=0');
+  it('runs the cleanup pass with format:true', async () => {
+    await transcribe(new Blob(['audio']), { format: true });
+    expect(fetch.mock.calls[0][0]).toBe('/api/stt?format=1');
   });
 
   it('throws the Daemon reason on failure', async () => {
@@ -38,15 +39,25 @@ describe('transcribe', () => {
     await expect(transcribe(new Blob(['x']))).rejects.toThrow('no credits');
   });
 
-  it('refuses an over-cap segment without calling the Daemon', async () => {
+  it('refuses an over-cap recording without calling the Daemon', async () => {
     const big = { size: STT_MAX_BYTES + 1, type: 'audio/webm' };
     await expect(transcribe(big)).rejects.toThrow('25 MB');
     expect(fetch).not.toHaveBeenCalled();
   });
 });
 
-// MediaRecorder mock: each instance is its own encoder, so blobs from
-// different instances prove independently decodable segments.
+describe('makePeaks', () => {
+  it('returns the floor for silence and for no samples', () => {
+    expect(makePeaks([])).toEqual(new Array(WAVE_BARS).fill(6));
+    expect(makePeaks([0, 0, 0])).toEqual(new Array(WAVE_BARS).fill(6));
+  });
+  it('scales the loudest bar to 100 and keeps order', () => {
+    const levels = [...new Array(48).fill(0.1), ...new Array(48).fill(0.5)];
+    const p = makePeaks(levels, 2);
+    expect(p).toEqual([20, 100]);
+  });
+});
+
 class MockRecorder {
   static instances = [];
   static isTypeSupported = () => true;
@@ -58,7 +69,7 @@ class MockRecorder {
   }
   start() {
     this.state = 'recording';
-    queueMicrotask(() => this.ondataavailable?.({ data: new Blob([`audio-${MockRecorder.instances.length}`]) }));
+    queueMicrotask(() => this.ondataavailable?.({ data: new Blob(['audio']) }));
   }
   stop() {
     this.state = 'inactive';
@@ -70,7 +81,7 @@ class MockRecorder {
 }
 
 function mockMic() {
-  const tracks = [{ stop: vi.fn() }];
+  const tracks = [{ stop: vi.fn(), onended: null }];
   Object.defineProperty(globalThis.navigator, 'mediaDevices', {
     value: { getUserMedia: async () => ({ getTracks: () => tracks }) },
     configurable: true,
@@ -80,54 +91,73 @@ function mockMic() {
   return tracks;
 }
 
-describe('startLiveRecording', () => {
+function mockWakeLock() {
+  const release = vi.fn(async () => {});
+  const request = vi.fn(async () => ({ release }));
+  Object.defineProperty(globalThis.navigator, 'wakeLock', { value: { request }, configurable: true });
+  return { request, release };
+}
+
+describe('startRecording', () => {
   let tracks;
   beforeEach(() => {
     tracks = mockMic();
-    vi.useRealTimers();
+    delete globalThis.window.AudioContext;
   });
   afterEach(() => {
     delete globalThis.MediaRecorder;
+    delete globalThis.navigator.wakeLock;
+    delete globalThis.window.AudioContext;
     vi.useRealTimers();
   });
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  it('emits timed segments in order, each from its own recorder', async () => {
-    const seen = [];
-    const rec = await startLiveRecording({ onSegment: (blob, seq) => seen.push([blob, seq]), segmentMs: 60 });
-    await sleep(250);
-    await rec.stop();
-    expect(seen.length).toBeGreaterThanOrEqual(2);
-    expect(seen.map(([, seq]) => seq)).toEqual(seen.map((_, i) => i));
-    for (const [blob] of seen) {
-      expect(blob).toBeInstanceOf(Blob);
-      expect(blob.size).toBeGreaterThan(0);
-      expect(blob.type).toContain('audio/');
-    }
-    // One fresh MediaRecorder per segment: never slices of one recording.
-    expect(MockRecorder.instances.length).toBeGreaterThanOrEqual(seen.length);
-    expect(tracks[0].stop).toHaveBeenCalledOnce();
+  it('records one take and returns blob, duration and peaks', async () => {
+    const rec = await startRecording();
+    await new Promise((r) => setTimeout(r, 20));
+    const out = await rec.stop();
+    expect(MockRecorder.instances).toHaveLength(1);
+    expect(out.blob.size).toBeGreaterThan(0);
+    expect(out.durationMs).toBeGreaterThanOrEqual(0);
+    expect(out.peaks).toHaveLength(WAVE_BARS);
+    expect(tracks[0].stop).toHaveBeenCalled();
   });
 
-  it('flushes one tail segment on immediate stop', async () => {
-    const seen = [];
-    const rec = await startLiveRecording({ onSegment: (blob, seq) => seen.push(seq), segmentMs: 60000 });
+  it('holds the screen awake while recording and releases it on stop', async () => {
+    const wl = mockWakeLock();
+    const rec = await startRecording();
+    await vi.waitFor(() => expect(wl.request).toHaveBeenCalledWith('screen'));
     await rec.stop();
-    expect(seen).toEqual([0]);
+    await vi.waitFor(() => expect(wl.release).toHaveBeenCalled());
   });
 
-  it('cancel drops the tail and releases the mic', async () => {
-    const seen = [];
-    const rec = await startLiveRecording({ onSegment: (blob, seq) => seen.push(seq), segmentMs: 60000 });
-    await sleep(20);
+  it('asks for the lock again when the tab becomes visible', async () => {
+    const wl = mockWakeLock();
+    const rec = await startRecording();
+    await vi.waitFor(() => expect(wl.request).toHaveBeenCalledTimes(1));
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.waitFor(() => expect(wl.request).toHaveBeenCalledTimes(2));
     rec.cancel();
-    await sleep(50);
-    expect(seen).toEqual([]);
-    expect(tracks[0].stop).toHaveBeenCalledOnce();
   });
 
-  it('requires onSegment', async () => {
-    await expect(startLiveRecording()).rejects.toThrow('onSegment');
+  it('records on when wake lock is unsupported', async () => {
+    const rec = await startRecording();
+    const out = await rec.stop();
+    expect(out.blob.size).toBeGreaterThan(0);
+  });
+
+  it('reports an interrupted take and still yields the audio so far', async () => {
+    const onEnded = vi.fn();
+    const rec = await startRecording({ onEnded });
+    await new Promise((r) => setTimeout(r, 5));
+    tracks[0].onended();
+    expect(onEnded).toHaveBeenCalledOnce();
+    const out = await rec.stop();
+    expect(out.blob.size).toBeGreaterThan(0);
+  });
+
+  it('cancel drops the take and releases the mic', async () => {
+    const rec = await startRecording();
+    rec.cancel();
+    expect(tracks[0].stop).toHaveBeenCalled();
   });
 });

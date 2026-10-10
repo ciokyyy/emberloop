@@ -108,14 +108,19 @@
     inputEl?.focus();
   });
 
+  // The virtualizer returns no rows before it measures (jsdom: zero-size
+  // scroll element). Fall back to one viewport window, never the full list:
+  // rendering all 500 rows defeats windowing and times the tests out.
   const virtualRows = $derived.by(() => {
     try {
       const rows = $virtualizer.getVirtualItems();
       if (rows.length > 0) return rows.map((r) => ({ index: r.index, start: r.start }));
     } catch {
-      // Fall through to the full list below.
+      // Fall through to the windowed list below.
     }
-    return filtered.map((_, index) => ({ index, start: index * rowHeight }));
+    const viewport = listEl?.clientHeight > 0 ? listEl.clientHeight : 256;
+    const windowed = Math.min(filtered.length, Math.ceil(viewport / Math.max(1, rowHeight)) + OVERSCAN * 2);
+    return Array.from({ length: windowed }, (_, index) => ({ index, start: index * rowHeight }));
   });
 
   const totalSize = $derived.by(() => {

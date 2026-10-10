@@ -1,4 +1,4 @@
-// Command el-web runs the Enderbloom Web Daemon: it owns Sessions,
+// Command el-web runs the Emberloop Daemon: it owns Sessions,
 // serves the embedded UI and streams Session Events over SSE. It binds the
 // loopback interface only and rejects foreign Host and Origin headers.
 package main
@@ -27,10 +27,16 @@ func main() {
 	}
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to bind")
 	stateDir := flag.String("state-dir", defaultStateDir(), "pig state directory (Sessions live in its enderbloom subtree)")
+	restartDrain := flag.Duration("restart-drain", 5*time.Minute, "longest wait for Sessions to go idle after a restart request")
 	restartCheck := flag.Duration("restart-check", time.Minute, "how often to look for a rebuilt binary and restart when idle (0 turns it off)")
 	allowHosts := flag.String("allow-host", os.Getenv("EL_WEB_ALLOW_HOSTS"), "comma-separated extra Host names to accept, for a local reverse proxy such as tailscale serve (still binds loopback)")
 	tailnet := flag.Bool("tailnet", false, "also listen on this machine's Tailscale IP (same port as -addr), reachable by your tailnet only")
+	showVersion := flag.Bool("version", false, "print the running build's version stamp and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(web.VersionString())
+		return
+	}
 
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil {
@@ -56,8 +62,8 @@ func main() {
 	pig := web.NewPigBackend()
 	pig.SharedTools = true
 	pig.LogDir = filepath.Join(*stateDir, "enderbloom", "pig-logs")
-	pig.Spawn = func(parentID string, agents []web.SpawnAgent) (string, []web.SessionMeta, error) {
-		gid, kids, code, msg := d.Spawn(parentID, agents)
+	pig.Spawn = func(parentID string, agents []web.SpawnAgent, deliver string) (string, []web.SessionMeta, error) {
+		gid, kids, code, msg := d.Spawn(parentID, agents, deliver)
 		if code != 0 {
 			return "", nil, fmt.Errorf("spawn: %s", msg)
 		}
@@ -114,6 +120,9 @@ func main() {
 	claude.SetDaemonAddr(daemonURL)
 	d.WithClaudeBackend(claude)
 	go watchForUpdate(d, exe, *restartCheck)
+	go watchForRestartRequest(d, exe, *restartDrain)
+	go signalRestart(d)
+	d.ResumeAfterRestart()
 	if *tailnet {
 		d.AllowTailnet(true)
 		_, port, _ := net.SplitHostPort(ln.Addr().String())

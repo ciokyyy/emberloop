@@ -1,5 +1,5 @@
 // The el installer: a small TUI that picks the harnesses, builds the
-// binaries, installs herdr, and writes every config el needs.
+// binaries, and writes every config el needs.
 //
 //	install.sh [--yes] [--pig=false] [--claude=false] [--graph=false]
 //	           [--bin-dir DIR] [--dry-run]
@@ -99,6 +99,6 @@ func finish(env *Env) error {
 			fmt.Printf("warning: %v (rerun it by hand)\n", err)
 		}
 	}
-	fmt.Printf("\nDone. Make sure %s is on your PATH, then run `el` inside a herdr pane.\n", env.BinDir)
+	fmt.Printf("\nDone. Make sure %s is on your PATH, then run `el`.\n", env.BinDir)
 	return nil
 }

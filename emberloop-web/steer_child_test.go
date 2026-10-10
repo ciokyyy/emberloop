@@ -13,8 +13,8 @@ import (
 
 func wirePigSteer(d *Daemon) *PigBackend {
 	pb := NewPigBackend()
-	pb.Spawn = func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error) {
-		gid, kids, code, msg := d.Spawn(parentID, agents)
+	pb.Spawn = func(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, error) {
+		gid, kids, code, msg := d.Spawn(parentID, agents, "")
 		if code != 0 {
 			return "", nil, fmt.Errorf("spawn: %s", msg)
 		}
@@ -101,6 +101,7 @@ func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
 	}
 	waitPrompt(t, srv.URL, child, "go left", 10*time.Second)
 	waitStatus(t, srv.URL, child, "idle", 15*time.Second)
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A parent steers its idle child through the Daemon: it starts as a
@@ -123,6 +124,7 @@ func TestSteerChildIdleStartsFollowup(t *testing.T) {
 	}
 	waitPrompt(t, srv.URL, child, "after that", 10*time.Second)
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A stranger's child is refused on every path: no cross-session messaging.
@@ -162,6 +164,7 @@ func TestSteerChildNonChildRefused(t *testing.T) {
 			t.Fatalf("refused steer delivered: %+v", e)
 		}
 	}
+	waitParentIdle(t, srv.URL, owner)
 }
 
 // Scout targets stay read-only on every path.
@@ -195,6 +198,8 @@ func TestSteerChildScoutRefused(t *testing.T) {
 		!strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("proxy steer scout err = %v, want read-only", err)
 	}
+	waitStatus(t, srv.URL, kids[0].ID, "idle", 10*time.Second)
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // The proxy steer tool steers the bound parent's own child through the same
@@ -218,13 +223,14 @@ func TestProxySteerSteersOwnChild(t *testing.T) {
 	}
 	waitPrompt(t, srv.URL, child, "go left", 10*time.Second)
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Workers gain spawn, steer, check and cancel; scouts gain none of the four:
 // they have no spawn tool, so no children to message, peek at or stop.
 func TestPigLoadoutWorkerGainsSubagentTools(t *testing.T) {
 	pb := NewPigBackend()
-	pb.Spawn = func(string, []SpawnAgent) (string, []SessionMeta, error) { return "", nil, nil }
+	pb.Spawn = func(string, []SpawnAgent, string) (string, []SessionMeta, error) { return "", nil, nil }
 	pb.SteerChild = func(string, string, string) (string, error) { return "", nil }
 	pb.CheckChild = func(string, string) (string, error) { return "", nil }
 	pb.CancelChild = func(string, string, bool) (string, error) { return "", nil }

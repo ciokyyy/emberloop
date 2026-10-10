@@ -25,19 +25,45 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 		serveFile(sub, w, r, "index.html")
 		return
 	}
-	// Static bundle assets (hashed JS/CSS, favicon). Anything else 404s:
-	// the app is one page served at /.
+	// Static bundle assets (hashed JS/CSS, favicon) serve by file. The
+	// client-side routes below fall back to index.html; anything else 404s,
+	// and /api/* never reaches here (mux routes it first).
 	name := strings.TrimPrefix(p, "/")
 	if name == "" || strings.Contains(name, "..") {
 		http.NotFound(w, r)
 		return
 	}
-	fi, err := fs.Stat(sub, name)
-	if err != nil || !fi.Mode().IsRegular() {
-		http.NotFound(w, r)
+	if fi, err := fs.Stat(sub, name); err == nil && fi.Mode().IsRegular() {
+		serveFile(sub, w, r, name)
 		return
 	}
-	serveFile(sub, w, r, name)
+	if isSPARoute(p) {
+		serveFile(sub, w, r, "index.html")
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// isSPARoute reports the client-side paths the browser router owns: the
+// session, runs and settings pages. Every other missing path 404s, so a
+// mistyped static asset never renders the app shell.
+func isSPARoute(p string) bool {
+	if p == "/runs" || p == "/settings" {
+		return true
+	}
+	if p == "/s" || p == "/s/" {
+		return false
+	}
+	if strings.HasPrefix(p, "/s/") && len(strings.Trim(p[3:], "/")) > 0 {
+		return true
+	}
+	if p == "/runs/" {
+		return true
+	}
+	if strings.HasPrefix(p, "/runs/") && len(strings.Trim(p[6:], "/")) > 0 {
+		return true
+	}
+	return false
 }
 
 func serveFile(sub fs.FS, w http.ResponseWriter, r *http.Request, name string) {
@@ -47,7 +73,13 @@ func serveFile(sub fs.FS, w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 	w.Header().Set("Content-Type", contentTypeFor(name))
-	if strings.HasPrefix(name, "assets/") {
+	if name == "sw.js" {
+		// The worker registers with scope / from the root, but send the
+		// header anyway so a nested route registration keeps working, and
+		// never let it go stale: a cached worker pins old push code.
+		w.Header().Set("Service-Worker-Allowed", "/")
+		w.Header().Set("Cache-Control", "no-store")
+	} else if strings.HasPrefix(name, "assets/") {
 		// Vite hashes these names, so content never changes under one name.
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
@@ -68,7 +100,7 @@ var gzCache sync.Map // name -> []byte
 
 func compressible(name string) bool {
 	switch strings.ToLower(path.Ext(name)) {
-	case ".html", ".js", ".css", ".svg", ".json", ".map", ".wasm":
+	case ".html", ".js", ".css", ".svg", ".json", ".webmanifest", ".map", ".wasm":
 		return true
 	}
 	return false
@@ -97,6 +129,8 @@ func contentTypeFor(name string) string {
 		return "text/css; charset=utf-8"
 	case ".svg":
 		return "image/svg+xml"
+	case ".webmanifest":
+		return "application/manifest+json"
 	case ".json", ".map":
 		return "application/json"
 	case ".png":

@@ -37,7 +37,7 @@ export PATH="$HOME/go/bin:$PATH"
 
 REPO=$(git rev-parse --show-toplevel 2>/dev/null || true)
 EL="$REPO/el"
-REPORT="$REPO/herdr-report"
+REPORT="$REPO/.scratch/archive/archived-herdr-report"
 for bin in herdr pig claude; do
   command -v "$bin" >/dev/null || { echo "FAIL - need $bin on PATH"; exit 1; }
 done

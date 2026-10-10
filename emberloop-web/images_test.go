@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,16 +14,18 @@ import (
 	"github.com/MichaelKinsy/PiG/ai"
 )
 
-// imageFake records the images its turns receive.
+// imageFake records the images and text its turns receive.
 type imageFake struct {
 	FakeBackend
-	mu   sync.Mutex
-	seen [][]Image
+	mu    sync.Mutex
+	seen  [][]Image
+	texts []string
 }
 
 func (f *imageFake) OnPromptImages(id, text string, images []Image, appendEvent func(kind, text, status string)) {
 	f.mu.Lock()
 	f.seen = append(f.seen, images)
+	f.texts = append(f.texts, text)
 	f.mu.Unlock()
 	f.FakeBackend.OnPrompt(id, text, appendEvent)
 }
@@ -56,17 +59,25 @@ func TestPromptWithImagesReachesBackendAndCountsInEvent(t *testing.T) {
 	events := readSSE(t, srv.URL, id, 0, 3, 5*time.Second)
 	found := false
 	for _, e := range events {
-		if e.Kind == "prompt" && e.Images == 1 {
+		if e.Kind == "prompt" && len(e.ImageIDs) == 1 {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("no prompt event with 1 image in %+v", events)
+		t.Fatalf("no prompt event with 1 stored image in %+v", events)
 	}
 	be.mu.Lock()
 	defer be.mu.Unlock()
-	if len(be.seen) != 1 || len(be.seen[0]) != 1 || be.seen[0][0].Data != tinyPNG {
+	// Inline attachments are stored under stable ids, and the agent gets
+	// both their file paths in the text and their bytes inline.
+	if len(be.seen) != 1 || len(be.seen[0]) != 1 {
 		t.Fatalf("backend saw %+v", be.seen)
+	}
+	if be.seen[0][0].Mime != "image/png" || be.seen[0][0].Data != tinyPNG {
+		t.Fatalf("backend image = %+v", be.seen[0][0])
+	}
+	if len(be.texts) != 1 || !strings.Contains(be.texts[0], "what is this") || !strings.Contains(be.texts[0], ".png") {
+		t.Fatalf("backend text = %q", be.texts)
 	}
 }
 
@@ -100,9 +111,34 @@ func TestPromptRejectsBadImages(t *testing.T) {
 	}
 }
 
+// imageLessBackend is a Backend that cannot take images: a named field, not
+// an embedding, so the fake's OnPromptImages is not promoted.
+type imageLessBackend struct{ fake *FakeBackend }
+
+func (b *imageLessBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
+	b.fake.OnPrompt(sessionID, text, appendEvent)
+}
+func (b *imageLessBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	return b.fake.CreateSession(meta, emit)
+}
+func (b *imageLessBackend) CloseSession(sessionID string) { b.fake.CloseSession(sessionID) }
+func (b *imageLessBackend) Models() []string              { return b.fake.Models() }
+func (b *imageLessBackend) ReleaseSession(sessionID string) string {
+	return b.fake.ReleaseSession(sessionID)
+}
+func (b *imageLessBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	return b.fake.ResumeSession(meta, emit)
+}
+func (b *imageLessBackend) ResumeToken(sessionID string) string {
+	return b.fake.ResumeToken(sessionID)
+}
+func (b *imageLessBackend) ResumeOK(meta SessionMeta) (bool, string) {
+	return b.fake.ResumeOK(meta)
+}
+
 func TestBackendWithoutImageSupportFailsTheTurnLoudly(t *testing.T) {
 	var kinds []string
-	promptBackend(NewFakeBackend(), "s", "hi", []Image{{Mime: "image/png", Data: tinyPNG}}, func(kind, text, status string) {
+	promptBackend(&imageLessBackend{fake: NewFakeBackend()}, "s", "hi", []Image{{Mime: "image/png", Data: tinyPNG}}, func(kind, text, status string) {
 		kinds = append(kinds, kind)
 	})
 	if len(kinds) != 2 || kinds[0] != "error" {

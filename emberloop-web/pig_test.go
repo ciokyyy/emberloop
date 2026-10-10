@@ -520,7 +520,7 @@ func TestPigSpawnToolSpawnsUnderItsSession(t *testing.T) {
 	var gotParent string
 	var gotAgents []SpawnAgent
 	pb := NewPigBackend()
-	pb.Spawn = func(parentID string, agents []SpawnAgent) (string, []SessionMeta, error) {
+	pb.Spawn = func(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, error) {
 		gotParent, gotAgents = parentID, agents
 		return "g1", []SessionMeta{{ID: "c1"}, {ID: "c2"}}, nil
 	}
@@ -553,7 +553,7 @@ func TestPigSpawnToolSpawnsUnderItsSession(t *testing.T) {
 // Scouts keep a tool-free loadout: no spawn tool, nothing writable through it.
 func TestPigScoutHasNoSpawnTool(t *testing.T) {
 	pb := NewPigBackend()
-	pb.Spawn = func(string, []SpawnAgent) (string, []SessionMeta, error) {
+	pb.Spawn = func(string, []SpawnAgent, string) (string, []SessionMeta, error) {
 		return "", nil, nil
 	}
 	for _, tl := range pb.sessionTools(SessionMeta{ID: "s", Scout: true}) {

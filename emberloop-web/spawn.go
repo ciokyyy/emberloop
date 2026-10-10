@@ -13,27 +13,73 @@ import (
 
 // SpawnAgent is one requested Subagent: its first prompt plus its kind.
 // Type is worker or scout; empty means worker. Scouts are read-only.
+// Name is the display name for the Subagent card and the sidebar; empty
+// falls back to the first four words of the prompt, so a card never shows
+// a bare id.
 type SpawnAgent struct {
 	Prompt string `json:"prompt"`
 	Type   string `json:"type,omitempty"`
+	Name   string `json:"name,omitempty"`
 }
 
 // spawnGroup is the Subagents of one spawn call: the parent they report to
-// and every member in spawn order. Delivered marks the grouped result as
-// sent, so a restart or a racing finish never sends it twice.
+// and every member in spawn order. Deliver is how results reach the parent:
+// "group" (one grouped notice when the last member settles) or "each" (one
+// notice per child as it settles). Delivered marks the grouped result as
+// sent and EachDone marks per-child notices as sent, so a restart or a
+// racing finish never sends either twice.
 type spawnGroup struct {
-	ID        string   `json:"id"`
-	Parent    string   `json:"parent"`
-	Members   []string `json:"members"`
-	Delivered bool     `json:"delivered"`
+	ID        string          `json:"id"`
+	Parent    string          `json:"parent"`
+	Members   []string        `json:"members"`
+	Deliver   string          `json:"deliver,omitempty"`
+	Delivered bool            `json:"delivered"`
+	EachDone  map[string]bool `json:"eachDone,omitempty"`
+}
+
+// spawnedPayload is the parent transcript's subagent_spawned Event text:
+// the child id plus the Group and display name the Group card renders.
+// Older logs carry the bare child id; readers accept both.
+type spawnedPayload struct {
+	ID    string `json:"id"`
+	Group string `json:"group,omitempty"`
+	Name  string `json:"name,omitempty"`
+}
+
+// parseSpawnedPayload reads a subagent_spawned Event text, accepting the
+// current JSON payload and legacy bare child ids.
+func parseSpawnedPayload(text string) spawnedPayload {
+	var p spawnedPayload
+	if err := json.Unmarshal([]byte(text), &p); err != nil || p.ID == "" {
+		return spawnedPayload{ID: strings.TrimSpace(text)}
+	}
+	return p
+}
+
+// agentDisplayName resolves the spawn name field, falling back to the
+// first four words of the prompt.
+func agentDisplayName(name, prompt string) string {
+	if strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+	words := strings.Fields(prompt)
+	if len(words) > 4 {
+		words = words[:4]
+	}
+	if len(words) == 0 {
+		return "Subagent"
+	}
+	return strings.Join(words, " ")
 }
 
 // Spawn creates one Subagent Session per requested agent under parentID.
 // Each child inherits the parent's harness, model and working directory,
-// records its parent and Group, and runs its prompt at once. The shared
-// Group delivers one grouped result to the parent when the last member
-// finishes. It returns the HTTP status to answer with when non-zero.
-func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionMeta, int, string) {
+// records its parent, Group and display name, and runs its prompt at once.
+// Deliver selects the parent notices: "group" (the default) sends one
+// grouped result when the last member settles; "each" sends one notice per
+// child as it settles. It returns the HTTP status to answer with when
+// non-zero.
+func (d *Daemon) Spawn(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, int, string) {
 	d.mu.Lock()
 	parent, ok := d.sessions[parentID]
 	if !ok {
@@ -48,6 +94,10 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 		d.mu.Unlock()
 		return "", nil, http.StatusForbidden, "scout sessions are read-only"
 	}
+	if _, _, typ := d.findReviewerLocked(parentID); typ != "" {
+		d.mu.Unlock()
+		return "", nil, http.StatusConflict, "reviewer sessions are read-only; only the run driver prompts them"
+	}
 	for _, a := range agents {
 		if a.Prompt == "" {
 			d.mu.Unlock()
@@ -57,6 +107,14 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 			d.mu.Unlock()
 			return "", nil, http.StatusBadRequest, "unknown type (want worker or scout)"
 		}
+	}
+	switch deliver {
+	case "", "group":
+		deliver = "group"
+	case "each":
+	default:
+		d.mu.Unlock()
+		return "", nil, http.StatusBadRequest, "unknown deliver (want group or each)"
 	}
 	// Reserve every child slot before starting any: over the cap the whole
 	// call is refused and no half Group is left behind.
@@ -84,6 +142,7 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 		}
 		metas[i] = SessionMeta{
 			ID:        members[i],
+			Name:      agentDisplayName(a.Name, a.Prompt),
 			Harness:   h,
 			Model:     m,
 			WorkDir:   workDir,
@@ -98,7 +157,7 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 	// Publish the Group before any child can finish: a fast child must
 	// find its Group when its first turn settles. The pointer stays local
 	// so the persist below never reads the map outside the lock.
-	g := &spawnGroup{ID: gid, Parent: parentID, Members: append([]string(nil), members...)}
+	g := &spawnGroup{ID: gid, Parent: parentID, Members: append([]string(nil), members...), Deliver: deliver}
 	d.mu.Lock()
 	d.groups[gid] = g
 	d.mu.Unlock()
@@ -130,7 +189,8 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 	for _, s := range okStarts {
 		d.persistResumeToken(s.be, s.meta.ID)
 		d.appendEvent(s.meta.ID, "status", "", "idle")
-		d.appendEvent(parentID, "subagent_spawned", s.meta.ID, "")
+		raw, _ := json.Marshal(spawnedPayload{ID: s.meta.ID, Group: gid, Name: s.meta.Name})
+		d.appendEvent(parentID, "subagent_spawned", string(raw), "")
 	}
 	// Launch each first prompt like an idle send: busy and active under
 	// the lock, the turn on its own goroutine.
@@ -152,19 +212,28 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent) (string, []SessionM
 		}
 	}
 	d.mu.Unlock()
+	// A worker spawning scouts changes its ticket's agents: publish the
+	// run at once so the UI never polls for it.
+	d.mu.Lock()
+	runID, _ := d.findWorkerLocked(parentID)
+	d.mu.Unlock()
+	if runID != "" {
+		d.snapshotAndPersist(runID)
+	}
 	return gid, kids, 0, ""
 }
 
 // handleSpawn serves POST /api/sessions/{id}/spawn.
 func (d *Daemon) handleSpawn(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
-		Agents []SpawnAgent `json:"agents"`
+		Agents  []SpawnAgent `json:"agents"`
+		Deliver string       `json:"deliver,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Agents) == 0 {
 		http.Error(w, "agents is required", http.StatusBadRequest)
 		return
 	}
-	gid, kids, code, msg := d.Spawn(id, req.Agents)
+	gid, kids, code, msg := d.Spawn(id, req.Agents, req.Deliver)
 	if code != 0 {
 		if code == http.StatusNotFound {
 			http.NotFound(w, r)
@@ -368,6 +437,8 @@ func (d *Daemon) CancelChild(parentID, childID string, kill bool) (string, int, 
 // endSession ends one Session the way DELETE /api/sessions/{id} does: it
 // marks ended under the lock, closes a live agent process outside it, and
 // appends the ended Event. Two concurrent ends emit one ended Event.
+// Attached images die with the Session: the transcript keeps their ids,
+// but the bytes and the gallery listing go.
 func (d *Daemon) endSession(id string) (SessionMeta, int) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
@@ -389,6 +460,8 @@ func (d *Daemon) endSession(id string) (SessionMeta, int) {
 	if wasLive && be != nil {
 		be.CloseSession(id)
 	}
+	// Attached images die with the Session (see above).
+	_ = os.RemoveAll(d.sessionImagesDir(id))
 	d.appendEvent(id, "status", "", "ended")
 	d.mu.Lock()
 	m := d.sessions[id].meta
@@ -530,9 +603,24 @@ func eventLine(e Event) string {
 	return fmt.Sprintf("#%d %s %s", e.Seq, e.Kind, text)
 }
 
-// maybeDeliverGroup sends the Group's single grouped result when id's turn
-// settled it as the last unfinished member. The result goes to the parent
-// as a Steer, so a working parent queues it and an idle one runs it at once.
+// settledLocked reports whether a member's turn is over: no turn running,
+// nothing queued, and a terminal status. Callers hold d.mu.
+func settledLocked(ms *session) bool {
+	if ms.busy || len(ms.pending) > 0 || ms.active > 0 {
+		return false
+	}
+	switch ms.meta.Status {
+	case "idle", "failed", "ended":
+		return true
+	}
+	return false
+}
+
+// maybeDeliverGroup sends the Group's result when id's turn settled it.
+// Group delivery sends one grouped result as the last member settles; each
+// delivery sends one notice per child as it settles. Results go to the
+// parent as a Steer, so a working parent queues them and an idle one runs
+// them at once.
 func (d *Daemon) maybeDeliverGroup(id string) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
@@ -541,7 +629,44 @@ func (d *Daemon) maybeDeliverGroup(id string) {
 		return
 	}
 	g, ok := d.groups[s.meta.GroupID]
-	if !ok || g.Delivered {
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if g.Deliver == "" {
+		g.Deliver = "group"
+	}
+	if g.Deliver == "each" {
+		if g.EachDone == nil {
+			g.EachDone = map[string]bool{}
+		}
+		if g.EachDone[id] {
+			d.mu.Unlock()
+			return
+		}
+		if !settledLocked(s) {
+			d.mu.Unlock()
+			return
+		}
+		g.EachDone[id] = true
+		d.persistGroup(g)
+		parent := g.Parent
+		name := s.meta.Name
+		d.mu.Unlock()
+
+		raw, _ := json.Marshal(spawnedPayload{ID: id, Group: g.ID, Name: name})
+		d.appendEvent(parent, "subagent_finished", string(raw), "")
+		text := d.memberResultText(g.ID, id)
+		// A settled parent released its agent; resume it so the Steer has
+		// a process to run on. A refusal (cap, ended, unwired) drops the
+		// delivery: the member stays marked, exactly once either way.
+		if code, _ := d.resumeReleased(parent); code != 0 {
+			return
+		}
+		d.routeLive(parent, "steer", text)
+		return
+	}
+	if g.Delivered {
 		d.mu.Unlock()
 		return
 	}
@@ -550,13 +675,7 @@ func (d *Daemon) maybeDeliverGroup(id string) {
 		if !ok {
 			continue
 		}
-		if ms.busy || len(ms.pending) > 0 || ms.active > 0 {
-			d.mu.Unlock()
-			return
-		}
-		switch ms.meta.Status {
-		case "idle", "failed", "ended":
-		default:
+		if !settledLocked(ms) {
 			d.mu.Unlock()
 			return
 		}
@@ -575,6 +694,53 @@ func (d *Daemon) maybeDeliverGroup(id string) {
 		return
 	}
 	d.routeLive(parent, "steer", text)
+}
+
+// memberReply renders one member's last-turn result the way groupResultText
+// reads it: its submit text when one exists, else its last assistant
+// message, with the failed and stopped marks. Callers hold d.mu.
+func (d *Daemon) memberReply(m string) (reply, kind string) {
+	reply, kind = "(no reply)", "worker"
+	s, ok := d.sessions[m]
+	if !ok {
+		return "(session gone)", kind
+	}
+	if s.meta.Scout {
+		kind = "scout"
+	}
+	if rec := d.submits[m]; rec != nil && rec.Status != "" && rec.Status != "stopped" {
+		reply = submitResultText(rec)
+	} else if last := lastAssistantReply(s.events); last != "" {
+		reply = last
+	}
+	if s.meta.Status == "failed" {
+		reply += " [failed]"
+	}
+	if rec := d.submits[m]; rec != nil && rec.Status == "stopped" {
+		if whole := wholeTranscriptReply(s.events); whole != "" {
+			reply = whole
+		}
+		reply += " [stopped without submitting]"
+	}
+	return reply, kind
+}
+
+// memberResultText renders one child's result for each-mode delivery.
+// Callers hold no lock; it takes its own.
+func (d *Daemon) memberResultText(gid, m string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	name := shortID(m)
+	if _, ok := d.groups[gid]; !ok {
+		return fmt.Sprintf("Subagent %s finished:\n- %s: (session gone)\n", m, name)
+	}
+	if s, ok := d.sessions[m]; ok && s.meta.Name != "" {
+		name = s.meta.Name
+	}
+	reply, kind := d.memberReply(m)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Subagent %s (%s) finished:\n- %s: %s\n", name, kind, shortID(m), reply)
+	return b.String()
 }
 
 // groupResultText combines every member's result, oldest member first, into

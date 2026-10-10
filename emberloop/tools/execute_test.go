@@ -200,13 +200,13 @@ func TestExecuteDescriptionListsTools(t *testing.T) {
 // a tool the role can call.
 func TestExecuteDescriptionExamplesFollowTheToolList(t *testing.T) {
 	full := ExecuteDescription([]string{"grep"}, []string{"bash"}, nil)
-	for _, want := range []string{"Prefer execute", "loop: one call", "filter: print only the answer"} {
+	for _, want := range []string{"Use execute", "loop: one call", "filter: print only the answer"} {
 		if !strings.Contains(full, want) {
 			t.Fatalf("description must carry %q:\n%s", want, full)
 		}
 	}
 	scout := ExecuteDescription([]string{"git"}, nil, nil)
-	if !strings.Contains(scout, "Prefer execute") {
+	if !strings.Contains(scout, "Use execute") {
 		t.Fatalf("guidance must not depend on the tool list:\n%s", scout)
 	}
 	for _, bad := range []string{"tools.bash(", "max_results=5"} {

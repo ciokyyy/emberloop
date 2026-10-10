@@ -1,14 +1,16 @@
 # Update el
 
-"Update" from the user means the full suite below: steps 1, 2 and 4, every time, without asking which parts. Run it after finishing a change too when the user asked for the update.
+"Update" from the user means the full suite below: steps 1, 2 and 3, every time, without asking which parts. Run it after finishing a change too when the user asked for the update.
 
 Run from the checkout (the repo whose root holds `AGENTS.md`). Do the steps in order; stop and report on the first failure.
 
-1. Binaries and plugin: `cd emberloop && el install`.
-   - Rebuilds `el`, `el-mcp` and `el-tui` into the directory of the running `el` binary (normally `~/.local/bin`), links the herdr compress plugin, refreshes the `el://docs` pages from `docs/agent/`, then runs `el deps`.
-   - Refuses while any worker, reviewer or scout agent is live and names them. Tell the user; `--force` installs anyway and running sessions keep the old binary until they restart. Never pass `--force` unasked.
-2. Web UI and Daemon (not covered by step 1): follow `el://docs/webui`. It builds the UI, then the binary into `~/.local/bin/el-web`; the prod Daemon (systemd unit `el-web`, port 7940) restarts itself when idle.
-3. Skills library, only when asked: `el skills install`.
-4. Verify with `el://docs/verify`.
+1. Everything: `cd emberloop && el update` (`el install` is the same command).
+   - Skips the `vite build` when the web source is unchanged since the last build; otherwise rebuilds the UI. Always rebuilds `el`, `el-mcp` and `el-web` with version stamps into the directory of the running `el` binary (normally `~/.local/bin`), keeps the previous set, and restores it when the new `el-web` fails its health check. Refreshes the `el://docs` pages from `docs/agent/`, then runs `el deps`.
+   - Running sessions keep the old binary until they restart.
+   - The prod Daemon (systemd unit `emberloop-web`, port 7940) notices the new binary and restarts itself when idle. Check it: `curl -s http://127.0.0.1:7940/api/health` must print `{"ok":true}`. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds; a stale browser offers `update available — reload`.
+2. Skills library, only when asked: `el skills install`.
+3. Verify with `el://docs/verify`.
+
+If you run inside a Session of the prod Daemon, its self-restart drops your own agent process once the turn ends. The next prompt reloads the Session. Tell the user before you update.
 
 Never commit as part of an update.

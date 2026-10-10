@@ -25,13 +25,13 @@ The installer is a terminal UI. It asks for three optional parts and installs ev
 
 | Choice | What it adds |
 |---|---|
-| pig | the `el` entry in `~/.pig/agent/mcp.json`, the `herdr-report` and `pig-antigravity-auth` extensions linked into `~/.pig/agent/extensions` |
+| pig | the `el` entry in `~/.pig/agent/mcp.json`, the `pig-antigravity-auth` extension linked into `~/.pig/agent/extensions` |
 | claude | the Claude Code CLI, installed with its official script when missing |
 | graph | the code graph MCP (`codebase-memory-mcp`), served to reviewers and scouts |
 
-Always installed: herdr (official script, when missing), the `el`, `el-mcp` and `el-tui` binaries in `~/.local/bin`, the herdr compress plugin, the `prefix+shift+c` compress key in `~/.config/herdr/config.toml`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `el deps` and `el skills install`, run on the plain terminal because `deps` can ask for a sudo password.
+Always installed: herdr (official script, when missing), the `el` and `el-mcp` binaries in `~/.local/bin`, `~/.emberloop/settings.json`, and the skill library (fetched with `bunx`, so bun is required). The last two commands, `el deps` and `el skills install`, run on the plain terminal because `deps` can ask for a sudo password.
 
-Put `~/.local/bin` on your `PATH`. Rerunning the installer changes nothing that is already in place. A herdr config is copied to `config.toml.bak` before the first edit.
+Put `~/.local/bin` on your `PATH`. Rerunning the installer changes nothing that is already in place.
 
 Flags skip the UI:
 
@@ -59,13 +59,13 @@ Other commands:
 | Command | Does |
 |---|---|
 | `el settings` | read and change role slots, models, tools and MCP servers |
-| `el tui` | open the dashboard: runs, tickets, agents, costs, settings |
+| `el tui` | open the dashboard: runs, tickets, agents, costs, settings (dashboard module archived; needs a previously installed `el-tui`) |
 | `el compress <pane>` | summarize the agent in a pane and restart it there |
 | `el deps` | check and install system dependencies (python3, rg, git, bwrap, graph binary) |
-| `el install` | rebuild the binaries from the checkout; refuses while agents are live |
+| `el update` (`el install`) | rebuild the UI unless unchanged, rebuild the binaries from the checkout |
 | `el context <session-id>` | print one session's context numbers |
 
-`prefix+shift+c` in herdr compresses the focused pane. At a tool boundary it compresses at once; during a running tool call the request queues, and a second press forces it.
+`el compress <pane>` summarizes the agent in a pane and restarts it there; `el request-compress <pane>` is the same path as a signal, used by the archived herdr compress plugin.
 
 ## How a run works
 
@@ -103,15 +103,12 @@ Two reviewers, one for the spec and one for the repository's standards, keep the
 | Directory | Contents |
 |---|---|
 | `emberloop/` | the main Go module: sessions, spawn and grid, reviewers, gate and merge, tools, MCP server, state database |
-| `emberloop-tui/` | the dashboard module |
 | `emberloop-web/` | the browser UI and Daemon module: local Go Daemon plus embedded UI, loopback only |
-| `herdr-emberloop/` | the herdr plugin with the compress action |
-| `herdr-report/` | a pig extension that registers pig panes as herdr agents and enforces the stop gate |
 | `pig-antigravity-auth/` | a pig extension that adds the `google-antigravity` model provider |
 | `installer/` | the install TUI that `install.sh` runs |
 | `scripts/` | live probes that need running agents |
 
-## Enderbloom Web
+## Emberloop
 
 The browser UI runs on a local Daemon:
 
@@ -134,7 +131,7 @@ A draft clears itself only while messages wait behind it. After 10 seconds witho
 .emberloop/check
 ```
 
-The check runs `go vet` and the tests for `emberloop/`, `emberloop-tui/`, `installer/` and `emberloop-web/`; live tests (`TestLive*`) are skipped. `AGENTS.md` files in each directory state the contract for that subtree; read the root file first.
+The check runs `go vet` and the tests for `emberloop/`, `installer/` and `emberloop-web/`; live tests (`TestLive*`) are skipped. `AGENTS.md` files in each directory state the contract for that subtree; read the root file first.
 
 ## Files and environment
 

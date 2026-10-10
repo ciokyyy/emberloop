@@ -77,6 +77,9 @@ func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
 			t.Fatalf("child %d transcript missing prompt %q", i, want)
 		}
 	}
+	waitStatus(t, srv.URL, kids[0].ID, "idle", 10*time.Second)
+	waitStatus(t, srv.URL, kids[1].ID, "idle", 10*time.Second)
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Slice 1: the session list links Subagents to their parent, so the tree
@@ -119,6 +122,10 @@ func TestSpawnedSessionsNestUnderParent(t *testing.T) {
 	if _, ok := byID[parent]; !ok {
 		t.Fatalf("parent %s missing from list", parent)
 	}
+	for _, k := range kids {
+		waitStatus(t, srv.URL, k.ID, "idle", 10*time.Second)
+	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Slice 2: when the last Group member finishes, the parent receives exactly
@@ -173,6 +180,7 @@ func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("grouped steers after settle = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Slice 3: a scout Subagent is read-only: user sends are refused.
@@ -212,6 +220,8 @@ func TestScoutSubagentCannotWrite(t *testing.T) {
 	}); code != http.StatusForbidden {
 		t.Fatalf("spawn on scout status = %d, want 403", code)
 	}
+	waitStatus(t, srv.URL, kids[0].ID, "idle", 10*time.Second)
+	waitParentIdle(t, srv.URL, parent)
 }
 
 func countGroupSteers(events []Event, group string) int {
@@ -264,6 +274,7 @@ func TestSpawnEmitsParentNotifications(t *testing.T) {
 	if n := countKind(events, "subagent_finished"); n != 1 {
 		t.Fatalf("subagent_finished = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // Over the cap the whole spawn call is refused with no half Group.
@@ -357,6 +368,7 @@ func TestRestartAfterDeliveryNeverResends(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	waitParentIdle(t, srv.URL, parent)
 	raw, err := os.ReadFile(filepath.Join(stateDir, "enderbloom", "groups", group+".json"))
 	if err != nil {
 		t.Fatal(err)

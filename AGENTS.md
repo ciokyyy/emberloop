@@ -3,9 +3,8 @@
 Project preamble: emberloop is a harness extension for running parallel agent
 implement/review loops. Pig and claude sessions spawn workers in git
 worktrees, judge them with persistent reviewers, and merge through a gate
-(`finish`). The main Go package is `emberloop/`; `emberloop-tui/` is the dashboard
-module; `emberloop-web/` is the browser UI and Daemon module; `herdr-report/` and `pig-antigravity-auth/` are separate pig
-extensions, and `herdr-emberloop/` is the herdr compress plugin; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
+(`finish`). The main Go package is `emberloop/`; `emberloop-web/` is the browser UI and Daemon module; `pig-antigravity-auth/` is a separate pig
+extension; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
 live
 probes that need running agents; `.scratch/archive/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
@@ -45,18 +44,18 @@ child it belongs to, and every entry must resolve to a file.
 
 - `emberloop/AGENTS.md` — the main Go package, its file map, and its Go
   workflow; indexes tools, MCP server, agent types, state database, and test data
-- `emberloop-tui/AGENTS.md` — the dashboard module (Runs list, read model, toolkit lock)
-- `herdr-report/AGENTS.md` — the herdr report extension (pig panes as
-  addressable agents)
-- `herdr-emberloop/AGENTS.md` — the herdr compress plugin (one key compresses
-  the focused pane)
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends)
+- `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
+- `.scratch/archive/archived-herdr-report/AGENTS.md` — the archived herdr report extension (not built, not tested)
+- `.scratch/archive/archived-herdr-emberloop/AGENTS.md` — the archived herdr compress plugin (not built, not tested)
 - `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
 - `.scratch/archive/retro-hardening/AGENTS.md` — the spec and ticket area for this run
-- `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Enderbloom Web (browser UI and Daemon, planned module `el-web`)
+- `.scratch/project-init/AGENTS.md` — the spec and ticket area for project init and validate
+- `.scratch/quota-tab/AGENTS.md` — the spec and ticket area for the quota tab (account quota page in `emberloop-web`)
+- `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
-- `GLOSSARY.md` — Enderbloom Web terms (Daemon, Session, Backend, Subagent, Group, Steer, Follow-up, Event, Event log)
-- `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el install` refreshes them
+- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Backend, Subagent, Group, Steer, Follow-up, Event, Event log)
+- `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK

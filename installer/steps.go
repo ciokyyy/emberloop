@@ -37,21 +37,17 @@ type Step struct {
 	Run  func(*Env) (string, error)
 }
 
-// binaries are the three programs built from the repo.
+// binaries are the two programs built from the repo.
 var binaries = []struct{ name, dir, pkg string }{
 	{"el", "el", "./cmd/emberloop"},
 	{"el-mcp", "el", "./cmd/emberloop-mcp"},
-	{"el-tui", "el-tui", "./cmd/emberloop-tui"},
 }
 
 // Steps lists the install steps for the given choices, in run order.
 func Steps(c Choices) []Step {
 	steps := []Step{
 		{"Check build tools", checkTools},
-		{"Install herdr", installHerdr},
 		{"Build el binaries", buildBinaries},
-		{"Link herdr plugin", linkPlugin},
-		{"Add herdr compress key", addKey},
 		{"Migrate old wick-pig data", migrateOld},
 		{"Write el settings", writeSettings},
 	}
@@ -121,19 +117,6 @@ func checkTools(e *Env) (string, error) {
 	return "git, go, curl found", nil
 }
 
-func installHerdr(e *Env) (string, error) {
-	if e.has("herdr") {
-		return "already installed", nil
-	}
-	if _, err := e.sh("", "sh", "-c", "curl -fsSL https://herdr.dev/install.sh | sh"); err != nil {
-		return "", err
-	}
-	if !e.DryRun && !e.has("herdr") {
-		return "", warning{"herdr installed but not on PATH: add its bin directory to PATH"}
-	}
-	return "installed with the official script", nil
-}
-
 func buildBinaries(e *Env) (string, error) {
 	if !e.DryRun {
 		if err := os.MkdirAll(e.BinDir, 0o755); err != nil {
@@ -152,57 +135,6 @@ func buildBinaries(e *Env) (string, error) {
 		}
 	}
 	return "built into " + e.BinDir, nil
-}
-
-func linkPlugin(e *Env) (string, error) {
-	if !e.has("herdr") {
-		return "", warning{"herdr missing: run `herdr plugin link " + filepath.Join(e.Repo, "herdr-emberloop") + "` later"}
-	}
-	dir := filepath.Join(e.Repo, "herdr-emberloop")
-	if _, err := e.sh("", "herdr", "plugin", "link", dir); err != nil {
-		return "", warning{err.Error()}
-	}
-	return "linked " + dir, nil
-}
-
-func herdrConfigPath(e *Env) string {
-	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "herdr", "config.toml")
-	}
-	return filepath.Join(e.Home, ".config", "herdr", "config.toml")
-}
-
-func addKey(e *Env) (string, error) {
-	path := herdrConfigPath(e)
-	raw, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-	out, status := addHerdrKeybinding(string(raw))
-	switch status {
-	case "present":
-		return "key already bound", nil
-	case "conflict":
-		return "", warning{"prefix+shift+c is taken in " + path + ": bind command el.compress to another key"}
-	}
-	if e.DryRun {
-		return "dry run: would append the key to " + path, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if len(raw) > 0 {
-		if err := os.WriteFile(path+".bak", raw, 0o644); err != nil {
-			return "", err
-		}
-	}
-	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		return "", err
-	}
-	if e.has("herdr") {
-		_, _ = e.sh("", "herdr", "server", "reload-config")
-	}
-	return "bound prefix+shift+c in " + path, nil
 }
 
 func writeSettings(e *Env) (string, error) {
@@ -245,7 +177,7 @@ func linkPigExtensions(e *Env) (string, error) {
 			return "", err
 		}
 	}
-	for _, name := range []string{"herdr-report", "pig-antigravity-auth"} {
+	for _, name := range []string{"pig-antigravity-auth"} {
 		src := filepath.Join(e.Repo, name)
 		dst := filepath.Join(extDir, name)
 		if e.DryRun {

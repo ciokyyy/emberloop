@@ -12,6 +12,7 @@
 <div class={cn('relative w-full', className)}>
   <input
     id={inputId}
+    name={rest.name ?? inputId}
     aria-label={label}
     bind:value
     class={cn(

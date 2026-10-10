@@ -1,29 +1,16 @@
 package web
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
-
-func submitReview(t *testing.T, base, id, status, report string) {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{"status": status, "report": report})
-	resp, err := http.Post(base+"/api/sessions/"+id+"/submit", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("review submit status = %d, want 202", resp.StatusCode)
-	}
-}
 
 func waitReviewers(t *testing.T, base, runID, ticketID string) map[string]string {
 	t.Helper()
@@ -73,11 +60,17 @@ func sessTranscript(s sessionBody) string {
 	return b.String()
 }
 
+// passReviewers waits for both reviewers to pass via their VERDICT
+// replies (the fake Backend defaults reviewer prompts to pass). It sends
+// nothing: reviewers never submit.
 func passReviewers(t *testing.T, base, runID, ticketID string) {
 	t.Helper()
-	for _, sess := range waitReviewers(t, base, runID, ticketID) {
-		submitReview(t, base, sess, "pass", "")
-	}
+	waitReviewers(t, base, runID, ticketID)
+	waitRunCond(t, base, runID, func(r runJSON) bool {
+		tk := ticketByID(r, ticketID)
+		return tk.Verdicts["reviewer-spec"].Verdict == "pass" &&
+			tk.Verdicts["reviewer-standards"].Verdict == "pass"
+	}, "both reviewers pass")
 }
 
 func ticketByID(r runJSON, id string) runTicketJSON {
@@ -91,11 +84,24 @@ func ticketByID(r runJSON, id string) runTicketJSON {
 
 // A submitted done spawns both Reviewers once; without passes the merge is
 // refused, and the row carries verdicts, tip freshness and no refusal yet.
+// Reviewers reply VERDICT in their turn: the spec reviewer passes at once
+// while the standards reviewer works, so the gate holds on one pass.
 func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	fb := NewFakeBackend()
+	fb.ReplyFunc = func(id, text string) (string, bool) {
+		if strings.Contains(text, "reviewer-standards") {
+			time.Sleep(4 * time.Second)
+			return "VERDICT: pass", true
+		}
+		if strings.Contains(text, "Review ticket") || strings.Contains(text, "RESPOND IN FORMAT") {
+			return "VERDICT: pass", true
+		}
+		return "", false
+	}
+	d := NewDaemon(t.TempDir(), fb)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -117,7 +123,6 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 	if got := ticketByID(first, "01-first"); got.State == "merged" {
 		t.Fatalf("ticket merged without passes, want the gate to refuse")
 	}
-	submitReview(t, srv.URL, revs["reviewer-spec"], "pass", "")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
 		return tk.Verdicts["reviewer-spec"].Verdict == "pass" && tk.State != "merged"
@@ -136,11 +141,31 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 
 // A changes verdict is delivered to the same Worker unchanged; the rework
 // loop keeps the Reviewer sessions and merges once both pass at the new tip.
+// The spec reviewer reports changes on its first turn and passes after the
+// rework; the standards reviewer always passes.
 func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	fb := NewFakeBackend()
+	var mu sync.Mutex
+	specCalls := 0
+	fb.ReplyFunc = func(id, text string) (string, bool) {
+		if !strings.Contains(text, "Review ticket") && !strings.Contains(text, "RESPOND IN FORMAT") {
+			return "", false
+		}
+		if strings.Contains(text, "reviewer-spec") {
+			mu.Lock()
+			specCalls++
+			n := specCalls
+			mu.Unlock()
+			if n == 1 {
+				return "VERDICT: changes\nwork.go:1 blocker: handle nil", true
+			}
+		}
+		return "VERDICT: pass", true
+	}
+	d := NewDaemon(t.TempDir(), fb)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -152,8 +177,6 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
-	submitReview(t, srv.URL, revs["reviewer-spec"], "changes", "work.go:1 blocker: handle nil")
-	submitReview(t, srv.URL, revs["reviewer-standards"], "pass", "")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
 		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "handle nil")
@@ -188,7 +211,6 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		if sess != revs[typ] {
 			t.Fatalf("reviewer %s session changed, want the persistent one", typ)
 		}
-		submitReview(t, srv.URL, sess, "pass", "")
 	}
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
@@ -276,7 +298,9 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 }
 
 // A verdict lands at the tip the reviewer was prompted on, not the tip as
-// it stands at submit: a Worker commit mid-review reads stale, never fresh.
+// it stands when the turn ends: a Worker commit mid-review reads stale,
+// never fresh. The reply arrives as the turn's final assistant message;
+// the Daemon stamps the oldest owed prompt.
 func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -286,24 +310,38 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
 	prompted := "1111111111111111111111111111111111111111"
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(t.TempDir(), fb)
+	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
-	d.sessions["rev-spec"] = &session{meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.sessions["rev-spec"] = &session{
+		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"},
+		live: true, notify: make(chan struct{}),
+		events: []Event{
+			{Seq: 1, SessionID: "rev-spec", Kind: "prompt", Text: prompt},
+			{Seq: 2, SessionID: "rev-spec", Kind: "assistant_chunk", Text: "VERDICT: pass"},
+		},
+	}
 	d.runs["r-tip"] = &runState{
 		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
 		Harness: "fake", Model: "fake-model",
-		notify:     make(chan struct{}),
-		Tickets:    []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
-		Branches:   map[string]string{"01-first": branch},
-		Worktrees:  map[string]string{"01-first": worktree},
-		Reviewers:  map[string]map[string]string{"01-first": {"reviewer-spec": "rev-spec"}},
-		ReviewTips: map[string]map[string]string{"01-first": {"reviewer-spec": prompted}},
-		Reviews:    map[string]map[string]storedReview{},
+		notify:        make(chan struct{}),
+		unpause:       make(chan struct{}),
+		Tickets:       []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Branches:      map[string]string{"01-first": branch},
+		Worktrees:     map[string]string{"01-first": worktree},
+		Reviewers:     map[string]map[string]string{"01-first": {"reviewer-spec": "rev-spec"}},
+		ReviewTips:    map[string]map[string]string{"01-first": {"reviewer-spec": prompted}},
+		ReviewPending: map[string]map[string][]string{"01-first": {"reviewer-spec": {prompted}}},
+		Reviews:       map[string]map[string]storedReview{},
+		Rows:          map[string]savedRow{"01-first": {State: "in-review", Tip: cur}},
 	}
 	d.mu.Unlock()
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	submitReview(t, srv.URL, "rev-spec", "pass", "")
+	d.handleReviewerTurnEnd("rev-spec")
 	r := getRun(t, srv.URL, "r-tip")
 	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
 	if got.Verdict != "pass" || got.At != prompted {
@@ -326,35 +364,38 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
 	prompted := "1111111111111111111111111111111111111111"
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(t.TempDir(), fb)
+	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
+	d.sessions["rev-spec"] = &session{
+		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"},
+		live: true, notify: make(chan struct{}),
+		events: []Event{
+			{Seq: 1, SessionID: "rev-spec", Kind: "prompt", Text: prompt},
+			{Seq: 2, SessionID: "rev-spec", Kind: "assistant_chunk", Text: "VERDICT: pass"},
+		},
+	}
 	d.runs["r-tip"] = &runState{
 		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
 		Harness: "fake", Model: "fake-model",
-		notify:     make(chan struct{}),
-		Tickets:    []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
-		Branches:   map[string]string{"01-first": branch},
-		Worktrees:  map[string]string{"01-first": worktree},
-		Reviewers:  map[string]map[string]string{},
-		ReviewTips: map[string]map[string]string{},
-		Reviews:    map[string]map[string]storedReview{},
+		notify:        make(chan struct{}),
+		unpause:       make(chan struct{}),
+		Tickets:       []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Branches:      map[string]string{"01-first": branch},
+		Worktrees:     map[string]string{"01-first": worktree},
+		Reviewers:     map[string]map[string]string{"01-first": {"reviewer-spec": "rev-spec"}},
+		ReviewTips:    map[string]map[string]string{"01-first": {"reviewer-spec": prompted}},
+		ReviewPending: map[string]map[string][]string{"01-first": {"reviewer-spec": {prompted}}},
+		Reviews:       map[string]map[string]storedReview{},
+		Rows:          map[string]savedRow{"01-first": {State: "in-review", Tip: cur}},
 	}
 	d.mu.Unlock()
-	// Start the reviewer judging an older tip through the real start path,
-	// so its Session can take the re-prompt.
-	if err := d.runStartReviewer("r-tip", "01-first", "reviewer-spec", prompted); err != nil {
-		t.Fatal(err)
-	}
-	d.mu.Lock()
-	sess := d.runs["r-tip"].Reviewers["01-first"]["reviewer-spec"]
-	d.mu.Unlock()
-	if sess == "" {
-		t.Fatalf("no reviewer session, want one")
-	}
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	submitReview(t, srv.URL, sess, "pass", "")
-	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
+	d.handleReviewerTurnEnd("rev-spec")
 	r := getRun(t, srv.URL, "r-tip")
 	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
 	if got.Verdict != "pass" || got.At != prompted {
@@ -368,7 +409,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if strings.Contains(sessTranscript(getSession(t, srv.URL, sess)), cur) {
+		if strings.Contains(sessTranscript(getSession(t, srv.URL, "rev-spec")), cur) {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -380,61 +421,55 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 
 // A reviewer pass after the Worker moved the tip under review binds to the
 // tip of the prompt it answers, not the latest prompted tip: with T1
-// prompted, then T2 prompted, the first submit still lands at T1 stale.
+// prompted, then T2 prompted, the first reply still lands at T1 stale.
 func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
-	repo, spec := initRunRepo(t, map[string]string{
+	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	branch := "implement/01-first"
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
+	t1 := "1111111111111111111111111111111111111111"
+	t2 := "2222222222222222222222222222222222222222"
+	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(t.TempDir(), fb)
+	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, t2)
+	d.mu.Lock()
+	d.sessions["rev-spec"] = &session{
+		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"},
+		live: true, notify: make(chan struct{}),
+		events: []Event{
+			{Seq: 1, SessionID: "rev-spec", Kind: "prompt", Text: prompt},
+			{Seq: 2, SessionID: "rev-spec", Kind: "assistant_chunk", Text: "VERDICT: pass"},
+		},
+	}
+	d.runs["r-tip"] = &runState{
+		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
+		Harness: "fake", Model: "fake-model",
+		notify:        make(chan struct{}),
+		unpause:       make(chan struct{}),
+		Tickets:       []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Branches:      map[string]string{"01-first": branch},
+		Worktrees:     map[string]string{"01-first": worktree},
+		Reviewers:     map[string]map[string]string{"01-first": {"reviewer-spec": "rev-spec"}},
+		ReviewTips:    map[string]map[string]string{"01-first": {"reviewer-spec": cur}},
+		ReviewPending: map[string]map[string][]string{"01-first": {"reviewer-spec": {t1, t2}}},
+		Reviews:       map[string]map[string]storedReview{},
+		Rows:          map[string]savedRow{"01-first": {State: "in-review", Tip: cur}},
+	}
+	d.mu.Unlock()
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-
-	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
-	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return ticketByID(r, "01-first").WorkerSession != ""
-	}, "worker started")
-	worker := ticketByID(r, "01-first").WorkerSession
-	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
-	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
-	t1 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
-	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
-	writeFile(t, worktree, "work.go", "package main\n")
-	testGit(t, worktree, "add", "work.go")
-	testGit(t, worktree, "commit", "-m", "second")
-	t2 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
-	if t1 == t2 {
-		t.Fatalf("tips equal %q, want a new commit to move the tip", t1)
-	}
-	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
-	// Wait for the driver to publish the new tip before judging freshness:
-	// verdict Fresh compares against the published row tip.
-	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return ticketByID(r, "01-first").Tip == t2
-	}, "driver publishes the new tip")
-	specSess := revs["reviewer-spec"]
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		if strings.Contains(sessTranscript(getSession(t, srv.URL, specSess)), t2) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("reviewer transcript misses the re-prompt at %q", t2)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	submitReview(t, srv.URL, specSess, "pass", "")
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		tk := ticketByID(r, "01-first")
-		return tk.Verdicts["reviewer-spec"].Verdict == "pass" && tk.Tip == t2
-	}, "spec verdict shown at the new tip")
+	d.handleReviewerTurnEnd("rev-spec")
+	r := getRun(t, srv.URL, "r-tip")
 	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
-	if got.At != t1 {
-		t.Fatalf("verdict at = %q, want the answered prompt %q (not the latest %q)", got.At, t1, t2)
+	if got.Verdict != "pass" || got.At != t1 {
+		t.Fatalf("verdict = %+v, want pass at the answered prompt %q (not the latest %q)", got, t1, t2)
 	}
 	if got.Fresh {
-		t.Fatalf("verdict = %+v, want stale at %q against the tip %q", got, t1, t2)
-	}
-	if ticketByID(r, "01-first").State == "merged" {
-		t.Fatalf("ticket merged on a stale pass, want the gate to refuse")
+		t.Fatalf("verdict = %+v, want stale", got)
 	}
 }

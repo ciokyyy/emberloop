@@ -5,7 +5,7 @@
 // (native tools off, only the spike MCP server allowed), sends a
 // prompt, prints every update, tries a prompt mid-turn, then restarts
 // the adapter and tries session/load. Findings go to
-// .scratch/enderbloom-web/spike-findings.md.
+// .scratch/archive/enderbloom-web/spike-findings.md.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

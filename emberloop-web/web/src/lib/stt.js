@@ -1,24 +1,20 @@
-// Speech-to-text client: records the mic in short segments and posts each
-// one to the Daemon, which transcribes it on OpenRouter (openai/gpt-transcribe
-// by default, EL_STT_MODEL overrides) and optionally runs the cleanup model
-// (?format=1). The OpenRouter key stays on the Daemon.
+// Speech-to-text client: records one voice message from the mic and posts it
+// whole to the Daemon, which transcribes it on OpenRouter (openai/gpt-transcribe
+// by default, EL_STT_MODEL overrides). The OpenRouter key stays on the Daemon.
 //
-// Livestream: OpenRouter STT is not streaming, so while the user speaks each
-// finished segment is transcribed as it closes and the caller appends the
-// text to the draft live. Every segment is recorded with its own fresh
-// MediaRecorder, so each blob is independently decodable (never slices of
-// one webm). Segments close on a silence pause (AnalyserNode) or on a timer
-// when no audio analysis is available.
+// The recording is one MediaRecorder take, flushed in 1 s chunks so an
+// interrupted take (screen lock, tab kill, track end) still yields the audio
+// captured so far. A Screen Wake Lock keeps the screen on while recording and
+// is re-requested when the tab becomes visible again. While recording, a
+// level meter feeds the live waveform and the stored peaks.
 import { apiBase } from './api.js';
 
-// OpenRouter's 25 MB upload cap, enforced per segment on both ends.
+// OpenRouter's 25 MB upload cap, enforced on both ends.
 export const STT_MAX_BYTES = 25 * 1024 * 1024;
 
-const SEGMENT_MS = 9000; // timed fallback cadence without audio analysis
-const SILENCE_MS = 1600; // quiet gap that closes a segment mid-speech
-const MIN_SEGMENT_MS = 1200; // never close a segment before this
-const MAX_SEGMENT_MS = 20000; // hard close for one unbroken utterance
-const LOUD_RMS = 0.02; // time-domain RMS above this counts as speech
+export const WAVE_BARS = 48; // stored waveform bars per recording
+const LEVEL_MS = 50; // level meter cadence
+const CHUNK_MS = 1000; // MediaRecorder timeslice
 
 // The mic needs a secure context (https or localhost), e.g. `tailscale serve`.
 export function sttSupport() {
@@ -32,8 +28,8 @@ export function sttSupport() {
 
 // transcribe(blob, { format }) -> text. format=true appends ?format=1 so the
 // Daemon runs the cleanup pass; false skips it. Throws on failure.
-export async function transcribe(blob, { format = true } = {}) {
-  if (blob.size > STT_MAX_BYTES) throw new Error('Voice part is over the 25 MB cap.');
+export async function transcribe(blob, { format = false } = {}) {
+  if (blob.size > STT_MAX_BYTES) throw new Error('Recording is over the 25 MB cap.');
   const res = await fetch(apiBase() + '/api/stt' + (format ? '?format=1' : '?format=0'), {
     method: 'POST',
     headers: { 'Content-Type': blob.type || 'audio/webm' },
@@ -42,6 +38,21 @@ export async function transcribe(blob, { format = true } = {}) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `request failed: ${res.status}`);
   return String(body.text ?? '').trim();
+}
+
+// makePeaks(levels, bars) -> bars integers in 6..100: the loudest level per
+// bucket, scaled so the loudest bucket reaches 100. Silence stays at the floor.
+export function makePeaks(levels, bars = WAVE_BARS) {
+  const out = new Array(bars).fill(6);
+  if (!levels.length) return out;
+  const peak = new Array(bars).fill(0);
+  levels.forEach((v, i) => {
+    const b = Math.min(bars - 1, Math.floor((i / levels.length) * bars));
+    if (v > peak[b]) peak[b] = v;
+  });
+  const max = Math.max(...peak);
+  if (max <= 0) return out;
+  return peak.map((v) => Math.max(6, Math.round((v / max) * 100)));
 }
 
 function pickMime() {
@@ -57,140 +68,117 @@ function pickMime() {
   return '';
 }
 
-// Start live recording; onSegment(blob, seq) fires in seq order as each
-// segment closes, plus a final one on stop(). Returns { stop(), cancel() }:
-// stop flushes the tail segment, cancel drops it. Both release the mic.
-export async function startLiveRecording({ onSegment, segmentMs = SEGMENT_MS, silenceMs = SILENCE_MS } = {}) {
-  if (typeof onSegment !== 'function') throw new Error('onSegment(blob, seq) is required');
+// Wake lock: best-effort. It keeps the screen from sleeping while recording;
+// the browser drops it when the tab hides, so it is requested again on return.
+function holdWakeLock() {
+  let lock = null;
+  let held = true;
+  const ask = async () => {
+    if (!held || !navigator.wakeLock?.request) return;
+    try {
+      lock = await navigator.wakeLock.request('screen');
+    } catch {
+      // Denied or unsupported: recording still works.
+    }
+  };
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') void ask();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  void ask();
+  return () => {
+    held = false;
+    document.removeEventListener('visibilitychange', onVisible);
+    try {
+      void lock?.release();
+    } catch {
+      // Already released.
+    }
+  };
+}
+
+// startRecording({ onLevel, onEnded }) records one take. onLevel(0..1) fires
+// every 50 ms for the live waveform. onEnded() fires when the browser stops
+// the take on its own (track ended, recorder error); call stop() then to keep
+// what was captured. stop() resolves { blob, durationMs, peaks }; cancel()
+// drops the take. Both release the mic and the wake lock.
+export async function startRecording({ onLevel = () => {}, onEnded = () => {} } = {}) {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const mimeType = pickMime();
-  let stopped = false;
-  let closing = false;
-  let seq = 0;
-  let rec = null;
-  let chunks = [];
-  let segStart = 0;
-  let lastLoud = 0;
-  let heard = false;
+  const releaseLock = holdWakeLock();
+  let rec;
+  try {
+    rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  } catch {
+    rec = new MediaRecorder(stream);
+  }
+  const chunks = [];
+  const levels = [];
+  let finished = false;
   let analyser = null;
   let audioCtx = null;
-  let freq = null;
+  let samples = null;
 
-  // Silence detection is best-effort: without an AudioContext the timed
-  // fallback below still closes segments, just without pause detection.
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (AC) {
       audioCtx = new AC();
-      const src = audioCtx.createMediaStreamSource(stream);
+      try {
+        await audioCtx.resume();
+      } catch {
+        // The context still runs where autoplay needs no gesture.
+      }
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
-      freq = new Uint8Array(analyser.fftSize);
-      src.connect(analyser);
+      analyser.fftSize = 1024;
+      samples = new Uint8Array(analyser.fftSize);
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
     }
   } catch {
     analyser = null;
   }
 
-  const loudNow = () => {
-    if (!analyser) return false;
-    analyser.getByteTimeDomainData(freq);
+  const level = () => {
+    if (!analyser) return 0;
+    analyser.getByteTimeDomainData(samples);
     let sum = 0;
-    for (let i = 0; i < freq.length; i++) {
-      const v = (freq[i] - 128) / 128;
+    for (let i = 0; i < samples.length; i++) {
+      const v = (samples[i] - 128) / 128;
       sum += v * v;
     }
-    return Math.sqrt(sum / freq.length) > LOUD_RMS;
+    return Math.min(1, Math.sqrt(sum / samples.length) * 4);
   };
 
-  const newRecorder = () => {
-    try {
-      return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-    } catch {
-      return new MediaRecorder(stream);
-    }
+  const t0 = Date.now();
+  rec.ondataavailable = (e) => {
+    if (e.data?.size) chunks.push(e.data);
   };
-
-  const openSegment = () => {
-    if (stopped) return;
-    chunks = [];
-    rec = newRecorder();
-    rec.ondataavailable = (e) => {
-      if (e.data?.size) chunks.push(e.data);
+  rec.onerror = () => {
+    if (!finished) onEnded();
+  };
+  stream.getTracks().forEach((t) => {
+    t.onended = () => {
+      if (!finished) onEnded();
     };
-    segStart = Date.now();
-    lastLoud = segStart;
-    heard = false;
+  });
+  try {
+    rec.start(CHUNK_MS);
+  } catch {
+    rec.start();
+  }
+  const meter = setInterval(() => {
+    const v = level();
+    levels.push(v);
     try {
-      rec.start(250);
+      onLevel(v);
     } catch {
-      rec.start();
+      // A throwing listener must not stop the meter.
     }
-  };
-
-  // The final dataavailable for a segment fires as stop() runs, before
-  // onstop, so the chunk array is only swapped inside onstop: swapping
-  // earlier would drop the tail audio into the next segment's array.
-  const closeSegment = () =>
-    new Promise((resolve) => {
-      const cur = rec;
-      if (!cur || cur.state === 'inactive') return resolve();
-      cur.onstop = () => {
-        const parts = chunks;
-        chunks = [];
-        rec = null;
-        const blob = new Blob(parts, { type: cur.mimeType || mimeType || 'audio/webm' });
-        // Empty segments (instant stop) carry nothing; the caller treats a
-        // recording with no text at all as "no speech heard".
-        if (blob.size > 0) {
-          try {
-            onSegment(blob, seq++);
-          } catch {
-            // A throwing callback must not kill the recording loop.
-          }
-        }
-        resolve();
-      };
-      try {
-        cur.stop();
-      } catch {
-        rec = null;
-        chunks = [];
-        resolve();
-      }
-    });
-
-  const tickFn = async () => {
-    if (stopped || closing || !rec) return;
-    const now = Date.now();
-    const elapsed = now - segStart;
-    if (analyser) {
-      if (loudNow()) {
-        heard = true;
-        lastLoud = now;
-      }
-      const paused = heard && elapsed >= MIN_SEGMENT_MS && now - lastLoud >= silenceMs;
-      if (paused || elapsed >= MAX_SEGMENT_MS) {
-        closing = true;
-        try {
-          await closeSegment();
-        } finally {
-          closing = false;
-          openSegment();
-        }
-      }
-    } else if (elapsed >= segmentMs) {
-      closing = true;
-      try {
-        await closeSegment();
-      } finally {
-        closing = false;
-        openSegment();
-      }
-    }
-  };
+  }, LEVEL_MS);
 
   const release = () => {
+    finished = true;
+    clearInterval(meter);
+    releaseLock();
     try {
       stream.getTracks().forEach((t) => t.stop());
     } catch {
@@ -203,34 +191,32 @@ export async function startLiveRecording({ onSegment, segmentMs = SEGMENT_MS, si
     }
   };
 
-  openSegment();
-  const timer = setInterval(() => {
-    tickFn().catch(() => {});
-  }, 200);
-
   return {
-    stop: async () => {
-      if (stopped) return;
-      stopped = true;
-      clearInterval(timer);
-      await closeSegment();
-      release();
-    },
-    cancel: () => {
-      if (stopped) return;
-      stopped = true;
-      clearInterval(timer);
-      const cur = rec;
-      rec = null;
-      chunks = [];
-      if (cur) {
-        cur.ondataavailable = null;
-        cur.onstop = () => {};
+    stop: () =>
+      new Promise((resolve) => {
+        const done = () => {
+          const durationMs = Date.now() - t0;
+          release();
+          const blob = new Blob(chunks, { type: rec.mimeType || mimeType || 'audio/webm' });
+          resolve({ blob, durationMs, peaks: makePeaks(levels) });
+        };
+        if (finished) return resolve({ blob: new Blob([]), durationMs: 0, peaks: makePeaks([]) });
+        if (rec.state === 'inactive') return done();
+        rec.onstop = done;
         try {
-          if (cur.state !== 'inactive') cur.stop();
+          rec.stop();
         } catch {
-          // Already stopped.
+          done();
         }
+      }),
+    cancel: () => {
+      if (finished) return;
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      try {
+        if (rec.state !== 'inactive') rec.stop();
+      } catch {
+        // Already stopped.
       }
       release();
     },

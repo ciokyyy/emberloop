@@ -15,10 +15,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -257,21 +260,100 @@ func encryptPush(s pushSub, payload []byte) ([]byte, error) {
 	return append(hdr, sealed...), nil
 }
 
+// pushMessage is the JSON body every push carries. Cue names an interface
+// sound for open tabs (the service worker messages them to play it; a
+// custom sound inside the OS notification itself is impossible). Key names
+// the event, so a tab that already sounded it over its live stream stays
+// silent. Path is the exact client route the notification opens.
+type pushMessage struct {
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Tag       string `json:"tag,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+	Cue       string `json:"cue,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Path      string `json:"path,omitempty"`
+}
+
+func pushPayload(m pushMessage) []byte {
+	payload, _ := json.Marshal(m)
+	return payload
+}
+
+func sessionTitle(meta SessionMeta) string {
+	if meta.Title != "" {
+		return meta.Title
+	}
+	return meta.Harness + " · " + meta.ID
+}
+
 // pushTurnDone sends a notification when a root chat turn settles.
-func (d *Daemon) pushTurnDone(meta SessionMeta, status string) {
+func (d *Daemon) pushTurnDone(meta SessionMeta, status string, seq int64) {
 	if meta.Scout || meta.ParentID != "" {
 		return
 	}
-	title := meta.Title
-	if title == "" {
-		title = meta.Harness + " · " + meta.ID
-	}
 	body := "Turn finished."
+	cue := "notification"
 	if status == "failed" {
 		body = "Turn failed."
+		cue = "error"
 	}
-	payload, _ := json.Marshal(map[string]string{"title": title, "body": body, "tag": meta.ID, "sessionId": meta.ID})
+	payload := pushPayload(pushMessage{
+		Title: sessionTitle(meta), Body: body, Tag: meta.ID, SessionID: meta.ID,
+		Cue: cue, Key: "turn:" + meta.ID + ":" + itoa(seq), Path: "/s/" + meta.ID,
+	})
 	go d.push.notify(payload)
+}
+
+// pushSudo sends a notification when an agent asks to run sudo: the turn
+// cannot continue without the user, on any session depth.
+func (d *Daemon) pushSudo(meta SessionMeta, reqID, command string) {
+	payload := pushPayload(pushMessage{
+		Title: sessionTitle(meta), Body: "Sudo approval needed: " + truncatePush(command, 120),
+		Tag: reqID, SessionID: meta.ID,
+		Cue: "mention", Key: "sudo:" + reqID, Path: "/s/" + meta.ID,
+	})
+	go d.push.notify(payload)
+}
+
+// pushRunNeedsYou sends a notification when a Run ticket stalls and needs
+// the user. Callers hold no lock: the payload is built before the call.
+func (d *Daemon) pushRunNeedsYou(runID, ticketID string, num int, title, reason string) {
+	name := title
+	if name == "" {
+		name = ticketID
+	}
+	payload := pushPayload(pushMessage{
+		Title: "Ticket " + itoa(int64(num)) + " needs you",
+		Body:  name + ": " + truncatePush(reason, 180),
+		Tag:   runID + "/" + ticketID,
+		Cue:   "blocked", Key: needsYouKey(runID, ticketID, reason),
+		Path: "/runs/" + runID + "/" + ticketID,
+	})
+	go d.push.notify(payload)
+}
+
+// needsYouKey names a needs-you event for push dedup: run, ticket and the
+// reason's hash, so a new reason sounds again in a tab that already heard
+// the old one. The browser builds the same key in sound.js (FNV-1a over the
+// UTF-8 reason), so a push arriving over both the Run SSE and the service
+// worker message sounds once.
+func needsYouKey(runID, ticketID, reason string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(reason))
+	return "needsyou:" + runID + ":" + ticketID + ":" + strconv.FormatUint(uint64(h.Sum32()), 16)
+}
+
+func truncatePush(s string, max int) string {
+	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "…"
+}
+
+func itoa(n int64) string {
+	return strconv.FormatInt(n, 10)
 }
 
 func (d *Daemon) handlePush(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the el-web Daemon for development on a fixed port (7941).
-# Prod is the systemd user unit el-web on 7940.
+# Prod is the systemd user unit emberloop-web on 7940.
 # Dev state lives in its own directory so it never touches prod Sessions.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

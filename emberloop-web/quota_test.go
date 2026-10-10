@@ -39,7 +39,7 @@ func (s *quotaStubState) handler() http.Handler {
 				http.Error(w, "boom", http.StatusInternalServerError)
 				return
 			}
-			w.Write([]byte(`{"usage":{"rolling":{"percent":` + itoa(opencodePct) + `,"resetsAt":"2030-01-01T00:00:00Z"},"weekly":{"percent":30,"resetsAt":"2030-02-01T00:00:00Z"},"monthly":{"percent":19,"resetsAt":"2030-03-01T00:00:00Z"}}}`))
+			w.Write([]byte(`{"usage":{"rolling":{"percent":` + quotaItoa(opencodePct) + `,"resetsAt":"2030-01-01T00:00:00Z"},"weekly":{"percent":30,"resetsAt":"2030-02-01T00:00:00Z"},"monthly":{"percent":19,"resetsAt":"2030-03-01T00:00:00Z"}}}`))
 		case strings.HasSuffix(r.URL.Path, "/token"):
 			w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
 		case strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary"):
@@ -58,7 +58,7 @@ func (s *quotaStubState) handler() http.Handler {
 	})
 }
 
-func itoa(n int) string {
+func quotaItoa(n int) string {
 	if n == 0 {
 		return "0"
 	}
@@ -117,7 +117,7 @@ const quotaAuth = `{"opencode-go":{"key":"k1"},"google-antigravity":{"refresh":"
 
 func writeClaudeFile(t *testing.T, dir string, fiveHour, sevenDay int) {
 	t.Helper()
-	raw := `{"five_hour":{"pct":` + itoa(fiveHour) + `,"resets_at":1893456000},"seven_day":{"pct":` + itoa(sevenDay) + `,"resets_at":1893456000}}`
+	raw := `{"five_hour":{"pct":` + quotaItoa(fiveHour) + `,"resets_at":1893456000},"seven_day":{"pct":` + quotaItoa(sevenDay) + `,"resets_at":1893456000}}`
 	if err := os.WriteFile(filepath.Join(dir, "claude-usage.json"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}

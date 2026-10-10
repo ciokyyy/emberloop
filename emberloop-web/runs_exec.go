@@ -154,13 +154,17 @@ type runState struct {
 	// /api/runs/{id}/tickets/{tid}/retry: each retry bumps it, and the
 	// driver drops that ticket's needs-you mark, backoff, refusal streak
 	// and stall-nudge count on its next pass.
-	RetryGen map[string]int      `json:"retryGen,omitempty"`
-	Rows     map[string]savedRow `json:"rows,omitempty"`
-	SpecRun  el.SpecRun          `json:"-"`
-	Driver   *el.DriverRun       `json:"-"`
-	notify   chan struct{}       `json:"-"`
-	unpause  chan struct{}       `json:"-"`
-	driving  bool                `json:"-"`
+	RetryGen map[string]int `json:"retryGen,omitempty"`
+	// ResumeOnRestart marks a Run that a graceful restart paused: the next
+	// Daemon resumes it on its own (ResumeAfterRestart). A Pause by hand
+	// never sets it.
+	ResumeOnRestart bool                `json:"resumeOnRestart,omitempty"`
+	Rows            map[string]savedRow `json:"rows,omitempty"`
+	SpecRun         el.SpecRun          `json:"-"`
+	Driver          *el.DriverRun       `json:"-"`
+	notify          chan struct{}       `json:"-"`
+	unpause         chan struct{}       `json:"-"`
+	driving         bool                `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -2193,17 +2197,32 @@ func (d *Daemon) pauseRun(w http.ResponseWriter, r *http.Request, id string) {
 // Ticket that already has one: started Tickets keep their Sessions and
 // merged ones seed from their shas. Anything else is 409.
 func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
+	out, code, msg := d.resumeRunCore(id)
+	switch code {
+	case 0:
+		writeJSON(w, http.StatusOK, map[string]any{"run": out})
+	case http.StatusNotFound:
+		http.NotFound(w, r)
+	case http.StatusConflict:
+		writeJSON(w, code, map[string]any{"error": msg})
+	default:
+		http.Error(w, msg, code)
+	}
+}
+
+// resumeRunCore is the Resume without the HTTP: it answers the fresh Run
+// snapshot, or a status code (404, 409, 500) and message. A restarted Daemon
+// calls it for Runs saved with ResumeOnRestart.
+func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	d.mu.Lock()
 	rs, ok := d.runs[id]
 	if !ok {
 		d.mu.Unlock()
-		http.NotFound(w, r)
-		return
+		return nil, http.StatusNotFound, "not found"
 	}
 	if rs.Status != runStatusPaused {
 		d.mu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not paused"})
-		return
+		return nil, http.StatusConflict, "run is not paused"
 	}
 	spec := rs.Spec
 	d.mu.Unlock()
@@ -2211,29 +2230,26 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 	if err != nil {
 		// The Run exists; its spec no longer resolves. That is Daemon
 		// state, not a missing Run.
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, err.Error()
 	}
 	files, err := el.ReadDriverFiles(specRun)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, err.Error()
 	}
 	max := d.MaxRunning()
 	d.mu.Lock()
 	rs, ok = d.runs[id]
 	if !ok {
 		d.mu.Unlock()
-		http.NotFound(w, r)
-		return
+		return nil, http.StatusNotFound, "not found"
 	}
 	if rs.Status != runStatusPaused {
 		d.mu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not paused"})
-		return
+		return nil, http.StatusConflict, "run is not paused"
 	}
 	rs.SpecRun = specRun
 	rs.Status = runStatusRunning
+	rs.ResumeOnRestart = false
 	if rs.unpause != nil {
 		close(rs.unpause)
 	}
@@ -2251,7 +2267,7 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 	if startDriver {
 		go d.driveRun(rs.ID, world)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"run": out})
+	return out, 0, ""
 }
 
 // runTicketStatic names one Run ticket for the per-ticket actions. Callers
@@ -2276,6 +2292,9 @@ func ticketActionLocked(rs *runState, ticketID, action string) (int, string) {
 	}
 	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
 		return http.StatusConflict, "run is finished"
+	}
+	if rs.Status == runStatusPaused && action == "retry" {
+		return http.StatusConflict, "run is paused: resume it first, a retry does nothing while paused"
 	}
 	if rs.Discarded[ticketID] && action != "discard" {
 		return http.StatusConflict, "ticket is discarded"

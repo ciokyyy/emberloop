@@ -71,8 +71,10 @@ func (d *Daemon) handleSudoCreate(w http.ResponseWriter, r *http.Request, sessio
 	d.mu.Lock()
 	s, ok := d.sessions[sessionID]
 	var workDir, status string
+	var meta SessionMeta
 	if ok {
 		workDir, status = s.meta.WorkDir, s.meta.Status
+		meta = s.meta
 	}
 	d.mu.Unlock()
 	if !ok {
@@ -93,6 +95,7 @@ func (d *Daemon) handleSudoCreate(w http.ResponseWriter, r *http.Request, sessio
 	st.reqs[rq.ID] = rq
 	st.mu.Unlock()
 	d.appendEvent(sessionID, "sudo_request", sudoEventText(rq, nil), "pending")
+	d.pushSudo(meta, rq.ID, req.Command)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": rq.ID})
 }
 

@@ -68,6 +68,9 @@ func TestMain(m *testing.M) {
 		os.Unsetenv(k)
 	}
 	os.Setenv("HERDR_BIN_PATH", stub)
+	// Worker state (workers.json and everything beside it) lives in the
+	// temp dir: no test may write the real HOME.
+	statePath = filepath.Join(dir, "workers.json")
 	// The code graph lifecycle stays unwired in tests: no Spawn, review or
 	// finish test may spawn a real graph server. Graph tests wire the dial
 	// themselves, per test.

@@ -2,34 +2,39 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Composer from './Composer.svelte';
+import { writeVoicePrefs, DEFAULT_VOICE } from './voicePrefs.js';
 
-const { mockStartLive, mockTranscribe } = vi.hoisted(() => ({
-  mockStartLive: vi.fn(),
+const { mockStart, mockTranscribe } = vi.hoisted(() => ({
+  mockStart: vi.fn(),
   mockTranscribe: vi.fn(),
 }));
 vi.mock('./stt.js', () => ({
   sttSupport: () => ({ ok: true, reason: '' }),
-  startLiveRecording: (...args) => mockStartLive(...args),
+  startRecording: (...args) => mockStart(...args),
   transcribe: (...args) => mockTranscribe(...args),
   STT_MAX_BYTES: 25 * 1024 * 1024,
 }));
 
-describe('Composer mode badge', () => {
-  it('sends as prompt when idle', () => {
+describe('Composer send mode', () => {
+  it('prompts for a plain send when idle', () => {
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
-    expect(within(container).getByTestId('composer-mode').textContent).toContain('Prompt');
+    expect(within(container).getByLabelText('message').placeholder).toBe('Send a prompt…');
   });
-  it('offers steer and follow-up while working, defaulting to steer', () => {
+  it('prompts for steer or follow-up while working', () => {
     const { container } = render(Composer, { props: { status: 'working', busy: false, onSend: () => {} } });
-    const badge = within(container).getByTestId('composer-mode');
-    expect(badge.textContent).toContain('Steer');
+    expect(within(container).getByLabelText('message').placeholder).toBe('Steer or follow up…');
     expect(within(container).getByText('Follow-up')).toBeTruthy();
   });
-  it('switches the promised mode when follow-up is picked', async () => {
-    const { container } = render(Composer, { props: { status: 'working', busy: false, onSend: () => {} } });
+  it('sends as follow-up when follow-up is picked', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'working', busy: false, onSend } });
     await fireEvent.click(within(container).getByText('Follow-up'));
     await tick();
-    expect(within(container).getByTestId('composer-mode').textContent).toContain('Follow-up');
+    await fireEvent.input(within(container).getByLabelText('message'), { target: { value: 'later' } });
+    await tick();
+    await fireEvent.click(within(container).getByText('Send'));
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('later', 'followup', [], []);
   });
   it('keeps the text and shows an error when send fails', async () => {
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => { throw new Error('down'); } } });
@@ -48,7 +53,7 @@ describe('Composer mode badge', () => {
     await tick();
     await fireEvent.click(within(container).getByText('Send'));
     await tick();
-    expect(onSend).toHaveBeenCalledWith('wait', 'steer', []);
+    expect(onSend).toHaveBeenCalledWith('wait', 'steer', [], []);
   });
   it('clears the box at once and restores it when the send fails', async () => {
     let reject;
@@ -80,18 +85,24 @@ describe('Composer working indicator', () => {
   });
 });
 
-describe('Composer live voice input', () => {
-  let captured;
+describe('Composer voice message', () => {
+  let opts;
+  let stopOut;
+  let cancel;
   beforeEach(() => {
-    captured = null;
-    mockStartLive.mockReset().mockImplementation(async ({ onSegment }) => {
-      captured = onSegment;
-      return { stop: async () => {}, cancel: () => {} };
+    opts = null;
+    cancel = vi.fn();
+    stopOut = { blob: new Blob(['audio'], { type: 'audio/webm' }), durationMs: 3000, peaks: [10, 50, 90] };
+    mockStart.mockReset().mockImplementation(async (o) => {
+      opts = o;
+      return { stop: async () => stopOut, cancel };
     });
     mockTranscribe.mockReset().mockResolvedValue('hello world');
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:draft');
+    globalThis.URL.revokeObjectURL = vi.fn();
+    writeVoicePrefs(DEFAULT_VOICE);
   });
 
-  const blob = (s = 'x') => new Blob([s], { type: 'audio/webm' });
   async function start(q) {
     await fireEvent.click(q.getByLabelText('record voice'));
     await tick();
@@ -101,80 +112,157 @@ describe('Composer live voice input', () => {
     await tick();
   }
 
-  it('streams each segment into the draft live without sending', async () => {
+  it('shows a live recorder with timer and waveform, and sends nothing', async () => {
     const onSend = vi.fn();
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
     const q = within(container);
     await start(q);
-    captured(blob(), 0);
-    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('hello world'));
-    expect(q.getByTestId('voice-live').textContent).toContain('hello world');
+    expect(q.getByTestId('voice-recorder')).toBeTruthy();
+    expect(q.getByTestId('voice-status').textContent).toContain('Listening');
+    opts.onLevel(0.5);
+    opts.onLevel(0.7);
+    await tick();
+    expect(q.getByTestId('voice-wave').children.length).toBeGreaterThan(0);
     await stop(q);
     expect(onSend).not.toHaveBeenCalled();
-    expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Blob), { format: true });
   });
 
-  it('holds a fast later segment until the earlier one lands', async () => {
-    let resolveFirst;
-    mockTranscribe.mockImplementation((b) =>
-      b.size === 1 ? new Promise((r) => (resolveFirst = r)) : Promise.resolve('two'),
-    );
-    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
+  it('puts the transcript in the draft with a voice bubble, not sent yet', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
     const q = within(container);
     await start(q);
-    captured(new Blob(['a']), 0);
-    captured(new Blob(['bb']), 1);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(q.getByLabelText('message').value).toBe('');
-    resolveFirst('one');
-    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('one two'));
     await stop(q);
+    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('hello world'));
+    expect(q.getByTestId('voice-draft')).toBeTruthy();
+    expect(q.getByTestId('voice-bubble')).toBeTruthy();
+    expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Blob), { format: false });
+    expect(onSend).not.toHaveBeenCalled();
   });
 
-  it('keeps text typed mid-recording', async () => {
+  it('blocks send while transcribing', async () => {
+    let finish;
+    mockTranscribe.mockImplementation(() => new Promise((r) => (finish = r)));
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
     const q = within(container);
-    await start(q);
     await fireEvent.input(q.getByLabelText('message'), { target: { value: 'typed' } });
-    await tick();
-    captured(blob(), 0);
-    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('typed hello world'));
+    await start(q);
     await stop(q);
+    await vi.waitFor(() => expect(q.getByTestId('voice-status').textContent).toContain('Transcribing'));
+    expect(q.getByText('Send').disabled).toBe(true);
+    finish('more');
+    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('typed more'));
+    expect(q.getByText('Send').disabled).toBe(false);
   });
 
-  it('marks a failed part and keeps the rest', async () => {
-    mockTranscribe.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce('kept');
+  it('lets the user edit the transcript, then sends text plus the recording', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
+    const q = within(container);
+    await start(q);
+    await stop(q);
+    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('hello world'));
+    await fireEvent.input(q.getByLabelText('message'), { target: { value: 'hello there' } });
+    await tick();
+    await fireEvent.click(q.getByText('Send'));
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('hello there', 'prompt', [], [], {
+      blob: stopOut.blob,
+      durationMs: 3000,
+      peaks: [10, 50, 90],
+    });
+    expect(q.queryByTestId('voice-draft')).toBeNull();
+  });
+
+  it('keeps the recording when transcription fails so the user can type', async () => {
+    mockTranscribe.mockRejectedValue(new Error('down'));
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
     const q = within(container);
     await start(q);
-    captured(blob(), 0);
-    captured(blob(), 1);
-    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('kept'));
-    expect(q.getByTestId('voice-note').textContent).toMatch(/part 1 failed.*rest is kept/);
     await stop(q);
+    await vi.waitFor(() => expect(q.getByTestId('voice-note').textContent).toMatch(/Transcription failed \(down\)/));
+    expect(q.getByTestId('voice-draft')).toBeTruthy();
   });
 
-  it('says nothing heard when every part is empty', async () => {
+  it('discards the recording from the draft bubble', async () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
+    const q = within(container);
+    await start(q);
+    await stop(q);
+    await vi.waitFor(() => expect(q.getByTestId('voice-draft')).toBeTruthy());
+    await fireEvent.click(q.getByLabelText('discard recording'));
+    await tick();
+    expect(q.queryByTestId('voice-draft')).toBeNull();
+  });
+
+  it('cancels a take without transcribing', async () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
+    const q = within(container);
+    await start(q);
+    await fireEvent.click(q.getByLabelText('cancel recording'));
+    await tick();
+    expect(cancel).toHaveBeenCalled();
+    expect(mockTranscribe).not.toHaveBeenCalled();
+    expect(q.queryByTestId('voice-recorder')).toBeNull();
+  });
+
+  it('keeps the audio so far when the browser ends the take early', async () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
+    const q = within(container);
+    await start(q);
+    opts.onEnded();
+    await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('hello world'));
+    expect(q.getByTestId('voice-note').textContent).toMatch(/stopped early/i);
+  });
+
+  it('says nothing heard when the transcript is empty', async () => {
     mockTranscribe.mockResolvedValue('');
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
     const q = within(container);
     await start(q);
-    captured(blob(), 0);
     await stop(q);
     await vi.waitFor(() => expect(q.getByTestId('voice-note').textContent).toMatch(/no speech/i));
   });
 
-  it('toggles the per-segment cleanup pass', async () => {
+  it('hides the mic when voice is off in Settings', async () => {
+    writeVoicePrefs({ enabled: false, cleanup: false });
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
+    const q = within(container);
+    expect(q.queryByLabelText('record voice')).toBeNull();
+    writeVoicePrefs({ enabled: true, cleanup: false });
+    await tick();
+    expect(q.getByLabelText('record voice')).toBeTruthy();
+  });
+
+  it('runs the cleanup pass when Settings turns it on', async () => {
+    writeVoicePrefs({ enabled: true, cleanup: true });
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
     const q = within(container);
     await start(q);
-    captured(blob(), 0);
-    await vi.waitFor(() => expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Blob), { format: true }));
-    await fireEvent.click(q.getByText(/cleanup on/i));
-    await tick();
-    expect(q.getByText(/cleanup off/i)).toBeTruthy();
-    captured(blob(), 1);
-    await vi.waitFor(() => expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Blob), { format: false }));
     await stop(q);
+    await vi.waitFor(() => expect(mockTranscribe).toHaveBeenCalledWith(expect.any(Blob), { format: true }));
+  });
+});
+
+vi.mock('./api.js', () => ({
+  listImages: vi.fn(async () => ({ images: [{ id: 'img1', name: 'a.png', url: '/api/sessions/s1/images/img1' }] })),
+  imageSrc: (sessionId, imageId) => `/api/sessions/${sessionId}/images/${imageId}`,
+}));
+
+describe('Composer stored image references', () => {
+  it('references a gallery image in the tray and sends its id', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, sessionId: 's1', onSend } });
+    const q = within(container);
+    await fireEvent.click(q.getByLabelText('Session image gallery'));
+    await tick();
+    await fireEvent.click(q.getByTitle('Reference a.png'));
+    await tick();
+    expect(q.getByTestId('composer-tray')).toBeTruthy();
+    await fireEvent.input(q.getByLabelText('message'), { target: { value: 'see this' } });
+    await tick();
+    await fireEvent.click(q.getByText('Send'));
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('see this', 'prompt', [], ['img1']);
   });
 });

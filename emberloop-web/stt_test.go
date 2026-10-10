@@ -129,14 +129,17 @@ func TestSTTFormatPassCleansPerSegment(t *testing.T) {
 	}))
 	defer or.Close()
 	var chatModel string
+	var chatMaxTokens int
 	var chatMsgs []map[string]string
 	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Model    string              `json:"model"`
-			Messages []map[string]string `json:"messages"`
+			Model     string              `json:"model"`
+			MaxTokens int                 `json:"max_tokens"`
+			Messages  []map[string]string `json:"messages"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		chatModel = body.Model
+		chatMaxTokens = body.MaxTokens
 		chatMsgs = body.Messages
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello, world."}}]}`))
 	}))
@@ -158,8 +161,12 @@ func TestSTTFormatPassCleansPerSegment(t *testing.T) {
 	if res.StatusCode != 200 || out.Text != "Hello, world." {
 		t.Fatalf("status %d text %q", res.StatusCode, out.Text)
 	}
-	if chatModel != "openai/gpt-4o-mini" {
+	if chatModel != "mistralai/mistral-small-24b-instruct-2501" {
 		t.Fatalf("format model = %q", chatModel)
+	}
+	// Short live segments need only a small cap, keeping the opt-in pass fast.
+	if chatMaxTokens != 500 {
+		t.Fatalf("format max_tokens = %d, want 500", chatMaxTokens)
 	}
 	if len(chatMsgs) != 2 || !strings.Contains(chatMsgs[1]["content"], "um hello world") {
 		t.Fatalf("transcript not sent as data: %+v", chatMsgs)

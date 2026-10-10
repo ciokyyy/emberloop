@@ -9,7 +9,11 @@ export function apiBase() {
 const url = (path) => apiBase() + path;
 
 async function json(res) {
-  if (!res.ok) throw new Error(`request failed: ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`request failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -22,7 +26,20 @@ export const createSession = (body) =>
     body: JSON.stringify(body),
   }).then(json);
 
-export const getSession = (id) => fetch(url(`/api/sessions/${id}`)).then(json);
+// params: { tail, before, turns, at } for snapshot paging. No params means
+// the full log, as before.
+export const getSession = (id, params = null) => {
+  let qs = '';
+  if (params) {
+    const q = new URLSearchParams();
+    for (const k of ['tail', 'before', 'turns', 'at']) {
+      if (params[k] != null && params[k] !== '') q.set(k, String(params[k]));
+    }
+    const s = q.toString();
+    if (s) qs = `?${s}`;
+  }
+  return fetch(url(`/api/sessions/${id}${qs}`)).then(json);
+};
 
 // opts: { mode, images } where images are { mime, data (base64) }.
 export const postPrompt = (id, text, opts = {}) =>
@@ -46,6 +63,37 @@ export const postFollowup = (id, text) =>
     body: JSON.stringify({ text }),
   }).then(json);
 
+// Session image attachments live under the Daemon state dir; the list
+// feeds the composer gallery, and imageSrc renders chips and thumbnails
+// from the same bytes the agent reads.
+export const listImages = (id) => fetch(url(`/api/sessions/${id}/images`)).then(json);
+
+export const uploadImage = (id, { name, mediaType, data }) =>
+  fetch(url(`/api/sessions/${id}/images`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, mediaType, data }),
+  }).then(json);
+
+// Uploads one voice recording to the Session store. Resolves its meta
+// ({ id, ... }); the id rides the next prompt as an imageId.
+export async function uploadAudio(id, { blob, durationMs, peaks }) {
+  const data = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] ?? '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+  const body = await fetch(url(`/api/sessions/${id}/images`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'voice', mediaType: blob.type || 'audio/webm', data, durationMs, peaks }),
+  }).then(json);
+  return body.image;
+}
+
+export const imageSrc = (sessionId, imageId) => url(`/api/sessions/${sessionId}/images/${imageId}`);
+
 export const interruptSession = (id) =>
   fetch(url(`/api/sessions/${id}/interrupt`), { method: 'POST' }).then(json);
 
@@ -53,13 +101,32 @@ export const getQueue = (id) => fetch(url(`/api/sessions/${id}/queue`)).then(jso
 
 export const clearQueue = (id) => fetch(url(`/api/sessions/${id}/queue`), { method: 'DELETE' }).then(json);
 
-export function openStream(id, since, onEvent) {
+export function openStream(id, since, onEvent, opts = {}) {
   const source = new EventSource(url(`/api/sessions/${id}/events?since=${since}`));
   source.onmessage = (ev) => {
     try {
       onEvent(JSON.parse(ev.data));
     } catch {
       // Malformed line: skip, keep the stream alive.
+    }
+    try {
+      opts.onMessage?.();
+    } catch {
+      // Hook must never break the stream.
+    }
+  };
+  source.onerror = (ev) => {
+    try {
+      opts.onError?.(ev);
+    } catch {
+      // Hook must never break the stream.
+    }
+  };
+  source.onopen = () => {
+    try {
+      opts.onOpen?.();
+    } catch {
+      // Hook must never break the stream.
     }
   };
   return source;
@@ -91,13 +158,32 @@ export const startRun = (body) =>
 
 export const getRun = (id) => fetch(url(`/api/runs/${id}`)).then(json);
 
-export function openRunStream(id, onRun) {
+export function openRunStream(id, onRun, opts = {}) {
   const source = new EventSource(url(`/api/runs/${id}/events`));
   source.onmessage = (ev) => {
     try {
       onRun(JSON.parse(ev.data));
     } catch {
       // Malformed line: skip, keep the stream alive.
+    }
+    try {
+      opts.onMessage?.();
+    } catch {
+      // Hook must never break the stream.
+    }
+  };
+  source.onerror = (ev) => {
+    try {
+      opts.onError?.(ev);
+    } catch {
+      // Hook must never break the stream.
+    }
+  };
+  source.onopen = () => {
+    try {
+      opts.onOpen?.();
+    } catch {
+      // Hook must never break the stream.
     }
   };
   return source;
@@ -111,6 +197,37 @@ export const pauseRun = (id) =>
 
 export const resumeRun = (id) =>
   fetch(url(`/api/runs/${id}/resume`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(json);
+
+// Per-ticket actions: steer reaches the worker, retry clears the
+// needs-you banner and any park and starts the ticket over, park holds
+// the ticket out of the driver, discard removes its worktree and branch.
+// Each answers the fresh Run snapshot. text is required for steer and
+// optional for retry.
+export const steerTicket = (runId, ticketId, text) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/steer`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).then(json);
+
+export const retryTicket = (runId, ticketId, text = '') =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/retry`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).then(json);
+
+export const parkTicket = (runId, ticketId) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/park`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(json);
+
+export const discardTicket = (runId, ticketId) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/discard`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   }).then(json);
@@ -164,3 +281,18 @@ export const decideSudo = (sessionId, requestId, action, password = '') =>
     if (res.status === 409) throw new Error('Already decided.');
     return json(res);
   });
+
+// The Quota tab: GET reads every provider's cached windows (guarded refresh);
+// POST forces a fresh fetch past the age guard for one key, or all when empty.
+export const getQuota = () => fetch(url('/api/quota')).then(json);
+
+export const refreshQuota = (key = '') =>
+  fetch(url('/api/quota/refresh'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(key ? { key } : {}),
+  }).then(json);
+
+// The Daemon's build identity for the version badge. version.js wraps this
+// with its never-throws fetch.
+export const getVersion = () => fetch(url('/api/version')).then(json);

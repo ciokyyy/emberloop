@@ -21,15 +21,22 @@ const (
 	// overrides). It beats whisper-large-v3-turbo on word error rate
 	// (3.3% vs 4.0% on the AA-WER v2 index) at a lower per-minute price.
 	sttDefaultModel = "openai/gpt-transcribe"
-	// sttDefaultFormatModel cleans each transcript segment through chat
-	// completions (EL_STT_FORMAT_MODEL overrides). No MiniCPM is hosted
-	// on OpenRouter, so the default is OpenAI's cheap fast small model.
-	sttDefaultFormatModel = "openai/gpt-4o-mini"
-	// sttDefaultURL is OpenRouter's transcription endpoint.
+	// sttDefaultFormatModel cleans a transcript through chat
+	// completions (EL_STT_FORMAT_MODEL overrides). No dictation-cleanup
+	// fine-tune is hosted on OpenRouter, so the default is a cheap
+	// non-reasoning 24B instruct model.
+	// The browser asks for it only on demand (?format=1, the Settings
+	// cleanup switch): the extra model round trip adds delay, so voice
+	// input runs without it by default.
+	sttDefaultFormatModel = "mistralai/mistral-small-24b-instruct-2501"
+	// sttDefaultURL is OpenRouter's transcription endpoint. It is POST-only
+	// with no streaming or partials, so a voice message is recorded whole and
+	// transcribed in one call: true streaming (OpenAI realtime transcription)
+	// needs a direct OpenAI key, which the Daemon never holds.
 	sttDefaultURL = "https://openrouter.ai/api/v1/audio/transcriptions"
 	// sttDefaultChatURL is OpenRouter's chat endpoint for the format pass.
 	sttDefaultChatURL = "https://openrouter.ai/api/v1/chat/completions"
-	// maxAudioBytes is OpenRouter's 25 MB upload cap, enforced per segment.
+	// maxAudioBytes is OpenRouter's 25 MB upload cap, enforced per recording.
 	maxAudioBytes = 25 << 20
 )
 
@@ -49,8 +56,9 @@ func sttFormatModelName() string {
 	return sttDefaultFormatModel
 }
 
-// formatWanted reports ?format=1: the browser asks for the cleanup pass per
-// segment with it, and skips it without it (or with ?format=0).
+// formatWanted reports ?format=1: the browser asks for the cleanup pass for
+// the recording with it (an explicit opt-in from the Settings cleanup
+// switch), and skips it without it (or with ?format=0), which is the default.
 func formatWanted(r *http.Request) bool {
 	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format"))) {
 	case "1", "true", "yes", "on":
@@ -97,8 +105,8 @@ func audioFormat(contentType string) string {
 // plus the models, POST takes the raw audio as the body and answers
 // {"text"}. With ?format=1 the transcript goes through the cleanup model
 // first (fail open: raw text on any cleanup error). The browser posts one
-// segment at a time while the user speaks, so each answer lands live in
-// the draft. The browser never sees the key.
+// short segment at a time while the user speaks and appends each answer to
+// the draft on arrival, so text appears live. The browser never sees the key.
 func (d *Daemon) handleSTT(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -125,7 +133,8 @@ func (d *Daemon) handleSTT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if formatWanted(r) {
-			text = formatTranscript(d.sttChatURLOrDefault(), key, sttFormatModelName(), text)
+			chatURL := d.sttChatURLOrDefault()
+			text = formatTranscript(chatURL, sttFormatKey(chatURL, key), sttFormatModelName(), text)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"text": text})
 	default:
@@ -148,7 +157,23 @@ func (d *Daemon) sttChatURLOrDefault() string {
 	if d.sttChatURL != "" {
 		return d.sttChatURL
 	}
+	if u := strings.TrimSpace(os.Getenv("EL_STT_FORMAT_URL")); u != "" {
+		return u
+	}
 	return sttDefaultChatURL
+}
+
+// sttFormatKey is the bearer token for the cleanup call. A custom
+// EL_STT_FORMAT_URL (a local server) never receives the OpenRouter key: it
+// gets EL_STT_FORMAT_KEY, possibly empty.
+func sttFormatKey(chatURL, openRouterKey string) string {
+	if chatURL == sttDefaultChatURL {
+		return openRouterKey
+	}
+	if strings.TrimSpace(os.Getenv("EL_STT_FORMAT_URL")) != "" {
+		return strings.TrimSpace(os.Getenv("EL_STT_FORMAT_KEY"))
+	}
+	return openRouterKey
 }
 
 // transcribe sends the audio to OpenRouter. The status is the HTTP code the
@@ -196,6 +221,8 @@ const formatPrompt = `You clean up a raw speech-transcription segment. Fix punct
 
 // formatTranscript runs the cleanup model over one transcript segment and
 // fails open: any error, timeout or empty answer returns the raw text.
+// Segments are short (a few seconds of speech), so the token cap stays small
+// to keep this opt-in pass fast.
 func formatTranscript(url, key, model, text string) string {
 	raw := strings.TrimSpace(text)
 	if raw == "" {
@@ -204,7 +231,7 @@ func formatTranscript(url, key, model, text string) string {
 	body, _ := json.Marshal(map[string]any{
 		"model":       model,
 		"temperature": 0,
-		"max_tokens":  1000,
+		"max_tokens":  500,
 		"messages": []map[string]string{
 			{"role": "system", "content": formatPrompt},
 			{"role": "user", "content": raw},
@@ -214,7 +241,9 @@ func formatTranscript(url, key, model, text string) string {
 	if err != nil {
 		return raw
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	res, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {

@@ -116,6 +116,7 @@ func TestGateChildThatSubmitsIsUntouched(t *testing.T) {
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A child that settles without submitting is reminded once, submits on the
@@ -144,6 +145,7 @@ func TestGateRemindsOnceThenChildSubmits(t *testing.T) {
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A child that never submits is reminded to the gate's bound, then gives up:
@@ -186,6 +188,7 @@ func TestGateGiveUpDeliversStoppedNoticeOnce(t *testing.T) {
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A killed child gets no reminder: ending is terminal, not a missing submit.
@@ -214,6 +217,7 @@ func TestGateKilledChildGetsNoReminder(t *testing.T) {
 	if n := countReminderPrompts(events); n != 0 {
 		t.Fatalf("reminder prompts on killed child = %d, want 0", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // An interrupted child gets no reminder loop: a user stop is deliberate.
@@ -239,6 +243,7 @@ func TestGateInterruptedChildGetsNoReminder(t *testing.T) {
 	if n := countReminderPrompts(events); n != 0 {
 		t.Fatalf("reminder prompts on interrupted child = %d, want 0", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A child that never submits still delivers once it settles: with the gate
@@ -272,6 +277,7 @@ func TestSettleDeliversLastMessageWithoutSubmit(t *testing.T) {
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // A submit recorded before the child settles is the Group result: the
@@ -308,6 +314,7 @@ func TestSettleDeliversSubmitTextWhenSubmitted(t *testing.T) {
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
 	}
+	waitParentIdle(t, srv.URL, parent)
 }
 
 // failReplyBackend answers one turn with a reply, then settles failed.
@@ -345,4 +352,7 @@ func TestSettleFailedChildDeliversStatus(t *testing.T) {
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
 	}
+	// The grouped delivery steers the parent, whose turn fails like every
+	// turn under this backend: settled here means failed, not idle.
+	waitStatus(t, srv.URL, parent, "failed", 20*time.Second)
 }

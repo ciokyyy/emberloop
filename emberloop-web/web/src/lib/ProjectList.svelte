@@ -5,12 +5,14 @@
   import { Folder, FolderOpen, ChevronRight, Plus, Trash2, Pencil } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import SessionList from './SessionList.svelte';
+  import { matchSession } from './sidebar.js';
 
   let {
     projects = [],
     sessions = [],
     currentId = null,
     activeProjectId = null,
+    query = '',
     onSelect = () => {},
     onNew = () => {},
     onRename = () => {},
@@ -37,13 +39,33 @@
     }
     return m;
   });
-  const orphans = $derived(byProject.get('') ?? []);
+  // Chat filter: a project shows when its name matches (with all its
+  // sessions) or when some of its sessions match; a query force-opens every
+  // match so results are never hidden behind a collapsed header.
+  const q = $derived(query.trim().toLowerCase());
+  const visibleProjects = $derived(
+    !q
+      ? projects
+      : projects.filter((p) => p.name.toLowerCase().includes(q) || (byProject.get(p.id) ?? []).some((s) => matchSession(s, p.name, q))),
+  );
+  const visibleSessions = $derived.by(() => {
+    if (!q) return byProject;
+    const m = new Map();
+    for (const [key, list] of byProject) {
+      const proj = projects.find((p) => p.id === key);
+      if (proj?.name.toLowerCase().includes(q)) m.set(key, list);
+      else m.set(key, list.filter((s) => matchSession(s, proj?.name ?? '', q)));
+    }
+    return m;
+  });
+  const orphans = $derived((visibleSessions.get('') ?? []).filter((s) => matchSession(s, '', q)));
+  const noMatch = $derived(!!q && !visibleProjects.length && !orphans.length);
 </script>
 
 <div class="flex flex-col gap-1">
-  {#each projects as p (p.id)}
-    {@const open = !collapsed.has(p.id)}
-    {@const list = byProject.get(p.id) ?? []}
+  {#each visibleProjects as p (p.id)}
+    {@const open = q ? true : !collapsed.has(p.id)}
+    {@const list = visibleSessions.get(p.id) ?? []}
     <section aria-label={p.name}>
       <div
         class="group flex items-center gap-1 rounded-xl px-1 py-1 text-sm transition-colors hover:bg-accent/50"
@@ -73,7 +95,11 @@
       {/if}
     </section>
   {:else}
-    <p class="px-3 py-4 text-sm text-muted-foreground">Add a project to start. Chats started in a project run in its folder.</p>
+    {#if noMatch}
+      <p class="px-3 py-4 text-sm text-muted-foreground">No chats match “{query.trim()}”.</p>
+    {:else}
+      <p class="px-3 py-4 text-sm text-muted-foreground">Add a project to start. Chats started in a project run in its folder.</p>
+    {/if}
   {/each}
   {#if orphans.length}
     <section aria-label="Other">

@@ -390,3 +390,53 @@ func TestRunStartUnknownRunErrors(t *testing.T) {
 		t.Fatalf("runStartReviewer unknown run = nil, want error")
 	}
 }
+
+// POST /api/restart pauses the running Run and marks it; the next Daemon
+// resumes it on its own with the same Worker and no second one. A Run the
+// user paused by hand stays paused.
+func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	stateDir := t.TempDir()
+	d := NewDaemon(stateDir, NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "01-first started")
+	first := ticketByID(r, "01-first").WorkerSession
+	before := countSessions(t, srv.URL)
+
+	resp, err := http.Post(srv.URL+"/api/restart", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("restart status = %d, want 202", resp.StatusCode)
+	}
+	select {
+	case <-d.RestartCh():
+	case <-time.After(time.Second):
+		t.Fatal("restart channel did not fire")
+	}
+	if got := getRun(t, srv.URL, run.ID).Status; got != "paused" {
+		t.Fatalf("status after request = %q, want paused", got)
+	}
+	srv.Close()
+
+	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.ResumeAfterRestart()
+	srv2 := httptest.NewServer(d2.Handler())
+	defer srv2.Close()
+	r = getRun(t, srv2.URL, run.ID)
+	if r.Status != "running" {
+		t.Fatalf("reloaded status = %q, want running", r.Status)
+	}
+	if got := ticketByID(r, "01-first").WorkerSession; got != first {
+		t.Fatalf("worker = %q, want the same %q", got, first)
+	}
+	if got := countSessions(t, srv2.URL); got != before {
+		t.Fatalf("sessions = %d, want %d (no second Worker)", got, before)
+	}
+}

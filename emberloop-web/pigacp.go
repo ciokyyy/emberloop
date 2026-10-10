@@ -74,23 +74,66 @@ func NewPigACPBackend(stateDir, daemonBin, daemonAddr string) (*PigACPBackend, e
 // the same list the pig CLI offers to a logged-in user.
 func (b *PigACPBackend) Models() []string { return PigAvailableModels("") }
 
-// CreateSession validates the model against the catalog, then starts the
-// adapter and the ACP session. Unknown models are a 400 like the SDK path.
+// CreateSession validates the model and effort against the catalog, then
+// starts the adapter and the ACP session. Unknown models and efforts are a
+// 400 like the SDK path. A thinking level the adapter refuses fails the
+// start with no Session left behind.
 func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	if _, ok := ai.LookupModel(meta.Model); !ok {
 		return fmt.Errorf("pig: unknown model %q", meta.Model)
 	}
+	if !validPigEffort(meta.Effort) {
+		return fmt.Errorf("pig: unknown effort %q (want off, minimal, low, medium, high, xhigh or max)", meta.Effort)
+	}
 	b.setScout(meta.ID, meta.Scout)
 	b.setGroup(meta.ID, meta.GroupID)
-	return b.StartSession(meta)
+	if err := b.StartSession(meta); err != nil {
+		return err
+	}
+	if err := b.applyPigEffort(meta.ID, meta.Effort); err != nil {
+		b.DropSession(meta.ID)
+		return err
+	}
+	return nil
 }
 
-// ResumeSession reloads the ACP session; the Session's scout flag is set
-// first so the new adapter gets the same read-only tool allowlist.
+// ResumeSession reloads the ACP session and re-applies its thinking level;
+// the Session's scout flag is set first so the new adapter gets the same
+// read-only tool allowlist.
 func (b *PigACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	b.setScout(meta.ID, meta.Scout)
 	b.setGroup(meta.ID, meta.GroupID)
-	return b.ClaudeBackend.ResumeSession(meta, emit)
+	if err := b.ClaudeBackend.ResumeSession(meta, emit); err != nil {
+		return err
+	}
+	if err := b.applyPigEffort(meta.ID, meta.Effort); err != nil {
+		b.DropSession(meta.ID)
+		return err
+	}
+	return nil
+}
+
+// applyPigEffort picks the Session's thinking level through the adapter's
+// thought_level config option. An empty effort keeps the model default;
+// adapters without the option keep it too.
+func (b *PigACPBackend) applyPigEffort(sessionID, effort string) error {
+	if effort == "" {
+		return nil
+	}
+	b.mu.Lock()
+	st, ok := b.sessions[sessionID]
+	b.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("pig: session %s not started", sessionID)
+	}
+	ts, ok := st.conn.(acpThoughtLevelSetter)
+	if !ok {
+		return nil
+	}
+	if err := ts.SetThoughtLevel(st.acpID, effort); err != nil {
+		return fmt.Errorf("pig: set thinking level %q: %w", effort, err)
+	}
+	return nil
 }
 
 func (b *PigACPBackend) setScout(id string, scout bool) {

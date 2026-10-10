@@ -1,6 +1,6 @@
-# Web UI (Enderbloom Web)
+# Web UI (Emberloop)
 
-The web UI is a local Go Daemon with the UI embedded in the binary. It is a separate program from `el`: `el install` does not rebuild it.
+The web UI is a local Go Daemon with the UI embedded in the binary. `el update` rebuilds the UI and the binary together; never build either by hand for prod.
 
 ## Two instances
 
@@ -11,26 +11,31 @@ The web UI is a local Go Daemon with the UI embedded in the binary. It is a sepa
 | Binary | `~/.local/bin/el-web` | `go run` from the checkout |
 | State | `~/.local/share/pig` | `~/.local/share/pig-dev` (`EL_WEB_DEV_STATE` overrides) |
 
+The product name is Emberloop. The on-disk state subtree keeps its internal name: Sessions, Groups, Runs, Projects and push data live under `<state-dir>/enderbloom/`, and that path is unchanged.
+
 Never start the Daemon with the default `-addr` (random port): it picks a random port and the URL changes on every start.
 
 ## Update prod
 
-Run from the checkout root. Do the steps in order and stop on the first failure.
+`el update` (see `el://docs/update`) does the whole prod update: it rebuilds
+the UI unless its source is unchanged, rebuilds `el-web` with version stamps
+into `~/.local/bin/el-web`, keeps the previous set, and rolls back to it when
+the new binary fails its health check.
 
-1. Build the UI first. The Daemon embeds `web/dist`, so this must come before the Go build: `cd emberloop-web/web && npx vite build`.
-2. Build the binary in place: `cd emberloop-web && go build -o ~/.local/bin/el-web ./cmd/emberloop-web`.
-3. Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and no Session is mid-turn and no Run is driving, it closes live agent processes and re-executes itself with the same pid and address. Idle Sessions reload on the next prompt.
-4. Check it: `curl -sI http://127.0.0.1:7940 | head -1` must print `HTTP/1.1 200 OK`.
+Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and no Session is mid-turn and no Run is driving, it closes live agent processes and re-executes itself with the same pid and address. Idle Sessions reload on the next prompt.
 
-If you run inside a Session of this Daemon, the restart drops your own agent process once the turn ends. The next prompt reloads the Session. Tell the user before you rebuild.
+Check it: `curl -s http://127.0.0.1:7940/api/health` must print `{"ok":true}`, and `el-web --version` names the build. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds a browser runs; a stale browser offers `update available — reload`.
 
-Write the binary with `go build -o`, which replaces the file. Do not copy over a running binary with `cp`: that fails with "text file busy".
+If you run inside a Session of this Daemon, the restart drops your own agent process once the turn ends. The next prompt reloads the Session. Tell the user before you update.
+
+`GET /api/version` answers the Daemon's `{version, commit, uiHash}` with no login; `GET /api/health` answers `{"ok":true}`.
 
 ## Service control
 
 - Status: `systemctl --user status emberloop-web`
-- Force a restart (only when the self-restart did not happen, for example `-restart-check 0`): `systemctl --user restart emberloop-web`
-- Logs: `journalctl --user -u emberloop-web -n 50`
+- Restart: `el restart` (`--dev` for port 7941, `--wait` to block until the Daemon is back; never `--wait` inside a Daemon Session). It POSTs `/api/restart`; `systemctl --user reload emberloop-web` (SIGUSR1) does the same. This is the only restart an agent runs. The Daemon pauses every running Run and marks it `resumeOnRestart`, waits up to `-restart-drain` (default 5m) for Sessions to finish their turns, closes agent processes, and re-executes itself. The new Daemon resumes the marked Runs on its own; a Run paused by hand stays paused. Idle Sessions reload on the next prompt.
+- Never run `systemctl restart|stop`, `kill` or a manual `el-web` launch against the prod Daemon, least of all from a Session inside it: the restart drops your own agent process and cuts Run Workers mid-turn.
+- Logs: `el logs` (`-n N`, `-f`, `--since TIME`, `--grep PATTERN`); it wraps `journalctl --user -u emberloop-web`. The dev Daemon has no journal: read its pane.
 - The unit file is `~/.config/systemd/user/emberloop-web.service`. It runs `el-web -addr 127.0.0.1:7940` with `Restart=always`. Linger is on, so it starts at boot.
 
 ## Dev loop
@@ -38,6 +43,20 @@ Write the binary with `go build -o`, which replaces the file. Do not copy over a
 - Start: `scripts/web-dev.sh` through the background tool, never with bash. Rebuild the UI first (`npx vite build` in `emberloop-web/web`), then restart the pane, because `go run` embeds `web/dist` at compile time.
 - Browser suite: `cd emberloop-web/web && npm run test:e2e`. It starts its own throwaway Daemon and needs no key.
 - Component tests: `cd emberloop-web/web && npx vitest run`. Go tests: `cd emberloop-web && go test ./...`.
+
+## URLs and fast session load
+
+Real paths (Daemon SPA fallback serves `index.html`; missing assets and
+`/api/*` still 404): `/s/<id>` Session with optional `?at=<seq>` scroll
+target, `/runs`, `/runs/<runId>`, `/runs/<runId>/<ticketId>`, `/settings`,
+`/` (last viewed from localStorage `eb.last`, else newest). Unknown ids show
+Session-not-found, never a random Session. Push notification taps open
+`/s/<sessionId>`.
+
+Session open loads the last 6 turns (`GET /api/sessions/<id>?tail=6`,
+compacted to the last `tool_call_updated` per tool id); older turns page in
+via `?before=<seq>&turns=6` (`hasMore`/`firstSeq`). No query means the full
+log, as before.
 
 ## Projects
 
