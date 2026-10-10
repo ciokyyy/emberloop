@@ -131,8 +131,8 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "role "+name+": harness must be pig", http.StatusBadRequest)
 				return
 			}
-			if rs.Harness != "claude" && rs.Harness != "pig" {
-				http.Error(w, "role "+name+": harness must be claude or pig", http.StatusBadRequest)
+			if rs.Harness != "claude" && rs.Harness != "pig" && rs.Harness != "grok" {
+				http.Error(w, "role "+name+": harness must be claude, pig or grok", http.StatusBadRequest)
 				return
 			}
 			if rs.Harness == "claude" && !validClaudeModel(rs.Model) {

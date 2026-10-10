@@ -4,6 +4,7 @@
 export const HARNESSES = [
   { id: 'claude', label: 'Claude', models: ['opus', 'sonnet', 'haiku'] },
   { id: 'pig', label: 'Pig', models: ['auto'] },
+  { id: 'grok', label: 'Grok', models: ['grok-4.7'] },
   { id: 'fake', label: 'Fake (tests)', models: ['fake-model'] },
 ];
 
@@ -70,6 +71,7 @@ export function modelItems(harness, models, current = '') {
 export const HARNESS_STYLE = {
   claude: { label: 'Claude', mark: 'C', accent: '#d97757', tint: '#e8a082' },
   pig: { label: 'Pig', mark: 'P', accent: '#4fb08f', tint: '#6fcaa9' },
+  grok: { label: 'Grok', mark: 'G', accent: '#8b8fa3', tint: '#b4b8cc' },
   fake: { label: 'Fake', mark: 'F', accent: '#71717a', tint: '#a1a1aa' },
 };
 

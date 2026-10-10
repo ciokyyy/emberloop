@@ -13,7 +13,7 @@ One conversation between a user and one agent, with a harness, a model and a wor
 _Avoid_: Chat, thread, run
 
 **Backend**:
-The adapter that drives one harness behind the Daemon's `Agent` interface: claude through ACP, pig through its Go SDK.
+The adapter that drives one harness behind the Daemon's `Agent` interface: claude and grok through ACP, pig through ACP or its Go SDK.
 _Avoid_: Driver, provider, adapter
 
 **Subagent**:

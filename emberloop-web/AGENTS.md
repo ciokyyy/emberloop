@@ -3,7 +3,7 @@
 ## Purpose
 
 Enderbloom Web: local Daemon (Go) plus embedded browser UI driving
-claude and pig Sessions behind one `Backend` interface. See
+claude, pig and grok Sessions behind one `Backend` interface. See
 `.scratch/archive/enderbloom-web/spec.md`.
 
 ## Ownership
@@ -81,6 +81,28 @@ the driver ticks boxes and marks done, nothing else writes them.
   `PigACPBackend` is a `steerBackend`. Compression is off for ACP pig: the
   Backend is not a `compactBackend`, the Session GET reports
   `compressible:false` and the UI hides the Compress button.
+- `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
+  <file> stdio` on the user's Grok subscription login, through the plain
+  `ClaudeBackend` ACP path (`metaHook`, `promptWrap`, `waitMCP`, `mcpEnv`).
+  Registered only when `grok` and `el-mcp` resolve; an unregistered harness
+  answers 503, never the fake. Each Session gets `<stateDir>/enderbloom/grok-acp/<id>/`
+  with a temp `home/` and `grok/` (the `GROK_HOME`): a copy of the user's
+  `auth.json` (written back on release when the agent refreshed it and the
+  user's file did not change), a `config.toml` that turns off subagents,
+  memory, media and web tools and every `[compat.claude]` scan, and a
+  profile whose `tools` allowlist is `use_tool` only (`agent stdio` ignores
+  the `--tools` flag; Grok has no setting to expose MCP tools directly).
+  The el MCP tools therefore go through `use_tool`; the system prompt
+  (`_meta.systemPromptOverride`: el rules, project context, then a compact
+  catalog rendered from the el-mcp `tools/list` of the Session's role) lets
+  the model call them without `search_tool`, which the profile keeps only
+  when the catalog could not be built. The register reminder is appended to
+  each prompt (ACP has no hook). Start and load wait for the agent's
+  `_x.ai/mcp_initialized` notification. Steer is not native: the Daemon
+  turns a busy Steer into a Follow-up. Effort is the `reasoning_effort`
+  config option (`max` maps to `xhigh`). Grok Sessions get no titles and
+  no compression. `grokacp_live_test.go` (`EL_LIVE_GROK=1`) drives a real
+  agent.
 - `restart.go` (`Idle`, `Shutdown`) and `cmd/emberloop-web/restart.go` restart the
   Daemon in place: every `-restart-check` (default 1m, 0 off) it compares its
   binary on disk with the one it started from and, after the change held for

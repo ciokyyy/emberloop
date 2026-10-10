@@ -182,6 +182,9 @@ type ClaudeBackend struct {
 	mcpName    string
 	mcpCommand string
 	mcpArgs    []string
+	// mcpEnv is extra environment for the el MCP server (grok: the real
+	// HOME, since the adapter itself runs under a temp one).
+	mcpEnv [][2]string
 	// daemonAddr is the loopback Daemon the single el MCP server calls back
 	// over HTTP for the Daemon-hosted tools and sudo approvals. Empty leaves
 	// Sessions with an unbound base server.
@@ -207,6 +210,18 @@ type ClaudeBackend struct {
 	// newConnFor, when set, starts the adapter for one Daemon Session, so
 	// the process can carry per-Session environment.
 	newConnFor func(sessionID string) (acpConn, error)
+	// metaHook, when set, builds the session/new and session/load _meta
+	// for a plain adapter (grok: system prompt override, yolo mode) from
+	// the Daemon Session id, model, effort and WorkDir.
+	metaHook func(daemonID, model, effort, workDir string) map[string]any
+	// promptWrap, when set, rewrites each prompt before it goes on the wire
+	// (grok: the per-turn register reminder, since ACP has no hook). The
+	// stored prompt Event keeps the user's own text.
+	promptWrap func(text string) string
+	// waitMCP makes start and load wait for the adapter's MCP-ready
+	// notification before the Session counts as ready (grok connects its MCP
+	// servers after session/new answers).
+	waitMCP bool
 
 	mu       sync.Mutex
 	sessions map[string]*claudeState
@@ -335,13 +350,13 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		b.drop(meta.ID, conn)
 		return err
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.strippingMetaEffort(meta.Model, meta.Effort, meta.WorkDir))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir))
 	if err != nil {
 		err = fmt.Errorf("acp session/new: %w", err)
 		b.drop(meta.ID, conn)
 		return err
 	}
-	if err := b.applyModel(conn, acpID, meta.Model); err != nil {
+	if err := b.afterStart(conn, acpID, meta.Model); err != nil {
 		b.drop(meta.ID, conn)
 		return err
 	}
@@ -379,12 +394,12 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 		b.drop(daemonID, conn)
 		return err
 	}
-	if err := conn.LoadSession(acpID, cwd, mcp, b.strippingMetaEffort(model, effort, cwd)); err != nil {
+	if err := conn.LoadSession(acpID, cwd, mcp, b.sessionMeta(daemonID, model, effort, cwd)); err != nil {
 		err = fmt.Errorf("acp session/load: %w", err)
 		b.drop(daemonID, conn)
 		return err
 	}
-	if err := b.applyModel(conn, acpID, model); err != nil {
+	if err := b.afterStart(conn, acpID, model); err != nil {
 		b.drop(daemonID, conn)
 		return err
 	}
@@ -620,6 +635,7 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 		return
 	}
 	acpID, conn := st.acpID, st.conn
+	text = b.wrapPrompt(text)
 	// Mid-turn prompts are assumed to queue inside the adapter until the
 	// turn ends (unverified in repo: no spike run log records MIDTURN-RESP),
 	// so no Daemon guard serializes them.
@@ -707,6 +723,7 @@ func (b *ClaudeBackend) mcpServersFor(sessionID, role string) ([]acpMCPServer, e
 			{"EL_WEB_DAEMON_URL", b.daemonAddr},
 		}
 	}
+	base.Env = append(base.Env, b.mcpEnv...)
 	return []acpMCPServer{base}, nil
 }
 
@@ -949,6 +966,10 @@ type acpProcessConn struct {
 	closeTimeout time.Duration
 	// steering is set by Initialize from _meta.steering.supported.
 	steering bool
+	// mcpReady closes once on the adapter's _x.ai/mcp_initialized
+	// notification (grok); WaitMCPReady reads it.
+	mcpReady chan struct{}
+	mcpOnce  sync.Once
 }
 
 func spawnACPConn(command []string) (acpConn, error) {
@@ -981,7 +1002,7 @@ func spawnACPConnEnv(command, env []string) (acpConn, error) {
 		// the Daemon. Prompts run agent turns, so they get minutes.
 		// Close kills a deaf adapter after seconds.
 		ctlTimeout: 60 * time.Second, promptTimeout: 15 * time.Minute,
-		closeTimeout: 5 * time.Second,
+		closeTimeout: 5 * time.Second, mcpReady: make(chan struct{}),
 	}
 	go c.read(bufio.NewScanner(stdout))
 	return c, nil
@@ -1034,6 +1055,10 @@ func (c *acpProcessConn) dispatch(msg acpWireMsg) {
 	}
 	if msg.ID != nil && msg.Method == "session/request_permission" {
 		c.handlePermission(msg)
+		return
+	}
+	if msg.ID == nil && msg.Method == "_x.ai/mcp_initialized" {
+		c.mcpOnce.Do(func() { close(c.mcpReady) })
 		return
 	}
 	if msg.Method == "session/update" {
@@ -1408,4 +1433,65 @@ func prettyJSON(v any) string {
 		return ""
 	}
 	return string(b)
+}
+
+// sessionMeta is the _meta for session/new and session/load: the plain-adapter
+// hook when set, the claude stripping set otherwise.
+func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir string) map[string]any {
+	if b.metaHook != nil {
+		return b.metaHook(daemonID, model, effort, workDir)
+	}
+	return b.strippingMetaEffort(model, effort, workDir)
+}
+
+// wrapPrompt applies the per-turn prompt rewrite, if any.
+func (b *ClaudeBackend) wrapPrompt(text string) string {
+	if b.promptWrap == nil {
+		return text
+	}
+	return b.promptWrap(text)
+}
+
+// acpMCPWaiter is the optional seam of an acpConn that reports when the
+// adapter has connected its MCP servers.
+type acpMCPWaiter interface {
+	WaitMCPReady(timeout time.Duration) error
+}
+
+// mcpReadyTimeout bounds the wait for the adapter's MCP servers.
+const mcpReadyTimeout = 45 * time.Second
+
+// WaitMCPReady blocks until the adapter's MCP-initialized notification.
+func (c *acpProcessConn) WaitMCPReady(timeout time.Duration) error {
+	select {
+	case <-c.mcpReady:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("adapter MCP servers not ready after %s", timeout)
+	}
+}
+
+// SetConfigOption sets one ACP session config option by id; the value is a
+// plain string.
+func (c *acpProcessConn) SetConfigOption(acpID, configID, value string) error {
+	_, err := c.call("session/set_config_option", map[string]any{
+		"sessionId": acpID, "configId": configID, "value": value,
+	})
+	return err
+}
+
+// afterStart finishes a start or load: it picks the model, then waits for
+// the adapter's MCP servers when the Backend needs that.
+func (b *ClaudeBackend) afterStart(conn acpConn, acpID, model string) error {
+	if err := b.applyModel(conn, acpID, model); err != nil {
+		return err
+	}
+	if b.waitMCP {
+		if w, ok := conn.(acpMCPWaiter); ok {
+			if err := w.WaitMCPReady(mcpReadyTimeout); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

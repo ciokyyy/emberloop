@@ -199,6 +199,15 @@ func (d *Daemon) backendForLocked(harness string) Backend {
 	return d.backend
 }
 
+// hasBackend reports whether a Backend is registered for exactly this
+// harness, with no fallback to the default.
+func (d *Daemon) hasBackend(harness string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, ok := d.backends[harness]
+	return ok
+}
+
 // Handler returns the full HTTP handler with the loopback guard applied.
 func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -251,8 +260,12 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"models": ClaudeModels()})
 		return
 	}
-	if harness != "pig" && harness != "fake" {
-		http.Error(w, "unknown harness (want claude, pig or fake)", http.StatusBadRequest)
+	if harness != "pig" && harness != "grok" && harness != "fake" {
+		http.Error(w, "unknown harness (want claude, pig, grok or fake)", http.StatusBadRequest)
+		return
+	}
+	if harness == "grok" && !d.hasBackend("grok") {
+		http.Error(w, "grok harness not available (grok or el-mcp missing)", http.StatusServiceUnavailable)
 		return
 	}
 	d.mu.Lock()
@@ -849,6 +862,12 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		mode = "followup"
 		degraded = true
 	}
+	if harness == "grok" && mode == "steer" && s.busy {
+		// Grok has no mid-turn injection on the primary Session: a Steer
+		// waits as a Follow-up.
+		mode = "followup"
+		degraded = true
+	}
 	if harness == "claude" && mode == "steer" && s.busy {
 		// A Steer always lands after the next tool call: the adapter injects
 		// at priority now, which pre-empts a running tool, so the Daemon holds
@@ -1090,6 +1109,10 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Harness == "" || req.Model == "" || req.WorkDir == "" {
 			http.Error(w, "harness, model and workDir (or projectId) are required", http.StatusBadRequest)
+			return
+		}
+		if req.Harness == "grok" && !d.hasBackend("grok") {
+			http.Error(w, "grok harness not available (grok or el-mcp missing)", http.StatusServiceUnavailable)
 			return
 		}
 		if req.Harness == "claude" && !validClaudeModel(req.Model) {

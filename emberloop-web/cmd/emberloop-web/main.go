@@ -116,6 +116,13 @@ func main() {
 			d.RegisterBackend("pig", acp)
 		}
 	}
+	// Grok Sessions run `grok agent stdio` on the user's Grok login; the
+	// harness stays unregistered when grok or el-mcp is missing.
+	if grok, err := web.NewGrokACPBackend(*stateDir, daemonURL); err != nil {
+		fmt.Fprintln(os.Stderr, "el-web: grok harness unavailable:", err)
+	} else {
+		d.RegisterBackend("grok", grok)
+	}
 	claude := web.NewClaudeBackend()
 	claude.SetDaemonAddr(daemonURL)
 	d.WithClaudeBackend(claude)
