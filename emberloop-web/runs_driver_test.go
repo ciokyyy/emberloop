@@ -790,3 +790,68 @@ func TestServeRunEventsStreamsTable(t *testing.T) {
 		t.Fatalf("events tickets = %d, want 2", len(body.Tickets))
 	}
 }
+
+// A round still open at the tip is under review, not a refusal: the gate
+// must not tell the worker a stale `changes` verdict while a reviewer is
+// still judging the new tip, or the driver parks on the worker's next
+// submit while the worker waits for the verdict. Once the round closes
+// with fresh changes, finish refuses with them.
+func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
+	repo, _ := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	base := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD"))
+	branch := "implement/01-first"
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	testGit(t, repo, "worktree", "add", "-b", branch, worktree, base)
+	writeFile(t, worktree, "worker.txt", "worker\n")
+	testGit(t, worktree, "add", "worker.txt")
+	testGit(t, worktree, "commit", "-m", "worker change")
+	tip := strings.TrimSpace(testGit(t, worktree, "rev-parse", "HEAD"))
+	old := base
+
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	rs := &runState{
+		ID: "r-open", Spec: "spec", Repo: repo, Status: "running",
+		notify:    make(chan struct{}),
+		Tickets:   []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Sessions:  map[string]string{"01-first": "sess1"},
+		Branches:  map[string]string{"01-first": branch},
+		Worktrees: map[string]string{"01-first": worktree},
+		Targets:   map[string]string{},
+		Bases:     map[string]string{"01-first": base},
+		Merged:    map[string]string{},
+		Reviewers: map[string]map[string]string{"01-first": {"reviewer-standards": "sess-std", "reviewer-spec": "sess-spec"}},
+		Reviews: map[string]map[string]storedReview{"01-first": {
+			"reviewer-standards": {Verdict: "changes", At: old},
+			"reviewer-spec":      {Verdict: "pass", At: tip},
+		}},
+		Rounds: map[string][]ticketRound{"01-first": {{N: 2, Tip: tip, StartedAt: time.Now()}}},
+	}
+	d.runs["r-open"] = rs
+
+	fin, err := d.runFinishWorker("r-open", "01-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fin.Merged || fin.Detail != "" {
+		t.Fatalf("finish = %+v, want empty under-review result while the round is open", fin)
+	}
+	if got := rs.Rounds["01-first"][0].SentToWorkerAt; got != nil {
+		t.Fatalf("sentToWorkerAt = %v, want nothing told while the round is open", got)
+	}
+
+	end := time.Now()
+	rs.Rounds["01-first"][0].EndedAt = &end
+	rs.Reviews["01-first"]["reviewer-standards"] = storedReview{Verdict: "changes", At: tip, Report: "fix it"}
+	fin, err = d.runFinishWorker("r-open", "01-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fin.Merged || !strings.Contains(fin.Detail, "reviewer-standards: changes at") {
+		t.Fatalf("finish = %+v, want the fresh changes told once the round closed", fin)
+	}
+	if rs.Rounds["01-first"][0].SentToWorkerAt == nil {
+		t.Fatal("sentToWorkerAt unset, want the closed round's findings recorded as told")
+	}
+}

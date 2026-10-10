@@ -35,12 +35,14 @@ type staticTicket struct {
 }
 
 // submitRec is one Session's submits: how many arrived, the last
-// status, its completed checkbox line texts (workers) and its report
-// (reviewers' findings).
+// status, its completed checkbox line texts and submit summary (workers;
+// follow-ups come from the summary after Follow-ups:) and its report
+// (kept for backward compatibility with worker reports).
 type submitRec struct {
 	Status    string   `json:"status"`
 	Completed []string `json:"completed"`
 	Report    string   `json:"report,omitempty"`
+	Summary   string   `json:"summary,omitempty"`
 	Count     int      `json:"count"`
 }
 
@@ -57,12 +59,15 @@ const (
 var requiredReviewerTypes = []string{reviewerStandardsType, reviewerSpecType}
 
 // storedReview is one reviewer type's verdict on a Ticket: the status it
-// submitted and the branch tip it was given at, plus the findings text.
-// A pass at an older tip is stale and does not count.
+// reported and the branch tip it was given at, plus the findings. Report
+// keeps the rendered `file:line severity: problem` lines for the refusal
+// text; Findings keeps them structured for the rounds. A pass at an older
+// tip is stale and does not count.
 type storedReview struct {
-	Verdict string `json:"verdict"`
-	At      string `json:"at"`
-	Report  string `json:"report,omitempty"`
+	Verdict  string          `json:"verdict"`
+	At       string          `json:"at"`
+	Report   string          `json:"report,omitempty"`
+	Findings []ReviewFinding `json:"findings,omitempty"`
 }
 
 // savedRow is one Ticket's driver row as the Run file keeps it: the state
@@ -109,12 +114,50 @@ type runState struct {
 	ReviewTips    map[string]map[string]string       `json:"reviewTips,omitempty"`
 	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
 	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
-	Rows          map[string]savedRow                `json:"rows,omitempty"`
-	SpecRun       el.SpecRun                         `json:"-"`
-	Driver        *el.DriverRun                      `json:"-"`
-	notify        chan struct{}                      `json:"-"`
-	unpause       chan struct{}                      `json:"-"`
-	driving       bool                               `json:"-"`
+	// ReviewStarted holds when the current tip was prompted per ticket per
+	// reviewer type, so a verdict's durationMs measures prompt to verdict.
+	ReviewStarted map[string]map[string]time.Time `json:"reviewStarted,omitempty"`
+	// ReviewSeen holds the last prompt seq consumed per ticket per reviewer
+	// type, so a turn drained inside finishTurn and the runTurn edge never
+	// record one reply twice.
+	ReviewSeen map[string]map[string]int64 `json:"reviewSeen,omitempty"`
+	// FormatReprompt marks reviewers already re-prompted once for the
+	// VERDICT format: a second unparseable reply becomes needs-you.
+	FormatReprompt map[string]map[string]bool `json:"formatReprompt,omitempty"`
+	// Rounds is the append-only review history per ticket for the ticket
+	// page. Old run files without it still load (nil reads as no rounds).
+	Rounds map[string][]ticketRound `json:"rounds,omitempty"`
+	// NeedsYouReason holds the needs-you alert text per ticket: the same
+	// refusal x3, idle 10m or stall-nudge message from the driver Notify,
+	// or a reviewer-format error needing the user.
+	NeedsYouReason map[string]string `json:"needsYouReason,omitempty"`
+	// pushedNeedsYou is the needs-you reason last pushed per ticket, so the
+	// driver pushing every pass still notifies once per reason. Memory only:
+	// a Daemon restart may repeat one push.
+	pushedNeedsYou map[string]string
+	// Followups holds the worker's follow-ups per ticket: the text its last
+	// submit named after Follow-ups:.
+	Followups map[string]string `json:"followups,omitempty"`
+	// Parked holds the user's park per ticket from POST
+	// /api/runs/{id}/tickets/{tid}/park: the driver never starts or
+	// finishes a parked ticket and only its dependents wait. A retry
+	// clears it.
+	Parked map[string]bool `json:"parked,omitempty"`
+	// Discarded holds the user's discard per ticket from POST
+	// /api/runs/{id}/tickets/{tid}/discard: the ticket's worktree and
+	// branch are removed and the driver never touches it again.
+	Discarded map[string]bool `json:"discarded,omitempty"`
+	// RetryGen is the user's retry generation per ticket from POST
+	// /api/runs/{id}/tickets/{tid}/retry: each retry bumps it, and the
+	// driver drops that ticket's needs-you mark, backoff, refusal streak
+	// and stall-nudge count on its next pass.
+	RetryGen map[string]int      `json:"retryGen,omitempty"`
+	Rows     map[string]savedRow `json:"rows,omitempty"`
+	SpecRun  el.SpecRun          `json:"-"`
+	Driver   *el.DriverRun       `json:"-"`
+	notify   chan struct{}       `json:"-"`
+	unpause  chan struct{}       `json:"-"`
+	driving  bool                `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -278,6 +321,25 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 		d.pauseRun(w, r, id)
 	case sub == "resume" && r.Method == "POST":
 		d.resumeRun(w, r, id)
+	case strings.HasPrefix(sub, "tickets/") && r.Method == "POST":
+		rest := strings.TrimPrefix(sub, "tickets/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 {
+			http.NotFound(w, r)
+			return
+		}
+		switch parts[1] {
+		case "steer":
+			d.steerTicket(w, r, id, parts[0])
+		case "retry":
+			d.retryTicket(w, r, id, parts[0])
+		case "park":
+			d.parkTicket(w, r, id, parts[0])
+		case "discard":
+			d.discardTicket(w, r, id, parts[0])
+		default:
+			http.NotFound(w, r)
+		}
 	default:
 		http.NotFound(w, r)
 	}
@@ -361,31 +423,40 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs := &runState{
-		ID:            newID(),
-		Spec:          specRun.Spec,
-		Repo:          repo,
-		Status:        runStatusRunning,
-		Harness:       harness,
-		Model:         model,
-		Effort:        effort,
-		CreatedAt:     time.Now().UTC(),
-		Sessions:      map[string]string{},
-		Branches:      map[string]string{},
-		Worktrees:     map[string]string{},
-		Targets:       map[string]string{},
-		Bases:         map[string]string{},
-		Merged:        map[string]string{},
-		Reviewers:     map[string]map[string]string{},
-		Reviews:       map[string]map[string]storedReview{},
-		ReviewTips:    map[string]map[string]string{},
-		ReviewPending: map[string]map[string][]string{},
-		Reprompted:    map[string]int{},
-		Rows:          map[string]savedRow{},
-		SpecRun:       specRun,
-		Driver:        el.NewDriverRun(nil),
-		notify:        make(chan struct{}),
-		unpause:       make(chan struct{}),
-		driving:       true,
+		ID:             newID(),
+		Spec:           specRun.Spec,
+		Repo:           repo,
+		Status:         runStatusRunning,
+		Harness:        harness,
+		Model:          model,
+		Effort:         effort,
+		CreatedAt:      time.Now().UTC(),
+		Sessions:       map[string]string{},
+		Branches:       map[string]string{},
+		Worktrees:      map[string]string{},
+		Targets:        map[string]string{},
+		Bases:          map[string]string{},
+		Merged:         map[string]string{},
+		Reviewers:      map[string]map[string]string{},
+		Reviews:        map[string]map[string]storedReview{},
+		ReviewTips:     map[string]map[string]string{},
+		ReviewPending:  map[string]map[string][]string{},
+		Reprompted:     map[string]int{},
+		ReviewStarted:  map[string]map[string]time.Time{},
+		FormatReprompt: map[string]map[string]bool{},
+		Rounds:         map[string][]ticketRound{},
+		NeedsYouReason: map[string]string{},
+		Followups:      map[string]string{},
+		Rows:           map[string]savedRow{},
+		SpecRun:        specRun,
+		Driver:         el.NewDriverRun(nil),
+		Parked:         map[string]bool{},
+		Discarded:      map[string]bool{},
+		RetryGen:       map[string]int{},
+
+		notify:  make(chan struct{}),
+		unpause: make(chan struct{}),
+		driving: true,
 	}
 	for _, p := range previews {
 		blockers := p.Blockers
@@ -443,6 +514,30 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 	return el.DriverWorld{
 		Files:      files,
 		MaxWorkers: max,
+		// The Daemon spawns the Reviewers after a done submit, so a stalled
+		// Worker is told to finish, never to spawn its own reviewers.
+		StallNudge: webStallNudge,
+		// runNow is the test seam for the idle and stall needs-you
+		// alerts; nil reads the real clock through the driver's default.
+		Now: d.runNow,
+		// Parked and Discarded read the user's per-ticket actions every
+		// pass, so parking or discarding mid-run takes effect at once;
+		// RetryGen starts a retried ticket over on the next pass.
+		Parked: func(ticketID string) bool {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return rs.Parked[ticketID]
+		},
+		Discarded: func(ticketID string) bool {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return rs.Discarded[ticketID]
+		},
+		RetryGen: func(ticketID string) int {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return rs.RetryGen[ticketID]
+		},
 		// HasWorker names started Tickets from the recorded Worker
 		// Sessions, so a resumed Run never starts a second Worker for a
 		// Ticket that already has one. MergedSHA names the merge sha of
@@ -501,7 +596,34 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			if path == "" {
 				return boxes, nil
 			}
-			return el.TickDriverTicketFile(path, boxes)
+			miss, err := el.TickDriverTicketFile(path, boxes)
+			if err == nil {
+				// Boxes are ticket-page state: publish the tick at once
+				// so the UI never polls for it.
+				d.snapshotAndPersist(rs.ID)
+			}
+			return miss, err
+		},
+		Followups: func(ticketID string) string {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return rs.Followups[ticketID]
+		},
+		Notify: func(ticketID, message string) error {
+			d.mu.Lock()
+			if rs.NeedsYouReason == nil {
+				rs.NeedsYouReason = map[string]string{}
+			}
+			rs.NeedsYouReason[ticketID] = message
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
+			push := d.noteNeedsYouPushLocked(rs, ticketID, message)
+			num, title := ticketNumTitleLocked(rs, ticketID)
+			d.mu.Unlock()
+			if push {
+				d.pushRunNeedsYou(rs.ID, ticketID, num, title, message)
+			}
+			return nil
 		},
 		Finish: func(ticketID string) (el.DriverFinish, error) {
 			return d.runFinishWorker(rs.ID, ticketID)
@@ -520,6 +642,30 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			time.Sleep(wait)
 		},
 	}
+}
+
+// noteNeedsYouPushLocked records a needs-you reason as pushed and reports
+// whether it is new or changed since the last push, so repeated driver
+// passes still notify once per reason. Callers hold d.mu.
+func (d *Daemon) noteNeedsYouPushLocked(rs *runState, ticketID, reason string) bool {
+	if rs.pushedNeedsYou == nil {
+		rs.pushedNeedsYou = map[string]string{}
+	}
+	if rs.pushedNeedsYou[ticketID] == reason {
+		return false
+	}
+	rs.pushedNeedsYou[ticketID] = reason
+	return true
+}
+
+// ticketNumTitleLocked names one ticket for a push. Callers hold d.mu.
+func ticketNumTitleLocked(rs *runState, ticketID string) (int, string) {
+	for _, t := range rs.Tickets {
+		if t.ID == ticketID {
+			return t.Num, t.Title
+		}
+	}
+	return 0, ticketID
 }
 
 // ticketPath returns the ticket file for one Ticket of the Run; callers hold
@@ -572,15 +718,236 @@ func (d *Daemon) runSubmitCount(runID, ticketID string) int {
 	return n
 }
 
+// workerReviewNote tells a Worker who reviews its work. The Daemon starts the
+// spec and standards Reviewers itself after the first done submit, so a Worker
+// never spawns reviewers of its own.
+const workerReviewNote = "Do not spawn reviewers: after you submit done, the Daemon starts the spec and standards reviewers itself and sends you their findings. Spawn scouts only for read-only research."
+
+// webStallNudge is the fixed nudge for a Worker that went idle with no submit.
+const webStallNudge = "Nudge: you have not submitted. Finish the ticket and submit done with the completed checkboxes; the reviewers start after your submit."
+
 // reviewerPrompt asks one reviewer type to judge the Ticket's worker branch
-// at the given tip and submit pass or changes with its findings. Reviewers
-// judge only: they never edit the worktree.
+// at the given tip and reply with the verdict. Reviewers judge only: they
+// never edit the worktree and never use the submit tool. The reply is the
+// final assistant message of this turn: one own-line `VERDICT:
+// pass|changes`, then one finding per line as `file:line severity:
+// problem` (severity blocker|major|minor; a problem may continue on
+// indented lines). The Daemon records the verdict at the prompted tip, so
+// the reply never names it. Only the reply to this prompt counts.
 func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 	axis := "correctness and this repo's standards"
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
 	}
-	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. When done, submit pass or changes with the findings in the report.", ticketID, spec, reviewerType, axis, branch, tip)
+	brief := standardsBrief
+	if reviewerType == reviewerSpecType {
+		brief = specBrief
+	}
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Do not use the submit tool. Reply with your verdict as the final message of this turn: one own line `VERDICT: pass` or `VERDICT: changes`, then one finding per line as `file:line severity: problem` (severity blocker, major or minor; a problem may continue on following indented lines). A pass needs no findings.\n\n%s", ticketID, spec, reviewerType, axis, branch, tip, brief)
+}
+
+// standardsBrief and specBrief carry the two axes of the code-review skill
+// into the Reviewer prompt: Reviewer Sessions load no skills, so the brief
+// travels with the prompt. The axes stay separate on purpose: code that
+// follows every standard can still miss the ticket, and the reverse.
+const standardsBrief = `Standards axis. Read the repo's documented standards first (AGENTS.md files on the route to each changed path, CLAUDE.md, CONTRIBUTING.md, CODING_STANDARDS.md). Report (a) each place the diff breaks a documented standard, citing the file and rule, and (b) bugs, missed edge cases, callers the change broke and new logic with no test. DOX check: report a diff that changes a documented contract or layout without updating the owning AGENTS.md, or leaves a Child DOX Index stale. Smell baseline, always a judgement call and always overridden by a documented repo standard: Mysterious Name, Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession, Repeated Switches, Shotgun Surgery, Divergent Change, Speculative Generality, Message Chains, Middle Man, Refused Bequest. Name a smell as "possible <smell>" and quote the hunk. Skip anything tooling already enforces. Whether the change matches the ticket is the spec reviewer's job, not yours.`
+
+const specBrief = `Spec axis. Read the ticket file and the spec. Report (a) requirements the ticket or spec asked for that are missing or only partly done, (b) behaviour in the diff nobody asked for (scope creep), and (c) requirements that look done but are implemented wrong. Quote the ticket or spec line for each finding. Check every acceptance checkbox against the diff, not against the worker's claim. The spec's hard limits bind the worker: never ask for an edit they forbid. Code style and repo standards are the standards reviewer's job, not yours.`
+
+// reviewerFormatReprompt is the single retry when a reviewer's reply does
+// not parse: it names the exact format once more. A second failure becomes
+// needs-you for the ticket.
+func reviewerFormatReprompt() string {
+	return "RESPOND IN FORMAT: one own line `VERDICT: pass` or `VERDICT: changes`, then one finding per line as `file:line severity: problem` (severity blocker, major or minor)."
+}
+
+// reviewerOf names the Run, Ticket and reviewer type of a Reviewer Session.
+// ok is false when the Session is no reviewer's.
+func (d *Daemon) reviewerOf(id string) (runID, ticketID, reviewerType string, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	runID, ticketID, reviewerType = d.findReviewerLocked(id)
+	return runID, ticketID, reviewerType, reviewerType != ""
+}
+
+// handleReviewerTurnEnd records one reviewer turn's verdict from its final
+// assistant message. Only the reply to the gate prompt counts: the tail
+// after the last prompt. A parseable reply lands at the prompted tip (the
+// oldest owed prompt, so a mid-review worker commit reads stale, never
+// fresh). An unparseable reply re-prompts the same reviewer once for the
+// format; a second failure marks the ticket needs-you for the user.
+func (d *Daemon) handleReviewerTurnEnd(id string) {
+	d.mu.Lock()
+	runID, ticketID, typ := d.findReviewerLocked(id)
+	if typ == "" {
+		d.mu.Unlock()
+		return
+	}
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	sess, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	events := append([]Event(nil), sess.events...)
+	repo, branch, spec := rs.Repo, rs.Branches[ticketID], rs.Spec
+	lastPrompt := int64(0)
+	for _, e := range events {
+		if e.Kind == "prompt" && e.Seq > lastPrompt {
+			lastPrompt = e.Seq
+		}
+	}
+	if seen := rs.ReviewSeen[ticketID][typ]; seen == lastPrompt && lastPrompt != 0 {
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
+
+	reply := reviewerReplyText(events)
+	parsed := ParseReview(reply)
+	now := time.Now().UTC()
+	if !parsed.OK {
+		d.mu.Lock()
+		rs, ok := d.runs[runID]
+		if !ok {
+			d.mu.Unlock()
+			return
+		}
+		if rs.FormatReprompt == nil {
+			rs.FormatReprompt = map[string]map[string]bool{}
+		}
+		if rs.FormatReprompt[ticketID] == nil {
+			rs.FormatReprompt[ticketID] = map[string]bool{}
+		}
+		if !rs.FormatReprompt[ticketID][typ] {
+			rs.FormatReprompt[ticketID][typ] = true
+			if rs.ReviewSeen == nil {
+				rs.ReviewSeen = map[string]map[string]int64{}
+			}
+			if rs.ReviewSeen[ticketID] == nil {
+				rs.ReviewSeen[ticketID] = map[string]int64{}
+			}
+			rs.ReviewSeen[ticketID][typ] = lastPrompt
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
+			d.mu.Unlock()
+			_ = d.runTellSession(id, reviewerFormatReprompt())
+			return
+		}
+		if rs.NeedsYouReason == nil {
+			rs.NeedsYouReason = map[string]string{}
+		}
+		reason := "reviewer " + typ + " needs you: could not parse its verdict after a re-prompt; steer the worker or retry the ticket"
+		rs.NeedsYouReason[ticketID] = reason
+		if rs.ReviewSeen == nil {
+			rs.ReviewSeen = map[string]map[string]int64{}
+		}
+		if rs.ReviewSeen[ticketID] == nil {
+			rs.ReviewSeen[ticketID] = map[string]int64{}
+		}
+		rs.ReviewSeen[ticketID][typ] = lastPrompt
+		push := d.noteNeedsYouPushLocked(rs, ticketID, reason)
+		num, title := ticketNumTitleLocked(rs, ticketID)
+		d.persistRun(rs)
+		d.broadcastRunLocked(rs)
+		d.mu.Unlock()
+		if push {
+			d.pushRunNeedsYou(runID, ticketID, num, title, reason)
+		}
+		return
+	}
+
+	cur, _ := runGit(repo, "rev-parse", branch)
+	d.mu.Lock()
+	rs, ok = d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if rs.Reviews == nil {
+		rs.Reviews = map[string]map[string]storedReview{}
+	}
+	if rs.Reviews[ticketID] == nil {
+		rs.Reviews[ticketID] = map[string]storedReview{}
+	}
+	// A verdict answers the oldest unanswered prompt, not the latest
+	// prompted tip: a Worker commit between prompts never lets a T1
+	// judgement read fresh at T2. Runs predating the queue fall back to
+	// the latest prompted tip, then the branch tip.
+	tip := popReviewPending(rs, ticketID, typ)
+	if tip == "" {
+		tip = rs.ReviewTips[ticketID][typ]
+	}
+	if tip == "" {
+		tip = cur
+	}
+	report := reviewReport(parsed.Findings)
+	rs.Reviews[ticketID][typ] = storedReview{Verdict: parsed.Verdict, At: tip, Report: report, Findings: append([]ReviewFinding(nil), parsed.Findings...)}
+	// Fill the round that prompted this tip.
+	if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
+		idx := -1
+		for i := len(rounds) - 1; i >= 0; i-- {
+			if rounds[i].Tip == tip {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			if rs.Rounds[ticketID][idx].Reviews == nil {
+				rs.Rounds[ticketID][idx].Reviews = map[string]roundReview{}
+			}
+			var dur int64
+			if st := rs.ReviewStarted[ticketID][typ]; !st.IsZero() {
+				dur = now.Sub(st).Milliseconds()
+				if dur < 0 {
+					dur = 0
+				}
+			}
+			rs.Rounds[ticketID][idx].Reviews[typ] = roundReview{Verdict: parsed.Verdict, Findings: append([]ReviewFinding(nil), parsed.Findings...), At: tip, DurationMs: dur}
+			closeRoundIfCompleteLocked(rs, ticketID, now)
+		}
+	}
+	// A verdict already stale at birth means the tip moved under review:
+	// re-prompt this reviewer once at the current tip, so the stale verdict
+	// never reads fresh later. When the re-prompt for the current tip is
+	// already out (queued by a later done), the verdict stays stale with no
+	// extra Tell.
+	retell := ""
+	if tip != "" && cur != "" && tip != cur && rs.ReviewTips[ticketID][typ] != cur {
+		if rs.ReviewTips == nil {
+			rs.ReviewTips = map[string]map[string]string{}
+		}
+		if rs.ReviewTips[ticketID] == nil {
+			rs.ReviewTips[ticketID] = map[string]string{}
+		}
+		rs.ReviewTips[ticketID][typ] = cur
+		if rs.ReviewStarted == nil {
+			rs.ReviewStarted = map[string]map[string]time.Time{}
+		}
+		if rs.ReviewStarted[ticketID] == nil {
+			rs.ReviewStarted[ticketID] = map[string]time.Time{}
+		}
+		rs.ReviewStarted[ticketID][typ] = now
+		appendReviewPending(rs, ticketID, typ, cur)
+		retell = reviewerPrompt(ticketID, spec, typ, branch, cur)
+	}
+	if rs.ReviewSeen == nil {
+		rs.ReviewSeen = map[string]map[string]int64{}
+	}
+	if rs.ReviewSeen[ticketID] == nil {
+		rs.ReviewSeen[ticketID] = map[string]int64{}
+	}
+	rs.ReviewSeen[ticketID][typ] = lastPrompt
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	if retell != "" {
+		_ = d.runTellSession(id, retell)
+	}
 }
 
 // appendReviewPending queues one owed judgement at tip for the Ticket's
@@ -615,6 +982,72 @@ func popReviewPending(rs *runState, ticketID, reviewerType string) string {
 	tip := q[0]
 	rs.ReviewPending[ticketID][reviewerType] = append([]string(nil), q[1:]...)
 	return tip
+}
+
+// appendRoundLocked starts the ticket's next review round at tip, closing
+// the previous open round. Passes at the same tip carry as held entries
+// (heldFromRound) instead of a rerun; their types need no new prompt.
+// Callers hold d.mu. It returns the new round number and the types still
+// needing a prompt.
+func appendRoundLocked(rs *runState, ticketID, tip string, now time.Time) (int, map[string]bool) {
+	if rs.Rounds == nil {
+		rs.Rounds = map[string][]ticketRound{}
+	}
+	rounds := rs.Rounds[ticketID]
+	if len(rounds) > 0 && rounds[len(rounds)-1].EndedAt == nil {
+		end := now
+		rounds[len(rounds)-1].EndedAt = &end
+	}
+	n := len(rounds) + 1
+	rd := ticketRound{N: n, Tip: tip, StartedAt: now, Reviews: map[string]roundReview{}}
+	need := map[string]bool{}
+	if len(rounds) > 0 {
+		prev := rounds[len(rounds)-1]
+		if prev.Tip == tip {
+			for typ, rv := range prev.Reviews {
+				if rv.Verdict == "pass" {
+					held := prev.N
+					rd.Reviews[typ] = roundReview{Verdict: "pass", Findings: append([]ReviewFinding(nil), rv.Findings...), HeldFromRound: &held, At: tip}
+				}
+			}
+		}
+	}
+	for _, typ := range requiredReviewerTypes {
+		if _, ok := rd.Reviews[typ]; !ok {
+			need[typ] = true
+		}
+	}
+	// A new round is a new attempt: types needing a prompt get their one
+	// format re-prompt back.
+	for typ := range need {
+		if rs.FormatReprompt != nil && rs.FormatReprompt[ticketID] != nil {
+			delete(rs.FormatReprompt[ticketID], typ)
+		}
+	}
+	rs.Rounds[ticketID] = append(rounds, rd)
+	return n, need
+}
+
+// closeRoundIfCompleteLocked ends the ticket's last round when every
+// required type holds a verdict in it. Callers hold d.mu.
+func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
+	rounds := rs.Rounds[ticketID]
+	if len(rounds) == 0 {
+		return
+	}
+	last := &rounds[len(rounds)-1]
+	if last.EndedAt != nil {
+		rs.Rounds[ticketID] = rounds
+		return
+	}
+	for _, typ := range requiredReviewerTypes {
+		if _, ok := last.Reviews[typ]; !ok {
+			rs.Rounds[ticketID] = rounds
+			return
+		}
+	}
+	last.EndedAt = &now
+	rs.Rounds[ticketID] = rounds
 }
 
 // ensureReviewers spawns the Ticket's two persistent Reviewer Sessions once
@@ -688,20 +1121,35 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		return
 	}
 	rs.Reprompted[ticketID] = count
+	now := time.Now().UTC()
 	if rs.ReviewTips == nil {
 		rs.ReviewTips = map[string]map[string]string{}
 	}
 	if rs.ReviewTips[ticketID] == nil {
 		rs.ReviewTips[ticketID] = map[string]string{}
 	}
+	if rs.ReviewStarted == nil {
+		rs.ReviewStarted = map[string]map[string]time.Time{}
+	}
+	if rs.ReviewStarted[ticketID] == nil {
+		rs.ReviewStarted[ticketID] = map[string]time.Time{}
+	}
+	_, need := appendRoundLocked(rs, ticketID, tip, now)
 	for _, typ := range requiredReviewerTypes {
+		if !need[typ] {
+			continue
+		}
 		rs.ReviewTips[ticketID][typ] = tip
+		rs.ReviewStarted[ticketID][typ] = now
 		appendReviewPending(rs, ticketID, typ, tip)
 	}
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
 	for _, typ := range requiredReviewerTypes {
+		if !need[typ] {
+			continue
+		}
 		if sess := existing[typ]; sess != "" {
 			_ = d.runTellSession(sess, reviewerPrompt(ticketID, spec, typ, branch, tip))
 		}
@@ -808,6 +1256,17 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	}
 	rs.ReviewTips[ticketID][reviewerType] = tip
 	appendReviewPending(rs, ticketID, reviewerType, tip)
+	now := time.Now().UTC()
+	if rs.ReviewStarted == nil {
+		rs.ReviewStarted = map[string]map[string]time.Time{}
+	}
+	if rs.ReviewStarted[ticketID] == nil {
+		rs.ReviewStarted[ticketID] = map[string]time.Time{}
+	}
+	rs.ReviewStarted[ticketID][reviewerType] = now
+	// Rounds open in ensureReviewers per worker done submit, not here: a
+	// start alone never begins a round, so the spawn and the prompt share
+	// the one round the done submit opened.
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -926,7 +1385,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 
 		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
-		prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes.", tk.ID, spec, tk.Path, branch)
+		prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes. %s", tk.ID, spec, tk.Path, branch, workerReviewNote)
 		d.mu.Lock()
 		if s, ok := d.sessions[meta.ID]; ok {
 			s.busy = true
@@ -1025,6 +1484,49 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		if noneFreshAtTip(verdicts, tip) {
 			return el.DriverFinish{}, nil
 		}
+		// A round still open at this tip means a reviewer has not judged it
+		// yet. Telling a refusal now would park the driver until the
+		// worker's next submit while the worker waits for the verdict:
+		// nothing moves. Report under review; the verdict closes the round
+		// and the next pass tells it.
+		d.mu.Lock()
+		open := false
+		if rs, ok := d.runs[runID]; ok {
+			open = roundOpenAtTip(rs.Rounds[ticketID], tip)
+		}
+		d.mu.Unlock()
+		if open {
+			return el.DriverFinish{}, nil
+		}
+		d.mu.Lock()
+		if rs, ok := d.runs[runID]; ok {
+			if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
+				idx := len(rounds) - 1
+				for i := len(rounds) - 1; i >= 0; i-- {
+					if rounds[i].Tip == tip {
+						idx = i
+						break
+					}
+				}
+				var declined []string
+				for _, typ := range requiredReviewerTypes {
+					if r, ok := verdicts[typ]; ok && r.Verdict != "pass" && r.At == tip {
+						for _, f := range r.Findings {
+							declined = append(declined, f.File+":"+fmt.Sprintf("%d", f.Line)+" "+f.Severity+": "+strings.ReplaceAll(f.Problem, "\n", " / "))
+						}
+					}
+				}
+				if len(declined) == 0 {
+					declined = []string{why}
+				}
+				now := time.Now().UTC()
+				rs.Rounds[ticketID][idx].Declined = declined
+				rs.Rounds[ticketID][idx].SentToWorkerAt = &now
+				d.persistRun(rs)
+				d.broadcastRunLocked(rs)
+			}
+		}
+		d.mu.Unlock()
 		return el.DriverFinish{Merged: false, Detail: why}, nil
 	}
 	// A detached repo has no target branch: rebase onto the repo HEAD as it
@@ -1083,6 +1585,9 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	d.mu.Lock()
 	if rs, ok := d.runs[runID]; ok {
 		rs.Merged[ticketID] = sha
+		if rs.NeedsYouReason != nil {
+			delete(rs.NeedsYouReason, ticketID)
+		}
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 	}
@@ -1147,6 +1652,16 @@ func noneFreshAtTip(verdicts map[string]storedReview, tip string) bool {
 	return true
 }
 
+// roundOpenAtTip says the ticket's last review round is still open at tip:
+// at least one required reviewer has not delivered its verdict for it yet.
+func roundOpenAtTip(rounds []ticketRound, tip string) bool {
+	if len(rounds) == 0 {
+		return false
+	}
+	last := rounds[len(rounds)-1]
+	return last.Tip == tip && last.EndedAt == nil
+}
+
 // shortSHA names a commit the way refusals do: the first eight characters.
 func shortSHA(sha string) string {
 	if len(sha) > 8 {
@@ -1158,6 +1673,13 @@ func shortSHA(sha string) string {
 // runJSONLocked renders one Run with its live Ticket table: state, Worker
 // Session link, both Reviewer verdicts with tip freshness, and the last
 // refusal per Ticket. Callers hold d.mu.
+// runJSONLocked renders one Run with its live Ticket table: state,
+// Worker Session link, both Reviewer verdicts with tip freshness, and the
+// last refusal per Ticket, plus everything the ticket page needs without
+// polling: boxes/body/title re-read from the ticket file at snapshot time,
+// branch, tip, state entry time, needs-you reason, follow-ups, agents
+// (worker, both reviewers, worker-spawned scouts), the gate and the
+// append-only rounds. Callers hold d.mu.
 func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 	rows := map[string]el.DriverRow{}
 	if rs.Driver != nil {
@@ -1170,18 +1692,36 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		state := "queued"
 		lastRefusal := ""
 		tip := ""
+		var stateSince time.Time
 		if row, ok := rows[t.ID]; ok {
 			state = string(row.State)
 			lastRefusal = row.LastRefusal
 			tip = row.Tip
+			stateSince = row.Since
 		} else if saved, ok := rs.Rows[t.ID]; ok {
 			// No live Driver (reloaded or finished on another boot): show
 			// the row the last pass wrote.
 			state = saved.State
 			lastRefusal = saved.LastRefusal
 			tip = saved.Tip
+			stateSince = saved.Since
 		} else if rs.Status == runStatusPaused {
 			state = runStatusPaused
+		}
+		needsYou := rs.NeedsYouReason[t.ID]
+		if needsYou != "" && state != "merged" && state != "discarded" && state != "parked" && state != "needs-you" {
+			// A reviewer-format failure needs the user while the driver
+			// still shows the ticket running: surface it as needs-you.
+			state = "needs-you"
+		}
+		// A user park or discard shows at once, ahead of the driver's
+		// next pass publishing the same row.
+		if state != "merged" {
+			if rs.Discarded[t.ID] {
+				state = "discarded"
+			} else if rs.Parked[t.ID] {
+				state = "parked"
+			}
 		}
 		blockers := t.Blockers
 		if blockers == nil {
@@ -1200,18 +1740,71 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		for typ, sess := range rs.Reviewers[t.ID] {
 			reviewers[typ] = sess
 		}
+		gate := map[string]any{
+			"required": append([]string(nil), requiredReviewerTypes...),
+			"verdicts": verdicts,
+		}
+		body := readTicketFile(ticketPath(rs, t.ID))
+		title := parseTicketTitle(body)
+		if title == "" {
+			title = t.Title
+		}
+		boxes := parseTicketBoxes(body)
+		rounds := rs.Rounds[t.ID]
+		if rounds == nil {
+			rounds = []ticketRound{}
+		}
 		tickets = append(tickets, map[string]any{
-			"id": t.ID, "num": t.Num, "title": t.Title, "blockers": blockers,
-			"state": state, "workerSession": rs.Sessions[t.ID],
-			"reviewerSessions": reviewers, "verdicts": verdicts, "tip": tip,
-			"branch": rs.Branches[t.ID], "effort": rs.Effort, "lastRefusal": lastRefusal,
+			"id": t.ID, "num": t.Num, "title": title, "blockers": blockers,
+			"state": state, "stateSince": stateSince, "workerSession": rs.Sessions[t.ID],
+			"reviewerSessions": reviewers, "verdicts": verdicts, "gate": gate, "tip": tip,
+			"branch": rs.Branches[t.ID], "body": body, "boxes": boxes,
+			"effort": rs.Effort, "lastRefusal": lastRefusal, "needsYou": needsYou,
+			"followups": rs.Followups[t.ID], "agents": d.ticketAgentsLocked(rs, t.ID),
+			"rounds": rounds,
 		})
 	}
 	return map[string]any{
-		"id": rs.ID, "spec": rs.Spec, "repo": rs.Repo, "status": rs.Status,
+		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
+}
+
+// ticketAgentsLocked lists one ticket's sessions: its worker, both
+// reviewers and the scouts the worker spawned (ParentID the worker).
+// Callers hold d.mu.
+func (d *Daemon) ticketAgentsLocked(rs *runState, ticketID string) []ticketAgent {
+	out := []ticketAgent{}
+	worker := rs.Sessions[ticketID]
+	agentName := func(meta SessionMeta) string {
+		if meta.Name != "" {
+			return meta.Name
+		}
+		return meta.Title
+	}
+	if worker != "" {
+		if s, ok := d.sessions[worker]; ok {
+			out = append(out, ticketAgent{SessionID: worker, Role: "worker", Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
+		}
+	}
+	for _, typ := range requiredReviewerTypes {
+		sess := rs.Reviewers[ticketID][typ]
+		if sess == "" {
+			continue
+		}
+		if s, ok := d.sessions[sess]; ok {
+			out = append(out, ticketAgent{SessionID: sess, Role: typ, Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
+		}
+	}
+	if worker != "" {
+		for _, s := range d.sessions {
+			if s.meta.ParentID == worker && s.meta.Scout {
+				out = append(out, ticketAgent{SessionID: s.meta.ID, Role: "scout", Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
+			}
+		}
+	}
+	return out
 }
 
 // broadcastRunLocked wakes the Run's SSE streams; callers hold d.mu.
@@ -1281,11 +1874,19 @@ func (d *Daemon) serveRunEvents(w http.ResponseWriter, r *http.Request, id strin
 // findings in the report). The driver loop reads both: it ticks the boxes
 // and merges a done submit once the gate passes. A Worker's done submit
 // also spawns its Reviewers, once, and re-prompts them on later dones.
+// handleSessionSubmit records a Worker's submit: its status, completed
+// checkbox line texts and submit summary (follow-ups come from the summary
+// after Follow-ups:). The driver loop ticks the boxes and merges a done
+// submit once the gate passes. A Worker's done submit also spawns its
+// Reviewers, once, and re-prompts them on later dones. Reviewers never
+// submit: they reply with VERDICT in their turn, so a submit to a reviewer
+// session is 409. Workers keep submit.
 func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Status    string   `json:"status"`
 		Completed []string `json:"completed"`
 		Report    string   `json:"report"`
+		Summary   string   `json:"summary"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Status == "" {
 		http.Error(w, "status is required", http.StatusBadRequest)
@@ -1297,10 +1898,9 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 		http.NotFound(w, r)
 		return
 	}
-	runID, ticketID, reviewerType := d.findReviewerLocked(id)
-	if reviewerType != "" && req.Status != "pass" && req.Status != "changes" {
+	if _, _, reviewerType := d.findReviewerLocked(id); reviewerType != "" {
 		d.mu.Unlock()
-		http.Error(w, "reviewer status must be pass or changes", http.StatusBadRequest)
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "reviewer sessions reply with VERDICT: pass|changes in their turn, not submit"})
 		return
 	}
 	rec := d.submits[id]
@@ -1312,64 +1912,21 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	rec.Status = req.Status
 	rec.Completed = append([]string(nil), req.Completed...)
 	rec.Report = req.Report
+	rec.Summary = req.Summary
 	count := rec.Count
-	if reviewerType != "" {
-		branch := d.runs[runID].Branches[ticketID]
-		repo := d.runs[runID].Repo
-		spec := d.runs[runID].Spec
-		d.mu.Unlock()
-		cur, _ := runGit(repo, "rev-parse", branch)
-		d.mu.Lock()
-		retell := ""
-		if rs, ok := d.runs[runID]; ok {
-			if rs.Reviews == nil {
-				rs.Reviews = map[string]map[string]storedReview{}
-			}
-			if rs.Reviews[ticketID] == nil {
-				rs.Reviews[ticketID] = map[string]storedReview{}
-			}
-			// A verdict answers the oldest unanswered prompt, not the latest
-			// prompted tip: a Worker commit between prompts never lets a T1
-			// judgement read fresh at T2. Runs predating the queue fall back
-			// to the latest prompted tip, then the branch tip.
-			tip := popReviewPending(rs, ticketID, reviewerType)
-			if tip == "" {
-				tip = rs.ReviewTips[ticketID][reviewerType]
-			}
-			if tip == "" {
-				tip = cur
-			}
-			rs.Reviews[ticketID][reviewerType] = storedReview{Verdict: req.Status, At: tip, Report: req.Report}
-			// A verdict already stale at birth means the tip moved under
-			// review: re-prompt this reviewer once at the current tip, so
-			// the stale verdict never reads fresh later. When the re-prompt
-			// for the current tip is already out (queued by a later done),
-			// the verdict stays stale with no extra Tell.
-			if tip != "" && cur != "" && tip != cur && rs.ReviewTips[ticketID][reviewerType] != cur {
-				if rs.ReviewTips == nil {
-					rs.ReviewTips = map[string]map[string]string{}
-				}
-				if rs.ReviewTips[ticketID] == nil {
-					rs.ReviewTips[ticketID] = map[string]string{}
-				}
-				rs.ReviewTips[ticketID][reviewerType] = cur
-				appendReviewPending(rs, ticketID, reviewerType, cur)
-				retell = reviewerPrompt(ticketID, spec, reviewerType, branch, cur)
-			}
-			d.persistRun(rs)
-			d.broadcastRunLocked(rs)
-		}
-		d.mu.Unlock()
-		if retell != "" {
-			_ = d.runTellSession(id, retell)
-		}
-		d.appendEvent(id, "submit", req.Status, "")
-		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
-		return
-	}
 	var workerRun, workerTicket string
 	if rec.Status == "done" {
 		workerRun, workerTicket = d.findWorkerLocked(id)
+		if workerRun != "" {
+			if rs, ok := d.runs[workerRun]; ok {
+				if rs.Followups == nil {
+					rs.Followups = map[string]string{}
+				}
+				rs.Followups[workerTicket] = parseFollowups(req.Summary)
+				d.persistRun(rs)
+				d.broadcastRunLocked(rs)
+			}
+		}
 	}
 	d.mu.Unlock()
 	d.appendEvent(id, "submit", req.Status, "")
@@ -1496,6 +2053,30 @@ func (d *Daemon) loadRuns() {
 		if rs.Reprompted == nil {
 			rs.Reprompted = map[string]int{}
 		}
+		if rs.ReviewStarted == nil {
+			rs.ReviewStarted = map[string]map[string]time.Time{}
+		}
+		if rs.FormatReprompt == nil {
+			rs.FormatReprompt = map[string]map[string]bool{}
+		}
+		if rs.Rounds == nil {
+			rs.Rounds = map[string][]ticketRound{}
+		}
+		if rs.NeedsYouReason == nil {
+			rs.NeedsYouReason = map[string]string{}
+		}
+		if rs.Followups == nil {
+			rs.Followups = map[string]string{}
+		}
+		if rs.Parked == nil {
+			rs.Parked = map[string]bool{}
+		}
+		if rs.Discarded == nil {
+			rs.Discarded = map[string]bool{}
+		}
+		if rs.RetryGen == nil {
+			rs.RetryGen = map[string]int{}
+		}
 		if rs.Rows == nil {
 			rs.Rows = map[string]savedRow{}
 		}
@@ -1519,6 +2100,9 @@ func (d *Daemon) snapshotRowsLocked(rs *runState) {
 	}
 	for _, row := range rs.Driver.Snapshot() {
 		rs.Rows[row.ID] = savedRow{State: string(row.State), Tip: row.Tip, LastRefusal: row.LastRefusal, Since: row.Since}
+		if row.State == el.DriverRowMerged && rs.NeedsYouReason != nil {
+			delete(rs.NeedsYouReason, row.ID)
+		}
 	}
 }
 
@@ -1643,4 +2227,201 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 		go d.driveRun(rs.ID, world)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run": out})
+}
+
+// runTicketStatic names one Run ticket for the per-ticket actions. Callers
+// hold d.mu.
+func runTicketStatic(rs *runState, ticketID string) (staticTicket, bool) {
+	for _, t := range rs.Tickets {
+		if t.ID == ticketID {
+			return t, true
+		}
+	}
+	return staticTicket{}, false
+}
+
+// ticketActionLocked validates a per-ticket action: the Run exists, the
+// ticket belongs to it and the Run is still live (running or paused).
+// Parked and discarded tickets run no action except retry (which unparks)
+// and idempotent repeats. Callers hold d.mu and get the failure status and
+// message, or zero when the action may run.
+func ticketActionLocked(rs *runState, ticketID, action string) (int, string) {
+	if _, ok := runTicketStatic(rs, ticketID); !ok {
+		return http.StatusNotFound, "unknown ticket"
+	}
+	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
+		return http.StatusConflict, "run is finished"
+	}
+	if rs.Discarded[ticketID] && action != "discard" {
+		return http.StatusConflict, "ticket is discarded"
+	}
+	return 0, ""
+}
+
+// writeTicketRun answers a per-ticket action with the fresh snapshot;
+// callers hold d.mu.
+func (d *Daemon) writeTicketRun(w http.ResponseWriter, rs *runState) {
+	d.persistRun(rs)
+	out := d.runJSONLocked(rs)
+	d.broadcastRunLocked(rs)
+	writeJSON(w, http.StatusOK, map[string]any{"run": out})
+}
+
+// steerTicket steers one ticket's worker through the driver tell, so the
+// refusal the row shows stays in sync. Workers only: a ticket with no
+// worker yet, or a finished one, is 409.
+func (d *Daemon) steerTicket(w http.ResponseWriter, r *http.Request, id, ticketID string) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
+		http.Error(w, "text is required", http.StatusBadRequest)
+		return
+	}
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if code, msg := ticketActionLocked(rs, ticketID, "steer"); code != 0 {
+		d.mu.Unlock()
+		writeJSON(w, code, map[string]any{"error": msg})
+		return
+	}
+	d.mu.Unlock()
+	if err := d.runTellWorker(id, ticketID, req.Text); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	d.mu.Lock()
+	rs, ok = d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	d.writeTicketRun(w, rs)
+	d.mu.Unlock()
+}
+
+// retryTicket starts one ticket over: it clears the needs-you banner and
+// any park, bumps the retry generation the driver honors on its next pass
+// (dropping the backoff, the refusal streak and the stall-nudge count),
+// and steers the optional text to the worker. The driver keeps polling on
+// its 500ms cadence, so the retry runs at once.
+func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketID string) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if code, msg := ticketActionLocked(rs, ticketID, "retry"); code != 0 {
+		d.mu.Unlock()
+		writeJSON(w, code, map[string]any{"error": msg})
+		return
+	}
+	if rs.NeedsYouReason == nil {
+		rs.NeedsYouReason = map[string]string{}
+	}
+	delete(rs.NeedsYouReason, ticketID)
+	if rs.pushedNeedsYou != nil {
+		delete(rs.pushedNeedsYou, ticketID)
+	}
+	if rs.Parked != nil {
+		delete(rs.Parked, ticketID)
+	}
+	if rs.RetryGen == nil {
+		rs.RetryGen = map[string]int{}
+	}
+	rs.RetryGen[ticketID]++
+	d.persistRun(rs)
+	broadcast := d.runJSONLocked(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	// The retry itself landed above; only an optional steer can still
+	// miss, and the snapshot below still answers it.
+	steerErr := ""
+	if strings.TrimSpace(req.Text) != "" {
+		if err := d.runTellWorker(id, ticketID, req.Text); err != nil {
+			steerErr = err.Error()
+		}
+	}
+	if steerErr != "" {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": steerErr, "run": broadcast})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": broadcast})
+}
+
+// parkTicket parks one ticket: the driver never starts or finishes it and
+// only its dependents wait. The worktree and branch stay, so a retry
+// resumes it where it stood. Repeats are idempotent.
+func (d *Daemon) parkTicket(w http.ResponseWriter, r *http.Request, id, ticketID string) {
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if code, msg := ticketActionLocked(rs, ticketID, "park"); code != 0 {
+		d.mu.Unlock()
+		writeJSON(w, code, map[string]any{"error": msg})
+		return
+	}
+	if rs.Parked == nil {
+		rs.Parked = map[string]bool{}
+	}
+	rs.Parked[ticketID] = true
+	d.writeTicketRun(w, rs)
+	d.mu.Unlock()
+}
+
+// discardTicket discards one ticket: its worktree and branch go away and
+// the driver never touches it again. The Worker session stays for its
+// transcript. Repeats are idempotent.
+func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticketID string) {
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := runTicketStatic(rs, ticketID); !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is finished"})
+		return
+	}
+	repo, branch, worktree := rs.Repo, rs.Branches[ticketID], rs.Worktrees[ticketID]
+	if rs.Discarded == nil {
+		rs.Discarded = map[string]bool{}
+	}
+	rs.Discarded[ticketID] = true
+	if rs.Parked != nil {
+		delete(rs.Parked, ticketID)
+	}
+	d.writeTicketRun(w, rs)
+	d.mu.Unlock()
+	// Best effort like the start cleanup: the discard stands even when git
+	// has nothing left to remove.
+	if worktree != "" {
+		_, _ = runGit(repo, "worktree", "remove", "--force", worktree)
+	}
+	if branch != "" {
+		_, _ = runGit(repo, "branch", "-D", branch)
+	}
 }
