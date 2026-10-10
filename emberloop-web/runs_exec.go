@@ -114,6 +114,9 @@ type runState struct {
 	ReviewTips    map[string]map[string]string       `json:"reviewTips,omitempty"`
 	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
 	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
+	// SubmitRecs keeps each Worker's last submit by ticket so a Daemon
+	// restart does not reset the submit count below Reprompted.
+	SubmitRecs map[string]submitRec `json:"submitRecs,omitempty"`
 	// ReviewStarted holds when the current tip was prompted per ticket per
 	// reviewer type, so a verdict's durationMs measures prompt to verdict.
 	ReviewStarted map[string]map[string]time.Time `json:"reviewStarted,omitempty"`
@@ -1928,9 +1931,25 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 			}
 		}
 	}
+	if workerRun == "" {
+		workerRun, workerTicket = d.findWorkerLocked(id)
+	}
+	if rs, ok := d.runs[workerRun]; ok && workerRun != "" {
+		// A count reset by a Daemon restart must still outrun what the
+		// reviewers were already re-prompted for.
+		if n := rs.Reprompted[workerTicket]; rec.Count <= n {
+			rec.Count = n + 1
+			count = rec.Count
+		}
+		if rs.SubmitRecs == nil {
+			rs.SubmitRecs = map[string]submitRec{}
+		}
+		rs.SubmitRecs[workerTicket] = *rec
+		d.persistRun(rs)
+	}
 	d.mu.Unlock()
 	d.appendEvent(id, "submit", req.Status, "")
-	if workerRun != "" {
+	if workerRun != "" && req.Status == "done" {
 		// Sync so the driver's next finish sees the re-prompt already out,
 		// never a stale refusal first, and prompts queue in submit order.
 		// Bounded to two reviewer starts plus two steers; the cap refuses
@@ -2083,6 +2102,12 @@ func (d *Daemon) loadRuns() {
 		rs.Driver = el.NewDriverRun(nil)
 		rs.notify = make(chan struct{})
 		rs.unpause = make(chan struct{})
+		for ticket, rec := range rs.SubmitRecs {
+			if sess := rs.Sessions[ticket]; sess != "" && d.submits[sess] == nil {
+				cp := rec
+				d.submits[sess] = &cp
+			}
+		}
 		cp := rs
 		d.runs[cp.ID] = &cp
 	}

@@ -855,3 +855,67 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 		t.Fatal("sentToWorkerAt unset, want the closed round's findings recorded as told")
 	}
 }
+
+// A Daemon restart must not reset a Worker's submit count: the saved Run
+// carries it, so the count stays above Reprompted and the next done submit
+// re-prompts the reviewers instead of being read as already handled.
+func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
+	state := t.TempDir()
+	d := NewDaemon(state, NewFakeBackend())
+	d.mu.Lock()
+	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.runs["r-sub"] = &runState{
+		ID: "r-sub", Spec: "spec", Repo: t.TempDir(), Status: "running",
+		notify:   make(chan struct{}),
+		Tickets:  []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Sessions: map[string]string{"01-first": "w1"},
+	}
+	d.mu.Unlock()
+	srv := httptest.NewServer(d.Handler())
+	body := `{"status":"done","completed":["alpha"]}`
+	for i := 0; i < 2; i++ {
+		resp, err := http.Post(srv.URL+"/api/sessions/w1/submit", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	srv.Close()
+
+	d2 := NewDaemon(state, NewFakeBackend())
+	d2.mu.Lock()
+	rec := d2.submits["w1"]
+	d2.mu.Unlock()
+	if rec == nil || rec.Count != 2 || rec.Status != "done" {
+		t.Fatalf("restored submit = %+v, want count 2 status done", rec)
+	}
+}
+
+// A submit count reset to 1 while Reprompted is 2 is lifted past it, so the
+// reviewers are re-prompted for the new tip.
+func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d.mu.Lock()
+	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.runs["r-cnt"] = &runState{
+		ID: "r-cnt", Spec: "spec", Repo: t.TempDir(), Status: "running",
+		notify:     make(chan struct{}),
+		Tickets:    []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Sessions:   map[string]string{"01-first": "w1"},
+		Reprompted: map[string]int{"01-first": 2},
+	}
+	d.mu.Unlock()
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/api/sessions/w1/submit", "application/json", strings.NewReader(`{"status":"done"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	d.mu.Lock()
+	n := d.submits["w1"].Count
+	d.mu.Unlock()
+	if n != 3 {
+		t.Fatalf("count = %d, want 3 (above Reprompted 2)", n)
+	}
+}
