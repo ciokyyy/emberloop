@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -471,5 +472,250 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 	}
 	if got.Fresh {
 		t.Fatalf("verdict = %+v, want stale", got)
+	}
+}
+
+// tipFromReviewPrompt extracts the tip SHA from a reviewer gate prompt ("on
+// branch <branch> at tip <tip>"), so scripted tool submits judge the prompted
+// tip. Empty when the prompt carries none.
+func tipFromReviewPrompt(text string) string {
+	idx := strings.Index(text, "at tip ")
+	if idx < 0 {
+		return ""
+	}
+	rest := text[idx+len("at tip "):]
+	if end := strings.IndexAny(rest, " \n.,"); end >= 0 {
+		return rest[:end]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// submitReview posts one reviewer `submit` tool call and returns the status
+// and decoded body, so tool-error cases assert the refusal directly.
+func submitReview(t *testing.T, base, sessionID string, payload map[string]any) (int, map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(payload)
+	resp, err := http.Post(base+"/api/sessions/"+sessionID+"/submit", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if out == nil {
+		out = map[string]any{}
+	}
+	return resp.StatusCode, out
+}
+
+// A scripted reviewer `submit` through the fake Backend records both verdicts
+// and merges: the tool path needs no VERDICT text. A pass may carry minors
+// without blocking.
+func TestReviewerSubmitToolScriptMergesWithMinors(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.ReviewSubmit = func(sessionID, prompt string) (ReviewerSubmit, bool) {
+		tip := tipFromReviewPrompt(prompt)
+		if tip == "" {
+			return ReviewerSubmit{}, false
+		}
+		return ReviewerSubmit{
+			Verdict: "pass",
+			Tip:     tip,
+			Ran:     []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
+			Findings: []ReviewFinding{
+				{File: "work.go", Line: 1, Severity: "minor", Problem: "rename var"},
+			},
+		}, true
+	}
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	waitReviewers(t, srv.URL, run.ID, "01-first")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done after tool passes with minors")
+	tk := ticketByID(r, "01-first")
+	if tk.Verdicts["reviewer-spec"].Verdict != "pass" || tk.Verdicts["reviewer-standards"].Verdict != "pass" {
+		t.Fatalf("verdicts = %+v, want both pass via the tool", tk.Verdicts)
+	}
+}
+
+// A `pass` with empty `ran` is refused with a tool error and records no
+// verdict: the ticket stays under review without a pass.
+func TestReviewerSubmitPassEmptyRanRefused(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	r = getRun(t, srv.URL, run.ID)
+	tip := ticketByID(r, "01-first").Tip
+	if tip == "" {
+		t.Fatalf("tip empty, want the worker branch tip")
+	}
+	code, out := submitReview(t, srv.URL, revs["reviewer-spec"], map[string]any{
+		"verdict": "pass", "tip": tip, "ran": []any{}, "findings": []any{},
+	})
+	if code != http.StatusBadRequest {
+		t.Fatalf("pass without ran status = %d (%v), want 400", code, out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(strings.ToLower(msg), "ran") {
+		t.Fatalf("pass without ran error = %q, want it to name ran", msg)
+	}
+	r = getRun(t, srv.URL, run.ID)
+	if v := ticketByID(r, "01-first").Verdicts["reviewer-spec"]; v.Verdict != "" {
+		t.Fatalf("verdict = %+v, want none after the refused submit", v)
+	}
+}
+
+// A `changes` with only minors is refused with a tool error and records no
+// verdict: nits never block through the tool.
+func TestReviewerSubmitChangesMinorsOnlyRefused(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	r = getRun(t, srv.URL, run.ID)
+	tip := ticketByID(r, "01-first").Tip
+	if tip == "" {
+		t.Fatalf("tip empty, want the worker branch tip")
+	}
+	code, out := submitReview(t, srv.URL, revs["reviewer-spec"], map[string]any{
+		"verdict": "changes", "tip": tip,
+		"ran":      []any{map[string]any{"command": "go vet ./...", "exitCode": 0}},
+		"findings": []any{map[string]any{"file": "work.go", "line": 1, "severity": "minor", "problem": "rename var"}},
+	})
+	if code != http.StatusBadRequest {
+		t.Fatalf("changes with minors status = %d (%v), want 400", code, out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(strings.ToLower(msg), "blocker") {
+		t.Fatalf("changes with minors error = %q, want it to name blocker or major", msg)
+	}
+	r = getRun(t, srv.URL, run.ID)
+	if v := ticketByID(r, "01-first").Verdicts["reviewer-spec"]; v.Verdict != "" {
+		t.Fatalf("verdict = %+v, want none after the refused submit", v)
+	}
+}
+
+// A verdict whose tip is behind the branch tip records stale and does not
+// count: the verdict lands at its tip, reads not fresh, and the ticket does
+// not merge on it.
+func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	r = getRun(t, srv.URL, run.ID)
+	tip := ticketByID(r, "01-first").Tip
+	if tip == "" {
+		t.Fatalf("tip empty, want the worker branch tip")
+	}
+	stale := "1111111111111111111111111111111111111111"
+	if stale == tip {
+		t.Fatalf("stale tip %q equals the branch tip, want them apart", stale)
+	}
+	code, out := submitReview(t, srv.URL, revs["reviewer-spec"], map[string]any{
+		"verdict": "pass", "tip": stale,
+		"ran":      []any{map[string]any{"command": "go vet ./...", "exitCode": 0}},
+		"findings": []any{},
+	})
+	if code != http.StatusAccepted {
+		t.Fatalf("stale submit status = %d (%v), want 202", code, out)
+	}
+	if staleOut, _ := out["stale"].(bool); !staleOut {
+		t.Fatalf("stale submit response = %v, want stale true", out)
+	}
+	r = getRun(t, srv.URL, run.ID)
+	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
+	if got.Verdict != "pass" || got.At != stale {
+		t.Fatalf("verdict = %+v, want pass recorded at the stale tip %q", got, stale)
+	}
+	if got.Fresh {
+		t.Fatalf("verdict = %+v, want stale against the branch tip %q", got, tip)
+	}
+	if tk := ticketByID(r, "01-first"); tk.State == "merged" {
+		t.Fatalf("ticket merged on a stale verdict, want it held")
+	}
+}
+
+// A `pass` with minors through the tool does not block: both reviewers pass
+// with minors and `ran`, and the ticket merges.
+func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	r = getRun(t, srv.URL, run.ID)
+	tip := ticketByID(r, "01-first").Tip
+	if tip == "" {
+		t.Fatalf("tip empty, want the worker branch tip")
+	}
+	for _, typ := range []string{"reviewer-spec", "reviewer-standards"} {
+		code, out := submitReview(t, srv.URL, revs[typ], map[string]any{
+			"verdict": "pass", "tip": tip,
+			"ran":      []any{map[string]any{"command": "go test ./...", "exitCode": 0}},
+			"findings": []any{map[string]any{"file": "work.go", "line": 2, "severity": "minor", "problem": "nit"}},
+		})
+		if code != http.StatusAccepted {
+			t.Fatalf("%s pass with minors status = %d (%v), want 202", typ, code, out)
+		}
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done after tool passes with minors")
+	if tk := ticketByID(r, "01-first"); tk.State != "merged" {
+		t.Fatalf("ticket state = %q, want merged", tk.State)
 	}
 }

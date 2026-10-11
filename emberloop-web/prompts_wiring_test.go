@@ -31,7 +31,7 @@ func TestClaudeSystemPromptForCarriesRoleExtra(t *testing.T) {
 }
 
 // sessionMetaFor carries the role extra into the ACP session params: web
-// names remember, reviewers never do even though their el role is web.
+// names remember, reviewers never do while their el role is run-worker.
 func TestSessionMetaForCarriesRoleExtra(t *testing.T) {
 	b := newStubClaudeBackend(nil)
 	webMeta := b.sessionMetaFor(SessionMeta{Owner: "u", Model: "sonnet"}, ownerDirs{})
@@ -82,15 +82,15 @@ func TestWorkerTaskPromptCarriesDox(t *testing.T) {
 
 // reviewerPrompt carries no memory/DOX text of its own: the Reviewer's system
 // prompt already carries the reviewer extra, so repeating it would inject it
-// twice. It keeps the VERDICT format both reviewer types parse.
+// twice. It describes the submit tool with verdict, tip, ran and findings.
 func TestReviewerPromptCarriesNoExtra(t *testing.T) {
 	for _, typ := range []string{reviewerSpecType, reviewerStandardsType} {
 		p := reviewerPrompt("27-x", "spec", typ, "branch", "tip")
 		if strings.Contains(p, reviewerRolePrompt()) {
 			t.Errorf("%s prompt repeats the system-prompt extra: %q", typ, p)
 		}
-		if !strings.Contains(p, "VERDICT: pass") {
-			t.Errorf("%s prompt lost the verdict format: %q", typ, p)
+		if !strings.Contains(p, "submit tool") || !strings.Contains(p, "verdict") {
+			t.Errorf("%s prompt lost the submit tool: %q", typ, p)
 		}
 	}
 }

@@ -99,8 +99,16 @@ func TestReviewerPromptCarriesItsAxisBrief(t *testing.T) {
 	if !strings.Contains(std, "Standards axis.") || !strings.Contains(std, "Smell baseline") || !strings.Contains(std, "DOX check") {
 		t.Errorf("standards reviewer prompt has the wrong brief: %q", std)
 	}
-	if !strings.Contains(spec, "Review ticket 01-a") || !strings.Contains(std, "VERDICT: pass") {
-		t.Error("the verdict format prefix must stay")
+	if !strings.Contains(spec, "Review ticket 01-a") {
+		t.Error("the review ticket prefix must stay")
+	}
+	for _, p := range []string{spec, std} {
+		if !strings.Contains(p, "submit tool") || !strings.Contains(p, "verdict") || !strings.Contains(p, "tip") || !strings.Contains(p, "ran") {
+			t.Errorf("reviewer prompt must describe the submit tool with verdict, tip, ran and findings: %q", p)
+		}
+		if strings.Contains(p, "VERDICT: pass") || strings.Contains(p, "RESPOND IN FORMAT") {
+			t.Errorf("reviewer prompt must drop the free-text verdict format: %q", p)
+		}
 	}
 }
 
@@ -110,5 +118,69 @@ func TestWebWorkerIsNeverToldToSpawnReviewers(t *testing.T) {
 	}
 	if !strings.Contains(workerReviewNote, "Do not spawn reviewers") {
 		t.Errorf("worker prompt note lost: %q", workerReviewNote)
+	}
+}
+
+// Table tests for the reviewer submit tool validation: a `changes` needs a
+// blocker or major, a `pass` needs `ran`, and severities stay
+// blocker|major|minor. A stale tip is not a validation error: it records and
+// does not count.
+func TestValidateReviewerSubmitTable(t *testing.T) {
+	ran := []ReviewRan{{Command: "go vet ./...", ExitCode: 0}}
+	tests := []struct {
+		name    string
+		sub     ReviewerSubmit
+		wantErr string
+	}{
+		{
+			name: "good pass with ran",
+			sub:  ReviewerSubmit{Verdict: "pass", Tip: "abc", Ran: ran},
+		},
+		{
+			name:    "pass without ran",
+			sub:     ReviewerSubmit{Verdict: "pass", Tip: "abc"},
+			wantErr: "ran",
+		},
+		{
+			name:    "changes with blocker",
+			sub:     ReviewerSubmit{Verdict: "changes", Tip: "abc", Ran: ran, Findings: []ReviewFinding{{File: "w.go", Line: 1, Severity: "blocker", Problem: "nil"}}},
+			wantErr: "",
+		},
+		{
+			name:    "changes with only minors",
+			sub:     ReviewerSubmit{Verdict: "changes", Tip: "abc", Ran: ran, Findings: []ReviewFinding{{File: "w.go", Line: 1, Severity: "minor", Problem: "nit"}}},
+			wantErr: "blocker",
+		},
+		{
+			name:    "pass with minors",
+			sub:     ReviewerSubmit{Verdict: "pass", Tip: "abc", Ran: ran, Findings: []ReviewFinding{{File: "w.go", Line: 1, Severity: "minor", Problem: "nit"}}},
+			wantErr: "",
+		},
+		{
+			name:    "bad verdict",
+			sub:     ReviewerSubmit{Verdict: "maybe", Tip: "abc", Ran: ran},
+			wantErr: "verdict",
+		},
+		{
+			name:    "missing tip",
+			sub:     ReviewerSubmit{Verdict: "pass", Ran: ran},
+			wantErr: "tip",
+		},
+		{
+			name:    "bad severity",
+			sub:     ReviewerSubmit{Verdict: "changes", Tip: "abc", Ran: ran, Findings: []ReviewFinding{{File: "w.go", Line: 1, Severity: "critical", Problem: "x"}}},
+			wantErr: "severity",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateReviewerSubmit(tc.sub)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("Validate = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.wantErr)) {
+				t.Fatalf("Validate = %v, want error containing %q", err, tc.wantErr)
+			}
+		})
 	}
 }

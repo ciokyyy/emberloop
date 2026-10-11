@@ -326,10 +326,11 @@ func TestToolSetHoldsAcrossCompress(t *testing.T) {
 	}
 	runPrompt(t, base, rv.ID, "review the ticket")
 	compressAndSettle(t, base, rv.ID, 1)
-	if got := roleSet(be, rv.ID); got != "web" || !opSeen(be, rv.ID, handleCompress) {
-		t.Fatalf("reviewer roles = %q, want web before and after compress", got)
+	if got := roleSet(be, rv.ID); got != "run-worker" || !opSeen(be, rv.ID, handleCompress) {
+		t.Fatalf("reviewer roles = %q, want run-worker before and after compress", got)
 	}
 }
+
 
 func TestParentLinksSurviveCompress(t *testing.T) {
 	d, _, _, base, parent := handleDaemon(t, nil)

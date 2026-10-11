@@ -153,7 +153,8 @@ func submitWorker(t *testing.T, base, id, status string, completed []string, sum
 	}
 }
 
-// A submit to a reviewer session is refused: reviewers reply VERDICT.
+// A reviewer submit without its tip is refused as a tool error: reviewers
+// report through the submit tool with verdict, tip, ran and findings.
 func TestReviewerSubmitRefused409(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -175,8 +176,8 @@ func TestReviewerSubmitRefused409(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("reviewer submit status = %d, want 409", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("reviewer submit status = %d, want 400", resp.StatusCode)
 	}
 	var out struct {
 		Error string `json:"error"`
@@ -184,8 +185,8 @@ func TestReviewerSubmitRefused409(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(out.Error), "verdict") {
-		t.Fatalf("reviewer submit error = %q, want it to name VERDICT", out.Error)
+	if !strings.Contains(strings.ToLower(out.Error), "tip") {
+		t.Fatalf("reviewer submit error = %q, want it to name the tip", out.Error)
 	}
 }
 

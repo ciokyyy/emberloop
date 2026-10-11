@@ -835,14 +835,20 @@ func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
 // elRoleFor is the el MCP role one Session's server runs under: spawned group
 // members run as workers (base tools plus, nesting kept, spawn), scouts stay
 // read-only, everything else runs as a top-level parent (base tools plus
-// spawn, steer, check and cancel). Run workers run run-worker, which
-// always serves submit. Submit stays registered for web-worker and scout
-// but is unoffered while el.WebSubmitEnabled is false.
+// spawn, steer, check and cancel). Run workers and Run reviewers run
+// run-worker, which always serves submit. Submit stays registered for
+// web-worker and scout but is unoffered while el.WebSubmitEnabled is false.
+// Reviewers run as run-worker for the submit tool only; the reviewer system
+// prompt (rolePromptFor) still carries the judge-only extra, and the spawn
+// route refuses reviewer spawns, so the extra spawn tool stays inert.
 func elRoleFor(meta SessionMeta) string {
 	if meta.Scout {
 		return "scout"
 	}
 	if meta.RunWorker {
+		return "run-worker"
+	}
+	if isReviewerSession(meta) {
 		return "run-worker"
 	}
 	if meta.GroupID != "" {
@@ -1620,7 +1626,8 @@ func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir, role strin
 
 // sessionMetaFor is sessionMeta for one agent record: the role's memory/DOX
 // extra (prompts.go) rides the system prompt. Reviewers get the reviewer
-// extra (no remember instruction) even though their el role is web.
+// extra (judge-only plus the submit tool) while their el role is run-worker
+// for the submit tool.
 func (b *ClaudeBackend) sessionMetaFor(meta SessionMeta, dirs ownerDirs) map[string]any {
 	extra := rolePromptFor(meta)
 	role := elRoleFor(meta)

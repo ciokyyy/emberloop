@@ -1,14 +1,17 @@
 package web
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// ReviewFinding is one parsed reviewer finding: the file and line plus the
-// severity and problem text. It mirrors the gate prompt's finding line
-// format `file:line severity: problem` (severity blocker|major|minor).
+// ReviewFinding is one reviewer finding: the file and line plus the
+// severity and problem text. It mirrors the submit tool's finding object
+// `{file, line, severity, problem}` (severity blocker|major|minor) and the
+// legacy gate prompt's finding line format `file:line severity: problem`.
 type ReviewFinding struct {
 	File     string `json:"file"`
 	Line     int    `json:"line"`
@@ -16,10 +19,102 @@ type ReviewFinding struct {
 	Problem  string `json:"problem"`
 }
 
+// ReviewRan is one command the reviewer ran, with its exit code. A pass
+// verdict must name at least one, so a pass without evidence is refused.
+type ReviewRan struct {
+	Command  string `json:"command"`
+	ExitCode int    `json:"exitCode"`
+}
+
+// UnmarshalJSON accepts both `exitCode` and the short `exit` for the exit
+// code, so hand-written submits do not fail on the key name.
+func (r *ReviewRan) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Command  string `json:"command"`
+		ExitCode *int   `json:"exitCode"`
+		Exit     *int   `json:"exit"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	r.Command = raw.Command
+	if raw.ExitCode != nil {
+		r.ExitCode = *raw.ExitCode
+	} else if raw.Exit != nil {
+		r.ExitCode = *raw.Exit
+	}
+	return nil
+}
+
+// MarshalJSON writes the canonical `command` and `exitCode` keys.
+func (r ReviewRan) MarshalJSON() ([]byte, error) {
+	type plain ReviewRan
+	return json.Marshal(plain(r))
+}
+
+// ReviewerSubmit is the reviewer `submit` tool payload: the verdict, the
+// full tip SHA it judges, the commands run with exit codes, and the
+// findings. It is the typed replacement for the legacy `VERDICT: pass|changes`
+// free-text reply, which stays only as a fallback for a Backend without the
+// tool.
+type ReviewerSubmit struct {
+	Verdict  string          `json:"verdict"`
+	Tip      string          `json:"tip"`
+	Ran      []ReviewRan     `json:"ran"`
+	Findings []ReviewFinding `json:"findings"`
+}
+
+// ValidateReviewerSubmit checks one reviewer submit payload for the tool
+// error cases: unknown verdict, empty tip, unknown severity, a `changes`
+// without a blocker or major, and a `pass` without `ran`. A stale tip is not
+// an error: it records and does not count, judged by the caller against the
+// current branch tip.
+func ValidateReviewerSubmit(s ReviewerSubmit) error {
+	v := strings.ToLower(strings.TrimSpace(s.Verdict))
+	if v != "pass" && v != "changes" {
+		return fmt.Errorf("verdict must be pass or changes")
+	}
+	if strings.TrimSpace(s.Tip) == "" {
+		return fmt.Errorf("tip is required: the full SHA you judged")
+	}
+	for i, f := range s.Findings {
+		sev := strings.ToLower(strings.TrimSpace(f.Severity))
+		if sev != "blocker" && sev != "major" && sev != "minor" {
+			return fmt.Errorf("finding %d: severity must be blocker, major or minor", i)
+		}
+		if strings.TrimSpace(f.File) == "" || strings.TrimSpace(f.Problem) == "" {
+			return fmt.Errorf("finding %d: file and problem are required", i)
+		}
+	}
+	for i, r := range s.Ran {
+		if strings.TrimSpace(r.Command) == "" {
+			return fmt.Errorf("ran %d: command is required", i)
+		}
+	}
+	if v == "changes" && !hasBlockerOrMajor(s.Findings) {
+		return fmt.Errorf("changes requires at least one blocker or major finding")
+	}
+	if v == "pass" && len(s.Ran) == 0 {
+		return fmt.Errorf("pass requires ran: name the commands you ran with their exit codes")
+	}
+	return nil
+}
+
+// hasBlockerOrMajor reports a blocker or major in the findings, case-insensitive.
+func hasBlockerOrMajor(fs []ReviewFinding) bool {
+	for _, f := range fs {
+		if sev := strings.ToLower(strings.TrimSpace(f.Severity)); sev == "blocker" || sev == "major" {
+			return true
+		}
+	}
+	return false
+}
+
 // ParsedReview is the Daemon's reading of a reviewer's final assistant
 // message: the verdict plus its findings. OK is false when no VERDICT line
 // or a malformed finding line was found, in which case the Daemon
-// re-prompts the reviewer once for the format.
+// re-prompts the reviewer once for the format. It stays only as a fallback
+// for a Backend without the submit tool.
 type ParsedReview struct {
 	Verdict  string
 	Findings []ReviewFinding

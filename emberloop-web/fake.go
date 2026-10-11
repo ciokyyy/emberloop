@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,9 +23,18 @@ type FakeBackend struct {
 	// ReplyFunc, when non-nil, scripts the assistant reply per prompt:
 	// returning (text, true) uses text as the whole reply, ("", false)
 	// keeps the default "fake reply to: ...". Run tests script reviewer
-	// VERDICT replies through it; the seam stays fake Backend over HTTP.
+	// VERDICT replies through it for the legacy fallback; the submit-tool
+	// path uses ReviewSubmit instead. The seam stays fake Backend over HTTP.
 	ReplyFunc func(sessionID, text string) (string, bool)
 
+	// ReviewSubmit, when non-nil, scripts a reviewer `submit` tool call: for
+	// reviewer prompts it returns the tool payload to submit instead of a
+	// VERDICT text reply. Returning (ReviewerSubmit{}, false) falls back to
+	// ReplyFunc and the default pass. The scripted submit is logged as a
+	// submit Event carrying the payload JSON, the way the submit tool would
+	// log it, so handleReviewerTurnEnd records the tool verdict. Tests drive
+	// the Run seam through it without a model.
+	ReviewSubmit func(sessionID, prompt string) (ReviewerSubmit, bool)
 	// UsageSize, when positive, makes each turn emit a usage Event sized
 	// from the characters the current handle has seen, so tests can watch
 	// the context meter fall after a Handoff.
@@ -74,6 +84,23 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 	if delay <= 0 {
 		delay = 5 * time.Millisecond
 	}
+	// A scripted reviewer submit wins over VERDICT text: it logs a submit
+	// Event carrying the tool payload, so the Daemon records the tool verdict
+	// the way a real submit tool call would.
+	if containsReviewPrompt(text) && f.ReviewSubmit != nil {
+		if sub, ok := f.ReviewSubmit(sessionID, text); ok {
+			payload, _ := json.Marshal(sub)
+			select {
+			case <-time.After(delay):
+				appendEvent("assistant_chunk", "submitting "+sub.Verdict+" at "+sub.Tip, "")
+				appendEvent("submit", string(payload), "")
+				appendEvent("status", "", "idle")
+			case <-ch:
+				appendEvent("status", "", "idle")
+			}
+			return
+		}
+	}
 	reply, ok := "", false
 	if f.ReplyFunc != nil {
 		reply, ok = f.ReplyFunc(sessionID, text)
@@ -82,7 +109,8 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 		if containsReviewPrompt(text) {
 			// Reviewer gate prompts and format re-prompts default to a
 			// pass, so runs without scripted reviews still merge; tests
-			// needing changes script ReplyFunc per reviewer type.
+			// needing changes script ReplyFunc per reviewer type. This is the
+			// legacy fallback for a Backend without the submit tool.
 			reply = "VERDICT: pass"
 		} else {
 			reply = "fake reply to: " + text

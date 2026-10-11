@@ -114,10 +114,10 @@ func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
 // ExtraTools plus the Daemon tools its el role serves (elRoleFor), bound to
 // this Session's id, so the Daemon knows the parent of anything it spawns,
 // messages, peeks at or stops. Web gets spawn, steer, check, cancel, profile
-// and remember; web-worker and run-worker get spawn (run-worker also submit);
-// every role with a wired backend gets recall, scouts included. Workers,
-// scouts and Reviewers get recall only (ticket 18); only top-level Sessions
-// propose Profile patches and Rules.
+// and remember; web-worker and run-worker get spawn (run-worker also submit,
+// reviewers the reviewer submit); every role with a wired backend gets
+// recall, scouts included. Workers, scouts and Reviewers get recall only
+// (ticket 18); only top-level Sessions propose Profile patches and Rules.
 func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -134,8 +134,12 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 			fmt.Fprintln(os.Stderr, "el-web: shared tools:", err)
 		}
 	}
-	if role == "run-worker" && b.DaemonURL != "" {
-		tools = append(tools, &submitAgentTool{session: meta.ID, daemonURL: b.DaemonURL, daemonToken: b.DaemonToken})
+	if b.DaemonURL != "" {
+		if isReviewerSession(meta) {
+			tools = append(tools, &reviewerSubmitAgentTool{session: meta.ID, daemonURL: b.DaemonURL, daemonToken: b.DaemonToken})
+		} else if role == "run-worker" {
+			tools = append(tools, &submitAgentTool{session: meta.ID, daemonURL: b.DaemonURL, daemonToken: b.DaemonToken})
+		}
 	}
 	if role != "scout" && b.Spawn != nil {
 		tools = append(tools, &spawnAgentTool{parent: meta.ID, spawn: b.Spawn})
@@ -309,6 +313,82 @@ func (t *submitAgentTool) Execute(ctx context.Context, _ string, params json.Raw
 	}, nil
 }
 func (t *submitAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
+// reviewerSubmitAgentTool is the Run reviewer submit tool as a pig ExtraTool.
+// It posts to the same submit route the el MCP proxy uses, with the typed
+// reviewer schema: verdict pass|changes, tip the full SHA judged, ran the
+// commands with exit codes, and findings as file/line/severity/problem. A
+// pass without ran and a changes without a blocker or major are refused as
+// tool errors; a stale tip records and does not count.
+type reviewerSubmitAgentTool struct {
+	session     string
+	daemonURL   string
+	daemonToken string
+}
+
+func (t *reviewerSubmitAgentTool) Name() string  { return "submit" }
+func (t *reviewerSubmitAgentTool) Label() string { return "submit review" }
+func (t *reviewerSubmitAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Submit your review verdict to the Daemon: verdict pass or changes, tip the full SHA you judged, ran the commands you ran with their exit codes, findings as file/line/severity/problem objects. A pass needs ran; a changes needs a blocker or major; minors never block.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"verdict":  map[string]any{"type": "string", "enum": []string{"pass", "changes"}},
+				"tip":      map[string]any{"type": "string"},
+				"ran":      map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "exitCode": map[string]any{"type": "integer"}}, "required": []string{"command"}}},
+				"findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"file": map[string]any{"type": "string"}, "line": map[string]any{"type": "integer"}, "severity": map[string]any{"type": "string", "enum": []string{"blocker", "major", "minor"}}, "problem": map[string]any{"type": "string"}}, "required": []string{"file", "severity", "problem"}}},
+			},
+			"required": []string{"verdict", "tip", "ran"},
+		},
+	}
+}
+func (t *reviewerSubmitAgentTool) Execute(ctx context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req ReviewerSubmit
+	if err := json.Unmarshal(params, &req); err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: bad arguments")
+	}
+	if err := ValidateReviewerSubmit(req); err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %s", err.Error())
+	}
+	body, _ := json.Marshal(req)
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.daemonURL+"/api/sessions/"+t.session+"/submit", bytes.NewReader(body))
+	if err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %w", err)
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	if t.daemonToken != "" {
+		hreq.Header.Set("Authorization", "Bearer "+t.daemonToken)
+	}
+	resp, err := http.DefaultClient.Do(hreq)
+	if err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Submits int    `json:"submits"`
+		Stale   bool   `json:"stale"`
+		Err     string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusAccepted {
+		if out.Err == "" {
+			out.Err = fmt.Sprintf("refused: %d", resp.StatusCode)
+		}
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %s", out.Err)
+	}
+	msg := fmt.Sprintf("submitted %s (submit %d)", req.Verdict, out.Submits)
+	if out.Stale {
+		msg += " stale: tip is behind the branch tip"
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: msg}},
+	}, nil
+}
+func (t *reviewerSubmitAgentTool) ExecutionMode() agent.ToolExecutionMode {
+	return agent.ToolModeSequential
+}
 
 // checkAgentTool is the Daemon check tool as a pig ExtraTool. One instance
 // serves one Session: Execute peeks at the caller's own Subagents, listing

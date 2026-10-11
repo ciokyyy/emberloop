@@ -78,11 +78,15 @@ func WebProxyTool(name string) Tool {
 			"kill": map[string]any{"type": "boolean"},
 		}, "id"), run: webProxyCancel}
 	case "submit":
-		return webProxy{name: "submit", desc: "Submit your result to the Daemon when the work is complete: a worker reports done with the completed checkbox texts, a reviewer reports pass or changes with the findings in report. Every turn ends with a submit; a turn that ends without one is re-prompted.", schema: webProxySchema(map[string]any{
+		return webProxy{name: "submit", desc: "Submit your result to the Daemon when the work is complete: a worker reports done with the completed checkbox texts, a reviewer reports verdict pass or changes with tip, ran and findings. Every turn ends with a submit; a turn that ends without one is re-prompted.", schema: webProxySchema(map[string]any{
 			"status":    map[string]any{"type": "string"},
 			"completed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"report":    map[string]any{"type": "string"},
-		}, "status"), run: webProxySubmit}
+			"verdict":   map[string]any{"type": "string", "enum": []string{"pass", "changes"}},
+			"tip":       map[string]any{"type": "string"},
+			"ran":       map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "exitCode": map[string]any{"type": "integer"}}, "required": []string{"command"}}},
+			"findings":  map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"file": map[string]any{"type": "string"}, "line": map[string]any{"type": "integer"}, "severity": map[string]any{"type": "string", "enum": []string{"blocker", "major", "minor"}}, "problem": map[string]any{"type": "string"}}, "required": []string{"file", "severity", "problem"}}},
+		}), run: webProxySubmit}
 	case "profile":
 		return webProxy{name: "profile", desc: "Read your standing Profile (memory://profile), or propose a patch to it. A patch is add, edit or retire operations by line ID and always waits for human approval in the settings view; it never applies directly. Call propose only after the User explicitly asks to change the Profile.", schema: webProxySchema(map[string]any{
 			"action": map[string]any{"type": "string", "enum": []string{"read", "propose"}},
@@ -384,15 +388,49 @@ func webProxyCancel(ctx context.Context, daemonURL, parentID string, args json.R
 
 // webProxySubmit records the bound Session's own result through the same
 // submit route Runs use: a worker reports done with the completed checkbox
-// texts, a reviewer reports pass or changes with the findings in report.
+// texts, a reviewer reports verdict pass|changes with tip, ran and findings.
 func webProxySubmit(ctx context.Context, daemonURL, sessionID string, args json.RawMessage) (string, error) {
 	var req struct {
-		Status    string   `json:"status"`
-		Completed []string `json:"completed,omitempty"`
-		Report    string   `json:"report,omitempty"`
+		Status    string           `json:"status"`
+		Completed []string         `json:"completed,omitempty"`
+		Report    string           `json:"report,omitempty"`
+		Verdict   string           `json:"verdict,omitempty"`
+		Tip       string           `json:"tip,omitempty"`
+		Ran       []map[string]any `json:"ran,omitempty"`
+		Findings  []map[string]any `json:"findings,omitempty"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return "", fmt.Errorf("submit: bad arguments")
+	}
+	if strings.TrimSpace(req.Verdict) != "" {
+		body, _ := json.Marshal(map[string]any{"verdict": req.Verdict, "tip": req.Tip, "ran": req.Ran, "findings": req.Findings})
+		resp, err := webProxyPost(ctx, daemonURL+"/api/sessions/"+sessionID+"/submit", "application/json", body)
+		if err != nil {
+			return "", fmt.Errorf("submit: %s", err.Error())
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Submits int    `json:"submits"`
+			Verdict string `json:"verdict"`
+			Stale   bool   `json:"stale"`
+			Err     string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if resp.StatusCode != http.StatusAccepted {
+			if out.Err == "" {
+				out.Err = fmt.Sprintf("submit refused: %d", resp.StatusCode)
+			}
+			return "", fmt.Errorf("submit: %s", out.Err)
+		}
+		status := req.Verdict
+		if out.Verdict != "" {
+			status = out.Verdict
+		}
+		msg := fmt.Sprintf("submitted %s (submit %d)", status, out.Submits)
+		if out.Stale {
+			msg += " stale: tip is behind the branch tip"
+		}
+		return msg, nil
 	}
 	if strings.TrimSpace(req.Status) == "" {
 		return "", fmt.Errorf("submit: status is required")
