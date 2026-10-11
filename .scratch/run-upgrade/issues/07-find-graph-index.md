@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Hits carry `source` of `jev`, `grep` or `graph`
-- [ ] Graph hits for an exact symbol rank first
-- [ ] Absent or failing index leaves current behavior unchanged
-- [ ] `emberloop/tools/find_test.go` covers each with a stub graph source; `emberloop/tools/AGENTS.md` updated; `.emberloop/check` passes
+- [x] Hits carry `source` of `jev`, `grep` or `graph`
+- [x] Graph hits for an exact symbol rank first
+- [x] Absent or failing index leaves current behavior unchanged
+- [x] `emberloop/tools/find_test.go` covers each with a stub graph source; `emberloop/tools/AGENTS.md` updated; `.emberloop/check` passes
