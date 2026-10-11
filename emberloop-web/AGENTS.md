@@ -643,7 +643,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   by rebase plus fast-forward-only (`mergeTicketIntoSpec` via
   `ffUpdateSpecBranch`'s update-ref, so a hand-checked-out spec branch still
   merges; same dirty-worktree and rebase-conflict refusals as the shared
-  core checks, the done mark committed on the spec branch); a non-done
+  core checks, the done mark committed on the spec branch (the driver
+  restores write on the ticket file first, since the worktree mirror is
+  read-only)); a non-done
   submit waits for done instead of merging; the submit gate refuses a done
   with no new commit since the last changes verdict and a done whose report
   or summary says the work is not done (both 409 with a reason), and a second

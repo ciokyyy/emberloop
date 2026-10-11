@@ -2641,6 +2641,15 @@ func (d *Daemon) mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, t
 		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", "", fmt.Errorf("ticket %s is outside the repo", ticketID)
 		}
+		// The worktree spec mirror is read-only so the Worker cannot tick
+		// its own copy; the driver restores write on the ticket file to
+		// record the done mark. The worktree is the ticket's own and is
+		// removed after the finish, so worker behavior is unchanged. A
+		// file the mirror never laid down stays missing and fails below
+		// the way it did before the mirror.
+		if err := os.Chmod(filepath.Join(worktree, rel), 0o644); err != nil && !os.IsNotExist(err) {
+			return "", "", err
+		}
 		changed, err := stageAndCommitTicketDone(worktree, filepath.Join(worktree, rel), rel, workerID)
 		if err != nil {
 			return "", "", err
@@ -2830,7 +2839,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"recallOffN": rs.RecallOffN,
 		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase,
-		"createdAt":  rs.CreatedAt, "error": rs.Error, "tickets": tickets,
+		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
 }
 
