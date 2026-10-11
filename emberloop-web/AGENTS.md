@@ -461,7 +461,7 @@ to a built Daemon binary (`TestLivePigACP`).
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary
-- `emberloop-web/memory/AGENTS.md` — the memory engine package: per-User SQLite banks (observations, Rules, queue, Profile versions, ledger), FTS5 recall, append-only Rules, human purge and snapshots
+- `emberloop-web/memory/AGENTS.md` — the memory engine package: per-User SQLite banks (observations, Rules, queue, Profile versions, ledger), FTS5 recall, append-only Rules, human purge, snapshots and project notes
 
 ## E2E suite
 
