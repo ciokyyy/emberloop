@@ -4,11 +4,11 @@
 
 **Blocked by:** 15, 23
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Two worktrees on different branches see different note sets
-- [ ] A note with deleted anchors is skipped
-- [ ] A malformed frontmatter file is skipped with a notice, not an error
-- [ ] Recall merges notes and Rules without comparing BM25 scores across tables
-- [ ] Tests use a temp git repo with two worktrees
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Two worktrees on different branches see different note sets
+- [x] A note with deleted anchors is skipped
+- [x] A malformed frontmatter file is skipped with a notice, not an error
+- [x] Recall merges notes and Rules without comparing BM25 scores across tables
+- [x] Tests use a temp git repo with two worktrees
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
