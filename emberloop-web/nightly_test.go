@@ -432,12 +432,15 @@ func TestNightlyOnDemandRoutes(t *testing.T) {
 	if led.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/memory/ledger = %d, want 200", led.StatusCode)
 	}
-	var rows []memory.LedgerRow
+	var rows []ledgerView
 	if err := json.NewDecoder(led.Body).Decode(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) == 0 {
 		t.Fatal("ledger rows = 0, want the nightly rows")
+	}
+	if rows[len(rows)-1].RunID == "" || rows[len(rows)-1].Stage == "" {
+		t.Fatalf("last ledger row = %+v, want the Memory page view keys", rows[len(rows)-1])
 	}
 	// Without a cookie both routes answer 401 like every other /api route.
 	plain := httptest.NewServer(d.Handler())
