@@ -238,7 +238,7 @@ func waitRunCond(t *testing.T, base, id string, cond func(runJSON) bool, what st
 			for _, tk := range r.Tickets {
 				states[tk.ID] = tk.State + "/" + tk.WorkerSession
 			}
-			t.Fatalf("timed out waiting for %s: %v (run %s)", what, states, r.Status)
+			t.Fatalf("timed out waiting for %s: %v (run %s error %q files %v)", what, states, r.Status, r.Error, r.FinalMergeFiles)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -675,14 +675,15 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 	}, "run done after done submit")
 }
 
-// Review fixes: on a detached repo (no target branch) the second of two
-// parallel Tickets rebases onto the repo HEAD as it stands at finish, not
-// the stale recorded base, so both merge.
-func TestRunDetachedMergesTwoTickets(t *testing.T) {
+// A detached checkout can run and merge Tickets to its spec branch, but the
+// final gate waits for the selected master branch to be checked out before
+// moving it. Checking out main and resuming completes the gate.
+func TestRunDetachedNeedsMasterCheckoutForFinalMerge(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
+	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	testGit(t, repo, "checkout", "--detach")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -706,9 +707,23 @@ func TestRunDetachedMergesTwoTickets(t *testing.T) {
 	submitSession(t, srv.URL, sess["02-second"], "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	passReviewers(t, srv.URL, run.ID, "02-second")
-	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return r.Status == "done"
-	}, "run done on detached repo")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == runStatusNeedsYou
+	}, "detached final merge Needs-you")
+	if !strings.Contains(r.Error, "checkout on master") || !containsString(r.FinalMergeFiles, "HEAD") {
+		t.Fatalf("detached final gate = %q files=%v, want checkout diagnostic", r.Error, r.FinalMergeFiles)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != initialMaster {
+		t.Fatalf("main moved from %s while detached, got %s", initialMaster, got)
+	}
+	testGit(t, repo, "checkout", "main")
+	if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != http.StatusOK {
+		t.Fatalf("resume after checking out master = %d, want 200", code)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusDone }, "resumed final merge")
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")) {
+		t.Fatalf("main = %s after resume, want spec tip", got)
+	}
 }
 
 // Review fixes: on a detached repo the finish rebases onto the repo HEAD as

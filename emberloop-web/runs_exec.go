@@ -767,7 +767,10 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	res, err := el.RunDriver(rs.SpecRun, world)
 	var final finalMergeOutcome
 	if err == nil && rs.SpecBranch != "" {
-		final, err = d.finalizeSpecRun(id)
+		final = d.finalMergeReadiness(id, res)
+		if !final.NeedsYou {
+			final, err = d.finalizeSpecRun(id)
+		}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -797,221 +800,6 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	}
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
-}
-
-type finalMergeOutcome struct {
-	NeedsYou bool
-	Reason   string
-	Files    []string
-}
-
-var finalGeneratedPaths = []string{
-	"emberloop-web/web/dist",
-	"emberloop-web/web/package-lock.json",
-}
-
-// finalizeSpecRun rebases the integration branch onto the current master,
-// rebuilds generated UI files, checks that exact result, then atomically
-// advances master. A red check or conflict is a recoverable Needs-you state.
-func (d *Daemon) finalizeSpecRun(runID string) (finalMergeOutcome, error) {
-	d.mu.Lock()
-	rs, ok := d.runs[runID]
-	if !ok {
-		d.mu.Unlock()
-		return finalMergeOutcome{}, fmt.Errorf("unknown run %q", runID)
-	}
-	repo, specBranch := rs.Repo, rs.SpecBranch
-	d.mu.Unlock()
-	if specBranch == "" {
-		return finalMergeOutcome{}, nil
-	}
-
-	masterRef, masterSHA, err := masterBranchRef(repo)
-	if err != nil {
-		return finalMergeOutcome{}, err
-	}
-	specRef := "refs/heads/" + specBranch
-	originalSpecSHA, err := runGit(repo, "rev-parse", specRef)
-	if err != nil {
-		return finalMergeOutcome{}, fmt.Errorf("could not read spec branch %s: %w", specBranch, err)
-	}
-	worktree, err := os.MkdirTemp("", "emberloop-final-merge-")
-	if err != nil {
-		return finalMergeOutcome{}, err
-	}
-	if err := os.Remove(worktree); err != nil {
-		return finalMergeOutcome{}, err
-	}
-	added := false
-	defer func() {
-		if added {
-			_, _ = runGit(repo, "worktree", "remove", "--force", worktree)
-		}
-		_ = os.RemoveAll(worktree)
-	}()
-	if _, err := runGit(repo, "worktree", "add", "--detach", worktree, originalSpecSHA); err != nil {
-		return finalMergeOutcome{}, fmt.Errorf("could not prepare final merge worktree: %w", err)
-	}
-	added = true
-
-	containsMaster, err := isAncestorRef(repo, masterSHA, originalSpecSHA)
-	if err != nil {
-		return finalMergeOutcome{}, err
-	}
-	if !containsMaster {
-		if _, err := runGit(worktree, "rebase", masterSHA); err != nil {
-			conflicts, _ := runGit(worktree, "diff", "--name-only", "--diff-filter=U")
-			files := splitFileList(conflicts)
-			_, _ = runGit(worktree, "rebase", "--abort")
-			if len(files) == 0 {
-				files = changedFilesBetween(repo, masterSHA, originalSpecSHA)
-			}
-			return finalNeedsYou("final rebase onto master conflicted", files, err.Error()), nil
-		}
-	}
-
-	buildOutput, err := d.runGeneratedBuild(worktree)
-	if err != nil {
-		files := workingTreeFiles(worktree)
-		if len(files) == 0 {
-			files = append([]string(nil), finalGeneratedPaths...)
-		}
-		return finalNeedsYou("generated-file build failed", files, buildOutput+"\n"+err.Error()), nil
-	}
-	if out, err := runGit(worktree, "status", "--porcelain"); err != nil {
-		return finalMergeOutcome{}, err
-	} else if strings.TrimSpace(out) != "" {
-		if _, err := runGit(worktree, "add", "-A"); err != nil {
-			return finalMergeOutcome{}, fmt.Errorf("could not stage generated files: %w", err)
-		}
-		if changed, err := runStagedDiff(worktree, "."); err != nil {
-			return finalMergeOutcome{}, err
-		} else if changed {
-			if _, err := runGit(worktree, "-c", "user.name=emberloop", "-c", "user.email=emberloop@localhost", "commit", "-m", "Build generated files for final merge"); err != nil {
-				return finalMergeOutcome{}, fmt.Errorf("could not commit generated files: %w", err)
-			}
-		}
-	}
-	candidateSHA, err := runGit(worktree, "rev-parse", "HEAD")
-	if err != nil {
-		return finalMergeOutcome{}, err
-	}
-	if candidateSHA != originalSpecSHA {
-		if _, err := runGit(repo, "update-ref", specRef, candidateSHA, originalSpecSHA); err != nil {
-			files := changedFilesBetween(repo, masterSHA, candidateSHA)
-			return finalNeedsYou("spec branch moved during final merge", files, err.Error()), nil
-		}
-	}
-
-	checkOutput, err := d.runFinalRepoCheck(worktree)
-	if err != nil {
-		files := changedFilesBetween(repo, masterSHA, candidateSHA)
-		return finalNeedsYou("repo check failed on the final merge result", files, checkOutput+"\n"+err.Error()), nil
-	}
-
-	d.pauseGate(runID)
-	if _, err := runGit(repo, "update-ref", masterRef, candidateSHA, masterSHA); err != nil {
-		latestMaster, refErr := masterTip(repo)
-		if refErr != nil {
-			return finalMergeOutcome{}, refErr
-		}
-		files := changedFilesBetween(repo, latestMaster, candidateSHA)
-		return finalNeedsYou("master moved while the final check was running", files, err.Error()), nil
-	}
-	return finalMergeOutcome{}, nil
-}
-
-func (d *Daemon) runGeneratedBuild(worktree string) (string, error) {
-	if d.runFinalBuild != nil {
-		return d.runFinalBuild(worktree)
-	}
-	webDir := filepath.Join(worktree, "emberloop-web", "web")
-	var output strings.Builder
-	for _, args := range [][]string{{"install", "--no-audit", "--no-fund"}, {"run", "build"}} {
-		cmd := exec.Command("npm", args...)
-		cmd.Dir = webDir
-		out, err := cmd.CombinedOutput()
-		output.Write(out)
-		if err != nil {
-			return output.String(), fmt.Errorf("npm %s failed: %w", strings.Join(args, " "), err)
-		}
-	}
-	return output.String(), nil
-}
-
-func (d *Daemon) runFinalRepoCheck(worktree string) (string, error) {
-	if d.runRepoCheck != nil {
-		return d.runRepoCheck(worktree)
-	}
-	cmd := exec.Command("sh", filepath.Join(worktree, ".emberloop", "check"))
-	cmd.Dir = worktree
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf(".emberloop/check failed: %w", err)
-	}
-	return string(out), nil
-}
-
-func masterBranchRef(repo string) (ref, sha string, err error) {
-	for _, candidate := range []string{"refs/heads/master", "refs/heads/main"} {
-		if got, e := runGit(repo, "rev-parse", candidate); e == nil && got != "" {
-			return candidate, got, nil
-		}
-	}
-	return "", "", fmt.Errorf("could not read the master tip in %s: neither master nor main exists", repo)
-}
-
-func finalNeedsYou(reason string, files []string, detail string) finalMergeOutcome {
-	files = sortedUnique(files)
-	if len(files) == 0 {
-		files = append([]string(nil), finalGeneratedPaths...)
-	}
-	message := reason + " in: " + strings.Join(files, ", ")
-	if detail = strings.TrimSpace(detail); detail != "" {
-		if len(detail) > 4000 {
-			detail = detail[:4000] + "…"
-		}
-		message += "\n" + detail
-	}
-	return finalMergeOutcome{NeedsYou: true, Reason: message, Files: files}
-}
-
-func changedFilesBetween(repo, base, head string) []string {
-	out, err := runGit(repo, "diff", "--name-only", base, head)
-	if err != nil {
-		return nil
-	}
-	return splitFileList(out)
-}
-
-func workingTreeFiles(dir string) []string {
-	tracked, _ := runGit(dir, "diff", "--name-only", "HEAD")
-	untracked, _ := runGit(dir, "ls-files", "--others", "--exclude-standard")
-	return sortedUnique(append(splitFileList(tracked), splitFileList(untracked)...))
-}
-
-func splitFileList(output string) []string {
-	var files []string
-	for _, line := range strings.Split(output, "\n") {
-		if file := strings.TrimSpace(line); file != "" {
-			files = append(files, file)
-		}
-	}
-	return sortedUnique(files)
-}
-
-func sortedUnique(files []string) []string {
-	seen := make(map[string]bool, len(files))
-	clean := make([]string, 0, len(files))
-	for _, file := range files {
-		file = strings.TrimSpace(file)
-		if file != "" && !seen[file] {
-			seen[file] = true
-			clean = append(clean, file)
-		}
-	}
-	sort.Strings(clean)
-	return clean
 }
 
 func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) el.DriverWorld {
@@ -1070,15 +858,13 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			defer d.mu.Unlock()
 			return rs.RetryGen[ticketID]
 		},
-		// HasWorker names started Tickets from the recorded Worker
-		// Sessions, so a resumed Run never starts a second Worker for a
-		// Ticket that already has one. MergedSHA names the merge sha of
-		// an already-merged Ticket, so a resumed Run seeds it as merged
-		// instead of finishing it again.
+		// HasWorker names started Tickets from their recorded Worker Sessions.
+		// A discarded queued Ticket also seeds as started so the core driver
+		// observes it as gone instead of starting it after the user's discard.
 		HasWorker: func(ticketID string) bool {
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			return rs.Sessions[ticketID] != "" || rs.ChainExhausted[ticketID]
+			return rs.Sessions[ticketID] != "" || rs.ChainExhausted[ticketID] || rs.Discarded[ticketID]
 		},
 		MergedSHA: func(ticketID string) string {
 			d.mu.Lock()
@@ -1159,6 +945,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			}
 			return miss, err
 		},
+
 		Followups: func(ticketID string) string {
 			d.mu.Lock()
 			defer d.mu.Unlock()
@@ -4625,15 +4412,17 @@ func runTicketStatic(rs *runState, ticketID string) (staticTicket, bool) {
 }
 
 // ticketActionLocked validates a per-ticket action: the Run exists, the
-// ticket belongs to it and the Run is still live (running or paused).
-// Parked and discarded tickets run no action except retry (which unparks)
-// and idempotent repeats. Callers hold d.mu and get the failure status and
-// message, or zero when the action may run.
+// ticket belongs to it and the Run is still live (running, paused or
+// needs-you). A Needs-you Run allows ticket actions so unresolved Tickets
+// can be retried, unparked or discarded before Resume. Parked and discarded
+// tickets run no action except retry (which unparks) and idempotent repeats.
+// Callers hold d.mu and get the failure status and message, or zero when the
+// action may run.
 func ticketActionLocked(rs *runState, ticketID, action string) (int, string) {
 	if _, ok := runTicketStatic(rs, ticketID); !ok {
 		return http.StatusNotFound, "unknown ticket"
 	}
-	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
+	if rs.Status != runStatusRunning && rs.Status != runStatusPaused && rs.Status != runStatusNeedsYou {
 		return http.StatusConflict, "run is finished"
 	}
 	if rs.Merged[ticketID] != "" {
@@ -4797,7 +4586,7 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 		http.NotFound(w, r)
 		return
 	}
-	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
+	if rs.Status != runStatusRunning && rs.Status != runStatusPaused && rs.Status != runStatusNeedsYou {
 		d.mu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is finished"})
 		return

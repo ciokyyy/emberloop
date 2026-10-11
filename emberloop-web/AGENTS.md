@@ -615,19 +615,19 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
 - `runs_exec.go` runs one deterministic Run per spec through the core driver
   (`POST /api/runs` starts with spec, repo, harness and model; a second active
   Start on the same spec is 409; `GET /api/runs` lists, `GET /api/runs/{id}`
- 	shows the live Ticket table, and `GET /api/runs/{id}/events` streams it over SSE.
- 	Start creates the Run's `spec/<slug>` branch from the master ref (master if
- 	present, else main) and reuses it otherwise, recording `specBranch` and
- 	`specBase`; `specBehind` counts commits on master absent from the spec branch.
- 	`POST /api/runs/{id}/rebase` rebases onto current master in a detached
- 	temporary worktree; conflicts keep the branch unchanged and list files in
- 	the needs-you error. Tickets start in number order after blockers merge, up
- 	to the live-Session cap, in worktrees forked from the spec branch. Worktree
- 	setup enables `extensions.worktreeConfig`, sets per-worktree identity and a
- 	spec excludes file, and mirrors missing spec files read-only at their paths.
- 	Spec-branch Runs validate submitted box names against a temporary copy and
- 	commit checked boxes and Status done to the Ticket branch, leaving master
- 	untouched; legacy Runs keep direct main-checkout ticks.
+   shows the live Ticket table, and `GET /api/runs/{id}/events` streams it over SSE.
+   Start creates the Run's `spec/<slug>` branch from the master ref (master if
+   present, else main) and reuses it otherwise, recording `specBranch` and
+   `specBase`; `specBehind` counts commits on master absent from the spec branch.
+   `POST /api/runs/{id}/rebase` rebases onto current master in a detached
+   temporary worktree; conflicts keep the branch unchanged and list files in
+   the needs-you error. Tickets start in number order after blockers merge, up
+   to the live-Session cap, in worktrees forked from the spec branch. Worktree
+   setup enables `extensions.worktreeConfig`, sets per-worktree identity and a
+   spec excludes file, and mirrors missing spec files read-only at their paths.
+   Spec-branch Runs validate completed names against the current spec Ticket
+   body, then commit checked boxes and Status done to the Ticket branch, leaving
+   master untouched. Legacy Runs retain direct main-checkout ticks.
   The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
@@ -658,27 +658,27 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   blocked submit with the same question hash becomes needs-you; a dirty
   worktree or
   rebase conflict keeps the Worker alive with the refusal on its row and
-  tells the Worker. Runs predating spec branches keep the legacy master merge
-  (detached: rebase onto repo HEAD at finish, never the recorded base). When
-  every Ticket is merged or discarded, the final gate first refuses queued,
-  parked or needs-you Tickets with their paths, then rebases the spec tip onto
-  current master, builds `emberloop-web/web` when its package exists (refreshing
-  the e2e lockfile when that package exists), commits generated files on the
-  spec branch, and requires a green `.emberloop/check` on that exact result.
-  A missing check, conflict or red result is Needs-you. A green result is
-  fast-forwarded into an existing clean master checkout, or a temporary clean
-  master worktree when none is checked out. Dirty active master or a concurrent
-  master move is Needs-you with files listed; other user checkouts stay
-  untouched. Resume retries the gate; Run status becomes done only after master
-  moves. The live table reads Ticket files from the spec branch. Each Ticket
-  merge compares changed files against other live spec branches and records an
-  overlap warning Event on both Runs when paths intersect. Start refuses a
-  spec outside the repo.
-  Submitted completed names are report-only until the reviewed Ticket branch
-  merges; then the driver commits checked boxes and Status done on that branch.
-  A red base check marks a Ticket Needs-you before its Worker starts. The spec
-  status is written only after the master merge. The driver remains the only
-  Ticket-file writer. Roles from
+   tells the Worker. Runs predating spec branches keep the legacy master merge
+   (detached: rebase onto repo HEAD at finish, never the recorded base). When
+   every Ticket is merged or discarded, `runs_final.go` blocks incomplete
+   Runs with Ticket paths, then rebases the spec tip onto master, builds the UI
+   when `emberloop-web/web/package.json` exists (refreshing the e2e lockfile
+   when its package exists), commits generated files on the spec branch and
+   requires a green `.emberloop/check` on that result. A missing check, red
+   check or rebase conflict is Needs-you with files listed. Promotion fast-
+   forwards an existing clean master checkout or uses a temporary clean
+   worktree when none is checked out; a dirty active master or concurrent move
+   keeps master unchanged and needs-you. Resume retries; the Run becomes done
+   only after promotion.
+   The live table reads Ticket files from the spec branch. Each Ticket merge
+   compares changed files against other live spec branches and records an
+   overlap warning Event on both Runs. Start refuses specs outside the repo.
+   Submitted completed names remain report-only until the reviewed Ticket
+   branch merges; the driver commits its boxes and Status done there. The base
+   repo check runs once per spec tip before a Worker starts; a red or
+   unverifiable base makes the Ticket Needs-you. The spec status is written
+   only after the master merge. The driver remains the only Ticket-file writer.
+   Roles from
   settings choose harness, model and effort, falling back to the Start
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent

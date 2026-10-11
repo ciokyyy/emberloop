@@ -539,8 +539,9 @@ func TestAbandonRunRemovesBranchesAndWorktrees(t *testing.T) {
 }
 func writeGeneratedTestFiles(root string) error {
 	files := map[string]string{
-		"emberloop-web/web/dist/index.html":   "generated bundle\n",
-		"emberloop-web/web/package-lock.json": "generated lock\n",
+		"emberloop-web/web/dist/index.html":       "generated bundle\n",
+		"emberloop-web/web/package-lock.json":     "generated lock\n",
+		"emberloop-web/web/e2e/package-lock.json": "generated e2e lock\n",
 	}
 	for rel, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
@@ -569,7 +570,7 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 	}
 	d.runRepoCheck = func(worktree string) (string, error) {
 		checks.Add(1)
-		for _, file := range []string{"emberloop-web/web/dist/index.html", "emberloop-web/web/package-lock.json"} {
+		for _, file := range []string{"emberloop-web/web/dist/index.html", "emberloop-web/web/package-lock.json", "emberloop-web/web/e2e/package-lock.json"} {
 			if _, err := runGit(worktree, "cat-file", "-e", "HEAD:"+file); err != nil {
 				return "generated files were not committed before check", err
 			}
@@ -609,14 +610,21 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 		t.Fatalf("main=%s spec=%s moved-master=%s; want green spec rebased and merged", mainTip, specTip, movedMaster)
 	}
 	for file, want := range map[string]string{
-		"emberloop-web/web/dist/index.html":   "generated bundle",
-		"emberloop-web/web/package-lock.json": "generated lock",
-		"master-only.txt":                     "master change",
+		"emberloop-web/web/dist/index.html":       "generated bundle",
+		"emberloop-web/web/package-lock.json":     "generated lock",
+		"emberloop-web/web/e2e/package-lock.json": "generated e2e lock",
+		"master-only.txt":                         "master change",
 	} {
 		got := strings.TrimSpace(testGit(t, repo, "show", "main:"+file))
 		if got != want {
 			t.Errorf("main:%s = %q, want %q", file, got, want)
 		}
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD")); got != mainTip {
+		t.Fatalf("checked-out HEAD = %s, master ref = %s; fast-forward must update the worktree", got, mainTip)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "status", "--porcelain")); got != "" {
+		t.Fatalf("checked-out master has post-merge diff: %s", got)
 	}
 	_ = r
 }

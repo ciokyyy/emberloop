@@ -53,6 +53,21 @@ func waitIdleAfter(t *testing.T, base, id string, n int) []Event {
 	t.Fatalf("handoff %d did not settle: %+v", n, transcriptOf(t, base, id))
 	return nil
 }
+func waitSessionSettled(t *testing.T, d *Daemon, id string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		sess, ok := d.sessions[id]
+		settled := ok && !sess.busy && sess.active == 0
+		d.mu.Unlock()
+		if settled {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("session %s did not finish its turn", id)
+}
 
 func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	d, be, base, id := handoffDaemon(t)
@@ -61,6 +76,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 		waitStatus(t, base, id, "working", 5*time.Second)
 		waitStatus(t, base, id, "idle", 5*time.Second)
 	}
+	waitSessionSettled(t, d, id)
 	d.mu.Lock()
 	metaBefore := d.sessions[id].meta
 	d.mu.Unlock()
@@ -131,6 +147,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 
 	// Second compress numbers 2.
 	compressReq(t, base, id, "")
+	waitSessionSettled(t, d, id)
 	evs = waitIdleAfter(t, base, id, 2)
 	if !strings.Contains(eventsOfKind(evs, "compressed")[1].Text, `"number":2`) {
 		t.Fatalf("second compressed = %s", eventsOfKind(evs, "compressed")[1].Text)
@@ -154,7 +171,7 @@ func indexOfSeq(evs []Event, seq int64) int {
 func TestHandoffFailureKeepsOldHandle(t *testing.T) {
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
-	waitStatus(t, base, id, "idle", 5*time.Second)
+	waitSessionSettled(t, d, id)
 	be.StartErr = os.ErrPermission
 	compressReq(t, base, id, "")
 	deadline := time.Now().Add(5 * time.Second)
@@ -187,6 +204,7 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
+	waitSessionSettled(t, d, id)
 	be.HandoffTurnErr = "boom"
 	compressReq(t, base, id, "")
 	waitEventKind(t, base, id, "error")
@@ -226,7 +244,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	worker := waitChildren(t, srv.URL, run.ID, 1)[0]
 	task := firstPromptWhere(t, srv.URL, worker.ID, func(Event) bool { return true })
 	wantSender(t, task, "system", "")
-	waitIdleAfter(t, srv.URL, worker.ID, 0)
+	waitSessionSettled(t, d, worker.ID)
 
 	if code, body := compressReq(t, srv.URL, worker.ID, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
@@ -261,7 +279,7 @@ func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
 	child := spawnOne(t, agent.URL, parent, "write the subagent job")
 	task := firstPromptWhere(t, srv.URL, child, func(e Event) bool { return e.Text == "write the subagent job" })
 	wantSender(t, task, "system", "")
-	waitIdleAfter(t, srv.URL, child, 0)
+	waitSessionSettled(t, d, child)
 
 	if code, body := compressReq(t, srv.URL, child, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)

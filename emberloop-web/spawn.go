@@ -204,28 +204,40 @@ func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAge
 		raw, _ := json.Marshal(spawnedPayload{ID: s.meta.ID, Group: gid, Name: s.meta.Name})
 		d.appendEvent(parentID, "subagent_spawned", string(raw), "")
 	}
-	// Launch each first prompt like an idle send: busy and active under
-	// the lock, the turn on its own goroutine. Recall builds synchronously
-	// from the spawn prompt before each launch, so the spawn answers after
-	// recall and a status poller never sees idle during it.
+	type childTurn struct {
+		id     string
+		be     Backend
+		prompt string
+		recall []string
+		refs   []InjectedRule
+	}
+	turns := make([]childTurn, 0, len(okStarts))
 	for i, s := range okStarts {
 		rb, refs := d.recallOrNotice(context.Background(), s.meta.ID, s.meta, agents[i].Prompt)
-		d.mu.Lock()
-		cs, ok := d.sessions[s.meta.ID]
+		turns = append(turns, childTurn{id: s.meta.ID, be: s.be, prompt: agents[i].Prompt, recall: rb, refs: refs})
+	}
+	// Reserve every first turn before launching any: a fast first child must
+	// not see later Group members as already settled while their prompts are
+	// still being assembled.
+	d.mu.Lock()
+	turnStarts := make([]childTurn, 0, len(turns))
+	for _, turn := range turns {
+		cs, ok := d.sessions[turn.id]
 		if !ok {
-			// The child was removed mid-recall; skip its turn.
-			d.mu.Unlock()
 			continue
 		}
-		if len(rb) > 0 {
-			cs.inject.appendRecall(rb, refs)
+		if len(turn.recall) > 0 {
+			cs.inject.appendRecall(turn.recall, turn.refs)
 		}
 		cs.injectOp = handleResume
 		cs.busy = true
 		cs.active++
-		d.mu.Unlock()
-		d.appendPromptEvent(s.meta.ID, agents[i].Prompt, "", 0, nil, from)
-		go d.runTurn(s.meta.ID, s.be, agents[i].Prompt, nil)
+		d.appendPromptEventLocked(turn.id, turn.prompt, "", 0, nil, from)
+		turnStarts = append(turnStarts, turn)
+	}
+	d.mu.Unlock()
+	for _, turn := range turnStarts {
+		go d.runTurn(turn.id, turn.be, turn.prompt, nil)
 	}
 	d.mu.Lock()
 	kids := make([]SessionMeta, 0, len(members))
