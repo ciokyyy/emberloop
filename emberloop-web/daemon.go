@@ -126,6 +126,9 @@ type Daemon struct {
 	// clock is the Daemon clock seam: idle quiet time and the runs driver read
 	// it; nil reads time.Now (idle.go).
 	clock func() time.Time
+	// Run final-merge hooks replace the generated-file build and repo check in seam tests.
+	runFinalBuild func(string) (string, error)
+	runRepoCheck  func(string) (string, error)
 	// Nightly job (nightly.go): distillOneShot and profileOneShot script the
 	// cheap-LLM calls in tests; nil runs the bare pig one-shot. nightlyFailStage
 	// forces one stage to fail (the test seam for abort and continue paths).

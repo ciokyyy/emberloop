@@ -44,13 +44,13 @@
   }
 
   const merged = $derived((run?.tickets ?? []).filter((t) => t.state === 'merged').length);
-  const runBadge = (status) => {
-    if (status === 'done') return 'success';
-    if (status === 'failed') return 'destructive';
-    if (status === 'paused' || status === 'needs-you') return 'warning';
-    if (status === 'abandoned') return 'outline';
-    return 'secondary';
-  };
+ 	const runBadge = (status) => {
+ 		if (status === 'done') return 'success';
+ 		if (status === 'failed') return 'destructive';
+ 		if (status === 'paused' || status === 'needs-you') return 'warning';
+ 		if (status === 'abandoned') return 'outline';
+ 		return 'secondary';
+ 	};
   const stateBadge = (state) =>
     state === 'merged' ? 'success' : state === 'needs-you' ? 'warning' : state === 'discarded' || state === 'parked' ? 'outline' : state === 'queued' ? 'outline' : 'secondary';
   const reviewerLabel = (type) => (type === 'reviewer-spec' ? 'spec' : type === 'reviewer-standards' ? 'standards' : String(type));
@@ -91,10 +91,10 @@
     runSource = null;
   }
 
-  // Completed, failed and abandoned Runs stop changing; paused and needs-you
-  // Runs stay subscribed so Resume can wake the view.
-  function liveDone(r) {
-    return r && (r.status === 'done' || r.status === 'failed' || r.status === 'abandoned');
+ 	// Completed, failed and abandoned Runs stop changing; paused and needs-you
+ 	// Runs stay subscribed so Resume can wake the view.
+ 	function liveDone(r) {
+ 		return r && (r.status === 'done' || r.status === 'failed' || r.status === 'abandoned');
   }
 
   // A sidebar spec pick drops a live Run started from another spec: the
@@ -326,6 +326,11 @@
     </div>
     {#if run.error}
       <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{run.error}</p>
+    {/if}
+    {#if run.status === 'needs-you' && run.finalMergeFiles?.length}
+      <p role="alert" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200" data-testid="run-final-merge-files">
+        Final merge needs attention in: {run.finalMergeFiles.join(', ')}
+      </p>
     {/if}
   {:else if discovery.selected}
     <div class="flex items-center gap-2">

@@ -107,7 +107,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   reload with nothing spawned, pause, resume without a second Worker, and a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused, failed and needs-you Runs; Restart Run starts from zero), and
   finished Runs staying listed; `RunsView.test.js` covers the live Ticket table
   and verdict columns, plus the spec branch distance, rebase action, abandon
-  confirmation and needs-you state; `SessionList.test.js` covers Session row
+  confirmation, final-gate files and needs-you state; `runs_final_test.go`
+  covers incomplete Runs, generated outputs, repo-check failures, branch/ref
+  races and safe master worktrees; `SessionList.test.js` covers Session row
   status, including capped; `quota_test.go` covers
   `GET /api/quota` and `POST /api/quota/refresh` with local HTTP stubs for
   the opencode and Antigravity endpoints (cards, not-configured, stale
@@ -611,27 +613,21 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   settings with no router: repo picker defaulting to the Session working
   directory, spec list, ticket table. No herdr import.
 - `runs_exec.go` runs one deterministic Run per spec through the core driver
-  (`POST /api/runs` starts with spec, repo, harness, model; a second active
+  (`POST /api/runs` starts with spec, repo, harness and model; a second active
   Start on the same spec is 409; `GET /api/runs` lists, `GET /api/runs/{id}`
-  shows the live Ticket table, `GET /api/runs/{id}/events` streams it over
-  SSE). Start creates the Run's `spec/<slug>` branch from the master tip
-  (the master ref when present, else main) when absent and reuses it
-  as it stands otherwise, recording the branch and the master tip at Start
-  (`specBranch`, `specBase`) on the Run row; the main checkout never moves.
-  `specBehind` in each Run snapshot counts commits on master not on its spec
-  branch. `POST /api/runs/{id}/rebase` rebases onto the current master in a
-  detached temporary worktree; a conflict leaves the branch unchanged, sets
-  the Run to needs-you and lists conflicted files in `error`. Each Ticket starts
-  in number order once blockers merged, up to the live-Session cap, in its own
-  worktree forked from the spec branch as a Subagent of the Run (ParentID the Run).
-  Worktree creation enables
-  extensions.worktreeConfig once per repo, then sets per-worktree
-  user.name/user.email (emberloop) and a per-worktree spec excludes file, so
-  the User's shared repo config is untouched; it also mirrors missing spec
-  files read-only into the worktree at the same repo-relative path (existing
-  files untouched; copied gap files go in the excludes file, so the mirror
-  never dirties the checkout); only the driver ticks boxes in the main
-  checkout.
+ 	shows the live Ticket table, and `GET /api/runs/{id}/events` streams it over SSE.
+ 	Start creates the Run's `spec/<slug>` branch from the master ref (master if
+ 	present, else main) and reuses it otherwise, recording `specBranch` and
+ 	`specBase`; `specBehind` counts commits on master absent from the spec branch.
+ 	`POST /api/runs/{id}/rebase` rebases onto current master in a detached
+ 	temporary worktree; conflicts keep the branch unchanged and list files in
+ 	the needs-you error. Tickets start in number order after blockers merge, up
+ 	to the live-Session cap, in worktrees forked from the spec branch. Worktree
+ 	setup enables `extensions.worktreeConfig`, sets per-worktree identity and a
+ 	spec excludes file, and mirrors missing spec files read-only at their paths.
+ 	Spec-branch Runs validate submitted box names against a temporary copy and
+ 	commit checked boxes and Status done to the Ticket branch, leaving master
+ 	untouched; legacy Runs keep direct main-checkout ticks.
   The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
@@ -662,25 +658,27 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   blocked submit with the same question hash becomes needs-you; a dirty
   worktree or
   rebase conflict keeps the Worker alive with the refusal on its row and
-  tells the Worker. Runs predating the spec branch keep the old master merge
-  (detached: rebase onto the repo HEAD as it stands at finish, never the
-  recorded base). The live table reads each ticket file from the spec branch,
-  so ticks and the done mark show. Each Ticket merge diffs the spec branch
-  against the other live spec branches in the same repo and records a
-  warning Event (`warnings`, with the shared files) on both Runs when the
-  sets intersect. Start refuses a spec outside the repo.
-  On spec-branch Runs, submitted completed names are report-only until the
-  reviewed Ticket branch merges into the spec branch; then the driver commits
-  Status done and all boxes ticked there, without changing the main checkout.
-  Legacy Runs without a spec branch retain direct progress ticks. Before an
-  unstarted Ticket starts, `.emberloop/check` runs against the current spec
-  tip once per SHA, cached on the Run. A missing check file means no check;
-  a red or unverifiable base marks the Ticket Needs-you with failures and
-  starts no Worker. With no Worker live, the driver ends at a stable state;
-  the Run reads done while the Needs-you banner remains, so fix the base and
-  start a new Run. Ticket merges never update the spec file's status; only
-  the final merge to master may write that status. The driver remains the
-  only ticket-file writer. Roles from
+  tells the Worker. Runs predating spec branches keep the legacy master merge
+  (detached: rebase onto repo HEAD at finish, never the recorded base). When
+  every Ticket is merged or discarded, the final gate first refuses queued,
+  parked or needs-you Tickets with their paths, then rebases the spec tip onto
+  current master, builds `emberloop-web/web` when its package exists (refreshing
+  the e2e lockfile when that package exists), commits generated files on the
+  spec branch, and requires a green `.emberloop/check` on that exact result.
+  A missing check, conflict or red result is Needs-you. A green result is
+  fast-forwarded into an existing clean master checkout, or a temporary clean
+  master worktree when none is checked out. Dirty active master or a concurrent
+  master move is Needs-you with files listed; other user checkouts stay
+  untouched. Resume retries the gate; Run status becomes done only after master
+  moves. The live table reads Ticket files from the spec branch. Each Ticket
+  merge compares changed files against other live spec branches and records an
+  overlap warning Event on both Runs when paths intersect. Start refuses a
+  spec outside the repo.
+  Submitted completed names are report-only until the reviewed Ticket branch
+  merges; then the driver commits checked boxes and Status done on that branch.
+  A red base check marks a Ticket Needs-you before its Worker starts. The spec
+  status is written only after the master merge. The driver remains the only
+  Ticket-file writer. Roles from
   settings choose harness, model and effort, falling back to the Start
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent
@@ -740,16 +738,17 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   pending-submit isolation and migration, replacement-worker re-review, fallback
   dispatch failure, exhaustion, Resume reconciliation and persisted Ticket rows.
   Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
-  (state, tip, last refusal, times) after every driver pass (plus `warnings`).
+  (state, tip, last refusal, times) after every driver pass (plus `warnings` and
+  `finalMergeFiles`).
   Reload spawns nothing: running Runs become paused and needs-you Runs stay needs-you.
   `POST /api/runs/{id}/pause` freezes the driver (no new Workers or Reviewers,
-  live Sessions untouched); `POST /api/runs/{id}/resume` continues it. Started
+  live Sessions untouched); `POST /api/runs/{id}/resume` continues it, including final-gate recovery. Started
   Tickets keep their Worker Sessions and merged ones seed from their shas, so
   Resume never starts a second Worker. `POST /api/runs/{id}/abandon` ends Run-owned
   Sessions and removes its Ticket worktrees/branches and spec branch; the Run
   remains listed as abandoned.
   The Run view shows the branch and distance from master, Rebase and confirmed
-  Abandon actions, plus Pause/Resume and Worker links.
+  Abandon actions, final-gate files, plus Pause/Resume and Worker links.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

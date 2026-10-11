@@ -542,4 +542,31 @@ describe('RunsView preview and live run', () => {
     expect(onNavigate).toHaveBeenCalledWith('/runs/run-1/01-first');
     vi.unstubAllGlobals();
   });
+
+  it('shows final-merge Needs-you files and lets the user resume the gate', async () => {
+    let status = 'needs-you';
+    const live = () => ({
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      status,
+      error: 'repo check failed on the final merge result in: emberloop-web/main.go',
+      finalMergeFiles: ['emberloop-web/main.go'],
+      tickets: [],
+    });
+    const calls = [];
+    stubRuns(async (u) => {
+      const url = String(u);
+      calls.push(url);
+      if (url.endsWith('/resume')) {
+        status = 'running';
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      return { ok: true, json: async () => ({ run: live() }) };
+    });
+    const { container } = render(RunsView, { props: { workDir: '', runId: 'run-1' } });
+    const files = await within(container).findByTestId('run-final-merge-files');
+    expect(files.textContent).toContain('emberloop-web/main.go');
+    await fireEvent.click(within(container).getByRole('button', { name: /resume/i }));
+    expect(calls.some((url) => url.endsWith('/api/runs/run-1/resume'))).toBe(true);
+  });
 });

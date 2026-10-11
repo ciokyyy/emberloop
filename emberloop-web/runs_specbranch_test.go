@@ -2,12 +2,14 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -110,10 +112,9 @@ func TestSpecBranchReusedWhenPresent(t *testing.T) {
 	}
 }
 
-// Tickets merge into the spec branch, never master: after a full chain run
-// master is untouched while the spec branch carries every ticket's done
-// commit, and each later ticket forked from the earlier merge.
-func TestTicketsMergeIntoSpecNotMaster(t *testing.T) {
+// Tickets merge into the spec branch as they finish. Once the whole chain
+// completes, the final gate moves master to the checked spec-branch tip.
+func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 	repo, spec := initRunRepo(t, chainTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -148,12 +149,10 @@ func TestTicketsMergeIntoSpecNotMaster(t *testing.T) {
 		return r.Status == "done"
 	}, "run done")
 	_ = r
-	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != master {
-		t.Fatalf("main = %q, want the untouched tip %q", got, master)
-	}
+	mainTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	specTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
-	if specTip == master {
-		t.Fatalf("spec/demo = %q, want it ahead of master", specTip)
+	if mainTip != specTip || specTip == master {
+		t.Fatalf("main = %q, spec/demo = %q, initial master = %q; want master advanced to the completed spec", mainTip, specTip, master)
 	}
 	for _, id := range []string{"01-first", "02-second", "03-third"} {
 		raw := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/issues/"+id+".md"))
@@ -163,9 +162,8 @@ func TestTicketsMergeIntoSpecNotMaster(t *testing.T) {
 	}
 }
 
-// A master that moves mid-run never blocks a ticket and never leaks into
-// the spec branch: the finish rebases onto the spec branch as it stands,
-// not onto master.
+// A master move during a Ticket does not block that Ticket. At the final
+// merge gate, the completed spec branch is rebased onto the moved master.
 func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -180,8 +178,8 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
-	// Master moves while the worker is out with an unrelated file: the move
-	// must neither stop the spec-branch merge nor leak into the spec branch.
+	// Master moves while the Worker runs: it neither blocks the Ticket merge
+	// nor leaks into the spec branch until the final-merge rebase.
 	writeFile(t, repo, "master.txt", "master\n")
 	testGit(t, repo, "add", "master.txt")
 	testGit(t, repo, "commit", "-m", "master moves")
@@ -195,14 +193,14 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 		return r.Status == "done"
 	}, "run done despite the master move")
 	_ = r
-	// The spec branch carries the ticket and not the master move; master
-	// carries the move and not the ticket.
-	if isAncestor(t, repo, moved, "spec/demo") {
-		t.Fatalf("master move %q is an ancestor of spec/demo, want it kept out", moved)
-	}
+	// Finalization rebases the spec branch onto the moved master and advances
+	// master only after the final check succeeds.
 	specTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
-	if isAncestor(t, repo, specTip, "main") {
-		t.Fatalf("spec tip %q is an ancestor of main, want master without the ticket", specTip)
+	if !isAncestor(t, repo, moved, specTip) {
+		t.Fatalf("master move %q is not an ancestor of spec/demo %q", moved, specTip)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != specTip {
+		t.Fatalf("main = %q, want the checked spec tip %q", got, specTip)
 	}
 }
 
@@ -270,10 +268,8 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 	_ = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done")
-	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != master {
-		// The restart changed nothing about the target: master stays put
-		// while the spec branch carries the work.
-		t.Fatalf("main = %q, want the untouched tip %q", got, master)
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")) {
+		t.Fatalf("main = %q, want the final spec tip", got)
 	}
 	specRaw := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/issues/01-first.md"))
 	if !strings.Contains(specRaw, "done") {
@@ -288,7 +284,6 @@ func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -312,8 +307,8 @@ func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
 		return r.Status == "done"
 	}, "run done with the spec branch checked out elsewhere")
 	_ = r
-	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != master {
-		t.Fatalf("main = %q, want the untouched tip %q", got, master)
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")) {
+		t.Fatalf("main = %q, want the final spec tip", got)
 	}
 	if got := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:worker.txt")); got != "worker" {
 		t.Fatalf("spec worker.txt = %q, want the merged worker change", got)
@@ -541,4 +536,198 @@ func TestAbandonRunRemovesBranchesAndWorktrees(t *testing.T) {
 	if got := getSession(t, srv.URL, worker).Meta.Status; got != "ended" {
 		t.Fatalf("Worker status after abandon = %q, want ended", got)
 	}
+}
+func writeGeneratedTestFiles(root string) error {
+	files := map[string]string{
+		"emberloop-web/web/dist/index.html":   "generated bundle\n",
+		"emberloop-web/web/package-lock.json": "generated lock\n",
+	}
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	var builds, checks atomic.Int32
+	d.runFinalBuild = func(worktree string) (string, error) {
+		builds.Add(1)
+		if err := writeGeneratedTestFiles(worktree); err != nil {
+			return "", err
+		}
+		return "generated", nil
+	}
+	d.runRepoCheck = func(worktree string) (string, error) {
+		checks.Add(1)
+		for _, file := range []string{"emberloop-web/web/dist/index.html", "emberloop-web/web/package-lock.json"} {
+			if _, err := runGit(worktree, "cat-file", "-e", "HEAD:"+file); err != nil {
+				return "generated files were not committed before check", err
+			}
+		}
+		return "green", nil
+	}
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	if builds.Load() != 0 || checks.Load() != 0 {
+		t.Fatalf("final build/check ran before all tickets merged: %d/%d", builds.Load(), checks.Load())
+	}
+	// Master moves independently while the Ticket is active. The final gate
+	// must rebase onto this commit before checking the merge result.
+	writeFile(t, repo, "master-only.txt", "master change\n")
+	testGit(t, repo, "add", "master-only.txt")
+	testGit(t, repo, "commit", "-m", "master moves")
+	movedMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	if movedMaster == initialMaster {
+		t.Fatal("master did not move in the fixture")
+	}
+
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == "done" }, "green final merge")
+	if builds.Load() != 1 || checks.Load() != 1 {
+		t.Fatalf("final build/check calls = %d/%d, want once each", builds.Load(), checks.Load())
+	}
+	specTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
+	mainTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	if specTip != mainTip || !isAncestor(t, repo, movedMaster, mainTip) {
+		t.Fatalf("main=%s spec=%s moved-master=%s; want green spec rebased and merged", mainTip, specTip, movedMaster)
+	}
+	for file, want := range map[string]string{
+		"emberloop-web/web/dist/index.html":   "generated bundle",
+		"emberloop-web/web/package-lock.json": "generated lock",
+		"master-only.txt":                     "master change",
+	} {
+		got := strings.TrimSpace(testGit(t, repo, "show", "main:"+file))
+		if got != want {
+			t.Errorf("main:%s = %q, want %q", file, got, want)
+		}
+	}
+	_ = r
+}
+
+func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	var builds, checks atomic.Int32
+	var failCheck atomic.Bool
+	failCheck.Store(true)
+	d.runFinalBuild = func(worktree string) (string, error) {
+		builds.Add(1)
+		return "", writeGeneratedTestFiles(worktree)
+	}
+	d.runRepoCheck = func(string) (string, error) {
+		checks.Add(1)
+		if failCheck.Load() {
+			return "FAIL: scripted repo check", errors.New("check failed")
+		}
+		return "green", nil
+	}
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusNeedsYou }, "red final check needs-you")
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != initialMaster {
+		t.Fatalf("main = %q after red check, want unchanged %q", got, initialMaster)
+	}
+	if !strings.Contains(r.Error, "FAIL: scripted repo check") || !containsString(r.FinalMergeFiles, "emberloop-web/web/dist/index.html") {
+		t.Fatalf("final gate diagnostics = %q files=%v, want failing output and generated paths", r.Error, r.FinalMergeFiles)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:emberloop-web/web/dist/index.html")); got != "generated bundle" {
+		t.Fatalf("generated output on spec branch = %q, want committed output", got)
+	}
+
+	failCheck.Store(false)
+	if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != 200 {
+		t.Fatalf("resume after red check = %d, want 200", code)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == "done" }, "resumed green final check")
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")) {
+		t.Fatalf("main = %q, want resumed spec tip", got)
+	}
+	if builds.Load() != 2 || checks.Load() != 2 {
+		t.Fatalf("build/check calls after resume = %d/%d, want 2/2", builds.Load(), checks.Load())
+	}
+	_ = r
+}
+
+func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+		"02-second.md": "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n",
+	})
+	writeFile(t, repo, "shared.txt", "base\n")
+	testGit(t, repo, "add", "shared.txt")
+	testGit(t, repo, "commit", "-m", "add shared base")
+	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	var builds, checks atomic.Int32
+	d.runFinalBuild = func(string) (string, error) { builds.Add(1); return "", nil }
+	d.runRepoCheck = func(string) (string, error) { checks.Add(1); return "green", nil }
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "first worker started")
+	firstWT := filepath.Join(repo, ".el-worktrees", "01-first")
+	writeFile(t, firstWT, "shared.txt", "spec change\n")
+	testGit(t, firstWT, "add", "shared.txt")
+	testGit(t, firstWT, "commit", "-m", "change shared file")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "merged" && ticketByID(r, "02-second").WorkerSession != ""
+	}, "first merged and second started")
+	writeFile(t, repo, "shared.txt", "master change\n")
+	testGit(t, repo, "add", "shared.txt")
+	testGit(t, repo, "commit", "-m", "conflicting master change")
+	movedMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	if movedMaster == initialMaster {
+		t.Fatal("master did not move in the fixture")
+	}
+	submitSession(t, srv.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
+	passReviewers(t, srv.URL, run.ID, "02-second")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusNeedsYou }, "final rebase conflict needs-you")
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != movedMaster {
+		t.Fatalf("main = %q after conflict, want unchanged %q", got, movedMaster)
+	}
+	if !containsString(r.FinalMergeFiles, "shared.txt") || !strings.Contains(r.Error, "shared.txt") {
+		t.Fatalf("final conflict = %q files=%v, want shared.txt listed", r.Error, r.FinalMergeFiles)
+	}
+	if builds.Load() != 0 || checks.Load() != 0 {
+		t.Fatalf("build/check ran before resolving the conflict: %d/%d", builds.Load(), checks.Load())
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

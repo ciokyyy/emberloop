@@ -351,6 +351,14 @@ func TestSetUserPasswordRefusesUnknownUserAndShortPassword(t *testing.T) {
 // creates the admin, later calls log in as the same account.
 func authedHandler(t testing.TB, d *Daemon) http.Handler {
 	t.Helper()
+	// Most Run tests use a synthetic repo and replace the final-gate hooks
+	// below; focused gate tests set the hooks first to assert their behavior.
+	if d.runFinalBuild == nil {
+		d.runFinalBuild = func(string) (string, error) { return "", nil }
+	}
+	if d.runRepoCheck == nil {
+		d.runRepoCheck = func(string) (string, error) { return "", nil }
+	}
 	cookie := signedIn(t, d.Handler(), "admin")
 	h := d.Handler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

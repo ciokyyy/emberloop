@@ -19,10 +19,8 @@ import (
 	el "example.com/emberloop"
 )
 
-// Run statuses: running while the driver polls; done when it reaches a stable
-// state (which may include ticket-level Needs-you or parked Tickets), failed
-// on driver error, and paused while the driver is stopped. Needs-you marks a
-// checkpoint rebase conflict; abandoned Runs remain readable after git cleanup.
+// Run statuses: a Run stays needs-you when a checkpoint rebase or final
+// merge needs human intervention; paused and abandoned Runs do not advance.
 const (
 	runStatusRunning   = "running"
 	runStatusDone      = "done"
@@ -134,35 +132,34 @@ type savedRow struct {
 // the Run file, so the table survives a Daemon restart. Owner names the User
 // who started the Run; its Worker and Reviewer Sessions inherit it.
 type runState struct {
-	ID            string                             `json:"id"`
-	Spec          string                             `json:"spec"`
-	Repo          string                             `json:"repo"`
-	Status        string                             `json:"status"`
-	Harness       string                             `json:"harness"`
-	Model         string                             `json:"model"`
-	Effort        string                             `json:"effort,omitempty"`
-	CreatedAt     time.Time                          `json:"createdAt"`
-	Error         string                             `json:"error,omitempty"`
-	Owner         string                             `json:"owner,omitempty"`
-	Tickets       []staticTicket                     `json:"tickets"`
-	Sessions      map[string]string                  `json:"sessions"`
-	Branches      map[string]string                  `json:"branches"`
-	Worktrees     map[string]string                  `json:"worktrees"`
-	Targets       map[string]string                  `json:"targets"`
-	Bases         map[string]string                  `json:"bases,omitempty"`
-	Merged        map[string]string                  `json:"merged,omitempty"`
-	Reviewers     map[string]map[string]string       `json:"reviewers,omitempty"`
-	Reviews       map[string]map[string]storedReview `json:"reviews,omitempty"`
-	ReviewTips    map[string]map[string]string       `json:"reviewTips,omitempty"`
-	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
-	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
-	// SpecBranch is the Run's integration branch (spec/<slug>), created
-	// from the master tip (the master ref when present, else main) when
-	// absent and reused as it stands otherwise. Ticket branches fork from
-	// it and finish back into it; master moves only at the final merge (a
-	// later ticket). SpecBase is the master tip at Start, even on reuse,
-	// for the later final-merge rebase. Both survive a restart in the Run
-	// file.
+	ID              string                             `json:"id"`
+	Spec            string                             `json:"spec"`
+	Repo            string                             `json:"repo"`
+	Status          string                             `json:"status"`
+	Harness         string                             `json:"harness"`
+	Model           string                             `json:"model"`
+	Effort          string                             `json:"effort,omitempty"`
+	CreatedAt       time.Time                          `json:"createdAt"`
+	Error           string                             `json:"error,omitempty"`
+	FinalMergeFiles []string                           `json:"finalMergeFiles,omitempty"`
+	Owner           string                             `json:"owner,omitempty"`
+	Tickets         []staticTicket                     `json:"tickets"`
+	Sessions        map[string]string                  `json:"sessions"`
+	Branches        map[string]string                  `json:"branches"`
+	Worktrees       map[string]string                  `json:"worktrees"`
+	Targets         map[string]string                  `json:"targets"`
+	Bases           map[string]string                  `json:"bases,omitempty"`
+	Merged          map[string]string                  `json:"merged,omitempty"`
+	Reviewers       map[string]map[string]string       `json:"reviewers,omitempty"`
+	Reviews         map[string]map[string]storedReview `json:"reviews,omitempty"`
+	ReviewTips      map[string]map[string]string       `json:"reviewTips,omitempty"`
+	ReviewPending   map[string]map[string][]string     `json:"reviewPending,omitempty"`
+	Reprompted      map[string]int                     `json:"reprompted,omitempty"`
+	// SpecBranch is the Run's integration branch, created from master (master
+	// ref when present, else main) when absent and reused as it stands otherwise.
+	// Ticket branches finish into it; only the final repo-check gate moves master.
+	// SpecBase is the master tip at Start, even on reuse, for final rebases and
+	// overlap warnings. Both survive a restart in the Run file.
 	SpecBranch string `json:"specBranch,omitempty"`
 	SpecBase   string `json:"specBase,omitempty"`
 	// BaseCheckCache stores each spec-branch tip's repo-check result. A tip is
@@ -669,7 +666,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 	max := d.MaxRunning()
 	d.mu.Lock()
 	for _, rs := range d.runs {
-		if rs.Spec == specRun.Spec && rs.Status == runStatusRunning {
+		if rs.Spec == specRun.Spec && (rs.Status == runStatusRunning || rs.Status == runStatusNeedsYou) {
 			d.mu.Unlock()
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "a run is already active for this spec"})
 			return
@@ -758,8 +755,8 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// driveRun runs the core deterministic driver against the web-backed world
-// to a stable state, then records the outcome on the Run.
+// driveRun runs the core deterministic driver against the web-backed world,
+// then gates the spec branch's final merge into master.
 func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	d.mu.Lock()
 	rs, ok := d.runs[id]
@@ -768,6 +765,10 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 		return
 	}
 	res, err := el.RunDriver(rs.SpecRun, world)
+	var final finalMergeOutcome
+	if err == nil && rs.SpecBranch != "" {
+		final, err = d.finalizeSpecRun(id)
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rs, ok = d.runs[id]
@@ -777,19 +778,242 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	rs.driving = false
 	d.snapshotRowsLocked(rs)
 	if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou {
+		for _, m := range res.Merged {
+			rs.Merged[m.ID] = m.SHA
+		}
 		if err != nil {
 			rs.Status = runStatusFailed
 			rs.Error = err.Error()
+			rs.FinalMergeFiles = nil
+		} else if final.NeedsYou {
+			rs.Status = runStatusNeedsYou
+			rs.Error = final.Reason
+			rs.FinalMergeFiles = append([]string(nil), final.Files...)
 		} else {
 			rs.Status = runStatusDone
-			for _, m := range res.Merged {
-				rs.Merged[m.ID] = m.SHA
-			}
+			rs.Error = ""
+			rs.FinalMergeFiles = nil
 		}
 	}
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 }
+
+type finalMergeOutcome struct {
+	NeedsYou bool
+	Reason   string
+	Files    []string
+}
+
+var finalGeneratedPaths = []string{
+	"emberloop-web/web/dist",
+	"emberloop-web/web/package-lock.json",
+}
+
+// finalizeSpecRun rebases the integration branch onto the current master,
+// rebuilds generated UI files, checks that exact result, then atomically
+// advances master. A red check or conflict is a recoverable Needs-you state.
+func (d *Daemon) finalizeSpecRun(runID string) (finalMergeOutcome, error) {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return finalMergeOutcome{}, fmt.Errorf("unknown run %q", runID)
+	}
+	repo, specBranch := rs.Repo, rs.SpecBranch
+	d.mu.Unlock()
+	if specBranch == "" {
+		return finalMergeOutcome{}, nil
+	}
+
+	masterRef, masterSHA, err := masterBranchRef(repo)
+	if err != nil {
+		return finalMergeOutcome{}, err
+	}
+	specRef := "refs/heads/" + specBranch
+	originalSpecSHA, err := runGit(repo, "rev-parse", specRef)
+	if err != nil {
+		return finalMergeOutcome{}, fmt.Errorf("could not read spec branch %s: %w", specBranch, err)
+	}
+	worktree, err := os.MkdirTemp("", "emberloop-final-merge-")
+	if err != nil {
+		return finalMergeOutcome{}, err
+	}
+	if err := os.Remove(worktree); err != nil {
+		return finalMergeOutcome{}, err
+	}
+	added := false
+	defer func() {
+		if added {
+			_, _ = runGit(repo, "worktree", "remove", "--force", worktree)
+		}
+		_ = os.RemoveAll(worktree)
+	}()
+	if _, err := runGit(repo, "worktree", "add", "--detach", worktree, originalSpecSHA); err != nil {
+		return finalMergeOutcome{}, fmt.Errorf("could not prepare final merge worktree: %w", err)
+	}
+	added = true
+
+	containsMaster, err := isAncestorRef(repo, masterSHA, originalSpecSHA)
+	if err != nil {
+		return finalMergeOutcome{}, err
+	}
+	if !containsMaster {
+		if _, err := runGit(worktree, "rebase", masterSHA); err != nil {
+			conflicts, _ := runGit(worktree, "diff", "--name-only", "--diff-filter=U")
+			files := splitFileList(conflicts)
+			_, _ = runGit(worktree, "rebase", "--abort")
+			if len(files) == 0 {
+				files = changedFilesBetween(repo, masterSHA, originalSpecSHA)
+			}
+			return finalNeedsYou("final rebase onto master conflicted", files, err.Error()), nil
+		}
+	}
+
+	buildOutput, err := d.runGeneratedBuild(worktree)
+	if err != nil {
+		files := workingTreeFiles(worktree)
+		if len(files) == 0 {
+			files = append([]string(nil), finalGeneratedPaths...)
+		}
+		return finalNeedsYou("generated-file build failed", files, buildOutput+"\n"+err.Error()), nil
+	}
+	if out, err := runGit(worktree, "status", "--porcelain"); err != nil {
+		return finalMergeOutcome{}, err
+	} else if strings.TrimSpace(out) != "" {
+		if _, err := runGit(worktree, "add", "-A"); err != nil {
+			return finalMergeOutcome{}, fmt.Errorf("could not stage generated files: %w", err)
+		}
+		if changed, err := runStagedDiff(worktree, "."); err != nil {
+			return finalMergeOutcome{}, err
+		} else if changed {
+			if _, err := runGit(worktree, "-c", "user.name=emberloop", "-c", "user.email=emberloop@localhost", "commit", "-m", "Build generated files for final merge"); err != nil {
+				return finalMergeOutcome{}, fmt.Errorf("could not commit generated files: %w", err)
+			}
+		}
+	}
+	candidateSHA, err := runGit(worktree, "rev-parse", "HEAD")
+	if err != nil {
+		return finalMergeOutcome{}, err
+	}
+	if candidateSHA != originalSpecSHA {
+		if _, err := runGit(repo, "update-ref", specRef, candidateSHA, originalSpecSHA); err != nil {
+			files := changedFilesBetween(repo, masterSHA, candidateSHA)
+			return finalNeedsYou("spec branch moved during final merge", files, err.Error()), nil
+		}
+	}
+
+	checkOutput, err := d.runFinalRepoCheck(worktree)
+	if err != nil {
+		files := changedFilesBetween(repo, masterSHA, candidateSHA)
+		return finalNeedsYou("repo check failed on the final merge result", files, checkOutput+"\n"+err.Error()), nil
+	}
+
+	d.pauseGate(runID)
+	if _, err := runGit(repo, "update-ref", masterRef, candidateSHA, masterSHA); err != nil {
+		latestMaster, refErr := masterTip(repo)
+		if refErr != nil {
+			return finalMergeOutcome{}, refErr
+		}
+		files := changedFilesBetween(repo, latestMaster, candidateSHA)
+		return finalNeedsYou("master moved while the final check was running", files, err.Error()), nil
+	}
+	return finalMergeOutcome{}, nil
+}
+
+func (d *Daemon) runGeneratedBuild(worktree string) (string, error) {
+	if d.runFinalBuild != nil {
+		return d.runFinalBuild(worktree)
+	}
+	webDir := filepath.Join(worktree, "emberloop-web", "web")
+	var output strings.Builder
+	for _, args := range [][]string{{"install", "--no-audit", "--no-fund"}, {"run", "build"}} {
+		cmd := exec.Command("npm", args...)
+		cmd.Dir = webDir
+		out, err := cmd.CombinedOutput()
+		output.Write(out)
+		if err != nil {
+			return output.String(), fmt.Errorf("npm %s failed: %w", strings.Join(args, " "), err)
+		}
+	}
+	return output.String(), nil
+}
+
+func (d *Daemon) runFinalRepoCheck(worktree string) (string, error) {
+	if d.runRepoCheck != nil {
+		return d.runRepoCheck(worktree)
+	}
+	cmd := exec.Command("sh", filepath.Join(worktree, ".emberloop", "check"))
+	cmd.Dir = worktree
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf(".emberloop/check failed: %w", err)
+	}
+	return string(out), nil
+}
+
+func masterBranchRef(repo string) (ref, sha string, err error) {
+	for _, candidate := range []string{"refs/heads/master", "refs/heads/main"} {
+		if got, e := runGit(repo, "rev-parse", candidate); e == nil && got != "" {
+			return candidate, got, nil
+		}
+	}
+	return "", "", fmt.Errorf("could not read the master tip in %s: neither master nor main exists", repo)
+}
+
+func finalNeedsYou(reason string, files []string, detail string) finalMergeOutcome {
+	files = sortedUnique(files)
+	if len(files) == 0 {
+		files = append([]string(nil), finalGeneratedPaths...)
+	}
+	message := reason + " in: " + strings.Join(files, ", ")
+	if detail = strings.TrimSpace(detail); detail != "" {
+		if len(detail) > 4000 {
+			detail = detail[:4000] + "…"
+		}
+		message += "\n" + detail
+	}
+	return finalMergeOutcome{NeedsYou: true, Reason: message, Files: files}
+}
+
+func changedFilesBetween(repo, base, head string) []string {
+	out, err := runGit(repo, "diff", "--name-only", base, head)
+	if err != nil {
+		return nil
+	}
+	return splitFileList(out)
+}
+
+func workingTreeFiles(dir string) []string {
+	tracked, _ := runGit(dir, "diff", "--name-only", "HEAD")
+	untracked, _ := runGit(dir, "ls-files", "--others", "--exclude-standard")
+	return sortedUnique(append(splitFileList(tracked), splitFileList(untracked)...))
+}
+
+func splitFileList(output string) []string {
+	var files []string
+	for _, line := range strings.Split(output, "\n") {
+		if file := strings.TrimSpace(line); file != "" {
+			files = append(files, file)
+		}
+	}
+	return sortedUnique(files)
+}
+
+func sortedUnique(files []string) []string {
+	seen := make(map[string]bool, len(files))
+	clean := make([]string, 0, len(files))
+	for _, file := range files {
+		file = strings.TrimSpace(file)
+		if file != "" && !seen[file] {
+			seen[file] = true
+			clean = append(clean, file)
+		}
+	}
+	sort.Strings(clean)
+	return clean
+}
+
 func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) el.DriverWorld {
 	if max <= 0 {
 		max = defaultMaxRunning
@@ -3214,7 +3438,7 @@ func (d *Daemon) checkSpecOverlap(runID string) {
 		// Live means running or paused: a paused Run resumes on the same
 		// branch, while done and failed Runs are over and never merge
 		// again.
-		if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
+		if rs.Status != runStatusRunning && rs.Status != runStatusPaused && rs.Status != runStatusNeedsYou {
 			continue
 		}
 		others = append(others, other{id: id, specBranch: rs.SpecBranch, specBase: rs.SpecBase})
@@ -3492,7 +3716,7 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		"recallOffN": rs.RecallOffN,
 		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase, "specBehind": specBehind,
 		"warnings":  warnings,
-		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
+		"createdAt": rs.CreatedAt, "error": rs.Error, "finalMergeFiles": rs.FinalMergeFiles, "tickets": tickets,
 	}
 }
 
@@ -4310,7 +4534,7 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 // resumeRunCore resumes a paused, failed or needs-you Run without the HTTP:
-// it answers the fresh Run snapshot, or a status code and message. A restarted
+// it answers the fresh snapshot, or a status code and message. A restarted
 // Daemon calls it for Runs saved with ResumeOnRestart.
 func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	d.mu.Lock()
@@ -4321,9 +4545,10 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	}
 	if rs.Status != runStatusPaused && rs.Status != runStatusFailed && rs.Status != runStatusNeedsYou {
 		d.mu.Unlock()
-		return nil, http.StatusConflict, "run is not paused, needs-you or failed"
+		return nil, http.StatusConflict, "run is not paused, failed or needs-you"
 	}
-	spec := rs.Spec
+	spec, repo, specBranch := rs.Spec, rs.Repo, rs.SpecBranch
+	tickets := append([]staticTicket(nil), rs.Tickets...)
 	d.mu.Unlock()
 	specRun, err := el.ResolveSpec(spec)
 	if err != nil {
@@ -4335,6 +4560,20 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	if err != nil {
 		return nil, http.StatusInternalServerError, err.Error()
 	}
+	// Ticket completion is authoritative on the integration branch: a final
+	// Needs-you Resume must seed the driver from its done marks, not the stale
+	// Status values in the main checkout.
+	if specBranch != "" {
+		for _, ticket := range tickets {
+			rel, relErr := filepath.Rel(repo, ticket.Path)
+			if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			if body, showErr := runGit(repo, "show", specBranch+":"+filepath.ToSlash(rel)); showErr == nil {
+				files[ticket.Path] = body
+			}
+		}
+	}
 	max := d.MaxRunning()
 	d.mu.Lock()
 	rs, ok = d.runs[id]
@@ -4344,15 +4583,15 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	}
 	if rs.Status != runStatusPaused && rs.Status != runStatusFailed && rs.Status != runStatusNeedsYou {
 		d.mu.Unlock()
-		return nil, http.StatusConflict, "run is not paused, needs-you or failed"
+		return nil, http.StatusConflict, "run is not paused, failed or needs-you"
 	}
 	rs.SpecRun = specRun
 	rs.Status = runStatusRunning
 	rs.ResumeOnRestart = false
-	// A failed Run (the driver hit an error such as a git failure) resumes
-	// from its saved state like a paused one: merged tickets, rounds and
-	// worker Sessions stay; only the error clears.
+	// A failed Run or final-gate Needs-you resumes from saved state: merged
+	// Tickets and their Sessions stay, and the gate diagnostics clear.
 	rs.Error = ""
+	rs.FinalMergeFiles = nil
 	if rs.unpause != nil {
 		close(rs.unpause)
 	}
@@ -4396,6 +4635,9 @@ func ticketActionLocked(rs *runState, ticketID, action string) (int, string) {
 	}
 	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
 		return http.StatusConflict, "run is finished"
+	}
+	if rs.Merged[ticketID] != "" {
+		return http.StatusConflict, "ticket is already merged"
 	}
 	if rs.Status == runStatusPaused && action == "retry" {
 		return http.StatusConflict, "run is paused: resume it first, a retry does nothing while paused"
@@ -4558,6 +4800,11 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 	if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
 		d.mu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is finished"})
+		return
+	}
+	if rs.Merged[ticketID] != "" {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "ticket is already merged"})
 		return
 	}
 	repo, branch, worktree := rs.Repo, rs.Branches[ticketID], rs.Worktrees[ticketID]

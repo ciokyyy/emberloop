@@ -78,17 +78,18 @@ type runTicketJSON struct {
 }
 
 type runJSON struct {
-	ID         string          `json:"id"`
-	Spec       string          `json:"spec"`
-	Status     string          `json:"status"`
-	Harness    string          `json:"harness"`
-	Model      string          `json:"model"`
-	Effort     string          `json:"effort"`
-	SpecBranch string          `json:"specBranch"`
-	SpecBase   string          `json:"specBase"`
-	SpecBehind int             `json:"specBehind"`
-	Error      string          `json:"error"`
-	Tickets    []runTicketJSON `json:"tickets"`
+	ID              string          `json:"id"`
+	Spec            string          `json:"spec"`
+	Status          string          `json:"status"`
+	Harness         string          `json:"harness"`
+	Model           string          `json:"model"`
+	Effort          string          `json:"effort"`
+	Error           string          `json:"error"`
+	FinalMergeFiles []string        `json:"finalMergeFiles"`
+	SpecBranch      string          `json:"specBranch"`
+	SpecBase        string          `json:"specBase"`
+	SpecBehind      int             `json:"specBehind"`
+	Tickets         []runTicketJSON `json:"tickets"`
 }
 
 func startRun(t *testing.T, base, spec, repo, harness, model string) runJSON {
@@ -375,10 +376,9 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 	_ = r
 }
 
-// The Worker completed list is report-only before merge; after the reviewed
-// branch merges into the spec branch the driver writes Status done and ticks
-// every box there, leaving the main checkout unchanged.
-func TestRunMarksTicketDoneAfterSpecMerge(t *testing.T) {
+// A completed list is report-only until the Ticket merges into the spec
+// branch. The final green gate then fast-forwards that checked branch to master.
+func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
@@ -415,11 +415,11 @@ func TestRunMarksTicketDoneAfterSpecMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "- [ ] alpha") || strings.Contains(string(raw), "- [x] alpha") || !strings.Contains(string(raw), "Status:** open") {
-		t.Fatalf("main ticket = %q, want open with boxes unticked", raw)
+	if !strings.Contains(string(raw), "- [x] alpha") || !strings.Contains(string(raw), "- [x] beta") || !strings.Contains(string(raw), "**Status:** done") {
+		t.Fatalf("master ticket = %q, want all boxes ticked and Status done after the gate", raw)
 	}
-	// The done mark lands on the spec branch, not master: the merge target
-	// is spec/demo and the main checkout stays behind.
+	// The checked Ticket file is committed on the spec branch before the
+	// green final gate advances master.
 	specRaw := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/issues/01-first.md"))
 	if !strings.Contains(specRaw, "- [x] alpha") || !strings.Contains(specRaw, "- [x] beta") {
 		t.Fatalf("spec ticket file = %q, want every box ticked", specRaw)
