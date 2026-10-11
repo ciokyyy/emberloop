@@ -183,7 +183,12 @@ func TestTicketSteerValidation(t *testing.T) {
 // unparks, bumps the retry generation in the run file and the ticket runs
 // again.
 func TestTicketParkAndRetry(t *testing.T) {
-	repo, spec := initRunRepo(t, demoTickets())
+	// A second independent ticket keeps the Run live while 01 is parked. A
+	// Run whose only work is parked ends on the driver's next poll, and the
+	// repeat park and the retry below would race that end.
+	tickets := demoTickets()
+	tickets["03-third.md"] = "# 03: Third\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] gamma\n"
+	repo, spec := initRunRepo(t, tickets)
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
