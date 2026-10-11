@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `done` with no new commit after `changes` is refused with a reason
-- [ ] Conservative not-done text pattern is refused
-- [ ] Second `blocked` with the same question hash becomes Needs-you
-- [ ] Run seam tests cover each; `.emberloop/check` passes
+- [x] `done` with no new commit after `changes` is refused with a reason
+- [x] Conservative not-done text pattern is refused
+- [x] Second `blocked` with the same question hash becomes Needs-you
+- [x] Run seam tests cover each; `.emberloop/check` passes
