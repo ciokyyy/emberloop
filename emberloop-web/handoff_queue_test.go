@@ -41,7 +41,7 @@ func queueDaemon(t *testing.T, delay time.Duration) (*Daemon, *promptRecord, str
 	rec := &promptRecord{}
 	be.ReplyFunc = rec.reply
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	return d, rec, srv.URL, id
@@ -145,7 +145,7 @@ func TestClaudeSteerDuringHandoffQueuesFollowup(t *testing.T) {
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
 	sendPrompt(t, srv.URL, id, "slow job")
@@ -247,7 +247,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 		return "", false
 	}
 	d1 := NewDaemon(stateDir, old)
-	srv1 := httptest.NewServer(d1.Handler())
+	srv1 := httptest.NewServer(authedHandler(t, d1))
 	defer srv1.Close()
 	parent := createSession(t, srv1.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv1.URL, parent, "plan the work")
@@ -274,7 +274,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 
 	// Restart: the reloaded Daemon sees the Group and its member mid-turn on disk.
 	d2 := NewDaemon(stateDir, NewFakeBackend())
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	if code, body := compressReq(t, srv2.URL, parent, ""); code != http.StatusAccepted || body["waiting"] != nil {
 		t.Fatalf("compress after restart = %d %v, want 202 with no wait", code, body)

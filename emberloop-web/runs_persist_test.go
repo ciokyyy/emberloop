@@ -447,7 +447,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 func TestFailedRunResumesWithSameWorker(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
