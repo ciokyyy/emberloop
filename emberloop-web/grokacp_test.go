@@ -94,7 +94,6 @@ func newTestGrokBackend(t *testing.T) (*GrokACPBackend, string) {
 	cb := &ClaudeBackend{plain: true, waitMCP: true, mcpName: "el", sessions: map[string]*claudeState{}}
 	b := &GrokACPBackend{
 		ClaudeBackend: cb, stateDir: tempDir(t), grokBin: "/bin/true", srcHome: src,
-		scouts: map[string]bool{}, groups: map[string]string{},
 		catalogs: map[string]string{"web": "- el__read(path:str)", "scout": "- el__read(path:str)"},
 	}
 	cb.metaHook = b.meta
@@ -104,13 +103,13 @@ func newTestGrokBackend(t *testing.T) (*GrokACPBackend, string) {
 
 func TestPrepareDirStripsAndIsolates(t *testing.T) {
 	b, src := newTestGrokBackend(t)
-	if _, err := b.prepareDir("s1"); err == nil || !strings.Contains(err.Error(), "grok login") {
+	if _, err := b.prepareDir("s1", "web"); err == nil || !strings.Contains(err.Error(), "grok login") {
 		t.Fatalf("missing login should name grok login, got %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(src, "auth.json"), []byte(`{"k":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	profile, err := b.prepareDir("s1")
+	profile, err := b.prepareDir("s1", "web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +142,7 @@ func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
 	if err := os.WriteFile(srcAuth, []byte(`{"t":"old"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.prepareDir("s1"); err != nil {
+	if _, err := b.prepareDir("s1", "web"); err != nil {
 		t.Fatal(err)
 	}
 	tmp := filepath.Join(b.sessionDir("s1"), "grok", "auth.json")
@@ -186,7 +185,7 @@ func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
 
 func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 	b, _ := newTestGrokBackend(t)
-	meta := b.meta("s1", "grok-4.7", "", tempDir(t))
+	meta := b.meta("s1", "grok-4.7", "", tempDir(t), "web")
 	if meta["yoloMode"] != true {
 		t.Fatalf("yoloMode %v", meta["yoloMode"])
 	}
@@ -196,16 +195,6 @@ func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 	}
 	if _, ok := meta["claudeCode"]; ok {
 		t.Fatal("grok meta must not carry the claude stripping set")
-	}
-}
-
-func TestGrokRoleFollowsScoutAndGroup(t *testing.T) {
-	b, _ := newTestGrokBackend(t)
-	b.setRole(SessionMeta{ID: "a"})
-	b.setRole(SessionMeta{ID: "b", Scout: true})
-	b.setRole(SessionMeta{ID: "c", GroupID: "g"})
-	if b.roleOf("a") != "web" || b.roleOf("b") != "scout" || b.roleOf("c") != "web-worker" {
-		t.Fatalf("roles %s %s %s", b.roleOf("a"), b.roleOf("b"), b.roleOf("c"))
 	}
 }
 

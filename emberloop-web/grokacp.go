@@ -282,12 +282,9 @@ type GrokACPBackend struct {
 	// copied from and refreshed tokens are written back to it.
 	srcHome string
 
-	gmu        sync.Mutex
-	scouts     map[string]bool
-	groups     map[string]string
-	runWorkers map[string]bool
-	catalogs   map[string]string
-	models     []string
+	gmu      sync.Mutex
+	catalogs map[string]string
+	models   []string
 }
 
 // NewGrokACPBackend finds the grok and el-mcp binaries. It fails when either
@@ -321,30 +318,12 @@ func NewGrokACPBackend(stateDir, daemonAddr string) (*GrokACPBackend, error) {
 	cb.daemonAddr = daemonAddr
 	b := &GrokACPBackend{
 		ClaudeBackend: cb, stateDir: stateDir, grokBin: grokBin, srcHome: srcHome,
-		scouts: map[string]bool{}, groups: map[string]string{}, runWorkers: map[string]bool{}, catalogs: map[string]string{},
+		catalogs: map[string]string{},
 	}
 	cb.newConnFor = b.connFor
 	cb.metaHook = b.meta
 	cb.promptWrap = grokPromptWrap
 	return b, nil
-}
-
-func (b *GrokACPBackend) setRole(meta SessionMeta) {
-	b.gmu.Lock()
-	b.scouts[meta.ID] = meta.Scout
-	b.groups[meta.ID] = meta.GroupID
-	if b.runWorkers == nil {
-		b.runWorkers = map[string]bool{}
-	}
-	b.runWorkers[meta.ID] = meta.RunWorker
-	b.gmu.Unlock()
-}
-
-// roleOf is the el MCP role of one Session, as elRoleFor computes it.
-func (b *GrokACPBackend) roleOf(id string) string {
-	b.gmu.Lock()
-	defer b.gmu.Unlock()
-	return elRoleFor(SessionMeta{Scout: b.scouts[id], GroupID: b.groups[id], RunWorker: b.runWorkers[id]})
 }
 
 // catalogFor renders (and caches per role) the tool catalog of the el MCP
@@ -375,9 +354,9 @@ func (b *GrokACPBackend) catalogFor(role, sessionID string) string {
 // meta is the session/new and session/load _meta: the el system prompt with
 // the project context and tool catalog replaces Grok's own, and the session
 // auto-approves tools.
-func (b *GrokACPBackend) meta(daemonID, model, effort, workDir string) map[string]any {
+func (b *GrokACPBackend) meta(daemonID, model, effort, workDir, role string) map[string]any {
 	prompt := claudeSystemPromptFor(workDir)
-	prompt += "\n\n" + grokToolBlock(b.catalogFor(b.roleOf(daemonID), daemonID))
+	prompt += "\n\n" + grokToolBlock(b.catalogFor(role, daemonID))
 	return map[string]any{"systemPromptOverride": prompt, "yoloMode": true}
 }
 
@@ -388,7 +367,7 @@ func (b *GrokACPBackend) sessionDir(id string) string {
 // prepareDir builds the Session's isolated HOME and GROK_HOME and returns
 // the profile path. auth.json is copied fresh on every start so the newest
 // login wins.
-func (b *GrokACPBackend) prepareDir(id string) (string, error) {
+func (b *GrokACPBackend) prepareDir(id, role string) (string, error) {
 	dir := b.sessionDir(id)
 	grokHome := filepath.Join(dir, "grok")
 	for _, d := range []string{filepath.Join(dir, "home"), grokHome} {
@@ -407,7 +386,7 @@ func (b *GrokACPBackend) prepareDir(id string) (string, error) {
 		return "", err
 	}
 	profile := filepath.Join(grokHome, "profile.md")
-	withSearch := b.catalogFor(b.roleOf(id), id) == ""
+	withSearch := b.catalogFor(role, id) == ""
 	if err := os.WriteFile(profile, []byte(grokProfile(withSearch)), 0o600); err != nil {
 		return "", err
 	}
@@ -416,8 +395,8 @@ func (b *GrokACPBackend) prepareDir(id string) (string, error) {
 
 // connFor starts one `grok agent stdio` process under the Session's temp
 // HOME and GROK_HOME.
-func (b *GrokACPBackend) connFor(sessionID string) (acpConn, error) {
-	profile, err := b.prepareDir(sessionID)
+func (b *GrokACPBackend) connFor(sessionID, role string) (acpConn, error) {
+	profile, err := b.prepareDir(sessionID, role)
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +506,6 @@ func (b *GrokACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, s
 	if !validGrokEffort(meta.Effort) {
 		return fmt.Errorf("grok: unknown effort %q (want low, medium, high, xhigh or max)", meta.Effort)
 	}
-	b.setRole(meta)
 	if err := b.StartSession(meta); err != nil {
 		return err
 	}
@@ -539,9 +517,8 @@ func (b *GrokACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, s
 }
 
 // ResumeSession reloads the ACP session in a fresh agent and re-applies the
-// effort. The role is set first so the new agent gets the same catalog.
+// effort. The role comes from the record, so the new agent gets the same catalog.
 func (b *GrokACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
-	b.setRole(meta)
 	if err := b.ClaudeBackend.ResumeSession(meta, emit); err != nil {
 		return err
 	}

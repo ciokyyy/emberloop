@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/MichaelKinsy/PiG/ai"
 )
@@ -29,11 +28,6 @@ type PigACPBackend struct {
 	pigBin string
 	// shimBin is the Daemon binary, run in pig-shim mode as the pi pi-acp starts.
 	shimBin string
-
-	smu        sync.Mutex
-	scouts     map[string]bool
-	groups     map[string]string
-	runWorkers map[string]bool
 
 	// sdk serves the stateless one-off completions (session titles), which
 	// need no agent process.
@@ -66,7 +60,7 @@ func NewPigACPBackend(stateDir, daemonBin, daemonAddr string) (*PigACPBackend, e
 	}
 	cb := &ClaudeBackend{plain: true, mcpName: "el", mcpCommand: "el-mcp", adapterCommand: runner, sessions: map[string]*claudeState{}}
 	cb.daemonAddr = daemonAddr
-	b := &PigACPBackend{ClaudeBackend: cb, stateDir: stateDir, runner: runner, pigBin: pigBin, shimBin: daemonBin, scouts: map[string]bool{}, groups: map[string]string{}, runWorkers: map[string]bool{}, sdk: NewPigBackend()}
+	b := &PigACPBackend{ClaudeBackend: cb, stateDir: stateDir, runner: runner, pigBin: pigBin, shimBin: daemonBin, sdk: NewPigBackend()}
 	cb.newConnFor = b.connFor
 	return b, nil
 }
@@ -86,9 +80,6 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 	if !validPigEffort(meta.Effort) {
 		return fmt.Errorf("pig: unknown effort %q (want off, minimal, low, medium, high, xhigh or max)", meta.Effort)
 	}
-	b.setScout(meta.ID, meta.Scout)
-	b.setGroup(meta.ID, meta.GroupID)
-	b.setRunWorker(meta.ID, meta.RunWorker)
 	if err := b.StartSession(meta); err != nil {
 		return err
 	}
@@ -99,13 +90,10 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 	return nil
 }
 
-// ResumeSession reloads the ACP session and re-applies its thinking level;
-// the Session's scout flag is set first so the new adapter gets the same
+// ResumeSession reloads the ACP session and re-applies its thinking level.
+// The role comes from the record, so the new adapter keeps the same
 // read-only tool allowlist.
 func (b *PigACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
-	b.setScout(meta.ID, meta.Scout)
-	b.setGroup(meta.ID, meta.GroupID)
-	b.setRunWorker(meta.ID, meta.RunWorker)
 	if err := b.ClaudeBackend.ResumeSession(meta, emit); err != nil {
 		return err
 	}
@@ -137,44 +125,6 @@ func (b *PigACPBackend) applyPigEffort(sessionID, effort string) error {
 		return fmt.Errorf("pig: set thinking level %q: %w", effort, err)
 	}
 	return nil
-}
-
-func (b *PigACPBackend) setScout(id string, scout bool) {
-	b.smu.Lock()
-	b.scouts[id] = scout
-	b.smu.Unlock()
-}
-func (b *PigACPBackend) setGroup(id, group string) {
-	b.smu.Lock()
-	b.groups[id] = group
-	b.smu.Unlock()
-}
-
-func (b *PigACPBackend) setRunWorker(id string, v bool) {
-	b.smu.Lock()
-	if b.runWorkers == nil {
-		b.runWorkers = map[string]bool{}
-	}
-	b.runWorkers[id] = v
-	b.smu.Unlock()
-}
-
-func (b *PigACPBackend) isRunWorker(id string) bool {
-	b.smu.Lock()
-	defer b.smu.Unlock()
-	return b.runWorkers[id]
-}
-
-func (b *PigACPBackend) groupOf(id string) string {
-	b.smu.Lock()
-	defer b.smu.Unlock()
-	return b.groups[id]
-}
-
-func (b *PigACPBackend) isScout(id string) bool {
-	b.smu.Lock()
-	defer b.smu.Unlock()
-	return b.scouts[id]
 }
 
 // steerSock is the shim's steer socket. It lives in the temp dir: unix
@@ -246,9 +196,8 @@ func (b *PigACPBackend) agentDir(sessionID string) string {
 }
 
 // connFor prepares the Session's agent dir and starts its adapter process.
-func (b *PigACPBackend) connFor(sessionID string) (acpConn, error) {
-	scout := b.isScout(sessionID)
-	dir, err := b.prepareAgentDir(sessionID, scout)
+func (b *PigACPBackend) connFor(sessionID, role string) (acpConn, error) {
+	dir, err := b.prepareAgentDir(sessionID, role)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +214,7 @@ func (b *PigACPBackend) connFor(sessionID string) (acpConn, error) {
 // except settings.json and mcp.json, written fresh) and <dir>/bin/pi, a
 // shim that runs pig. The shim hides the version so pi-acp prints no update
 // notice, and adds the scout tool allowlist.
-func (b *PigACPBackend) prepareAgentDir(sessionID string, scout bool) (string, error) {
+func (b *PigACPBackend) prepareAgentDir(sessionID, role string) (string, error) {
 	dir := b.agentDir(sessionID)
 	agent := filepath.Join(dir, "agent")
 	bin := filepath.Join(dir, "bin")
@@ -296,7 +245,7 @@ func (b *PigACPBackend) prepareAgentDir(sessionID string, scout bool) (string, e
 	if err := os.WriteFile(filepath.Join(agent, "settings.json"), mergedPigSettings(home), 0o600); err != nil {
 		return "", err
 	}
-	mcp, err := b.mergedMCP(sessionID, scout)
+	mcp, err := b.mergedMCP(sessionID, role)
 	if err != nil {
 		return "", err
 	}
@@ -378,15 +327,7 @@ func mergedPigSettings(home string) []byte {
 // direct exposure so the model sees the tools without codemode. The user's
 // own mcp.json is not merged: its el server carries the herdr spawn, tell and
 // finish tools, which would run panes instead of Daemon Subagents.
-func (b *PigACPBackend) mergedMCP(sessionID string, scout bool) ([]byte, error) {
-	role := "web"
-	if scout {
-		role = "scout"
-	} else if b.isRunWorker(sessionID) {
-		role = "run-worker"
-	} else if b.groupOf(sessionID) != "" {
-		role = "web-worker"
-	}
+func (b *PigACPBackend) mergedMCP(sessionID, role string) ([]byte, error) {
 	b.mu.Lock()
 	servers, err := b.mcpServersFor(sessionID, role)
 	b.mu.Unlock()

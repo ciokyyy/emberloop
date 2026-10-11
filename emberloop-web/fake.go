@@ -44,6 +44,7 @@ type FakeBackend struct {
 	gen      map[string]int
 	seen     map[string]int
 	released map[string]int
+	starts   map[string][]handleStart
 }
 
 func NewFakeBackend() *FakeBackend { return &FakeBackend{} }
@@ -128,6 +129,7 @@ func (f *FakeBackend) Interrupt(sessionID string) bool {
 }
 
 func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	f.recordStart(meta, handleCreate)
 	return nil
 }
 
@@ -140,6 +142,7 @@ func (f *FakeBackend) ReleaseSession(sessionID string) string { return f.ResumeT
 
 // ResumeSession rebuilds the fake handle; the log is the whole state.
 func (f *FakeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	f.recordStart(meta, handleResume)
 	return nil
 }
 
@@ -168,6 +171,7 @@ func (f *FakeBackend) StartHandle(meta SessionMeta, emit func(kind, text, status
 	if f.StartErr != nil {
 		return "", nil, f.StartErr
 	}
+	f.recordStart(meta, handleCompress)
 	f.mu.Lock()
 	if f.gen == nil {
 		f.gen = map[string]int{}
@@ -199,4 +203,29 @@ func (f *FakeBackend) ResumeOK(meta SessionMeta) (bool, string) {
 		return false, f.ResumeNote
 	}
 	return true, ""
+}
+
+// handleStart is one start the fake Backend received: the operation and the
+// handle startHandle derived from the record it was handed.
+type handleStart struct {
+	op     handleOp
+	handle handle
+}
+
+// recordStart keeps what one start received, in order per Session.
+func (f *FakeBackend) recordStart(meta SessionMeta, op handleOp) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.starts == nil {
+		f.starts = map[string][]handleStart{}
+	}
+	f.starts[meta.ID] = append(f.starts[meta.ID], handleStart{op: op, handle: startHandle(meta, op)})
+}
+
+// Starts lists the starts one Session got, in order: create, then each
+// resume and compress.
+func (f *FakeBackend) Starts(sessionID string) []handleStart {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]handleStart(nil), f.starts[sessionID]...)
 }

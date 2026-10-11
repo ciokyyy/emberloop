@@ -261,6 +261,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	text := res.text
 
 	emit := func(kind, text, status string) { d.appendEvent(id, kind, text, status) }
+	h := startHandle(meta, handleCompress)
 	var token string
 	var release func()
 	startRetries, err := retryTransient(func() error {
@@ -286,6 +287,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 		cur.meta.CompressBlock = ""
 		d.persistMeta(cur.meta)
 		cur.turnsSinceCompress = 0
+		cur.inject = h.inject
 	}
 	d.mu.Unlock()
 	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: model, Fallback: res.fallback, Retries: res.retries, TransientRetries: res.transient, StartRetries: startRetries, Error: res.err}.text(), "")

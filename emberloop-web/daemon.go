@@ -142,6 +142,9 @@ type session struct {
 	compressInstr string
 	// swapping marks a Handoff from its claim until its turn ends.
 	swapping bool
+	// inject holds the memory texts the next turn carries ahead of its
+	// prompt (handle.go). A fresh handle sets it; the first turn takes it.
+	inject []string
 }
 
 // queuedMsg is one not-yet-delivered message. Mode is prompt, steer or
@@ -372,6 +375,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	if meta.ProjectID == "" {
 		meta.ProjectID = d.projectIDForPath(meta.WorkDir)
 	}
+	h := startHandle(meta, handleCreate)
 	// The cap counts Sessions holding an agent process. Over it the
 	// start is refused with a clear message.
 	d.mu.Lock()
@@ -410,7 +414,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 			return nil, &startError{code: http.StatusBadRequest, msg: err.Error()}
 		}
 		d.mu.Lock()
-		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now()}
+		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject}
 		d.persistMeta(meta)
 		d.starting--
 		d.mu.Unlock()
@@ -420,7 +424,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	// are connected before the first prompt can go out. The Session
 	// publishes live to hold its cap slot while it starts.
 	d.mu.Lock()
-	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now()}
+	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject}
 	d.persistMeta(meta)
 	cb := d.claude
 	d.mu.Unlock()
@@ -803,6 +807,7 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 		d.starting--
 		if cur, ok := d.sessions[id]; ok && !cur.live {
 			cur.live = true
+			cur.inject = startHandle(cur.meta, handleResume).inject
 			if tok := be.ResumeToken(id); tok != "" {
 				cur.meta.ResumeToken = tok
 			}
@@ -1056,6 +1061,9 @@ func (d *Daemon) runTurn(id string, be Backend, text string, images []Image) {
 func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image, handoff bool, tap func(kind, text, status string)) {
 	mark, harness, gated := d.gateBaseline(id)
 	gated = gated && !handoff
+	if block := d.takeInjection(id); block != "" {
+		text = block + "\n\n" + text
+	}
 	promptBackend(be, id, text, images, func(kind, text, status string) {
 		if tap != nil {
 			tap(kind, text, status)

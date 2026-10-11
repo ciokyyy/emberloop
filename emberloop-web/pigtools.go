@@ -58,13 +58,10 @@ func (t elTool) ExecutionMode() agent.ToolExecutionMode {
 // its own spawn: serving them would start herdr-era panes, not Sessions.
 var hostOnlyTools = map[string]bool{"spawn": true, "finish": true, "tell": true, "submit": true}
 
-// elToolsFor returns the shared tools for one Session: the read-only
-// scout role for scouts, the web role (file tools, no spawn) otherwise.
+// elToolsFor returns the shared tools of one Session's el role (elRoleFor):
+// file tools for web, web-worker and run-worker, read-only tools for scouts.
 func elToolsFor(meta SessionMeta, gate func(ctx context.Context, root, command string) (string, bool)) ([]agent.AgentTool, error) {
-	role := "web"
-	if meta.Scout {
-		role = "scout"
-	}
+	role := elRoleFor(meta)
 	served, err := el.RoleTools(role)
 	if err != nil {
 		return nil, err

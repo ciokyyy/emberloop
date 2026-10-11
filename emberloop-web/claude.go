@@ -212,11 +212,11 @@ type ClaudeBackend struct {
 	plain bool
 	// newConnFor, when set, starts the adapter for one Daemon Session, so
 	// the process can carry per-Session environment.
-	newConnFor func(sessionID string) (acpConn, error)
+	newConnFor func(sessionID, role string) (acpConn, error)
 	// metaHook, when set, builds the session/new and session/load _meta
 	// for a plain adapter (grok: system prompt override, yolo mode) from
 	// the Daemon Session id, model, effort and WorkDir.
-	metaHook func(daemonID, model, effort, workDir string) map[string]any
+	metaHook func(daemonID, model, effort, workDir, role string) map[string]any
 	// promptWrap, when set, rewrites each prompt before it goes on the wire
 	// (grok: the per-turn register reminder, since ACP has no hook). The
 	// stored prompt Event keeps the user's own text.
@@ -334,11 +334,12 @@ func (b *ClaudeBackend) strippingMetaEffort(model, effort, workDir string) map[s
 // returns only after session/new answers, so the MCP tools are connected
 // before the first prompt can go out.
 func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
-	mcp, err := b.mcpServersFor(meta.ID, elRoleFor(meta))
+	role := elRoleFor(meta)
+	mcp, err := b.mcpServersFor(meta.ID, role)
 	if err != nil {
 		return err
 	}
-	newConn := b.connFactory(meta.ID)
+	newConn := b.connFactory(meta.ID, role)
 	conn, err := newConn()
 	if err != nil {
 		return fmt.Errorf("start claude adapter: %w", err)
@@ -353,7 +354,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		b.drop(meta.ID, conn)
 		return err
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role))
 	if err != nil {
 		err = fmt.Errorf("acp session/new: %w", err)
 		b.drop(meta.ID, conn)
@@ -382,7 +383,7 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 	if err != nil {
 		return err
 	}
-	newConn := b.connFactory(daemonID)
+	newConn := b.connFactory(daemonID, role)
 	conn, err := newConn()
 	if err != nil {
 		return fmt.Errorf("restart claude adapter: %w", err)
@@ -397,7 +398,7 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 		b.drop(daemonID, conn)
 		return err
 	}
-	if err := conn.LoadSession(acpID, cwd, mcp, b.sessionMeta(daemonID, model, effort, cwd)); err != nil {
+	if err := conn.LoadSession(acpID, cwd, mcp, b.sessionMeta(daemonID, model, effort, cwd, role)); err != nil {
 		err = fmt.Errorf("acp session/load: %w", err)
 		b.drop(daemonID, conn)
 		return err
@@ -413,9 +414,9 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 }
 
 // connFactory picks how the adapter process starts for one Daemon Session.
-func (b *ClaudeBackend) connFactory(sessionID string) func() (acpConn, error) {
+func (b *ClaudeBackend) connFactory(sessionID, role string) func() (acpConn, error) {
 	if b.newConnFor != nil {
-		return func() (acpConn, error) { return b.newConnFor(sessionID) }
+		return func() (acpConn, error) { return b.newConnFor(sessionID, role) }
 	}
 	if b.newConn != nil {
 		return b.newConn
@@ -1455,9 +1456,9 @@ func prettyJSON(v any) string {
 
 // sessionMeta is the _meta for session/new and session/load: the plain-adapter
 // hook when set, the claude stripping set otherwise.
-func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir string) map[string]any {
+func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir, role string) map[string]any {
 	if b.metaHook != nil {
-		return b.metaHook(daemonID, model, effort, workDir)
+		return b.metaHook(daemonID, model, effort, workDir, role)
 	}
 	return b.strippingMetaEffort(model, effort, workDir)
 }

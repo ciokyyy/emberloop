@@ -30,7 +30,7 @@ func (s *thoughtStubConn) SetThoughtLevel(acpID, level string) error {
 func newThoughtStubBackend(stub *thoughtStubConn) *PigACPBackend {
 	cb := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	cb.plain = true
-	return &PigACPBackend{ClaudeBackend: cb, scouts: map[string]bool{}, groups: map[string]string{}, sdk: NewPigBackend()}
+	return &PigACPBackend{ClaudeBackend: cb, sdk: NewPigBackend()}
 }
 
 // oneCatalogModel returns a fully-qualified model the catalog knows, so the

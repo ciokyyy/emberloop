@@ -51,6 +51,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   `owner_test.go` covers owners, inheritance, hiding, sender typing and the
   home directory at the same seam.
 - Users list and presence (`handleUsers` in `auth.go`, `presence` in `live.go`): `GET /api/users` lists every account in creation order as `{id, username, admin, online}` for a signed-in User; the machine token answers 401. `online` holds while the User has an open `GET /api/live` channel: the first join and the last leave publish the `users` topic. `users_list_test.go` covers the list, presence and the gate at the same seam.
+- `handle_test.go` covers `startHandle` at the Daemon seam on the fake Backend: owner, role and injections across create, resume and compress; the Profile, recall, Handoff order and the no-op before memory; the tool set and parent links across a compress; and the pig loadout per role.
 - Real Backends prove out in live probes, never the main check.
 - Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
   goroutines write after a test returns and fail `t.TempDir()` cleanup with
@@ -92,8 +93,10 @@ the driver ticks boxes and marks done, nothing else writes them.
   Claude re-reads its file only). Same `{providers:[...]}` shape both ways;
   per-card `ok` / `not_configured` / `error` with stale windows kept.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
-  ExtraTools plus the per-Session spawn tool (scouts: ExtraTools without
-  spawn), models from the SDK catalog filtered to providers with usable auth
+  ExtraTools plus the Daemon tools its role serves (`sessionTools`: web gets
+  spawn, steer, check and cancel; web-worker spawn; run-worker spawn and
+  submit; scouts none), models from the SDK catalog filtered to providers
+  with usable auth
   (`CheckProviderAuth` over `auth.json`, env keys, OAuth; `?current=` keeps
   one unlisted model visible), one SDK stack per live Session
   released on idle or DELETE and reloaded through `Runtime.Resume`.
@@ -118,6 +121,18 @@ the driver ticks boxes and marks done, nothing else writes them.
   `PigACPBackend` is a `steerBackend`. Compression is off for ACP pig: the
   Backend is neither a `compactBackend` nor a `handoffBackend`, the Session
   GET reports `compressible:false` and the UI hides the Compress button.
+- `handle.go` derives the identity of every harness handle start:
+  `startHandle(meta, op)` returns the owner, the el role (`elRoleFor`: web,
+  web-worker, run-worker or scout, which sets the tool set) and the injection
+  texts for one start (`handleCreate`, `handleResume`, `handleCompress`).
+  Create (`startSession`), resume (`resumeReleased`) and compress (`runHandoff`)
+  all call it; the fake Backend records each start it gets. Backends hold no
+  identity maps: they read the role from the record they are handed, through
+  `elRoleFor`. Bank bindings join the handle with the memory engine. The
+  injection hook `memoryInjections` returns nothing until memory exists. Its
+  texts go in front of the next turn's prompt (`takeInjection` in
+  `runTurnWith`), once per start, in order: Profile, recall, then the Handoff.
+  The Event log keeps the prompt alone.
 - `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
   compress model is unset or unauthed. Else `runHandoff` writes the body

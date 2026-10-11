@@ -92,17 +92,19 @@ func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
 }
 
 // sessionTools is the stripped loadout for one Session: the configured
-// ExtraTools plus the Daemon spawn, steer, check and cancel tools bound to
+// ExtraTools plus the Daemon tools its el role serves (elRoleFor), bound to
 // this Session's id, so the Daemon knows the parent of anything it spawns,
-// messages, peeks at or stops. Scouts keep the ExtraTools without any of
-// the four: nothing they call can write, and they have no children to read.
+// messages, peeks at or stops. Web gets spawn, steer, check and cancel;
+// web-worker and run-worker get spawn (run-worker also submit); scouts keep
+// the ExtraTools alone: nothing they call can write, and they have no children.
 func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	role := elRoleFor(meta)
 	tools := append([]agent.AgentTool(nil), b.extra...)
 	if b.SharedTools {
 		var gate func(ctx context.Context, root, command string) (string, bool)
-		if b.SudoGate != nil && !meta.Scout {
+		if b.SudoGate != nil && role != "scout" {
 			gate = b.SudoGate(meta.ID)
 		}
 		if shared, err := elToolsFor(meta, gate); err == nil {
@@ -111,13 +113,13 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 			fmt.Fprintln(os.Stderr, "el-web: shared tools:", err)
 		}
 	}
-	if meta.RunWorker && b.DaemonURL != "" {
+	if role == "run-worker" && b.DaemonURL != "" {
 		tools = append(tools, &submitAgentTool{session: meta.ID, daemonURL: b.DaemonURL, daemonToken: b.DaemonToken})
 	}
-	if !meta.Scout {
-		if b.Spawn != nil {
-			tools = append(tools, &spawnAgentTool{parent: meta.ID, spawn: b.Spawn})
-		}
+	if role != "scout" && b.Spawn != nil {
+		tools = append(tools, &spawnAgentTool{parent: meta.ID, spawn: b.Spawn})
+	}
+	if role == "web" {
 		if b.SteerChild != nil {
 			tools = append(tools, &steerAgentTool{parent: meta.ID, steer: b.SteerChild})
 		}
