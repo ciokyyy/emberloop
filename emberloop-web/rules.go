@@ -22,6 +22,11 @@ import (
 // deterministically (the approval supersedes the old Rule); a different
 // author is a disagreement for a human (both Rules stay live).
 
+// queueLedgerRunID is the ledger RunID for rule-queue mutations
+// (recordQueueLedger). The Memory page status treats it as non-nightly when
+// it picks the last nightly run, so the two must stay in step.
+const queueLedgerRunID = "queue"
+
 // ruleDecideBody is POST /api/rules/queue/{id}/decide: approve or reject,
 // with an optional edit. Text, Kind and SubjectKey replace the proposal when
 // present; absent fields keep the proposal. The proposal payload is never
@@ -604,7 +609,7 @@ func (d *Daemon) recordQueueLedger(ctx context.Context, owner, stage string) {
 		"avgApprovalLatencyHours": st.AvgLatencyHrs, "oldestPendingAgeHours": st.OldestPendingAgeHrs,
 	})
 	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{
-		RunID: "queue", Stage: stage, Status: memory.LedgerSuccess,
+		RunID: queueLedgerRunID, Stage: stage, Status: memory.LedgerSuccess,
 		CountsJSON: string(counts),
 		Detail:     "rule queue " + stage,
 	})

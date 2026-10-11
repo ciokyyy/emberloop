@@ -2,7 +2,6 @@ package web
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,52 +26,64 @@ import (
 //     The typed confirmation is required; the result reports what it removed.
 
 // ruleView is one Rule on the Memory page. Keys are lowercase for the UI;
-// the engine structs keep their Go names.
+// the engine structs keep their Go names. Times are always set by the bank,
+// so they carry no omitempty: encoding/json never omits a struct value.
 type ruleView struct {
-	RuleID               string   `json:"ruleId"`
-	Version              int      `json:"version"`
-	Text                 string   `json:"text"`
-	Kind                 string   `json:"kind"`
-	SubjectKey           string   `json:"subjectKey"`
-	Status               string   `json:"status"`
-	Anchors              []string `json:"anchors,omitempty"`
-	ObservedCommit       string   `json:"observedCommit,omitempty"`
-	ApprovedBy           string   `json:"approvedBy,omitempty"`
-	ApprovedAt           time.Time `json:"approvedAt,omitempty"`
-	SourceObservationIDs []int64  `json:"sourceObservationIds,omitempty"`
+	RuleID               string    `json:"ruleId"`
+	Version              int       `json:"version"`
+	Text                 string    `json:"text"`
+	Kind                 string    `json:"kind"`
+	SubjectKey           string    `json:"subjectKey"`
+	Status               string    `json:"status"`
+	Anchors              []string  `json:"anchors,omitempty"`
+	ObservedCommit       string    `json:"observedCommit,omitempty"`
+	ApprovedBy           string    `json:"approvedBy,omitempty"`
+	ApprovedAt           time.Time `json:"approvedAt"`
+	SourceObservationIDs []int64   `json:"sourceObservationIds,omitempty"`
 }
 
 func toRuleView(r memory.Rule) ruleView {
 	return ruleView{
-		RuleID: r.RuleID, Version: r.Version, Text: r.Text,
-		Kind: r.Kind, SubjectKey: r.SubjectKey, Status: r.Status,
-		Anchors: append([]string(nil), r.Anchors...),
-		ObservedCommit: r.ObservedCommit, ApprovedBy: r.ApprovedBy,
-		ApprovedAt: r.ApprovedAt,
+		RuleID:               r.RuleID,
+		Version:              r.Version,
+		Text:                 r.Text,
+		Kind:                 r.Kind,
+		SubjectKey:           r.SubjectKey,
+		Status:               r.Status,
+		Anchors:              append([]string(nil), r.Anchors...),
+		ObservedCommit:       r.ObservedCommit,
+		ApprovedBy:           r.ApprovedBy,
+		ApprovedAt:           r.ApprovedAt,
 		SourceObservationIDs: append([]int64(nil), r.SourceObservationIDs...),
 	}
 }
 
 // observationView is one observation on the Memory page.
 type observationView struct {
-	ID            int64     `json:"id"`
-	SessionID     string    `json:"sessionId"`
-	EventID       string    `json:"eventId"`
-	Author        string    `json:"author,omitempty"`
-	Quote         string    `json:"quote"`
-	Kind          string    `json:"kind"`
-	SubjectKey    string    `json:"subjectKey"`
-	EvidenceCount int       `json:"evidenceCount"`
-	ObservedCommit string   `json:"observedCommit,omitempty"`
-	CreatedAt     time.Time `json:"createdAt,omitempty"`
+	ID             int64     `json:"id"`
+	SessionID      string    `json:"sessionId"`
+	EventID        string    `json:"eventId"`
+	Author         string    `json:"author,omitempty"`
+	Quote          string    `json:"quote"`
+	Kind           string    `json:"kind"`
+	SubjectKey     string    `json:"subjectKey"`
+	EvidenceCount  int       `json:"evidenceCount"`
+	ObservedCommit string    `json:"observedCommit,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 func toObservationView(o memory.Observation) observationView {
 	return observationView{
-		ID: o.ID, SessionID: o.SessionID, EventID: o.EventID,
-		Author: o.Author, Quote: o.Quote, Kind: o.Kind,
-		SubjectKey: o.SubjectKey, EvidenceCount: o.EvidenceCount,
-		ObservedCommit: o.ObservedCommit, CreatedAt: o.CreatedAt,
+		ID:             o.ID,
+		SessionID:      o.SessionID,
+		EventID:        o.EventID,
+		Author:         o.Author,
+		Quote:          o.Quote,
+		Kind:           o.Kind,
+		SubjectKey:     o.SubjectKey,
+		EvidenceCount:  o.EvidenceCount,
+		ObservedCommit: o.ObservedCommit,
+		CreatedAt:      o.CreatedAt,
 	}
 }
 
@@ -84,24 +95,30 @@ type ledgerView struct {
 	Status     string    `json:"status"`
 	CountsJSON string    `json:"countsJson"`
 	Detail     string    `json:"detail"`
-	CreatedAt  time.Time `json:"createdAt,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 func toLedgerView(l memory.LedgerRow) ledgerView {
 	return ledgerView{
-		ID: l.ID, RunID: l.RunID, Stage: l.Stage, Status: l.Status,
-		CountsJSON: l.CountsJSON, Detail: l.Detail, CreatedAt: l.CreatedAt,
+		ID:         l.ID,
+		RunID:      l.RunID,
+		Stage:      l.Stage,
+		Status:     l.Status,
+		CountsJSON: l.CountsJSON,
+		Detail:     l.Detail,
+		CreatedAt:  l.CreatedAt,
 	}
 }
 
-// memoryStatus is GET /api/memory/status: the chip plus the stats.
+// memoryStatus is GET /api/memory/status: the chip plus the stats. LedgerSize
+// has no omitempty so an empty ledger sends 0 instead of dropping the field.
 type memoryStatus struct {
-	Available  bool              `json:"available"`
-	Queue      *memory.QueueStats `json:"queue,omitempty"`
-	LedgerSize int               `json:"ledgerSize,omitempty"`
-	LastLedger *ledgerView       `json:"lastLedger,omitempty"`
-	LastNightly *ledgerView      `json:"lastNightly,omitempty"`
-	Error      string            `json:"error,omitempty"`
+	Available   bool               `json:"available"`
+	Queue       *memory.QueueStats `json:"queue,omitempty"`
+	LedgerSize  int                `json:"ledgerSize"`
+	LastLedger  *ledgerView        `json:"lastLedger,omitempty"`
+	LastNightly *ledgerView        `json:"lastNightly,omitempty"`
+	Error       string             `json:"error,omitempty"`
 }
 
 // purgeRequest is POST /api/memory/purge. Selection IDs name the records the
@@ -135,6 +152,36 @@ func (d *Daemon) memoryUserOf(w http.ResponseWriter, r *http.Request) (User, boo
 	return *who.user, true
 }
 
+// memoryBank resolves the signed-in User behind r, enforces method, and opens
+// the caller's bank. Authentication and method failures are answered here. A
+// bank-open failure is answered with failCode: 500 on the list, ledger and
+// purge routes, 503 on the status route (plain text; the page treats any
+// status-route failure as the Unavailable chip).
+func (d *Daemon) memoryBank(w http.ResponseWriter, r *http.Request, method string, failCode int) (memory.Memory, bool) {
+	user, ok := d.memoryUserOf(w, r)
+	if !ok {
+		return nil, false
+	}
+	if r.Method != method {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return nil, false
+	}
+	bank, err := d.profileBankFor(user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), failCode)
+		return nil, false
+	}
+	return bank, true
+}
+
+// memoryQuery reads the page search text: q first, query as fallback, trimmed.
+func memoryQuery(r *http.Request) string {
+	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+		return q
+	}
+	return strings.TrimSpace(r.URL.Query().Get("query"))
+}
+
 // memoryLimit parses the list limit: empty means the default, garbage means
 // the default, and the engine clamps the rest.
 func memoryLimit(r *http.Request, def int) int {
@@ -153,25 +200,13 @@ func memoryLimit(r *http.Request, def int) int {
 // only. An empty q lists the newest first; a q searches through Recall. The
 // bank is always the caller's, so no other User's Rules ever show.
 func (d *Daemon) handleRulesList(w http.ResponseWriter, r *http.Request) {
-	user, ok := d.memoryUserOf(w, r)
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusInternalServerError)
 	if !ok {
 		return
 	}
-	if r.Method != "GET" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	bank, err := d.profileBankFor(user.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
-		q = strings.TrimSpace(r.URL.Query().Get("query"))
-	}
 	var rules []memory.Rule
-	if q == "" {
+	var err error
+	if q := memoryQuery(r); q == "" {
 		rules, err = bank.ListRules(r.Context(), memoryLimit(r, 50))
 	} else {
 		rules, err = bank.Recall(r.Context(), memory.Redact(q), memoryLimit(r, memory.MaxRecall))
@@ -191,25 +226,13 @@ func (d *Daemon) handleRulesList(w http.ResponseWriter, r *http.Request) {
 // candidates, never injected. An empty q lists the newest first; a q searches
 // through SearchObservations. The bank is always the caller's.
 func (d *Daemon) handleObservationsList(w http.ResponseWriter, r *http.Request) {
-	user, ok := d.memoryUserOf(w, r)
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusInternalServerError)
 	if !ok {
 		return
 	}
-	if r.Method != "GET" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	bank, err := d.profileBankFor(user.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
-		q = strings.TrimSpace(r.URL.Query().Get("query"))
-	}
 	var obs []memory.Observation
-	if q == "" {
+	var err error
+	if q := memoryQuery(r); q == "" {
 		obs, err = bank.ListObservations(r.Context(), memoryLimit(r, 50))
 	} else {
 		obs, err = bank.SearchObservations(r.Context(), memory.Redact(q), memoryLimit(r, memory.MaxRecall))
@@ -229,17 +252,8 @@ func (d *Daemon) handleObservationsList(w http.ResponseWriter, r *http.Request) 
 // oldest first. Queue mutations and nightly stages share it; the page splits
 // the last nightly run from the tail.
 func (d *Daemon) handleMemoryLedger(w http.ResponseWriter, r *http.Request) {
-	user, ok := d.memoryUserOf(w, r)
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusInternalServerError)
 	if !ok {
-		return
-	}
-	if r.Method != "GET" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	bank, err := d.profileBankFor(user.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	rows, err := bank.Ledger(r.Context())
@@ -260,17 +274,8 @@ func (d *Daemon) handleMemoryLedger(w http.ResponseWriter, r *http.Request) {
 // engine or bank failure answers 503 with available false, which the page
 // shows as the Unavailable chip and never blocks the turn.
 func (d *Daemon) handleMemoryStatus(w http.ResponseWriter, r *http.Request) {
-	user, ok := d.memoryUserOf(w, r)
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusServiceUnavailable)
 	if !ok {
-		return
-	}
-	if r.Method != "GET" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	bank, err := d.profileBankFor(user.ID)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, memoryStatus{Available: false, Error: err.Error()})
 		return
 	}
 	items, err := bank.Queue(r.Context())
@@ -289,7 +294,7 @@ func (d *Daemon) handleMemoryStatus(w http.ResponseWriter, r *http.Request) {
 		last := toLedgerView(rows[len(rows)-1])
 		out.LastLedger = &last
 		for i := len(rows) - 1; i >= 0; i-- {
-			if rows[i].RunID != "queue" {
+			if rows[i].RunID != queueLedgerRunID {
 				nightly := toLedgerView(rows[i])
 				out.LastNightly = &nightly
 				break
@@ -305,12 +310,8 @@ func (d *Daemon) handleMemoryStatus(w http.ResponseWriter, r *http.Request) {
 // purge is refused and nothing is deleted. An empty selection is refused the
 // same way, so a stray POST never vacuums the bank.
 func (d *Daemon) handleMemoryPurge(w http.ResponseWriter, r *http.Request) {
-	user, ok := d.memoryUserOf(w, r)
+	bank, ok := d.memoryBank(w, r, http.MethodPost, http.StatusInternalServerError)
 	if !ok {
-		return
-	}
-	if r.Method != "POST" {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body purgeRequest
@@ -323,20 +324,13 @@ func (d *Daemon) handleMemoryPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sel := memory.Selection{
-		Observations: body.Observations, Rules: body.Rules,
-		Queue: body.Queue, Ledger: body.Ledger,
+		Observations: body.Observations,
+		Rules:        body.Rules,
+		Queue:        body.Queue,
+		Ledger:       body.Ledger,
 	}
 	if len(sel.Observations)+len(sel.Rules)+len(sel.Queue)+len(sel.Ledger) == 0 {
 		http.Error(w, "nothing selected", http.StatusBadRequest)
-		return
-	}
-	bank, err := d.profileBankFor(user.ID)
-	if err != nil {
-		if errors.Is(err, memory.ErrInvalid) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	res, err := bank.Purge(r.Context(), sel)
@@ -345,8 +339,11 @@ func (d *Daemon) handleMemoryPurge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, purgeResultView{
-		Observations: res.Observations, Rules: res.Rules,
-		Queue: res.Queue, Ledger: res.Ledger,
-		Scrubbed: res.Scrubbed, Snapshots: res.Snapshots,
+		Observations: res.Observations,
+		Rules:        res.Rules,
+		Queue:        res.Queue,
+		Ledger:       res.Ledger,
+		Scrubbed:     res.Scrubbed,
+		Snapshots:    res.Snapshots,
 	})
 }
