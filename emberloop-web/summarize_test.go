@@ -150,20 +150,39 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 type summaryCall struct{ model, system, user string }
 
 // scriptedSummarizer is the fake summarizer: replies run in call order and
-// the last one repeats; err fails every call.
+// the last one repeats; err fails every call. window is the input budget
+// Window reports (0 reports a large one). maxInput is the most user text one
+// call takes (0 for no limit); a larger call fails with errSummaryOverflow, as
+// a provider does. partReply answers the chunk calls of a fold.
 type scriptedSummarizer struct {
-	mu      sync.Mutex
-	replies []string
-	err     error
-	calls   []summaryCall
+	mu        sync.Mutex
+	replies   []string
+	err       error
+	calls     []summaryCall
+	window    int
+	maxInput  int
+	partReply string
+}
+
+func (f *scriptedSummarizer) Window(string) int {
+	if f.window > 0 {
+		return f.window
+	}
+	return 1 << 30
 }
 
 func (f *scriptedSummarizer) Summarize(model, system, user string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, summaryCall{model, system, user})
+	if f.maxInput > 0 && len(user) > f.maxInput {
+		return "", errSummaryOverflow
+	}
 	if f.err != nil {
 		return "", f.err
+	}
+	if f.partReply != "" && strings.HasPrefix(system, foldPrompt("")) {
+		return f.partReply, nil
 	}
 	if len(f.replies) == 0 {
 		return "", nil

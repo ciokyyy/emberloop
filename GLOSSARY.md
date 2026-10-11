@@ -88,6 +88,10 @@ _Avoid_: Compact, summarize, reset
 The document a pig model writes from a Session's Event log, sent as the first prompt of the new harness handle after a Compress. It is shown as a collapsed block, not as user input.
 _Avoid_: Summary, checkpoint
 
+**Fold**:
+Part of a Compress for input over the summarizer window: the Event log is summarized in parts, the part summaries are summarized again, and the Handoff call reads what fits. Oversize tool results are cut first.
+_Avoid_: Truncate, trim
+
 **Idle**:
 A Session is idle when no turn runs or starts, no input is queued, no Group it leads is outstanding (a member is working, or a fresh Group's results are unsent), and its last Event is older than the quiet time. The Daemon is idle when every Session is idle, none is starting and no Run runs.
 _Avoid_: Ready, free

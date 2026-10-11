@@ -97,7 +97,7 @@ Compress makes a Session's context smaller. The SDK pig Backend compacts in plac
 - Compress model: Settings page, "Context compression", "Compress model" picks `compress_model` from the authed pig models only. Until it is set, Compress stays disabled and shows why.
 - Auto: after a turn, when context is at or above `compress_threshold_percent` (default 80) and at least `compress_cooldown` turns (default 5) passed since the last compression. `auto_compress` (default true) turns it off. In-place Backends only.
 - Settings page section "Context compression" writes `compress_model`, `auto_compress`, `compress_threshold_percent`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
-- The transcript shows a "Context compressed" card with token counts and the summary for in-place compression, or a divider with the Handoff number, model, fallback step and retries. The meter under the chat refreshes.
+- The transcript shows a "Context compressed" card with token counts and the summary for in-place compression, or a divider with the Handoff number, model, fallback step and retries. Oversize input adds one step Event per fold or fallback, with its reason, before the divider. The meter under the chat refreshes.
 
 ## Push notifications
 

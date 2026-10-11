@@ -109,25 +109,41 @@ the driver ticks boxes and marks done, nothing else writes them.
   retries, error when the summarizer call failed) and the Handoff prompt Event
   (`handoff:true`, `sender:"system"`). It runs the Handoff as the first turn
   through `runTurn` and releases the old handle once that turn works (or ends).
+  Each fold and fallback step of `writeHandoff` appends a `compress_step` Event
+  (text: the reason) before the `compressed` Event.
   Session ID, Event log and metadata stay. A compress waits while a Group of the Session is outstanding (`groupOutstandingLocked`: a Group spawned in this process with results not all sent, or a member with a turn running or queued): it answers 202 `{"waiting":"group"}` and `runDeferredCompress` runs it at the next turn end or Group delivery. A claude Steer that arrives while a Handoff swap runs (`swapping`) degrades to a Follow-up, so the Handoff leads. Tests: `handoff_test.go`, `handoff_queue_test.go`.
 - `summarize.go` is the Handoff summarizer: a one-off pig completion
   (`pigOneShot`) behind the `handoffSummarizer` seam (`pigSummarizer` in
   production, a scripted fake in tests). No tools, no Session. The system prompt
-  is `el.CompressPrompt` plus `compress_instructions`; the user message is
-  `summaryTranscript` (prompts, assistant text, tool calls at last state, errors).
-  Chain (`writeHandoff`): a reply passing `el.CheckHandoff` is used (`summary`);
+  is `el.CompressPrompt` plus `compress_instructions`; the user message is the
+  folded transcript (`summaryBlocks`: prompts, assistant text, tool calls at last
+  state, errors). `Window(model)` is the input budget of one call: the catalog
+  context window less the reply cap, at 4 characters per token (128000 tokens
+  when the catalog lists none). A call the provider refuses for its window
+  (`ai.IsContextOverflow`) fails with `errSummaryOverflow`.
+  Chain (`writeHandoff`): input over the budget is folded first
+  (`summarize_fold.go`). A reply passing `el.CheckHandoff` is used (`summary`);
   empty or wrong-format replies get up to 2 repair retries that restate
   `el.HandoffSections()` (`repair`); then the last non-empty reply is wrapped
   under the headings (`lenient`); no text, or a call error, gives the
-  deterministic Handoff (`deterministic`). `assembleHandoff` appends the last
-  user prompt verbatim and `el.ContinueLine` when a tool call never finished
-  (`openTask`). `dropMemoryBlocks` removes fenced memory blocks (an opening line
-  starting with three backticks and `memory`, closed by a bare three-backtick
-  line) from all text except the user's, in the summarizer input and output.
-  Compress gate: `compress_model` (the spec's `compressModel`) must name an
-  authed pig model (`pigModelAuthed`, the new-Session picker's test). In-place
-  SDK compaction (`compactBackend`) is not gated and does not use the summarizer.
-  Tests: `summarize_test.go`.
+  deterministic Handoff (`deterministic`). A Handoff call the window refuses
+  folds the input again at half its size, up to 2 times. `assembleHandoff`
+  appends the last user prompt verbatim and `el.ContinueLine` when a tool call
+  never finished (`openTask`). `dropMemoryBlocks` removes fenced memory blocks
+  (an opening line starting with three backticks and `memory`, closed by a bare
+  three-backtick line) from all text except the user's, in the summarizer input
+  and output. Compress gate: `compress_model` (the spec's `compressModel`) must
+  name an authed pig model (`pigModelAuthed`, the new-Session picker's test).
+  In-place SDK compaction (`compactBackend`) is not gated and does not use the
+  summarizer. Tests: `summarize_test.go`, `summarize_fold_test.go`.
+- `summarize_fold.go` folds oversize Handoff input. Tool results are cut to
+  head and tail at 2000 characters. Input over the budget is packed into runs;
+  each run is summarized under a `PART i OF n:` label, and the run summaries
+  are folded the same way until they fit. A run the summarizer refuses is
+  halved between its Events while it is over 8000 characters; one Event does
+  not split, so it goes to the floor at once. At the floor the tool results are
+  cut to 500 characters of head and the run is sent once more. Still refused:
+  `errNoFit`, and the deterministic Handoff.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
   <file> stdio` on the user's Grok subscription login, through the plain
   `ClaudeBackend` ACP path (`metaHook`, `promptWrap`, `waitMCP`, `mcpEnv`).

@@ -63,7 +63,7 @@ func capText(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "\n[cut]"
+	return headOf(s, n) + "\n[cut]"
 }
 
 // buildHandoff writes the deterministic Handoff: first user prompt, last
@@ -209,7 +209,8 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	}
 	before := lastUsedTokens(events)
 	d.appendEvent(id, "status", "", "working")
-	res := writeHandoff(d.summarizer, model, instructions, events)
+	note := func(reason string) { d.appendEvent(id, "compress_step", reason, "") }
+	res := writeHandoff(d.summarizer, model, instructions, events, note)
 	text := res.text
 
 	emit := func(kind, text, status string) { d.appendEvent(id, kind, text, status) }
