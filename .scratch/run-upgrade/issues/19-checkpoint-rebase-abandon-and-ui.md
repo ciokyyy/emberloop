@@ -4,9 +4,9 @@
 
 **Blocked by:** spec-branch-core (09)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Rebase action; conflict becomes Needs-you with files
-- [ ] Run view shows branch name and commits behind master
-- [ ] Abandon removes branches and worktrees after confirmation
-- [ ] Seam and `RunsView.test.js` tests; `.emberloop/check` passes
+- [x] Rebase action; conflict becomes Needs-you with files
+- [x] Run view shows branch name and commits behind master
+- [x] Abandon removes branches and worktrees after confirmation
+- [x] Seam and `RunsView.test.js` tests; `.emberloop/check` passes
