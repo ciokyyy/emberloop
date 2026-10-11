@@ -4,15 +4,15 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Any `DELETE` outside purge fails with `use purge`; a `rules` UPDATE that changes more than `status` fails
-- [ ] FTS stays in sync across insert, update and delete, including the update trigger mnemopi lacks
-- [ ] A query with quotes, dashes, colons, `AND`/`OR` and parentheses never errors and never injects syntax
-- [ ] An identifier such as `TestUploadHandler` also matches `upload handler`
-- [ ] Search returns only live rows (not superseded, not dormant) using the `EXISTS` filter
-- [ ] Purge removes chosen records, rebuilds FTS, runs `VACUUM` and clears the text from snapshots, queue and ledger
-- [ ] Snapshots use `VACUUM INTO`, keep 10, and skip when the last one is under 6 hours old
-- [ ] A contract test suite runs against the real engine and the fake `Memory`
-- [ ] Concurrent writers (nightly job, miner, tool call) serialize without `SQLITE_BUSY`
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Any `DELETE` outside purge fails with `use purge`; a `rules` UPDATE that changes more than `status` fails
+- [x] FTS stays in sync across insert, update and delete, including the update trigger mnemopi lacks
+- [x] A query with quotes, dashes, colons, `AND`/`OR` and parentheses never errors and never injects syntax
+- [x] An identifier such as `TestUploadHandler` also matches `upload handler`
+- [x] Search returns only live rows (not superseded, not dormant) using the `EXISTS` filter
+- [x] Purge removes chosen records, rebuilds FTS, runs `VACUUM` and clears the text from snapshots, queue and ledger
+- [x] Snapshots use `VACUUM INTO`, keep 10, and skip when the last one is under 6 hours old
+- [x] A contract test suite runs against the real engine and the fake `Memory`
+- [x] Concurrent writers (nightly job, miner, tool call) serialize without `SQLITE_BUSY`
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes

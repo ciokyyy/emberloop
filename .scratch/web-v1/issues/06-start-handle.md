@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Create, resume and compress share one code path for owner, tools and injections
 - [x] A Worker, Reviewer or scout has the same tool set before and after a compress (no `remember` appears)
@@ -12,4 +12,4 @@
 - [x] Injection order after compress is Profile, recall, Handoff; before memory exists the hook is a no-op
 - [x] Parent-id links for `spawn`, `steer`, `check` and `cancel` survive the swap
 - [x] Daemon-seam tests cover all of the above on the fake Backend
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes

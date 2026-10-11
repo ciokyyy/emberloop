@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Own group first and open; other groups collapsed with count and online dot
 - [x] Colored left bar per owner; Project headers; Subagents nested; Runs tagged
@@ -12,4 +12,4 @@
 - [x] Each user prompt shows a sender badge; system prompts show none; the Session header shows the creator
 - [x] Layout follows `web/README.md` design rules and works on `<md` screens
 - [x] vitest covers grouping, filters and badges
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes

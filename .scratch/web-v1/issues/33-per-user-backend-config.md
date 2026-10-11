@@ -4,12 +4,12 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A claude Session of User A does not see files in User B's config directory
-- [ ] A note in this ticket lists what pig and grok load by themselves and what was done about it
-- [ ] Tests at the Daemon seam assert the environment passed to the fake harness per owner
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A claude Session of User A does not see files in User B's config directory
+- [x] A note in this ticket lists what pig and grok load by themselves and what was done about it
+- [x] Tests at the Daemon seam assert the environment passed to the fake harness per owner
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
 
 ## Note: what each harness loads by itself
 
