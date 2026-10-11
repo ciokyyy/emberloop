@@ -4,13 +4,13 @@
 
 **Blocked by:** 07, 15, 16
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A truncated or rewritten file resets the cursor; a torn last line is not read
-- [ ] Handoff text, injection blocks and `sender=system` Events are never mined
-- [ ] Golden cases: guardrail phrases accepted; `no problem`, `never mind`, `no worries` rejected; `Perfect! Now let's add X` rejected; bare praise under 25 chars rejected; CJK corrections accepted
-- [ ] A steer from User B inside User A's Session lands in B's bank only
-- [ ] "always return wrapped errors" and "never return wrapped errors" are related as contradicts, not merged
-- [ ] Each observation passes the grounding check and is redacted before storage
-- [ ] Tests drive the miner with canned `events.jsonl` files
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A truncated or rewritten file resets the cursor; a torn last line is not read
+- [x] Handoff text, injection blocks and `sender=system` Events are never mined
+- [x] Golden cases: guardrail phrases accepted; `no problem`, `never mind`, `no worries` rejected; `Perfect! Now let's add X` rejected; bare praise under 25 chars rejected; CJK corrections accepted
+- [x] A steer from User B inside User A's Session lands in B's bank only
+- [x] "always return wrapped errors" and "never return wrapped errors" are related as contradicts, not merged
+- [x] Each observation passes the grounding check and is redacted before storage
+- [x] Tests drive the miner with canned `events.jsonl` files
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
