@@ -87,9 +87,11 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 	s, ok := d.sessions[id]
 	var settled bool
 	var memCopy []Event
+	var workDir string
 	if ok {
 		settled = s.meta.Status == "ended" || s.Idle(d.now(), MinerSettleWindow, d.groupOutstandingLocked(id))
 		memCopy = append([]Event(nil), s.events...)
+		workDir = s.meta.WorkDir
 	} else {
 		// A Session the Daemon never loaded (canned file, reload gap) mines
 		// only when its meta says it ended; idle needs live state.
@@ -97,6 +99,7 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			var meta SessionMeta
 			if json.Unmarshal(raw, &meta) == nil && meta.Status == "ended" {
 				settled = true
+				workDir = meta.WorkDir
 			}
 		}
 	}
@@ -227,12 +230,14 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			Confirmed:     dec.confirmed,
 		})
 		_, rel, err := memory.DedupAndStore(ctx, bank, memory.Observation{
-			SessionID:   id,
-			EventID:     eventID,
-			Author:      author,
-			Quote:       redactedQuote,
-			Kind:        dec.kind,
-			DeciderJSON: string(doc),
+			SessionID:      id,
+			EventID:        eventID,
+			Author:         author,
+			Quote:          redactedQuote,
+			Kind:           dec.kind,
+			SubjectKey:     memory.NormalizeSubjectKey(memory.ProposeSubjectKey(redactedQuote)),
+			DeciderJSON:    string(doc),
+			ObservedCommit: gitHead(workDir),
 		})
 		if err != nil {
 			if errors.Is(err, memory.ErrInvalid) {

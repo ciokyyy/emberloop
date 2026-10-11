@@ -227,6 +227,16 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   payloads, limits (including concurrency), roles, cross-User banks, the command
   on every path with its invalid and remainder cases, and recall isolation at
   the Daemon seam; `Composer.test.js` covers the button.
+- Rule queue approval (`rules.go`, `memory/queue.go`): pending Rule candidates
+  with one proposed generalization and its quotes. `GET /api/rules/queue`
+  lists, `POST /api/rules/queue/{id}/decide` approves (optional edit to text,
+  kind, subject key) or rejects, `POST /api/rules/queue/batch` decides many by
+  IDs or by Session, `POST /api/rules/queue/promote` enqueues a recurring
+  subject, `GET /api/rules/queue/stats` reports budget and latency. Approve
+  creates the Rule and supersedes the same key and author, keeps the proposal
+  in the queue row, refuses over-300 text; reject keeps the label. A single
+  mention never promotes; the same key in two Sessions does unless situational.
+  `rules_test.go` covers each path on the fake clock at the Daemon seam.
 - Auto-recall injection (`recall_inject.go`): at create and compress the Daemon
   builds Profile plus recall from the task prompt (the Handoff text for
   compress) through `recallBlockFor`: bank `Recall` (20 candidates, `Redact`ed

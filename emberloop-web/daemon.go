@@ -281,6 +281,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/profile/restore", d.handleProfileRestore)
 	mux.HandleFunc("/api/profile/queue", d.handleProfileQueue)
 	mux.HandleFunc("/api/profile/queue/", d.handleProfileQueueSub)
+	mux.HandleFunc("/api/rules/queue", d.handleRulesQueue)
+	mux.HandleFunc("/api/rules/queue/", d.handleRulesQueueSub)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	mux.HandleFunc("/api/specs", d.handleSpecs)

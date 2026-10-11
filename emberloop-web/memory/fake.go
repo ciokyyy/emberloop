@@ -35,6 +35,7 @@ func NewFake(opts Options) *Fake {
 }
 
 func (f *Fake) AddObservation(_ context.Context, o Observation) (int64, error) {
+	o.SubjectKey = NormalizeSubjectKey(o.SubjectKey)
 	if err := validObservation(o); err != nil {
 		return 0, err
 	}
@@ -98,6 +99,22 @@ func (f *Fake) SearchObservations(_ context.Context, text string, limit int) ([]
 	return out, nil
 }
 
+func (f *Fake) ObservationsBySubjectKey(_ context.Context, subjectKey string) ([]Observation, error) {
+	key := NormalizeSubjectKey(subjectKey)
+	if key == "" {
+		return nil, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Observation
+	for _, o := range f.obs {
+		if o.SubjectKey == key {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
 func (f *Fake) AddRule(_ context.Context, r Rule) (Rule, error) {
 	if r.RuleID == "" {
 		r.RuleID = newID()
@@ -106,6 +123,7 @@ func (f *Fake) AddRule(_ context.Context, r Rule) (Rule, error) {
 	if r.Status == "" {
 		r.Status = StatusActive
 	}
+	r.SubjectKey = NormalizeSubjectKey(r.SubjectKey)
 	r.ApprovedAt = f.now()
 	if err := validRule(r); err != nil {
 		return Rule{}, err
@@ -126,6 +144,7 @@ func (f *Fake) ReviseRule(_ context.Context, next Rule) (Rule, error) {
 	if next.Status == "" {
 		next.Status = StatusActive
 	}
+	next.SubjectKey = NormalizeSubjectKey(next.SubjectKey)
 	next.ApprovedAt = f.now()
 	if err := validRule(next); err != nil {
 		return Rule{}, err
@@ -201,6 +220,28 @@ func (f *Fake) Recall(_ context.Context, text string, limit int) ([]Rule, error)
 	for _, h := range hits[:min(len(hits), clampLimit(limit))] {
 		out = append(out, h.r)
 	}
+	return out, nil
+}
+
+func (f *Fake) RulesBySubjectKey(_ context.Context, subjectKey string) ([]Rule, error) {
+	key := NormalizeSubjectKey(subjectKey)
+	if key == "" {
+		return nil, nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Rule
+	for _, r := range f.rules {
+		if r.SubjectKey == key {
+			out = append(out, copyRule(r))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].RuleID != out[j].RuleID {
+			return out[i].RuleID < out[j].RuleID
+		}
+		return out[i].Version < out[j].Version
+	})
 	return out, nil
 }
 

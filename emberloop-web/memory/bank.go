@@ -146,8 +146,10 @@ func (b *Bank) Close() error {
 	return b.closeErr
 }
 
-// AddObservation stores a grounded candidate and returns its ID.
+// AddObservation stores a grounded candidate and returns its ID. The subject
+// key is normalized before storage so recurrence groups deterministically.
 func (b *Bank) AddObservation(ctx context.Context, o Observation) (int64, error) {
+	o.SubjectKey = NormalizeSubjectKey(o.SubjectKey)
 	if err := validObservation(o); err != nil {
 		return 0, err
 	}
@@ -235,6 +237,19 @@ func (b *Bank) ObservationByEvent(ctx context.Context, sessionID, eventID string
 	return out, nil
 }
 
+// ObservationsBySubjectKey returns every observation with the normalized
+// subject key, oldest first. Empty key returns nothing: keyless observations
+// never promote.
+func (b *Bank) ObservationsBySubjectKey(ctx context.Context, subjectKey string) ([]Observation, error) {
+	key := NormalizeSubjectKey(subjectKey)
+	if key == "" {
+		return nil, nil
+	}
+	return queryAll(ctx, b.rdb, scanObservation, `SELECT `+observationCols+`
+		FROM observations AS o WHERE o.subject_key = ? ORDER BY o.id`, key)
+}
+
+
 func scanObservation(s rowScanner) (Observation, error) {
 	var o Observation
 	var created string
@@ -248,7 +263,8 @@ const ruleCols = `r.rule_id, r.version, r.text, r.kind, r.subject_key, r.anchors
 	r.observed_commit, r.status, r.source_observation_ids, r.approved_by, r.approved_at`
 
 // AddRule stores version 1 of a new Rule. An empty RuleID gets a fresh ID. The
-// bank sets Version, Status (default active) and ApprovedAt.
+// bank sets Version, Status (default active) and ApprovedAt. Text over
+// MaxRuleChars is refused at write, never clipped.
 func (b *Bank) AddRule(ctx context.Context, r Rule) (Rule, error) {
 	if r.RuleID == "" {
 		r.RuleID = newID()
@@ -257,6 +273,7 @@ func (b *Bank) AddRule(ctx context.Context, r Rule) (Rule, error) {
 	if r.Status == "" {
 		r.Status = StatusActive
 	}
+	r.SubjectKey = NormalizeSubjectKey(r.SubjectKey)
 	r.ApprovedAt = b.now()
 	if err := validRule(r); err != nil {
 		return Rule{}, err
@@ -283,6 +300,7 @@ func (b *Bank) ReviseRule(ctx context.Context, next Rule) (Rule, error) {
 	if next.Status == "" {
 		next.Status = StatusActive
 	}
+	next.SubjectKey = NormalizeSubjectKey(next.SubjectKey)
 	next.ApprovedAt = b.now()
 	if err := validRule(next); err != nil {
 		return Rule{}, err
@@ -377,6 +395,18 @@ func (b *Bank) Recall(ctx context.Context, text string, limit int) ([]Rule, erro
 		                AND live.status NOT IN ('superseded', 'dormant'))
 		ORDER BY bm25(rules_fts), r.id
 		LIMIT ?`, q, clampLimit(limit))
+}
+
+// RulesBySubjectKey returns every Rule version with the normalized subject
+// key, ordered by rule ID then version. Callers keep the latest live version
+// per Rule for supersession and disagreement checks.
+func (b *Bank) RulesBySubjectKey(ctx context.Context, subjectKey string) ([]Rule, error) {
+	key := NormalizeSubjectKey(subjectKey)
+	if key == "" {
+		return nil, nil
+	}
+	return queryAll(ctx, b.rdb, scanRule, `SELECT `+ruleCols+`
+		FROM rules AS r WHERE r.subject_key = ? ORDER BY r.rule_id, r.version`, key)
 }
 
 func scanRule(s rowScanner) (Rule, error) {

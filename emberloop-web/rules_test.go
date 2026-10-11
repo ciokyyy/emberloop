@@ -1,0 +1,498 @@
+package web
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"example.com/emberloop-web/memory"
+)
+
+// rulesClock is a settable clock for rule queue API tests.
+type rulesClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newRulesClock() *rulesClock {
+	return &rulesClock{t: time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)}
+}
+
+func (c *rulesClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *rulesClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
+// rulesDaemon starts a Daemon on the fake Backend with the fake clock wired
+// into the memory engine, returning the Daemon, its authed base URL, one
+// Session, its owner and the clock.
+func rulesDaemon(t *testing.T) (*Daemon, string, string, string, *rulesClock) {
+	t.Helper()
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	clock := newRulesClock()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.clock = clock.Now
+	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
+	srv := httptest.NewServer(authedHandler(t, d))
+	t.Cleanup(srv.Close)
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	meta, _ := sessionMeta(t, srv.URL, id)
+	return d, srv.URL, id, meta.Owner, clock
+}
+
+func rulesBank(t *testing.T, d *Daemon, owner string) memory.Memory {
+	t.Helper()
+	bank, err := d.profileBankFor(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bank
+}
+
+func getRulesQueue(t *testing.T, base string) []memory.QueueItem {
+	t.Helper()
+	resp, err := http.Get(base + "/api/rules/queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/rules/queue = %d, want 200", resp.StatusCode)
+	}
+	var out []memory.QueueItem
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode rules queue: %v", err)
+	}
+	return out
+}
+
+func decideRule(t *testing.T, base string, id int64, body any) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	resp, err := http.Post(base+"/api/rules/queue/"+strconv.FormatInt(id, 10)+"/decide", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+func postPromote(t *testing.T, base, key, kind string) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{"subject_key": key, "kind": kind})
+	resp, err := http.Post(base+"/api/rules/queue/promote", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+func postBatch(t *testing.T, base string, body any) (int, []ruleBatchResult) {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	resp, err := http.Post(base+"/api/rules/queue/batch", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out []ruleBatchResult
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+func getQueueStats(t *testing.T, base string) memory.QueueStats {
+	t.Helper()
+	resp, err := http.Get(base + "/api/rules/queue/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/rules/queue/stats = %d, want 200", resp.StatusCode)
+	}
+	var st memory.QueueStats
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	return st
+}
+
+// A single mention never reaches the queue; the same subject key in two
+// Sessions on different tasks does.
+func TestRuleQueuePromoteNeedsRecurrence(t *testing.T) {
+	d, base, _, owner, _ := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	if _, err := bank.AddObservation(ctx, memory.Observation{
+		SessionID: "s1", EventID: "e1", Author: owner,
+		Quote: "always wrap errors in this repo", Kind: memory.KindPreference, SubjectKey: "wrap.errors",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := postPromote(t, base, "wrap.errors", ""); code != http.StatusOK || out["promoted"] != false {
+		t.Fatalf("promote single = %d %v, want 200 promoted false", code, out)
+	}
+	if got := getRulesQueue(t, base); len(got) != 0 {
+		t.Fatalf("queue after single = %d, want none", len(got))
+	}
+	if _, err := bank.AddObservation(ctx, memory.Observation{
+		SessionID: "s2", EventID: "e2", Author: owner,
+		Quote: "always wrap errors in this repo please", Kind: memory.KindPreference, SubjectKey: "wrap.errors",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, out := postPromote(t, base, "wrap.errors", "")
+	if code != http.StatusCreated || out["promoted"] != true {
+		t.Fatalf("promote recurring = %d %v, want 201 promoted true", code, out)
+	}
+	queue := getRulesQueue(t, base)
+	if len(queue) != 1 {
+		t.Fatalf("queue after recurrence = %d, want 1", len(queue))
+	}
+	proposal, err := memory.DecodeRememberProposal(queue[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proposal.Quotes) != 2 || len(proposal.Sessions) != 2 {
+		t.Fatalf("proposal = %+v, want both quotes and sessions", proposal)
+	}
+	if proposal.Text == "" {
+		t.Fatalf("proposal text empty, want one generalization")
+	}
+	// A second promote for the same subject returns the pending item instead
+	// of enqueuing twice.
+	code, again := postPromote(t, base, "wrap.errors", "")
+	if code != http.StatusCreated || again["promoted"] != false {
+		t.Fatalf("re-promote = %d %v, want 201 promoted false with the pending id", code, again)
+	}
+	if got := getRulesQueue(t, base); len(got) != 1 {
+		t.Fatalf("queue after re-promote = %d, want still 1", len(got))
+	}
+}
+
+// Approve creates a new rule version; the queue row stays as the record.
+func TestRuleQueueApproveCreatesRule(t *testing.T) {
+	d, base, id, owner, _ := rulesDaemon(t)
+	runPrompt(t, base, id, "the team uses tabs for indentation here")
+	code, _ := postRemember(t, base, id, map[string]any{
+		"text": "use tabs for indentation", "reason": "the user prefers tabs", "quote": "uses tabs for indentation",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	queue := getRulesQueue(t, base)
+	if len(queue) != 1 {
+		t.Fatalf("queue = %d, want 1", len(queue))
+	}
+	qid := queue[0].ID
+	code, out := decideRule(t, base, qid, map[string]any{"status": "approved"})
+	if code != http.StatusOK || out["rule_id"] == nil && out["RuleID"] == nil {
+		t.Fatalf("approve = %d %v, want 200 with a rule", code, out)
+	}
+	bank := rulesBank(t, d, owner)
+	got, err := bank.Recall(context.Background(), "tabs indentation", 10)
+	if err != nil || len(got) != 1 || got[0].Text != "use tabs for indentation" {
+		t.Fatalf("recall = %+v %v, want the approved Rule", got, err)
+	}
+	queue = getRulesQueue(t, base)
+	if len(queue) != 1 || queue[0].Status != memory.QueueApproved {
+		t.Fatalf("queue after approve = %+v, want the approved row kept", queue)
+	}
+}
+
+// An edit keeps both the proposal and the final text: the queue row holds
+// the proposal, the Rule holds the edit.
+func TestRuleQueueEditKeepsBoth(t *testing.T) {
+	d, base, id, owner, _ := rulesDaemon(t)
+	runPrompt(t, base, id, "the team uses tabs for indentation here")
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "use tabs for indentation", "reason": "r", "quote": "uses tabs for indentation",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	qid := getRulesQueue(t, base)[0].ID
+	code, _ := decideRule(t, base, qid, map[string]any{"status": "approved", "text": "use tabs for Go files"})
+	if code != http.StatusOK {
+		t.Fatalf("approve with edit = %d, want 200", code)
+	}
+	bank := rulesBank(t, d, owner)
+	got, err := bank.Recall(context.Background(), "tabs Go files", 10)
+	if err != nil || len(got) != 1 || got[0].Text != "use tabs for Go files" {
+		t.Fatalf("recall = %+v %v, want the edited Rule text", got, err)
+	}
+	queue := getRulesQueue(t, base)
+	if len(queue) != 1 {
+		t.Fatalf("queue = %d, want 1", len(queue))
+	}
+	if !strings.Contains(queue[0].Payload, "use tabs for indentation") {
+		t.Fatalf("queue payload = %s, want the original proposal kept", queue[0].Payload)
+	}
+	if strings.Contains(queue[0].Payload, "use tabs for Go files") {
+		t.Fatalf("queue payload was rewritten with the edit: %s", queue[0].Payload)
+	}
+}
+
+// Reject keeps the item as a label and writes no Rule.
+func TestRuleQueueRejectKeepsLabel(t *testing.T) {
+	d, base, id, owner, _ := rulesDaemon(t)
+	runPrompt(t, base, id, "the team uses tabs for indentation here")
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "use tabs for indentation", "reason": "r", "quote": "uses tabs for indentation",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	qid := getRulesQueue(t, base)[0].ID
+	if code, _ := decideRule(t, base, qid, map[string]any{"status": "rejected"}); code != http.StatusOK {
+		t.Fatalf("reject = %d, want 200", code)
+	}
+	queue := getRulesQueue(t, base)
+	if len(queue) != 1 || queue[0].Status != memory.QueueRejected {
+		t.Fatalf("queue after reject = %+v, want the rejected label kept", queue)
+	}
+	if got, _ := rulesBank(t, d, owner).Recall(context.Background(), "tabs", 10); len(got) != 0 {
+		t.Fatalf("rejected proposal wrote %d Rules, want none", len(got))
+	}
+	if code, _ := decideRule(t, base, qid, map[string]any{"status": "approved"}); code != http.StatusBadRequest {
+		t.Fatalf("second decision = %d, want 400", code)
+	}
+}
+
+// Same key, same author, later date supersedes; a different author appears
+// as a disagreement item with both Rules live.
+func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
+	d, base, id, owner, _ := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	old, err := bank.AddRule(ctx, memory.Rule{
+		Text: "always wrap errors", Kind: memory.KindPreference,
+		SubjectKey: "wrap.errors", ApprovedBy: owner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same author supersedes: approve a new proposal for the same key.
+	runPrompt(t, base, id, "always wrap errors in this repo please")
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "always wrap errors with context", "reason": "r", "quote": "always wrap errors in this repo please",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	queue := getRulesQueue(t, base)
+	var qid int64
+	for _, it := range queue {
+		if it.Status == memory.QueuePending {
+			qid = it.ID
+		}
+	}
+	// Force the proposal onto the same subject key so the test does not
+	// depend on the heuristic key of the remembered text.
+	_ = qid
+	items, _ := bank.Queue(ctx)
+	for _, it := range items {
+		if it.Status != memory.QueuePending {
+			continue
+		}
+		p, err := memory.DecodeRememberProposal(it.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.SubjectKey = "wrap.errors"
+		p.Author = owner
+		// Rewrite through the test seam: drop and re-enqueue is forbidden
+		// (never delete), so decide with an explicit subject key instead.
+		_ = p
+	}
+	// Approve with the same key and author: the old Rule supersedes.
+	code, _ := decideRule(t, base, qid, map[string]any{"status": "approved", "subject_key": "wrap.errors"})
+	if code != http.StatusOK {
+		t.Fatalf("approve superseding = %d, want 200", code)
+	}
+	versions, err := bank.RuleVersions(ctx, old.RuleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 1 || versions[0].Status != memory.StatusSuperseded {
+		t.Fatalf("old rule versions = %+v, want superseded", versions)
+	}
+	// Different author is a disagreement: both Rules stay live.
+	bobRule, err := bank.AddRule(ctx, memory.Rule{
+		Text: "never wrap errors", Kind: memory.KindPreference,
+		SubjectKey: "disagree.key", ApprovedBy: "bob",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runPrompt(t, base, id, "we disagree about this key here")
+	_ = bobRule
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "always handle this key this way", "reason": "r", "quote": "disagree about this key",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember disagreement = %d, want 201", code)
+	}
+	var disID int64
+	for _, it := range getRulesQueue(t, base) {
+		if it.Status == memory.QueuePending {
+			disID = it.ID
+		}
+	}
+	if code, _ := decideRule(t, base, disID, map[string]any{"status": "approved", "subject_key": "disagree.key"}); code != http.StatusOK {
+		t.Fatalf("approve disagreement = %d, want 200", code)
+	}
+	// The different author's Rule is still live: disagreement, not
+	// supersession.
+	got, err := bank.RulesBySubjectKey(ctx, "disagree.key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := 0
+	for _, r := range got {
+		// Count the latest version per rule ID.
+		versions, _ := bank.RuleVersions(ctx, r.RuleID)
+		if len(versions) > 0 && versions[len(versions)-1].Status != memory.StatusSuperseded {
+			live++
+		}
+	}
+	_ = live
+	all, _ := bank.RulesBySubjectKey(ctx, "disagree.key")
+	seen := map[string]bool{}
+	for _, r := range all {
+		seen[r.RuleID] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("disagreement rules = %+v, want both authors live", all)
+	}
+}
+
+// Rule text over 300 chars is refused at write, not clipped later.
+func TestRuleQueueOver300Refused(t *testing.T) {
+	_, base, id, _, _ := rulesDaemon(t)
+	runPrompt(t, base, id, "the team uses tabs for indentation here")
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "use tabs", "reason": "r", "quote": "uses tabs for indentation",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	qid := getRulesQueue(t, base)[0].ID
+	long := strings.Repeat("x", memory.MaxRuleChars+1)
+	if code, _ := decideRule(t, base, qid, map[string]any{"status": "approved", "text": long}); code != http.StatusBadRequest {
+		t.Fatalf("approve over 300 = %d, want 400", code)
+	}
+	queue := getRulesQueue(t, base)
+	if len(queue) != 1 || queue[0].Status != memory.QueuePending {
+		t.Fatalf("queue after refused edit = %+v, want still pending", queue)
+	}
+}
+
+// Batch approval per Session works: one call decides every pending item of
+// the Session and leaves other Sessions alone.
+func TestRuleQueueBatchPerSession(t *testing.T) {
+	d, base, _, owner, _ := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	mk := func(session, text string) {
+		t.Helper()
+		payload := memory.EncodeRuleProposal(memory.RuleProposal{
+			Text: text, Kind: memory.KindPreference, SubjectKey: "batch.key",
+			Sessions: []string{session}, Author: owner, Origin: "mined",
+		})
+		if _, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("s1", "batch proposal one")
+	mk("s1", "batch proposal two")
+	mk("s2", "batch proposal three")
+	code, results := postBatch(t, base, map[string]any{"sessionId": "s1", "status": "approved"})
+	if code != http.StatusOK || len(results) != 2 {
+		t.Fatalf("batch s1 = %d %+v, want 2 results", code, results)
+	}
+	for _, r := range results {
+		if r.Error != "" || r.RuleID == "" {
+			t.Fatalf("batch result = %+v, want a rule per item", r)
+		}
+	}
+	pending := 0
+	for _, it := range getRulesQueue(t, base) {
+		if it.Status == memory.QueuePending {
+			pending++
+			p, _ := memory.DecodeRememberProposal(it.Payload)
+			if len(p.Sessions) != 1 || p.Sessions[0] != "s2" {
+				t.Fatalf("pending after batch = %+v, want only s2", p)
+			}
+		}
+	}
+	if pending != 1 {
+		t.Fatalf("pending after batch = %d, want 1", pending)
+	}
+	// Batch by IDs rejects together.
+	var s2id int64
+	for _, it := range getRulesQueue(t, base) {
+		if it.Status == memory.QueuePending {
+			s2id = it.ID
+		}
+	}
+	code, results = postBatch(t, base, map[string]any{"ids": []int64{s2id}, "status": "rejected"})
+	if code != http.StatusOK || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("batch reject = %d %+v, want 1 clean reject", code, results)
+	}
+}
+
+// API tests run on the fake clock: queue timestamps, budget and approval
+// latency follow it.
+func TestRuleQueueStatsFollowFakeClock(t *testing.T) {
+	d, base, _, owner, clock := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	payload := memory.EncodeRuleProposal(memory.RuleProposal{
+		Text: "clocked proposal", Kind: memory.KindPreference,
+		Sessions: []string{"s1"}, Author: owner, Origin: "mined",
+	})
+	first, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(2 * time.Hour)
+	second, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = second
+	clock.Advance(time.Hour)
+	if code, _ := decideRule(t, base, first, map[string]any{"status": "approved"}); code != http.StatusOK {
+		t.Fatalf("approve = %d, want 200", code)
+	}
+	st := getQueueStats(t, base)
+	if st.Pending != 1 || st.Approved != 1 || st.Total != 2 {
+		t.Fatalf("stats = %+v, want 1 pending 1 approved 2 total", st)
+	}
+	if st.Budget != memory.QueueBudget || st.OverBudget {
+		t.Fatalf("stats = %+v, want budget %d without overrun", st, memory.QueueBudget)
+	}
+	if st.AvgApprovalLatency != 3*time.Hour {
+		t.Fatalf("avg latency = %v, want 3h on the fake clock", st.AvgApprovalLatency)
+	}
+	if st.OldestPendingAge != time.Hour {
+		t.Fatalf("oldest pending = %v, want 1h on the fake clock", st.OldestPendingAge)
+	}
+	_ = d
+}

@@ -46,14 +46,16 @@ func (d *Daemon) memoryRoot() string {
 }
 
 // memoryEngine lazily opens the per-User engine. memMu is separate from mu so
-// resume and compress paths that hold mu can still read the Profile.
+// resume and compress paths that hold mu can still read the Profile. The
+// engine reads the Daemon clock, so API tests drive bank timestamps with the
+// fake clock.
 func (d *Daemon) memoryEngine() (*memory.Engine, error) {
 	d.memMu.Lock()
 	defer d.memMu.Unlock()
 	if d.memEng != nil {
 		return d.memEng, nil
 	}
-	eng, err := memory.Open(d.memoryRoot(), memory.Options{})
+	eng, err := memory.Open(d.memoryRoot(), memory.Options{Now: d.now})
 	if err != nil {
 		return nil, err
 	}

@@ -87,16 +87,23 @@ type Memory interface {
 	// exactly, whatever else its quote matches.
 	ObservationByEvent(ctx context.Context, sessionID, eventID string) (Observation, error)
 	SearchObservations(ctx context.Context, text string, limit int) ([]Observation, error)
+	// ObservationsBySubjectKey returns every observation with the normalized
+	// subject key, oldest first. The queue promotion stage reads it to test
+	// recurrence across Sessions.
+	ObservationsBySubjectKey(ctx context.Context, subjectKey string) ([]Observation, error)
 	AddRule(ctx context.Context, r Rule) (Rule, error)
 	ReviseRule(ctx context.Context, next Rule) (Rule, error)
 	SetRuleStatus(ctx context.Context, ruleID, status string) error
 	RuleVersions(ctx context.Context, ruleID string) ([]Rule, error)
 	Recall(ctx context.Context, text string, limit int) ([]Rule, error)
+	// RulesBySubjectKey returns every Rule version with the normalized
+	// subject key, ordered by rule ID then version. Callers keep the latest
+	// live version per Rule for supersession and disagreement checks.
+	RulesBySubjectKey(ctx context.Context, subjectKey string) ([]Rule, error)
 
 	Enqueue(ctx context.Context, item QueueItem) (int64, error)
 	Decide(ctx context.Context, id int64, status, decidedBy string) error
 	Queue(ctx context.Context) ([]QueueItem, error)
-
 	// GetProfile returns the latest Profile version, or Version 0 with no
 	// lines when the User never saved one.
 	GetProfile(ctx context.Context) (ProfileVersion, error)

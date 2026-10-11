@@ -35,15 +35,19 @@ var (
 // rememberQueuePayload is the JSON of a rule queue item proposed through the
 // remember tool: the proposed text plus who asked for it and why, with the
 // grounding quote and Event. Origin marks remember proposals so the
-// per-Session rate limit counts only them.
+// per-Session rate limit counts only them. SubjectKey groups the proposal
+// with mined observations of the same subject for recurrence and
+// supersession; it is normalized on write.
 type rememberQueuePayload struct {
-	Text      string `json:"text"`
-	Reason    string `json:"reason"`
-	Quote     string `json:"quote"`
-	EventID   string `json:"eventId,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	Author    string `json:"author,omitempty"`
-	Origin    string `json:"origin,omitempty"`
+	Text       string `json:"text"`
+	Reason     string `json:"reason"`
+	Quote      string `json:"quote"`
+	EventID    string `json:"eventId,omitempty"`
+	SessionID  string `json:"sessionId,omitempty"`
+	Author     string `json:"author,omitempty"`
+	Origin     string `json:"origin,omitempty"`
+	SubjectKey string `json:"subject_key,omitempty"`
+	Kind       string `json:"kind,omitempty"`
 }
 
 // recallHit is one structured recall result: a User Rule, an observation or
@@ -203,6 +207,8 @@ func (d *Daemon) proposeRemember(ctx context.Context, sessionID, text, reason, q
 	raw, _ := json.Marshal(rememberQueuePayload{
 		Text: memory.Redact(text), Reason: reason, Quote: memory.Redact(quote),
 		EventID: strconv.FormatInt(seq, 10), SessionID: sessionID, Author: author, Origin: "remember",
+		SubjectKey: memory.NormalizeSubjectKey(memory.ProposeSubjectKey(text)),
+		Kind:       memory.KindPreference,
 	})
 	return bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: string(raw)})
 }
