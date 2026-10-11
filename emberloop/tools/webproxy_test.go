@@ -346,7 +346,11 @@ func TestWebProxyCheckIsReadOnly(t *testing.T) {
 	if !ok || !ro.ReadOnly() {
 		t.Fatal("check must stay read-only so the MCP server can batch it")
 	}
-	for _, name := range []string{"spawn", "steer", "cancel", "submit"} {
+	recall := WebProxyTool("recall")
+	if ro, ok := recall.(ReadOnly); !ok || !ro.ReadOnly() {
+		t.Fatal("recall must stay read-only so the MCP server can batch it")
+	}
+	for _, name := range []string{"spawn", "steer", "cancel", "submit", "profile", "remember"} {
 		if ro, ok := WebProxyTool(name).(ReadOnly); ok && ro.ReadOnly() {
 			t.Errorf("%s must not be read-only", name)
 		}
@@ -357,7 +361,7 @@ func TestWebProxyCheckIsReadOnly(t *testing.T) {
 // stopping, spawning or submitting from inside execute would bypass the
 // harness that owns the turn.
 func TestWebProxiesStayOutOfExecute(t *testing.T) {
-	for _, name := range []string{"spawn", "steer", "check", "cancel", "submit"} {
+	for _, name := range []string{"spawn", "steer", "check", "cancel", "submit", "profile", "remember", "recall"} {
 		if !ExecuteExcludedTool(WebProxyTool(name)) {
 			t.Errorf("%s proxy must stay out of execute", name)
 		}

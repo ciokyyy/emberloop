@@ -27,12 +27,14 @@ via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
   read-only roles; MCP tools serve under their configured names and as
   `tools.<server>.<name>`, with one description line per server),
   `webproxy.go` (the Daemon-hosted tools the single el server serves under the
-  web Daemon: spawn, steer, check, cancel and profile as thin HTTP proxies
-  bound by `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL`, registered only for the web
-  roles that allow them, marked so `execute` never serves them; profile reads
-  memory://profile and proposes patches that wait for human approval, only on
-  an explicit User request; submit stays defined but unoffered while
-  `WebSubmitEnabled` in `toolresolve.go` is false),
+  web Daemon: spawn, steer, check, cancel, profile, remember and recall as thin
+  HTTP proxies bound by `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL`, registered only
+  for the web roles that allow them, marked so `execute` never serves them;
+  profile reads memory://profile and proposes patches that wait for human
+  approval, only on an explicit User request; remember proposes Rule candidates
+  that wait for human approval, only on top-level Sessions; recall searches the
+  caller's bank and Project notes on every role; submit stays defined but
+  unoffered while `WebSubmitEnabled` in `toolresolve.go` is false),
   `websearch.go`
 (the provider-neutral search tool: Brave then Exa under auto, a 15-minute
 answer cache, quota rows; adapters and response parsing live in

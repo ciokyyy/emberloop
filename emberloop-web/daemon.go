@@ -908,7 +908,34 @@ func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, t
 		imageIDs = append(imageIDs, d.storeInlineImages(id, images)...)
 		images = nil
 	}
-	res, code := d.routeLiveImages(id, mode, text, images, imageIDs, d.senderOf(r))
+	from := d.senderOf(r)
+	// A structural /remember action on the first line of a typed sender=user
+	// message creates a Rule directly after grounding. Pasted blocks (the
+	// command on a later line), colon forms and system messages route as
+	// normal prompts and create nothing.
+	if from.kind == senderUser {
+		if _, _, isCommand := parseRememberCommand(text); isCommand {
+			res, code, msg := d.handleRememberCommand(id, mode, text, images, imageIDs, from)
+			if code != 0 {
+				writeJSON(w, code, map[string]any{"error": msg})
+				return
+			}
+			if res.rest == "" && len(images) == 0 && len(imageIDs) == 0 {
+				writeJSON(w, http.StatusCreated, map[string]any{"seq": res.event.Seq, "ruleId": res.ruleID})
+				return
+			}
+			routed, rcode := d.routeLiveImages(id, mode, res.rest, images, imageIDs, from)
+			if rcode != http.StatusAccepted {
+				writeJSON(w, rcode, map[string]any{"error": "session is resuming; send the message again", "ruleId": res.ruleID})
+				return
+			}
+			out := writeSendResult(routed)
+			out["ruleId"] = res.ruleID
+			writeJSON(w, rcode, out)
+			return
+		}
+	}
+	res, code := d.routeLiveImages(id, mode, text, images, imageIDs, from)
 	if code != http.StatusAccepted {
 		if code == http.StatusNotFound {
 			http.NotFound(w, r)
@@ -1498,6 +1525,10 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		d.handleSessionProfile(w, r, id)
 	case sub == "profile/propose" && r.Method == "POST":
 		d.handleSessionProfilePropose(w, r, id)
+	case sub == "remember" && r.Method == "POST":
+		d.handleSessionRemember(w, r, id)
+	case sub == "recall" && r.Method == "GET":
+		d.handleSessionRecall(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}

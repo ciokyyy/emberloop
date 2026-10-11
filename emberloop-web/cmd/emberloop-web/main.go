@@ -104,6 +104,8 @@ func main() {
 	}
 	pig.ReadProfile = d.ReadProfileForSession
 	pig.ProposeProfile = d.ProposeProfileFromSession
+	pig.Remember = d.RememberFromSession
+	pig.Recall = d.RecallForSession
 	pig.SudoGate = func(sessionID string) func(context.Context, string, string) (string, bool) {
 		return tools.HTTPSudoGate(daemonURL, sessionID, d.MachineToken())
 	}

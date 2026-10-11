@@ -81,17 +81,20 @@ var WebSubmitEnabled = false
 // webProxyRoles is the Daemon-tool matrix for the single el MCP server: which
 // Daemon-hosted tools each web role serves. A top-level parent manages its
 // children (spawn, steer, check, cancel), reads and proposes its Profile
-// (profile) and never needs submit; a spawned worker spawns its own (nesting
-// kept) but never steers, peeks at or stops, and never touches the Profile;
-// a scout only reads. Submit stays listed for web-worker and scout so a
+// (profile), proposes Rules to remember (remember) and searches memory
+// (recall), and never needs submit; a spawned worker spawns its own (nesting
+// kept) and searches memory but never steers, peeks at or stops, and never
+// touches the Profile or proposes Rules; a scout only reads memory and
+// settles. Submit stays listed for web-worker and scout so a
 // one-line re-enable restores it, but withWebProxies filters it while
 // WebSubmitEnabled is false. Children never hold the parent's full set:
-// workers, scouts and Reviewers get recall only (ticket 18), never profile.
+// workers, scouts and Reviewers get recall only (ticket 18), never profile
+// or remember.
 var webProxyRoles = map[string][]string{
-	"web":        {"spawn", "steer", "check", "cancel", "profile"},
-	"web-worker": {"spawn", "submit"},
-	"scout":      {"submit"},
-	"run-worker": {"spawn", "submit"},
+	"web":        {"spawn", "steer", "check", "cancel", "profile", "remember", "recall"},
+	"web-worker": {"spawn", "submit", "recall"},
+	"scout":      {"submit", "recall"},
+	"run-worker": {"spawn", "submit", "recall"},
 }
 
 // withWebProxies serves the Daemon-hosted tools for one web role, but only

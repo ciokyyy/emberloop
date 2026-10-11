@@ -117,8 +117,9 @@ the driver ticks boxes and marks done, nothing else writes them.
   per-card `ok` / `not_configured` / `error` with stale windows kept.
 - `pig.go` is the pig Backend: embedded SDK pinned in `go.mod`, stripped to
   ExtraTools plus the Daemon tools its role serves (`sessionTools`: web gets
-  spawn, steer, check and cancel; web-worker spawn; run-worker spawn and
-  submit; scouts none), models from the SDK catalog filtered to providers
+  spawn, steer, check, cancel, profile and remember; web-worker spawn;
+  run-worker spawn and submit; every role with a wired backend gets recall,
+  scouts included), models from the SDK catalog filtered to providers
   with usable auth
   (`CheckProviderAuth` over `auth.json`, env keys, OAuth; `?current=` keeps
   one unlisted model visible), one SDK stack per live Session
@@ -199,6 +200,26 @@ the driver ticks boxes and marks done, nothing else writes them.
   retire, filter, queue, gate recency and Events at the Daemon seam;
   `ProfileSettings.svelte` with `ProfileSettings.test.js` covers the settings
   view.
+- Remember and recall (`remember.go`): agent memory tools plus the structural
+  `/remember` action. `POST /api/sessions/{id}/remember` (`text`, `reason`,
+  optional `quote` defaulting to the text) grounds the quote in a sender=user
+  prompt of the Session and enqueues a Rule candidate in the Session owner's
+  bank; it never writes a Rule, needs a reason, and past the per-Session limit
+  (default 5, `EL_REMEMBER_LIMIT` overrides) answers 429. Only top-level web
+  Sessions propose; workers, scouts, Reviewers and Run workers get 403.
+  `GET /api/sessions/{id}/recall?query=` searches the owner's bank (live Rules
+  plus observations) and the worktree's Project notes fused by reciprocal rank
+  fusion; every role may search and no other User's bank is ever read. A
+  `/remember <text>` first line of a typed sender=user prompt, steer or
+  follow-up (and the composer's Remember button, which sends exactly that)
+  stores the message as its grounding Event and creates a Rule directly in the
+  sender's bank; leftover lines still route as the turn, while pasted
+  `remember:` text and system messages route normally and create nothing. The
+  pig `remember`/`recall` ExtraTools (`pig.go`) and the el-mcp proxies
+  (`emberloop/tools/webproxy.go`: `remember` on `web` only, `recall` on every
+  web role) share those gates. `remember_test.go` covers queue payloads,
+  limits, roles, the command and recall isolation at the Daemon seam;
+  `Composer.test.js` covers the button.
 - `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK,
   pig-over-ACP and claude Backends; grok reuses the same swap):
   `POST .../compress` answers 409 with the reason from `compressNote` while the

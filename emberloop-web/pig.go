@@ -61,6 +61,15 @@ type PigBackend struct {
 	// It always creates a queue item, never a Profile version, and only on
 	// an explicit User request mentioning the Profile.
 	ProposeProfile func(sessionID string, patch memory.ProfilePatch, reason string) (int64, error)
+	// Remember proposes a Rule for the Session owner's bank. The Daemon wires
+	// it to its RememberFromSession; nil hides the propose. It always creates
+	// a queue item for human approval, never a Rule, needs a reason, is
+	// rate-limited per Session, and only runs on top-level Sessions.
+	Remember func(sessionID, text, reason, quote string) (int64, error)
+	// Recall searches the Session owner's bank and the Project notes. The
+	// Daemon wires it to its RecallForSession; nil hides the search. Every
+	// role may search, including scouts, workers, Reviewers and Run Sessions.
+	Recall func(sessionID, query string) (string, error)
 	// SudoGate builds the per-Session gate that routes sudo bash commands to
 	// user approval; nil runs them unasked.
 	SudoGate func(sessionID string) func(ctx context.Context, root, command string) (string, bool)
@@ -104,11 +113,11 @@ func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
 // sessionTools is the stripped loadout for one Session: the configured
 // ExtraTools plus the Daemon tools its el role serves (elRoleFor), bound to
 // this Session's id, so the Daemon knows the parent of anything it spawns,
-// messages, peeks at or stops. Web gets spawn, steer, check, cancel and
-// profile; web-worker and run-worker get spawn (run-worker also submit);
-// scouts keep the ExtraTools alone: nothing they call can write, and they
-// have no children. Workers, scouts and Reviewers get recall only (ticket
-// 18); only top-level Sessions propose Profile patches.
+// messages, peeks at or stops. Web gets spawn, steer, check, cancel, profile
+// and remember; web-worker and run-worker get spawn (run-worker also submit);
+// every role with a wired backend gets recall, scouts included. Workers,
+// scouts and Reviewers get recall only (ticket 18); only top-level Sessions
+// propose Profile patches and Rules.
 func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -142,10 +151,20 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 			tools = append(tools, &cancelAgentTool{parent: meta.ID, cancel: b.CancelChild})
 		}
 		// Reviewers get the filtered Profile by injection only; they never
-		// propose patches.
+		// propose patches or Rules.
 		if !isReviewerSession(meta) && (b.ReadProfile != nil || b.ProposeProfile != nil) {
 			tools = append(tools, &profileAgentTool{session: meta.ID, read: b.ReadProfile, propose: b.ProposeProfile})
 		}
+		// Only top-level Sessions propose Rules through remember; workers,
+		// scouts, Reviewers and Run Sessions get recall only.
+		if !isReviewerSession(meta) && b.Remember != nil {
+			tools = append(tools, &rememberAgentTool{session: meta.ID, remember: b.Remember})
+		}
+	}
+	// Every role searches memory, scouts included: recall never writes and the
+	// bank is always the Session owner's, so no other User's notes ever show.
+	if b.Recall != nil {
+		tools = append(tools, &recallAgentTool{session: meta.ID, recall: b.Recall})
 	}
 	return tools
 }
@@ -454,6 +473,106 @@ func (t *profileAgentTool) Execute(_ context.Context, _ string, params json.RawM
 	}, nil
 }
 func (t *profileAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
+// rememberAgentTool is the Daemon remember tool as a pig ExtraTool. One
+// instance serves one top-level Session: Execute grounds the quote in a User
+// message of the Session and enqueues a Rule candidate for human approval.
+// It never writes a Rule itself; workers, scouts, Reviewers and Run Sessions
+// never see it.
+type rememberAgentTool struct {
+	session  string
+	remember func(sessionID, text, reason, quote string) (int64, error)
+}
+
+func (t *rememberAgentTool) Name() string  { return "remember" }
+func (t *rememberAgentTool) Label() string { return "propose a rule" }
+func (t *rememberAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Propose a Rule for the User's memory bank. The text is the note to keep (at most 300 chars), the reason says why it matters, and the quote is the User's verbatim words it came from (defaults to the text). It always waits for human approval in the queue; it never applies directly. Only top-level Sessions may propose. Put Project knowledge in the nearest AGENTS.md instead.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"text":   map[string]any{"type": "string"},
+				"reason": map[string]any{"type": "string"},
+				"quote":  map[string]any{"type": "string"},
+			},
+			"required": []string{"text", "reason"},
+		},
+	}
+}
+func (t *rememberAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		Text   string `json:"text"`
+		Reason string `json:"reason"`
+		Quote  string `json:"quote"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || strings.TrimSpace(req.Text) == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("remember: text is required")
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("remember: reason is required")
+	}
+	if t.remember == nil {
+		return agent.AgentToolResult{}, fmt.Errorf("remember: propose is not available")
+	}
+	id, err := t.remember(t.session, req.Text, req.Reason, req.Quote)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: fmt.Sprintf("proposed rule %d for human approval", id)}},
+	}, nil
+}
+func (t *rememberAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
+// recallAgentTool is the Daemon recall tool as a pig ExtraTool. One instance
+// serves one Session of any role: Execute searches the Session owner's bank
+// and the Project notes. It never writes and never returns another User's
+// notes.
+type recallAgentTool struct {
+	session string
+	recall  func(sessionID, query string) (string, error)
+}
+
+func (t *recallAgentTool) Name() string  { return "recall" }
+func (t *recallAgentTool) Label() string { return "search memory" }
+func (t *recallAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Search the User's memory bank and the Project notes for the query. Returns matching Rules and notes, best match first, with a verify flag when the anchored code changed since the note was observed. Every role may search; the bank is always the caller's User bank, so no other User's notes ever show.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string"},
+			},
+			"required": []string{"query"},
+		},
+	}
+}
+func (t *recallAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || strings.TrimSpace(req.Query) == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("recall: query is required")
+	}
+	if t.recall == nil {
+		return agent.AgentToolResult{}, fmt.Errorf("recall: search is not available")
+	}
+	text, err := t.recall(t.session, req.Query)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	if strings.TrimSpace(text) == "" {
+		text = "(no matching rules)"
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: text}},
+	}, nil
+}
+func (t *recallAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
 func (t *spawnAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
 	var req struct {
 		Agents  []SpawnAgent `json:"agents"`

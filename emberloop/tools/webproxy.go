@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -95,6 +96,16 @@ func WebProxyTool(name string) Tool {
 			},
 			"reason": map[string]any{"type": "string"},
 		}, "action"), run: webProxyProfile}
+	case "remember":
+		return webProxy{name: "remember", desc: "Propose a Rule for the User's memory bank. The text is the note to keep (at most 300 chars), the reason says why it matters, and the quote is the User's verbatim words it came from (defaults to the text). It always waits for human approval in the queue; it never applies directly. Only top-level Sessions may propose; workers, scouts, Reviewers and Run Sessions are refused. Put Project knowledge in the nearest AGENTS.md instead.", schema: webProxySchema(map[string]any{
+			"text":   map[string]any{"type": "string"},
+			"reason": map[string]any{"type": "string"},
+			"quote":  map[string]any{"type": "string"},
+		}, "text", "reason"), run: webProxyRemember}
+	case "recall":
+		return webProxy{name: "recall", desc: "Search the User's memory bank and the Project notes for the query. Returns matching Rules and notes, best match first, with a verify flag when the anchored code changed since the note was observed. Every role may search; the bank is always the caller's User bank, so no other User's notes ever show.", schema: webProxySchema(map[string]any{
+			"query": map[string]any{"type": "string"},
+		}, "query"), readOnly: true, run: webProxyRecall}
 	}
 	return nil
 }
@@ -478,6 +489,84 @@ func webProxyProfile(ctx context.Context, daemonURL, sessionID string, args json
 	default:
 		return "", fmt.Errorf("profile: action must be read or propose")
 	}
+}
+
+// webProxyRemember proposes a Rule through the Session-bound remember route:
+// the Daemon grounds the quote in a User message of the Session, checks the
+// per-Session rate limit, and enqueues a Rule candidate for human approval.
+// It never writes a Rule directly.
+func webProxyRemember(ctx context.Context, daemonURL, sessionID string, args json.RawMessage) (string, error) {
+	var req struct {
+		Text   string `json:"text"`
+		Reason string `json:"reason"`
+		Quote  string `json:"quote,omitempty"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return "", fmt.Errorf("remember: bad arguments")
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		return "", fmt.Errorf("remember: text is required")
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		return "", fmt.Errorf("remember: reason is required")
+	}
+	body, _ := json.Marshal(map[string]any{"text": req.Text, "reason": req.Reason, "quote": req.Quote})
+	resp, err := webProxyPost(ctx, daemonURL+"/api/sessions/"+sessionID+"/remember", "application/json", body)
+	if err != nil {
+		return "", fmt.Errorf("remember: %s", err.Error())
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		if msg := strings.TrimSpace(string(raw)); msg != "" {
+			return "", fmt.Errorf("remember: %s", msg)
+		}
+		return "", fmt.Errorf("remember: refused: %d", resp.StatusCode)
+	}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("remember: bad session response")
+	}
+	return fmt.Sprintf("proposed rule %d for human approval", out.ID), nil
+}
+
+// webProxyRecall searches the caller's User bank and the Project notes
+// through the Session-bound recall route. Every role may search; the Daemon
+// scopes the bank to the Session owner, so no other User's notes ever show.
+func webProxyRecall(ctx context.Context, daemonURL, sessionID string, args json.RawMessage) (string, error) {
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return "", fmt.Errorf("recall: bad arguments")
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		return "", fmt.Errorf("recall: query is required")
+	}
+	resp, err := webProxyGet(ctx, daemonURL+"/api/sessions/"+sessionID+"/recall?query="+url.QueryEscape(req.Query))
+	if err != nil {
+		return "", fmt.Errorf("recall: %s", err.Error())
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		if msg := strings.TrimSpace(string(raw)); msg != "" {
+			return "", fmt.Errorf("recall: %s", msg)
+		}
+		return "", fmt.Errorf("recall: refused: %d", resp.StatusCode)
+	}
+	var out struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("recall: bad session response")
+	}
+	if strings.TrimSpace(out.Text) == "" {
+		return "(no matching rules)", nil
+	}
+	return out.Text, nil
 }
 
 // webProxySession is the small session metadata the Daemon's session routes

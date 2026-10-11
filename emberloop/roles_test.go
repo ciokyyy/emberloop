@@ -290,9 +290,10 @@ func TestRoleToolsetsPerRole(t *testing.T) {
 
 // The web Daemon serves one el MCP server per Session, bound through the
 // environment: the role decides which Daemon tools ride along. A top-level
-// parent manages its children but never submits, a spawned worker spawns its
-// own (nesting kept) but never steers, peeks at or stops, and a scout only
-// reads: submit stays registered for web-worker and scout but is unoffered
+// parent manages its children, proposes Rules and searches memory but never
+// submits, a spawned worker spawns its own (nesting kept) and searches memory
+// but never steers, peeks at or stops, and a scout only searches memory:
+// submit stays registered for web-worker and scout but is unoffered
 // while WebSubmitEnabled is false. Children never hold the parent's full
 // set, and without the binding every role resolves as for herdr.
 func TestWebRoleMatrixUnderDaemon(t *testing.T) {
@@ -304,11 +305,11 @@ func TestWebRoleMatrixUnderDaemon(t *testing.T) {
 		main, execute []string
 		proxies       []string
 	}{
-		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile"}},
-		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}, []string{"check", "grep", "git"}, []string{"spawn"}},
-		{"scout", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"grep", "git"}, []string{}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "remember", "recall", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile", "remember", "recall"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "recall", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "recall"}},
+		{"scout", []string{"read", "find", "websearch", "ctx_search", "recall", "execute"}, []string{"grep", "git"}, []string{"recall"}},
 		// Run workers keep submit with the flag off: the Run route needs it.
-		{"run-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit"}},
+		{"run-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "recall", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit", "recall"}},
 	}
 	// No test in this package runs parallel and no other test enables the
 	// flag, so the default-off read here needs no save/restore.
@@ -390,9 +391,9 @@ func TestWebRoleMatrixWithSubmitEnabled(t *testing.T) {
 		main, execute []string
 		proxies       []string
 	}{
-		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile"}},
-		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit"}},
-		{"scout", []string{"read", "find", "websearch", "ctx_search", "submit", "execute"}, []string{"grep", "git"}, []string{"submit"}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "remember", "recall", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile", "remember", "recall"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "recall", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit", "recall"}},
+		{"scout", []string{"read", "find", "websearch", "ctx_search", "submit", "recall", "execute"}, []string{"grep", "git"}, []string{"submit", "recall"}},
 	}
 	for _, tc := range cases {
 		main, execute, err := ResolvedTools(tc.role)

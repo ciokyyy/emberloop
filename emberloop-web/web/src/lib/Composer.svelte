@@ -37,6 +37,7 @@
   let galleryLoadedFor = '';
   let lastSession = '';
   let picker;
+  let box;
   // Voice input: 'idle' | 'recording' | 'transcribing'. A recording is one
   // take. On stop it uploads for transcription and the text lands in the
   // draft textarea, where the user edits it before sending. The recording
@@ -145,6 +146,28 @@
       audio = sentAudio;
       sendError = 'Send failed. Your message is kept above.';
     }
+  }
+
+  // Remember button: a structural /remember action that stores the draft as
+  // a Rule directly after grounding. A draft sends at once with the prefix;
+  // an empty draft gains the prefix for editing; a prefixed draft toggles
+  // back to a normal message. Pasted "remember:" text never matches: only
+  // the slash prefix on the first line acts.
+  function remember(ev) {
+    if (busy || voice === 'transcribing') return;
+    if (text.startsWith('/remember ')) {
+      text = text.slice('/remember '.length);
+      box?.focus();
+      return;
+    }
+    const t = text.trim();
+    if ((!t || t === '/remember') && images.length === 0 && refs.length === 0) {
+      text = '/remember ';
+      box?.focus();
+      return;
+    }
+    text = '/remember ' + t;
+    send(ev);
   }
 
   async function addFiles(files) {
@@ -360,6 +383,7 @@
   <div class="flex flex-wrap items-end gap-2 p-1 sm:flex-nowrap">
     <div class="relative min-w-0 basis-full sm:basis-0 sm:flex-1">
       <textarea
+        bind:this={box}
         aria-label="message"
         name="message"
         rows="2"
@@ -410,6 +434,7 @@
         <Square />
       </Button>
     {/if}
+    <Button type="button" variant="ghost" size="sm" aria-label="remember as rule" title="Remember as a Rule (sends /remember)" onclick={remember}>Remember</Button>
     <Button type="submit" size="default" class="ml-auto sm:ml-0" disabled={!canSend} title={canSend ? 'Send' : busy ? 'Sending the previous message…' : 'Type a message or attach an image'}>Send</Button>
   </div>
   {#if sendError}

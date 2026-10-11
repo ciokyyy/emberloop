@@ -17,9 +17,11 @@ func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string
 	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
-		prev := memoryInjections
-		memoryInjections = hook
-		t.Cleanup(func() { memoryInjections = prev })
+		prev := memoryInjection
+		memoryInjection = func(meta SessionMeta, op handleOp) injection {
+			return injection{texts: hook(meta, op)}
+		}
+		t.Cleanup(func() { memoryInjection = prev })
 	}
 	// The voice-reminder hook needs an el binary on PATH; a stub one makes
 	// the hook survive the swap the same way product code does.

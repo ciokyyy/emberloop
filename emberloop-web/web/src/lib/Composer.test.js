@@ -266,3 +266,36 @@ describe('Composer stored image references', () => {
     expect(onSend).toHaveBeenCalledWith('see this', 'prompt', [], ['img1']);
   });
 });
+
+describe('Composer remember button', () => {
+  it('sends the draft at once with the /remember prefix', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
+    const q = within(container);
+    await fireEvent.input(q.getByLabelText('message'), { target: { value: 'use tabs' } });
+    await tick();
+    await fireEvent.click(q.getByLabelText('remember as rule'));
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('/remember use tabs', 'prompt', [], []);
+  });
+  it('prefixes an empty draft for editing instead of sending', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
+    const q = within(container);
+    await fireEvent.click(q.getByLabelText('remember as rule'));
+    await tick();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(q.getByLabelText('message').value).toBe('/remember ');
+  });
+  it('toggles a prefixed draft back to a normal message', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
+    const q = within(container);
+    await fireEvent.input(q.getByLabelText('message'), { target: { value: '/remember use tabs' } });
+    await tick();
+    await fireEvent.click(q.getByLabelText('remember as rule'));
+    await tick();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(q.getByLabelText('message').value).toBe('use tabs');
+  });
+});

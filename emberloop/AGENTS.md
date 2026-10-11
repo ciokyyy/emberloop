@@ -203,8 +203,12 @@ owns its `_test.go` and the behaviour below):
   Daemon's `web` parent, `web-worker` child and `scout` roles take their
   Daemon tools from `tools/webproxy.go`, never the parent's full set; `web`
   also takes `profile` (memory://profile read, patch proposals that wait for
-  human approval, only on an explicit User request; workers, scouts and
-  Reviewers never propose); `WebSubmitEnabled` in `toolresolve.go` (off)
+  human approval, only on an explicit User request) and `remember` (Rule
+  proposals that wait for human approval, needs a reason, rate-limited per
+  Session; workers, scouts and Reviewers never propose either, and put Project
+  knowledge in the nearest `AGENTS.md` instead), while every web role takes
+  `recall` (the caller's bank plus Project notes); `WebSubmitEnabled` in
+  `toolresolve.go` (off)
   keeps `submit` unoffered to web children while the herdr-era submit and Run
   submits stay; the `run-worker` role (a Run ticket Worker) always serves
   `submit` and `spawn`), `toolresolve.go`
