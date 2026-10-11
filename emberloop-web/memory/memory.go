@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -240,6 +241,19 @@ func validRule(r Rule) error {
 		return fmt.Errorf("%w: rule status %q", ErrInvalid, r.Status)
 	case r.ApprovedBy == "":
 		return fmt.Errorf("%w: rule has no approver", ErrInvalid)
+	case r.Kind == KindPreference && len(r.Anchors) > 0:
+		return fmt.Errorf("%w: preference rules carry no anchors", ErrInvalid)
+	}
+	// Anchors agree with cleanAnchor: anything cleanAnchor drops (whitespace,
+	// empty) is refused here. The spec caps only Rule text; anchor count and
+	// length are extraction caps (MaxAnchors, MaxAnchorRunes), not write limits.
+	for _, a := range r.Anchors {
+		switch {
+		case a == "":
+			return fmt.Errorf("%w: empty anchor", ErrInvalid)
+		case strings.ContainsAny(a, " \t\r\n\f\v"):
+			return fmt.Errorf("%w: anchor %q has whitespace", ErrInvalid, a)
+		}
 	}
 	return nil
 }
