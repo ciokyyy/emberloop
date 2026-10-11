@@ -302,7 +302,8 @@ func (d *Daemon) deciderLLMCall(_ context.Context, model, system, user string) (
 
 // mineConfirmers selects the confirming Decider for the current settings,
 // shared by decideMine and minerSubjectKey so the two paths never diverge:
-// the test seam wins, else the memory model in llm and ensemble modes.
+// the test seam wins, else the endpoint in jev mode, the memory model in llm
+// mode, and the endpoint when on else the model in ensemble mode.
 // ensemble reports whether the heuristic proposes first. A nil second means
 // the heuristic judges alone.
 func (d *Daemon) mineConfirmers() (second memory.Decider, ensemble bool) {
@@ -310,22 +311,33 @@ func (d *Daemon) mineConfirmers() (second memory.Decider, ensemble bool) {
 		return d.decider, false
 	}
 	set := readDeciderSettings()
-	if set.Mode != deciderLLM && set.Mode != deciderEnsemble {
+	switch set.Mode {
+	case deciderJev:
+		return d.jevMineDecider(), false
+	case deciderEnsemble:
+		// The ensemble confirms with jev when its endpoint is on, else
+		// with the memory model: the configured second Decider.
+		if j := d.jevMineDecider(); j != nil {
+			return j, true
+		}
+		return d.llmMineDecider(set.Model), true
+	case deciderLLM:
+		return d.llmMineDecider(set.Model), false
+	default:
 		return nil, false
 	}
-	return d.llmMineDecider(set.Model), set.Mode == deciderEnsemble
 }
 
 // minerSubjectKey proposes the subject key for a mined statement. The
 // confirming Decider names it when it implements SubjectKeyProposer (the test
-// seam, or the memory model in llm and ensemble modes); otherwise the
-// heuristic fallback proposes it. statement must already be redacted: the
-// miner keys from redactedQuote, so a secret in the topic tokens never
-// reaches the subject key, while the LLM path redacts again inside its call.
-// The result is normalized; empty means keyless and never promotes. It also
-// reports who proposed the key (the Decider model, or the heuristic name)
-// for the decider_json provenance. Key proposal costs one model call beside
-// the durable confirm when a model Decider is configured.
+// seam, or the model in llm and ensemble modes); a confirmer without key
+// support (jev) falls through to the heuristic fallback. statement must
+// already be redacted: the miner keys from redactedQuote, so a secret in the
+// topic tokens never reaches the subject key, while the LLM path redacts
+// again inside its call. The result is normalized; empty means keyless and
+// never promotes. It also reports who proposed the key (the Decider model, or
+// the heuristic name) for the decider_json provenance. Key proposal costs one
+// model call beside the durable confirm when a model Decider is configured.
 func (d *Daemon) minerSubjectKey(statement, contextText string) (string, string) {
 	state := memory.DeciderState{Statement: statement, Context: contextText}
 	ctx := context.Background()
