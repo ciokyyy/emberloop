@@ -53,6 +53,12 @@ func TestTrimRunSkillDropsOptional(t *testing.T) {
 			drop: []string{"drop"},
 		},
 		{
+			name: "hash comment in fence is not a heading",
+			in:   "Head.\n\n```sh\n# run (optional)\necho hi\n```\n\n## Real (optional)\nDrop me.\n\n## Back\nKeep me.",
+			keep: []string{"Head.", "# run (optional)", "echo hi", "Back", "Keep me."},
+			drop: []string{"Drop me."},
+		},
+		{
 			name: "sublevel stays dropped",
 			in:   "# S\nKeep.\n\n## Opt (optional)\nDrop.\n\n### Sub\nStill drop.\n\n## Back\nKeep back.",
 			keep: []string{"Keep.", "Back", "Keep back."},
@@ -181,6 +187,32 @@ func TestRunSkillsSettingsRoundTrip(t *testing.T) {
 	}
 	if view2.RunSkills["reviewer-spec"][0] != "s1" {
 		t.Fatalf("spec skills after clear = %+v, want kept", view2.RunSkills)
+	}
+}
+
+// run_skills is host-global prompt text injected into every Run, so like
+// signup, decider and jev it writes admin-only.
+func TestRunSkillsAreAdminOnly(t *testing.T) {
+	settings := filepath.Join(tempDir(t), "settings.json")
+	if err := os.WriteFile(settings, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_SETTINGS", settings)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	h := d.Handler()
+	admin := signedIn(t, h, "alice")
+	bob := signedIn(t, h, "bob")
+	put := func(cookies ...*http.Cookie) int {
+		return authDo(t, h, http.MethodPut, "/api/settings", `{"run_skills":{"worker":["w1"]}}`, cookies...).Code
+	}
+	if code := put(bob); code != http.StatusForbidden {
+		t.Fatalf("plain User writes run_skills = %d, want 403", code)
+	}
+	if code := put(); code != http.StatusUnauthorized {
+		t.Fatalf("anonymous writes run_skills = %d, want 401", code)
+	}
+	if code := put(admin); code != http.StatusOK {
+		t.Fatalf("admin writes run_skills = %d, want 200", code)
 	}
 }
 

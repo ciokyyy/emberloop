@@ -625,10 +625,13 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   the role's skills; `reviewerPrompt` is the prefix plus its brief and serves
   re-reviews) (prompts.go: task text only; the reviewer prompt describes the
   submit tool, the `VERDICT:` text stays only as a fallback for a Backend
-  without the tool). Per-role skills live in settings `run_skills` (the briefs
-  first, optional sections trimmed; `runs_inject_test.go` pins the content per
-  role). The system prompt carries the role extra, no `remember` in any of
-  them. A submitted
+  without the tool). Per-role skills live in settings `run_skills`: a role-keyed
+  map of string arrays (at most 20 entries per role, 16 KB per entry; null or
+  `{}` clears all custom skills; admin-only writes). The briefs come first;
+  sections marked optional (`<!-- optional:start/end -->` blocks and headings
+  containing `(optional)`, fenced code excluded) are trimmed.
+  `runs_inject_test.go` pins the content per role.
+  The system prompt carries the role extra, no `remember` in any of them. A submitted
   done (`POST /api/sessions/{id}/submit`) merges by rebase plus
   fast-forward-only through the shared core checks; a non-done submit waits
   for done instead of merging; a dirty worktree or

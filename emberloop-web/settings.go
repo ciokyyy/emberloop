@@ -142,9 +142,12 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 				runSkills = map[string][]string{}
 			}
 		}
-		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil {
+		// run_skills is host-global prompt text: it is injected verbatim into
+		// every Run's Worker and Reviewer first prompts, including other
+		// Users' Runs, so like signup, decider and jev it writes admin-only.
+		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
-				http.Error(w, "only the admin can change signup, decider and jev settings", http.StatusForbidden)
+				http.Error(w, "only the admin can change signup, decider, jev and run_skills settings", http.StatusForbidden)
 				return
 			}
 		}
@@ -224,13 +227,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if runSkillsSet {
 			merged := readRunSkillsRaw()
 			for role, list := range runSkills {
-				kept := make([]string, 0, len(list))
-				for _, s := range list {
-					if strings.TrimSpace(s) == "" {
-						continue
-					}
-					kept = append(kept, s)
-				}
+				kept := cleanSkillList(list)
 				if len(kept) == 0 {
 					delete(merged, role)
 					continue

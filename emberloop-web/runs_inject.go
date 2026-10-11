@@ -95,19 +95,25 @@ func readRunSkillsRaw() map[string][]string {
 		if err := json.Unmarshal(rraw, &list); err != nil {
 			continue
 		}
-		kept := make([]string, 0, len(list))
-		for _, s := range list {
-			if strings.TrimSpace(s) == "" {
-				continue
-			}
-			kept = append(kept, s)
+		if kept := cleanSkillList(list); len(kept) > 0 {
+			out[role] = kept
 		}
-		if len(kept) == 0 {
-			continue
-		}
-		out[role] = kept
 	}
 	return out
+}
+
+// cleanSkillList drops blank entries from one role's skill list. Both the
+// settings read and the settings save share it, so blank handling cannot
+// drift between the two.
+func cleanSkillList(list []string) []string {
+	kept := make([]string, 0, len(list))
+	for _, s := range list {
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
 }
 
 // validateRunSkills rejects a run_skills write that is not an object of
@@ -139,22 +145,20 @@ func validateRunSkills(skills map[string][]string) string {
 
 // runSkillsFor returns the trimmed skill list for one role: the built-in
 // first entries plus the configured custom skills for the role and its
-// aliases, each with optional sections dropped.
+// aliases. Every entry passes through trimRunSkill exactly once.
 func runSkillsFor(role string) []string {
 	canonical := canonicalSkillRole(role)
-	out := append([]string(nil), defaultRunSkills(canonical)...)
+	var untrimmed []string
+	untrimmed = append(untrimmed, defaultRunSkills(canonical)...)
 	raw := readRunSkillsRaw()
 	for _, alias := range skillAliases(canonical) {
-		for _, s := range raw[alias] {
-			if trimmed := trimRunSkill(s); strings.TrimSpace(trimmed) != "" {
-				out = append(out, trimmed)
-			}
-		}
+		untrimmed = append(untrimmed, raw[alias]...)
 	}
-	// Built-ins carry no optional sections, but trim them anyway so the
-	// first entries obey the same rule.
-	for i, s := range out {
-		out[i] = trimRunSkill(s)
+	out := make([]string, 0, len(untrimmed))
+	for _, s := range untrimmed {
+		if trimmed := trimRunSkill(s); strings.TrimSpace(trimmed) != "" {
+			out = append(out, trimmed)
+		}
 	}
 	return out
 }
@@ -167,15 +171,27 @@ func runSkillsFor(role string) []string {
 //     (case-insensitive): the heading plus its body up to the next heading
 //     of equal or higher level (# count <= the optional heading's).
 //
-// Unclosed markers drop to the end. Surrounding blank lines collapse.
+// Lines inside fenced code blocks (``` or ~~~) never count as headings, so a
+// shell comment like `# run (optional)` in an example cannot swallow the
+// rest of the skill. Unclosed markers drop to the end. Surrounding blank
+// lines collapse.
 func trimRunSkill(s string) string {
 	s = dropOptionalHTMLBlocks(s)
 	lines := strings.Split(s, "\n")
 	var out []string
 	skipLevel := 0 // 0 means keeping; else the # count of the optional heading
+	inFence := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			if skipLevel != 0 {
+				continue
+			}
+			out = append(out, line)
+			continue
+		}
+		if !inFence && strings.HasPrefix(trimmed, "#") {
 			level := 0
 			for level < len(trimmed) && trimmed[level] == '#' {
 				level++
