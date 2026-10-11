@@ -435,6 +435,25 @@ func TestContract(t *testing.T) {
 					t.Fatalf("bump missing err = %v, want ErrNotFound", err)
 				}
 			})
+
+			t.Run("observation by event is exact", func(t *testing.T) {
+				clock := newTestClock()
+				m := fac.open(t, clock)
+				ctx := context.Background()
+				id, err := m.AddObservation(ctx, Observation{SessionID: "s", EventID: "e", Author: "u1", Quote: "exact event quote", Kind: KindFact})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := m.ObservationByEvent(ctx, "s", "e")
+				if err != nil || got.ID != id || got.Quote != "exact event quote" {
+					t.Fatalf("by event = %+v, %v; want id %d", got, err, id)
+				}
+				for _, miss := range [][2]string{{"s", "other"}, {"other", "e"}, {"", ""}} {
+					if _, err := m.ObservationByEvent(ctx, miss[0], miss[1]); !errors.Is(err, ErrNotFound) {
+						t.Errorf("by event %q err = %v, want ErrNotFound", miss, err)
+					}
+				}
+			})
 		})
 	}
 }

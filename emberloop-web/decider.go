@@ -200,7 +200,9 @@ func (d *Daemon) decideMine(text, contextText string, hit memory.HeuristicResult
 		ensemble = true
 	}
 	if second == nil && !ensemble {
-		out.eligible = out.durable >= set.High
+		// Only the heuristic mode offers eligibility from the heuristic
+		// score: llm without a model has no confirmer, so never eligible.
+		out.eligible = set.Mode == deciderHeuristic && d.decider == nil && out.durable >= set.High
 		return out
 	}
 	if ensemble {
@@ -247,7 +249,7 @@ func (out *mineDecision) judgeEnsemble(ctx context.Context, state memory.Decider
 	if second != nil {
 		e.Second = second
 	} else {
-		e.Second = &memory.ScriptedDecider{Unavailable: true}
+		e.Second = memory.UnavailableDecider{}
 	}
 	v, err := e.Judge(ctx, state)
 	if err != nil {

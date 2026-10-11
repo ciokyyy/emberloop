@@ -60,6 +60,19 @@ func (f *Fake) BumpObservationEvidence(_ context.Context, id int64) (Observation
 	return Observation{}, fmt.Errorf("%w: observation %d", ErrNotFound, id)
 }
 
+// ObservationByEvent returns the observation stored for one Session Event,
+// or ErrNotFound.
+func (f *Fake) ObservationByEvent(_ context.Context, sessionID, eventID string) (Observation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, o := range f.obs {
+		if o.SessionID == sessionID && o.EventID == eventID {
+			return o, nil
+		}
+	}
+	return Observation{}, fmt.Errorf("%w: observation %s event %s", ErrNotFound, sessionID, eventID)
+}
+
 func (f *Fake) SearchObservations(_ context.Context, text string, limit int) ([]Observation, error) {
 	terms := Tokens(text)
 	if len(terms) == 0 {

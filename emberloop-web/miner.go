@@ -187,14 +187,15 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		// A replayed Event (cursor reset) is found here, before the Decider,
 		// so it never costs a confirming LLM call; the store below would
 		// return the same row without bumping or inserting.
-		if d.minedEventAlready(ctx, bank, id, eventID, redactedQuote) {
+		if d.minedEventAlready(ctx, bank, id, eventID) {
 			res.Duplicates++
 			prior = append(prior, e)
 			continue
 		}
 		// The heuristic proposes; the confirming Decider (decider.go) judges
 		// durable and offers kind and scope. A drop below its cut stores
-		// nothing; an unavailable confirmer leaves the heuristic standing.
+		// nothing; an unavailable confirmer leaves the heuristic keep
+		// standing, but never queue-eligible.
 		dec := d.decideMine(e.Text, contextText, hit)
 		if !dec.keep {
 			res.Dropped++
@@ -257,20 +258,12 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 }
 
 // minedEventAlready reports whether this Session Event already has a stored
-// observation: a cursor reset replays it. It is the same lookup the store
-// runs (same Session, same Event), over local FTS only, so a replay never
-// reaches the Decider.
-func (d *Daemon) minedEventAlready(ctx context.Context, bank memory.Memory, id, eventID, quote string) bool {
-	hits, err := bank.SearchObservations(ctx, quote, 20)
-	if err != nil {
-		return false
-	}
-	for _, h := range hits {
-		if h.SessionID == id && h.EventID == eventID {
-			return true
-		}
-	}
-	return false
+// observation: a cursor reset replays it. The lookup is by Session ID and
+// Event ID, so it is exact whatever else the quote matches; the store would
+// return the same row without bumping or inserting.
+func (d *Daemon) minedEventAlready(ctx context.Context, bank memory.Memory, id, eventID string) bool {
+	_, err := bank.ObservationByEvent(ctx, id, eventID)
+	return err == nil
 }
 
 // MineSettledSessions mines every settled Session once, for the nightly job.

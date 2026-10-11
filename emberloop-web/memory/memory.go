@@ -82,6 +82,10 @@ type Memory interface {
 	// a duplicate hit and returns the updated row. The miner calls it; nothing
 	// is ever deleted or merged.
 	BumpObservationEvidence(ctx context.Context, id int64) (Observation, error)
+	// ObservationByEvent returns the observation stored for one Session
+	// Event, or ErrNotFound. The miner uses it to recognize a replayed Event
+	// exactly, whatever else its quote matches.
+	ObservationByEvent(ctx context.Context, sessionID, eventID string) (Observation, error)
 	SearchObservations(ctx context.Context, text string, limit int) ([]Observation, error)
 	AddRule(ctx context.Context, r Rule) (Rule, error)
 	ReviseRule(ctx context.Context, next Rule) (Rule, error)

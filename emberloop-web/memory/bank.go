@@ -213,6 +213,28 @@ func (b *Bank) SearchObservations(ctx context.Context, text string, limit int) (
 		LIMIT ?`, q, clampLimit(limit))
 }
 
+// ObservationByEvent returns the observation stored for one Session Event,
+// or ErrNotFound. The lookup is by Session ID and Event ID, so it finds a
+// replayed Event exactly, whatever else its quote matches.
+func (b *Bank) ObservationByEvent(ctx context.Context, sessionID, eventID string) (Observation, error) {
+	var out Observation
+	var created string
+	err := b.rdb.QueryRowContext(ctx, `SELECT id, session_id, event_id, author, quote, kind,
+		subject_key, evidence_count, decider_json, observed_commit, created_at
+		FROM observations WHERE session_id = ? AND event_id = ? LIMIT 1`,
+		sessionID, eventID).Scan(
+		&out.ID, &out.SessionID, &out.EventID, &out.Author, &out.Quote, &out.Kind,
+		&out.SubjectKey, &out.EvidenceCount, &out.DeciderJSON, &out.ObservedCommit, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Observation{}, fmt.Errorf("%w: observation %s event %s", ErrNotFound, sessionID, eventID)
+	}
+	if err != nil {
+		return Observation{}, err
+	}
+	out.CreatedAt = parseTimeText(created)
+	return out, nil
+}
+
 func scanObservation(s rowScanner) (Observation, error) {
 	var o Observation
 	var created string

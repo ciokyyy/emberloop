@@ -639,6 +639,30 @@ func (e EnsembleDecider) Judge(ctx context.Context, state DeciderState) (Ensembl
 	}
 }
 
+// UnavailableDecider is a Decider that never answers: every asked question
+// reads as unavailable. The ensemble uses it when no second Decider is
+// configured, so the candidate observes unconfirmed instead of failing the
+// mine.
+type UnavailableDecider struct{}
+
+// Model reports the decider_json model name.
+func (UnavailableDecider) Model() string { return "unavailable" }
+
+// Version reports the decider_json version.
+func (UnavailableDecider) Version() string { return "v1" }
+
+// Decide answers nothing: every question is unavailable, never a yes.
+func (UnavailableDecider) Decide(_ context.Context, _ DeciderState, questions []DeciderQuestion) (DeciderResult, error) {
+	if err := ValidateQuestions(questions); err != nil {
+		return DeciderResult{}, err
+	}
+	res := DeciderResult{Answers: map[string]Answer{}, Model: "unavailable", Version: "v1"}
+	for _, q := range questions {
+		res.Answers[q.Name] = Answer{Question: q.Name, Available: false}
+	}
+	return res, nil
+}
+
 // ScriptedDecider is the fake Decider: scripted probabilities and choices
 // drive Daemon tests. Unavailable (or Err) answers read as unavailable.
 type ScriptedDecider struct {

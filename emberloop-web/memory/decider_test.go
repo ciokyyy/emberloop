@@ -358,6 +358,36 @@ func TestEnsembleRejectsBadThresholds(t *testing.T) {
 	}
 }
 
+func TestUnavailableDeciderAnswersNothing(t *testing.T) {
+	d := UnavailableDecider{}
+	if d.Model() == "" || d.Version() == "" {
+		t.Fatal("unavailable decider needs a model and version for decider_json")
+	}
+	res, err := d.Decide(context.Background(), DeciderState{Statement: "No, use tabs"}, []DeciderQuestion{Noul(QuestionDurable), KindQuestion()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{QuestionDurable, QuestionKind} {
+		if _, ok := res.Answers[q]; !ok {
+			t.Errorf("question %q missing, want it present but unavailable", q)
+			continue
+		}
+		if res.Answers[q].Available {
+			t.Errorf("question %q answered, want unavailable", q)
+		}
+	}
+	// An ensemble with no configured second observes unconfirmed, never
+	// eligible and never dropped on the missing answer.
+	e := EnsembleDecider{First: HeuristicDecider{}, Second: UnavailableDecider{}}
+	got, err := e.Judge(context.Background(), DeciderState{Statement: "No, use tabs here"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Proposed || got.Verdict != VerdictObserve || got.QueueEligible || got.Confirmed {
+		t.Errorf("verdict = %+v, want proposed observe unconfirmed", got)
+	}
+}
+
 func TestScriptedDeciderDrivesTests(t *testing.T) {
 	s := &ScriptedDecider{Durable: 0.6, Kind: KindFact, Scope: "situational"}
 	res, err := s.Decide(context.Background(), DeciderState{}, []DeciderQuestion{Noul(QuestionDurable), KindQuestion(), ScopeQuestion(), Noul(QuestionContradicts), Noul(QuestionRelevant)})

@@ -449,3 +449,33 @@ func TestMineSessionLLMErrorNeverEligible(t *testing.T) {
 		t.Fatalf("decider doc = %+v, want stored unconfirmed and never eligible", doc)
 	}
 }
+
+// llm without a memory model has no confirmer: the heuristic hit is stored
+// (nothing is lost) but never queue-eligible on the heuristic score alone.
+func TestMineSessionLLMWithoutModelNeverEligible(t *testing.T) {
+	useSettings(t, `{"decider_mode":"llm"}`)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
+	res, err := d.MineSession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stored != 1 {
+		t.Fatalf("result = %+v, want the heuristic hit stored", res)
+	}
+	var doc struct {
+		Decider   string `json:"decider"`
+		Eligible  bool   `json:"queue_eligible"`
+		Confirmed bool   `json:"confirmed"`
+	}
+	obs := bankQuotes(t, d, "alice", "tabs")
+	if len(obs) != 1 {
+		t.Fatalf("observations = %+v, want 1", obs)
+	}
+	if err := json.Unmarshal([]byte(obs[0].DeciderJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Decider != "llm" || doc.Eligible || doc.Confirmed {
+		t.Fatalf("decider doc = %+v, want llm mode stored unconfirmed and never eligible", doc)
+	}
+}
