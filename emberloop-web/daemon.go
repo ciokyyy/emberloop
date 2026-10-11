@@ -454,7 +454,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		}
 		d.mu.Lock()
 		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject, injectOp: handleCreate}
-	
+
 		d.persistMeta(meta)
 		d.starting--
 		d.mu.Unlock()
@@ -1097,15 +1097,21 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 	}
 	d.mu.Unlock()
 	if needRecall {
-		if rb, refs, err := d.recallBlockFor(context.Background(), recallMeta, text); err != nil {
-			d.appendNoticeEvent(id, "memory recall skipped: "+err.Error())
-		} else if len(rb) > 0 {
-			d.mu.Lock()
-			if cur, ok := d.sessions[id]; ok {
-				cur.inject.appendRecall(rb, refs)
-			}
+		rb, refs := d.recallOrNotice(context.Background(), id, recallMeta, text)
+		d.mu.Lock()
+		cur, ok := d.sessions[id]
+		if !ok {
 			d.mu.Unlock()
+			return sendResult{}, http.StatusNotFound
 		}
+		if cur.meta.Status == "ended" {
+			d.mu.Unlock()
+			return sendResult{}, http.StatusGone
+		}
+		if len(rb) > 0 {
+			cur.inject.appendRecall(rb, refs)
+		}
+		d.mu.Unlock()
 	}
 	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs, from)
 	d.maybeTitle(id, text)
@@ -1186,7 +1192,9 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 	// Create turns build fresh recall from the task prompt: the Profile came
 	// with the handle, the Rules come now that the prompt is known. An empty
 	// prompt injects the Profile only. Resume turns carry the Profile only;
-	// compress turns already carry fresh recall from the Handoff.
+	// compress turns already carry fresh recall from the Handoff. This is the
+	// fallback owner: routeLiveOpt and spawnFrom build synchronously, so only
+	// direct runTurn callers (Run Workers) reach it.
 	if !handoff && op == handleCreate {
 		d.mu.Lock()
 		meta := SessionMeta{}
@@ -1194,9 +1202,7 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 			meta = s.meta
 		}
 		d.mu.Unlock()
-		if rb, refs, err := d.recallBlockFor(context.Background(), meta, text); err != nil {
-			d.appendNoticeEvent(id, "memory recall skipped: "+err.Error())
-		} else if len(rb) > 0 {
+		if rb, refs := d.recallOrNotice(context.Background(), id, meta, text); len(rb) > 0 {
 			in.appendRecall(rb, refs)
 		}
 	}

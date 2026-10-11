@@ -232,19 +232,22 @@ the driver ticks boxes and marks done, nothing else writes them.
 - Auto-recall injection (`recall_inject.go`): at create and compress the Daemon
   builds Profile plus recall from the task prompt (the Handoff text for
   compress) through `recallBlockFor`: bank `Recall` (20 candidates, `Redact`ed
-  query) plus `ApplyVerification` (dormant marked, parked and over-300 skipped),
-  Project notes via `RecallNotes`, fused by `FuseRecall` (k=60), an optional
-  `relevant` Decider (`recallDecider`, 1500 ms budget, FTS5 order on timeout or
-  error, `ForDecider` redaction), cut to 5 hits of at most 300 chars
-  (`truncateRunes` for notes) and fenced as untrusted notes with `FlagNote`
-  verify flags. `Query` gives identifiers, paths and rare terms; empty query
-  injects the Profile only. Create builds synchronously in `routeLiveOpt` and
-  `spawnFrom` (the spawn answers after recall) and compress in `runHandoff`;
-  `runTurnWith` keeps the fallback for Run Workers. Resume carries the Profile
+  query) plus `ApplyVerification` (dormant marked fail-closed, parked and
+  over-300 skipped), Project notes via `RecallNotes`, fused by `FuseRecall`
+  (k=60), an optional `relevant` Decider (`recallDecider`, 1500 ms budget,
+  FTS5 order on timeout or error, `ForDecider` redaction), cut to 5 hits of at
+  most 300 chars (`truncateRunes` for notes) and fenced as untrusted notes
+  with `FlagNote` verify flags, all under `recallTimeout` (10 s). `Query`
+  gives identifiers, paths and rare terms; empty query injects the Profile
+  only. `recallOrNotice` is the single error-to-notice home for the four
+  sites. Create builds synchronously in `routeLiveOpt` (404 when removed,
+  410 when ended mid-recall) and `spawnFrom` (missing children skipped) and
+  compress in `runHandoff`; `runTurnWith` keeps the fallback for Run Workers,
+  pinned by `TestAutoRecallRunWorkerFallback`. Resume carries the Profile
   only. Engine failure posts a `notice` Event and the turn still runs.
   `recall_inject_test.go` covers order, fence, Events, empty query, caps,
   flags, dormancy, notes merge, identifiers, Decider fallback, resume,
-  Reviewer filter, engine notice and compress.
+  Reviewer filter, engine notice, compress and the fallback.
 - `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK,
   pig-over-ACP and claude Backends; grok reuses the same swap):
   `POST .../compress` answers 409 with the reason from `compressNote` while the

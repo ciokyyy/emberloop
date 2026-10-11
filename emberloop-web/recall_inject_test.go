@@ -502,3 +502,45 @@ func TestAutoRecallCompressInjectsRecallThenHandoff(t *testing.T) {
 		t.Fatalf("compress injection Event = %+v, want the recalled Rule", lastIE)
 	}
 }
+
+// Direct runTurn callers (Run Workers in runs_exec.go) bypass routeLiveOpt and
+// spawnFrom, so the runTurnWith create fallback is their only recall. It pins
+// the second recall owner: if the synchronous sites ever stop flipping
+// injectOp to resume, this fails on a duplicated recall block.
+func TestAutoRecallRunWorkerFallback(t *testing.T) {
+	d, seen, base, _ := recallDaemon(t)
+	putProfileLines(t, base, "fallback profile line")
+	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))
+	rule := addRule(t, d, meta.Owner, "tabs for the fallback worker")
+	worker := SessionMeta{
+		ID: newID(), Harness: "fake", Model: "fake-model", WorkDir: tempDir(t),
+		Status: "idle", CreatedAt: time.Now().UTC(), Owner: meta.Owner,
+		ParentID: "run-1", GroupID: "g-1", RunWorker: true,
+	}
+	be, serr := d.startSession(worker)
+	if serr != nil {
+		t.Fatalf("run worker start: %s", serr.msg)
+	}
+	d.runTurnWith(worker.ID, be, "tabs fallback prompt", nil, false, nil)
+	got := seen.all()
+	if len(got) == 0 {
+		t.Fatal("no backend prompts")
+	}
+	last := got[len(got)-1]
+	if !strings.Contains(last, "fallback profile line") {
+		t.Fatalf("worker prompt = %q, want the Profile", last)
+	}
+	if !strings.Contains(last, "tabs for the fallback worker") {
+		t.Fatalf("worker prompt = %q, want fallback recall", last)
+	}
+	if n := strings.Count(last, "```memory"); n != 2 {
+		t.Fatalf("worker prompt carries %d fences, want 2 (Profile plus one recall block): %q", n, last)
+	}
+	ies := injectionEventsOf(t, transcriptOf(t, base, worker.ID))
+	if len(ies) != 1 {
+		t.Fatalf("injection Events = %d, want 1", len(ies))
+	}
+	if len(ies[0].Rules) != 1 || ies[0].Rules[0].ID != rule.RuleID {
+		t.Fatalf("injection Event = %+v, want rule %s", ies[0], rule.RuleID)
+	}
+}

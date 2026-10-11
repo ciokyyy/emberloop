@@ -59,13 +59,14 @@ func (in *injection) prepend(texts []string, profile int) {
 // appendRecall adds the recall block after the Profile and records its Rule
 // refs. The recall block carries no preamble of its own: when the bundle has
 // no Profile the caller leads it with the preamble so every injection still
-// opens with the precedence rules.
+// opens with the precedence rules. It copies the slice so the caller's
+// backing array is never mutated.
 func (in *injection) appendRecall(texts []string, refs []InjectedRule) {
 	if len(texts) == 0 {
 		return
 	}
 	if in.profile == 0 {
-		texts[0] = profilePreamble + "\n\n" + texts[0]
+		texts = append([]string{profilePreamble + "\n\n" + texts[0]}, texts[1:]...)
 	}
 	in.texts = append(in.texts, texts...)
 	in.refs = append(in.refs, refs...)
@@ -101,4 +102,3 @@ func (d *Daemon) takeInjection(id string) (injection, handleOp) {
 	s.injectOp = handleResume
 	return in, op
 }
-

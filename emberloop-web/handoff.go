@@ -276,9 +276,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	if pb, pv := d.profileBlockFor(meta); len(pb) > 0 {
 		h.inject.prepend(pb, pv)
 	}
-	if rb, refs, err := d.recallBlockFor(context.Background(), meta, text); err != nil {
-		d.appendNoticeEvent(id, "memory recall skipped: "+err.Error())
-	} else if len(rb) > 0 {
+	if rb, refs := d.recallOrNotice(context.Background(), id, meta, text); len(rb) > 0 {
 		h.inject.appendRecall(rb, refs)
 	}
 	var token string

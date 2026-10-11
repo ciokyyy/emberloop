@@ -209,27 +209,20 @@ func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAge
 	// from the spawn prompt before each launch, so the spawn answers after
 	// recall and a status poller never sees idle during it.
 	for i, s := range okStarts {
-		if rb, refs, err := d.recallBlockFor(context.Background(), s.meta, agents[i].Prompt); err != nil {
-			d.appendNoticeEvent(s.meta.ID, "memory recall skipped: "+err.Error())
-		} else if len(rb) > 0 {
-			d.mu.Lock()
-			if cs, ok := d.sessions[s.meta.ID]; ok {
-				cs.inject.appendRecall(rb, refs)
-				cs.injectOp = handleResume
-			}
-			d.mu.Unlock()
-		} else {
-			d.mu.Lock()
-			if cs, ok := d.sessions[s.meta.ID]; ok {
-				cs.injectOp = handleResume
-			}
-			d.mu.Unlock()
-		}
+		rb, refs := d.recallOrNotice(context.Background(), s.meta.ID, s.meta, agents[i].Prompt)
 		d.mu.Lock()
-		if cs, ok := d.sessions[s.meta.ID]; ok {
-			cs.busy = true
-			cs.active++
+		cs, ok := d.sessions[s.meta.ID]
+		if !ok {
+			// The child was removed mid-recall; skip its turn.
+			d.mu.Unlock()
+			continue
 		}
+		if len(rb) > 0 {
+			cs.inject.appendRecall(rb, refs)
+		}
+		cs.injectOp = handleResume
+		cs.busy = true
+		cs.active++
 		d.mu.Unlock()
 		d.appendPromptEvent(s.meta.ID, agents[i].Prompt, "", 0, nil, from)
 		go d.runTurn(s.meta.ID, s.be, agents[i].Prompt, nil)
