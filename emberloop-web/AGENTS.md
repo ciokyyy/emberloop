@@ -634,7 +634,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   The system prompt carries the role extra, no `remember` in any of them. A submitted
   done (`POST /api/sessions/{id}/submit`) merges by rebase plus
   fast-forward-only through the shared core checks; a non-done submit waits
-  for done instead of merging; a dirty worktree or
+  for done instead of merging; the submit gate refuses a done with no new
+  commit since the last changes verdict and a done whose report or summary
+  says the work is not done (both 409 with a reason), and a second blocked
+  submit with the same question hash becomes needs-you; a dirty worktree or
   rebase conflict keeps the Worker alive with the refusal on its row and
   tells the Worker. With no target branch (detached repo) the rebase falls
   back to the repo HEAD as it stands at finish, never the recorded base.

@@ -410,22 +410,16 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 	}
 }
 
-// The same refusal three times in a row marks the ticket needs-you: both
-// reviewers report the same changes verdict, the worker submits done three
-// times, and each refusal is told back before the next submit.
+// The same refusal three times in a row marks the ticket needs-you: a dirty
+// worktree refuses every finish identically, the worker submits done three
+// times, and each refusal is told back before the next submit. A dirty
+// refusal repeats verbatim (unlike a changes verdict, which the submit gate
+// refuses as an empty resubmit), so it still exercises the driver's streak.
 func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	fb := NewFakeBackend()
-	changes := "VERDICT: changes\nmain.go:10 major: missing probe handler"
-	fb.ReplyFunc = func(id, text string) (string, bool) {
-		if strings.Contains(text, "Review ticket") || strings.Contains(text, "RESPOND IN FORMAT") {
-			return changes, true
-		}
-		return "", false
-	}
-	d := NewDaemon(tempDir(t), fb)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -434,12 +428,13 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	writeFile(t, filepath.Join(repo, ".el-worktrees", "01-first"), "dirty.txt", "dirty\n")
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 		// Each submit's refusal reaches the worker before the next
 		// submit, so the streak counts consecutive identical refusals.
-		waitPromptContaining(t, srv.URL, worker, "missing probe handler", n, "refusal tell")
+		waitPromptContaining(t, srv.URL, worker, "uncommitted changes", n, "refusal tell")
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -456,21 +451,13 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 
 // Retry after the refusal alert clears the banner and the ticket works
 // again: the retry generation resets the driver's streak and backoff, so a
-// passing review from here merges.
+// clean worktree from here merges. A dirty refusal repeats verbatim (unlike
+// a changes verdict, which the submit gate refuses as an empty resubmit).
 func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	fb := NewFakeBackend()
-	changes := "VERDICT: changes\nmain.go:10 major: missing probe handler"
-	verdict := changes
-	fb.ReplyFunc = func(id, text string) (string, bool) {
-		if strings.Contains(text, "Review ticket") || strings.Contains(text, "RESPOND IN FORMAT") {
-			return verdict, true
-		}
-		return "", false
-	}
-	d := NewDaemon(tempDir(t), fb)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -479,24 +466,28 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	writeFile(t, worktree, "dirty.txt", "dirty\n")
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
-		waitPromptContaining(t, srv.URL, worker, "missing probe handler", n, "refusal tell")
+		waitPromptContaining(t, srv.URL, worker, "uncommitted changes", n, "refusal tell")
 	}
 	waitActionState(t, srv.URL, run.ID, "01-first", "needs-you", "refusal needs-you")
 
-	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", "address the findings and submit again"); code != http.StatusOK {
+	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", "clean up and submit again"); code != http.StatusOK {
 		t.Fatalf("retry status = %d, want 200", code)
 	}
 	if got := actionTicketByID(getActionRun(t, srv.URL, run.ID), "01-first"); got.NeedsYou != "" {
 		t.Fatalf("needsYou = %q after retry, want cleared", got.NeedsYou)
 	}
 	// The retry's steer reached the worker.
-	waitPromptContaining(t, srv.URL, worker, "address the findings", 1, "retry steer text")
+	waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")
 
-	// From here both reviewers pass and the next done submit merges.
-	verdict = "VERDICT: pass"
+	// A clean worktree from here merges.
+	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	waitRunTickets(t, srv.URL, run.ID, map[string]string{"01-first": "merged"})
 }

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,6 +46,17 @@ type submitRec struct {
 	Report    string   `json:"report,omitempty"`
 	Summary   string   `json:"summary,omitempty"`
 	Count     int      `json:"count"`
+}
+
+// blockedTrack is one Ticket's blocked-question state for the submit gate:
+// the normalized question hash, the question text for the needs-you reason,
+// and how many times the Worker submitted blocked with that hash. A second
+// blocked submit with the same hash becomes needs-you, so a Worker does not
+// loop asking the same question.
+type blockedTrack struct {
+	Hash     string `json:"hash"`
+	Question string `json:"question,omitempty"`
+	Count    int    `json:"count"`
 }
 
 // The reviewer types every Ticket gets, one persistent Reviewer Session
@@ -122,6 +135,10 @@ type runState struct {
 	// SubmitRecs keeps each Worker's last submit by ticket so a Daemon
 	// restart does not reset the submit count below Reprompted.
 	SubmitRecs map[string]submitRec `json:"submitRecs,omitempty"`
+	// Blocked tracks each Ticket's blocked-question submits for the gate:
+	// the second blocked submit with the same question hash becomes
+	// needs-you. Old run files without it read as no blocked history.
+	Blocked map[string]blockedTrack `json:"blocked,omitempty"`
 	// ReviewStarted holds when the current tip was prompted per ticket per
 	// reviewer type, so a verdict's durationMs measures prompt to verdict.
 	ReviewStarted map[string]map[string]time.Time `json:"reviewStarted,omitempty"`
@@ -1960,6 +1977,9 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		if rs.NeedsYouReason != nil {
 			delete(rs.NeedsYouReason, ticketID)
 		}
+		if rs.Blocked != nil {
+			delete(rs.Blocked, ticketID)
+		}
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 	}
@@ -2141,7 +2161,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"recallOffN": rs.RecallOffN,
-		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
+		"createdAt":  rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
 }
 
@@ -2251,7 +2271,120 @@ func (d *Daemon) serveRunEvents(w http.ResponseWriter, r *http.Request, id strin
 // records at its tip: a `pass` needs `ran`, a `changes` needs a blocker or
 // major, and a tip behind the branch tip records stale and does not count.
 // The legacy `VERDICT: pass|changes` free-text reply stays only as a fallback
-// for a Backend without the tool.
+// for a Backend without the tool. The Worker submit gate refuses a done with
+// no new commit since the last changes verdict, refuses a done whose report
+// or pre-Follow-ups summary says the work is not done, and turns a second
+// blocked submit with the same question hash into needs-you.
+// notDonePhrases is the conservative "work is not done" pattern for the
+// Worker submit gate: a done submit whose report or pre-Follow-ups summary
+// names one of these is refused, so a ticked Ticket is complete. The list
+// stays narrow on purpose: only phrases that clearly say the work itself is
+// unfinished. The Follow-ups section of the summary is excluded from the
+// scan, so legitimate notes like "Follow-ups: still needs docs" or reports
+// about handling "incomplete input" do not refuse.
+var notDonePhrases = []string{
+	"not done",
+	"not finished",
+	"not complete",
+}
+
+// stripFollowups returns the summary text before the Follow-ups: marker, so
+// the not-done scan never reads the worker's follow-up notes.
+func stripFollowups(summary string) string {
+	if i := strings.Index(summary, "Follow-ups:"); i >= 0 {
+		return summary[:i]
+	}
+	return summary
+}
+
+// refuseNotDoneText reports why a done submit's text says the work is not
+// done, or empty when the text reads finished. It scans the report and the
+// pre-Follow-ups summary together, case-insensitively.
+func refuseNotDoneText(report, summary string) string {
+	text := strings.ToLower(strings.Join(strings.Fields(report+" "+stripFollowups(summary)), " "))
+	if text == "" {
+		return ""
+	}
+	for _, phrase := range notDonePhrases {
+		if strings.Contains(text, phrase) {
+			return "done refused: the submit text says the work is not done (" + phrase + "); finish the work and submit done again"
+		}
+	}
+	return ""
+}
+
+// refuseEmptyResubmit reports why a done submit at tip is an empty resubmit
+// after a changes verdict, or empty when the Worker committed since. Any
+// changes verdict at the current tip means no commit followed it, so the
+// submit is refused with the tip named.
+func refuseEmptyResubmit(reviews map[string]storedReview, tip string) string {
+	if tip == "" {
+		return ""
+	}
+	for _, typ := range requiredReviewerTypes {
+		if r, ok := reviews[typ]; ok && r.Verdict == "changes" && r.At == tip {
+			return "done refused: no new commit since the last changes verdict at " + shortSHA(tip) + "; commit your fixes and submit done again"
+		}
+	}
+	return ""
+}
+
+// blockedQuestionText is the Worker's blocked question for the gate: the
+// report and summary together, trimmed. Empty reads as an empty question.
+func blockedQuestionText(report, summary string) string {
+	return strings.TrimSpace(strings.TrimSpace(report) + "\n" + strings.TrimSpace(summary))
+}
+
+// blockedQuestionHash normalizes a blocked question (collapsing whitespace)
+// and hashes it, so the same question asked twice has the same hash. The
+// normalization keeps case: the same words with different answers still
+// match, while trivial whitespace edits do not hide a repeat.
+func blockedQuestionHash(question string) string {
+	normalized := strings.Join(strings.Fields(question), " ")
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+// truncateQuestion shortens a blocked question for the needs-you reason.
+func truncateQuestion(s string, max int) string {
+	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	if s == "" {
+		return "no question given"
+	}
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "..."
+}
+
+// storeSubmitLocked records one submit in d.submits and, for Run workers,
+// in the Run's SubmitRecs, bumping past Reprompted after a restart.
+// Callers hold d.mu. A nil rs means a non-Run session: only d.submits.
+func (d *Daemon) storeSubmitLocked(sessionID, ticketID string, rs *runState, status string, completed []string, report, summary string) int {
+	rec := d.submits[sessionID]
+	if rec == nil {
+		rec = &submitRec{}
+		d.submits[sessionID] = rec
+	}
+	rec.Count++
+	rec.Status = status
+	rec.Completed = append([]string(nil), completed...)
+	rec.Report = report
+	rec.Summary = summary
+	count := rec.Count
+	if rs != nil && ticketID != "" {
+		if n := rs.Reprompted[ticketID]; rec.Count <= n {
+			rec.Count = n + 1
+			count = rec.Count
+		}
+		if rs.SubmitRecs == nil {
+			rs.SubmitRecs = map[string]submitRec{}
+		}
+		rs.SubmitRecs[ticketID] = *rec
+	}
+	return count
+}
+
 func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Status    string          `json:"status"`
@@ -2283,55 +2416,111 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 		http.Error(w, "status is required", http.StatusBadRequest)
 		return
 	}
-	rec := d.submits[id]
-	if rec == nil {
-		rec = &submitRec{}
-		d.submits[id] = rec
+	workerRun, workerTicket := d.findWorkerLocked(id)
+	rs, ok := d.runs[workerRun]
+	if workerRun == "" || !ok {
+		count := d.storeSubmitLocked(id, "", nil, req.Status, req.Completed, req.Report, req.Summary)
+		d.mu.Unlock()
+		d.appendEvent(id, "submit", req.Status, "")
+		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
+		return
 	}
-	rec.Count++
-	rec.Status = req.Status
-	rec.Completed = append([]string(nil), req.Completed...)
-	rec.Report = req.Report
-	rec.Summary = req.Summary
-	count := rec.Count
-	var workerRun, workerTicket string
-	if rec.Status == "done" {
-		workerRun, workerTicket = d.findWorkerLocked(id)
-		if workerRun != "" {
-			if rs, ok := d.runs[workerRun]; ok {
-				if rs.Followups == nil {
-					rs.Followups = map[string]string{}
-				}
-				rs.Followups[workerTicket] = parseFollowups(req.Summary)
-				d.persistRun(rs)
-				d.broadcastRunLocked(rs)
-			}
-		}
-	}
-	if workerRun == "" {
-		workerRun, workerTicket = d.findWorkerLocked(id)
-	}
-	if rs, ok := d.runs[workerRun]; ok && workerRun != "" {
-		// A count reset by a Daemon restart must still outrun what the
-		// reviewers were already re-prompted for.
-		if n := rs.Reprompted[workerTicket]; rec.Count <= n {
-			rec.Count = n + 1
-			count = rec.Count
-		}
-		if rs.SubmitRecs == nil {
-			rs.SubmitRecs = map[string]submitRec{}
-		}
-		rs.SubmitRecs[workerTicket] = *rec
+	switch req.Status {
+	case "done":
+		d.handleWorkerDoneSubmit(w, r, id, workerRun, workerTicket, rs, req.Completed, req.Report, req.Summary)
+	case "blocked":
+		d.handleWorkerBlockedSubmit(w, r, id, workerRun, workerTicket, rs, req.Completed, req.Report, req.Summary)
+	default:
+		count := d.storeSubmitLocked(id, workerTicket, rs, req.Status, req.Completed, req.Report, req.Summary)
 		d.persistRun(rs)
+		d.mu.Unlock()
+		d.appendEvent(id, "submit", req.Status, "")
+		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 	}
+}
+
+// handleWorkerDoneSubmit gates and records one Worker done submit.
+// Callers hold d.mu and stay holding it across the tip read, so two
+// concurrent done submits cannot both pass the empty-resubmit check:
+// rev-parse never touches the index, so holding the lock is a short,
+// single-attempt read.
+func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, id, workerRun, workerTicket string, rs *runState, completed []string, report, summary string) {
+	if msg := refuseNotDoneText(report, summary); msg != "" {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": msg})
+		return
+	}
+	for _, typ := range requiredReviewerTypes {
+		if rev, ok := rs.Reviews[workerTicket][typ]; ok && rev.Verdict == "changes" {
+			tip := ""
+			if branch := rs.Branches[workerTicket]; branch != "" {
+				if sha, err := runGit(rs.Repo, "rev-parse", branch); err == nil {
+					tip = sha
+				}
+			}
+			if why := refuseEmptyResubmit(rs.Reviews[workerTicket], tip); why != "" {
+				d.mu.Unlock()
+				writeJSON(w, http.StatusConflict, map[string]any{"error": why})
+				return
+			}
+			break
+		}
+	}
+	count := d.storeSubmitLocked(id, workerTicket, rs, "done", completed, report, summary)
+	if rs.Followups == nil {
+		rs.Followups = map[string]string{}
+	}
+	rs.Followups[workerTicket] = parseFollowups(summary)
+	if rs.Blocked != nil {
+		delete(rs.Blocked, workerTicket)
+	}
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
-	d.appendEvent(id, "submit", req.Status, "")
-	if workerRun != "" && req.Status == "done" {
-		// Sync so the driver's next finish sees the re-prompt already out,
-		// never a stale refusal first, and prompts queue in submit order.
-		// Bounded to two reviewer starts plus two steers; the cap refuses
-		// fast and Tell is best effort, so the ack waits on at most that.
-		d.ensureReviewers(workerRun, workerTicket)
+	d.appendEvent(id, "submit", "done", "")
+	// Sync so the driver's next finish sees the re-prompt already out,
+	// never a stale refusal first, and prompts queue in submit order.
+	// Bounded to two reviewer starts plus two steers; the cap refuses
+	// fast and Tell is best effort, so the ack waits on at most that.
+	d.ensureReviewers(workerRun, workerTicket)
+	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
+}
+
+// handleWorkerBlockedSubmit records one Worker blocked submit, turning a
+// second submit with the same question hash into needs-you. Callers hold
+// d.mu.
+func (d *Daemon) handleWorkerBlockedSubmit(w http.ResponseWriter, r *http.Request, id, workerRun, workerTicket string, rs *runState, completed []string, report, summary string) {
+	question := blockedQuestionText(report, summary)
+	hash := blockedQuestionHash(question)
+	if rs.Blocked == nil {
+		rs.Blocked = map[string]blockedTrack{}
+	}
+	prev := rs.Blocked[workerTicket]
+	var needsYou string
+	if prev.Hash != "" && prev.Hash == hash {
+		rs.Blocked[workerTicket] = blockedTrack{Hash: hash, Question: question, Count: prev.Count + 1}
+		needsYou = "worker blocked again with the same question: " + truncateQuestion(question, 180)
+		if rs.NeedsYouReason == nil {
+			rs.NeedsYouReason = map[string]string{}
+		}
+		rs.NeedsYouReason[workerTicket] = needsYou
+	} else {
+		rs.Blocked[workerTicket] = blockedTrack{Hash: hash, Question: question, Count: 1}
+	}
+	count := d.storeSubmitLocked(id, workerTicket, rs, "blocked", completed, report, summary)
+	var push bool
+	var num int
+	var title string
+	if needsYou != "" {
+		push = d.noteNeedsYouPushLocked(rs, workerTicket, needsYou)
+		num, title = ticketNumTitleLocked(rs, workerTicket)
+	}
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	d.appendEvent(id, "submit", "blocked", "")
+	if needsYou != "" && push {
+		d.pushRunNeedsYou(workerRun, workerTicket, num, title, needsYou)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 }
@@ -2823,6 +3012,9 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 	delete(rs.NeedsYouReason, ticketID)
 	if rs.pushedNeedsYou != nil {
 		delete(rs.pushedNeedsYou, ticketID)
+	}
+	if rs.Blocked != nil {
+		delete(rs.Blocked, ticketID)
 	}
 	if rs.Parked != nil {
 		delete(rs.Parked, ticketID)

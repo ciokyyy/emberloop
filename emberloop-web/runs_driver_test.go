@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -960,4 +961,248 @@ func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("count = %d, want 3 (above Reprompted 2)", n)
 	}
+}
+
+// submitGateRaw posts one Worker submit with report and summary and returns
+// the status code and error text, so gate refusals can assert 409.
+func submitGateRaw(t *testing.T, base, id, status string, completed []string, report, summary string) (int, string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"status": status, "completed": completed, "report": report, "summary": summary})
+	resp, err := http.Post(base+"/api/sessions/"+id+"/submit", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Error   string `json:"error"`
+		Submits int    `json:"submits"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out.Error
+}
+
+// A done submit with no new commit since the last changes verdict is refused
+// with a reason; a new commit lets the next done through.
+func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	var mu sync.Mutex
+	specCalls := 0
+	fb.ReplyFunc = func(id, text string) (string, bool) {
+		if !strings.Contains(text, "Review ticket") && !strings.Contains(text, "RESPOND IN FORMAT") {
+			return "", false
+		}
+		if strings.Contains(text, "reviewer-spec") {
+			mu.Lock()
+			specCalls++
+			n := specCalls
+			mu.Unlock()
+			if n == 1 {
+				return "VERDICT: changes\nwork.go:1 blocker: handle nil", true
+			}
+		}
+		return "VERDICT: pass", true
+	}
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", ""); code != http.StatusAccepted {
+		t.Fatalf("first done status = %d, want 202", code)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "handle nil")
+	}, "changes refusal shown")
+	code, msg := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", "")
+	if code != http.StatusConflict {
+		t.Fatalf("empty resubmit status = %d, want 409", code)
+	}
+	if !strings.Contains(strings.ToLower(msg), "no new commit") {
+		t.Fatalf("empty resubmit error = %q, want it to name no new commit", msg)
+	}
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	writeFile(t, worktree, "work.go", "package main\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "fix nil")
+	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", ""); code != http.StatusAccepted {
+		t.Fatalf("done after a new commit status = %d, want 202", code)
+	}
+}
+
+// A done submit whose text says the work is not done is refused; finished
+// text, Follow-ups notes and reports about handling bad input go through.
+func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	code, msg := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "Not done: auth handler missing", "")
+	if code != http.StatusConflict {
+		t.Fatalf("not-done done status = %d, want 409", code)
+	}
+	if !strings.Contains(strings.ToLower(msg), "not done") {
+		t.Fatalf("not-done error = %q, want it to name not done", msg)
+	}
+	code, msg = submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", "work is not complete")
+	if code != http.StatusConflict {
+		t.Fatalf("summary not-done status = %d, want 409", code)
+	}
+	if !strings.Contains(strings.ToLower(msg), "not done") {
+		t.Fatalf("summary not-done error = %q, want it to name not done", msg)
+	}
+	// The Follow-ups section is excluded: follow-up notes never refuse.
+	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "All done, boxes ticked", "Follow-ups: still needs docs"); code != http.StatusAccepted {
+		t.Fatalf("follow-ups done status = %d, want 202", code)
+	}
+	// Reports about handling unfinished or invalid input are not refusals.
+	for _, report := range []string{"handles incomplete input", "rejects not yet valid tokens", "reports unfinished jobs as skipped"} {
+		if msg := refuseNotDoneText(report, ""); msg != "" {
+			t.Fatalf("report %q refused: %q, want accepted", report, msg)
+		}
+	}
+	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "All done, boxes ticked", "Follow-ups: none"); code != http.StatusAccepted {
+		t.Fatalf("finished done status = %d, want 202", code)
+	}
+}
+
+// A second blocked submit with the same question becomes needs-you; a
+// different question does not.
+func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need the API key for X", ""); code != http.StatusAccepted {
+		t.Fatalf("first blocked status = %d, want 202", code)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").LastRefusal != ""
+	}, "blocked refusal shown")
+	if got := ticketByID(r, "01-first"); got.State == "needs-you" {
+		t.Fatalf("first blocked state = needs-you, want it to wait for done")
+	}
+	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need a different token for Y", ""); code != http.StatusAccepted {
+		t.Fatalf("different blocked status = %d, want 202", code)
+	}
+	if got := getRun(t, srv.URL, run.ID); ticketByID(got, "01-first").State == "needs-you" {
+		t.Fatalf("different question state = needs-you, want it to wait for done")
+	}
+	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need  a different   token for Y", ""); code != http.StatusAccepted {
+		t.Fatalf("repeat blocked status = %d, want 202", code)
+	}
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "needs-you"
+	}, "repeat blocked becomes needs-you")
+	// A done submit clears the blocked question track, while needs-you stays
+	// until a retry: the next identical blocked starts a fresh count.
+	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "All done", ""); code != http.StatusAccepted {
+		t.Fatalf("done after blocked status = %d, want 202", code)
+	}
+	d.mu.Lock()
+	if _, ok := d.runs[run.ID].Blocked["01-first"]; ok {
+		d.mu.Unlock()
+		t.Fatalf("blocked track survives done, want it cleared")
+	}
+	d.mu.Unlock()
+	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", ""); code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200", code)
+	}
+	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need a different token for Y", ""); code != http.StatusAccepted {
+		t.Fatalf("blocked after retry status = %d, want 202", code)
+	}
+	if got := getRun(t, srv.URL, run.ID); ticketByID(got, "01-first").State == "needs-you" {
+		t.Fatalf("blocked after retry state = needs-you, want a fresh count")
+	}
+}
+
+// A retry clears the blocked question, and the blocked track survives a
+// Daemon restart through the persisted Run file.
+func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
+	state := tempDir(t)
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(state, NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need the API key for X", ""); code != http.StatusAccepted {
+		t.Fatalf("first blocked status = %d, want 202", code)
+	}
+	// Retry clears the track while running.
+	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", ""); code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200", code)
+	}
+	d.mu.Lock()
+	if _, ok := d.runs[run.ID].Blocked["01-first"]; ok {
+		d.mu.Unlock()
+		t.Fatalf("blocked track survives retry, want it cleared")
+	}
+	d.mu.Unlock()
+	// A fresh blocked starts over after the retry.
+	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need the API key for X", ""); code != http.StatusAccepted {
+		t.Fatalf("blocked after retry status = %d, want 202", code)
+	}
+	if got := getRun(t, srv.URL, run.ID); ticketByID(got, "01-first").State == "needs-you" {
+		t.Fatalf("blocked after retry state = needs-you, want a fresh count")
+	}
+	// Pause first so the reloaded Daemon is the only driver afterwards.
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+		t.Fatalf("pause status = %d, want 200", code)
+	}
+	srv.Close()
+	d2 := NewDaemon(state, NewFakeBackend())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
+	defer srv2.Close()
+	d2.mu.Lock()
+	rs, ok := d2.runs[run.ID]
+	if !ok {
+		d2.mu.Unlock()
+		t.Fatalf("run %s missing after restart", run.ID)
+	}
+	track, ok := rs.Blocked["01-first"]
+	d2.mu.Unlock()
+	if !ok || track.Count != 1 {
+		t.Fatalf("blocked track after restart = %+v, want count 1", track)
+	}
+	if _, code := postRunAction(t, srv2.URL, run.ID, "resume"); code != http.StatusOK {
+		t.Fatalf("resume status = %d, want 200", code)
+	}
+	r = getRun(t, srv2.URL, run.ID)
+	worker = ticketByID(r, "01-first").WorkerSession
+	if code, _ := submitGateRaw(t, srv2.URL, worker, "blocked", nil, "Need the API key for X", ""); code != http.StatusAccepted {
+		t.Fatalf("repeat blocked status = %d, want 202", code)
+	}
+	waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "needs-you"
+	}, "repeat blocked becomes needs-you after restart")
 }
