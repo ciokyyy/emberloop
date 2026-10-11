@@ -83,9 +83,9 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 		t.Fatalf("user prompt flagged: %+v", hand[0])
 	}
 
-	// compressed Event: number, tokens before, fallback step (no model: the deterministic path has no summarizer).
+	// compressed Event: number, tokens before, model (deterministic: no summarizer), fallback step.
 	c := eventsOfKind(evs, "compressed")[0]
-	if !strings.Contains(c.Text, `"number":1`) ||
+	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":"deterministic"`) ||
 		!strings.Contains(c.Text, `"fallback":"deterministic"`) || !strings.Contains(c.Text, `"tokensBefore":`) ||
 		strings.Contains(c.Text, `"tokensBefore":0`) {
 		t.Fatalf("compressed text = %s", c.Text)
@@ -191,11 +191,12 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 		settled := !sess.busy && sess.active == 0
 		d.mu.Unlock()
 		if settled {
-			break
+			if n := be.ReleasedHandles(id); n != 0 {
+				t.Fatalf("released = %d, want 0 after a turn error", n)
+			}
+			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if n := be.ReleasedHandles(id); n != 0 {
-		t.Fatalf("released = %d, want 0 after a turn error", n)
-	}
+	t.Fatal("busy/active not cleared after the turn error")
 }

@@ -26,6 +26,7 @@ type handoffBackend interface {
 type HandoffEvent struct {
 	Number       int    `json:"number"`
 	TokensBefore int    `json:"tokensBefore"`
+	Model        string `json:"model"` // "deterministic": no summarizer wrote the Handoff
 	Fallback     string `json:"fallback"`
 }
 
@@ -217,7 +218,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 		cur.turnsSinceCompress = 0
 	}
 	d.mu.Unlock()
-	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Fallback: "deterministic"}.text(), "")
+	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: "deterministic", Fallback: "deterministic"}.text(), "")
 
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {
@@ -227,9 +228,10 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 	be := d.backendForLocked(meta.Harness)
 	d.mu.Unlock()
 
-	// The old handle goes once the first turn on the new one works. A turn
-	// that ends without working releases it too, unless it reported an error:
-	// then the old handle stays for the caller to keep.
+	// The old handle goes as soon as the first turn on the new one works. A
+	// turn that ends without ever working releases it too, unless it reported
+	// an error: then the old handle stays. An error after working changes
+	// nothing: the old handle is already gone.
 	var once sync.Once
 	releaseOld := func() {
 		once.Do(func() {
