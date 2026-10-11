@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Settings store, validate and return per-role Chains
-- [ ] Classifier extracted from the Compress block path and used by both
-- [ ] Unit and API tests cover each class and the settings round trip
-- [ ] `.emberloop/check` passes
+- [x] Settings store, validate and return per-role Chains
+- [x] Classifier extracted from the Compress block path and used by both
+- [x] Unit and API tests cover each class and the settings round trip
+- [x] `.emberloop/check` passes
