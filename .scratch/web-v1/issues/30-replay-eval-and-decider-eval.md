@@ -4,11 +4,11 @@
 
 **Blocked by:** 19, 20, 24
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A command prints recall@5 and the repeat-correction rate for a Project's history
-- [ ] The embedder comparison runs on the same cases and prints the gap
-- [ ] A labelling file format and a script that scores each Decider on it exist; labels come from the queue and from hand labels
-- [ ] The Run A/B option is a Run setting and is recorded in the Run file
-- [ ] Unit tests cover the metrics on canned logs
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A command prints recall@5 and the repeat-correction rate for a Project's history
+- [x] The embedder comparison runs on the same cases and prints the gap
+- [x] A labelling file format and a script that scores each Decider on it exist; labels come from the queue and from hand labels
+- [x] The Run A/B option is a Run setting and is recorded in the Run file
+- [x] Unit tests cover the metrics on canned logs
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
