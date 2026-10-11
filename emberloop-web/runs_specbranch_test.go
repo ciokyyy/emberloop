@@ -350,3 +350,75 @@ func TestFFUpdateSpecBranchRefusesNonFastForward(t *testing.T) {
 		t.Fatalf("equal-tip update = %q %q %v, want %q with no refusal", sha, kept, err, specTip)
 	}
 }
+
+// A checkout sitting on another branch at Start still forks the spec branch
+// from the master tip: ensureSpecBranch resolves the master ref explicitly,
+// never HEAD.
+func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	// Move the checkout onto a side branch HEAD does not share with master.
+	testGit(t, repo, "checkout", "-b", "side")
+	writeFile(t, repo, "side.txt", "side\n")
+	testGit(t, repo, "add", "side.txt")
+	testGit(t, repo, "commit", "-m", "side work")
+	side := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD"))
+	if side == master {
+		t.Fatalf("HEAD = %q, want it off the master tip %q", side, master)
+	}
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	if run.SpecBase != master {
+		t.Fatalf("specBase = %q, want the master tip %q", run.SpecBase, master)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")); got != master {
+		t.Fatalf("spec/demo = %q, want the master tip %q", got, master)
+	}
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	_ = r
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first")); got != master {
+		t.Fatalf("implement/01-first = %q, want the spec tip %q", got, master)
+	}
+}
+
+// Reuse still records the master tip at Start when the checkout sits
+// elsewhere: the branch keeps its own tip while the base names master for
+// the later final-merge rebase.
+func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	// Pre-create the spec branch with a commit master lacks.
+	specWT := filepath.Join(repo, ".el-worktrees", "preexisting")
+	testGit(t, repo, "worktree", "add", "-b", "spec/demo", specWT, master)
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", specWT) })
+	writeFile(t, specWT, "spec-note.txt", "spec\n")
+	testGit(t, specWT, "add", "spec-note.txt")
+	testGit(t, specWT, "commit", "-m", "spec work")
+	specTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
+	// Move the checkout onto a side branch, so HEAD names neither master
+	// nor the spec branch.
+	testGit(t, repo, "checkout", "-b", "side")
+	writeFile(t, repo, "side.txt", "side\n")
+	testGit(t, repo, "add", "side.txt")
+	testGit(t, repo, "commit", "-m", "side work")
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	if run.SpecBase != master {
+		t.Fatalf("specBase = %q, want the master tip %q", run.SpecBase, master)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")); got != specTip {
+		t.Fatalf("spec/demo = %q, want the reused tip %q", got, specTip)
+	}
+}

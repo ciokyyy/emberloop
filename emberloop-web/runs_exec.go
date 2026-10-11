@@ -137,12 +137,12 @@ type runState struct {
 	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
 	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
 	// SpecBranch is the Run's integration branch (spec/<slug>), created
-	// from HEAD as it stands at Start (the master tip when the checkout
-	// sits on it) when absent and reused as it stands otherwise. Ticket
-	// branches fork from it and finish back into it; master moves only at
-	// the final merge (a later ticket). SpecBase is the HEAD the branch was
-	// created or reused from, for the later rebase. Both survive a restart
-	// in the Run file.
+	// from the master tip (the master ref when present, else main) when
+	// absent and reused as it stands otherwise. Ticket branches fork from
+	// it and finish back into it; master moves only at the final merge (a
+	// later ticket). SpecBase is the master tip at Start, even on reuse,
+	// for the later final-merge rebase. Both survive a restart in the Run
+	// file.
 	SpecBranch string `json:"specBranch,omitempty"`
 	SpecBase   string `json:"specBase,omitempty"`
 	// SubmitRecs keeps each Worker's last submit by ticket so a Daemon
@@ -335,16 +335,28 @@ func specBranchExists(repo, branch string) (bool, error) {
 	}
 }
 
-// ensureSpecBranch creates the Run's spec/<slug> branch from HEAD as it
-// stands at Start (the master tip when the checkout sits on it; a checkout
-// on another branch or detached forks from that HEAD instead) when absent
-// and reuses it as it stands otherwise. It returns the HEAD the Run records
-// as its base: the later rebase compares against it. The main checkout never
-// moves, so two specs run at once.
+// masterTip resolves the master tip of repo explicitly, never HEAD: the
+// master ref when present, else main. A checkout on another branch or
+// detached must not move where a new spec branch forks from.
+func masterTip(repo string) (string, error) {
+	for _, ref := range []string{"refs/heads/master", "refs/heads/main"} {
+		if out, err := runGit(repo, "rev-parse", ref); err == nil && out != "" {
+			return out, nil
+		}
+	}
+	return "", fmt.Errorf("could not read the master tip in %s: neither master nor main exists", repo)
+}
+
+// ensureSpecBranch creates the Run's spec/<slug> branch from the master tip
+// when absent and reuses it as it stands otherwise. It returns the master
+// tip at Start as the base the Run records: on reuse the branch keeps its
+// own tip while the recorded base still names master for the later
+// final-merge rebase. The main checkout never moves, so two specs run at
+// once.
 func ensureSpecBranch(repo, branch string) (base string, created bool, err error) {
-	base, err = runGit(repo, "rev-parse", "HEAD")
-	if err != nil || base == "" {
-		return "", false, fmt.Errorf("could not read HEAD in %s: %v", repo, err)
+	base, err = masterTip(repo)
+	if err != nil {
+		return "", false, err
 	}
 	exists, err := specBranchExists(repo, branch)
 	if err != nil {
@@ -622,13 +634,14 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// The Run works on its own spec/<slug> branch, created from HEAD as it
-	// stands at Start (the master tip when the checkout sits on it) when
-	// absent and reused as it stands otherwise. It runs after the
-	// duplicate-Run check, so a refused Start leaves no branch behind.
-	// Ticket branches fork from it and finish back into it; the main
-	// checkout never moves, so two specs run at once. The branch and the
-	// base SHA persist on the Run row and survive a restart.
+	// The Run works on its own spec/<slug> branch, created from the master
+	// tip (master ref when present, else main) when absent and reused as it
+	// stands otherwise; the recorded base is always the master tip at
+	// Start, even on reuse. It runs after the duplicate-Run check, so a
+	// refused Start leaves no branch behind. Ticket branches fork from it
+	// and finish back into it; the main checkout never moves, so two specs
+	// run at once. The branch and the base SHA persist on the Run row and
+	// survive a restart.
 	specBase, _, err := ensureSpecBranch(repo, specRun.Branch)
 	if err != nil {
 		d.mu.Unlock()
