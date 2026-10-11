@@ -1,13 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, within } from '@testing-library/svelte';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, within, fireEvent } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import Card from './Card.svelte';
-import { compressSession } from './api.js';
+import { compressSession, promoteSessionRule } from './api.js';
 import { people } from './people.svelte.js';
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 vi.mock('./api.js', async (orig) => ({
   ...(await orig()),
   listImages: vi.fn(async () => ({ images: [{ id: 'aud_1', mediaType: 'audio/webm', peaks: [20, 80], durationMs: 5000 }] })),
   compressSession: vi.fn(async () => ({ ok: true })),
+  promoteSessionRule: vi.fn(async () => ({ id: 7, status: 'pending' })),
 }));
 
 const block = (card, title = 'T', body = 'body text') => ({ key: 1, card, title, body, collapsed: card === 'tool', events: [] });
@@ -166,5 +172,39 @@ describe('user prompt sender badge', () => {
     system.unmount();
     const legacy = render(Card, { props: { block: prompt({}) } });
     expect(within(legacy.container).queryByTestId('sender-badge')).toBeNull();
+  });
+});
+
+describe('Card promote action', () => {
+  const injected = (rules) => ({ key: 2, card: 'divider', title: 'Memory injected', body: '2 rules', collapsed: false, rules, events: [] });
+
+  it('offers Promote on each injected rule in the chat', () => {
+    const { container } = render(Card, {
+      props: { block: injected([{ id: 'rule-aaa111', version: 1 }, { id: 'rule-bbb222', version: 2 }]), sessionId: 's1' },
+    });
+    expect(container.querySelector('[data-testid="promote-rules"]')).not.toBeNull();
+    expect(within(container).getByRole('button', { name: /Promote rule rule-aaa/ })).toBeTruthy();
+    expect(within(container).getByRole('button', { name: /Promote rule rule-bbb/ })).toBeTruthy();
+  });
+
+  it('proposes through the Session route without leaving the chat', async () => {
+    const { container } = render(Card, {
+      props: { block: injected([{ id: 'rule-aaa111', version: 1 }]), sessionId: 's1' },
+    });
+    await fireEvent.click(within(container).getByRole('button', { name: /Promote rule/ }));
+    await tick();
+    expect(promoteSessionRule).toHaveBeenCalledWith('s1', 'rule-aaa111');
+    expect(within(container).getByRole('button', { name: /Promotion proposed/ })).toBeTruthy();
+  });
+
+  it('hides the promote row without a Session or without rules', () => {
+    const noSession = render(Card, { props: { block: injected([{ id: 'r1', version: 1 }]) } });
+    expect(within(noSession.container).queryByTestId('promote-rules')).toBeNull();
+    noSession.unmount();
+    const noRules = render(Card, {
+      props: { block: { key: 3, card: 'divider', title: 'Memory injected', body: '', collapsed: false, events: [] }, sessionId: 's1' },
+    });
+    expect(within(noRules.container).queryByTestId('promote-rules')).toBeNull();
+    noRules.unmount();
   });
 });

@@ -257,6 +257,37 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   is `MemoryPage.svelte` (`memory.js` normalizers that accept Go-case and
   lowercase rows, `MemoryPage.test.js`, `memory.test.js`) on the rail (`/memory`
   in `router.js`, `Rail.svelte`, `App.svelte`) beside the reused `ProfileSettings`.
+- Promotion to project knowledge (`promote.go`, `memory/promote.go`): a Rule
+  becomes an edit to the nearest `AGENTS.md` or a new note file in the
+  Session's worktree. `POST /api/promotions` (`rule_id`, optional
+  `session_id` resolved from the Rule's provenance when absent, `target`
+  defaulting to `agents_md`) and `POST /api/sessions/{id}/promote` (the chat
+  action, same body minus the Session) enqueue a kind=promotion item with the
+  diff preview for approval (a pending promotion for the same Rule reuses its
+  item); `GET /api/promotions/queue` lists them and
+  `POST /api/promotions/queue/{id}/decide` approves (optional `session_id`
+  worktree override and `text` edit) or rejects. `POST
+  /api/rules/queue/{id}/decide` decides a kind=promotion ID through the same
+  promotion approval, so the normal queue never misses the write. Approval
+  writes the file in the Session's worktree and leaves it uncommitted (the
+  Daemon never commits; the Reviewer loop reviews it as a normal change),
+  then stamps the Rule promoted (`MarkRulePromoted`: `promoted_at/by` on
+  every version, status and provenance untouched) and decides the item
+  approved; the edit is idempotent (an `AGENTS.md` holding the line and an
+  identical note file both succeed) while an existing different note file
+  refuses. Only a signed-in User promotes (the machine token answers 401).
+  Every approval and rejection writes a `promote_*` ledger row.
+  `promote_test.go` covers the diff against the nearest `AGENTS.md`, the
+  uncommitted write with HEAD still, the stamp with provenance, idempotency,
+  the note target with its parseable frontmatter, rejection, the human gate,
+  bad inputs, provenance session fallback and the rules-route decision, all on
+  temp git repos at the Daemon seam. The Memory page proposes from its rules
+  list (`MemoryPage.svelte` Promote button per Rule) and approves from the
+  promotion queue section (`PromotionQueue.svelte` target path plus diff
+  preview with approve and reject; `PromotionQueue.test.js`); the chat side is
+  the Promote button per injected Rule on the memory divider (`Card.svelte`
+  via the `rules` the `injection` card carries in `events.js`; `api.js`
+  `promoteSessionRule`; `Card.test.js`, `events.test.js`, `api.test.js`).
 - Auto-recall injection (`recall_inject.go`): at create and compress the Daemon
   builds Profile plus recall from the task prompt (the Handoff text for
   compress) through `recallBlockFor`: bank `Recall` (20 candidates, `Redact`ed
@@ -628,7 +659,7 @@ to a built Daemon binary (`TestLivePigACP`). The Jev live probe is
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary
-- `emberloop-web/memory/AGENTS.md` — the memory engine package: per-User SQLite banks (observations, Rules, queue, Profile versions, ledger), FTS5 recall, append-only Rules, human purge, snapshots and project notes
+- `emberloop-web/memory/AGENTS.md` — the memory engine package: per-User SQLite banks (observations, Rules, queue, Profile versions, ledger), FTS5 recall, append-only Rules, human purge, snapshots, project notes and promotions to `AGENTS.md`
 
 ## E2E suite
 

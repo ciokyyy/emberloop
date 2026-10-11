@@ -347,7 +347,10 @@ func (d *Daemon) handleRulesQueueStats(w http.ResponseWriter, r *http.Request) {
 // {"status":"approved"|"rejected","text"?,"kind"?,"subject_key"?}. An approval
 // creates the Rule (superseding the same observer's older Rule) and keeps the
 // proposal in the queue row; a rejection keeps the item as a label and writes
-// nothing. Only kind=rule items decide here: a profile_patch ID answers 400.
+// nothing. A kind=promotion ID decides through the promotion approval instead
+// (writing the worktree file, stamping the Rule and deciding the item), so an
+// approval through the normal queue never misses the write; a profile_patch
+// ID answers 400.
 func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, id int64) {
 	user, ok := d.ruleUserOf(w, r)
 	if !ok {
@@ -365,6 +368,10 @@ func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, 
 	bank, err := d.profileBankFor(user.ID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if kind, found := d.queueItemKind(r.Context(), bank, id); found && kind == memory.QueuePromotion {
+		d.decidePromotionThroughRulesQueue(w, r, user, id, &body)
 		return
 	}
 	switch body.Status {
@@ -391,6 +398,73 @@ func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, 
 		}
 		d.recordQueueLedger(r.Context(), user.ID, "queue_approve")
 		writeJSON(w, http.StatusOK, rule)
+	default:
+		http.Error(w, "status must be approved or rejected", http.StatusBadRequest)
+	}
+}
+
+// queueItemKind returns the kind of one queue item, or false when the item is
+// missing or the listing fails.
+func (d *Daemon) queueItemKind(ctx context.Context, bank memory.Memory, id int64) (string, bool) {
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, it := range items {
+		if it.ID == id {
+			return it.Kind, true
+		}
+	}
+	return "", false
+}
+
+// decidePromotionThroughRulesQueue decides a kind=promotion item posted to the
+// rule queue route. It runs the same promotion approval (worktree write, Rule
+// stamp, item decision) as the promotions route, carrying the optional text
+// edit across, so both routes approve identically.
+func (d *Daemon) decidePromotionThroughRulesQueue(w http.ResponseWriter, r *http.Request, user User, id int64, body *ruleDecideBody) {
+	switch body.Status {
+	case memory.QueueRejected:
+		bank, err := d.profileBankFor(user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items, err := bank.Queue(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, it := range items {
+			if it.ID != id {
+				continue
+			}
+			if it.Kind != memory.QueuePromotion {
+				http.Error(w, fmt.Sprintf("%s: queue item %d is %q, not a promotion", memory.ErrInvalid, id, it.Kind), http.StatusBadRequest)
+				return
+			}
+		}
+		if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
+			if errors.Is(err, memory.ErrNotFound) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		d.recordQueueLedger(r.Context(), user.ID, "promote_reject")
+		writeJSON(w, http.StatusOK, map[string]any{"status": memory.QueueRejected})
+	case memory.QueueApproved:
+		out, err := d.approvePromotionQueueItem(r.Context(), user.ID, user.ID, id, &promotionDecideBody{Status: memory.QueueApproved, Text: body.Text})
+		if err != nil {
+			if errors.Is(err, memory.ErrNotFound) {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
 	default:
 		http.Error(w, "status must be approved or rejected", http.StatusBadRequest)
 	}

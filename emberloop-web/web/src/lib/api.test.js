@@ -85,3 +85,60 @@ describe('unauthorized signal', () => {
     window.removeEventListener(api.UNAUTHORIZED, onUnauthorized);
   });
 });
+
+describe('promotions client', () => {
+  it('proposes a Rule against a Session worktree with its target', async () => {
+    const seen = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u, opts) => {
+        seen.url = String(u);
+        seen.opts = opts;
+        return reply(201, '{"id":7,"status":"pending","target":"agents_md","target_path":"AGENTS.md","diff":"--- a/AGENTS.md\\n"}');
+      }),
+    );
+    const item = await api.proposePromotion('r1', 's1', 'agents_md');
+    expect(item.id).toBe(7);
+    expect(item.diff).toContain('AGENTS.md');
+    expect(seen.url).toBe('/api/promotions');
+    expect(seen.opts.method).toBe('POST');
+    expect(JSON.parse(seen.opts.body)).toEqual({ rule_id: 'r1', session_id: 's1', target: 'agents_md' });
+  });
+
+  it('lists the promotion queue and decides with an optional edit', async () => {
+    const urls = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u, opts) => {
+        urls.push(String(u));
+        if (String(u).endsWith('/decide')) {
+          expect(opts.method).toBe('POST');
+          return reply(200, '{"status":"approved","rule_id":"r1"}');
+        }
+        return reply(200, '[{"id":7,"status":"pending","target":"agents_md","target_path":"AGENTS.md","diff":"+x"}]');
+      }),
+    );
+    const queue = await api.listPromotions();
+    expect(queue).toHaveLength(1);
+    expect(queue[0].diff).toBe('+x');
+    const out = await api.decidePromotion(7, 'approved', { text: 'edited' });
+    expect(out.status).toBe('approved');
+    expect(urls).toEqual(['/api/promotions/queue', '/api/promotions/queue/7/decide']);
+  });
+
+  it('promotes a Rule from its own Session without leaving the chat', async () => {
+    const seen = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u, opts) => {
+        seen.url = String(u);
+        seen.opts = opts;
+        return reply(201, '{"id":9,"status":"pending"}');
+      }),
+    );
+    const item = await api.promoteSessionRule('s1', 'r1');
+    expect(item.id).toBe(9);
+    expect(seen.url).toBe('/api/sessions/s1/promote');
+    expect(JSON.parse(seen.opts.body)).toEqual({ rule_id: 'r1', target: '' });
+  });
+});

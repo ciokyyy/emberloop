@@ -298,6 +298,9 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/memory/status", d.handleMemoryStatus)
 	mux.HandleFunc("/api/memory/purge", d.handleMemoryPurge)
 	mux.HandleFunc("/api/memory/nightly", d.handleNightly)
+	mux.HandleFunc("/api/promotions", d.handlePromotions)
+	mux.HandleFunc("/api/promotions/queue", d.handlePromotionsQueue)
+	mux.HandleFunc("/api/promotions/queue/", d.handlePromotionsQueueSub)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	mux.HandleFunc("/api/specs", d.handleSpecs)
@@ -1612,6 +1615,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		d.handleSessionRemember(w, r, id)
 	case sub == "recall" && r.Method == "GET":
 		d.handleSessionRecall(w, r, id)
+	case sub == "promote" && r.Method == "POST":
+		d.handleSessionPromote(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}

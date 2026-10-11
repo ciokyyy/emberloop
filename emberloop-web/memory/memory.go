@@ -136,6 +136,11 @@ type Memory interface {
 	// pending item. Missing supersede targets are skipped (a human purge may
 	// have removed them); every other failure aborts.
 	ApproveRule(ctx context.Context, itemID int64, decidedBy string, rule Rule, supersedeIDs []string) (Rule, error)
+	// MarkRulePromoted stamps every version of ruleID as promoted by promotedBy.
+	// Status and provenance (text, kind, anchors, sources, approver) stay
+	// untouched; only the promoted columns change, which the rules guard
+	// allows alongside status. Unknown IDs are ErrNotFound.
+	MarkRulePromoted(ctx context.Context, ruleID, promotedBy string) error
 
 	// GetProfile returns the latest Profile version, or Version 0 with no
 	// lines when the User never saved one.
@@ -174,7 +179,9 @@ type Observation struct {
 }
 
 // Rule is one version of an approved, injectable note. ApprovedAt is set by
-// the bank.
+// the bank. PromotedAt/By stamp a Rule copied to project knowledge (the
+// nearest AGENTS.md or a project note file) by a human-approved promotion;
+// zero means never promoted. Stamping never touches status or provenance.
 type Rule struct {
 	RuleID               string
 	Version              int
@@ -187,6 +194,8 @@ type Rule struct {
 	SourceObservationIDs []int64
 	ApprovedBy           string
 	ApprovedAt           time.Time
+	PromotedAt           time.Time
+	PromotedBy           string
 }
 
 // QueueItem is a pending decision: a Rule, a Profile patch or a promotion.

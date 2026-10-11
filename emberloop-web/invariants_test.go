@@ -779,11 +779,35 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 			}
 			idx += i + 4
 		}
+		// Fuzzy stems count only as calls: a field named summarizer or a
+		// status word like completed must not read as a send. Every real
+		// model or completion send is a call, so the stem must run into a
+		// paren (after word chars and spaces) to count.
+		callsStem := func(s, stem string) bool {
+			for idx := 0; idx < len(s); {
+				i := strings.Index(s[idx:], stem)
+				if i < 0 {
+					return false
+				}
+				j := idx + i + len(stem)
+				for j < len(s) && (s[j] == '_' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= '0' && s[j] <= '9') {
+					j++
+				}
+				for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+					j++
+				}
+				if j < len(s) && s[j] == '(' {
+					return true
+				}
+				idx += i + len(stem)
+			}
+			return false
+		}
 		send := strings.Contains(lowered, "http.post") || strings.Contains(lowered, "http.get") ||
 			strings.Contains(lowered, "http.head") || strings.Contains(lowered, "http.postform") ||
 			strings.Contains(lowered, "newrequest") || sendsDo ||
-			strings.Contains(lowered, "summariz") || strings.Contains(lowered, "complete") ||
-			strings.Contains(lowered, "chatcompletion") || strings.Contains(lowered, "/api/v1/decisions") ||
+			callsStem(lowered, "summariz") || callsStem(lowered, "complete") ||
+			callsStem(lowered, "chatcompletion") || strings.Contains(lowered, "/api/v1/decisions") ||
 			strings.Contains(lowered, "/v1/systemone")
 		guard := strings.Contains(code, "Redact(") || strings.Contains(code, "RedactedFor(") ||
 			strings.Contains(code, "ForDistill(") || strings.Contains(code, "ForDecider(") ||

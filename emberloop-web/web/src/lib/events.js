@@ -184,9 +184,12 @@ export function cardForEvent(e) {
     case 'injection': {
       let c = {};
       try { c = JSON.parse(text); } catch { /* keep the divider */ }
-      const rules = Array.isArray(c.rules) ? c.rules : [];
+      const raw = Array.isArray(c.rules) ? c.rules : [];
+      // Injected Rule IDs ride the card so the chat can promote one to
+      // project knowledge without leaving the transcript.
+      const rules = raw.filter((r) => r && typeof r.id === 'string' && r.id);
       const bits = [c.profileVersion ? `profile v${c.profileVersion}` : '', rules.length === 1 ? '1 rule' : rules.length ? `${rules.length} rules` : ''].filter(Boolean);
-      return { card: 'divider', title: 'Memory injected', body: bits.join(' · '), collapsed: false };
+      return { card: 'divider', title: 'Memory injected', body: bits.join(' · '), collapsed: false, rules };
     }
     case 'compress_blocked': {
       let c = {};
@@ -389,7 +392,7 @@ export function groupTranscript(events, sessionsById = {}, opts = {}) {
       continue;
     }
     if (c.card === 'tool' && last?.card === 'tool') last.open = false;
-    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, imageIds: c.imageIds, open: e.kind === 'tool_call_started', events: [e] });
+    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, imageIds: c.imageIds, rules: c.rules, open: e.kind === 'tool_call_started', events: [e] });
   }
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];

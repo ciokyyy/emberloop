@@ -77,10 +77,18 @@ describe('cardForEvent maps every Event kind to a card', () => {
     const one = cardForEvent(ev(2, 'injection', JSON.stringify({ rules: [{ id: 'r', version: 2 }] })));
     expect(one.body).toBe('1 rule');
   });
+  it('carries the injected Rule IDs on the divider for the chat promote action', () => {
+    const c = cardForEvent(ev(1, 'injection', JSON.stringify({ rules: [{ id: 'r1', version: 1 }, { id: 'r2', version: 3 }] })));
+    expect(c.rules).toEqual([{ id: 'r1', version: 1 }, { id: 'r2', version: 3 }]);
+    const blocks = groupTranscript([ev(1, 'injection', JSON.stringify({ rules: [{ id: 'r1', version: 1 }] }))]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].rules).toEqual([{ id: 'r1', version: 1 }]);
+  });
   it('renders a malformed injection Event as an empty divider, never nothing', () => {
     const c = cardForEvent(ev(1, 'injection', 'not json'));
     expect(c.card).toBe('divider');
     expect(c.body).toBe('');
+    expect(c.rules).toEqual([]);
   });
 });
 

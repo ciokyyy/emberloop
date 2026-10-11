@@ -226,6 +226,37 @@ export const purgeMemory = (selection, confirm) =>
     body: JSON.stringify({ ...selection, confirm }),
   }).then(json);
 
+// Promotions: propose a Rule as project knowledge (an edit to the nearest
+// AGENTS.md or a new note file in the Session's worktree). Propose answers
+// the queue item with its diff preview for approval; list reads the
+// promotion queue; decide approves (writing the worktree file, never
+// committing) or rejects. The Memory page proposes from the rules list; the
+// chat action proposes from its own Session.
+export const proposePromotion = (ruleId, sessionId, target = '') =>
+  fetch(url('/api/promotions'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rule_id: ruleId, session_id: sessionId, target }),
+  }).then(json);
+
+export const listPromotions = () => fetch(url('/api/promotions/queue')).then(json);
+
+export const decidePromotion = (id, status, opts = {}) =>
+  fetch(url(`/api/promotions/queue/${id}/decide`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, ...opts }),
+  }).then(json);
+
+// Chat action: propose the Rule against that Session's own worktree, so the
+// composer never leaves the chat to file a promotion.
+export const promoteSessionRule = (sessionId, ruleId, target = '') =>
+  fetch(url(`/api/sessions/${sessionId}/promote`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rule_id: ruleId, target }),
+  }).then(json);
+
 export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURIComponent(repo)}`)).then(json);
 
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);

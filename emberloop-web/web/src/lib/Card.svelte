@@ -6,7 +6,7 @@
   import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
-  import { decideSudo, compressSession, imageSrc } from './api.js';
+  import { decideSudo, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
   import Badge from './ui/badge.svelte';
@@ -42,6 +42,26 @@
       compressError = e.message;
     } finally {
       compressBusy = false;
+    }
+  }
+  // Promote an injected Rule to project knowledge from the chat: the Session
+  // route files the promotion against this Session's worktree, and the
+  // promotion queue approves the diff.
+  const injectedRules = $derived((block.rules ?? []).filter((r) => r && typeof r.id === 'string' && r.id));
+  let promoteBusy = $state('');
+  let promoteError = $state('');
+  let promotedIds = $state([]);
+  const shortId = (id) => String(id).slice(0, 8);
+  async function promoteRule(rule) {
+    promoteBusy = rule.id;
+    promoteError = '';
+    try {
+      await promoteSessionRule(sessionId, rule.id);
+      if (!promotedIds.includes(rule.id)) promotedIds = [...promotedIds, rule.id];
+    } catch (e) {
+      promoteError = e.message;
+    } finally {
+      promoteBusy = '';
     }
   }
   // One-line hint of what the tool was asked: first line of the input.
@@ -186,6 +206,26 @@
     <span>{block.title}{#if block.body} · {block.body}{/if}</span>
     <span class="h-px flex-1 bg-border"></span>
   </div>
+  {#if injectedRules.length > 0 && sessionId}
+    <div class="flex flex-wrap items-center justify-center gap-1.5" data-testid="promote-rules">
+      {#each injectedRules as rule (rule.id)}
+        {@const done = promotedIds.includes(rule.id)}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={promoteBusy === rule.id || done}
+          aria-label={done ? `Promotion proposed for rule ${shortId(rule.id)}` : `Promote rule ${shortId(rule.id)} to project knowledge`}
+          title={done ? 'Promotion proposed; approve its diff in the promotion queue' : 'Propose this Rule as an edit to the nearest AGENTS.md'}
+          onclick={() => promoteRule(rule)}
+        >
+          {promoteBusy === rule.id ? 'Proposing…' : done ? `Proposed ${shortId(rule.id)}` : `Promote ${shortId(rule.id)}`}
+        </Button>
+      {/each}
+    </div>
+    {#if promoteError}
+      <p role="alert" class="text-center text-xs text-destructive">{promoteError}</p>
+    {/if}
+  {/if}
 {:else if block.card === 'status'}
   <div class="flex animate-rise justify-center" data-card="status">
     <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">Session {block.title}</span>

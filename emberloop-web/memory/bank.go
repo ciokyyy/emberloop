@@ -288,7 +288,8 @@ func scanObservation(s rowScanner) (Observation, error) {
 }
 
 const ruleCols = `r.rule_id, r.version, r.text, r.kind, r.subject_key, r.anchors_json,
-	r.observed_commit, r.status, r.source_observation_ids, r.approved_by, r.approved_at`
+	r.observed_commit, r.status, r.source_observation_ids, r.approved_by, r.approved_at,
+	r.promoted_at, r.promoted_by`
 
 // AddRule stores version 1 of a new Rule. An empty RuleID gets a fresh ID. The
 // bank sets Version, Status (default active) and ApprovedAt. Text over
@@ -303,6 +304,8 @@ func (b *Bank) AddRule(ctx context.Context, r Rule) (Rule, error) {
 	}
 	r.SubjectKey = NormalizeSubjectKey(r.SubjectKey)
 	r.ApprovedAt = b.now()
+	r.PromotedAt = time.Time{}
+	r.PromotedBy = ""
 	if err := validRule(r); err != nil {
 		return Rule{}, err
 	}
@@ -330,6 +333,8 @@ func (b *Bank) ReviseRule(ctx context.Context, next Rule) (Rule, error) {
 	}
 	next.SubjectKey = NormalizeSubjectKey(next.SubjectKey)
 	next.ApprovedAt = b.now()
+	next.PromotedAt = time.Time{}
+	next.PromotedBy = ""
 	if err := validRule(next); err != nil {
 		return Rule{}, err
 	}
@@ -466,9 +471,10 @@ func (b *Bank) RulesBySubjectKey(ctx context.Context, subjectKey string) ([]Rule
 
 func scanRule(s rowScanner) (Rule, error) {
 	var r Rule
-	var anchors, sources, approved string
+	var anchors, sources, approved, promoted string
 	err := s.Scan(&r.RuleID, &r.Version, &r.Text, &r.Kind, &r.SubjectKey, &anchors,
-		&r.ObservedCommit, &r.Status, &sources, &r.ApprovedBy, &approved)
+		&r.ObservedCommit, &r.Status, &sources, &r.ApprovedBy, &approved,
+		&promoted, &r.PromotedBy)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -479,7 +485,30 @@ func scanRule(s rowScanner) (Rule, error) {
 		return Rule{}, fmt.Errorf("memory: sources of %s: %w", r.RuleID, err)
 	}
 	r.ApprovedAt = parseTimeText(approved)
+	r.PromotedAt = parseTimeText(promoted)
 	return r, nil
+}
+
+// MarkRulePromoted stamps every version of ruleID as promoted by promotedBy.
+// Status and provenance stay untouched: only the promoted columns change,
+// which the guard allows alongside status.
+func (b *Bank) MarkRulePromoted(ctx context.Context, ruleID, promotedBy string) error {
+	if err := MarkRulePromotedCommand(ruleID, promotedBy); err != nil {
+		return err
+	}
+	return b.write(ctx, func(db *sql.DB) error {
+		now := timeText(b.now())
+		res, err := db.ExecContext(ctx, `UPDATE rules
+			SET promoted_at = ?, promoted_by = ?
+			WHERE rule_id = ?`, now, promotedBy, ruleID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("%w: rule %s", ErrNotFound, ruleID)
+		}
+		return nil
+	})
 }
 
 // Enqueue adds a pending decision and returns its ID.
@@ -600,6 +629,8 @@ func (b *Bank) ApproveRule(ctx context.Context, itemID int64, decidedBy string, 
 		rule.ApprovedBy = decidedBy
 	}
 	rule.ApprovedAt = b.now()
+	rule.PromotedAt = time.Time{}
+	rule.PromotedBy = ""
 	if err := validRule(rule); err != nil {
 		return Rule{}, err
 	}

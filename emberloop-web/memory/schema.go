@@ -14,6 +14,7 @@ import (
 // a shipped migration is never edited.
 var migrations = []string{
 	schemaTables + ftsTables + guardTriggers + ftsTriggers + noDeleteTriggers(),
+	migrationPromoted,
 }
 
 // deletableTables lists every table whose DELETE aborts outside purge.
@@ -95,6 +96,8 @@ CREATE VIRTUAL TABLE rules_fts USING fts5(
 `
 
 // guardTriggers make rules append-only: only status may change on UPDATE.
+// Migration 2 widens the allowance to status and the promotion columns; its
+// trigger replaces this one on existing banks.
 const guardTriggers = `
 CREATE TRIGGER rules_guard BEFORE UPDATE ON rules
 WHEN NEW.id IS NOT OLD.id
@@ -111,6 +114,32 @@ WHEN NEW.id IS NOT OLD.id
   OR NEW.approved_at IS NOT OLD.approved_at
 BEGIN
   SELECT RAISE(ABORT, 'rules: only status may change');
+END;
+`
+
+// migrationPromoted marks Rules copied to project knowledge: promoted_at/by
+// plus parking the active latest version. The guard is recreated to allow
+// status and promotion changes while still refusing every other edit, so the
+// append-only promise holds.
+const migrationPromoted = `
+ALTER TABLE rules ADD COLUMN promoted_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE rules ADD COLUMN promoted_by TEXT NOT NULL DEFAULT '';
+DROP TRIGGER IF EXISTS rules_guard;
+CREATE TRIGGER rules_guard BEFORE UPDATE ON rules
+WHEN NEW.id IS NOT OLD.id
+  OR NEW.rule_id IS NOT OLD.rule_id
+  OR NEW.version IS NOT OLD.version
+  OR NEW.text IS NOT OLD.text
+  OR NEW.split_text IS NOT OLD.split_text
+  OR NEW.kind IS NOT OLD.kind
+  OR NEW.subject_key IS NOT OLD.subject_key
+  OR NEW.anchors_json IS NOT OLD.anchors_json
+  OR NEW.observed_commit IS NOT OLD.observed_commit
+  OR NEW.source_observation_ids IS NOT OLD.source_observation_ids
+  OR NEW.approved_by IS NOT OLD.approved_by
+  OR NEW.approved_at IS NOT OLD.approved_at
+BEGIN
+  SELECT RAISE(ABORT, 'rules: only status or promotion may change');
 END;
 `
 

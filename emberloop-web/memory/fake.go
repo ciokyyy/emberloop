@@ -151,6 +151,8 @@ func (f *Fake) AddRule(_ context.Context, r Rule) (Rule, error) {
 	}
 	r.SubjectKey = NormalizeSubjectKey(r.SubjectKey)
 	r.ApprovedAt = f.now()
+	r.PromotedAt = time.Time{}
+	r.PromotedBy = ""
 	if err := validRule(r); err != nil {
 		return Rule{}, err
 	}
@@ -172,6 +174,8 @@ func (f *Fake) ReviseRule(_ context.Context, next Rule) (Rule, error) {
 	}
 	next.SubjectKey = NormalizeSubjectKey(next.SubjectKey)
 	next.ApprovedAt = f.now()
+	next.PromotedAt = time.Time{}
+	next.PromotedBy = ""
 	if err := validRule(next); err != nil {
 		return Rule{}, err
 	}
@@ -422,6 +426,8 @@ func (f *Fake) ApproveRule(_ context.Context, itemID int64, decidedBy string, ru
 		rule.ApprovedBy = decidedBy
 	}
 	rule.ApprovedAt = f.now()
+	rule.PromotedAt = time.Time{}
+	rule.PromotedBy = ""
 	if err := validRule(rule); err != nil {
 		return Rule{}, err
 	}
@@ -466,6 +472,28 @@ func (f *Fake) ApproveRule(_ context.Context, itemID int64, decidedBy string, ru
 	f.queue[idx].DecidedBy = decidedBy
 	f.queue[idx].DecidedAt = f.now()
 	return rule, nil
+}
+
+func (f *Fake) MarkRulePromoted(_ context.Context, ruleID, promotedBy string) error {
+	if err := MarkRulePromotedCommand(ruleID, promotedBy); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	found := false
+	for i := range f.rules {
+		if f.rules[i].RuleID != ruleID {
+			continue
+		}
+		found = true
+		f.rules[i].PromotedAt = now
+		f.rules[i].PromotedBy = promotedBy
+	}
+	if !found {
+		return fmt.Errorf("%w: rule %s", ErrNotFound, ruleID)
+	}
+	return nil
 }
 
 func (f *Fake) Queue(_ context.Context) ([]QueueItem, error) {
