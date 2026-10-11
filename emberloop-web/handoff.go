@@ -66,8 +66,28 @@ func capText(s string, n int) string {
 	return headOf(s, n) + "\n[cut]"
 }
 
-// buildHandoff writes the deterministic Handoff: first user prompt, last
-// user prompts, files touched, last assistant message and open tool errors.
+// handoffPrompt is the text of a prompt Event the Handoff carries, or false
+// when it carries none. Every prompt but a Handoff counts, whatever its sender:
+// a Worker, Reviewer or Subagent task is a system prompt, and the Task must name
+// it. A system prompt loses its fenced memory blocks, so an injected block alone
+// carries nothing.
+func handoffPrompt(e Event) (string, bool) {
+	if e.Kind != "prompt" || e.Handoff {
+		return "", false
+	}
+	text := e.Text
+	if e.Sender != senderUser {
+		text = dropMemoryBlocks(text)
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", false
+	}
+	return text, true
+}
+
+// buildHandoff writes the deterministic Handoff: the first prompt the Handoff
+// carries as the Task, the last ones, files touched, last assistant message and
+// open tool errors (see handoffPrompt).
 func buildHandoff(events []Event) string {
 	var prompts []string
 	files := map[string]bool{}
@@ -84,8 +104,8 @@ func buildHandoff(events []Event) string {
 		}
 		switch e.Kind {
 		case "prompt":
-			if !e.Handoff && e.Sender == senderUser {
-				prompts = append(prompts, e.Text)
+			if text, ok := handoffPrompt(e); ok {
+				prompts = append(prompts, text)
 			}
 		case "assistant_chunk":
 			if !inReply {

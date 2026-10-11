@@ -145,8 +145,13 @@ the driver ticks boxes and marks done, nothing else writes them.
   under the headings (`lenient`); no text, or a call error, gives the
   deterministic Handoff (`deterministic`). A Handoff call the window refuses
   folds the input again at half its size, up to 2 times. `assembleHandoff`
-  appends the last user prompt verbatim and `el.ContinueLine` when a tool call
-  never finished (`openTask`). `dropMemoryBlocks` removes fenced memory blocks
+  appends the last prompt the Handoff carries, verbatim, and `el.ContinueLine`
+  when a tool call never finished (`openTask`). The prompt set is `handoffPrompt`,
+  shared by the summary tail and the deterministic Handoff (`buildHandoff`): every
+  prompt Event but a Handoff, whatever its sender (a Worker or Subagent task is a
+  system prompt). A prompt left empty by `dropMemoryBlocks` is skipped. Summarizer
+  input labels system prompts `SYSTEM:`.
+  `dropMemoryBlocks` removes fenced memory blocks
   (an opening line starting with three backticks and `memory`, closed by a bare
   three-backtick line) from all text except the user's, in the summarizer input
   and output. Compress gate: `compress_model` (the spec's `compressModel`) must

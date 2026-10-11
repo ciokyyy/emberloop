@@ -28,7 +28,7 @@ func chunkCalls(calls []summaryCall) (chunks, handoffs []summaryCall) {
 func addPrompts(d *Daemon, id string, n, size int) {
 	for i := 0; i < n; i++ {
 		head := fmt.Sprintf("P%d ", i)
-		d.appendPromptEvent(id, head+strings.Repeat("x", size-len(head)), "", 0, nil)
+		d.appendPromptEvent(id, head+strings.Repeat("x", size-len(head)), "", 0, nil, userSender(User{ID: "fold-user"}))
 	}
 }
 

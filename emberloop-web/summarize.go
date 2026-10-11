@@ -369,7 +369,7 @@ func summaryBlocks(events []Event) []summaryBlock {
 }
 
 // assembleHandoff frames a summary body as the Handoff text, with the last
-// user prompt verbatim after it.
+// prompt that is not a Handoff, verbatim, after it.
 func assembleHandoff(body string, events []Event) string {
 	var b strings.Builder
 	b.WriteString(handoffHeader + "\n" + body + "\n")
@@ -379,11 +379,12 @@ func assembleHandoff(body string, events []Event) string {
 	return el.FinishHandoff(b.String(), openTask(events))
 }
 
-// lastUserPrompt is the newest prompt the user typed, verbatim.
+// lastUserPrompt is the newest prompt the Handoff carries verbatim (see
+// handoffPrompt): every prompt but a Handoff, whatever its sender.
 func lastUserPrompt(events []Event) string {
 	for i := len(events) - 1; i >= 0; i-- {
-		if e := events[i]; e.Kind == "prompt" && e.Sender != "system" && !e.Handoff {
-			return e.Text
+		if text, ok := handoffPrompt(events[i]); ok {
+			return text
 		}
 	}
 	return ""

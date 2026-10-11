@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -204,4 +205,74 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("busy/active not cleared after the turn error")
+}
+
+// A Run Worker's task is a system prompt: the Run driver sends it. The
+// deterministic Handoff still names it as the Task, so a compressed Worker
+// keeps the work it was asked to do.
+func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	sum := &scriptedSummarizer{err: errString("credit exhausted")}
+	d.summarizer = sum
+	h := d.Handler()
+	admin := signedIn(t, h, "admin")
+	srv := httptest.NewServer(withCookie(h, admin))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	worker := waitChildren(t, srv.URL, run.ID, 1)[0]
+	task := firstPromptWhere(t, srv.URL, worker.ID, func(Event) bool { return true })
+	wantSender(t, task, "system", "")
+	waitIdleAfter(t, srv.URL, worker.ID, 0)
+
+	if code, body := compressReq(t, srv.URL, worker.ID, ""); code != http.StatusAccepted {
+		t.Fatalf("compress = %d %v", code, body)
+	}
+	evs := waitIdleAfter(t, srv.URL, worker.ID, 1)
+	prompts := eventsOfKind(evs, "prompt")
+	hand := prompts[len(prompts)-1]
+	if !hand.Handoff || !strings.Contains(hand.Text, "## Task\n"+strings.TrimSpace(task.Text)) {
+		t.Fatalf("handoff does not name the ticket as its Task: %q", hand.Text)
+	}
+	if len(sum.calls) == 0 || !strings.Contains(sum.calls[0].user, strings.TrimSpace(task.Text)) {
+		t.Fatalf("summarizer input does not carry the ticket: %+v", sum.calls)
+	}
+}
+
+// A Subagent's spawn prompt is a system prompt too; its Handoff keeps it as
+// the Task for the same reason.
+func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	sum := &scriptedSummarizer{err: errString("credit exhausted")}
+	d.summarizer = sum
+	h := d.Handler()
+	admin := signedIn(t, h, "admin")
+	srv := httptest.NewServer(withCookie(h, admin))
+	defer srv.Close()
+	agent := httptest.NewServer(withBearer(h, d.MachineToken()))
+	defer agent.Close()
+
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	child := spawnOne(t, agent.URL, parent, "write the subagent job")
+	task := firstPromptWhere(t, srv.URL, child, func(e Event) bool { return e.Text == "write the subagent job" })
+	wantSender(t, task, "system", "")
+	waitIdleAfter(t, srv.URL, child, 0)
+
+	if code, body := compressReq(t, srv.URL, child, ""); code != http.StatusAccepted {
+		t.Fatalf("compress = %d %v", code, body)
+	}
+	evs := waitIdleAfter(t, srv.URL, child, 1)
+	prompts := eventsOfKind(evs, "prompt")
+	hand := prompts[len(prompts)-1]
+	if !hand.Handoff || !strings.Contains(hand.Text, "## Task\nwrite the subagent job") {
+		t.Fatalf("handoff does not name the spawn prompt as its Task: %q", hand.Text)
+	}
+	if len(sum.calls) == 0 || !strings.Contains(sum.calls[0].user, "write the subagent job") {
+		t.Fatalf("summarizer input does not carry the spawn prompt: %+v", sum.calls)
+	}
 }
