@@ -277,10 +277,12 @@ func TestRuleQueueRejectKeepsLabel(t *testing.T) {
 	}
 }
 
-// Same key, same author, later date supersedes; a different author appears
-// as a disagreement item with both Rules live.
+// Same key, same observer, newer observation wins; a different observer is a
+// disagreement with both Rules live. Identity is the observer behind the
+// source observations (the approver fallback when there are none), never the
+// approver alone.
 func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
-	d, base, id, owner, _ := rulesDaemon(t)
+	d, base, id, owner, clock := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
 	old, err := bank.AddRule(ctx, memory.Rule{
@@ -290,39 +292,21 @@ func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Same author supersedes: approve a new proposal for the same key.
+	// Same observer supersedes: the proposal is newer than the stored Rule.
+	clock.Advance(time.Hour)
 	runPrompt(t, base, id, "always wrap errors in this repo please")
 	if code, _ := postRemember(t, base, id, map[string]any{
 		"text": "always wrap errors with context", "reason": "r", "quote": "always wrap errors in this repo please",
 	}); code != http.StatusCreated {
 		t.Fatalf("remember = %d, want 201", code)
 	}
-	queue := getRulesQueue(t, base)
 	var qid int64
-	for _, it := range queue {
+	for _, it := range getRulesQueue(t, base) {
 		if it.Status == memory.QueuePending {
 			qid = it.ID
 		}
 	}
-	// Force the proposal onto the same subject key so the test does not
-	// depend on the heuristic key of the remembered text.
-	_ = qid
-	items, _ := bank.Queue(ctx)
-	for _, it := range items {
-		if it.Status != memory.QueuePending {
-			continue
-		}
-		p, err := memory.DecodeRememberProposal(it.Payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		p.SubjectKey = "wrap.errors"
-		p.Author = owner
-		// Rewrite through the test seam: drop and re-enqueue is forbidden
-		// (never delete), so decide with an explicit subject key instead.
-		_ = p
-	}
-	// Approve with the same key and author: the old Rule supersedes.
+	// Approve with the same key and observer: the old Rule supersedes.
 	code, _ := decideRule(t, base, qid, map[string]any{"status": "approved", "subject_key": "wrap.errors"})
 	if code != http.StatusOK {
 		t.Fatalf("approve superseding = %d, want 200", code)
@@ -334,16 +318,46 @@ func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
 	if len(versions) != 1 || versions[0].Status != memory.StatusSuperseded {
 		t.Fatalf("old rule versions = %+v, want superseded", versions)
 	}
-	// Different author is a disagreement: both Rules stay live.
-	bobRule, err := bank.AddRule(ctx, memory.Rule{
-		Text: "never wrap errors", Kind: memory.KindPreference,
-		SubjectKey: "disagree.key", ApprovedBy: "bob",
+	// An older candidate never clobbers a newer Rule: the newer text wins.
+	// The stale proposal enqueues first; the Rule lands an hour later.
+	stalePayload := memory.EncodeRuleProposal(memory.RuleProposal{
+		Text: "stale wording", Kind: memory.KindPreference, SubjectKey: "newer.key",
+		Sessions: []string{"s-old"}, Author: owner, Origin: "mined",
+	})
+	staleID, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: stalePayload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Hour)
+	newer, err := bank.AddRule(ctx, memory.Rule{
+		Text: "newest wording wins", Kind: memory.KindPreference,
+		SubjectKey: "newer.key", ApprovedBy: owner,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	code, out := decideRule(t, base, staleID, map[string]any{"status": "approved"})
+	if code != http.StatusOK {
+		t.Fatalf("approve stale = %d, want 200", code)
+	}
+	if versions, _ := bank.RuleVersions(ctx, newer.RuleID); len(versions) != 1 || versions[0].Status != memory.StatusActive {
+		t.Fatalf("newer rule after stale approve = %+v, want still active", versions)
+	}
+	staleRuleID, _ := out["RuleID"].(string)
+	if staleRuleID == "" {
+		t.Fatalf("approve response = %v, want the stillborn Rule ID", out)
+	}
+	if versions, _ := bank.RuleVersions(ctx, staleRuleID); len(versions) != 1 || versions[0].Status != memory.StatusSuperseded {
+		t.Fatalf("stale rule = %+v, want stillborn superseded", versions)
+	}
+	// Different observer is a disagreement: both Rules stay live.
+	if _, err := bank.AddRule(ctx, memory.Rule{
+		Text: "never wrap errors", Kind: memory.KindPreference,
+		SubjectKey: "disagree.key", ApprovedBy: "bob",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	runPrompt(t, base, id, "we disagree about this key here")
-	_ = bobRule
 	if code, _ := postRemember(t, base, id, map[string]any{
 		"text": "always handle this key this way", "reason": "r", "quote": "disagree about this key",
 	}); code != http.StatusCreated {
@@ -358,28 +372,18 @@ func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
 	if code, _ := decideRule(t, base, disID, map[string]any{"status": "approved", "subject_key": "disagree.key"}); code != http.StatusOK {
 		t.Fatalf("approve disagreement = %d, want 200", code)
 	}
-	// The different author's Rule is still live: disagreement, not
+	// The different observer's Rule is still live: disagreement, not
 	// supersession.
-	got, err := bank.RulesBySubjectKey(ctx, "disagree.key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	live := 0
-	for _, r := range got {
-		// Count the latest version per rule ID.
-		versions, _ := bank.RuleVersions(ctx, r.RuleID)
-		if len(versions) > 0 && versions[len(versions)-1].Status != memory.StatusSuperseded {
-			live++
-		}
-	}
-	_ = live
 	all, _ := bank.RulesBySubjectKey(ctx, "disagree.key")
 	seen := map[string]bool{}
 	for _, r := range all {
-		seen[r.RuleID] = true
+		versions, _ := bank.RuleVersions(ctx, r.RuleID)
+		if len(versions) > 0 && versions[len(versions)-1].Status != memory.StatusSuperseded {
+			seen[r.RuleID] = true
+		}
 	}
 	if len(seen) < 2 {
-		t.Fatalf("disagreement rules = %+v, want both authors live", all)
+		t.Fatalf("disagreement rules = %+v, want both observers live", all)
 	}
 }
 
@@ -495,4 +499,174 @@ func TestRuleQueueStatsFollowFakeClock(t *testing.T) {
 		t.Fatalf("oldest pending = %v, want 1h on the fake clock", st.OldestPendingAge)
 	}
 	_ = d
+}
+
+// The rule queue never decides a profile_patch item: single and batch
+// rejects both refuse it, and it stays pending.
+func TestRuleQueueRejectRefusesNonRule(t *testing.T) {
+	d, base, _, owner, _ := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	profileID, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: `{"op":"add"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := decideRule(t, base, profileID, map[string]any{"status": "rejected"}); code != http.StatusBadRequest {
+		t.Fatalf("rule reject of profile item = %d, want 400", code)
+	}
+	_, results := postBatch(t, base, map[string]any{"ids": []int64{profileID}, "status": "rejected"})
+	if len(results) != 1 || results[0].Error == "" {
+		t.Fatalf("batch reject of profile item = %+v, want one error", results)
+	}
+	for _, it := range getRulesQueue(t, base) {
+		if it.ID == profileID {
+			t.Fatalf("profile item %d leaked into the rule queue", profileID)
+		}
+	}
+	items, _ := bank.Queue(ctx)
+	for _, it := range items {
+		if it.ID == profileID && it.Status != memory.QueuePending {
+			t.Fatalf("profile item after refused rejects = %s, want still pending", it.Status)
+		}
+	}
+	_ = d
+}
+
+// A promotion against a different observer's live Rule marks the proposal as
+// a disagreement: the relation and the conflicting Rule travel with it for
+// the human, instead of superseding.
+func TestRuleQueuePromoteMarksDisagreement(t *testing.T) {
+	d, base, _, owner, _ := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	bob, err := bank.AddRule(ctx, memory.Rule{
+		Text: "never wrap errors here", Kind: memory.KindPreference,
+		SubjectKey: "wrap.errors", ApprovedBy: "bob",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range [][2]string{
+		{"s1", "always wrap errors in this repo"},
+		{"s2", "always wrap errors on every retry"},
+	} {
+		if _, err := bank.AddObservation(ctx, memory.Observation{
+			SessionID: ev[0], EventID: "e1", Author: owner,
+			Quote: ev[1], Kind: memory.KindPreference, SubjectKey: "wrap.errors",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out := postPromote(t, base, "wrap.errors", "")
+	if code != http.StatusCreated || out["promoted"] != true {
+		t.Fatalf("promote = %d %v, want 201 promoted true", code, out)
+	}
+	queue := getRulesQueue(t, base)
+	if len(queue) != 1 {
+		t.Fatalf("queue = %d, want the disagreement item", len(queue))
+	}
+	proposal, err := memory.DecodeRememberProposal(queue[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.RelatedRuleID != bob.RuleID || proposal.Relation == "" {
+		t.Fatalf("proposal = %+v, want the disagreement relation to bob's rule", proposal)
+	}
+}
+
+// Queue budget and approval latency are recorded: every rule-queue mutation
+// writes a ledger row with the counts, so the nightly summary reads stored
+// rows instead of recomputing them.
+func TestRuleQueueLedgerRecorded(t *testing.T) {
+	d, base, id, owner, clock := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	runPrompt(t, base, id, "the team uses tabs for indentation here")
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "use tabs for indentation", "reason": "r", "quote": "uses tabs for indentation",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	clock.Advance(time.Hour)
+	qid := getRulesQueue(t, base)[0].ID
+	if code, _ := decideRule(t, base, qid, map[string]any{"status": "approved"}); code != http.StatusOK {
+		t.Fatalf("approve = %d, want 200", code)
+	}
+	ledger, err := bank.Ledger(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var approve *memory.LedgerRow
+	for i := range ledger {
+		if ledger[i].Stage == "queue_approve" {
+			approve = &ledger[i]
+		}
+	}
+	if approve == nil {
+		t.Fatalf("ledger = %+v, want a queue_approve row", ledger)
+	}
+	var counts struct {
+		Approved int     `json:"approved"`
+		Total    int     `json:"total"`
+		Budget   int     `json:"budget"`
+		AvgHours float64 `json:"avgApprovalLatencyHours"`
+	}
+	if err := json.Unmarshal([]byte(approve.CountsJSON), &counts); err != nil {
+		t.Fatal(err)
+	}
+	if counts.Approved != 1 || counts.Total != 1 || counts.Budget != memory.QueueBudget {
+		t.Fatalf("approve counts = %+v, want 1 approved of 1 with the budget", counts)
+	}
+	if counts.AvgHours != 1 {
+		t.Fatalf("avg latency = %v hours, want 1 on the fake clock", counts.AvgHours)
+	}
+	if code, _ := postRemember(t, base, id, map[string]any{
+		"text": "use spaces", "reason": "r", "quote": "uses tabs for indentation",
+	}); code != http.StatusCreated {
+		t.Fatalf("second remember = %d, want 201", code)
+	}
+	var second int64
+	for _, it := range getRulesQueue(t, base) {
+		if it.Status == memory.QueuePending {
+			second = it.ID
+		}
+	}
+	if code, _ := decideRule(t, base, second, map[string]any{"status": "rejected"}); code != http.StatusOK {
+		t.Fatalf("reject = %d, want 200", code)
+	}
+	ledger, _ = bank.Ledger(ctx)
+	found := false
+	for _, l := range ledger {
+		if l.Stage == "queue_reject" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("ledger = %+v, want a queue_reject row", ledger)
+	}
+	_ = d
+}
+
+// kindPreferenceOf picks the most common valid kind; ties keep the earliest
+// leader and anything without a valid kind defaults to preference.
+func TestKindPreferenceOf(t *testing.T) {
+	if got := kindPreferenceOf(nil); got != memory.KindPreference {
+		t.Fatalf("empty group = %q, want preference", got)
+	}
+	tie := []memory.Observation{
+		{Kind: memory.KindFact}, {Kind: memory.KindPreference},
+	}
+	if got := kindPreferenceOf(tie); got != memory.KindFact {
+		t.Fatalf("tie = %q, want the earliest leader fact", got)
+	}
+	swapped := []memory.Observation{
+		{Kind: memory.KindPreference}, {Kind: memory.KindFact},
+	}
+	if got := kindPreferenceOf(swapped); got != memory.KindPreference {
+		t.Fatalf("swapped tie = %q, want the earliest leader preference", got)
+	}
+	invalid := []memory.Observation{{Kind: "essay"}, {Kind: memory.KindDecision}}
+	if got := kindPreferenceOf(invalid); got != memory.KindDecision {
+		t.Fatalf("invalid skipped = %q, want decision", got)
+	}
 }

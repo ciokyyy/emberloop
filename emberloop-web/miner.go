@@ -36,6 +36,7 @@ type MineResult struct {
 	Stored     int // observations inserted
 	Duplicates int // duplicate hits folded into evidence_count
 	Dropped    int // heuristic hits the Decider dropped below its cut
+	Promoted   int // recurrence proposals enqueued by this scan
 	Reset      bool
 }
 
@@ -46,8 +47,9 @@ func (d *Daemon) minerCursorPath(id string) string {
 
 // minerDeciderDoc is the decider_json of a mined observation: the Decider
 // that judged it (mode, model, version), its durable probability, kind and
-// scope, whether it is queue-eligible (ticket 22), and the heuristic detail
-// (what fired and the redacted thing it corrected).
+// scope, whether it is queue-eligible, the proposed subject key and who
+// proposed it, and the heuristic detail (what fired and the redacted thing it
+// corrected).
 type minerDeciderDoc struct {
 	Miner         string  `json:"miner"`
 	Type          string  `json:"type"`
@@ -63,6 +65,8 @@ type minerDeciderDoc struct {
 	Confirmed     bool    `json:"confirmed"`
 	Scope         string  `json:"scope_hint"`
 	QueueEligible bool    `json:"queue_eligible"`
+	SubjectKey    string  `json:"subject_key,omitempty"`
+	SubjectBy     string  `json:"subject_by,omitempty"`
 }
 
 // MineSession mines one settled Session's new events.jsonl bytes into the
@@ -76,11 +80,16 @@ type minerDeciderDoc struct {
 // below its cut stores nothing. Handoffs, injection blocks and every
 // sender=system Event never reach the classifier. Each kept hit is redacted,
 // grounded, then stored with dedup in the Event sender's bank: a steer from
-// User B inside User A's Session lands in B's bank only. Duplicates fold into
-// evidence_count; refines and contradicts are stored with the relation and
-// the related observation ID in decider_json, nothing is dropped. A transient
-// bank error aborts the scan without advancing the cursor, so the bytes mine
-// again; permanently invalid records are skipped.
+// User B inside User A's Session lands in B's bank only. The subject key comes
+// from the confirming Decider when it proposes keys, else the heuristic
+// fallback, and is recorded in decider_json with who proposed it. Duplicates
+// fold into evidence_count; refines and contradicts are stored with the
+// relation and the related observation ID in decider_json, nothing is
+// dropped. After the scan, every touched subject key runs the recurrence
+// check (promoteSubject): a key recurring across Sessions enqueues one
+// proposal, a single mention enqueues nothing. A transient bank error aborts
+// the scan without advancing the cursor, so the bytes mine again; permanently
+// invalid records are skipped.
 func (d *Daemon) MineSession(id string) (MineResult, error) {
 	res := MineResult{SessionID: id}
 	d.mu.Lock()
@@ -150,6 +159,11 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 	// in-memory history cut where this chunk starts, then earlier fresh
 	// Events as the scan advances.
 	prior := minerPriorEvents(memCopy, fresh)
+	// touched collects one subject key per author for the post-scan
+	// recurrence check. Replays contribute their stored key without costing
+	// another confirming call, so a held cursor retries the promotion.
+	type touch struct{ author, key string }
+	touched := make(map[touch]bool)
 	for i, e := range fresh {
 		// The miner reads Sessions only through MinerReadable, the
 		// per-Event predicate of FilterMinerEvents: injections, Handoffs
@@ -187,11 +201,14 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			}
 			return res, fmt.Errorf("miner: bank for %s: %w", author, err)
 		}
-		// A replayed Event (cursor reset) is found here, before the Decider,
+		// A replayed Event (cursor reset) is read here, before the Decider,
 		// so it never costs a confirming LLM call; the store below would
 		// return the same row without bumping or inserting.
-		if d.minedEventAlready(ctx, bank, id, eventID) {
+		if existing, err := bank.ObservationByEvent(ctx, id, eventID); err == nil {
 			res.Duplicates++
+			if key := memory.NormalizeSubjectKey(existing.SubjectKey); key != "" {
+				touched[touch{author, key}] = true
+			}
 			prior = append(prior, e)
 			continue
 		}
@@ -213,6 +230,7 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			prior = append(prior, e)
 			continue
 		}
+		subjectKey, subjectBy := d.minerSubjectKey(e.Text, contextText)
 		doc, _ := json.Marshal(minerDeciderDoc{
 			Miner:         "heuristic-v1",
 			Type:          hit.Type,
@@ -228,6 +246,8 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			Scope:         dec.scope,
 			QueueEligible: dec.eligible,
 			Confirmed:     dec.confirmed,
+			SubjectKey:    subjectKey,
+			SubjectBy:     subjectBy,
 		})
 		_, rel, err := memory.DedupAndStore(ctx, bank, memory.Observation{
 			SessionID:      id,
@@ -235,7 +255,7 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			Author:         author,
 			Quote:          redactedQuote,
 			Kind:           dec.kind,
-			SubjectKey:     memory.NormalizeSubjectKey(memory.ProposeSubjectKey(redactedQuote)),
+			SubjectKey:     subjectKey,
 			DeciderJSON:    string(doc),
 			ObservedCommit: gitHead(workDir),
 		})
@@ -251,7 +271,24 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		} else {
 			res.Stored++
 		}
+		if subjectKey != "" {
+			touched[touch{author, subjectKey}] = true
+		}
 		prior = append(prior, e)
+	}
+	// Recurrence promotion runs after the scan: every touched subject key is
+	// checked once, so a key recurring across Sessions enqueues one proposal
+	// on its own, with no manual promote call. A promotion failure aborts
+	// without advancing the cursor; replays re-touch the same keys above, so
+	// the promotion retries instead of being lost.
+	for t := range touched {
+		_, created, err := d.promoteSubject(ctx, t.author, t.key, "")
+		if err != nil {
+			return res, fmt.Errorf("miner: promote subject %s: %w", t.key, err)
+		}
+		if created {
+			res.Promoted++
+		}
 	}
 	// The cursor advances only after a clean scan. A crash or a returned
 	// error re-reads the bytes; same-Event replays return without bumping,
@@ -260,15 +297,6 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		return res, err
 	}
 	return res, nil
-}
-
-// minedEventAlready reports whether this Session Event already has a stored
-// observation: a cursor reset replays it. The lookup is by Session ID and
-// Event ID, so it is exact whatever else the quote matches; the store would
-// return the same row without bumping or inserting.
-func (d *Daemon) minedEventAlready(ctx context.Context, bank memory.Memory, id, eventID string) bool {
-	_, err := bank.ObservationByEvent(ctx, id, eventID)
-	return err == nil
 }
 
 // MineSettledSessions mines every settled Session once, for the nightly job.

@@ -405,3 +405,97 @@ func TestMineSessionBankErrorHoldsCursor(t *testing.T) {
 		t.Fatalf("cursor saved despite the store error: %v", statErr)
 	}
 }
+
+// A subject key recurring across Sessions promotes on its own: mining the
+// second Session enqueues one proposal with both quotes, with no manual
+// promote call. A single Session's key enqueues nothing.
+func TestMineSessionPromotesRecurringSubject(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	a := "No, always return wrapped errors in this repo"
+	b := "No, never return wrapped errors from handlers"
+	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", a)})
+	res, err := d.MineSession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stored != 1 || res.Promoted != 0 {
+		t.Fatalf("first mine = %+v, want 1 stored and no promotion from a single mention", res)
+	}
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := bank.Queue(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Kind == memory.QueueRule {
+			t.Fatalf("single mention queued %+v, want nothing", it)
+		}
+	}
+	seedEndedSession(t, d, "s2", "alice", []Event{userPrompt(1, "alice", b)})
+	res, err = d.MineSession("s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stored != 1 || res.Promoted != 1 {
+		t.Fatalf("second mine = %+v, want 1 stored and 1 promotion", res)
+	}
+	var proposal memory.QueueItem
+	n := 0
+	items, _ = bank.Queue(t.Context())
+	for _, it := range items {
+		if it.Kind == memory.QueueRule {
+			proposal, n = it, n+1
+		}
+	}
+	if n != 1 {
+		t.Fatalf("rule queue holds %d items, want the one recurrence proposal", n)
+	}
+	decoded, err := memory.DecodeRememberProposal(proposal.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Quotes) != 2 || len(decoded.Sessions) != 2 {
+		t.Fatalf("proposal = %+v, want both quotes and sessions", decoded)
+	}
+	// The stored observations record the Decider-proposed key and its source.
+	obs := bankQuotes(t, d, "alice", "wrapped errors")
+	if len(obs) != 2 {
+		t.Fatalf("observations = %d, want 2", len(obs))
+	}
+	for _, o := range obs {
+		if o.SubjectKey == "" {
+			t.Fatalf("observation %d has no subject key", o.ID)
+		}
+		var doc struct {
+			SubjectKey string `json:"subject_key"`
+			SubjectBy  string `json:"subject_by"`
+		}
+		if err := json.Unmarshal([]byte(o.DeciderJSON), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc.SubjectKey != o.SubjectKey || doc.SubjectBy == "" {
+			t.Fatalf("decider doc = %+v, want the key and its proposer", doc)
+		}
+	}
+}
+
+// The subject key comes from the confirming Decider when it proposes one:
+// the scripted test seam names the key the miner stores.
+func TestMineSessionSubjectKeyFromDecider(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.decider = &memory.ScriptedDecider{Durable: 0.9, Kind: memory.KindPreference, SubjectKey: "Scripted.Subject.Key"}
+	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
+	if _, err := d.MineSession("s1"); err != nil {
+		t.Fatal(err)
+	}
+	obs := bankQuotes(t, d, "alice", "tabs")
+	if len(obs) != 1 {
+		t.Fatalf("observations = %+v, want 1", obs)
+	}
+	if obs[0].SubjectKey != "scripted.subject.key" {
+		t.Fatalf("subject key = %q, want the Decider proposal normalized", obs[0].SubjectKey)
+	}
+}

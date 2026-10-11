@@ -237,6 +237,25 @@ func (b *Bank) ObservationByEvent(ctx context.Context, sessionID, eventID string
 	return out, nil
 }
 
+// ObservationByID returns the observation with the bank ID, or ErrNotFound.
+func (b *Bank) ObservationByID(ctx context.Context, id int64) (Observation, error) {
+	var out Observation
+	var created string
+	err := b.rdb.QueryRowContext(ctx, `SELECT id, session_id, event_id, author, quote, kind,
+		subject_key, evidence_count, decider_json, observed_commit, created_at
+		FROM observations WHERE id = ?`, id).Scan(
+		&out.ID, &out.SessionID, &out.EventID, &out.Author, &out.Quote, &out.Kind,
+		&out.SubjectKey, &out.EvidenceCount, &out.DeciderJSON, &out.ObservedCommit, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Observation{}, fmt.Errorf("%w: observation %d", ErrNotFound, id)
+	}
+	if err != nil {
+		return Observation{}, err
+	}
+	out.CreatedAt = parseTimeText(created)
+	return out, nil
+}
+
 // ObservationsBySubjectKey returns every observation with the normalized
 // subject key, oldest first. Empty key returns nothing: keyless observations
 // never promote.
@@ -248,7 +267,6 @@ func (b *Bank) ObservationsBySubjectKey(ctx context.Context, subjectKey string) 
 	return queryAll(ctx, b.rdb, scanObservation, `SELECT `+observationCols+`
 		FROM observations AS o WHERE o.subject_key = ? ORDER BY o.id`, key)
 }
-
 
 func scanObservation(s rowScanner) (Observation, error) {
 	var o Observation
@@ -474,7 +492,92 @@ func (b *Bank) Decide(ctx context.Context, id int64, status, decidedBy string) e
 	})
 }
 
-// Queue lists every queue item, oldest first.
+// ApproveRule approves one pending kind=rule queue item and creates its Rule
+// in one transaction: the item must be pending, the rule text is refused over
+// MaxRuleChars (never clipped), the named live Rules become superseded and
+// the item becomes approved. Any failure rolls everything back. Missing
+// supersede targets are skipped; only live (active, parked) versions change.
+func (b *Bank) ApproveRule(ctx context.Context, itemID int64, decidedBy string, rule Rule, supersedeIDs []string) (Rule, error) {
+	if decidedBy == "" {
+		return Rule{}, fmt.Errorf("%w: decider empty", ErrInvalid)
+	}
+	if rule.RuleID == "" {
+		rule.RuleID = newID()
+	}
+	rule.Version = 1
+	if rule.Status == "" {
+		rule.Status = StatusActive
+	}
+	rule.SubjectKey = NormalizeSubjectKey(rule.SubjectKey)
+	if rule.ApprovedBy == "" {
+		rule.ApprovedBy = decidedBy
+	}
+	rule.ApprovedAt = b.now()
+	if err := validRule(rule); err != nil {
+		return Rule{}, err
+	}
+	seen := make(map[string]bool)
+	var supersede []string
+	for _, sid := range supersedeIDs {
+		sid = strings.TrimSpace(sid)
+		if sid == "" || sid == rule.RuleID || seen[sid] {
+			continue
+		}
+		seen[sid] = true
+		supersede = append(supersede, sid)
+	}
+	err := b.write(ctx, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var kind, status string
+		if err := tx.QueryRowContext(ctx, `SELECT kind, status FROM queue WHERE id = ?`, itemID).Scan(&kind, &status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: queue item %d", ErrNotFound, itemID)
+			}
+			return err
+		}
+		if kind != QueueRule {
+			return fmt.Errorf("%w: queue item %d is %q, not a rule", ErrInvalid, itemID, kind)
+		}
+		if status != QueuePending {
+			return fmt.Errorf("%w: queue item %d already decided", ErrInvalid, itemID)
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM rules WHERE rule_id = ?`, rule.RuleID).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: rule %s exists; revise it", ErrInvalid, rule.RuleID)
+		}
+		if err := insertRule(ctx, tx, rule); err != nil {
+			return err
+		}
+		for _, sid := range supersede {
+			if _, err := tx.ExecContext(ctx, `UPDATE rules SET status = ?
+				WHERE rule_id = ? AND version = (SELECT MAX(version) FROM rules WHERE rule_id = ?)
+				AND status IN ('active', 'parked')`, StatusSuperseded, sid, sid); err != nil {
+				return err
+			}
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE queue SET status = ?, decided_by = ?, decided_at = ?
+			WHERE id = ? AND status = 'pending'`, QueueApproved, decidedBy, timeText(b.now()), itemID)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return fmt.Errorf("%w: queue item %d already decided", ErrInvalid, itemID)
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		return Rule{}, err
+	}
+	return rule, nil
+}
+
 func (b *Bank) Queue(ctx context.Context) ([]QueueItem, error) {
 	return queryAll(ctx, b.rdb, scanQueueItem, `SELECT id, kind, payload, status,
 		decided_by, decided_at, created_at FROM queue ORDER BY id`)

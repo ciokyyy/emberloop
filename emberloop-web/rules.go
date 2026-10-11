@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"example.com/emberloop-web/memory"
@@ -60,19 +61,17 @@ func (d *Daemon) ruleUserOf(w http.ResponseWriter, r *http.Request) (User, bool)
 	return *who.user, true
 }
 
-// ruleProposalOf decodes a kind=rule queue payload in either the current or
-// the older remember shape.
-func ruleProposalOf(payload string) (memory.RuleProposal, error) {
-	return memory.DecodeRememberProposal(payload)
-}
-
-// approveRuleQueueItem approves (or edits then approves) one rule queue item:
-// it creates the Rule and marks the item approved. The queue payload is never
-// rewritten, so an edit keeps both the proposal (in the queue row) and the
-// final text (in the Rule). Same key, same author supersedes deterministically:
-// live Rules with the same normalized key and the same author are marked
-// superseded. A different author is a disagreement: both Rules stay live for
-// a human to resolve. Text over MaxRuleChars is refused, never clipped.
+// approveRuleQueueItem approves (or edits then approves) one rule queue item
+// in one bank transaction (memory.ApproveRule): it creates the Rule and marks
+// the item approved together, so a failed approval leaves no Rule, no
+// supersession and a still-pending item. The queue payload is never rewritten,
+// so an edit keeps both the proposal (in the queue row) and the final text
+// (in the Rule). Supersession is deterministic on observer identity and date:
+// live Rules with the same normalized key from the same observer (the User
+// behind the source observations) become superseded only when the candidate's
+// newest observation is at least as new as theirs; a different observer is a
+// disagreement and both Rules stay live for a human to resolve. Text over
+// MaxRuleChars is refused, never clipped.
 func (d *Daemon) approveRuleQueueItem(ctx context.Context, owner, decidedBy string, itemID int64, edit *ruleDecideBody) (memory.Rule, error) {
 	bank, err := d.profileBankFor(owner)
 	if err != nil {
@@ -98,7 +97,7 @@ func (d *Daemon) approveRuleQueueItem(ctx context.Context, owner, decidedBy stri
 	if item.Status != memory.QueuePending {
 		return memory.Rule{}, fmt.Errorf("%w: queue item %d already decided", memory.ErrInvalid, itemID)
 	}
-	proposal, err := ruleProposalOf(item.Payload)
+	proposal, err := memory.DecodeRememberProposal(item.Payload)
 	if err != nil {
 		return memory.Rule{}, fmt.Errorf("%w: rule payload: %v", memory.ErrInvalid, err)
 	}
@@ -134,40 +133,150 @@ func (d *Daemon) approveRuleQueueItem(ctx context.Context, owner, decidedBy stri
 			kind = proposal.Kind
 		}
 	}
-	author := proposal.Author
-	if author == "" {
-		author = decidedBy
+	candidateAuthor := d.candidateObserverAuthor(ctx, bank, proposal, decidedBy)
+	candidateTime := d.candidateObservedTime(ctx, bank, proposal, item.CreatedAt)
+	var supersede []string
+	stillborn := false
+	if key != "" {
+		existing, err := bank.RulesBySubjectKey(ctx, key)
+		if err != nil {
+			return memory.Rule{}, err
+		}
+		authors := d.ruleObserverAuthors(ctx, bank, existing)
+		same, _ := memory.PartitionSubjectRules(existing, key, candidateAuthor, func(r memory.Rule) string {
+			return authors[r.RuleID]
+		})
+		for _, old := range same {
+			// Newer observation wins: only a candidate at least as new as
+			// the stored Rule supersedes it. An older candidate still gets
+			// its Rule, but stillborn superseded, so the newer text stays.
+			if !candidateTime.Before(d.ruleObservedTime(ctx, bank, old)) {
+				supersede = append(supersede, old.RuleID)
+			} else {
+				stillborn = true
+			}
+		}
+	}
+	status := memory.StatusActive
+	if stillborn && len(supersede) == 0 {
+		status = memory.StatusSuperseded
 	}
 	// Provenance: the source observations stay on the Rule, the quotes stay
 	// in the queue row. Redact the final text: approval is an egress from the
 	// Daemon's store to future prompts.
-	rule, err := bank.AddRule(ctx, memory.Rule{
+	rule, err := bank.ApproveRule(ctx, itemID, decidedBy, memory.Rule{
 		Text: memory.Redact(text), Kind: kind, SubjectKey: key,
-		ObservedCommit: observedCommitFor(item.Payload),
-		Status:         memory.StatusActive,
+		ObservedCommit:       observedCommitFor(item.Payload),
+		Status:               status,
 		SourceObservationIDs: proposal.SourceObservationIDs,
 		ApprovedBy:           decidedBy,
-	})
+	}, supersede)
 	if err != nil {
 		return memory.Rule{}, err
 	}
-	// Deterministic supersession: same key, same author, newer wins. Only the
-	// new Rule's author supersedes; a different author's Rules stay live as
-	// the disagreement the approver resolves by hand.
-	if key != "" {
-		if existing, err := bank.RulesBySubjectKey(ctx, key); err == nil {
-			for _, old := range memory.FindSuperseded(existing, key, author) {
-				if old.RuleID == rule.RuleID {
-					continue
-				}
-				_ = bank.SetRuleStatus(ctx, old.RuleID, memory.StatusSuperseded)
-			}
+	return rule, nil
+}
+
+// candidateObserverAuthor resolves the observer behind a proposal: the single
+// distinct author of its source observations, else the proposal author, else
+// the decider. Mixed or unknown authors resolve to "": nothing supersedes
+// without one known author.
+func (d *Daemon) candidateObserverAuthor(ctx context.Context, bank memory.Memory, proposal memory.RuleProposal, decidedBy string) string {
+	seen := make(map[string]bool)
+	var authors []string
+	for _, id := range proposal.SourceObservationIDs {
+		o, err := bank.ObservationByID(ctx, id)
+		if err != nil || strings.TrimSpace(o.Author) == "" {
+			continue
+		}
+		if !seen[o.Author] {
+			seen[o.Author] = true
+			authors = append(authors, o.Author)
 		}
 	}
-	if err := bank.Decide(ctx, itemID, memory.QueueApproved, decidedBy); err != nil {
-		return memory.Rule{}, err
+	if len(authors) == 1 {
+		return authors[0]
 	}
-	return rule, nil
+	if len(authors) > 1 {
+		return ""
+	}
+	if strings.TrimSpace(proposal.Author) != "" {
+		return proposal.Author
+	}
+	return decidedBy
+}
+
+// candidateObservedTime reports the newest source-observation time of a
+// proposal, falling back to the queue item's creation when it has no
+// resolvable sources.
+func (d *Daemon) candidateObservedTime(ctx context.Context, bank memory.Memory, proposal memory.RuleProposal, fallback time.Time) time.Time {
+	var newest time.Time
+	for _, id := range proposal.SourceObservationIDs {
+		o, err := bank.ObservationByID(ctx, id)
+		if err != nil || o.CreatedAt.IsZero() {
+			continue
+		}
+		if o.CreatedAt.After(newest) {
+			newest = o.CreatedAt
+		}
+	}
+	if newest.IsZero() {
+		return fallback
+	}
+	return newest
+}
+
+// ruleObserverAuthors resolves the observer behind each Rule: the single
+// distinct author of its source observations, else its approver. Mixed
+// authors resolve to "": such a Rule never supersedes and always disagrees.
+func (d *Daemon) ruleObserverAuthors(ctx context.Context, bank memory.Memory, rules []memory.Rule) map[string]string {
+	out := make(map[string]string, len(rules))
+	for _, r := range rules {
+		out[r.RuleID] = d.ruleObserverAuthor(ctx, bank, r)
+	}
+	return out
+}
+
+// ruleObserverAuthor resolves the observer behind one Rule.
+func (d *Daemon) ruleObserverAuthor(ctx context.Context, bank memory.Memory, r memory.Rule) string {
+	seen := make(map[string]bool)
+	var authors []string
+	for _, id := range r.SourceObservationIDs {
+		o, err := bank.ObservationByID(ctx, id)
+		if err != nil || strings.TrimSpace(o.Author) == "" {
+			continue
+		}
+		if !seen[o.Author] {
+			seen[o.Author] = true
+			authors = append(authors, o.Author)
+		}
+	}
+	if len(authors) == 1 {
+		return authors[0]
+	}
+	if len(authors) > 1 {
+		return ""
+	}
+	return r.ApprovedBy
+}
+
+// ruleObservedTime reports the newest source-observation time of a Rule,
+// falling back to its approval when it has no resolvable sources.
+func (d *Daemon) ruleObservedTime(ctx context.Context, bank memory.Memory, r memory.Rule) time.Time {
+	var newest time.Time
+	for _, id := range r.SourceObservationIDs {
+		o, err := bank.ObservationByID(ctx, id)
+		if err != nil || o.CreatedAt.IsZero() {
+			continue
+		}
+		if o.CreatedAt.After(newest) {
+			newest = o.CreatedAt
+		}
+	}
+	if newest.IsZero() {
+		return r.ApprovedAt
+	}
+	return newest
 }
 
 // observedCommitFor returns the observed commit recorded in a rule payload,
@@ -240,9 +349,9 @@ func (d *Daemon) handleRulesQueueStats(w http.ResponseWriter, r *http.Request) {
 
 // handleRulesQueueDecide serves POST /api/rules/queue/{id}/decide
 // {"status":"approved"|"rejected","text"?,"kind"?,"subject_key"?}. An approval
-// creates the Rule (superseding the same key and author) and keeps the
+// creates the Rule (superseding the same observer's older Rule) and keeps the
 // proposal in the queue row; a rejection keeps the item as a label and writes
-// nothing.
+// nothing. Only kind=rule items decide here: a profile_patch ID answers 400.
 func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, id int64) {
 	user, ok := d.ruleUserOf(w, r)
 	if !ok {
@@ -264,7 +373,7 @@ func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, 
 	}
 	switch body.Status {
 	case memory.QueueRejected:
-		if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
+		if err := d.rejectRuleQueueItem(r.Context(), bank, id, user.ID); err != nil {
 			if errors.Is(err, memory.ErrNotFound) {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
@@ -272,6 +381,7 @@ func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		d.recordQueueLedger(r.Context(), user.ID, "queue_reject")
 		writeJSON(w, http.StatusOK, map[string]any{"status": memory.QueueRejected})
 	case memory.QueueApproved:
 		rule, err := d.approveRuleQueueItem(r.Context(), user.ID, user.ID, id, &body)
@@ -283,10 +393,31 @@ func (d *Daemon) handleRulesQueueDecide(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		d.recordQueueLedger(r.Context(), user.ID, "queue_approve")
 		writeJSON(w, http.StatusOK, rule)
 	default:
 		http.Error(w, "status must be approved or rejected", http.StatusBadRequest)
 	}
+}
+
+// rejectRuleQueueItem rejects one pending kind=rule queue item. The row stays
+// as a Decider label. Non-rule IDs are refused so the rule queue can never
+// decide a profile_patch item.
+func (d *Daemon) rejectRuleQueueItem(ctx context.Context, bank memory.Memory, id int64, decidedBy string) error {
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if it.ID != id {
+			continue
+		}
+		if it.Kind != memory.QueueRule {
+			return fmt.Errorf("%w: queue item %d is %q, not a rule", memory.ErrInvalid, id, it.Kind)
+		}
+		return bank.Decide(ctx, id, memory.QueueRejected, decidedBy)
+	}
+	return fmt.Errorf("%w: queue item %d", memory.ErrNotFound, id)
 }
 
 // handleRulesQueueBatch serves POST /api/rules/queue/batch
@@ -336,8 +467,17 @@ func (d *Daemon) handleRulesQueueBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := make([]ruleBatchResult, 0, len(ids))
+	byID := make(map[int64]memory.QueueItem, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
 	for _, id := range ids {
 		res := ruleBatchResult{ID: id, Status: body.Status}
+		if it, ok := byID[id]; ok && it.Kind != memory.QueueRule {
+			res.Error = fmt.Errorf("%w: queue item %d is %q, not a rule", memory.ErrInvalid, id, it.Kind).Error()
+			results = append(results, res)
+			continue
+		}
 		switch body.Status {
 		case memory.QueueRejected:
 			if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
@@ -353,6 +493,7 @@ func (d *Daemon) handleRulesQueueBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, res)
 	}
+	d.recordQueueLedger(r.Context(), user.ID, "queue_batch")
 	writeJSON(w, http.StatusOK, results)
 }
 
@@ -360,9 +501,10 @@ func (d *Daemon) handleRulesQueueBatch(w http.ResponseWriter, r *http.Request) {
 // owner's bank when the key recurs across Sessions. A single mention never
 // reaches the queue; the same subject key in two Sessions on different tasks
 // does, unless situational language counts against it. A pending item for the
-// same key is returned as-is instead of enqueued twice. Contradiction pairing
-// runs before the enqueue: the FTS5 relation to a stored Rule with the same
-// key or high overlap goes on the proposal for the approver.
+// same key is returned as-is instead of enqueued twice. Pairing runs before
+// the enqueue: a live Rule with the same key from a different observer marks
+// the proposal as a disagreement (relation plus related rule) for the human;
+// otherwise the FTS5 relation to an overlapping stored Rule goes on it.
 func (d *Daemon) promoteSubject(ctx context.Context, owner, subjectKey, kind string) (int64, bool, error) {
 	key := memory.NormalizeSubjectKey(subjectKey)
 	if key == "" {
@@ -383,23 +525,39 @@ func (d *Daemon) promoteSubject(ctx context.Context, owner, subjectKey, kind str
 		return pending[0].ID, false, nil
 	}
 	if !validMineKind(kind) {
-		kind = KindPreferenceOf(group)
+		kind = kindPreferenceOf(group)
 	}
 	proposal, ok := memory.BuildRuleProposal(group, kind, "", "mined")
 	if !ok {
 		return 0, false, nil
 	}
-	// Contradiction pairing: the same subject key or high textual overlap
-	// with a stored Rule goes on the proposal as its relation.
-	if rules, err := bank.RulesBySubjectKey(ctx, key); err == nil && len(rules) > 0 {
-		if related, rel := memory.PairCandidate(proposal.Text, key, rules); related != "" {
+	// Pairing is best effort: a pairing failure never blocks the promotion,
+	// it only leaves the proposal without a relation.
+	sameKeyRules, err := bank.RulesBySubjectKey(ctx, key)
+	if err != nil {
+		sameKeyRules = nil
+	}
+	if len(sameKeyRules) > 0 {
+		candidateAuthor := d.candidateObserverAuthor(ctx, bank, proposal, owner)
+		authors := d.ruleObserverAuthors(ctx, bank, sameKeyRules)
+		_, different := memory.PartitionSubjectRules(sameKeyRules, key, candidateAuthor, func(r memory.Rule) string {
+			return authors[r.RuleID]
+		})
+		if len(different) > 0 {
+			// A newer statement from a different observer is a
+			// disagreement: it stays in the queue with the conflicting
+			// Rule named, instead of superseding it.
+			if related, rel := memory.PairCandidate(proposal.Text, key, different); related != "" {
+				proposal.Relation, proposal.RelatedRuleID = rel, related
+			} else {
+				proposal.Relation, proposal.RelatedRuleID = memory.RelContradicts, different[0].RuleID
+			}
+		} else if related, rel := memory.PairCandidate(proposal.Text, key, sameKeyRules); related != "" {
 			proposal.Relation, proposal.RelatedRuleID = rel, related
 		}
-	} else if err == nil {
-		if recalled, err := bank.Recall(ctx, proposal.Text, memory.MaxRecall); err == nil && len(recalled) > 0 {
-			if related, rel := memory.PairCandidate(proposal.Text, key, recalled); related != "" {
-				proposal.Relation, proposal.RelatedRuleID = rel, related
-			}
+	} else if recalled, err := bank.Recall(ctx, proposal.Text, memory.MaxRecall); err == nil && len(recalled) > 0 {
+		if related, rel := memory.PairCandidate(proposal.Text, key, recalled); related != "" {
+			proposal.Relation, proposal.RelatedRuleID = rel, related
 		}
 	}
 	id, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: memory.EncodeRuleProposal(proposal)})
@@ -409,9 +567,10 @@ func (d *Daemon) promoteSubject(ctx context.Context, owner, subjectKey, kind str
 	return id, true, nil
 }
 
-// KindPreferenceOf returns the most common kind in group, defaulting to
-// preference when the group is empty or tied.
-func KindPreferenceOf(group []memory.Observation) string {
+// kindPreferenceOf returns the most common valid kind in group. Ties keep the
+// earliest leader; an empty group or one with no valid kind defaults to
+// preference.
+func kindPreferenceOf(group []memory.Observation) string {
 	counts := make(map[string]int)
 	best, bestN := memory.KindPreference, 0
 	for _, o := range group {
@@ -424,6 +583,32 @@ func KindPreferenceOf(group []memory.Observation) string {
 		}
 	}
 	return best
+}
+
+// recordQueueLedger records the queue budget, size and approval latency after
+// a rule-queue mutation, so the budget pressure and the latency are stored,
+// not just served. It is best effort: a ledger failure never fails the
+// decision it follows.
+func (d *Daemon) recordQueueLedger(ctx context.Context, owner, stage string) {
+	bank, err := d.profileBankFor(owner)
+	if err != nil {
+		return
+	}
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return
+	}
+	st := memory.DescribeQueue(items, d.now())
+	counts, _ := json.Marshal(map[string]any{
+		"pending": st.Pending, "approved": st.Approved, "rejected": st.Rejected,
+		"total": st.Total, "budget": st.Budget, "overBudget": st.OverBudget,
+		"avgApprovalLatencyHours": st.AvgLatencyHrs, "oldestPendingAgeHours": st.OldestPendingAgeHrs,
+	})
+	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{
+		RunID: "queue", Stage: stage, Status: memory.LedgerSuccess,
+		CountsJSON: string(counts),
+		Detail:     "rule queue " + stage,
+	})
 }
 
 // mustQueue lists the bank's queue, swallowing the error for the pending
@@ -465,6 +650,9 @@ func (d *Daemon) handleRulesQueuePromote(w http.ResponseWriter, r *http.Request)
 	if !created && id == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"promoted": false})
 		return
+	}
+	if created {
+		d.recordQueueLedger(r.Context(), user.ID, "queue_promote")
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "promoted": created})
 }

@@ -74,6 +74,17 @@ func (f *Fake) ObservationByEvent(_ context.Context, sessionID, eventID string) 
 	return Observation{}, fmt.Errorf("%w: observation %s event %s", ErrNotFound, sessionID, eventID)
 }
 
+func (f *Fake) ObservationByID(_ context.Context, id int64) (Observation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, o := range f.obs {
+		if o.ID == id {
+			return o, nil
+		}
+	}
+	return Observation{}, fmt.Errorf("%w: observation %d", ErrNotFound, id)
+}
+
 func (f *Fake) SearchObservations(_ context.Context, text string, limit int) ([]Observation, error) {
 	terms := Tokens(text)
 	if len(terms) == 0 {
@@ -284,6 +295,68 @@ func (f *Fake) Decide(_ context.Context, id int64, status, decidedBy string) err
 		return nil
 	}
 	return fmt.Errorf("%w: queue item %d", ErrNotFound, id)
+}
+
+func (f *Fake) ApproveRule(_ context.Context, itemID int64, decidedBy string, rule Rule, supersedeIDs []string) (Rule, error) {
+	if decidedBy == "" {
+		return Rule{}, fmt.Errorf("%w: decider empty", ErrInvalid)
+	}
+	if rule.RuleID == "" {
+		rule.RuleID = newID()
+	}
+	rule.Version = 1
+	if rule.Status == "" {
+		rule.Status = StatusActive
+	}
+	rule.SubjectKey = NormalizeSubjectKey(rule.SubjectKey)
+	if rule.ApprovedBy == "" {
+		rule.ApprovedBy = decidedBy
+	}
+	rule.ApprovedAt = f.now()
+	if err := validRule(rule); err != nil {
+		return Rule{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	idx := -1
+	for i := range f.queue {
+		if f.queue[i].ID == itemID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return Rule{}, fmt.Errorf("%w: queue item %d", ErrNotFound, itemID)
+	}
+	if f.queue[idx].Kind != QueueRule {
+		return Rule{}, fmt.Errorf("%w: queue item %d is %q, not a rule", ErrInvalid, itemID, f.queue[idx].Kind)
+	}
+	if f.queue[idx].Status != QueuePending {
+		return Rule{}, fmt.Errorf("%w: queue item %d already decided", ErrInvalid, itemID)
+	}
+	if latestVersion(f.rules, rule.RuleID) > 0 {
+		return Rule{}, fmt.Errorf("%w: rule %s exists; revise it", ErrInvalid, rule.RuleID)
+	}
+	seen := make(map[string]bool)
+	for _, sid := range supersedeIDs {
+		sid = strings.TrimSpace(sid)
+		if sid == "" || sid == rule.RuleID || seen[sid] {
+			continue
+		}
+		seen[sid] = true
+		if latest := latestVersion(f.rules, sid); latest > 0 {
+			for i := range f.rules {
+				if f.rules[i].RuleID == sid && f.rules[i].Version == latest && live(f.rules[i].Status) {
+					f.rules[i].Status = StatusSuperseded
+				}
+			}
+		}
+	}
+	f.rules = append(f.rules, copyRule(rule))
+	f.queue[idx].Status = QueueApproved
+	f.queue[idx].DecidedBy = decidedBy
+	f.queue[idx].DecidedAt = f.now()
+	return rule, nil
 }
 
 func (f *Fake) Queue(_ context.Context) ([]QueueItem, error) {

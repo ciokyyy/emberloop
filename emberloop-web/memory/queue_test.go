@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -133,22 +134,50 @@ func TestProposeGeneralizationPicksGeneralizing(t *testing.T) {
 	}
 }
 
-func TestSupersessionSameAuthorDisagreementOther(t *testing.T) {
+func TestPartitionSubjectRules(t *testing.T) {
 	rules := []Rule{
 		{RuleID: "r1", Version: 1, Text: "always wrap errors", Kind: KindPreference, SubjectKey: "wrap.errors", Status: StatusActive, ApprovedBy: "u1"},
 		{RuleID: "r2", Version: 1, Text: "always wrap errors, bob's take", Kind: KindPreference, SubjectKey: "wrap.errors", Status: StatusActive, ApprovedBy: "bob"},
 		{RuleID: "r3", Version: 1, Text: "unrelated note", Kind: KindFact, SubjectKey: "other.key", Status: StatusActive, ApprovedBy: "u1"},
+		{RuleID: "r0", Version: 1, Text: "older same-key take", Kind: KindPreference, SubjectKey: "wrap.errors", Status: StatusActive, ApprovedBy: "u1"},
 	}
-	superseded := FindSuperseded(rules, "Wrap.Errors", "u1")
-	if len(superseded) != 1 || superseded[0].RuleID != "r1" {
-		t.Fatalf("superseded = %+v, want only r1 (same key, same author)", superseded)
+	byApprover := func(r Rule) string { return r.ApprovedBy }
+	same, different := PartitionSubjectRules(rules, "Wrap.Errors", "u1", byApprover)
+	if len(same) != 2 || same[0].RuleID != "r0" || same[1].RuleID != "r1" {
+		t.Fatalf("same = %+v, want r0 r1 ordered by rule ID", same)
 	}
-	disagreements := FindDisagreements(rules, "wrap.errors", "u1")
-	if len(disagreements) != 1 || disagreements[0].RuleID != "r2" {
-		t.Fatalf("disagreements = %+v, want r2 (same key, different author)", disagreements)
+	if len(different) != 1 || different[0].RuleID != "r2" {
+		t.Fatalf("different = %+v, want r2 (same key, different observer)", different)
 	}
-	if n := len(FindSuperseded(rules, "", "u1")); n != 0 {
-		t.Fatalf("empty key superseded %d, want none", n)
+	// Unknown or mixed authors never supersede: everything disagrees.
+	same, different = PartitionSubjectRules(rules, "wrap.errors", "", byApprover)
+	if len(same) != 0 || len(different) != 3 {
+		t.Fatalf("unknown candidate: same = %d different = %d, want 0 and 3", len(same), len(different))
+	}
+	same, different = PartitionSubjectRules(rules, "wrap.errors", "u1", func(Rule) string { return "" })
+	if len(same) != 0 || len(different) != 3 {
+		t.Fatalf("unknown rule authors: same = %d different = %d, want 0 and 3", len(same), len(different))
+	}
+	if same, different := PartitionSubjectRules(rules, "", "u1", byApprover); len(same) != 0 || len(different) != 0 {
+		t.Fatalf("empty key: same = %d different = %d, want none", len(same), len(different))
+	}
+}
+
+func TestProposeGeneralizationNeverClips(t *testing.T) {
+	long := "always " + strings.Repeat("wrapping errors with context ", 20)
+	group := []Observation{
+		queueObs("s1", "e1", "u1", "fix it here", "long.key"),
+		queueObs("s2", "e2", "u1", long, "long.key"),
+	}
+	text, quotes, err := ProposeGeneralization(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != strings.TrimSpace(long) {
+		t.Fatalf("generalization clipped to %d chars, want the whole %d-char quote", len(text), len(long))
+	}
+	if len(quotes) != 2 {
+		t.Fatalf("quotes = %d, want both as evidence", len(quotes))
 	}
 }
 
@@ -161,6 +190,48 @@ func TestPairCandidateSameKeyAndOverlap(t *testing.T) {
 	}
 	if id, _ := PairCandidate("prefer tabs for indentation", "tabs.indentation", rules); id != "" {
 		t.Fatalf("unrelated pair = %s, want none", id)
+	}
+}
+
+func TestSubjectKeyProposers(t *testing.T) {
+	ctx := context.Background()
+	state := DeciderState{Statement: "always return wrapped errors in this repo"}
+	if key, err := (HeuristicDecider{}).ProposeSubjectKey(ctx, state); err != nil || key != ProposeSubjectKey(state.Statement) {
+		t.Fatalf("heuristic proposer = %q %v, want the heuristic key", key, err)
+	}
+	if _, err := (UnavailableDecider{}).ProposeSubjectKey(ctx, state); !errors.Is(err, ErrDeciderUnavailable) {
+		t.Fatalf("unavailable proposer err = %v, want ErrDeciderUnavailable", err)
+	}
+	scripted := &ScriptedDecider{SubjectKey: "Go.Errors.Wrapping"}
+	if key, err := scripted.ProposeSubjectKey(ctx, state); err != nil || key != "go.errors.wrapping" {
+		t.Fatalf("scripted proposer = %q %v, want normalized go.errors.wrapping", key, err)
+	}
+	empty := &ScriptedDecider{}
+	if _, err := empty.ProposeSubjectKey(ctx, state); !errors.Is(err, ErrDeciderUnavailable) {
+		t.Fatalf("empty scripted proposer err = %v, want fallback via ErrDeciderUnavailable", err)
+	}
+	ensemble := EnsembleDecider{First: HeuristicDecider{}, Second: &ScriptedDecider{SubjectKey: "second.key"}}
+	if key, err := ensemble.ProposeSubjectKey(ctx, state); err != nil || key != "second.key" {
+		t.Fatalf("ensemble proposer = %q %v, want the confirming second", key, err)
+	}
+	// The model sees redacted text only.
+	llm := LLMDecider{ModelName: "m", Call: func(_ context.Context, _, _, user string) (string, error) {
+		if strings.Contains(user, "hunter2") {
+			t.Errorf("model input carried the raw secret")
+		}
+		if !strings.Contains(user, "[redacted:password]") {
+			t.Errorf("model input missed the redaction marker: %q", user)
+		}
+		return `{"subject_key":"Model.Proposed.Key"}`, nil
+	}}
+	if key, err := llm.ProposeSubjectKey(ctx, DeciderState{Statement: "the password is hunter2-2026, always use tabs"}); err != nil || key != "model.proposed.key" {
+		t.Fatalf("llm proposer = %q %v, want normalized model.proposed.key", key, err)
+	}
+	bad := LLMDecider{ModelName: "m", Call: func(context.Context, string, string, string) (string, error) {
+		return `{"subject_key":""}`, nil
+	}}
+	if _, err := bad.ProposeSubjectKey(ctx, state); !errors.Is(err, ErrDeciderUnavailable) {
+		t.Fatalf("empty model key err = %v, want ErrDeciderUnavailable", err)
 	}
 }
 
@@ -326,6 +397,89 @@ func TestQueueItemsForSessionAndPendingForSubject(t *testing.T) {
 	}
 	if got := PendingForSubject(subj, "wrap.errors"); len(got) != 1 || got[0].ID != 1 {
 		t.Fatalf("pending for subject = %+v, want only ID 1", got)
+	}
+}
+
+func TestObservationByID(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			clock := newTestClock()
+			m := fac.open(t, clock)
+			ctx := context.Background()
+			id, err := m.AddObservation(ctx, Observation{SessionID: "s", EventID: "e", Author: "u1", Quote: "find me", Kind: KindFact})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := m.ObservationByID(ctx, id)
+			if err != nil || got.Quote != "find me" || got.ID != id {
+				t.Fatalf("by ID = %+v %v, want the observation", got, err)
+			}
+			if _, err := m.ObservationByID(ctx, id+9999); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing ID err = %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
+
+func TestApproveRuleIsAtomic(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			clock := newTestClock()
+			m := fac.open(t, clock)
+			ctx := context.Background()
+			old, err := m.AddRule(ctx, Rule{Text: "old wording", Kind: KindPreference, SubjectKey: "wrap.errors", ApprovedBy: "u1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := m.Enqueue(ctx, QueueItem{Kind: QueueRule, Payload: `{"text":"new wording"}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A refused approval changes nothing: no Rule, no supersession,
+			// the item stays pending.
+			long := "quuxdistinct " + strings.Repeat("y", MaxRuleChars+1)
+			if _, err := m.ApproveRule(ctx, item, "u1", Rule{Text: long, Kind: KindFact, ApprovedBy: "u1"}, []string{old.RuleID}); !isInvalid(err) {
+				t.Fatalf("over-long approve err = %v, want ErrInvalid", err)
+			}
+			if queue, _ := m.Queue(ctx); len(queue) != 1 || queue[0].Status != QueuePending {
+				t.Fatalf("queue after refused approve = %+v, want still pending", queue)
+			}
+			if versions, _ := m.RuleVersions(ctx, old.RuleID); len(versions) != 1 || versions[0].Status != StatusActive {
+				t.Fatalf("old rule after refused approve = %+v, want still active", versions)
+			}
+			if got, _ := m.Recall(ctx, "quuxdistinct", 10); len(got) != 0 {
+				t.Fatalf("refused approval wrote %d Rules, want none", len(got))
+			}
+			// The happy path creates the Rule, supersedes the old one and
+			// approves the item together.
+			rule, err := m.ApproveRule(ctx, item, "u1", Rule{Text: "new wording", Kind: KindFact, SubjectKey: "wrap.errors", ApprovedBy: "u1"}, []string{old.RuleID, "missing", old.RuleID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rule.Version != 1 || rule.Status != StatusActive {
+				t.Fatalf("approved rule = %+v, want active v1", rule)
+			}
+			if queue, _ := m.Queue(ctx); len(queue) != 1 || queue[0].Status != QueueApproved || queue[0].DecidedBy != "u1" {
+				t.Fatalf("queue after approve = %+v, want the approved label", queue)
+			}
+			if versions, _ := m.RuleVersions(ctx, old.RuleID); len(versions) != 1 || versions[0].Status != StatusSuperseded {
+				t.Fatalf("old rule after approve = %+v, want superseded", versions)
+			}
+			// Decided items, non-rule items and missing items are refused.
+			if _, err := m.ApproveRule(ctx, item, "u1", Rule{Text: "again", Kind: KindFact, ApprovedBy: "u1"}, nil); !isInvalid(err) {
+				t.Fatalf("second approve err = %v, want ErrInvalid", err)
+			}
+			profile, err := m.Enqueue(ctx, QueueItem{Kind: QueueProfilePatch, Payload: `{"op":"add"}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.ApproveRule(ctx, profile, "u1", Rule{Text: "x", Kind: KindFact, ApprovedBy: "u1"}, nil); !isInvalid(err) {
+				t.Fatalf("non-rule approve err = %v, want ErrInvalid", err)
+			}
+			if _, err := m.ApproveRule(ctx, 9999, "u1", Rule{Text: "x", Kind: KindFact, ApprovedBy: "u1"}, nil); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing approve err = %v, want ErrNotFound", err)
+			}
+		})
 	}
 }
 

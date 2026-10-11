@@ -86,6 +86,9 @@ type Memory interface {
 	// Event, or ErrNotFound. The miner uses it to recognize a replayed Event
 	// exactly, whatever else its quote matches.
 	ObservationByEvent(ctx context.Context, sessionID, eventID string) (Observation, error)
+	// ObservationByID returns the observation with the bank ID, or ErrNotFound.
+	// Approval resolves source-observation authors and dates through it.
+	ObservationByID(ctx context.Context, id int64) (Observation, error)
 	SearchObservations(ctx context.Context, text string, limit int) ([]Observation, error)
 	// ObservationsBySubjectKey returns every observation with the normalized
 	// subject key, oldest first. The queue promotion stage reads it to test
@@ -104,6 +107,15 @@ type Memory interface {
 	Enqueue(ctx context.Context, item QueueItem) (int64, error)
 	Decide(ctx context.Context, id int64, status, decidedBy string) error
 	Queue(ctx context.Context) ([]QueueItem, error)
+	// ApproveRule approves one pending kind=rule queue item and creates its
+	// Rule in one transaction: the item must be pending, the rule text is
+	// refused over MaxRuleChars (never clipped), the named live Rules become
+	// superseded and the item becomes approved. Any failure rolls everything
+	// back, so a failed approval leaves no Rule, no supersession and a still
+	// pending item. Missing supersede targets are skipped (a human purge may
+	// have removed them); every other failure aborts.
+	ApproveRule(ctx context.Context, itemID int64, decidedBy string, rule Rule, supersedeIDs []string) (Rule, error)
+
 	// GetProfile returns the latest Profile version, or Version 0 with no
 	// lines when the User never saved one.
 	GetProfile(ctx context.Context) (ProfileVersion, error)

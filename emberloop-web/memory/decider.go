@@ -665,6 +665,8 @@ func (UnavailableDecider) Decide(_ context.Context, _ DeciderState, questions []
 
 // ScriptedDecider is the fake Decider: scripted probabilities and choices
 // drive Daemon tests. Unavailable (or Err) answers read as unavailable.
+// SubjectKey scripts the proposed subject key; empty falls back to the
+// heuristic proposal like a model that offered none.
 type ScriptedDecider struct {
 	ModelName   string
 	VersionName string
@@ -673,6 +675,7 @@ type ScriptedDecider struct {
 	Scope       string
 	Contradicts float64
 	Relevant    float64
+	SubjectKey  string
 	Unavailable bool
 	Err         error
 	Calls       int
@@ -745,4 +748,94 @@ func (s *ScriptedDecider) Decide(_ context.Context, _ DeciderState, questions []
 		}
 	}
 	return res, nil
+}
+
+// Subject key proposal. Subject keys group observations and Rules by topic
+// (go.errors.wrapping); the miner stores the proposed key on each
+// observation and the queue stage groups by it. A Decider that implements
+// SubjectKeyProposer names the key; callers fall back to the heuristic
+// ProposeSubjectKey (queue.go) when it cannot. Results are always normalized;
+// empty means keyless and never promotes.
+type SubjectKeyProposer interface {
+	ProposeSubjectKey(ctx context.Context, state DeciderState) (string, error)
+}
+
+// ProposeSubjectKey proposes the heuristic key for state.Statement: the
+// fallback every caller uses when no proposer answers.
+func (HeuristicDecider) ProposeSubjectKey(_ context.Context, state DeciderState) (string, error) {
+	return NormalizeSubjectKey(ProposeSubjectKey(state.Statement)), nil
+}
+
+// subjectKeySystemPrompt tells the model the one-key reply shape.
+func subjectKeySystemPrompt() string {
+	return "Name the topic of the user's message as a dotted key of lowercase words, " +
+		"for example {\"subject_key\":\"go.errors.wrapping\"}. " +
+		"Reply with one JSON object and nothing else."
+}
+
+// ProposeSubjectKey asks the model for the subject key of state.Statement.
+// The state is redacted with ForDecider before Call runs, like Decide. An
+// empty or unparsable reply is unavailable, never a key: the caller falls
+// back to the heuristic proposal.
+func (d LLMDecider) ProposeSubjectKey(ctx context.Context, state DeciderState) (string, error) {
+	if strings.TrimSpace(d.ModelName) == "" || d.Call == nil {
+		return "", fmt.Errorf("%w: llm proposer has no model", ErrDeciderUnavailable)
+	}
+	user := "Statement:\n" + ForDecider(firstRunes(state.Statement, maxDeciderStatementRunes)) + "\n"
+	if ctxText := strings.TrimSpace(state.Context); ctxText != "" {
+		user += "\nWhat it corrected:\n" + ForDecider(firstRunes(ctxText, maxDeciderContextRunes)) + "\n"
+	}
+	raw, err := d.Call(ctx, d.ModelName, subjectKeySystemPrompt(), user)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrDeciderUnavailable, err)
+	}
+	var reply struct {
+		SubjectKey string `json:"subject_key"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &reply); err != nil {
+		return "", fmt.Errorf("%w: malformed key reply", ErrDeciderUnavailable)
+	}
+	if key := NormalizeSubjectKey(reply.SubjectKey); key != "" {
+		return key, nil
+	}
+	return "", fmt.Errorf("%w: model proposed no key", ErrDeciderUnavailable)
+}
+
+// ProposeSubjectKey confirms with Second when it proposes keys, else First.
+// A candidate no proposer names keeps the heuristic fallback at the caller.
+func (e EnsembleDecider) ProposeSubjectKey(ctx context.Context, state DeciderState) (string, error) {
+	if e.Second != nil {
+		if p, ok := e.Second.(SubjectKeyProposer); ok {
+			if key, err := p.ProposeSubjectKey(ctx, state); err == nil && NormalizeSubjectKey(key) != "" {
+				return NormalizeSubjectKey(key), nil
+			}
+		}
+	}
+	if e.First != nil {
+		if p, ok := e.First.(SubjectKeyProposer); ok {
+			return p.ProposeSubjectKey(ctx, state)
+		}
+	}
+	return "", fmt.Errorf("%w: ensemble has no proposer", ErrDeciderUnavailable)
+}
+
+// ProposeSubjectKey never answers: without a configured model there is no
+// proposal, only the caller's heuristic fallback.
+func (UnavailableDecider) ProposeSubjectKey(_ context.Context, _ DeciderState) (string, error) {
+	return "", fmt.Errorf("%w: no proposer configured", ErrDeciderUnavailable)
+}
+
+// ProposeSubjectKey answers the scripted key. Empty scripts no key, like a
+// model that offered none, so the caller falls back to the heuristic.
+func (s *ScriptedDecider) ProposeSubjectKey(_ context.Context, _ DeciderState) (string, error) {
+	if s.Err != nil {
+		return "", fmt.Errorf("%w: %v", ErrDeciderUnavailable, s.Err)
+	}
+	if s.Unavailable {
+		return "", fmt.Errorf("%w: scripted unavailable", ErrDeciderUnavailable)
+	}
+	if key := NormalizeSubjectKey(s.SubjectKey); key != "" {
+		return key, nil
+	}
+	return "", fmt.Errorf("%w: no scripted key", ErrDeciderUnavailable)
 }

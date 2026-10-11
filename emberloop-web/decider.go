@@ -300,6 +300,41 @@ func (d *Daemon) deciderLLMCall(_ context.Context, model, system, user string) (
 	return pigOneShot("", model, system, redacted, deciderMaxTokens, deciderTimeout)
 }
 
+// minerSubjectKey proposes the subject key for a mined statement. The
+// confirming Decider names it when it implements SubjectKeyProposer (the test
+// seam, or the memory model in llm and ensemble modes); otherwise the
+// heuristic fallback proposes it. The result is normalized; empty means
+// keyless and never promotes. It also reports who proposed the key (the
+// Decider model, or the heuristic name) for the decider_json provenance.
+func (d *Daemon) minerSubjectKey(statement, contextText string) (string, string) {
+	state := memory.DeciderState{Statement: statement, Context: contextText}
+	ctx := context.Background()
+	var candidates []memory.Decider
+	if d.decider != nil {
+		candidates = []memory.Decider{d.decider}
+	} else {
+		set := readDeciderSettings()
+		if (set.Mode == deciderLLM || set.Mode == deciderEnsemble) && strings.TrimSpace(set.Model) != "" {
+			if llm := d.llmMineDecider(set.Model); llm != nil {
+				candidates = append(candidates, llm)
+			}
+		}
+		candidates = append(candidates, memory.HeuristicDecider{})
+	}
+	for _, c := range candidates {
+		p, ok := c.(memory.SubjectKeyProposer)
+		if !ok {
+			continue
+		}
+		if key, err := p.ProposeSubjectKey(ctx, state); err == nil {
+			if norm := memory.NormalizeSubjectKey(key); norm != "" {
+				return norm, c.Model()
+			}
+		}
+	}
+	return memory.NormalizeSubjectKey(memory.ProposeSubjectKey(statement)), memory.HeuristicModel
+}
+
 // decideMine judges one heuristic hit. The heuristic pass always proposes
 // and always offers kind and scope; the confirming Decider (llm, jev,
 // ensemble's second, or the test seam) judges durable. A confirm keeps at

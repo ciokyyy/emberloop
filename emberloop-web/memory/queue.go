@@ -13,6 +13,7 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -162,17 +163,17 @@ func IsSituational(text string) bool { return GeneralizationScore(text) < 0 }
 // Rule the candidate overlaps, so the approver sees the conflict without
 // recomputing it.
 type RuleProposal struct {
-	Text               string   `json:"text"`
-	Kind               string   `json:"kind,omitempty"`
-	SubjectKey         string   `json:"subject_key,omitempty"`
-	Quotes             []string `json:"quotes,omitempty"`
-	Sessions           []string `json:"sessions,omitempty"`
-	Author             string   `json:"author,omitempty"`
-	Origin             string   `json:"origin,omitempty"`
-	Reason             string   `json:"reason,omitempty"`
-	SourceObservationIDs []int64 `json:"source_observation_ids,omitempty"`
-	Relation           string   `json:"relation,omitempty"`
-	RelatedRuleID      string   `json:"related_rule_id,omitempty"`
+	Text                 string   `json:"text"`
+	Kind                 string   `json:"kind,omitempty"`
+	SubjectKey           string   `json:"subject_key,omitempty"`
+	Quotes               []string `json:"quotes,omitempty"`
+	Sessions             []string `json:"sessions,omitempty"`
+	Author               string   `json:"author,omitempty"`
+	Origin               string   `json:"origin,omitempty"`
+	Reason               string   `json:"reason,omitempty"`
+	SourceObservationIDs []int64  `json:"source_observation_ids,omitempty"`
+	Relation             string   `json:"relation,omitempty"`
+	RelatedRuleID        string   `json:"related_rule_id,omitempty"`
 }
 
 // EncodeRuleProposal marshals p with a normalized subject key.
@@ -180,22 +181,6 @@ func EncodeRuleProposal(p RuleProposal) string {
 	p.SubjectKey = NormalizeSubjectKey(p.SubjectKey)
 	raw, _ := json.Marshal(p)
 	return string(raw)
-}
-
-// DecodeRuleProposal unmarshals a kind=rule payload. Old remember payloads
-// (text, reason, quote, eventId, sessionId, author, origin) decode through
-// DecodeRememberProposal instead; this function reports an error for them so
-// callers fall back.
-func DecodeRuleProposal(payload string) (RuleProposal, error) {
-	var p RuleProposal
-	if err := json.Unmarshal([]byte(payload), &p); err != nil {
-		return RuleProposal{}, err
-	}
-	if strings.TrimSpace(p.Text) == "" {
-		return RuleProposal{}, fmt.Errorf("%w: rule proposal text empty", ErrInvalid)
-	}
-	p.SubjectKey = NormalizeSubjectKey(p.SubjectKey)
-	return p, nil
 }
 
 // rememberCompat is the pre-ticket-22 remember payload shape, plus the
@@ -281,8 +266,10 @@ func distinctSessions(group []Observation) int {
 }
 
 // RecursAcrossSessions reports whether group holds the same normalized
-// subject key in two or more distinct Sessions. Different Sessions stand in
-// for different tasks: one mention, however emphatic, never promotes alone.
+// subject key in two or more distinct Sessions. Sessions stand in for tasks:
+// each Session is one unit of work, so repeats inside one Session never
+// promote, while the same subject in two Sessions counts as two tasks. One
+// mention, however emphatic, never promotes alone.
 func RecursAcrossSessions(group []Observation) bool {
 	if len(group) < 2 {
 		return false
@@ -308,9 +295,10 @@ func ShouldPromote(group []Observation) bool {
 // ProposeGeneralization returns the one proposed generalization the approver
 // sees, with its supporting quotes. The pick is the quote with the highest
 // generalization score, breaking ties toward the longest quote, so an
-// "always ..." statement wins over a bare "here ..." one. The text is capped
-// at MaxRuleChars so the proposal is approvable as written; the full quotes
-// stay beside it as evidence. Empty group gives an error.
+// "always ..." statement wins over a bare "here ..." one. The text is never
+// clipped: a proposal over MaxRuleChars stays whole and the approval refuses
+// it until a human edits it down. The full quotes stay beside it as evidence.
+// Empty group gives an error.
 func ProposeGeneralization(group []Observation) (string, []string, error) {
 	if len(group) == 0 {
 		return "", nil, fmt.Errorf("%w: no observations", ErrInvalid)
@@ -324,9 +312,6 @@ func ProposeGeneralization(group []Observation) (string, []string, error) {
 		}
 	}
 	text := strings.TrimSpace(best.Quote)
-	if utf8.RuneCountInString(text) > MaxRuleChars {
-		text = strings.TrimSpace(firstRunes(text, MaxRuleChars))
-	}
 	seen := make(map[string]bool)
 	var quotes []string
 	for _, o := range group {
@@ -394,7 +379,8 @@ func BuildRuleProposal(group []Observation, kind, author, origin string) (RulePr
 	}, true
 }
 
-// latestLiveRules keeps the latest version per rule ID among live rows.
+// latestLiveRules keeps the latest version per rule ID among live rows,
+// ordered by rule ID so pairing and partition read deterministically.
 func latestLiveRules(rules []Rule) []Rule {
 	latest := make(map[string]Rule)
 	for _, r := range rules {
@@ -408,47 +394,42 @@ func latestLiveRules(rules []Rule) []Rule {
 			out = append(out, r)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RuleID < out[j].RuleID })
 	return out
 }
 
-// FindSuperseded returns the live rules the candidate supersedes
-// deterministically: same normalized subject key, same author. The caller
-// marks them superseded when the approval creates the new Rule. Empty key
-// supersedes nothing.
-func FindSuperseded(rules []Rule, subjectKey, author string) []Rule {
-	key := NormalizeSubjectKey(subjectKey)
-	if key == "" || author == "" {
-		return nil
-	}
-	var out []Rule
-	for _, r := range latestLiveRules(rules) {
-		if NormalizeSubjectKey(r.SubjectKey) == key && r.ApprovedBy == author {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// FindDisagreements returns the live rules the candidate disagrees with: the
-// same normalized subject key from a different author. A newer statement
-// from a different User never supersedes; it stays in the queue for a human.
-func FindDisagreements(rules []Rule, subjectKey, author string) []Rule {
+// PartitionSubjectRules splits the live latest versions carrying subjectKey
+// into same-author and different-author sets, both ordered by rule ID.
+// Authors are observer identities resolved by the caller: ruleAuthor reports
+// the User behind a Rule's observations (its source observations' single
+// distinct author, else the approver fallback the caller applied), and
+// candidateAuthor is the candidate's resolved observer. "" on either side
+// means unknown or mixed and never matches, so nothing supersedes without a
+// known author on both sides. A newer statement from a different User lands
+// in different and stays in the queue for a human; it never supersedes.
+func PartitionSubjectRules(rules []Rule, subjectKey, candidateAuthor string, ruleAuthor func(Rule) string) (same, different []Rule) {
 	key := NormalizeSubjectKey(subjectKey)
 	if key == "" {
-		return nil
+		return nil, nil
 	}
-	var out []Rule
 	for _, r := range latestLiveRules(rules) {
-		if NormalizeSubjectKey(r.SubjectKey) == key && r.ApprovedBy != author {
-			out = append(out, r)
+		if NormalizeSubjectKey(r.SubjectKey) != key {
+			continue
 		}
+		if candidateAuthor != "" {
+			if author := ruleAuthor(r); author != "" && author == candidateAuthor {
+				same = append(same, r)
+				continue
+			}
+		}
+		different = append(different, r)
 	}
-	return out
+	return same, different
 }
 
 // PairCandidate pairs a candidate against stored Rules for the queue payload:
-// the first live Rule with the same subject key, else the highest-overlap
-// Rule by Relation (duplicate, refines, contradicts). It returns the related
+// the lowest-ID live Rule with the same subject key, else the lowest-ID Rule
+// with a Relation (duplicate, refines, contradicts). It returns the related
 // Rule ID and the relation, or empty when nothing relates. Callers store both
 // on the proposal so the approver sees the conflict.
 func PairCandidate(candidateText, subjectKey string, rules []Rule) (string, string) {
