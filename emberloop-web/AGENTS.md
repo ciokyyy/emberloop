@@ -91,9 +91,11 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   the same seam; `runs_test.go` covers spec discovery and
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
   with a fake Backend and fake git (order, cap, box ticks, dirty and
-  conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
-  Sessions per Ticket, the gate, rework, staleness, roles and the cap at the
-  same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
+ conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
+ Sessions per Ticket, the gate, rework, staleness, roles, the cap and the
+ reviewer submit tool (scripted tool submits, empty-ran and minors-only
+ refusals, stale-tip records with the current tip, minors-pass merges) at the
+ same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
   reload with nothing spawned, pause, resume without a second Worker, a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused and failed Runs; Restart Run starts from zero), and
   finished Runs staying listed, at the same seam; `RunsView.test.js` covers
   the live Ticket table with Worker links, the verdict columns, and the
@@ -311,13 +313,15 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   `recall_inject_test.go` covers order, fence, Events, empty query, caps,
   flags, dormancy, notes merge, identifiers, Decider fallback, resume,
   Reviewer filter, engine notice, compress and the fallback.
-- Role prompts (`prompts.go`): the memory/DOX extra per role, the one place
+ - Role prompts (`prompts.go`): the memory/DOX extra per role, the one place
   the wording lives. Web names the `remember` tool (User statements only,
   needs a reason, queue approval, project facts go in AGENTS.md) and the
   explicit-Profile rule; workers, scouts and Reviewers name no memory-write
-  tool and get `recall` only. Every role carries the AGENTS.md chain rule and
-  the untrusted-notes rule. `rolePromptFor` dispatches on the Session record
-  (Reviewers first, though their el role is web). claude (`sessionMetaFor`,
+  tool and get `recall` only. Reviewers report through the reviewer `submit`
+  tool (verdict, tip, ran, findings). Every role carries the AGENTS.md chain
+  rule and the untrusted-notes rule. `rolePromptFor` dispatches on the Session
+  record (Reviewers first: they run as `run-worker` for the submit tool but
+  must never see a memory-write instruction). claude (`sessionMetaFor`,
   `claudeSystemPromptFor`), grok (`meta` hook with extra) and pig
   (`ownerResourcesExtra`) inject it into the system prompt on every create,
   resume and Handoff, exactly once per role: Run tasks (`workerTaskPrompt`,
@@ -564,7 +568,7 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   with a banner, pig scout loadouts carry none of spawn, steer, check or
   cancel, and claude scout Sessions run the single el server under `--role
   scout` (no Daemon tools at all).
-- `spawn`, `steer`, `check` and `cancel` are Daemon-hosted
+ - `spawn`, `steer`, `check` and `cancel` are Daemon-hosted
   (`spawn.go` for the routes, `emberloop/tools/webproxy.go` for the thin HTTP
   proxies the single `el-mcp` server serves; `submit` stays registered there
   but unoffered while `el.WebSubmitEnabled` is false): pig takes the four as
@@ -572,24 +576,30 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   under the Session's role. Top-level parents run `--role web` (spawn, steer,
   check, cancel), spawned group children `--role web-worker`
   (spawn; nesting kept, but no steer, check or cancel), Run ticket Workers
-  `--role run-worker` (`SessionMeta.RunWorker`; spawn and submit on every
-  harness: a done submit starts the ticket's reviewers; SDK pig gets a submit
-  ExtraTool via `PigBackend.DaemonURL`), scouts
-  `--role scout` (read-only). A proxy registers only when its role allows
-  it and `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL` bind the server to the Session,
-  and never reaches an execute script. `steer` (`SteerChild`: only the
-  recorded parent, scouts refused) routes a working child as steer and an
-  idle or released one as follow-up (resuming first) through the same resume
-  plus routeLive path the UI sends use. `check` (`CheckChildren`/`CheckChild`:
-  only the recorded parent, scouts readable) peeks without messaging: one
-  summary line per child, or one child plus its last twenty Events; grouped
-  results still arrive on their own, so check never polls. `cancel`
-  (`CancelChild`: only the recorded parent, scouts stoppable) reuses the
-  interrupt route, and kill ends through the same end DELETE serves.
-  The submit route (`POST /api/sessions/{id}/submit`, kept for Runs and the
-  flag-on gate) still records a result the grouped text prefers when one
-  exists. The existing
-  MCP server never calls back; all Group state stays in the Daemon.
+  and Reviewers run `--role run-worker` (spawn plus submit on every harness:
+  a worker done submit starts the ticket's reviewers; a reviewer submit
+  carries verdict, tip, ran and findings; SDK pig gets a worker submit
+  ExtraTool via `PigBackend.DaemonURL` and reviewers a reviewer submit
+  ExtraTool instead), scouts `--role scout` (read-only). A proxy registers
+  only when its role allows it and `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL` bind
+  the server to the Session, and never reaches an execute script. `steer`
+  (`SteerChild`: only the recorded parent, scouts refused) routes a working
+  child as steer and an idle or released one as follow-up (resuming first)
+  through the same resume plus routeLive path the UI sends use.
+  `check` (`CheckChildren`/`CheckChild`: only the recorded parent, scouts
+  readable) peeks without messaging: one summary line per child, or one child
+  plus its last twenty Events; grouped results still arrive on their own, so
+  check never polls. `cancel` (`CancelChild`: only the recorded parent,
+  scouts stoppable) reuses the interrupt route, and kill ends through the
+  same end DELETE serves. The submit route (`POST /api/sessions/{id}/submit`,
+  kept for Runs and the flag-on gate) records worker results the grouped text
+  prefers when one exists, and reviewer verdicts (`storedReview`: verdict, at
+  tip, findings, report, ran) under the tool verdict rules: a `pass` needs
+  `ran`, a `changes` needs a blocker or major, a `pass` may carry minors
+  without blocking, and a tip behind the branch tip records stale (with the
+  current tip in the answer) and does not count. The legacy `VERDICT:`
+  free-text reply stays only as a fallback for a Backend without the tool.
+  The existing MCP server never calls back; all Group state stays in the Daemon.
 - `runs.go` serves the Runs picker off core spec resolution and ticket
   reading (`GET /api/specs` lists specs with title and ticket count,
   `GET /api/specs/preview` returns number, title, blockers and checkbox
@@ -608,7 +618,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `workerTaskPrompt` and each
   Reviewer's is `reviewerPrompt` (prompts.go: task text only, the system
-  prompt carries the role extra, no `remember` in any of them). A submitted
+  prompt carries the role extra, no `remember` in any of them; the reviewer
+  prompt describes the submit tool, the `VERDICT:` text stays only as a
+  fallback for a Backend without the tool). A submitted
   done (`POST /api/sessions/{id}/submit`) merges by rebase plus
   fast-forward-only through the shared core checks; a non-done submit waits
   for done instead of merging; a dirty worktree or
@@ -621,10 +633,14 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent
   of the Run in the Worker's worktree; later dones re-prompt the same
-  Sessions, so they keep context across Passes. Each prompt queues its tip as
-  owed and each verdict answers the oldest queued tip, so a mid-review Worker
-  commit reads stale, never fresh; a verdict already stale at birth re-prompts
-  its reviewer once at the current tip unless that re-prompt is already out.
+  Sessions, so they keep context across Passes. Reviewer verdicts arrive
+  through the submit tool and record through one shared recorder
+  (`recordReviewerToolVerdictLocked`: the submit route and the fake-seam turn
+  end alike); an invalid tool payload re-prompts once with the tool error,
+  then marks the ticket needs-you. Each prompt queues its tip as owed and
+  each verdict answers the oldest queued tip, so a mid-review Worker commit
+  reads stale, never fresh; a verdict already stale at birth re-prompts its
+  reviewer once at the current tip unless that re-prompt is already out.
   The finish merges only when both types passed at the current tip; a fresh
   refusal lands on the row and reaches the Worker unchanged, retried after the
   next submit, while stale findings stay behind (at only, never the old

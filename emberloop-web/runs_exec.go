@@ -989,6 +989,42 @@ func storeReviewerVerdictLocked(rs *runState, ticketID, reviewerType string, sub
 	return ""
 }
 
+// markReviewSeenLocked marks the turn's last prompt consumed for the
+// Ticket's reviewer type, so the turn never records twice. Callers hold
+// d.mu. A zero lastPrompt (no prompt Event yet) marks nothing.
+func markReviewSeenLocked(rs *runState, ticketID, reviewerType string, lastPrompt int64) {
+	if rs.ReviewSeen == nil {
+		rs.ReviewSeen = map[string]map[string]int64{}
+	}
+	if rs.ReviewSeen[ticketID] == nil {
+		rs.ReviewSeen[ticketID] = map[string]int64{}
+	}
+	if lastPrompt != 0 {
+		rs.ReviewSeen[ticketID][reviewerType] = lastPrompt
+	}
+}
+
+// recordReviewerToolVerdictLocked stores one reviewer submit-tool verdict and
+// marks the turn seen: the Reviews entry via storeReviewerVerdictLocked, the
+// ReviewSeen mark, and the submits bookkeeping (count, verdict, report).
+// Both the fake-seam turn end and the submit route record through it, so the
+// two paths cannot drift: a new submit Event is appended only by the route,
+// whose tool call arrived over HTTP rather than the Event log. Callers hold
+// d.mu. It returns the stale-at-birth retell, "" when fresh.
+func recordReviewerToolVerdictLocked(d *Daemon, rs *runState, id, ticketID, reviewerType string, sub ReviewerSubmit, cur string, now time.Time, lastPrompt int64) string {
+	retell := storeReviewerVerdictLocked(rs, ticketID, reviewerType, sub, cur, now)
+	markReviewSeenLocked(rs, ticketID, reviewerType, lastPrompt)
+	rec := d.submits[id]
+	if rec == nil {
+		rec = &submitRec{}
+		d.submits[id] = rec
+	}
+	rec.Count++
+	rec.Status = strings.ToLower(strings.TrimSpace(sub.Verdict))
+	rec.Report = reviewReport(sub.Findings)
+	return retell
+}
+
 // handleReviewerTurnEnd records one reviewer turn's verdict. The submit tool
 // is primary: a submit Event carrying a ReviewerSubmit payload (the fake
 // Backend's scripted tool call) records at its own tip. The legacy
@@ -1031,23 +1067,47 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 
 	// The submit tool path first: a scripted tool payload in this turn's
 	// submit Events records at its own tip with the tool verdict rules. An
-	// invalid tool payload records nothing and never falls through to the
-	// free-text fallback in the same turn: the turn already submitted.
+	// invalid tool payload never falls through to the free-text fallback in
+	// the same turn (the turn already submitted): the first failure re-prompts
+	// with the tool error, the second marks the ticket needs-you, mirroring
+	// the fallback format path below.
 	if sub, ok := reviewerToolSubmitFromEvents(events); ok {
 		if err := ValidateReviewerSubmit(sub); err != nil {
 			d.mu.Lock()
-			if rs, ok := d.runs[runID]; ok {
-				if rs.ReviewSeen == nil {
-					rs.ReviewSeen = map[string]map[string]int64{}
-				}
-				if rs.ReviewSeen[ticketID] == nil {
-					rs.ReviewSeen[ticketID] = map[string]int64{}
-				}
-				rs.ReviewSeen[ticketID][typ] = lastPrompt
+			rs, ok := d.runs[runID]
+			if !ok {
+				d.mu.Unlock()
+				return
+			}
+			if rs.FormatReprompt == nil {
+				rs.FormatReprompt = map[string]map[string]bool{}
+			}
+			if rs.FormatReprompt[ticketID] == nil {
+				rs.FormatReprompt[ticketID] = map[string]bool{}
+			}
+			if !rs.FormatReprompt[ticketID][typ] {
+				rs.FormatReprompt[ticketID][typ] = true
+				markReviewSeenLocked(rs, ticketID, typ, lastPrompt)
 				d.persistRun(rs)
 				d.broadcastRunLocked(rs)
+				d.mu.Unlock()
+				_ = d.runTellSession(id, "submit refused: "+err.Error()+". Call submit again with verdict pass|changes, tip the full SHA you judged, ran the commands you ran with their exit codes, and findings as file/line/severity/problem objects (a pass needs ran, a changes needs a blocker or major).")
+				return
 			}
+			if rs.NeedsYouReason == nil {
+				rs.NeedsYouReason = map[string]string{}
+			}
+			reason := "reviewer " + typ + " needs you: invalid submit tool payload after a re-prompt (" + err.Error() + "); steer the worker or retry the ticket"
+			rs.NeedsYouReason[ticketID] = reason
+			markReviewSeenLocked(rs, ticketID, typ, lastPrompt)
+			push := d.noteNeedsYouPushLocked(rs, ticketID, reason)
+			num, title := ticketNumTitleLocked(rs, ticketID)
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
 			d.mu.Unlock()
+			if push {
+				d.pushRunNeedsYou(runID, ticketID, num, title, reason)
+			}
 			return
 		}
 		cur, _ := runGit(repo, "rev-parse", branch)
@@ -1058,20 +1118,7 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 			d.mu.Unlock()
 			return
 		}
-		retell := storeReviewerVerdictLocked(rs, ticketID, typ, sub, cur, now)
-		if rs.ReviewSeen == nil {
-			rs.ReviewSeen = map[string]map[string]int64{}
-		}
-		if rs.ReviewSeen[ticketID] == nil {
-			rs.ReviewSeen[ticketID] = map[string]int64{}
-		}
-		rs.ReviewSeen[ticketID][typ] = lastPrompt
-		if rec := d.submits[id]; rec == nil {
-			d.submits[id] = &submitRec{Status: strings.ToLower(strings.TrimSpace(sub.Verdict)), Count: 1}
-		} else {
-			rec.Count++
-			rec.Status = strings.ToLower(strings.TrimSpace(sub.Verdict))
-		}
+		retell := recordReviewerToolVerdictLocked(d, rs, id, ticketID, typ, sub, cur, now, lastPrompt)
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 		d.mu.Unlock()
@@ -2214,7 +2261,7 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	}
 	if _, _, reviewerType := d.findReviewerLocked(id); reviewerType != "" {
 		d.mu.Unlock()
-		d.handleReviewerSubmit(w, r, id, req.Verdict, req.Status, req.Tip, req.Ran, req.Findings)
+		d.handleReviewerSubmit(w, r, id, ReviewerSubmit{Verdict: req.Verdict, Tip: req.Tip, Ran: req.Ran, Findings: req.Findings})
 		return
 	}
 	if req.Status == "" {
@@ -2279,27 +2326,16 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 // ran and findings. The verdict rules are tool errors (400): a `pass` needs
 // `ran`, a `changes` needs a blocker or major, and the verdict must name a
 // tip. A tip behind the branch tip records stale and does not count toward
-// the gate, but still returns 202 with `stale: true`. A `pass` may carry
-// minors without blocking; they ride the refusal text to the worker like any
-// other finding once a later `changes` arrives, and the gate passes on a
-// fresh pass regardless of its minors. Callers hold no lock; r is unused
-// after the JSON decode in handleSessionSubmit.
-func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id, verdict, status, tip string, ran []ReviewRan, findings []ReviewFinding) {
-	_ = r
-	v := strings.TrimSpace(verdict)
-	if v == "" {
-		// Older proxies send the verdict as status; accept it so a Backend
-		// without the typed schema still submits through the tool.
-		if s := strings.ToLower(strings.TrimSpace(status)); s == "pass" || s == "changes" {
-			v = s
-		}
-	}
-	sub := ReviewerSubmit{Verdict: v, Tip: strings.TrimSpace(tip), Ran: ran, Findings: findings}
-	if err := ValidateReviewerSubmit(sub); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
+// the gate, but still returns 202 with `stale: true` and the current tip, so
+// the reviewer can judge it without waiting for the re-prompt. A `pass` may
+// carry minors without blocking; they ride the refusal text to the worker
+// like any other finding once a later `changes` arrives, and the gate passes
+// on a fresh pass regardless of its minors. An unknown Session answers 404
+// even with an invalid payload: the reviewer check runs before validation.
+// Callers hold no lock.
+func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id string, sub ReviewerSubmit) {
 	sub.Verdict = strings.ToLower(strings.TrimSpace(sub.Verdict))
+	sub.Tip = strings.TrimSpace(sub.Tip)
 	for i := range sub.Findings {
 		sub.Findings[i].Severity = strings.ToLower(strings.TrimSpace(sub.Findings[i].Severity))
 	}
@@ -2320,8 +2356,12 @@ func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id
 		}
 	}
 	d.mu.Unlock()
+	if err := ValidateReviewerSubmit(sub); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
 	cur, _ := runGit(repo, "rev-parse", branch)
-	stale := cur != "" && strings.TrimSpace(sub.Tip) != cur
+	stale := cur != "" && sub.Tip != cur
 	now := time.Now().UTC()
 	d.mu.Lock()
 	rs, ok = d.runs[runID]
@@ -2330,25 +2370,8 @@ func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id
 		http.NotFound(w, r)
 		return
 	}
-	retell := storeReviewerVerdictLocked(rs, ticketID, typ, sub, cur, now)
-	if rs.ReviewSeen == nil {
-		rs.ReviewSeen = map[string]map[string]int64{}
-	}
-	if rs.ReviewSeen[ticketID] == nil {
-		rs.ReviewSeen[ticketID] = map[string]int64{}
-	}
-	if lastPrompt != 0 {
-		rs.ReviewSeen[ticketID][typ] = lastPrompt
-	}
-	rec := d.submits[id]
-	if rec == nil {
-		rec = &submitRec{}
-		d.submits[id] = rec
-	}
-	rec.Count++
-	rec.Status = sub.Verdict
-	rec.Report = reviewReport(sub.Findings)
-	count := rec.Count
+	retell := recordReviewerToolVerdictLocked(d, rs, id, ticketID, typ, sub, cur, now, lastPrompt)
+	count := d.submits[id].Count
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -2357,7 +2380,11 @@ func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id
 	if retell != "" {
 		_ = d.runTellSession(id, retell)
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count, "verdict": sub.Verdict, "stale": stale})
+	resp := map[string]any{"submits": count, "verdict": sub.Verdict, "stale": stale}
+	if stale && cur != "" {
+		resp["currentTip"] = cur
+	}
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 // findReviewerLocked names the Run, Ticket and reviewer type of a Reviewer

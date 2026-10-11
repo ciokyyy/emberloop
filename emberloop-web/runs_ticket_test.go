@@ -155,7 +155,7 @@ func submitWorker(t *testing.T, base, id, status string, completed []string, sum
 
 // A reviewer submit without its tip is refused as a tool error: reviewers
 // report through the submit tool with verdict, tip, ran and findings.
-func TestReviewerSubmitRefused409(t *testing.T) {
+func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -170,7 +170,7 @@ func TestReviewerSubmitRefused409(t *testing.T) {
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
-	body, _ := json.Marshal(map[string]any{"status": "pass"})
+	body, _ := json.Marshal(map[string]any{"verdict": "pass"})
 	resp, err := http.Post(srv.URL+"/api/sessions/"+revs["reviewer-spec"]+"/submit", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)

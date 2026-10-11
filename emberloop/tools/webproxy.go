@@ -78,6 +78,15 @@ func WebProxyTool(name string) Tool {
 			"kill": map[string]any{"type": "boolean"},
 		}, "id"), run: webProxyCancel}
 	case "submit":
+		// One tool, two shapes: workers send status/completed/report, reviewers
+		// send verdict/tip/ran/findings. No field is required at the schema
+		// level because neither shape's required fields fit the other; Execute
+		// below and the Daemon route validate each shape instead (a worker
+		// without status gets "status is required", a reviewer payload goes
+		// through the verdict rules). The reviewer properties mirror the pig
+		// reviewer submit ExtraTool schema and ValidateReviewerSubmit in
+		// emberloop-web: the three live in different modules (el core never
+		// imports the web Daemon), so a schema change must be made in each.
 		return webProxy{name: "submit", desc: "Submit your result to the Daemon when the work is complete: a worker reports done with the completed checkbox texts, a reviewer reports verdict pass or changes with tip, ran and findings. Every turn ends with a submit; a turn that ends without one is re-prompted.", schema: webProxySchema(map[string]any{
 			"status":    map[string]any{"type": "string"},
 			"completed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -410,10 +419,11 @@ func webProxySubmit(ctx context.Context, daemonURL, sessionID string, args json.
 		}
 		defer resp.Body.Close()
 		var out struct {
-			Submits int    `json:"submits"`
-			Verdict string `json:"verdict"`
-			Stale   bool   `json:"stale"`
-			Err     string `json:"error"`
+			Submits    int    `json:"submits"`
+			Verdict    string `json:"verdict"`
+			Stale      bool   `json:"stale"`
+			CurrentTip string `json:"currentTip"`
+			Err        string `json:"error"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		if resp.StatusCode != http.StatusAccepted {
@@ -428,7 +438,11 @@ func webProxySubmit(ctx context.Context, daemonURL, sessionID string, args json.
 		}
 		msg := fmt.Sprintf("submitted %s (submit %d)", status, out.Submits)
 		if out.Stale {
-			msg += " stale: tip is behind the branch tip"
+			if out.CurrentTip != "" {
+				msg += fmt.Sprintf(" stale: tip is behind the branch tip (current %s); judge the current tip", out.CurrentTip)
+			} else {
+				msg += " stale: tip is behind the branch tip"
+			}
 		}
 		return msg, nil
 	}

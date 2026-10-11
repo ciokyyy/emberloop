@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -666,6 +667,9 @@ func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
 	if staleOut, _ := out["stale"].(bool); !staleOut {
 		t.Fatalf("stale submit response = %v, want stale true", out)
 	}
+	if cur, _ := out["currentTip"].(string); cur != tip {
+		t.Fatalf("stale submit currentTip = %q, want the branch tip %q", cur, tip)
+	}
 	r = getRun(t, srv.URL, run.ID)
 	got := ticketByID(r, "01-first").Verdicts["reviewer-spec"]
 	if got.Verdict != "pass" || got.At != stale {
@@ -717,5 +721,40 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 	}, "run done after tool passes with minors")
 	if tk := ticketByID(r, "01-first"); tk.State != "merged" {
 		t.Fatalf("ticket state = %q, want merged", tk.State)
+	}
+}
+
+// The submit route checks the Session before validating the payload: an
+// unknown Session answers 404 even with an invalid reviewer payload. Bad
+// JSON and a worker submit without a status keep their own messages.
+func TestSessionSubmitRoutesAndMessages(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	// Unknown session with an invalid reviewer payload still 404s: the
+	// reviewer check runs before validation (which would 400 on the empty tip).
+	if code, _ := submitReview(t, srv.URL, "missing-session", map[string]any{
+		"verdict": "pass", "tip": "", "ran": []any{}, "findings": []any{},
+	}); code != http.StatusNotFound {
+		t.Fatalf("unknown reviewer submit status = %d, want 404", code)
+	}
+
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	post := func(body string) (int, string) {
+		t.Helper()
+		resp, err := http.Post(srv.URL+"/api/sessions/"+id+"/submit", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+	if code, body := post(`{bad`); code != http.StatusBadRequest || !strings.Contains(body, "bad json") {
+		t.Fatalf("bad json submit = %d %q, want 400 with the decode message", code, body)
+	}
+	if code, body := post(`{"report":"x"}`); code != http.StatusBadRequest || !strings.Contains(body, "status is required") {
+		t.Fatalf("worker submit without status = %d %q, want 400 with the status message", code, body)
 	}
 }

@@ -367,9 +367,10 @@ func (t *reviewerSubmitAgentTool) Execute(ctx context.Context, _ string, params 
 	}
 	defer resp.Body.Close()
 	var out struct {
-		Submits int    `json:"submits"`
-		Stale   bool   `json:"stale"`
-		Err     string `json:"error"`
+		Submits    int    `json:"submits"`
+		Stale      bool   `json:"stale"`
+		CurrentTip string `json:"currentTip"`
+		Err        string `json:"error"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode != http.StatusAccepted {
@@ -380,7 +381,11 @@ func (t *reviewerSubmitAgentTool) Execute(ctx context.Context, _ string, params 
 	}
 	msg := fmt.Sprintf("submitted %s (submit %d)", req.Verdict, out.Submits)
 	if out.Stale {
-		msg += " stale: tip is behind the branch tip"
+		if out.CurrentTip != "" {
+			msg += fmt.Sprintf(" stale: tip is behind the branch tip (current %s); judge the current tip", out.CurrentTip)
+		} else {
+			msg += " stale: tip is behind the branch tip"
+		}
 	}
 	return agent.AgentToolResult{
 		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: msg}},

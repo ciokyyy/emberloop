@@ -113,12 +113,22 @@ func (d *fakeDaemon) handler() http.Handler {
 		case sub == "submit" && r.Method == http.MethodPost:
 			var req map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req["status"] == "" {
+			status, _ := req["status"].(string)
+			verdict, _ := req["verdict"].(string)
+			if status == "" && verdict == "" {
 				http.Error(w, "status is required", http.StatusBadRequest)
 				return
 			}
 			d.submits = append(d.submits, req)
-			d.writeJSON(w, http.StatusAccepted, map[string]any{"submits": len(d.submits)})
+			resp := map[string]any{"submits": len(d.submits)}
+			if verdict != "" {
+				resp["verdict"] = verdict
+				if tip, _ := req["tip"].(string); tip == "stale-tip" {
+					resp["stale"] = true
+					resp["currentTip"] = "current-tip"
+				}
+			}
+			d.writeJSON(w, http.StatusAccepted, resp)
 		case sub == "" && r.Method == http.MethodDelete:
 			d.ended = append(d.ended, id)
 			d.writeJSON(w, http.StatusOK, map[string]any{})
@@ -321,6 +331,35 @@ func TestWebProxySubmitPostsOwnResult(t *testing.T) {
 	}
 	if _, err := proxyCall(t, "submit", `{}`); err == nil || !strings.Contains(err.Error(), "status is required") {
 		t.Errorf("submit without status err = %v", err)
+	}
+}
+
+// A reviewer verdict posts through the same submit proxy: the verdict route
+// answers with the verdict and submit count, and a stale tip names the
+// current tip so the reviewer can judge it without waiting for a re-prompt.
+func TestWebProxySubmitPostsReviewerVerdict(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "child")
+
+	out, err := proxyCall(t, "submit", `{"verdict":"pass","tip":"abc","ran":[{"command":"go vet ./...","exitCode":0}],"findings":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "submitted pass (submit 1)" {
+		t.Fatalf("submit verdict = %q", out)
+	}
+	if len(d.submits) != 1 || d.submits[0]["verdict"] != "pass" {
+		t.Fatalf("submits = %v", d.submits)
+	}
+
+	out, err = proxyCall(t, "submit", `{"verdict":"pass","tip":"stale-tip","ran":[{"command":"go vet ./...","exitCode":0}],"findings":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "stale") || !strings.Contains(out, "current-tip") {
+		t.Fatalf("stale submit = %q, want the stale mark and the current tip", out)
 	}
 }
 
