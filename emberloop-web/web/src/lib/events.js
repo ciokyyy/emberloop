@@ -122,6 +122,15 @@ export function stripRunStatus(status = '') {
   return 'running';
 }
 
+// compressBlockReason is the error a compress_blocked Event carries.
+export function compressBlockReason(text) {
+  try {
+    return JSON.parse(text).error || 'compress blocked';
+  } catch {
+    return 'compress blocked';
+  }
+}
+
 export function cardForEvent(e) {
   const text = e.text ?? '';
   switch (e.kind) {
@@ -164,8 +173,15 @@ export function cardForEvent(e) {
       let c = {};
       try { c = JSON.parse(text); } catch { /* keep the divider */ }
       const retries = c.retries === 1 ? '1 retry' : c.retries ? `${c.retries} retries` : '';
-      const bits = [`#${c.number ?? '?'}`, c.tokensBefore ? `${c.tokensBefore} tokens before` : '', c.model !== 'none' ? c.model : '' /* wire sentinel, see AGENTS.md */, c.fallback, retries, c.error ? `error: ${c.error}` : ''].filter(Boolean);
+      const transient = (c.transientRetries ?? 0) + (c.startRetries ?? 0);
+      const transientLabel = transient ? `${transient} transient ${transient === 1 ? 'retry' : 'retries'}` : '';
+      const bits = [`#${c.number ?? '?'}`, c.tokensBefore ? `${c.tokensBefore} tokens before` : '', c.model !== 'none' ? c.model : '' /* wire sentinel, see AGENTS.md */, c.fallback, retries, transientLabel, c.error ? `error: ${c.error}` : ''].filter(Boolean);
       return { card: 'divider', title: 'Context compressed', body: bits.join(' · '), collapsed: false };
+    }
+    case 'compress_blocked': {
+      let c = {};
+      try { c = JSON.parse(text); } catch { /* keep the card */ }
+      return { card: 'compressBlocked', title: 'compress needs pig credits', body: c.error ?? '', collapsed: false };
     }
     case 'sudo_request': {
       const r = parseSudoRequest(text);

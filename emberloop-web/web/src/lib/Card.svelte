@@ -3,10 +3,10 @@
   import Markdown from './Markdown.svelte';
   import GroupCard from './GroupCard.svelte';
   import ToolStrip from './ToolStrip.svelte';
-  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal } from '@lucide/svelte';
+  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
-  import { decideSudo, imageSrc } from './api.js';
+  import { decideSudo, compressSession, imageSrc } from './api.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
   let { block, sessionId = null, sessions = [], onOpenSession = () => {} } = $props();
@@ -24,6 +24,20 @@
       sudoError = e.message;
     } finally {
       sudoBusy = false;
+    }
+  }
+  let compressBusy = $state(false);
+  let compressError = $state('');
+  // Retry reruns the whole compress of this card's Session.
+  async function retryCompress() {
+    compressBusy = true;
+    compressError = '';
+    try {
+      await compressSession(sessionId);
+    } catch (e) {
+      compressError = e.message;
+    } finally {
+      compressBusy = false;
     }
   }
   // One-line hint of what the tool was asked: first line of the input.
@@ -118,6 +132,16 @@
       {#if sudo.output}<pre class="max-h-96 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">{sudo.output}</pre>{/if}
     </div>
   </details>
+{:else if block.card === 'compressBlocked'}
+  <div class="animate-rise overflow-hidden rounded-2xl border border-amber-500/40 bg-card text-card-foreground" data-card="compressBlocked">
+    <div class="flex flex-wrap items-center gap-2.5 px-4 py-2.5 text-sm">
+      <CreditCard class="size-4 shrink-0 text-amber-400" />
+      <span class="font-medium">{block.title}</span>
+      <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={block.body}>{block.body}</span>
+      <Button size="sm" disabled={compressBusy} onclick={retryCompress}>Retry</Button>
+    </div>
+    {#if compressError}<p role="alert" class="px-4 pb-2.5 text-xs text-destructive">{compressError}</p>{/if}
+  </div>
 {:else if block.card === 'compaction'}
   <details class="group animate-rise overflow-hidden rounded-2xl border bg-card/60 text-card-foreground" data-card="compaction" data-state={compaction.state}>
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">

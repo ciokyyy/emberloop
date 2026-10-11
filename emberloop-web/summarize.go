@@ -89,6 +89,10 @@ func pigOneShot(agentDir, model, system, user string, maxTokens int, timeout tim
 		return "", overflowOr(err, window)
 	}
 	msg, err := stream.ResultContext(ctx)
+	if ctx.Err() == context.DeadlineExceeded && (err != nil || msg.StopReason == ai.StopReasonError) {
+		// A deadline is not transient: retrying it would stall the Session for every try.
+		return "", fmt.Errorf("pig one-off stopped at the %s limit", timeout)
+	}
 	if err != nil {
 		return "", overflowOr(err, window)
 	}
@@ -157,12 +161,15 @@ const (
 	stepDeterministic = "deterministic"
 )
 
-// handoffResult is one Handoff text and the step that wrote it.
+// handoffResult is one Handoff text and the step that wrote it. blocked marks
+// a credit or auth failure: there is no text and the compress holds.
 type handoffResult struct {
-	text     string
-	fallback string
-	retries  int
-	err      string
+	text      string
+	fallback  string
+	retries   int
+	transient int
+	err       string
+	blocked   bool
 }
 
 // handoffRepairs is the number of repair retries after the first reply.
@@ -177,7 +184,8 @@ const handoffRefolds = 2
 // format gets up to handoffRepairs repair retries that restate the sections.
 // When no reply passes, the last non-empty reply is wrapped under the
 // sections. With no usable text at all, the deterministic Handoff is used.
-// Each fold and fallback step is reported to note with its reason.
+// A credit or auth failure of any call gives a blocked result. Each fold and
+// fallback step is reported to note with its reason.
 func writeHandoff(sum handoffSummarizer, model, instructions string, events []Event, note func(string)) handoffResult {
 	system := summaryPrompt(instructions)
 	f := folder{sum: sum, model: model, instructions: instructions, note: note}
@@ -190,6 +198,9 @@ func writeHandoff(sum handoffSummarizer, model, instructions string, events []Ev
 			return deterministicResult(events, 0, "")
 		}
 		if err != nil {
+			if classifyCompressError(err) == failBlock {
+				return blockedResult(err)
+			}
 			note("deterministic: summarizer failed: " + err.Error())
 			return deterministicResult(events, 0, err.Error())
 		}
@@ -219,6 +230,9 @@ func handoffChain(sum handoffSummarizer, model, system, text string, events []Ev
 			return handoffResult{}, err
 		}
 		if err != nil {
+			if classifyCompressError(err) == failBlock {
+				return blockedResult(err), nil
+			}
 			note("deterministic: summarizer failed: " + err.Error())
 			return deterministicResult(events, attempt, err.Error()), nil
 		}

@@ -411,11 +411,12 @@ func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
 	}
 }
 
-// A summarizer call that fails ends the chain at the deterministic Handoff
-// with no repair retry. The compressed Event records the error text.
+// A summarizer failure that is neither transient nor a credit or auth failure
+// ends the chain at the deterministic Handoff with no repair retry. The
+// compressed Event records the error text.
 func TestHandoffSummarizerErrorFallsBackAtOnce(t *testing.T) {
 	_, sum, base, id := summaryDaemon(t, goodSummary)
-	sum.err = errString("credit exhausted")
+	sum.err = errString("bad request: malformed input")
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
@@ -428,7 +429,7 @@ func TestHandoffSummarizerErrorFallsBackAtOnce(t *testing.T) {
 		t.Fatalf("handoff prompt = %q, want the deterministic Handoff", text)
 	}
 	c := eventsOfKind(evs, "compressed")[0].Text
-	if !strings.Contains(c, `"fallback":"deterministic"`) || !strings.Contains(c, `"retries":0`) || !strings.Contains(c, `"error":"credit exhausted"`) {
+	if !strings.Contains(c, `"fallback":"deterministic"`) || !strings.Contains(c, `"retries":0`) || !strings.Contains(c, `"error":"bad request: malformed input"`) {
 		t.Fatalf("compressed = %s", c)
 	}
 }

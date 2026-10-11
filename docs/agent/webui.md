@@ -99,6 +99,9 @@ Compress makes a Session's context smaller. The SDK pig Backend compacts in plac
 - Auto: after a turn, when context is at or above `compress_threshold_percent` (default 80) and at least `compress_cooldown` turns (default 5) passed since the last compression. `auto_compress` (default true) turns it off. In-place Backends only.
 - Settings page section "Context compression" writes `compress_model`, `auto_compress`, `compress_threshold_percent`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
 - The transcript shows a "Context compressed" card with token counts and the summary for in-place compression, or a divider with the Handoff number, model, fallback step and retries. Oversize input adds one step Event per fold or fallback, with its reason, before the divider. The meter under the chat refreshes.
+- Retries: a summarizer call or a new-handle start that fails with a network, 5xx or rate-limit error retries after 2s, 8s and 30s. A summarizer failure that outlasts them falls back to the deterministic Handoff; a start failure that outlasts them ends the compress with an error. The divider shows the retry counts.
+- Blocked: a credit or auth failure (402, 401, quota) does not retry. The Session blocks: the banner "compress needs pig credits" offers Retry (runs the whole compress again), Change compress model (opens Settings) and Dismiss. The transcript keeps a `compress_blocked` card with the same Retry button. The old handle stays. New messages queue and wait until Retry succeeds or the banner is dismissed.
+- Dismiss: `POST /api/sessions/<id>/compress/dismiss` clears the block without a compress; the held messages then run on the old handle. It answers 409 while the Session works or no block is set.
 
 ## Push notifications
 

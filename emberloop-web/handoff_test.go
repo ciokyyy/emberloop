@@ -215,7 +215,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	sum := &scriptedSummarizer{err: errString("credit exhausted")}
+	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -248,7 +248,7 @@ func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
 	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	sum := &scriptedSummarizer{err: errString("credit exhausted")}
+	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")

@@ -100,6 +100,10 @@ _Avoid_: Summary, checkpoint
 Part of a Compress for input over the summarizer window: the Event log is summarized in parts, the part summaries are summarized again, and the Handoff call reads what fits. Oversize tool results are cut first.
 _Avoid_: Truncate, trim
 
+**Blocked**:
+A Session whose Compress stopped on a credit or auth failure. Its new messages queue and do not run until a Retry succeeds or the block is dismissed.
+_Avoid_: Stuck, paused, frozen
+
 **Idle**:
 A Session is idle when no turn runs or starts, no input is queued, no Group it leads is outstanding (a member is working, or a fresh Group's results are unsent), and its last Event is older than the quiet time. The Daemon is idle when every Session is idle, none is starting and no Run runs.
 _Avoid_: Ready, free

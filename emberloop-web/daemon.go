@@ -65,6 +65,9 @@ type Daemon struct {
 	machineToken string
 	// summarizer writes Handoffs for Compress (summarize.go); tests replace it.
 	summarizer handoffSummarizer
+	// compressSleep waits between compress retries (compress_retry.go). Nil
+	// sleeps for real; tests replace it.
+	compressSleep func(time.Duration)
 	// projects are the recorded working directories; projMu guards them.
 	projMu   sync.Mutex
 	projects []Project
@@ -504,6 +507,13 @@ func (d *Daemon) finishTurn(id string) {
 		s.swapping = false
 		if s.meta.Status == "ended" {
 			s.pending = nil
+			s.busy = false
+			d.mu.Unlock()
+			return
+		}
+		// A blocked Session holds its queue and its live handle until Retry or
+		// Dismiss: nothing drains and nothing releases.
+		if s.meta.CompressBlock != "" {
 			s.busy = false
 			d.mu.Unlock()
 			return
@@ -959,7 +969,8 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 			return sendResult{seq: e.Seq, queued: true}, http.StatusAccepted
 		}
 	}
-	if s.busy {
+	// A blocked Session queues every message until Retry or Dismiss.
+	if s.busy || s.meta.CompressBlock != "" {
 		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded, from: from})
 		pos := len(s.pending)
 		d.mu.Unlock()
@@ -1369,6 +1380,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"interrupted": stopped})
 	case sub == "compress" && r.Method == "POST":
 		d.handleCompress(w, r, id)
+	case sub == "compress/dismiss" && r.Method == "POST":
+		d.handleCompressDismiss(w, r, id)
 	case sub == "queue" && r.Method == "GET":
 		q, code := d.listQueue(id)
 		if code != http.StatusOK {

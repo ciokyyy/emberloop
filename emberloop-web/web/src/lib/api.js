@@ -274,6 +274,9 @@ export const compressSession = (id, instructions = '') =>
     return body;
   });
 
+// Clear a compress block without a compress. The messages it held go on.
+export const dismissCompress = (id) => fetch(url(`/api/sessions/${id}/compress/dismiss`), { method: 'POST' }).then(json);
+
 // Approve or deny a sudo request. The password is optional and travels once;
 // the Daemon keeps it in memory for the run only.
 export const decideSudo = (sessionId, requestId, action, password = '') =>

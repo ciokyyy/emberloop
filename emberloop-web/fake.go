@@ -31,6 +31,8 @@ type FakeBackend struct {
 	UsageSize int
 	// StartErr, when set, makes StartHandle fail.
 	StartErr error
+	// StartErrs, when set, fail the next StartHandle calls in order.
+	StartErrs []error
 	// HandoffTurnErr, when set, makes a Handoff prompt report an error
 	// Event before it ever works.
 	HandoffTurnErr string
@@ -153,6 +155,14 @@ func (f *FakeBackend) ResumeToken(sessionID string) string {
 // resume token and clears the context the handle has seen. The returned
 // release drops the old handle and counts it.
 func (f *FakeBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
+	f.mu.Lock()
+	if len(f.StartErrs) > 0 {
+		err := f.StartErrs[0]
+		f.StartErrs = f.StartErrs[1:]
+		f.mu.Unlock()
+		return "", nil, err
+	}
+	f.mu.Unlock()
 	if f.StartErr != nil {
 		return "", nil, f.StartErr
 	}

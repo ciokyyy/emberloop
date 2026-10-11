@@ -23,18 +23,39 @@ type handoffBackend interface {
 	StartHandle(meta SessionMeta, emit func(kind, text, status string)) (token string, release func(), err error)
 }
 
-// HandoffEvent is the JSON Text of a "compressed" Event.
+// HandoffEvent is the JSON Text of a "compressed" Event. Retries counts the
+// summarizer repair retries. TransientRetries and StartRetries count retries
+// of network, 5xx and rate-limit failures (compress_retry.go).
 type HandoffEvent struct {
-	Number       int    `json:"number"`
-	TokensBefore int    `json:"tokensBefore"`
-	Model        string `json:"model"` // compress model that wrote the Handoff
-	Fallback     string `json:"fallback"`
-	Retries      int    `json:"retries"`
-	Error        string `json:"error,omitempty"`
+	Number           int    `json:"number"`
+	TokensBefore     int    `json:"tokensBefore"`
+	Model            string `json:"model"` // compress model that wrote the Handoff
+	Fallback         string `json:"fallback"`
+	Retries          int    `json:"retries"`
+	TransientRetries int    `json:"transientRetries"`
+	StartRetries     int    `json:"startRetries"`
+	Error            string `json:"error,omitempty"`
 }
 
 func (h HandoffEvent) text() string {
 	b, _ := json.Marshal(h)
+	return string(b)
+}
+
+// CompressBlockedEvent is the JSON Text of a "compress_blocked" Event: a compress
+// stopped on a credit or auth failure. Action names the Retry action that the
+// Event and the banner both offer.
+type CompressBlockedEvent struct {
+	Number           int    `json:"number"`
+	Model            string `json:"model"`
+	TransientRetries int    `json:"transientRetries"`
+	StartRetries     int    `json:"startRetries"`
+	Error            string `json:"error"`
+	Action           string `json:"action"`
+}
+
+func (c CompressBlockedEvent) text() string {
+	b, _ := json.Marshal(c)
 	return string(b)
 }
 
@@ -230,12 +251,28 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	before := lastUsedTokens(events)
 	d.appendEvent(id, "status", "", "working")
 	note := func(reason string) { d.appendEvent(id, "compress_step", reason, "") }
-	res := writeHandoff(d.summarizer, model, instructions, events, note)
+	rs := &retryingSummarizer{next: d.summarizer, wait: d.backoffWait()}
+	res := writeHandoff(rs, model, instructions, events, note)
+	res.transient = rs.retries
+	if res.blocked {
+		d.blockCompress(id, CompressBlockedEvent{Number: number, Model: model, TransientRetries: res.transient, Error: res.err})
+		return
+	}
 	text := res.text
 
 	emit := func(kind, text, status string) { d.appendEvent(id, kind, text, status) }
-	token, release, err := hb.StartHandle(meta, emit)
+	var token string
+	var release func()
+	startRetries, err := retryTransient(func() error {
+		var e error
+		token, release, e = hb.StartHandle(meta, emit)
+		return e
+	}, d.backoffWait())
 	if err != nil {
+		if classifyCompressError(err) == failBlock {
+			d.blockCompress(id, CompressBlockedEvent{Number: number, Model: model, TransientRetries: res.transient, StartRetries: startRetries, Error: err.Error()})
+			return
+		}
 		d.appendEvent(id, "error", "compress failed: "+err.Error(), "")
 		return
 	}
@@ -245,11 +282,13 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	d.mu.Lock()
 	if cur, ok := d.sessions[id]; ok {
 		cur.meta.ResumeToken = token
+		// A successful swap clears a block: held messages go on after the Handoff.
+		cur.meta.CompressBlock = ""
 		d.persistMeta(cur.meta)
 		cur.turnsSinceCompress = 0
 	}
 	d.mu.Unlock()
-	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: model, Fallback: res.fallback, Retries: res.retries, Error: res.err}.text(), "")
+	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: model, Fallback: res.fallback, Retries: res.retries, TransientRetries: res.transient, StartRetries: startRetries, Error: res.err}.text(), "")
 
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {

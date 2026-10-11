@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, within } from '@testing-library/svelte';
 import Card from './Card.svelte';
+import { compressSession } from './api.js';
 
 vi.mock('./api.js', async (orig) => ({
   ...(await orig()),
   listImages: vi.fn(async () => ({ images: [{ id: 'aud_1', mediaType: 'audio/webm', peaks: [20, 80], durationMs: 5000 }] })),
+  compressSession: vi.fn(async () => ({ ok: true })),
 }));
 
 const block = (card, title = 'T', body = 'body text') => ({ key: 1, card, title, body, collapsed: card === 'tool', events: [] });
@@ -124,5 +126,19 @@ describe('Card subagent and image branches', () => {
     const card = container.querySelector('[data-card="subagent"]');
     expect(card.textContent).toContain('Alpha');
     expect(card.getAttribute('title')).toBe('child-abcdef');
+  });
+});
+
+describe('Card compress blocked', () => {
+  it('shows the banner title and the error, and Retry reruns the compress', async () => {
+    const { fireEvent } = await import('@testing-library/svelte');
+    const { container } = render(Card, {
+      props: { block: { key: 3, card: 'compressBlocked', title: 'compress needs pig credits', body: '402 Payment Required', collapsed: false, events: [] }, sessionId: 's1' },
+    });
+    const card = container.querySelector('[data-card="compressBlocked"]');
+    expect(card.textContent).toContain('compress needs pig credits');
+    expect(card.textContent).toContain('402 Payment Required');
+    await fireEvent.click(within(container).getByRole('button', { name: 'Retry' }));
+    expect(compressSession).toHaveBeenCalledWith('s1');
   });
 });

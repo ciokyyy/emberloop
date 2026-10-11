@@ -120,15 +120,42 @@ the driver ticks boxes and marks done, nothing else writes them.
 - `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
   compress model is unset or unauthed. Else `runHandoff` writes the body
-  (`writeHandoff`, `summarize.go`), starts a fresh handle (`StartHandle`),
-  rotates the resume token, stores `handoff-N.md` in the Session directory,
+  (`writeHandoff`, `summarize.go`) through a `retryingSummarizer`
+  (`compress_retry.go`), starts a fresh handle (`StartHandle`, retried the same
+  way), rotates the resume token, stores `handoff-N.md` in the Session directory,
   appends a `compressed` Event (number, tokens before, model, fallback step,
-  retries, error when the summarizer call failed) and the Handoff prompt Event
-  (`handoff:true`, `sender:"system"`). It runs the Handoff as the first turn
-  through `runTurn` and releases the old handle once that turn works (or ends).
-  Each fold and fallback step of `writeHandoff` appends a `compress_step` Event
-  (text: the reason) before the `compressed` Event.
-  Session ID, Event log and metadata stay. A compress waits while a Group of the Session is outstanding (`groupOutstandingLocked`: a Group spawned in this process with results not all sent, or a member with a turn running or queued): it answers 202 `{"waiting":"group"}` and `runDeferredCompress` runs it at the next turn end or Group delivery. A claude Steer that arrives while a Handoff swap runs (`swapping`) degrades to a Follow-up, so the Handoff leads. Tests: `handoff_test.go`, `handoff_queue_test.go`.
+  repair `retries`, `transientRetries`, `startRetries`, error when the summarizer
+  call failed) and the Handoff prompt Event (`handoff:true`,
+  `sender:"system"`). It runs the Handoff as the first turn through `runTurn` and
+  releases the old handle once that turn works (or ends). Each fold and fallback
+  step of `writeHandoff` appends a `compress_step` Event (text: the reason) before
+  the `compressed` Event. Session ID, Event log and metadata stay. A compress
+  waits while a Group of the Session is outstanding (`groupOutstandingLocked`: a
+  Group spawned in this process with results not all sent, or a member with a
+  turn running or queued): it answers 202 `{"waiting":"group"}` and
+  `runDeferredCompress` runs it at the next turn end or Group delivery. A claude
+  Steer that arrives while a Handoff swap runs (`swapping`) degrades to a
+  Follow-up, so the Handoff leads. Tests: `handoff_test.go`,
+  `handoff_queue_test.go`.
+- `compress_retry.go` sorts a compress failure by its text
+  (`classifyCompressError`): block (`402`, `401`, quota, credit, insufficient,
+  billing, auth, API key), transient (`429`, `5xx`, rate limit, overloaded, timed
+  out, connection, fetch failed, EOF, unavailable) or other. The pig SDK puts the
+  status or the error type in provider text and names network failures with
+  fixed phrases. `retryTransient` retries a transient failure after 2s, 8s and
+  30s (`compressBackoff`; the sleep seam is `Daemon.compressSleep`).
+  `retryingSummarizer` runs every summarizer call under that policy and counts
+  the retries. A one-off that hits its deadline (`pigOneShot`) is other: a
+  deadline never retries. A block sets `SessionMeta.CompressBlock` (persisted),
+  appends a `compress_blocked` Event (number, model, retry counts, error,
+  `action:"retry"`) and leaves the old handle and resume token alone. While the
+  block stands, `routeLiveOpt` queues every message in the Daemon pending list
+  and `finishTurn` neither drains nor releases. A Retry (`POST .../compress`)
+  that succeeds clears the block before the Handoff turn, so the held messages
+  follow the Handoff. `POST /api/sessions/{id}/compress/dismiss`
+  (`dismissCompress`) clears the block, claims the Session and drains the held
+  messages on the old handle; it answers 409 while the Session works or no block
+  is set. Tests: `compress_retry_test.go`.
 - `summarize.go` is the Handoff summarizer: a one-off pig completion
   (`pigOneShot`) behind the `handoffSummarizer` seam (`pigSummarizer` in
   production, a scripted fake in tests). No tools, no Session. The system prompt
@@ -142,9 +169,11 @@ the driver ticks boxes and marks done, nothing else writes them.
   (`summarize_fold.go`). A reply passing `el.CheckHandoff` is used (`summary`);
   empty or wrong-format replies get up to 2 repair retries that restate
   `el.HandoffSections()` (`repair`); then the last non-empty reply is wrapped
-  under the headings (`lenient`); no text, or a call error, gives the
-  deterministic Handoff (`deterministic`). A Handoff call the window refuses
-  folds the input again at half its size, up to 2 times. `assembleHandoff`
+  under the headings (`lenient`); no text, or an other call error, gives the
+  deterministic Handoff (`deterministic`); a transient call error retries first,
+  and a credit or auth error blocks (`compress_retry.go`). A Handoff call the
+  window refuses folds the input again at half its size, up to 2 times.
+  `assembleHandoff`
   appends the last prompt the Handoff carries, verbatim, and `el.ContinueLine`
   when a tool call never finished (`openTask`). The prompt set is `handoffPrompt`,
   shared by the summary tail and the deterministic Handoff (`buildHandoff`): every
@@ -264,7 +293,8 @@ the driver ticks boxes and marks done, nothing else writes them.
 - `read` returns images: `pigtools.go` turns the shared tool's images into `ai.ImageContent` (a model without image input gets pig's placeholder); claude gets MCP image blocks from el-mcp.
 - `push.go` is Web Push (stdlib, RFC 8291 + VAPID): `GET /api/push/key`, `POST|DELETE /api/push/subscribe`; the VAPID key and subscriptions persist in `enderbloom/push/`. A root chat turn going working to idle or failed notifies every subscription; gone ones (404, 410) drop. Browsers allow push only in a secure context, so a plain http tailnet IP cannot subscribe: use `tailscale serve` (https) with `-allow-host`. `web/public/sw.js` shows the notification.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
-  `meta.json` (now carrying `owner`, the resume token plus `parentId`, `groupId`,
+  `meta.json` (now carrying `owner`, the resume token, `compressBlock`, `parentId`,
+  `groupId`,
   `scout`) plus append-only `events.jsonl`; Groups persist as
   `enderbloom/groups/{id}.json`; the Daemon reloads all three on start.
 - Subagents are `POST /api/sessions/{id}/spawn` with

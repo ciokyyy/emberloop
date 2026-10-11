@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cardForEvent, groupTranscript } from './events.js';
+import { cardForEvent, groupTranscript, compressBlockReason } from './events.js';
 const ev = (seq, kind, text = '', status = '', mode = '') => ({ seq, kind, text, status, mode });
 
 describe('cardForEvent maps every Event kind to a card', () => {
@@ -227,5 +227,22 @@ describe('thinking inside a tool burst', () => {
     expect(strips).toHaveLength(1);
     expect(strips[0].runs.map((r) => r.name)).toEqual(['bash', 'thinking', 'read']);
     expect(strips[0].runs[1].thinking).toBe(true);
+  });
+});
+
+describe('compress blocked and compressed Events', () => {
+  it('a blocked compress renders the banner card with its error', () => {
+    const card = cardForEvent(ev(1, 'compress_blocked', JSON.stringify({ number: 2, error: '402 Payment Required', action: 'retry' })));
+    expect(card.card).toBe('compressBlocked');
+    expect(card.title).toBe('compress needs pig credits');
+    expect(card.body).toBe('402 Payment Required');
+  });
+  it('the compressed divider names the transient retries', () => {
+    const card = cardForEvent(ev(1, 'compressed', JSON.stringify({ number: 3, model: 'test-faux/faux-1', fallback: 'summary', retries: 0, transientRetries: 2, startRetries: 1 })));
+    expect(card.body).toContain('3 transient retries');
+  });
+  it('compressBlockReason reads the error and falls back on bad JSON', () => {
+    expect(compressBlockReason(JSON.stringify({ error: 'boom' }))).toBe('boom');
+    expect(compressBlockReason('not json')).toBe('compress blocked');
   });
 });

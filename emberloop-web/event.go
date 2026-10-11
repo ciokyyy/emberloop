@@ -114,6 +114,10 @@ type SessionMeta struct {
 	// Owner is the ID of the User who created the Session. Subagents, Workers
 	// and Reviewers inherit it. A Session with no Owner is hidden everywhere.
 	Owner string `json:"owner,omitempty"`
+	// CompressBlock is the error of a compress that stopped on a credit or auth
+	// failure. Non-empty means the Session is blocked: its messages queue until
+	// Retry succeeds or the block is dismissed.
+	CompressBlock string `json:"compressBlock,omitempty"`
 }
 
 // ToolCall is the one tool-call shape every Backend normalizes to. It rides
