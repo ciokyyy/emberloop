@@ -164,10 +164,12 @@ func (d *Daemon) deciderLLMCall(_ context.Context, model, system, user string) (
 
 // decideMine judges one heuristic hit. The heuristic pass always proposes
 // and always offers kind and scope; the confirming Decider (llm, ensemble's
-// second, or the test seam) judges durable, and an unavailable confirmer
-// leaves the heuristic verdict standing. A confirm keeps at confirmLow and
-// is queue-eligible at confirmHigh, in every mode. It never errors: callers
-// store or drop on the verdict.
+// second, or the test seam) judges durable. A confirm keeps at confirmLow and
+// is queue-eligible at confirmHigh, in every mode. No confirmer answering
+// means no eligibility: an error or a missing answer leaves the heuristic
+// keep standing, but the candidate is never queue-eligible on it. Only the
+// heuristic mode offers eligibility from the heuristic score. It never
+// errors: callers store or drop on the verdict.
 func (d *Daemon) decideMine(text, contextText string, hit memory.HeuristicResult) mineDecision {
 	set := readDeciderSettings()
 	ctx := context.Background()
@@ -209,7 +211,7 @@ func (d *Daemon) decideMine(text, contextText string, hit memory.HeuristicResult
 			return out
 		}
 	}
-	out.eligible = out.durable >= set.High
+	out.eligible = false
 	return out
 }
 
@@ -249,7 +251,9 @@ func (out *mineDecision) judgeEnsemble(ctx context.Context, state memory.Decider
 	}
 	v, err := e.Judge(ctx, state)
 	if err != nil {
-		out.eligible = out.durable >= set.High
+		// An unconfirmed ensemble candidate is never queue-eligible: the
+		// second Decider must confirm each one.
+		out.eligible = false
 		return *out
 	}
 	out.durable, out.eligible = v.Durable, v.QueueEligible

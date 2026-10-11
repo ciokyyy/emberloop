@@ -416,3 +416,36 @@ func TestMineSessionLLMRedactsBeforeCall(t *testing.T) {
 		t.Fatalf("observations = %+v, want one redacted quote", obs)
 	}
 }
+
+// A failed llm confirm stores the heuristic hit but never marks it eligible:
+// no confirmer answering means no eligibility, even when the heuristic score
+// clears the high threshold.
+func TestMineSessionLLMErrorNeverEligible(t *testing.T) {
+	useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.deciderOneShot = func(model, system, user string) (string, error) {
+		return "", errFakeDecider
+	}
+	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
+	res, err := d.MineSession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stored != 1 {
+		t.Fatalf("result = %+v, want the heuristic hit stored", res)
+	}
+	var doc struct {
+		Eligible  bool `json:"queue_eligible"`
+		Confirmed bool `json:"confirmed"`
+	}
+	obs := bankQuotes(t, d, "alice", "tabs")
+	if len(obs) != 1 {
+		t.Fatalf("observations = %+v, want 1", obs)
+	}
+	if err := json.Unmarshal([]byte(obs[0].DeciderJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Eligible || doc.Confirmed {
+		t.Fatalf("decider doc = %+v, want stored unconfirmed and never eligible", doc)
+	}
+}
