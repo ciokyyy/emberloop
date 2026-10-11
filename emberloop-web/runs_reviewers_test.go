@@ -260,7 +260,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	d.mu.Lock()
 	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
