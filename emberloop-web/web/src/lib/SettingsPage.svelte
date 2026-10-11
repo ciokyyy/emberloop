@@ -46,6 +46,8 @@
   let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '', model: 'none' });
   let compressNote = $state('');
   let decider = $state({ mode: 'heuristic', model: 'none', low: '0.35', high: '0.7' });
+  let jev = $state({ baseURL: '', apiKey: '', model: 'jev-latest' });
+  let jevKeySet = $state(false);
   let deciderNote = $state('');
   let signupOpen = $state('on');
   let titlesLocked = $state(false);
@@ -57,7 +59,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress, decider, signupOpen });
+  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -104,6 +106,9 @@
         high: String(md.decider_confirm_high ?? 0.7),
       };
       deciderNote = body.decider_note ?? '';
+      const j = body.jev ?? {};
+      jev = { baseURL: j.base_url ?? '', apiKey: '', model: j.model || 'jev-latest' };
+      jevKeySet = !!j.api_key_set;
       saved = snapshot();
     } catch (e) {
       error = e.message;
@@ -126,6 +131,7 @@
   const deciderModeItems = [
     { value: 'heuristic', label: 'Heuristic' },
     { value: 'llm', label: 'LLM' },
+    { value: 'jev', label: 'Jev' },
     { value: 'ensemble', label: 'Ensemble' },
   ];
 
@@ -158,11 +164,17 @@
           decider_confirm_low: Number(decider.low),
           decider_confirm_high: Number(decider.high),
         };
+      if (admin) {
+        payload.jev = { base_url: jev.baseURL.trim(), model: jev.model.trim() };
+        if (jev.apiKey) payload.jev.api_key = jev.apiKey;
+      }
       const savedBody = await putSettings(payload);
       maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
       locked = !!savedBody.max_workers_from_env;
       compressNote = savedBody.compress_note ?? '';
       deciderNote = savedBody.decider_note ?? '';
+      jev = { baseURL: savedBody.jev?.base_url ?? jev.baseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
+      jevKeySet = !!savedBody.jev?.api_key_set;
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -181,6 +193,7 @@
     sessionTitles = prev.sessionTitles;
     compress = prev.compress;
     decider = prev.decider;
+    jev = prev.jev;
     signupOpen = prev.signupOpen;
   }
 </script>
@@ -285,13 +298,13 @@
         <section class="animate-rise flex flex-col gap-2" data-testid="decider-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Memory deciders</h2>
-            <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model against the thresholds.</p>
+            <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model, or with Jev when its endpoint is on, against the thresholds.</p>
           </div>
           <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
                 <div class="text-sm font-medium">Decider mode</div>
-                <div class="text-xs text-muted-foreground">Heuristic is local. LLM and ensemble ask the memory model.</div>
+                <div class="text-xs text-muted-foreground">Heuristic is local. LLM and ensemble ask the memory model. Jev asks the decision endpoint.</div>
               </div>
               <Combobox class="h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
             </div>
@@ -302,6 +315,31 @@
                 {#if deciderNote}<div class="text-xs text-amber-300">{deciderNote}</div>{/if}
               </div>
               <Combobox class="h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Jev endpoint</div>
+                <div class="text-xs text-muted-foreground">Decision endpoint URL, empty when off. A local Laya server plugs in by URL.</div>
+              </div>
+              <FloatingInput id="jev-endpoint" label="Endpoint URL" bind:value={jev.baseURL} placeholder="https://jev-api.org/api/v1/decisions" />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Jev API key</div>
+                {#if jevKeySet}
+                  <div class="text-xs text-muted-foreground">Key set. Type a new one to replace it; empty keeps it.</div>
+                {:else}
+                  <div class="text-xs text-muted-foreground">Empty for a local server without one.</div>
+                {/if}
+              </div>
+              <FloatingInput id="jev-key" label="API key" type="password" bind:value={jev.apiKey} placeholder={jevKeySet ? '••••••' : 'Key'} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Jev model</div>
+                <div class="text-xs text-muted-foreground">Sent with every call. When on, redacted user turns leave this host for the endpoint.</div>
+              </div>
+              <FloatingInput id="jev-model" label="Model" bind:value={jev.model} placeholder="jev-latest" />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">

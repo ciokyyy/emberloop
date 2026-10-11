@@ -309,3 +309,56 @@ describe('SettingsPage memory deciders', () => {
     expect('decider' in seen.body).toBe(false);
   });
 });
+
+describe('SettingsPage jev decider', () => {
+  it('shows saved values and sends the edited ones without the key', async () => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        decider: { decider_mode: 'jev', memory_model: 'none', decider_confirm_low: 0.35, decider_confirm_high: 0.7 },
+        jev: { base_url: 'http://localhost:8000/v1/systemone', model: 'jev-latest', api_key_set: true },
+      },
+      seen,
+    });
+    const { container } = render(SettingsPage, { props: { admin: true } });
+    expect((await within(container).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
+    expect(within(container).getByLabelText('Model').value).toBe('jev-latest');
+    expect(await within(container).findByText(/leave this host/)).toBeTruthy();
+
+    await fireEvent.input(within(container).getByLabelText('Endpoint URL'), {
+      target: { value: 'https://jev-api.org/api/v1/decisions' },
+    });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.jev).toEqual({
+      base_url: 'https://jev-api.org/api/v1/decisions',
+      model: 'jev-latest',
+    });
+  });
+
+  it('sends a typed key and keeps it out of later saves', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest', api_key_set: false } }, seen });
+    const { container } = render(SettingsPage, { props: { admin: true } });
+    await fireEvent.input(await within(container).findByLabelText('API key'), { target: { value: 'k' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.jev.api_key).toBe('k');
+  });
+
+  it('hides the jev fields from other Users and never sends them', async () => {
+    const seen = {};
+    stubSettings({ settings: base, seen });
+    const { container } = render(SettingsPage);
+    expect(within(container).queryByLabelText('Endpoint URL')).toBeNull();
+    const workers = await within(container).findByLabelText('Maximum workers');
+    await fireEvent.input(workers, { target: { value: '4' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect('jev' in seen.body).toBe(false);
+  });
+});

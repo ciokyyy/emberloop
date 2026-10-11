@@ -100,6 +100,7 @@ func settingsView() map[string]any {
 		"compress_note":           compressNote(readCompressSettings().Model),
 		"decider":                 decider,
 		"decider_note":            deciderNote(decider),
+		"jev":                     readJevSettings(),
 	}
 }
 
@@ -116,14 +117,15 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			SignupEnabled *bool                  `json:"signup_enabled"`
 			Compress      *compressPatch         `json:"compress"`
 			Decider       *deciderPatch          `json:"decider"`
+			Jev           *jevPatch              `json:"jev"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		if body.SignupEnabled != nil || body.Decider != nil {
+		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
-				http.Error(w, "only the admin can change signup and decider settings", http.StatusForbidden)
+				http.Error(w, "only the admin can change signup, decider and jev settings", http.StatusForbidden)
 				return
 			}
 		}
@@ -132,6 +134,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if msg := body.Decider.validate(); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+		if msg := body.Jev.validate(); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
@@ -192,6 +198,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		body.Compress.apply(all)
 		body.Decider.apply(all)
+		body.Jev.apply(all)
 		out, _ := json.MarshalIndent(all, "", "  ")
 		p := settingsFile()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
