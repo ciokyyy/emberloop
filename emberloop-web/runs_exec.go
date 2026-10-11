@@ -244,6 +244,21 @@ func gitRoot(path string) string {
 // runGit runs git in dir and returns trimmed stdout, failing on git errors
 // and nonzero exits.
 func runGit(dir string, args ...string) (string, error) {
+	var out string
+	var err error
+	// Another git process (a parallel Worker finish, the user) can hold
+	// index.lock for a moment; retry that failure instead of failing the Run.
+	for attempt := 0; attempt < 8; attempt++ {
+		out, err = runGitOnce(dir, args...)
+		if err == nil || !strings.Contains(err.Error(), "index.lock") {
+			return out, err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return out, err
+}
+
+func runGitOnce(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	var stdout, stderr strings.Builder
@@ -265,8 +280,11 @@ func runStagedDiff(dir, rel string) (bool, error) {
 	cmd.Dir = dir
 	if err := cmd.Run(); err == nil {
 		return false, nil
-	} else if _, ok := err.(*exec.ExitError); ok {
+	} else if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
 		return true, nil
+	} else if ok {
+		// Exit 128 and the like are git failures, not "has changes".
+		return false, fmt.Errorf("git diff --cached %s failed: %w", rel, err)
 	} else {
 		return false, err
 	}
@@ -276,13 +294,26 @@ func runStagedDiff(dir, rel string) (bool, error) {
 // with the error: git prints "nothing to commit" on stdout, which runGit
 // drops, so the caller checks both.
 func runGitCommitDone(dir, rel, workerID string) (string, error) {
-	cmd := exec.Command("git", "commit", "-m", "mark "+workerID+" done", "--", rel)
-	cmd.Dir = dir
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stdout.String() + stderr.String(), err
+	var out string
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		cmd := exec.Command("git", "commit", "-m", "mark "+workerID+" done", "--", rel)
+		cmd.Dir = dir
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		out = stdout.String() + stderr.String()
+		if err == nil || !strings.Contains(out, "index.lock") {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err != nil {
+		// Keep git's own words: a bare "exit status 128" hides the cause.
+		err = fmt.Errorf("git commit %s failed: %w: %s", rel, err, strings.TrimSpace(out))
+	}
+	return out, err
 }
 
 // handleRuns serves the Run collection: list Runs, or start one.
