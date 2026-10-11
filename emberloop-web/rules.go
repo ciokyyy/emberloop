@@ -148,8 +148,10 @@ func (d *Daemon) approveRuleQueueItem(ctx context.Context, owner, decidedBy stri
 		})
 		for _, old := range same {
 			// Newer observation wins: only a candidate at least as new as
-			// the stored Rule supersedes it. An older candidate still gets
-			// its Rule, but stillborn superseded, so the newer text stays.
+			// the stored Rule supersedes it. When any same-observer Rule is
+			// newer than the candidate, the new Rule lands stillborn
+			// superseded while the older ones still fall, so exactly the
+			// newest text stays live.
 			if !candidateTime.Before(d.ruleObservedTime(ctx, bank, old)) {
 				supersede = append(supersede, old.RuleID)
 			} else {
@@ -158,7 +160,7 @@ func (d *Daemon) approveRuleQueueItem(ctx context.Context, owner, decidedBy stri
 		}
 	}
 	status := memory.StatusActive
-	if stillborn && len(supersede) == 0 {
+	if stillborn {
 		status = memory.StatusSuperseded
 	}
 	// Provenance: the source observations stay on the Rule, the quotes stay
@@ -182,22 +184,9 @@ func (d *Daemon) approveRuleQueueItem(ctx context.Context, owner, decidedBy stri
 // the decider. Mixed or unknown authors resolve to "": nothing supersedes
 // without one known author.
 func (d *Daemon) candidateObserverAuthor(ctx context.Context, bank memory.Memory, proposal memory.RuleProposal, decidedBy string) string {
-	seen := make(map[string]bool)
-	var authors []string
-	for _, id := range proposal.SourceObservationIDs {
-		o, err := bank.ObservationByID(ctx, id)
-		if err != nil || strings.TrimSpace(o.Author) == "" {
-			continue
-		}
-		if !seen[o.Author] {
-			seen[o.Author] = true
-			authors = append(authors, o.Author)
-		}
-	}
-	if len(authors) == 1 {
+	if authors := observationAuthors(ctx, bank, proposal.SourceObservationIDs); len(authors) == 1 {
 		return authors[0]
-	}
-	if len(authors) > 1 {
+	} else if len(authors) > 1 {
 		return ""
 	}
 	if strings.TrimSpace(proposal.Author) != "" {
@@ -210,20 +199,10 @@ func (d *Daemon) candidateObserverAuthor(ctx context.Context, bank memory.Memory
 // proposal, falling back to the queue item's creation when it has no
 // resolvable sources.
 func (d *Daemon) candidateObservedTime(ctx context.Context, bank memory.Memory, proposal memory.RuleProposal, fallback time.Time) time.Time {
-	var newest time.Time
-	for _, id := range proposal.SourceObservationIDs {
-		o, err := bank.ObservationByID(ctx, id)
-		if err != nil || o.CreatedAt.IsZero() {
-			continue
-		}
-		if o.CreatedAt.After(newest) {
-			newest = o.CreatedAt
-		}
+	if newest := newestObservationTime(ctx, bank, proposal.SourceObservationIDs); !newest.IsZero() {
+		return newest
 	}
-	if newest.IsZero() {
-		return fallback
-	}
-	return newest
+	return fallback
 }
 
 // ruleObserverAuthors resolves the observer behind each Rule: the single
@@ -239,9 +218,30 @@ func (d *Daemon) ruleObserverAuthors(ctx context.Context, bank memory.Memory, ru
 
 // ruleObserverAuthor resolves the observer behind one Rule.
 func (d *Daemon) ruleObserverAuthor(ctx context.Context, bank memory.Memory, r memory.Rule) string {
+	if authors := observationAuthors(ctx, bank, r.SourceObservationIDs); len(authors) == 1 {
+		return authors[0]
+	} else if len(authors) > 1 {
+		return ""
+	}
+	return r.ApprovedBy
+}
+
+// ruleObservedTime reports the newest source-observation time of a Rule,
+// falling back to its approval when it has no resolvable sources.
+func (d *Daemon) ruleObservedTime(ctx context.Context, bank memory.Memory, r memory.Rule) time.Time {
+	if newest := newestObservationTime(ctx, bank, r.SourceObservationIDs); !newest.IsZero() {
+		return newest
+	}
+	return r.ApprovedAt
+}
+
+// observationAuthors resolves the distinct authors of the named source
+// observations in first-seen order, skipping missing or authorless rows, so
+// one helper serves every observer and date lookup with one query per source.
+func observationAuthors(ctx context.Context, bank memory.Memory, ids []int64) []string {
 	seen := make(map[string]bool)
 	var authors []string
-	for _, id := range r.SourceObservationIDs {
+	for _, id := range ids {
 		o, err := bank.ObservationByID(ctx, id)
 		if err != nil || strings.TrimSpace(o.Author) == "" {
 			continue
@@ -251,20 +251,14 @@ func (d *Daemon) ruleObserverAuthor(ctx context.Context, bank memory.Memory, r m
 			authors = append(authors, o.Author)
 		}
 	}
-	if len(authors) == 1 {
-		return authors[0]
-	}
-	if len(authors) > 1 {
-		return ""
-	}
-	return r.ApprovedBy
+	return authors
 }
 
-// ruleObservedTime reports the newest source-observation time of a Rule,
-// falling back to its approval when it has no resolvable sources.
-func (d *Daemon) ruleObservedTime(ctx context.Context, bank memory.Memory, r memory.Rule) time.Time {
+// newestObservationTime reports the newest creation time among the named
+// source observations, or zero when none resolve.
+func newestObservationTime(ctx context.Context, bank memory.Memory, ids []int64) time.Time {
 	var newest time.Time
-	for _, id := range r.SourceObservationIDs {
+	for _, id := range ids {
 		o, err := bank.ObservationByID(ctx, id)
 		if err != nil || o.CreatedAt.IsZero() {
 			continue
@@ -272,9 +266,6 @@ func (d *Daemon) ruleObservedTime(ctx context.Context, bank memory.Memory, r mem
 		if o.CreatedAt.After(newest) {
 			newest = o.CreatedAt
 		}
-	}
-	if newest.IsZero() {
-		return r.ApprovedAt
 	}
 	return newest
 }
@@ -471,6 +462,7 @@ func (d *Daemon) handleRulesQueueBatch(w http.ResponseWriter, r *http.Request) {
 	for _, it := range items {
 		byID[it.ID] = it
 	}
+	succeeded := false
 	for _, id := range ids {
 		res := ruleBatchResult{ID: id, Status: body.Status}
 		if it, ok := byID[id]; ok && it.Kind != memory.QueueRule {
@@ -482,6 +474,8 @@ func (d *Daemon) handleRulesQueueBatch(w http.ResponseWriter, r *http.Request) {
 		case memory.QueueRejected:
 			if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
 				res.Error = err.Error()
+			} else {
+				succeeded = true
 			}
 		case memory.QueueApproved:
 			rule, err := d.approveRuleQueueItem(r.Context(), user.ID, user.ID, id, nil)
@@ -489,11 +483,16 @@ func (d *Daemon) handleRulesQueueBatch(w http.ResponseWriter, r *http.Request) {
 				res.Error = err.Error()
 			} else {
 				res.RuleID = rule.RuleID
+				succeeded = true
 			}
 		}
 		results = append(results, res)
 	}
-	d.recordQueueLedger(r.Context(), user.ID, "queue_batch")
+	// The batch records its counts only when it decided something: an empty
+	// selection or an all-failed batch writes no ledger row.
+	if succeeded {
+		d.recordQueueLedger(r.Context(), user.ID, "queue_batch")
+	}
 	writeJSON(w, http.StatusOK, results)
 }
 

@@ -132,18 +132,31 @@ var (
 )
 
 // GeneralizationScore counts +1 per generalizing phrase present and -1 per
-// situational phrase present, case-insensitive. "Always use tabs in this
-// repo, here for now" scores 0: the signals cancel.
+// situational phrase present, case-insensitive. Single words match whole
+// words only, so "where" never counts as the situational "here". "Always use
+// tabs in this repo, here for now" scores 0: the signals cancel.
 func GeneralizationScore(text string) int {
 	lower := strings.ToLower(text)
+	wordSet := make(map[string]bool)
+	for _, w := range words(lower) {
+		wordSet[w] = true
+	}
 	score := 0
 	for _, p := range generalizingPhrases {
-		if strings.Contains(lower, p) {
+		if strings.Contains(p, " ") {
+			if strings.Contains(lower, p) {
+				score++
+			}
+		} else if wordSet[p] {
 			score++
 		}
 	}
 	for _, p := range situationalPhrases {
-		if strings.Contains(lower, p) {
+		if strings.Contains(p, " ") {
+			if strings.Contains(lower, p) {
+				score--
+			}
+		} else if wordSet[p] {
 			score--
 		}
 	}

@@ -454,6 +454,67 @@ func TestContract(t *testing.T) {
 					}
 				}
 			})
+
+			t.Run("subject lookups and atomic approval", func(t *testing.T) {
+				clock := newTestClock()
+				m := fac.open(t, clock)
+				ctx := context.Background()
+				first, err := m.AddObservation(ctx, Observation{SessionID: "s1", EventID: "e1", Author: "u1", Quote: "first", Kind: KindFact, SubjectKey: "Wrap.Errors"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := m.AddObservation(ctx, Observation{SessionID: "s2", EventID: "e2", Author: "u1", Quote: "second", Kind: KindFact, SubjectKey: "wrap.errors"}); err != nil {
+					t.Fatal(err)
+				}
+				// ObservationByID finds the exact row; subject keys
+				// normalize on write so both spellings group together.
+				got, err := m.ObservationByID(ctx, first)
+				if err != nil || got.Quote != "first" {
+					t.Fatalf("by ID = %+v %v, want the first observation", got, err)
+				}
+				if _, err := m.ObservationByID(ctx, first+9999); !errors.Is(err, ErrNotFound) {
+					t.Fatalf("missing ID err = %v, want ErrNotFound", err)
+				}
+				group, err := m.ObservationsBySubjectKey(ctx, "WRAP.ERRORS")
+				if err != nil || len(group) != 2 {
+					t.Fatalf("observations by key = %d %v, want 2 normalized together", len(group), err)
+				}
+				old, err := m.AddRule(ctx, Rule{Text: "old wording", Kind: KindFact, SubjectKey: "Wrap.Errors", ApprovedBy: "u1"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				keyed, err := m.RulesBySubjectKey(ctx, "wrap.errors")
+				if err != nil || len(keyed) != 1 || keyed[0].RuleID != old.RuleID {
+					t.Fatalf("rules by key = %+v %v, want the old rule", keyed, err)
+				}
+				item, err := m.Enqueue(ctx, QueueItem{Kind: QueueRule, Payload: `{"text":"new wording"}`})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// The approval creates the Rule, supersedes the old one
+				// and approves the item in one transaction.
+				rule, err := m.ApproveRule(ctx, item, "u1", Rule{Text: "new wording", Kind: KindFact, SubjectKey: "wrap.errors", ApprovedBy: "u1"}, []string{old.RuleID})
+				if err != nil || rule.Version != 1 {
+					t.Fatalf("approve = %+v %v, want active v1", rule, err)
+				}
+				if queue, _ := m.Queue(ctx); len(queue) != 1 || queue[0].Status != QueueApproved {
+					t.Fatalf("queue after approve = %+v, want approved", queue)
+				}
+				if versions, _ := m.RuleVersions(ctx, old.RuleID); len(versions) != 1 || versions[0].Status != StatusSuperseded {
+					t.Fatalf("old rule after approve = %+v, want superseded", versions)
+				}
+				// A refused approval changes nothing.
+				second, err := m.Enqueue(ctx, QueueItem{Kind: QueueRule, Payload: `{"text":"x"}`})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := m.ApproveRule(ctx, second, "u1", Rule{Text: strings.Repeat("y", MaxRuleChars+1), Kind: KindFact, ApprovedBy: "u1"}, nil); !errors.Is(err, ErrInvalid) {
+					t.Fatalf("over-long approve err = %v, want ErrInvalid", err)
+				}
+				if queue, _ := m.Queue(ctx); queue[1].Status != QueuePending {
+					t.Fatalf("queue after refused approve = %+v, want still pending", queue[1])
+				}
+			})
 		})
 	}
 }

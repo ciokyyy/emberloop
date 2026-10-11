@@ -49,6 +49,9 @@ func TestGeneralizationSignals(t *testing.T) {
 	if GeneralizationScore("fix it here in this function for now") >= 0 {
 		t.Errorf("situational language did not count against promotion")
 	}
+	if GeneralizationScore("store it where the vault is") != 0 {
+		t.Errorf("where counted as here: score = %d, want 0", GeneralizationScore("store it where the vault is"))
+	}
 	if !IsGeneralizing("always use tabs") || IsSituational("always use tabs") {
 		t.Errorf("IsGeneralizing/IsSituational mismatch on generalizing text")
 	}

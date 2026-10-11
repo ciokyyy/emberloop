@@ -300,27 +300,40 @@ func (d *Daemon) deciderLLMCall(_ context.Context, model, system, user string) (
 	return pigOneShot("", model, system, redacted, deciderMaxTokens, deciderTimeout)
 }
 
+// mineConfirmers selects the confirming Decider for the current settings,
+// shared by decideMine and minerSubjectKey so the two paths never diverge:
+// the test seam wins, else the memory model in llm and ensemble modes.
+// ensemble reports whether the heuristic proposes first. A nil second means
+// the heuristic judges alone.
+func (d *Daemon) mineConfirmers() (second memory.Decider, ensemble bool) {
+	if d.decider != nil {
+		return d.decider, false
+	}
+	set := readDeciderSettings()
+	if set.Mode != deciderLLM && set.Mode != deciderEnsemble {
+		return nil, false
+	}
+	return d.llmMineDecider(set.Model), set.Mode == deciderEnsemble
+}
+
 // minerSubjectKey proposes the subject key for a mined statement. The
 // confirming Decider names it when it implements SubjectKeyProposer (the test
 // seam, or the memory model in llm and ensemble modes); otherwise the
-// heuristic fallback proposes it. The result is normalized; empty means
-// keyless and never promotes. It also reports who proposed the key (the
-// Decider model, or the heuristic name) for the decider_json provenance.
+// heuristic fallback proposes it. statement must already be redacted: the
+// miner keys from redactedQuote, so a secret in the topic tokens never
+// reaches the subject key, while the LLM path redacts again inside its call.
+// The result is normalized; empty means keyless and never promotes. It also
+// reports who proposed the key (the Decider model, or the heuristic name)
+// for the decider_json provenance. Key proposal costs one model call beside
+// the durable confirm when a model Decider is configured.
 func (d *Daemon) minerSubjectKey(statement, contextText string) (string, string) {
 	state := memory.DeciderState{Statement: statement, Context: contextText}
 	ctx := context.Background()
 	var candidates []memory.Decider
-	if d.decider != nil {
-		candidates = []memory.Decider{d.decider}
-	} else {
-		set := readDeciderSettings()
-		if (set.Mode == deciderLLM || set.Mode == deciderEnsemble) && strings.TrimSpace(set.Model) != "" {
-			if llm := d.llmMineDecider(set.Model); llm != nil {
-				candidates = append(candidates, llm)
-			}
-		}
-		candidates = append(candidates, memory.HeuristicDecider{})
+	if second, _ := d.mineConfirmers(); second != nil {
+		candidates = append(candidates, second)
 	}
+	candidates = append(candidates, memory.HeuristicDecider{})
 	for _, c := range candidates {
 		p, ok := c.(memory.SubjectKeyProposer)
 		if !ok {
@@ -360,25 +373,9 @@ func (d *Daemon) decideMine(text, contextText string, hit memory.HeuristicResult
 			out.scope = s
 		}
 	}
-	var second memory.Decider
-	ensemble := false
-	switch {
-	case d.decider != nil:
-		second = d.decider
+	second, ensemble := d.mineConfirmers()
+	if d.decider != nil {
 		out.decider = "test"
-	case set.Mode == deciderLLM:
-		second = d.llmMineDecider(set.Model)
-	case set.Mode == deciderJev:
-		second = d.jevMineDecider()
-	case set.Mode == deciderEnsemble:
-		ensemble = true
-		// The ensemble confirms with jev when its endpoint is on, else
-		// with the memory model: the configured second Decider.
-		if j := d.jevMineDecider(); j != nil {
-			second = j
-		} else {
-			second = d.llmMineDecider(set.Model)
-		}
 	}
 	if second == nil && !ensemble {
 		// Only the heuristic mode offers eligibility from the heuristic

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -230,7 +231,7 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			prior = append(prior, e)
 			continue
 		}
-		subjectKey, subjectBy := d.minerSubjectKey(e.Text, contextText)
+		subjectKey, subjectBy := d.minerSubjectKey(redactedQuote, contextText)
 		doc, _ := json.Marshal(minerDeciderDoc{
 			Miner:         "heuristic-v1",
 			Type:          hit.Type,
@@ -276,19 +277,34 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		}
 		prior = append(prior, e)
 	}
-	// Recurrence promotion runs after the scan: every touched subject key is
-	// checked once, so a key recurring across Sessions enqueues one proposal
-	// on its own, with no manual promote call. A promotion failure aborts
-	// without advancing the cursor; replays re-touch the same keys above, so
-	// the promotion retries instead of being lost.
+	// Recurrence promotion runs after the scan in sorted key order, so a key
+	// recurring across Sessions enqueues one proposal on its own, with no
+	// manual promote call. Every touched key is tried even when one fails;
+	// the errors join and the cursor holds, while replays re-touch the same
+	// keys above, so a failed promotion retries instead of being lost.
+	ordered := make([]touch, 0, len(touched))
 	for t := range touched {
+		ordered = append(ordered, t)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].author != ordered[j].author {
+			return ordered[i].author < ordered[j].author
+		}
+		return ordered[i].key < ordered[j].key
+	})
+	var promoteErrs []error
+	for _, t := range ordered {
 		_, created, err := d.promoteSubject(ctx, t.author, t.key, "")
 		if err != nil {
-			return res, fmt.Errorf("miner: promote subject %s: %w", t.key, err)
+			promoteErrs = append(promoteErrs, fmt.Errorf("miner: promote subject %s: %w", t.key, err))
+			continue
 		}
 		if created {
 			res.Promoted++
 		}
+	}
+	if len(promoteErrs) > 0 {
+		return res, errors.Join(promoteErrs...)
 	}
 	// The cursor advances only after a clean scan. A crash or a returned
 	// error re-reads the bytes; same-Event replays return without bumping,

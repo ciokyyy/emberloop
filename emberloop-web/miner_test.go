@@ -499,3 +499,44 @@ func TestMineSessionSubjectKeyFromDecider(t *testing.T) {
 		t.Fatalf("subject key = %q, want the Decider proposal normalized", obs[0].SubjectKey)
 	}
 }
+
+// The subject key never carries secrets: the miner keys from the redacted
+// quote, so a secret in the topic tokens lands redacted in the observation,
+// the decider_json and any promoted queue payload.
+func TestMineSessionRedactsSubjectKey(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	a := "No, always store it where the admin password is hunter2-2026 in the vault"
+	b := "No, never store it where the admin password is hunter2-2026 in the config"
+	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", a)})
+	if _, err := d.MineSession("s1"); err != nil {
+		t.Fatal(err)
+	}
+	obs := bankQuotes(t, d, "alice", "vault")
+	if len(obs) != 1 {
+		t.Fatalf("observations = %+v, want 1", obs)
+	}
+	if strings.Contains(obs[0].SubjectKey, "hunter2") || strings.Contains(obs[0].DeciderJSON, "hunter2") {
+		t.Fatalf("secret leaked into key material: %+v", obs[0])
+	}
+	if obs[0].SubjectKey == "" {
+		t.Fatalf("redacted quote proposed no key: %+v", obs[0])
+	}
+	seedEndedSession(t, d, "s2", "alice", []Event{userPrompt(1, "alice", b)})
+	res, err := d.MineSession("s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Promoted != 1 {
+		t.Fatalf("second mine = %+v, want the redacted recurrence promoted", res)
+	}
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, _ := bank.Queue(t.Context())
+	for _, it := range items {
+		if it.Kind == memory.QueueRule && strings.Contains(it.Payload, "hunter2") {
+			t.Fatalf("secret leaked into the queue payload: %s", it.Payload)
+		}
+	}
+}

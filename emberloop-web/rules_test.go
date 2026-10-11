@@ -670,3 +670,115 @@ func TestKindPreferenceOf(t *testing.T) {
 		t.Fatalf("invalid skipped = %q, want decision", got)
 	}
 }
+
+// Mixed ages converge: with an older and a newer same-observer Rule live, an
+// in-between candidate supersedes the older one while landing stillborn
+// itself, so exactly the newest text stays live.
+func TestRuleQueueMixedAgesConverge(t *testing.T) {
+	d, base, _, owner, clock := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	old, err := bank.AddRule(ctx, memory.Rule{
+		Text: "oldest wording", Kind: memory.KindPreference,
+		SubjectKey: "mixed.key", ApprovedBy: owner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Hour)
+	midPayload := memory.EncodeRuleProposal(memory.RuleProposal{
+		Text: "middle wording", Kind: memory.KindPreference, SubjectKey: "mixed.key",
+		Sessions: []string{"s-mid"}, Author: owner, Origin: "mined",
+	})
+	midID, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: midPayload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(time.Hour)
+	newer, err := bank.AddRule(ctx, memory.Rule{
+		Text: "newest wording", Kind: memory.KindPreference,
+		SubjectKey: "mixed.key", ApprovedBy: owner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out := decideRule(t, base, midID, map[string]any{"status": "approved"})
+	if code != http.StatusOK {
+		t.Fatalf("approve middle = %d, want 200", code)
+	}
+	midRuleID, _ := out["RuleID"].(string)
+	if versions, _ := bank.RuleVersions(ctx, old.RuleID); len(versions) != 1 || versions[0].Status != memory.StatusSuperseded {
+		t.Fatalf("oldest rule = %+v, want superseded by the middle candidate", versions)
+	}
+	if versions, _ := bank.RuleVersions(ctx, midRuleID); len(versions) != 1 || versions[0].Status != memory.StatusSuperseded {
+		t.Fatalf("middle rule = %+v, want stillborn superseded under the newest", versions)
+	}
+	if versions, _ := bank.RuleVersions(ctx, newer.RuleID); len(versions) != 1 || versions[0].Status != memory.StatusActive {
+		t.Fatalf("newest rule = %+v, want the only live text", versions)
+	}
+	got, err := bank.Recall(ctx, "wording", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RuleID != newer.RuleID {
+		t.Fatalf("recall = %+v, want only the newest Rule live", got)
+	}
+}
+
+// A batch that decides nothing writes no ledger row: an empty selection is
+// refused up front, and an all-failed batch records nothing.
+func TestRuleQueueBatchLedgerOnlyOnSuccess(t *testing.T) {
+	d, base, _, owner, _ := rulesDaemon(t)
+	ctx := context.Background()
+	bank := rulesBank(t, d, owner)
+	ledgerCount := func() int {
+		ledger, _ := bank.Ledger(ctx)
+		n := 0
+		for _, l := range ledger {
+			if l.Stage == "queue_batch" {
+				n++
+			}
+		}
+		return n
+	}
+	// A session with no pending items selects nothing and writes nothing.
+	code, results := postBatch(t, base, map[string]any{"sessionId": "s-empty", "status": "approved"})
+	if code != http.StatusOK || len(results) != 0 {
+		t.Fatalf("empty batch = %d %+v, want 200 with no results", code, results)
+	}
+	if n := ledgerCount(); n != 0 {
+		t.Fatalf("ledger holds %d batch rows after an empty batch, want none", n)
+	}
+	// An all-failed batch (a profile item picked by ID) writes nothing.
+	profileID, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: `{"op":"add"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, results = postBatch(t, base, map[string]any{"ids": []int64{profileID}, "status": "rejected"})
+	if code != http.StatusOK || len(results) != 1 || results[0].Error == "" {
+		t.Fatalf("failed batch = %d %+v, want one error", code, results)
+	}
+	if n := ledgerCount(); n != 0 {
+		t.Fatalf("ledger holds %d batch rows after an all-failed batch, want none", n)
+	}
+	// One success records the batch.
+	payload := memory.EncodeRuleProposal(memory.RuleProposal{
+		Text: "batch ledger probe", Kind: memory.KindPreference,
+		Sessions: []string{"s1"}, Author: owner, Origin: "mined",
+	})
+	ruleID, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueRule, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, results = postBatch(t, base, map[string]any{"ids": []int64{profileID, ruleID}, "status": "approved"})
+	if code != http.StatusOK || len(results) != 2 {
+		t.Fatalf("mixed batch = %d %+v, want 2 results", code, results)
+	}
+	if results[0].Error == "" || results[1].RuleID == "" {
+		t.Fatalf("mixed batch = %+v, want the profile error plus the rule", results)
+	}
+	if n := ledgerCount(); n != 1 {
+		t.Fatalf("ledger holds %d batch rows after a succeeding batch, want 1", n)
+	}
+	_ = d
+}
