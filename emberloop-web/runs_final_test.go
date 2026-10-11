@@ -129,28 +129,28 @@ func TestFinalMergeNeedsYouWhenMasterMovesDuringCheck(t *testing.T) {
 	}
 }
 
-func TestFinalMergeNeedsCleanCheckoutOfMaster(t *testing.T) {
+func TestFinalMergeUsesSafeMasterCheckout(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		prepare   func(t *testing.T, repo string)
-		wantFile  string
-		wantError string
+		name         string
+		prepare      func(t *testing.T, repo string)
+		wantNeedsYou bool
+		wantFile     string
+		wantError    string
 	}{
 		{
-			name: "dirty checkout",
+			name: "dirty master checkout",
 			prepare: func(t *testing.T, repo string) {
 				writeFile(t, repo, "local-edit.txt", "keep me\n")
 			},
-			wantFile:  "local-edit.txt",
-			wantError: "clean master checkout",
+			wantNeedsYou: true,
+			wantFile:     "local-edit.txt",
+			wantError:    "clean master checkout",
 		},
 		{
-			name: "checkout on another branch",
+			name: "user checkout on another branch",
 			prepare: func(t *testing.T, repo string) {
 				testGit(t, repo, "checkout", "-b", "feature")
 			},
-			wantFile:  "HEAD",
-			wantError: "checkout on master",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,14 +162,29 @@ func TestFinalMergeNeedsCleanCheckoutOfMaster(t *testing.T) {
 			d.runRepoCheck = func(string) (string, error) { return "green", nil }
 
 			out, err := d.finalizeSpecRun(runID)
-			if err != nil || !out.NeedsYou || !strings.Contains(out.Reason, test.wantError) {
-				t.Fatalf("final merge = %+v, %v; want Needs-you for %s", out, err, test.name)
+			if test.wantNeedsYou {
+				if err != nil || !out.NeedsYou || !strings.Contains(out.Reason, test.wantError) {
+					t.Fatalf("final merge = %+v, %v; want Needs-you for %s", out, err, test.name)
+				}
+				if !containsString(out.Files, test.wantFile) {
+					t.Fatalf("final files = %v, want %q", out.Files, test.wantFile)
+				}
+				if got := strings.TrimSpace(testGit(t, repo, "rev-parse", masterRef)); got != master {
+					t.Fatalf("master = %s, want unchanged %s", got, master)
+				}
+				return
 			}
-			if !containsString(out.Files, test.wantFile) {
-				t.Fatalf("final files = %v, want %q", out.Files, test.wantFile)
+			if err != nil || out.NeedsYou {
+				t.Fatalf("final merge = %+v, %v; want safe promotion from the other checkout", out, err)
 			}
-			if got := strings.TrimSpace(testGit(t, repo, "rev-parse", masterRef)); got != master {
-				t.Fatalf("master = %s, want unchanged %s", got, master)
+			if got := strings.TrimSpace(testGit(t, repo, "rev-parse", masterRef)); got != strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")) {
+				t.Fatalf("master = %s, want final spec tip", got)
+			}
+			if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD")); got != master {
+				t.Fatalf("user checkout moved from %s to %s", master, got)
+			}
+			if got := strings.TrimSpace(testGit(t, repo, "status", "--porcelain")); got != "" {
+				t.Fatalf("user checkout became dirty: %s", got)
 			}
 		})
 	}

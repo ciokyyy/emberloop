@@ -675,16 +675,17 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 	}, "run done after done submit")
 }
 
-// A detached checkout can run and merge Tickets to its spec branch, but the
-// final gate waits for the selected master branch to be checked out before
-// moving it. Checking out main and resuming completes the gate.
-func TestRunDetachedNeedsMasterCheckoutForFinalMerge(t *testing.T) {
+// A detached user checkout does not block promotion: the gate checks and
+// fast-forwards master in a temporary clean worktree, leaving the detached
+// checkout untouched.
+func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	testGit(t, repo, "checkout", "--detach")
+	initialHEAD := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -707,22 +708,14 @@ func TestRunDetachedNeedsMasterCheckoutForFinalMerge(t *testing.T) {
 	submitSession(t, srv.URL, sess["02-second"], "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	passReviewers(t, srv.URL, run.ID, "02-second")
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return r.Status == runStatusNeedsYou
-	}, "detached final merge Needs-you")
-	if !strings.Contains(r.Error, "checkout on master") || !containsString(r.FinalMergeFiles, "HEAD") {
-		t.Fatalf("detached final gate = %q files=%v, want checkout diagnostic", r.Error, r.FinalMergeFiles)
-	}
-	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != initialMaster {
-		t.Fatalf("main moved from %s while detached, got %s", initialMaster, got)
-	}
-	testGit(t, repo, "checkout", "main")
-	if _, code := postRunAction(t, srv.URL, run.ID, "resume"); code != http.StatusOK {
-		t.Fatalf("resume after checking out master = %d, want 200", code)
-	}
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusDone }, "resumed final merge")
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == runStatusDone
+	}, "run done from detached checkout")
 	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")) {
-		t.Fatalf("main = %s after resume, want spec tip", got)
+		t.Fatalf("main = %s, want final spec tip", got)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD")); got != initialHEAD || got != initialMaster {
+		t.Fatalf("detached HEAD moved from %s to %s during promotion", initialHEAD, got)
 	}
 }
 

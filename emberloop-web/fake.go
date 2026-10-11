@@ -84,7 +84,7 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 		}
 		f.mu.Unlock()
 	}()
-	if f.HandoffTurnErr != "" && strings.Contains(text, "# Handoff") {
+	if f.HandoffTurnErr != "" && strings.HasPrefix(text, "# Handoff") {
 		appendEvent("error", f.HandoffTurnErr, "")
 		appendEvent("status", "", "idle")
 		return

@@ -174,11 +174,29 @@ func (d *Daemon) finalizeSpecRun(runID string) (finalMergeOutcome, error) {
 }
 
 func advanceCheckedMaster(repo, masterRef, masterSHA, candidateSHA string) (finalMergeOutcome, error) {
-	checkoutRoot, err := runGit(repo, "rev-parse", "--show-toplevel")
+	masterCheckout, checkedOut, err := masterBranchWorktree(repo, masterRef)
 	if err != nil {
 		return finalMergeOutcome{}, err
 	}
-	branch, branchErr := runGit(checkoutRoot, "symbolic-ref", "--quiet", "HEAD")
+	if !checkedOut {
+		masterCheckout, err = os.MkdirTemp("", "emberloop-master-merge-")
+		if err != nil {
+			return finalMergeOutcome{}, err
+		}
+		if err := os.Remove(masterCheckout); err != nil {
+			return finalMergeOutcome{}, err
+		}
+		branch := strings.TrimPrefix(masterRef, "refs/heads/")
+		if _, err := runGit(repo, "worktree", "add", masterCheckout, branch); err != nil {
+			_ = os.RemoveAll(masterCheckout)
+			return finalNeedsYou("could not prepare a clean master checkout", []string{"HEAD"}, err.Error()), nil
+		}
+		defer func() {
+			_, _ = runGit(repo, "worktree", "remove", "--force", masterCheckout)
+			_ = os.RemoveAll(masterCheckout)
+		}()
+	}
+	branch, branchErr := runGit(masterCheckout, "symbolic-ref", "--quiet", "HEAD")
 	if branchErr != nil || branch != masterRef {
 		detail := "expected a checkout of " + masterRef
 		if branchErr != nil {
@@ -186,16 +204,16 @@ func advanceCheckedMaster(repo, masterRef, masterSHA, candidateSHA string) (fina
 		} else {
 			detail += ", found " + branch
 		}
-		return finalNeedsYou("final merge requires the repository checkout on master", []string{"HEAD"}, detail), nil
+		return finalNeedsYou("final merge requires the selected master checkout", []string{"HEAD"}, detail), nil
 	}
-	dirtyFiles, status, err := masterCheckoutDirtyFiles(checkoutRoot)
+	dirtyFiles, status, err := masterCheckoutDirtyFiles(masterCheckout)
 	if err != nil {
 		return finalMergeOutcome{}, err
 	}
 	if len(dirtyFiles) != 0 {
 		return finalNeedsYou("final merge requires a clean master checkout", dirtyFiles, status), nil
 	}
-	currentMaster, err := runGit(checkoutRoot, "rev-parse", masterRef)
+	currentMaster, err := runGit(masterCheckout, "rev-parse", masterRef)
 	if err != nil {
 		return finalMergeOutcome{}, err
 	}
@@ -209,11 +227,11 @@ func advanceCheckedMaster(repo, masterRef, masterSHA, candidateSHA string) (fina
 		}
 		return finalNeedsYou("master moved while the final check was running", files, "checked "+masterSHA+", current "+currentMaster), nil
 	}
-	if _, err := runGit(checkoutRoot, "merge", "--ff-only", candidateSHA); err != nil {
+	if _, err := runGit(masterCheckout, "merge", "--ff-only", candidateSHA); err != nil {
 		files := changedFilesBetween(repo, masterSHA, candidateSHA)
 		return finalNeedsYou("could not fast-forward the checked-out master", files, err.Error()), nil
 	}
-	mergedHEAD, err := runGit(checkoutRoot, "rev-parse", "HEAD")
+	mergedHEAD, err := runGit(masterCheckout, "rev-parse", "HEAD")
 	if err != nil {
 		return finalMergeOutcome{}, err
 	}
@@ -221,6 +239,29 @@ func advanceCheckedMaster(repo, masterRef, masterSHA, candidateSHA string) (fina
 		return finalNeedsYou("master moved during the final merge", changedFilesBetween(repo, masterSHA, mergedHEAD), "expected "+candidateSHA+", found "+mergedHEAD), nil
 	}
 	return finalMergeOutcome{}, nil
+}
+
+func masterBranchWorktree(repo, branchRef string) (string, bool, error) {
+	output, err := runGit(repo, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", false, err
+	}
+	var path, branch string
+	for _, line := range append(strings.Split(output, "\n"), "") {
+		if line == "" {
+			if path != "" && branch == branchRef {
+				return path, true, nil
+			}
+			path, branch = "", ""
+			continue
+		}
+		if strings.HasPrefix(line, "worktree ") {
+			path = strings.TrimPrefix(line, "worktree ")
+		} else if strings.HasPrefix(line, "branch ") {
+			branch = strings.TrimPrefix(line, "branch ")
+		}
+	}
+	return "", false, nil
 }
 
 // masterCheckoutDirtyFiles ignores only registered linked worktrees nested
