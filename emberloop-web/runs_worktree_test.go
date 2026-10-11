@@ -67,7 +67,7 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 		t.Fatalf("mirror ticket = %q, %v; want the alpha checkbox", traw, err)
 	}
 
-	// Read-only: no write bit anywhere under the mirror, so a Worker cannot
+	// Read-only: no write bit on mirrored files, so a Worker cannot
 	// tick its own copy. The main checkout stays writable: only the driver
 	// ticks boxes there.
 	assertNoWriteBits(t, filepath.Join(worktree, rel))
@@ -77,6 +77,11 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 	if f, err := os.OpenFile(mirrorTicket, os.O_WRONLY, 0); err == nil {
 		_ = f.Close()
 		t.Fatalf("mirror ticket opened for writing; want read-only")
+	}
+	// The gap file must not trip the finish dirty-worktree check: it is
+	// recorded in the worktree's info/exclude, so status stays clean.
+	if got := strings.TrimSpace(testGit(t, worktree, "status", "--porcelain")); got != "" {
+		t.Fatalf("worktree status = %q, want clean with the gap file excluded", got)
 	}
 }
 

@@ -1662,12 +1662,13 @@ func ensureWorktreeGitIdentity(worktree string) error {
 // holding spec.md and issues/) from the main checkout into the worktree at
 // the same repo-relative path, then strips write bits from the mirrored files
 // so the Worker reads them read-only. Only files missing in the worktree are
-// copied, so a committed spec (the common case) stays clean for the finish
-// dirty-worktree check; a fresh worktree add already carries committed files
-// and the mirror only fills uncommitted gaps that used to surface as stat
-// errors. Only the driver ticks boxes, and it ticks the main checkout ticket
-// files (TickCheckboxes), never the mirror: the read-only bit keeps a Worker
-// from ticking its own copy and diverging.
+// copied, so a committed spec stays clean for the finish dirty-worktree
+// check; copied gap files (uncommitted new files a fresh worktree add missed)
+// are listed in a per-worktree excludes file, so they read as ignored instead
+// of untracked `??`, which would otherwise refuse every finish. Only the
+// driver ticks boxes, and it ticks the main checkout ticket files
+// (TickCheckboxes), never the mirror: the read-only bit keeps a Worker from
+// ticking its own copy and diverging.
 func ensureWorktreeSpecDir(repo, spec, worktree string) error {
 	specDir := filepath.Dir(spec)
 	rel, err := filepath.Rel(repo, specDir)
@@ -1678,32 +1679,47 @@ func ensureWorktreeSpecDir(repo, spec, worktree string) error {
 		return mirrorSpecRootFiles(repo, spec, worktree)
 	}
 	dst := filepath.Join(worktree, rel)
-	return mirrorDirReadOnly(specDir, dst)
+	gaps, err := mirrorDirReadOnly(specDir, dst)
+	if err != nil {
+		return err
+	}
+	return excludeWorktreeGaps(repo, worktree, gaps)
 }
 
 // mirrorSpecRootFiles mirrors a repo-root spec without touching the rest of
 // the worktree: the spec file plus the sibling issues/ directory when one
-// exists. Every mirrored path lands read-only.
+// exists. Copied gap files are excluded from git status like above.
 func mirrorSpecRootFiles(repo, spec, worktree string) error {
-	if err := mirrorFileReadOnly(spec, filepath.Join(worktree, filepath.Base(spec))); err != nil {
+	var gaps []string
+	copied, err := mirrorFileReadOnly(spec, filepath.Join(worktree, filepath.Base(spec)))
+	if err != nil {
 		return err
+	}
+	if copied {
+		gaps = append(gaps, filepath.Join(worktree, filepath.Base(spec)))
 	}
 	tickets := filepath.Join(repo, "issues")
 	if st, err := os.Stat(tickets); err != nil || !st.IsDir() {
-		return nil
+		return excludeWorktreeGaps(repo, worktree, gaps)
 	}
-	return mirrorDirReadOnly(tickets, filepath.Join(worktree, "issues"))
+	more, err := mirrorDirReadOnly(tickets, filepath.Join(worktree, "issues"))
+	if err != nil {
+		return err
+	}
+	return excludeWorktreeGaps(repo, worktree, append(gaps, more...))
 }
 
 // mirrorDirReadOnly fills files missing in dst from src, then strips write
-// bits from the mirrored files. Existing worktree files are never
-// overwritten, so a committed spec stays clean for the finish
+// bits from the mirrored files. It returns the absolute paths it copied, so
+// the caller can keep them out of git status. Existing worktree files are
+// never overwritten, so a committed spec stays clean for the finish
 // dirty-worktree check; only gaps (uncommitted new files a fresh worktree add
 // missed) become readable instead of missing. The source tree is never
 // chmodded.
-func mirrorDirReadOnly(src, dst string) error {
+func mirrorDirReadOnly(src, dst string) ([]string, error) {
+	var gaps []string
 	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
+		return nil, err
 	}
 	walkErr := filepath.WalkDir(src, func(path string, e os.DirEntry, err error) error {
 		if err != nil {
@@ -1723,49 +1739,129 @@ func mirrorDirReadOnly(src, dst string) error {
 		if !e.Type().IsRegular() {
 			return nil
 		}
-		if err := copyFileIfMissing(path, target); err != nil {
+		copied, err := copyFileIfMissing(path, target)
+		if err != nil {
 			return err
+		}
+		if copied {
+			gaps = append(gaps, target)
 		}
 		return nil
 	})
 	if walkErr != nil {
-		return walkErr
+		return nil, walkErr
 	}
-	return stripWriteBits(dst)
+	if err := stripWriteBits(dst); err != nil {
+		return nil, err
+	}
+	return gaps, nil
 }
 
 // copyFileIfMissing copies src to dst when dst does not exist yet, leaving
 // an existing worktree file untouched so the mirror never dirties a
-// checkout. Parent directories are created as needed.
-func copyFileIfMissing(src, dst string) error {
+// checkout. It reports whether it copied. Parent directories are created as
+// needed.
+func copyFileIfMissing(src, dst string) (bool, error) {
 	if _, err := os.Stat(dst); err == nil {
-		return nil
+		return false, nil
 	}
 	raw, err := os.ReadFile(src)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
+		return false, err
 	}
-	return os.WriteFile(dst, raw, 0o644)
+	if err := os.WriteFile(dst, raw, 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // mirrorFileReadOnly copies one file into place read-only, leaving an
 // existing worktree file untouched so the mirror never dirties a checkout.
-func mirrorFileReadOnly(src, dst string) error {
-	if err := copyFileIfMissing(src, dst); err != nil {
+// It reports whether it copied.
+func mirrorFileReadOnly(src, dst string) (bool, error) {
+	copied, err := copyFileIfMissing(src, dst)
+	if err != nil {
+		return false, err
+	}
+	if err := stripWriteBits(dst); err != nil {
+		return false, err
+	}
+	return copied, nil
+}
+
+// excludeWorktreeGaps lists mirrored gap files in a per-worktree excludes
+// file, so `git status --porcelain` reads them as ignored instead of
+// untracked `??` and the finish dirty-worktree check sees the Ticket work,
+// not the spec input. A linked worktree ignores its own gitdir info/exclude,
+// so this enables extensions.worktreeConfig once per repo and points the
+// worktree's core.excludesFile at a list inside its own gitdir: the main
+// checkout's ignore rules stay untouched, and removing the worktree removes
+// the list with it. Failures return an error so the start fails loudly
+// instead of leaving a worktree that can never finish.
+func excludeWorktreeGaps(repo, worktree string, absPaths []string) error {
+	if len(absPaths) == 0 {
+		return nil
+	}
+	rels := make([]string, 0, len(absPaths))
+	for _, p := range absPaths {
+		rel, err := filepath.Rel(worktree, p)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rels = append(rels, filepath.ToSlash(rel))
+	}
+	if len(rels) == 0 {
+		return nil
+	}
+	gitdir, err := runGit(worktree, "rev-parse", "--git-dir")
+	if err != nil || gitdir == "" {
+		return fmt.Errorf("could not read git dir in %s: %v", worktree, err)
+	}
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(worktree, gitdir)
+	}
+	if _, err := runGit(repo, "config", "extensions.worktreeConfig", "true"); err != nil {
+		return fmt.Errorf("could not enable worktreeConfig in %s: %v", repo, err)
+	}
+	exclude := filepath.Join(gitdir, "info", "worktree-exclude")
+	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
 		return err
 	}
-	return stripWriteBits(dst)
+	raw, _ := os.ReadFile(exclude)
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		have[strings.TrimSpace(line)] = true
+	}
+	var missing []string
+	for _, rel := range rels {
+		if !have[rel] {
+			missing = append(missing, rel)
+		}
+	}
+	if len(missing) > 0 {
+		out := strings.TrimRight(string(raw), "\n")
+		if out != "" {
+			out += "\n"
+		}
+		out += strings.Join(missing, "\n") + "\n"
+		if err := os.WriteFile(exclude, []byte(out), 0o644); err != nil {
+			return err
+		}
+	}
+	if _, err := runGit(worktree, "config", "--worktree", "core.excludesFile", exclude); err != nil {
+		return fmt.Errorf("could not set excludesFile in %s: %v", worktree, err)
+	}
+	return nil
 }
 
 // stripWriteBits removes every write bit from files under root; directories
-// stay writable so `git worktree remove --force` can still delete the mirror
-// (unlinking needs write on the parent dir, not on the file). Files keep
-// their read bits, so the mirror stays readable but a Worker cannot overwrite
-// (tick) its own copy. Git tracks only the executable bit, so a 644->444
-// demotion stays clean for the finish status --porcelain check.
+// stay writable so `git worktree remove --force` can still delete the mirror.
+// Files keep their read bits, so the mirror stays readable but a Worker
+// cannot overwrite (tick) its own copy. Git tracks only the executable bit,
+// so a 644->444 demotion stays clean for the finish status --porcelain check.
 func stripWriteBits(root string) error {
 	return filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
 		if err != nil {

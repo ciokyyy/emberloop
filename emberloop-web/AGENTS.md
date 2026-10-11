@@ -620,8 +620,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   live-Session cap, in its own worktree and branch as a Subagent of the Run
   (ParentID the Run). Worktree creation sets local user.name/user.email
   (emberloop) and mirrors missing spec files read-only into the worktree at
-  the same repo-relative path (existing files untouched, so the mirror never
-  dirties the checkout); only the driver ticks boxes in the main checkout.
+  the same repo-relative path (existing files untouched; copied gap files go
+  in a per-worktree excludes file, so the mirror never dirties the checkout);
+  only the driver ticks boxes in the main checkout.
   The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
