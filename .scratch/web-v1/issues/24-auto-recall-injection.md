@@ -4,13 +4,13 @@
 
 **Blocked by:** 16, 17, 18, 23
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Block order is preamble, Profile, Rules; the fence marks recalled text as untrusted notes, not instructions
-- [ ] Query comes from identifiers, paths and rare terms of the task prompt; an empty prompt injects the Profile only
-- [ ] Injection is capped at 5 Rules of at most 300 chars; flagged Rules show "code changed since <date>, verify"
-- [ ] Reviewers get the filtered Profile
-- [ ] Decider timeout falls back to FTS5 order; engine failure posts a notice Event and the turn still runs
-- [ ] An `injection` Event lists Rule IDs and versions
-- [ ] Tests cover merge, caps, fence, fallback and resume
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Block order is preamble, Profile, Rules; the fence marks recalled text as untrusted notes, not instructions
+- [x] Query comes from identifiers, paths and rare terms of the task prompt; an empty prompt injects the Profile only
+- [x] Injection is capped at 5 Rules of at most 300 chars; flagged Rules show "code changed since <date>, verify"
+- [x] Reviewers get the filtered Profile
+- [x] Decider timeout falls back to FTS5 order; engine failure posts a notice Event and the turn still runs
+- [x] An `injection` Event lists Rule IDs and versions
+- [x] Tests cover merge, caps, fence, fallback and resume
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
