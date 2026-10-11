@@ -13,18 +13,23 @@ import (
 // findTool is ported from el's apps/backend/tools/find.go: semantic grep
 // through the CascadeSearcher, asking a decisions model through OpenRouter's
 // systemone endpoint. With no OpenRouter key it falls back to lexical ranking.
+// When the codebase-memory index exists for the project, the code graph
+// answers as a third source beside the decisions model and grep.
 type findTool struct {
 	// provider is a test seam. Nil means: build the hosted one per call, from
 	// whichever key is available then.
 	provider systemone.Provider
 	// lexicalOnly skips the key lookup, for tests that must not touch the network.
 	lexicalOnly bool
+	// graph is a test seam for the third source. Nil means: read the
+	// codebase-memory index when one exists, else degrade to the cascade.
+	graph GraphSource
 }
 
 func (findTool) Name() string   { return "find" }
 func (findTool) ReadOnly() bool { return true }
 func (findTool) Description() string {
-	return "Semantic grep: locate files and line ranges that implement a concept or behavior. Ranked by a decisions model; falls back to keyword ranking when none is available."
+	return "Semantic grep: locate files and line ranges that implement a concept or behavior. Ranked by a decisions model; falls back to keyword ranking when none is available. Includes code-graph hits (symbols, callers) when the codebase-memory index exists; each hit names its source (jev, grep, graph)."
 }
 func (findTool) Schema() map[string]any {
 	return obj(map[string]any{
@@ -60,6 +65,11 @@ func (f findTool) Execute(ctx context.Context, root string, args json.RawMessage
 		}
 	}
 	searcher := NewCascadeSearcher(provider, systemone.CanonicalModel(cfg.DecisionModel), cfg.Threshold, root)
+	if f.graph != nil {
+		searcher.WithGraphSource(f.graph)
+	} else if graphAvailable(root) {
+		searcher.WithGraphSource(defaultGraphSourceForRoot(root))
+	}
 
 	hits, err := searcher.Search(ctx, a.Query, a.GrepKeywords, a.Path)
 	if err != nil {
@@ -72,12 +82,24 @@ func (f findTool) Execute(ctx context.Context, root string, args json.RawMessage
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d hit(s) for %q (τ %.2f), strongest first\n\n", len(hits), a.Query, searcher.threshold)
 	for _, hit := range hits {
-		fmt.Fprintf(&sb, "%s  %.2f\n", hit.Path, hit.Score)
+		fmt.Fprintf(&sb, "%s  [%s]  %.2f\n", hit.Path, hit.Source, hit.Score)
 		for _, r := range hit.Ranges {
 			fmt.Fprintf(&sb, "  %s:%d-%d  %.2f  %s\n", hit.Path, r.StartLine, r.EndLine, r.Score, previewLine(r.Snippet, a.GrepKeywords))
 		}
 	}
 	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// graphAvailable reports whether a graph source is worth wiring: enabled in
+// settings with a binary behind the seam. The index-status check itself stays
+// in the source, so an unindexed project still degrades without failing.
+func graphAvailable(workDir string) bool {
+	s := EffectiveSettings(workDir)
+	if !s.GraphEnabled() {
+		return false
+	}
+	_, ok := GraphServerSetting(s)
+	return ok
 }
 
 // previewLine is the first non-blank line of a snippet, or the first one that

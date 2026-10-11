@@ -18,8 +18,12 @@ view that fits still answers inline),
 `overflow.go` (the shared store-or-passthrough helper over
 `overflow.threshold_bytes`, head/tail summary, searchable terms, `intent`
 excerpts, `ctx:` handle parsing), `ctxsearch.go` (the `ctx_search` tool and
-the `ctx:` handle reader), `background.go`, `find.go`
-(plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
+the `ctx:` handle reader), `background.go`, `find.go` (semantic search with
+three tagged sources: the decisions-model cascade as `jev`, the lexical
+fallback as `grep`, and the `codebase-memory` index as `graph` when one
+exists for the project, via `findgraph.go`; exact symbol-name graph hits
+rank first, an absent or failing index degrades to the two cascade sources,
+plus the `cascade.go` ranker), `grep.go` (exact and regex search: ripgrep
 via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
 (the Python bridge: a fresh `python3 -I` per call, a socket plus a generated
 `tools` module in a private temp dir, `ToolError` on refusal, `search`/`help`

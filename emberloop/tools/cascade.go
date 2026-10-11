@@ -26,11 +26,32 @@ type PassageRange struct {
 }
 
 // SearchHit represents a file match containing scored passage ranges.
+// Source names the index that produced the hit: "jev" (the decisions-model
+// cascade), "grep" (lexical ranking without the model) or "graph" (the
+// codebase-memory index). Symbol holds the graph symbol name when one is
+// known; it is empty for cascade hits.
 type SearchHit struct {
 	Path   string         `json:"path"`
 	Score  float64        `json:"score"`
 	Ranges []PassageRange `json:"ranges"`
+	Source string         `json:"source"`
+	Symbol string         `json:"symbol,omitempty"`
 }
+
+// Find hit sources. The cascade answers "jev" when the decisions model
+// ranked it and "grep" on the lexical fallback; the code graph answers
+// "graph".
+const (
+	SourceJev   = "jev"
+	SourceGrep  = "grep"
+	SourceGraph = "graph"
+)
+
+// GraphSource queries the codebase-memory index. It returns hits tagged
+// SourceGraph (the caller forces the tag when missing) or an error when the
+// query fails. A nil source, an error, or an empty result leaves the cascade
+// behavior unchanged: the caller drops the graph result silently.
+type GraphSource func(ctx context.Context, query string, keywords []string, root string) ([]SearchHit, error)
 
 // MergePassageRanges combines adjacent or overlapping ranges into continuous blocks,
 // preserving the highest probability score.
@@ -89,6 +110,9 @@ type CascadeSearcher struct {
 	model     string
 	threshold float64
 	workDir   string
+	// graph is the optional third source: the codebase-memory index. Nil
+	// means absent, and the search degrades to the jev and grep sources.
+	graph GraphSource
 	// agentID and findCallID attribute decision calls in the agent's usage
 	// log (ticket 04). They are set per Search from EL_AGENT_ID and a
 	// fresh id; empty means this search logs nothing.
@@ -113,6 +137,14 @@ func NewCascadeSearcher(provider systemone.Provider, model string, threshold flo
 		threshold: threshold,
 		workDir:   workDir,
 	}
+}
+
+// WithGraphSource attaches the codebase-memory index as find's third source.
+// Nil removes it. The searcher is not safe for concurrent Search calls, so
+// set this once before searching.
+func (c *CascadeSearcher) WithGraphSource(g GraphSource) *CascadeSearcher {
+	c.graph = g
+	return c
 }
 
 // Ignored directories mirror common build output and dependency folders.
@@ -386,7 +418,9 @@ func (c *CascadeSearcher) logFindCall(req systemone.Request, resp systemone.Resp
 	})
 }
 
-// Search executes the 4-stage cascade over candidate files.
+// Search executes the 4-stage cascade over candidate files, then merges the
+// optional graph source. A nil graph, a graph error, or an empty graph
+// result leaves the cascade answer unchanged.
 func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []string, targetDir string) ([]SearchHit, error) {
 	// One find-call id per search groups the decision calls of its stages
 	// in the calling agent's usage log. Outside a session there is no agent
@@ -408,18 +442,22 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 
 	// Stage 1: Lexical scan to isolate candidate files (cap 128)
 	candidates, err := c.stage1LexicalScan(ctx, searchRoot, keywords, query)
-	if err != nil || len(candidates) == 0 {
+	stageErr := err
+	if (err != nil || len(candidates) == 0) && c.graph == nil {
 		return nil, err
 	}
 
 	// Stage 2: Filename ranking via System One (cap 20)
-	topFiles, err := c.stage2FilenameRanking(ctx, candidates, query, keywords)
-	if err != nil {
-		topFiles = candidates
-		if len(topFiles) > 20 {
-			topFiles = topFiles[:20]
+	var topFiles []string
+	if len(candidates) > 0 {
+		topFiles, err = c.stage2FilenameRanking(ctx, candidates, query, keywords)
+		if err != nil {
+			topFiles = candidates
+			if len(topFiles) > 20 {
+				topFiles = topFiles[:20]
+			}
+		} else {
 		}
-	} else {
 	}
 
 	// Stage 3 & 4: Passage extraction, sketch scoring, and range verification
@@ -440,12 +478,87 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 			hits = append(hits, hit)
 		}
 	}
+	_ = unreadable
 
-	sort.Slice(hits, func(i, j int) bool {
+	if c.graph != nil && ctx.Err() == nil {
+		if ghits, gerr := c.graph(ctx, query, keywords, searchRoot); gerr == nil && len(ghits) > 0 {
+			for _, g := range ghits {
+				if g.Path == "" || len(g.Ranges) == 0 {
+					continue
+				}
+				if g.Source == "" {
+					g.Source = SourceGraph
+				}
+				if g.Score >= c.threshold {
+					hits = append(hits, g)
+				}
+			}
+		}
+		// A graph error is a downgrade, not a failure: the cascade hits
+		// stand, exactly as when the index is absent.
+	}
+
+	sortFindHits(hits, query, keywords)
+
+	// A stage-1 error with no hits anywhere stays an error: a failing graph
+	// must not turn "no search terms" into an empty success.
+	if len(hits) == 0 && stageErr != nil {
+		return nil, stageErr
+	}
+	return hits, nil
+}
+
+// cascadeSource names the cascade hit source for this searcher: the
+// decisions model ("jev") when one is wired, else the lexical fallback
+// ("grep").
+func (c *CascadeSearcher) cascadeSource() string {
+	if c.provider != nil {
+		return SourceJev
+	}
+	return SourceGrep
+}
+
+// sortFindHits orders merged hits with the existing score fusion, except
+// graph hits that name an exact symbol sort first: a symbol the index knows
+// by name outranks a scored passage guess.
+func sortFindHits(hits []SearchHit, query string, keywords []string) {
+	terms := extractTerms(query, keywords)
+	sort.SliceStable(hits, func(i, j int) bool {
+		ei, ej := isExactSymbolHit(hits[i], terms), isExactSymbolHit(hits[j], terms)
+		if ei != ej {
+			return ei
+		}
+		if hits[i].Score == hits[j].Score {
+			return hits[i].Path < hits[j].Path
+		}
 		return hits[i].Score > hits[j].Score
 	})
+}
 
-	return hits, nil
+// isExactSymbolHit reports whether a graph hit names a symbol that exactly
+// equals a search term. Only graph hits qualify: the cascade has no symbol
+// names, only passages. The match is case-insensitive; when the hit carries
+// no symbol, the file base name without extension stands in, so an index
+// that answers files still promotes an exact file-symbol match.
+func isExactSymbolHit(h SearchHit, terms []string) bool {
+	if h.Source != SourceGraph {
+		return false
+	}
+	names := []string{strings.TrimSpace(h.Symbol)}
+	if base := strings.TrimSuffix(filepath.Base(h.Path), filepath.Ext(h.Path)); base != "" {
+		names = append(names, base)
+	}
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		for _, t := range terms {
+			if strings.EqualFold(n, t) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // stage1LexicalScan locates candidate files containing keywords or query terms.
@@ -805,6 +918,7 @@ func (c *CascadeSearcher) processFilePassages(ctx context.Context, filePath, sea
 		Path:   relPath,
 		Score:  maxScore,
 		Ranges: merged,
+		Source: c.cascadeSource(),
 	}, nil
 }
 
