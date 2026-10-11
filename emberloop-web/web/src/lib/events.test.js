@@ -49,6 +49,13 @@ describe('cardForEvent maps every Event kind to a card', () => {
     expect(c.title).toBe('Handoff');
     expect(c.collapsed).toBe(true);
   });
+  it('renders a compressed Event as a divider', () => {
+    const c = cardForEvent({ seq: 1, kind: 'compressed', text: '{"number":2,"tokensBefore":5000,"model":"m","fallback":"deterministic"}' });
+    expect(c.card).toBe('divider');
+    expect(c.body).toContain('#2');
+    expect(c.body).toContain('5000 tokens before');
+    expect(c.body).toContain('deterministic');
+  });
   it('labels plain prompts as You', () => {
     expect(cardForEvent(ev(1, 'prompt', 'hi')).title).toBe('You');
   });

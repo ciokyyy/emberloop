@@ -263,10 +263,7 @@ func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id strin
 	s.active++
 	d.mu.Unlock()
 	if hb != nil {
-		go func() {
-			d.runHandoff(id, hb)
-			d.finishTurn(id)
-		}()
+		go d.runHandoff(id, hb)
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
 		return
 	}

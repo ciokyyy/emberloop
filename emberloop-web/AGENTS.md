@@ -86,7 +86,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   LLM), starts a fresh handle (`StartHandle`), rotates the resume token,
   stores `handoff-N.md` in the Session directory, appends a `compressed`
   Event and the Handoff prompt Event (`handoff:true`, `sender:"system"`), and
-  releases the old handle once the first turn on the new handle works. Session
+  runs the Handoff as the first turn through `runTurn` and releases the old handle once that turn works (or ends); compress instructions are ignored. Session
   ID, Event log and metadata stay. Tests: `handoff_test.go`.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
   <file> stdio` on the user's Grok subscription login, through the plain

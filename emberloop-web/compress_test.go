@@ -213,8 +213,8 @@ func TestCompressGuards(t *testing.T) {
 		t.Fatalf("handoff compress = %d %v, want 202", code, body)
 	}
 	waitEventKind(t, srv2.URL, pid, "compressed")
+	waitEventKind(t, srv2.URL, pid, "assistant_chunk")
 	waitStatus(t, srv2.URL, pid, "idle", 5*time.Second)
-	time.Sleep(100 * time.Millisecond)
 }
 
 // Messages sent during a compaction queue and deliver after it.

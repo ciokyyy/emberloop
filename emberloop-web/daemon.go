@@ -981,8 +981,17 @@ func modeLabel(mode string) string {
 // runTurn drives one backend turn, then drains the Daemon pending list in
 // turn order. Pig native queues drain inside the SDK Send, never here.
 func (d *Daemon) runTurn(id string, be Backend, text string, images []Image) {
+	d.runTurnWith(id, be, text, images, nil)
+}
+
+// runTurnWith is runTurn with an optional tap that sees every Backend event
+// before it is appended.
+func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image, tap func(kind, text, status string)) {
 	mark, harness, gated := d.gateBaseline(id)
 	promptBackend(be, id, text, images, func(kind, text, status string) {
+		if tap != nil {
+			tap(kind, text, status)
+		}
 		d.appendEvent(id, kind, text, status)
 	})
 	if gated {

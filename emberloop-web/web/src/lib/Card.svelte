@@ -145,6 +145,12 @@
       </div>
     {/if}
   </details>
+{:else if block.card === 'divider'}
+  <div class="flex animate-rise items-center gap-3 text-xs text-muted-foreground" data-card="divider">
+    <span class="h-px flex-1 bg-border"></span>
+    <span>{block.title}{#if block.body} · {block.body}{/if}</span>
+    <span class="h-px flex-1 bg-border"></span>
+  </div>
 {:else if block.card === 'status'}
   <div class="flex animate-rise justify-center" data-card="status">
     <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">Session {block.title}</span>

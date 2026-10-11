@@ -168,11 +168,18 @@ func lastUsedTokens(events []Event) int {
 	return 0
 }
 
-// runHandoff swaps the Session's handle. The caller marked the Session busy
-// and runs finishTurn after.
+// runHandoff swaps the Session's handle, then runs the Handoff as the first
+// turn on the new handle through the shared turn path (gate, Reviewer verdict,
+// Group delivery). The caller marked the Session busy; runHandoff settles it
+// with finishTurn. Instructions do not apply: the Handoff has no summarizer.
 func (d *Daemon) runHandoff(id string, hb handoffBackend) {
-	d.appendEvent(id, "status", "", "working")
-	defer d.appendEvent(id, "status", "", "idle")
+	settled := false
+	defer func() {
+		if !settled {
+			d.appendEvent(id, "status", "", "idle")
+			d.finishTurn(id)
+		}
+	}()
 
 	d.mu.Lock()
 	s, ok := d.sessions[id]
@@ -219,16 +226,21 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 	be := d.backendForLocked(meta.Harness)
 	d.mu.Unlock()
 
-	// The old handle goes once the first turn on the new one starts cleanly.
+	// The old handle goes once the first turn on the new one works, or when
+	// that turn ends without working.
 	var once sync.Once
-	promptBackend(be, id, text, nil, func(kind, t, status string) {
+	releaseOld := func() {
+		once.Do(func() {
+			if release != nil {
+				release()
+			}
+		})
+	}
+	defer releaseOld()
+	settled = true
+	d.runTurnWith(id, be, text, nil, func(kind, _, status string) {
 		if kind == "status" && status == "working" {
-			once.Do(func() {
-				if release != nil {
-					release()
-				}
-			})
+			releaseOld()
 		}
-		d.appendEvent(id, kind, t, status)
 	})
 }
