@@ -31,6 +31,9 @@ type FakeBackend struct {
 	UsageSize int
 	// StartErr, when set, makes StartHandle fail.
 	StartErr error
+	// HandoffTurnErr, when set, makes a Handoff prompt report an error
+	// Event before it ever works.
+	HandoffTurnErr string
 
 	mu       sync.Mutex
 	stop     map[string]chan struct{}
@@ -56,6 +59,11 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 		}
 		f.mu.Unlock()
 	}()
+	if f.HandoffTurnErr != "" && strings.HasPrefix(text, "# Handoff") {
+		appendEvent("error", f.HandoffTurnErr, "")
+		appendEvent("status", "", "idle")
+		return
+	}
 	appendEvent("status", "", "working")
 	delay := f.Delay
 	if delay <= 0 {

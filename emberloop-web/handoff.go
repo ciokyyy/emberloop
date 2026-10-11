@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Handoff compress: the Daemon builds one Handoff document from the Event log
@@ -25,7 +26,6 @@ type handoffBackend interface {
 type HandoffEvent struct {
 	Number       int    `json:"number"`
 	TokensBefore int    `json:"tokensBefore"`
-	Model        string `json:"model"`
 	Fallback     string `json:"fallback"`
 }
 
@@ -169,9 +169,10 @@ func lastUsedTokens(events []Event) int {
 }
 
 // runHandoff swaps the Session's handle, then runs the Handoff as the first
-// turn on the new handle through the shared turn path (gate, Reviewer verdict,
-// Group delivery). The caller marked the Session busy; runHandoff settles it
-// with finishTurn. Instructions do not apply: the Handoff has no summarizer.
+// turn on the new handle through the shared turn path. That turn skips the
+// submit gate, auto-compress and the Reviewer verdict hook; Group delivery
+// and finishTurn still run. The caller marked the Session busy; runHandoff
+// settles it. Instructions do not apply: the Handoff has no summarizer.
 func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 	settled := false
 	defer func() {
@@ -216,7 +217,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 		cur.turnsSinceCompress = 0
 	}
 	d.mu.Unlock()
-	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: "", Fallback: "deterministic"}.text(), "")
+	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Fallback: "deterministic"}.text(), "")
 
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {
@@ -237,17 +238,17 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 			}
 		})
 	}
-	failed := false
+	var failed atomic.Bool
 	settled = true
 	d.runTurnWith(id, be, text, nil, true, func(kind, _, status string) {
 		switch {
 		case kind == "status" && status == "working":
 			releaseOld()
 		case kind == "error":
-			failed = true
+			failed.Store(true)
 		}
 	})
-	if !failed {
+	if !failed.Load() {
 		releaseOld()
 	}
 }
