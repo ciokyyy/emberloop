@@ -25,7 +25,7 @@ func postInterrupt(t *testing.T, base, id string) (int, map[string]any) {
 // turn, and leaves the Session idle and usable.
 func TestInterruptStopsWorkingPigSession(t *testing.T) {
 	d, pb := newPigDaemon(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
@@ -48,7 +48,7 @@ func TestInterruptStopsWorkingPigSession(t *testing.T) {
 
 func TestInterruptIdleSessionReportsFalse(t *testing.T) {
 	d, _ := newPigDaemon(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	code, body := postInterrupt(t, srv.URL, id)

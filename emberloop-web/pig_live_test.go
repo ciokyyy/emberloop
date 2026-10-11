@@ -59,7 +59,7 @@ func TestLivePigBackend(t *testing.T) {
 	pb := NewPigBackend(liveEchoTool{calls: &calls})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.RegisterBackend("pig", pb)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "pig", model, tempDir(t))

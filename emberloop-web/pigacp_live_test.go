@@ -23,7 +23,7 @@ func TestLivePigACP(t *testing.T) {
 		model = "opencode-go/muse-spark-1.3-contributor"
 	}
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	be, err := NewPigACPBackend(tempDir(t), bin, srv.URL)
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 // Slice 1: a directory with no spec returns an empty list.
 func TestListSpecsEmptyDir(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/specs?repo=" + url.QueryEscape(tempDir(t)))
@@ -49,7 +49,7 @@ func TestListSpecsFindsSpecWithTitleAndCount(t *testing.T) {
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [ ] a box\n")
 	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Blocked by:** 01\n\n- [ ] a box\n")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/specs?repo=" + url.QueryEscape(repo))
 	if err != nil {
@@ -113,7 +113,7 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [x] done box\n- [ ] todo box\n")
 	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Blocked by:** 01\n\n- [ ] a box\n")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	spec := filepath.Join(repo, ".scratch", "demo", "spec.md")
 	resp, err := http.Get(srv.URL + "/api/specs/preview?spec=" + url.QueryEscape(spec))
@@ -163,7 +163,7 @@ func TestSpecPreviewBadBlockedByIsRowError(t *testing.T) {
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [ ] a box\n")
 	writeFile(t, repo, ".scratch/demo/issues/02-bad.md", "# 02: Bad\n\n**Blocked by** none\n\n- [ ] a box\n")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	spec := filepath.Join(repo, ".scratch", "demo", "spec.md")
 	resp, err := http.Get(srv.URL + "/api/specs/preview?spec=" + url.QueryEscape(spec))

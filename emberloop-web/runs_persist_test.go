@@ -111,7 +111,7 @@ func runFileRows(t *testing.T, stateDir, id string) map[string]map[string]any {
 func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	repo, spec := initRunRepo(t, chainTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -205,7 +205,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -235,7 +235,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	srv.Close()
 
 	d2 := NewDaemon(stateDir, NewFakeBackend())
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 
 	r = getRun(t, srv2.URL, run.ID)
@@ -284,7 +284,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 func TestPauseResumeValidation(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -326,7 +326,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 		}
 		repo, spec := initRunRepo(t, tickets)
 		d := NewDaemon(tempDir(t), NewFakeBackend())
-		srv := httptest.NewServer(d.Handler())
+		srv := httptest.NewServer(authedHandler(t, d))
 		run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 		if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
 			srv.Close()
@@ -398,7 +398,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -427,7 +427,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 
 	d2 := NewDaemon(stateDir, NewFakeBackend())
 	d2.ResumeAfterRestart()
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	r = getRun(t, srv2.URL, run.ID)
 	if r.Status != "running" {

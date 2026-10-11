@@ -62,12 +62,12 @@ func TestUsesSudo(t *testing.T) {
 // reaches the Session.
 func TestSudoRequestApproveDeliversTOON(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	// Gate through the real HTTP client the MCP server uses.
-	gate := tools.HTTPSudoGate(srv.URL, id)
+	gate := tools.HTTPSudoGate(srv.URL, id, "")
 	msg, taken := gate(t.Context(), tempDir(t), "sudo echo hello-from-root")
 	if !taken || !strings.Contains(msg, "sent to the user") {
 		t.Fatalf("gate = %q, %v", msg, taken)
@@ -101,7 +101,7 @@ func TestSudoRequestApproveDeliversTOON(t *testing.T) {
 
 func TestSudoDenyDeliversDenied(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postJSON(t, srv.URL+"/api/sessions/"+id+"/sudo", map[string]any{"command": "sudo reboot"})

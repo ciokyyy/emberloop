@@ -177,7 +177,7 @@ func getSnapshot(t *testing.T, base, id, query string) (events []Event, hasMore 
 func TestSessionTailBeforePagingOverHTTP(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedDirectSession(d, "s1", mkEvents(4)) // prompts at seqs 1,4,7,10
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	// Full for old clients: everything, no more.
@@ -231,7 +231,7 @@ func TestSessionSnapshotCompactsOverHTTP(t *testing.T) {
 		{Kind: "tool_call_updated", Text: toolText("a", "echo hi", "hi")},
 		{Kind: "assistant_chunk", Text: "done"},
 	})
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	events, _, _ := getSnapshot(t, srv.URL, "s1", "")
@@ -271,7 +271,7 @@ func readAll(t *testing.T, resp *http.Response) string {
 
 func TestSPAFallback(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	get := func(path string) (int, string) {

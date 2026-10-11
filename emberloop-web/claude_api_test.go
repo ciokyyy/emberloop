@@ -19,7 +19,7 @@ func TestClaudeSessionOverAPIStreamsEvents(t *testing.T) {
 	stub := &stubConn{updates: []map[string]any{chunk("real answer")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -40,7 +40,7 @@ func TestClaudeSessionCreationValidates(t *testing.T) {
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	body, _ := json.Marshal(map[string]string{"harness": "claude", "model": "gpt-9", "workDir": tempDir(t)})
@@ -54,7 +54,7 @@ func TestClaudeSessionCreationValidates(t *testing.T) {
 	}
 
 	plain := NewDaemon(tempDir(t), NewFakeBackend())
-	srv2 := httptest.NewServer(plain.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, plain))
 	defer srv2.Close()
 	body, _ = json.Marshal(map[string]string{"harness": "claude", "model": "sonnet", "workDir": tempDir(t)})
 	resp, err = http.Post(srv2.URL+"/api/sessions", "application/json", bytes.NewReader(body))
@@ -72,7 +72,7 @@ func TestClaudeSessionCreationValidates(t *testing.T) {
 func TestClaudeStartFailureRemovesSession(t *testing.T) {
 	be := newStubClaudeBackend(func() (acpConn, error) { return &stubConn{newErr: errNoAdapter}, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	body, _ := json.Marshal(map[string]string{"harness": "claude", "model": "sonnet", "workDir": tempDir(t)})
@@ -107,7 +107,7 @@ func TestClaudeStartFailureRemovesSession(t *testing.T) {
 
 func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	for harness, want := range map[string][]string{

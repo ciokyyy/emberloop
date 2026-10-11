@@ -39,29 +39,35 @@ mkdir -p "$tmp/state" "$tmp/work"
 "$tmp/emberloop-web" -addr "127.0.0.1:$PORT" -state-dir "$tmp/state" -restart-check 0 >"$tmp/daemon.log" 2>&1 &
 daemon=$!
 base="http://127.0.0.1:$PORT"
+# The Daemon gates /api with its machine token, written to its state dir at start.
+token=""
 for _ in $(seq 1 50); do
-  curl -sf "$base/api/health" >/dev/null 2>&1 && break
+  token="$(cat "$tmp/state/enderbloom/daemon.token" 2>/dev/null)" && [ -n "$token" ] && break
+  sleep 0.2
+done
+for _ in $(seq 1 50); do
+  curl -H "Authorization: Bearer $token" -sf "$base/api/health" >/dev/null 2>&1 && break
   sleep 0.2
 done
 
 create() { # effort -> session id
-  curl -s -X POST "$base/api/sessions" -H 'Content-Type: application/json' \
+  curl -H "Authorization: Bearer $token" -s -X POST "$base/api/sessions" -H 'Content-Type: application/json' \
     -d "$(python3 -c 'import json,sys; print(json.dumps({"harness":"claude","model":sys.argv[1],"effort":sys.argv[2],"workDir":sys.argv[3]}))' "$MODEL" "$1" "$tmp/work")"
 }
 run_one() { # effort -> stats line
   local effort="$1" id start end status
   id="$(create "$effort" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
   echo "session $effort: $id" >&2
-  curl -s -X POST "$base/api/sessions/$id/prompt" -H 'Content-Type: application/json' \
+  curl -H "Authorization: Bearer $token" -s -X POST "$base/api/sessions/$id/prompt" -H 'Content-Type: application/json' \
     -d "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$PROMPT")" >/dev/null
   start="$(date +%s)"
   while :; do
-    status="$(curl -s "$base/api/sessions/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"]["status"])')"
+    status="$(curl -H "Authorization: Bearer $token" -s "$base/api/sessions/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"]["status"])')"
     [ "$status" = idle ] || [ "$status" = failed ] && break
     sleep 5
   done
   end="$(date +%s)"
-  curl -s "$base/api/sessions/$id" | EFFORT="$effort" WALL="$((end - start))" STATUS="$status" python3 -c '
+  curl -H "Authorization: Bearer $token" -s "$base/api/sessions/$id" | EFFORT="$effort" WALL="$((end - start))" STATUS="$status" python3 -c '
 import json, os, sys
 body = json.load(sys.stdin)
 think = sum(len(e.get("text", "")) for e in body["events"] if e.get("kind") == "thinking_chunk")

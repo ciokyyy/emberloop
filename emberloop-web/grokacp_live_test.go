@@ -18,7 +18,7 @@ func TestLiveGrokACP(t *testing.T) {
 		t.Skip("set EL_LIVE_GROK=1 (grok logged in, el-mcp on PATH) for the grok probe")
 	}
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	be, err := NewGrokACPBackend(tempDir(t), srv.URL)
 	if err != nil {

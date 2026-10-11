@@ -67,7 +67,7 @@ func TestClaudeSessionGetsTitle(t *testing.T) {
 	title := &stubConn{updates: []map[string]any{chunk("**Fix flaky retry test**")}}
 	be := newStubClaudeBackend(stubSequence(own, title))
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -104,7 +104,7 @@ func TestTitleFailureLeavesLabel(t *testing.T) {
 	title := &stubConn{promptErr: errNoAdapter}
 	be := newStubClaudeBackend(stubSequence(own, title))
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -123,7 +123,7 @@ func TestTitleFailureLeavesLabel(t *testing.T) {
 func TestNoTitleWithoutRole(t *testing.T) {
 	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "settings.json"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -148,7 +148,7 @@ func TestPigSessionGetsTitleFromRole(t *testing.T) {
 	pb := newPigTestBackend(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	d.RegisterBackend("pig", pb)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))

@@ -369,3 +369,22 @@ func TestWebProxiesStayOutOfExecute(t *testing.T) {
 		t.Error("read must stay script-callable")
 	}
 }
+
+// Every Daemon proxy call presents the machine token from the environment.
+func TestWebProxySendsMachineToken(t *testing.T) {
+	t.Setenv(SudoGateTokenEnv, "machine-secret")
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	resp, err := webProxyGet(context.Background(), srv.URL+"/api/sessions/s1/queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if auth != "Bearer machine-secret" {
+		t.Fatalf("Authorization = %q, want the machine token", auth)
+	}
+}

@@ -303,7 +303,7 @@ func TestGrokPromptReachesAgentWithReminder(t *testing.T) {
 
 func TestUnregisteredGrokHarnessAnswers503(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/models?harness=grok")
 	if err != nil {

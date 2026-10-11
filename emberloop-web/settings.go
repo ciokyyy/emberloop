@@ -95,6 +95,7 @@ func settingsView() map[string]any {
 		"session_titles":          sessionTitlesSetting(),
 		"session_titles_from_env": titlesFromEnv(),
 		"compress":                readCompressSettings(),
+		"signup_enabled":          signupEnabledSetting(),
 	}
 }
 
@@ -108,11 +109,18 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Roles         map[string]roleSetting `json:"roles"`
 			MaxWorkers    *int                   `json:"max_workers"`
 			SessionTitles *bool                  `json:"session_titles"`
+			SignupEnabled *bool                  `json:"signup_enabled"`
 			Compress      *compressPatch         `json:"compress"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
+		}
+		if body.SignupEnabled != nil {
+			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
+				http.Error(w, "only the admin can change signup", http.StatusForbidden)
+				return
+			}
 		}
 		if msg := body.Compress.validate(); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
@@ -169,6 +177,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			raw, _ := json.Marshal(*body.SessionTitles)
 			all["session_titles"] = raw
 		}
+		if body.SignupEnabled != nil {
+			raw, _ := json.Marshal(*body.SignupEnabled)
+			all["signup_enabled"] = raw
+		}
 		body.Compress.apply(all)
 		out, _ := json.MarshalIndent(all, "", "  ")
 		p := settingsFile()
@@ -187,4 +199,22 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// signupEnabledSetting reads signup_enabled. Unset means on. An unreadable
+// settings file means off, so signup fails closed.
+func signupEnabledSetting() bool {
+	all, err := readSettingsMap()
+	if err != nil {
+		return false
+	}
+	raw, ok := all["signup_enabled"]
+	if !ok {
+		return true
+	}
+	var on bool
+	if err := json.Unmarshal(raw, &on); err != nil {
+		return false
+	}
+	return on
 }

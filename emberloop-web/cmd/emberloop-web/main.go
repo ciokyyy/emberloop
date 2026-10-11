@@ -25,6 +25,9 @@ func main() {
 	if len(os.Args) > 2 && os.Args[1] == web.PigShimMode {
 		os.Exit(web.RunPigShim(os.Args[2], os.Args[3:], os.Getenv("EL_PIG_STEER_SOCK")))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "user" {
+		os.Exit(runUserCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to bind")
 	stateDir := flag.String("state-dir", defaultStateDir(), "pig state directory (Sessions live in its enderbloom subtree)")
 	restartDrain := flag.Duration("restart-drain", 5*time.Minute, "longest wait for Sessions to go idle after a restart request")
@@ -62,6 +65,7 @@ func main() {
 	pig := web.NewPigBackend()
 	pig.SharedTools = true
 	pig.DaemonURL = daemonURL
+	pig.DaemonToken = d.MachineToken()
 	pig.LogDir = filepath.Join(*stateDir, "enderbloom", "pig-logs")
 	pig.Spawn = func(parentID string, agents []web.SpawnAgent, deliver string) (string, []web.SessionMeta, error) {
 		gid, kids, code, msg := d.Spawn(parentID, agents, deliver)
@@ -99,7 +103,7 @@ func main() {
 		return outcome, nil
 	}
 	pig.SudoGate = func(sessionID string) func(context.Context, string, string) (string, bool) {
-		return tools.HTTPSudoGate(daemonURL, sessionID)
+		return tools.HTTPSudoGate(daemonURL, sessionID, d.MachineToken())
 	}
 	d.RegisterBackend("pig", pig)
 	exe, err := os.Executable()
@@ -114,6 +118,7 @@ func main() {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "el-web: pig over ACP unavailable, using the SDK:", err)
 		} else {
+			acp.SetDaemonToken(d.MachineToken())
 			d.RegisterBackend("pig", acp)
 		}
 	}
@@ -122,10 +127,12 @@ func main() {
 	if grok, err := web.NewGrokACPBackend(*stateDir, daemonURL); err != nil {
 		fmt.Fprintln(os.Stderr, "el-web: grok harness unavailable:", err)
 	} else {
+		grok.SetDaemonToken(d.MachineToken())
 		d.RegisterBackend("grok", grok)
 	}
 	claude := web.NewClaudeBackend()
 	claude.SetDaemonAddr(daemonURL)
+	claude.SetDaemonToken(d.MachineToken())
 	d.WithClaudeBackend(claude)
 	go watchForUpdate(d, exe, *restartCheck)
 	go watchForRestartRequest(d, exe, *restartDrain)

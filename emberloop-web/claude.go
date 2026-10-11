@@ -189,6 +189,9 @@ type ClaudeBackend struct {
 	// over HTTP for the Daemon-hosted tools and sudo approvals. Empty leaves
 	// Sessions with an unbound base server.
 	daemonAddr string
+	// daemonToken is the Daemon machine token. The el MCP server sends it as
+	// EL_WEB_TOKEN so its callbacks pass the /api gate (see auth.go).
+	daemonToken string
 	// allowedTools overrides the default MCP allow-list; the live probe
 	// points it at the echo server's tool.
 	allowedTools []string
@@ -674,6 +677,14 @@ func (b *ClaudeBackend) SetDaemonAddr(daemonAddr string) {
 	b.daemonAddr = daemonAddr
 }
 
+// SetDaemonToken sets the machine token the el MCP server presents on its
+// Daemon callbacks.
+func (b *ClaudeBackend) SetDaemonToken(token string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.daemonToken = token
+}
+
 func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
 	return b.mcpServersFor("", "web")
 }
@@ -725,6 +736,9 @@ func (b *ClaudeBackend) mcpServersFor(sessionID, role string) ([]acpMCPServer, e
 		base.Env = [][2]string{
 			{"EL_WEB_PARENT", sessionID},
 			{"EL_WEB_DAEMON_URL", b.daemonAddr},
+		}
+		if b.daemonToken != "" {
+			base.Env = append(base.Env, [2]string{"EL_WEB_TOKEN", b.daemonToken})
 		}
 	}
 	base.Env = append(base.Env, b.mcpEnv...)

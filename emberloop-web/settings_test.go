@@ -25,7 +25,7 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 	t.Setenv("EL_SETTINGS", settings)
 	t.Setenv("EL_MAX_WORKERS", "")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
 	return srv, settings
 }

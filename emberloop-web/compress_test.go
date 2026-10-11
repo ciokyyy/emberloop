@@ -133,7 +133,7 @@ func TestCompressManualRunsAndReportsResult(t *testing.T) {
 	be := newCompactFake()
 	be.used = 900
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
@@ -163,7 +163,7 @@ func TestCompressFailureIsReportedAndSessionRecovers(t *testing.T) {
 	be := newCompactFake()
 	be.err = errString("summary model unavailable")
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
@@ -189,7 +189,7 @@ func TestCompressGuards(t *testing.T) {
 	be := newCompactFake()
 	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
@@ -206,7 +206,7 @@ func TestCompressGuards(t *testing.T) {
 
 	// A Backend without in-place compaction swaps by Handoff.
 	plain := NewDaemon(tempDir(t), NewFakeBackend())
-	srv2 := httptest.NewServer(plain.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, plain))
 	defer srv2.Close()
 	pid := createSession(t, srv2.URL, "fake", "fake-model", tempDir(t))
 	if code, body := compressReq(t, srv2.URL, pid, ""); code != http.StatusAccepted {
@@ -224,7 +224,7 @@ func TestCompressQueuesMessagesUntilDone(t *testing.T) {
 	be.used = 900
 	be.hold = make(chan struct{})
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
@@ -271,7 +271,7 @@ func TestAutoCompress(t *testing.T) {
 			useSettings(t, tc.settings)
 			be := newCompactFake()
 			d := NewDaemon(tempDir(t), be)
-			srv := httptest.NewServer(d.Handler())
+			srv := httptest.NewServer(authedHandler(t, d))
 			defer srv.Close()
 			id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 			for i := 0; i < tc.prompts; i++ {
@@ -295,7 +295,7 @@ func TestAutoCompress(t *testing.T) {
 func TestCompressSettings(t *testing.T) {
 	useSettings(t, "")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	get := func() compressSettings {
@@ -350,7 +350,7 @@ func TestCompressSettings(t *testing.T) {
 func TestPigCompressUsesSDKCompaction(t *testing.T) {
 	useSettings(t, `{"auto_compress":false}`)
 	d, _ := newPigDaemon(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 

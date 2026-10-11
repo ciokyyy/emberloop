@@ -13,7 +13,7 @@ import (
 // spawned payload; an empty name falls back to four prompt words.
 func TestSpawnNamesAndFallback(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	base := srv.URL
 
@@ -83,7 +83,7 @@ func TestAgentDisplayName(t *testing.T) {
 // An unknown deliver mode is refused with no half Group.
 func TestSpawnUnknownDeliverRefused(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	base := srv.URL
 
@@ -102,7 +102,7 @@ func TestSpawnUnknownDeliverRefused(t *testing.T) {
 // Each delivery sends one notice per child as it settles.
 func TestDeliverEachSendsOneNoticePerChild(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	base := srv.URL
 

@@ -108,7 +108,7 @@ func quotaEnv(t *testing.T, stub *quotaStubState, auth string) (base, stateDir s
 	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
 	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	api := httptest.NewServer(d.Handler())
+	api := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(api.Close)
 	return api.URL, stateDir
 }

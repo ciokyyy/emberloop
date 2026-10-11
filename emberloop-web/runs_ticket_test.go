@@ -159,7 +159,7 @@ func TestReviewerSubmitRefused409(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -196,7 +196,7 @@ func TestReviewerMessagesRefused409(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -248,7 +248,7 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 		return "", false
 	}
 	d := NewDaemon(tempDir(t), fb)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -298,7 +298,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	})
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -343,7 +343,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	srv.Close()
 
 	d2 := NewDaemon(stateDir, NewFakeBackend())
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	er2 := getExtRun(t, srv2.URL, run.ID)
 	tk2 := extTicketByID(er2, "01-first")
@@ -370,7 +370,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	d3 := NewDaemon(legacyDir, NewFakeBackend())
-	srv3 := httptest.NewServer(d3.Handler())
+	srv3 := httptest.NewServer(authedHandler(t, d3))
 	defer srv3.Close()
 	resp, err := http.Get(srv3.URL + "/api/runs/run-legacy")
 	if err != nil {
@@ -389,7 +389,7 @@ func TestHeldPassNoRerun(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -453,7 +453,7 @@ func TestRunTicketJSONExposesPageFields(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -585,7 +585,7 @@ func TestRunSSEPublishesTicketChanges(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -625,7 +625,7 @@ func TestRunSSEPublishesScoutAgent(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -665,7 +665,7 @@ func TestRunNeedsYouReasonSameRefusal(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")

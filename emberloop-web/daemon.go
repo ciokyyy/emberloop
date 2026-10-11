@@ -59,6 +59,10 @@ type Daemon struct {
 	// sttKeyFn overrides the OpenRouter key lookup (tests).
 	sttKeyFn func(context.Context) string
 	stateDir string
+	// users are the accounts under stateDir. machineToken is the bearer that
+	// local machine clients send (see auth.go).
+	users        *userStore
+	machineToken string
 	// projects are the recorded working directories; projMu guards them.
 	projMu   sync.Mutex
 	projects []Project
@@ -182,6 +186,12 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		submits:   map[string]*submitRec{},
 		restartCh: make(chan struct{}, 1),
 	}
+	d.users = newUserStore(stateDir)
+	tok, err := newMachineToken(stateDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "el-web: machine token:", err)
+	}
+	d.machineToken = tok
 	d.load()
 	d.loadGroups()
 	d.loadRuns()
@@ -214,7 +224,8 @@ func (d *Daemon) hasBackend(harness string) bool {
 	return ok
 }
 
-// Handler returns the full HTTP handler with the loopback guard applied.
+// Handler returns the full HTTP handler: the loopback guard, then the cookie
+// or machine-token gate on every /api route except the auth routes.
 func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", d.serveUI)
@@ -236,8 +247,16 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/version", d.handleVersion)
 	mux.HandleFunc("/api/health", d.handleHealth)
 	mux.HandleFunc("/api/restart", d.handleRestart)
-	return guardHosts(mux, d.allowHosts, d.allowTailnet)
+	mux.HandleFunc("/api/auth/signup", d.handleSignup)
+	mux.HandleFunc("/api/auth/login", d.handleLogin)
+	mux.HandleFunc("/api/auth/logout", d.handleLogout)
+	mux.HandleFunc("/api/auth/me", d.handleMe)
+	return guardHosts(d.requireRequester(mux), d.allowHosts, d.allowTailnet)
 }
+
+// MachineToken is the bearer that local machine clients send to this Daemon:
+// agent callbacks and the el CLI. main wires it into the agent backends.
+func (d *Daemon) MachineToken() string { return d.machineToken }
 
 // WithClaudeBackend routes harness "claude" Sessions to the ACP backend.
 // It also registers the backend so the generic harness lookup finds it.

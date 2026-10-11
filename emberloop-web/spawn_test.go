@@ -30,7 +30,7 @@ func postSpawn(t *testing.T, base, parent string, body any) (int, map[string]any
 // each recording its parent and Group.
 func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -86,7 +86,7 @@ func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
 // nests them underneath it.
 func TestSpawnedSessionsNestUnderParent(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -132,7 +132,7 @@ func TestSpawnedSessionsNestUnderParent(t *testing.T) {
 // one grouped result as a Steer.
 func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -186,7 +186,7 @@ func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
 // Slice 3: a scout Subagent is read-only: user sends are refused.
 func TestScoutSubagentCannotWrite(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -247,7 +247,7 @@ func countKind(events []Event, kind string) int {
 // The parent transcript names every spawn and the one grouped finish.
 func TestSpawnEmitsParentNotifications(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -281,7 +281,7 @@ func TestSpawnEmitsParentNotifications(t *testing.T) {
 func TestSpawnOverCapRefusesWithoutHalfGroup(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -321,7 +321,7 @@ func (b *flakyBackend) CreateSession(meta SessionMeta, emit func(kind, text, sta
 func TestSpawnFailureRollsBackGroup(t *testing.T) {
 	be := &flakyBackend{FakeBackend: NewFakeBackend()}
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -346,7 +346,7 @@ func TestSpawnFailureRollsBackGroup(t *testing.T) {
 func TestRestartAfterDeliveryNeverResends(t *testing.T) {
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -379,7 +379,7 @@ func TestRestartAfterDeliveryNeverResends(t *testing.T) {
 	}
 	// Restart: the reloaded Daemon must not deliver again.
 	d2 := NewDaemon(stateDir, NewFakeBackend())
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	time.Sleep(300 * time.Millisecond)
 	_, events := sessionMeta(t, srv2.URL, parent)
@@ -394,7 +394,7 @@ func TestEndedParentKeepsMarkerWithoutSteer(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))

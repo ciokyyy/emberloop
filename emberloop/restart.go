@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -40,16 +41,23 @@ func RunRestart(argv []string, out io.Writer) error {
 		}
 	}
 	base = strings.TrimRight(base, "/")
-	return requestRestart(base, *wait, out, 6*time.Minute)
+	return requestRestart(base, restartToken(*dev), *wait, out, 6*time.Minute)
 }
 
-func requestRestart(base string, wait bool, out io.Writer, timeout time.Duration) error {
+func requestRestart(base, token string, wait bool, out io.Writer, timeout time.Duration) error {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(base+"/api/restart", "application/json", nil)
+	req, err := http.NewRequest(http.MethodPost, base+"/api/restart", nil)
+	if err != nil {
+		return fmt.Errorf("el restart: %w", err)
+	}
+	resp, err := client.Do(withDaemonToken(req, token))
 	if err != nil {
 		return fmt.Errorf("el restart: Daemon at %s unreachable: %w", base, err)
 	}
 	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("el restart: Daemon refused the machine token: set EL_WEB_TOKEN to the token in <state dir>/enderbloom/daemon.token")
+	}
 	if resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("el restart: Daemon answered %s (is it an older build? run el update)", resp.Status)
 	}
@@ -60,7 +68,7 @@ func requestRestart(base string, wait bool, out io.Writer, timeout time.Duration
 	deadline := time.Now().Add(timeout)
 	down := false
 	for time.Now().Before(deadline) {
-		ok := healthy(client, base)
+		ok := healthy(client, base, token)
 		if !ok {
 			down = true
 		} else if down {
@@ -72,11 +80,65 @@ func requestRestart(base string, wait bool, out io.Writer, timeout time.Duration
 	return fmt.Errorf("el restart: Daemon did not come back within %s", timeout)
 }
 
-func healthy(c *http.Client, base string) bool {
-	resp, err := c.Get(base + "/api/health")
+func healthy(c *http.Client, base, token string) bool {
+	req, err := http.NewRequest(http.MethodGet, base+"/api/health", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := c.Do(withDaemonToken(req, token))
 	if err != nil {
 		return false
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// restartToken is the machine token el restart sends to the target Daemon: EL_WEB_TOKEN,
+// else the token file of the target Daemon state dir.
+func restartToken(dev bool) string {
+	if tok := strings.TrimSpace(os.Getenv("EL_WEB_TOKEN")); tok != "" {
+		return tok
+	}
+	return readTokenFile(defaultTokenPath(dev))
+}
+
+// readTokenFile returns the machine token stored at path, or "" if unreadable.
+func readTokenFile(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// defaultTokenPath is the token file of the target Daemon's default state dir:
+// pig for prod, pig-dev for --dev (EL_WEB_DEV_STATE overrides it). Both sit
+// under XDG_DATA_HOME, else ~/.local/share.
+func defaultTokenPath(dev bool) string {
+	if dev {
+		if dir := os.Getenv("EL_WEB_DEV_STATE"); dir != "" {
+			return filepath.Join(dir, "enderbloom", "daemon.token")
+		}
+	}
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		dataHome = filepath.Join(home, ".local", "share")
+	}
+	name := "pig"
+	if dev {
+		name = "pig-dev"
+	}
+	return filepath.Join(dataHome, name, "enderbloom", "daemon.token")
+}
+
+// withDaemonToken sets the machine token on a request to the Daemon.
+func withDaemonToken(req *http.Request, token string) *http.Request {
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return req
 }

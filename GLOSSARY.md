@@ -8,6 +8,14 @@ A browser UI and local daemon that run coding-agent sessions and show them live.
 The local Go process that owns every Session, talks to Backends, and serves the UI over HTTP and server-sent events.
 _Avoid_: Server, backend service
 
+**User**:
+A signed-in account on the Daemon, with a username, a password and an admin flag. The first signup is the admin.
+_Avoid_: Account, member, login
+
+**Machine token**:
+The Daemon's bearer token for local machine clients: agent callbacks and the `el` CLI. It is not a User, so it cannot write admin-only settings.
+_Avoid_: API key, service token
+
 **Session**:
 One conversation between a user and one agent, with a harness, a model and a working directory. Persisted as an event log.
 _Avoid_: Chat, thread, run

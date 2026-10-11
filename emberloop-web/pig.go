@@ -42,6 +42,8 @@ type PigBackend struct {
 	// DaemonURL is the Daemon base URL a Run worker's submit tool posts to;
 	// empty leaves Run workers without submit.
 	DaemonURL string
+	// DaemonToken is the machine token the submit callback sends (see auth.go).
+	DaemonToken string
 	// CheckChild peeks at the calling Session's Subagents. The Daemon wires
 	// it to its CheckChildren (empty child) and CheckChild; nil keeps
 	// Sessions check-free.
@@ -110,7 +112,7 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 		}
 	}
 	if meta.RunWorker && b.DaemonURL != "" {
-		tools = append(tools, &submitAgentTool{session: meta.ID, daemonURL: b.DaemonURL})
+		tools = append(tools, &submitAgentTool{session: meta.ID, daemonURL: b.DaemonURL, daemonToken: b.DaemonToken})
 	}
 	if !meta.Scout {
 		if b.Spawn != nil {
@@ -208,8 +210,9 @@ func (t *steerAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.
 // to the same submit route the el MCP proxy uses, so a done submit starts the
 // ticket's reviewers on every harness alike.
 type submitAgentTool struct {
-	session   string
-	daemonURL string
+	session     string
+	daemonURL   string
+	daemonToken string
 }
 
 func (t *submitAgentTool) Name() string  { return "submit" }
@@ -244,6 +247,9 @@ func (t *submitAgentTool) Execute(ctx context.Context, _ string, params json.Raw
 		return agent.AgentToolResult{}, fmt.Errorf("submit: %w", err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
+	if t.daemonToken != "" {
+		hreq.Header.Set("Authorization", "Bearer "+t.daemonToken)
+	}
 	resp, err := http.DefaultClient.Do(hreq)
 	if err != nil {
 		return agent.AgentToolResult{}, fmt.Errorf("submit: %w", err)

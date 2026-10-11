@@ -349,7 +349,7 @@ var probeWebHealth = func(bin string) error {
 	if err != nil {
 		return err
 	}
-	return waitHealthy(url+"/api/health", 20*time.Second)
+	return waitHealthy(url+"/api/health", readTokenFile(filepath.Join(stateDir, "enderbloom", "daemon.token")), 20*time.Second)
 }
 
 // awaitDaemonURL reads the "el-web on <url>" line the Daemon prints once it
@@ -380,11 +380,15 @@ func awaitDaemonURL(stdout io.Reader) (string, error) {
 // waitHealthy polls a health endpoint until it answers ok or the timeout
 // passes. A wait that only fails is a false alarm about a slow disk away
 // from stranding prod, so every error reads as what it saw last.
-func waitHealthy(url string, timeout time.Duration) error {
+func waitHealthy(url, token string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	last := "no response yet"
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := http.DefaultClient.Do(withDaemonToken(req, token))
 		if err != nil {
 			last = err.Error()
 		} else {

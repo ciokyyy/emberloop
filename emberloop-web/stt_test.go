@@ -29,7 +29,7 @@ func TestSTTProxiesAudioToOpenRouter(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	res, err := http.Post(srv.URL+"/api/stt", "audio/webm;codecs=opus", bytes.NewReader([]byte("AUDIO")))
@@ -53,7 +53,7 @@ func TestSTTProxiesAudioToOpenRouter(t *testing.T) {
 func TestSTTWithoutKeyIs503AndGetReportsDisabled(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "" }
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	res, _ := http.Post(srv.URL+"/api/stt", "audio/webm", strings.NewReader("x"))
@@ -71,7 +71,7 @@ func TestSTTWithoutKeyIs503AndGetReportsDisabled(t *testing.T) {
 func TestSTTRejectsUnknownAudioType(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	res, _ := http.Post(srv.URL+"/api/stt", "text/plain", strings.NewReader("x"))
 	if res.StatusCode != http.StatusUnsupportedMediaType {
@@ -88,7 +88,7 @@ func TestSTTUpstreamErrorIs502WithMessage(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	res, _ := http.Post(srv.URL+"/api/stt", "audio/wav", strings.NewReader("x"))
 	var out struct{ Error string }
@@ -109,7 +109,7 @@ func TestSTTModelEnvOverride(t *testing.T) {
 	}
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	res, _ := http.Get(srv.URL + "/api/stt")
 	var out struct {
@@ -148,7 +148,7 @@ func TestSTTFormatPassCleansPerSegment(t *testing.T) {
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	d.sttChatURL = chat.URL
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	res, err := http.Post(srv.URL+"/api/stt?format=1", "audio/webm", strings.NewReader("AUDIO"))
@@ -190,7 +190,7 @@ func TestSTTWithoutFormatSkipsChat(t *testing.T) {
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	d.sttChatURL = chat.URL
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	for _, path := range []string{"/api/stt", "/api/stt?format=0"} {
@@ -221,7 +221,7 @@ func TestSTTFormatFailsOpenOnChatError(t *testing.T) {
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	d.sttChatURL = chat.URL
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	res, _ := http.Post(srv.URL+"/api/stt?format=1", "audio/webm", strings.NewReader("AUDIO"))

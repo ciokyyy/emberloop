@@ -102,7 +102,7 @@ func (b *probeBackend) counts() (creates, closes, releases, resumes int) {
 func TestSessionCapRefusedOverMax(t *testing.T) {
 	d := NewDaemon(tempDir(t), newProbeBackend())
 	d.SetMaxRunning(1)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	_ = createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -161,7 +161,7 @@ func TestMaxRunningReadsGlobalSetting(t *testing.T) {
 func TestIdleSessionReleasedAndResumed(t *testing.T) {
 	be := newProbeBackend()
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -195,14 +195,14 @@ func TestRestartResumesSession(t *testing.T) {
 	dir := tempDir(t)
 	be := newProbeBackend()
 	d := NewDaemon(dir, be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "before")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	srv.Close()
 
 	d2 := NewDaemon(dir, newProbeBackend())
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	view := sessionView(t, srv2.URL, id)
 	if !view.Resumable {
@@ -227,7 +227,7 @@ func TestNonResumableSessionReadOnly(t *testing.T) {
 	dir := tempDir(t)
 	be := newProbeBackend()
 	d := NewDaemon(dir, be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
@@ -237,7 +237,7 @@ func TestNonResumableSessionReadOnly(t *testing.T) {
 	stuck.resumable = false
 	stuck.reason = "fake harness cannot resume: no saved agent for this Session"
 	d2 := NewDaemon(dir, stuck)
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 
 	view := sessionView(t, srv2.URL, id)

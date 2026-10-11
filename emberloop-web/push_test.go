@@ -114,7 +114,7 @@ func TestPushNotifySendsVapidAndDropsGone(t *testing.T) {
 
 func TestPushAPI(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	res, err := http.Get(srv.URL + "/api/push/key")
 	if err != nil || res.StatusCode != 200 {

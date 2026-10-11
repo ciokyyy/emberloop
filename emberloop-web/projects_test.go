@@ -38,7 +38,7 @@ func TestProjectsPersistAndStartSessions(t *testing.T) {
 	state := tempDir(t)
 	repo := tempDir(t)
 	d := NewDaemon(state, NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	code, b := apiJSON(t, "POST", srv.URL+"/api/projects", map[string]string{"path": repo})
@@ -97,7 +97,7 @@ func TestProjectGitView(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(repo, "b.txt"), []byte("new\n"), 0o644)
 
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	_, b := apiJSON(t, "POST", srv.URL+"/api/projects", map[string]string{"path": repo})
 	var p Project

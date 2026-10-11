@@ -354,7 +354,7 @@ func TestWaitHealthy(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer ok.Close()
-	if err := waitHealthy(ok.URL, 5*time.Second); err != nil {
+	if err := waitHealthy(ok.URL, "", 5*time.Second); err != nil {
 		t.Errorf("a healthy endpoint must pass, got: %v", err)
 	}
 
@@ -362,13 +362,30 @@ func TestWaitHealthy(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer bad.Close()
-	if err := waitHealthy(bad.URL, 500*time.Millisecond); err == nil {
+	if err := waitHealthy(bad.URL, "", 500*time.Millisecond); err == nil {
 		t.Error("a 404 endpoint must fail the wait")
 	} else if !strings.Contains(err.Error(), "404") {
 		t.Errorf("the failure must name what it saw, got: %v", err)
 	}
 
-	if err := waitHealthy("http://127.0.0.1:1/nope", 500*time.Millisecond); err == nil {
+	if err := waitHealthy("http://127.0.0.1:1/nope", "", 500*time.Millisecond); err == nil {
 		t.Error("an unreachable endpoint must fail the wait")
+	}
+}
+
+// The probe presents the machine token of the state dir it boots.
+func TestWaitHealthyPresentsToken(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	if err := waitHealthy(srv.URL, "probe-token", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if auth != "Bearer probe-token" {
+		t.Fatalf("Authorization = %q, want the probe token", auth)
 	}
 }

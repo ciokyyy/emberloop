@@ -91,7 +91,7 @@ func waitParentIdle(t *testing.T, base, parent string) {
 // Slice 1: a Steer on an idle fake Session runs a turn labelled steer.
 func TestSteerOnIdleRunsLabeledTurn(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -121,7 +121,7 @@ func TestSteerOnIdleRunsLabeledTurn(t *testing.T) {
 // Slice 1: a Follow-up on an idle fake Session runs a turn labelled followup.
 func TestFollowupOnIdleRunsLabeledTurn(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -151,7 +151,7 @@ func TestQueuedModesListAndClearBeforeDelivery(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -191,7 +191,7 @@ func TestQueuedFollowupRunsAfterTurn(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -237,7 +237,7 @@ func TestQueuedSteerDeliversLabeledAfterTurn(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -268,7 +268,7 @@ func TestClaudeSteerDegradesToFollowup(t *testing.T) {
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -308,7 +308,7 @@ func TestClaudeSteerOnIdleKeepsSteerLabel(t *testing.T) {
 	stub := &stubConn{updates: []map[string]any{chunk("done")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -336,7 +336,7 @@ func TestClaudeSteerOnIdleKeepsSteerLabel(t *testing.T) {
 // Steer and follow-up validation: unknown Session, empty text, ended.
 func TestSteerFollowupValidation(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	for _, mode := range []string{"steer", "followup"} {
@@ -401,7 +401,7 @@ func startChainedSlowTurns(t *testing.T, base, id string) {
 // the backend seam.
 func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 	d, pb := newPigDaemon(t)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	// The PAUSE turn holds ~2s. The second prompt waits in the Daemon
@@ -450,7 +450,7 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 // release, so a stale release never kills a freshly resumed process.
 func TestSendDuringTransitionAnswers409(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
@@ -510,7 +510,7 @@ func TestClaudeSteerInjectsWhenAdapterSupportsIt(t *testing.T) {
 	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}, outcome: true}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -566,7 +566,7 @@ func TestClaudeSteerFallsBackWhenNotInjected(t *testing.T) {
 	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -604,7 +604,7 @@ func TestQueuedMessagesMergeIntoOne(t *testing.T) {
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))

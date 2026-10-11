@@ -101,8 +101,8 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(t.TempDir(), fb)
-	srv := httptest.NewServer(d.Handler())
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -165,8 +165,8 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		}
 		return "VERDICT: pass", true
 	}
-	d := NewDaemon(t.TempDir(), fb)
-	srv := httptest.NewServer(d.Handler())
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -232,8 +232,8 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
@@ -313,7 +313,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(t.TempDir(), fb)
+	d := NewDaemon(tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -339,7 +339,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 		Rows:          map[string]savedRow{"01-first": {State: "in-review", Tip: cur}},
 	}
 	d.mu.Unlock()
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	d.handleReviewerTurnEnd("rev-spec")
 	r := getRun(t, srv.URL, "r-tip")
@@ -367,7 +367,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(t.TempDir(), fb)
+	d := NewDaemon(tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -393,7 +393,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 		Rows:          map[string]savedRow{"01-first": {State: "in-review", Tip: cur}},
 	}
 	d.mu.Unlock()
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	d.handleReviewerTurnEnd("rev-spec")
 	r := getRun(t, srv.URL, "r-tip")
@@ -435,7 +435,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(t.TempDir(), fb)
+	d := NewDaemon(tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, t2)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -461,7 +461,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 		Rows:          map[string]savedRow{"01-first": {State: "in-review", Tip: cur}},
 	}
 	d.mu.Unlock()
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	d.handleReviewerTurnEnd("rev-spec")
 	r := getRun(t, srv.URL, "r-tip")

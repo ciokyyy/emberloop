@@ -42,7 +42,7 @@ func TestCurrentPrefersStamps(t *testing.T) {
 // anything else is 405.
 func TestVersionEndpoint(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/version")
@@ -82,7 +82,7 @@ func TestVersionEndpoint(t *testing.T) {
 // else is 405.
 func TestHealthEndpoint(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/health")

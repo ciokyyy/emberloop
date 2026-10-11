@@ -4,7 +4,12 @@ go 1.26.0
 
 require example.com/emberloop v0.0.0
 
-require github.com/MichaelKinsy/PiG v0.4.0
+require (
+	github.com/MichaelKinsy/PiG v0.4.0
+	github.com/gofrs/flock v0.13.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/term v0.45.0
+)
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
@@ -40,7 +45,6 @@ require (
 	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
@@ -61,7 +65,6 @@ require (
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

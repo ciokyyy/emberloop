@@ -21,7 +21,7 @@ func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 		return strings.Repeat("x", 8000), true
 	}
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	return d, be, srv.URL, id

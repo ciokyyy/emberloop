@@ -53,7 +53,7 @@ func TestClaudeLifecycleOverAPI(t *testing.T) {
 	stub := &stubConn{updates: []map[string]any{chunk("hello")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(dir, NewFakeBackend()).WithClaudeBackend(be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
@@ -90,7 +90,7 @@ func TestClaudeLifecycleOverAPI(t *testing.T) {
 
 	be2 := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d2 := NewDaemon(dir, NewFakeBackend()).WithClaudeBackend(be2)
-	srv2 := httptest.NewServer(d2.Handler())
+	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	if view := sessionView(t, srv2.URL, id); !view.Resumable {
 		t.Fatalf("resumable = false after restart, note %q", view.ResumeNote)

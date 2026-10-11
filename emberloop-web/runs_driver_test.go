@@ -159,7 +159,7 @@ func waitRunTickets(t *testing.T, base, id string, want map[string]string) runJS
 func TestStartRunCreatesRunAndRefusesSecond(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -244,7 +244,7 @@ func chainTickets() map[string]string {
 func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 	repo, spec := initRunRepo(t, chainTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -314,7 +314,7 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -370,7 +370,7 @@ func TestRunTicksBoxesFromCompletedList(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -417,7 +417,7 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -480,7 +480,7 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -544,7 +544,7 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 	}
 	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
@@ -571,7 +571,7 @@ func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
 	}
 	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
@@ -586,7 +586,7 @@ func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
 	})
 	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "missing.json"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
@@ -602,7 +602,7 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -656,7 +656,7 @@ func TestRunDetachedMergesTwoTickets(t *testing.T) {
 	})
 	testGit(t, repo, "checkout", "--detach")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -737,7 +737,7 @@ func TestStartRunRejectsSpecOutsideRepo(t *testing.T) {
 	_, spec := initRunRepo(t, demoTickets())
 	other := tempDir(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	body, _ := json.Marshal(map[string]string{"spec": spec, "repo": other, "harness": "fake", "model": "fake-model"})
@@ -767,7 +767,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := NewDaemon(stateDir, NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/runs/run-paused")
@@ -794,7 +794,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 func TestServeRunEventsStreamsTable(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -909,7 +909,7 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 		Sessions: map[string]string{"01-first": "w1"},
 	}
 	d.mu.Unlock()
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	body := `{"status":"done","completed":["alpha"]}`
 	for i := 0; i < 2; i++ {
 		resp, err := http.Post(srv.URL+"/api/sessions/w1/submit", "application/json", strings.NewReader(body))
@@ -943,7 +943,7 @@ func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
 		Reprompted: map[string]int{"01-first": 2},
 	}
 	d.mu.Unlock()
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	resp, err := http.Post(srv.URL+"/api/sessions/w1/submit", "application/json", strings.NewReader(`{"status":"done"}`))
 	if err != nil {

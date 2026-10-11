@@ -11,7 +11,7 @@ import (
 // serve from the embedded dist with correct content types.
 func TestServesBuiltStaticAssets(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	get := func(path string) (int, string) {

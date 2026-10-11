@@ -24,16 +24,24 @@ the new binary fails its health check.
 
 Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and no Session is mid-turn and no Run is driving, it closes live agent processes and re-executes itself with the same pid and address. Idle Sessions reload on the next prompt.
 
-Check it: `curl -s http://127.0.0.1:7940/api/health` must print `{"ok":true}`, and `el-web --version` names the build. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds a browser runs; a stale browser offers `update available — reload`.
+Check it: `curl -s -H "Authorization: Bearer $(cat ~/.local/share/pig/enderbloom/daemon.token)" http://127.0.0.1:7940/api/health` must print `{"ok":true}`, and `el-web --version` names the build. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds a browser runs; a stale browser offers `update available — reload`.
 
 If you run inside a Session of this Daemon, the restart drops your own agent process once the turn ends. The next prompt reloads the Session. Tell the user before you update.
 
-`GET /api/version` answers the Daemon's `{version, commit, uiHash}` with no login; `GET /api/health` answers `{"ok":true}`.
+`GET /api/version` answers the Daemon's `{version, commit, uiHash}`; `GET /api/health` answers `{"ok":true}`. Both need the machine token or a login cookie (see Accounts and API auth).
+
+## Accounts and API auth
+
+- Every `/api` route, SSE stream included, answers 401 without a login cookie (`el_session`) or the machine token as `Authorization: Bearer`. Only `/api/auth/signup|login|logout` and `/api/auth/me` answer without one.
+- The first signup becomes the admin. Sign up the admin yourself right after a fresh start, before anyone else reaches the Daemon.
+- The admin switches `signup_enabled` in Settings; off refuses signup.
+- Reset a password: `el-web user set-password <name>` (prod; add `-state-dir ~/.local/share/pig-dev` for dev). It reads the new password from a terminal with echo off, or one line from a pipe. It signs that User out everywhere; a running Daemon sees the change at once.
+- Machine token: `<state-dir>/enderbloom/daemon.token`, new on every start, owner-only. `el restart` and the probes read it. The Daemon's own agents get it as `EL_WEB_TOKEN`.
 
 ## Service control
 
 - Status: `systemctl --user status emberloop-web`
-- Restart: `el restart` (`--dev` for port 7941, `--wait` to block until the Daemon is back; never `--wait` inside a Daemon Session). It POSTs `/api/restart`; `systemctl --user reload emberloop-web` (SIGUSR1) does the same. This is the only restart an agent runs. The Daemon pauses every running Run and marks it `resumeOnRestart`, waits up to `-restart-drain` (default 5m) for Sessions to finish their turns, closes agent processes, and re-executes itself. The new Daemon resumes the marked Runs on its own; a Run paused by hand stays paused. Idle Sessions reload on the next prompt.
+- Restart: `el restart` (`--dev` for port 7941, `--wait` to block until the Daemon is back; never `--wait` inside a Daemon Session). It POSTs `/api/restart` with the machine token (`EL_WEB_TOKEN`, else the `daemon.token` file of the state dir; `pig-dev` for `--dev`); `systemctl --user reload emberloop-web` (SIGUSR1) does the same. This is the only restart an agent runs. The Daemon pauses every running Run and marks it `resumeOnRestart`, waits up to `-restart-drain` (default 5m) for Sessions to finish their turns, closes agent processes, and re-executes itself. The new Daemon resumes the marked Runs on its own; a Run paused by hand stays paused. Idle Sessions reload on the next prompt.
 - Never run `systemctl restart|stop`, `kill` or a manual `el-web` launch against the prod Daemon, least of all from a Session inside it: the restart drops your own agent process and cuts Run Workers mid-turn.
 - Logs: `el logs` (`-n N`, `-f`, `--since TIME`, `--grep PATTERN`); it wraps `journalctl --user -u emberloop-web`. The dev Daemon has no journal: read its pane.
 - The unit file is `~/.config/systemd/user/emberloop-web.service`. It runs `el-web -addr 127.0.0.1:7940` with `Restart=always`. Linger is on, so it starts at boot.
@@ -70,7 +78,7 @@ The prod unit runs `el-web -addr 127.0.0.1:7940 -tailnet -allow-host cachy-cioky
 
 - `127.0.0.1` alone is reachable only from this machine. `-tailnet` adds a second listener on this machine's Tailscale IPv4 (100.64.0.0/10) at the same port, so any device on the tailnet opens `http://<tailscale-ip>:7940` (`tailscale ip -4` prints it).
 - Nothing listens on `0.0.0.0` or the LAN. The Daemon refuses a bind that is not loopback or a Tailscale address, and rejects any request whose `Host` or `Origin` is not loopback, a Tailscale IP, or on `-allow-host`.
-- There is no login: anyone on the tailnet can use the Daemon. Never bind it to `0.0.0.0` or expose it with Funnel.
+- Login is per account (see Accounts and API auth), but the tailnet is still the perimeter: anyone on the tailnet can reach the sign-in page, and signup stays open until the admin turns `signup_enabled` off. Never bind it to `0.0.0.0` or expose it with Funnel.
 - The listener retries every 10 seconds, so it comes up even when Tailscale starts after the Daemon.
 - HTTPS alternative: `sudo tailscale serve --bg --https=7940 http://127.0.0.1:7940`, then use the `-allow-host` name. Needs root once.
 

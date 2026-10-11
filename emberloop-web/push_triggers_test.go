@@ -70,7 +70,7 @@ func decodePushMessage(t *testing.T, decrypt func([]byte) []byte, body []byte) p
 
 func TestPushTurnDoneCueKeyAndPath(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
@@ -92,7 +92,7 @@ func TestPushTurnDoneCueKeyAndPath(t *testing.T) {
 
 func TestPushTurnFailedUsesErrorCue(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
@@ -108,7 +108,7 @@ func TestPushTurnFailedUsesErrorCue(t *testing.T) {
 
 func TestPushSudoRequestUsesMentionCue(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
@@ -257,7 +257,7 @@ func TestPushDuplicateNotifySendsOnce(t *testing.T) {
 // grouped-result turn notifies. Driven through spawn and real turn settles.
 func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
@@ -296,7 +296,7 @@ func TestPushEndedSessionStaysSilent(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = time.Second
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, _ := capturePush(t, d)

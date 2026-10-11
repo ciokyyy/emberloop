@@ -108,7 +108,7 @@ func proxyCallOne(t *testing.T, daemonURL, parent, name, args string) (string, e
 // without messaging them.
 func TestCheckListsOwnChildren(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -159,7 +159,7 @@ func TestCheckListsOwnChildren(t *testing.T) {
 // tool description tells callers not to poll.
 func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -202,7 +202,7 @@ func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
 // A stranger's id is refused on every check path.
 func TestCheckNonChildRefused(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -234,7 +234,7 @@ func TestCheckNonChildRefused(t *testing.T) {
 // same session routes the UI uses.
 func TestProxyCheckReadsOwnChildren(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -264,7 +264,7 @@ func TestCancelInterruptsWorkingChild(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -303,7 +303,7 @@ func TestCancelInterruptsWorkingChild(t *testing.T) {
 // Cancelling an idle child is a no-op that says so.
 func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -336,7 +336,7 @@ func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
 // further sends, while the parent keeps going.
 func TestCancelKillEndsChild(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -373,7 +373,7 @@ func TestCancelKillEndsChild(t *testing.T) {
 // a parent may stop its own scout: a stop is not a message.
 func TestCancelNonChildRefusedScoutStoppable(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
@@ -428,7 +428,7 @@ func TestProxyCancelInterruptsAndKills(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))

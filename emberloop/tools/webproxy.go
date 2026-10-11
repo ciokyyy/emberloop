@@ -121,6 +121,9 @@ func (t webProxy) Execute(ctx context.Context, _ string, args json.RawMessage) (
 var webProxyClient = &http.Client{Timeout: 60 * time.Second}
 
 func webProxyDo(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if tok := os.Getenv(SudoGateTokenEnv); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	return webProxyClient.Do(req.WithContext(ctx))
 }
 

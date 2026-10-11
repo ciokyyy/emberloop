@@ -79,7 +79,7 @@ func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigSteer(d)
 
@@ -108,7 +108,7 @@ func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
 // follow-up turn.
 func TestSteerChildIdleStartsFollowup(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -130,7 +130,7 @@ func TestSteerChildIdleStartsFollowup(t *testing.T) {
 // A stranger's child is refused on every path: no cross-session messaging.
 func TestSteerChildNonChildRefused(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigSteer(d)
 
@@ -170,7 +170,7 @@ func TestSteerChildNonChildRefused(t *testing.T) {
 // Scout targets stay read-only on every path.
 func TestSteerChildScoutRefused(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	pb := wirePigSteer(d)
 
@@ -206,7 +206,7 @@ func TestSteerChildScoutRefused(t *testing.T) {
 // HTTP route the UI uses.
 func TestProxySteerSteersOwnChild(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))

@@ -13,7 +13,7 @@ import (
 // peaks, serves back, and never reaches the model as a file path or pixels.
 func TestAudioUploadKeepsPeaksAndStaysOutOfModelInput(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -53,7 +53,7 @@ func TestAudioUploadKeepsPeaksAndStaysOutOfModelInput(t *testing.T) {
 
 func TestUploadRejectsOtherMediaTypes(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, _ := uploadImage(t, srv.URL, id, map[string]any{

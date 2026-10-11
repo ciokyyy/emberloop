@@ -194,6 +194,9 @@ owns its `_test.go` and the behaviour below):
   keep the strip: stdin and stdout stay on the PTY while stderr keeps its
   own pipe to the log, one stamped line at a time. Generated theme files
   live under the state dir (`themes/`); golden fixtures are `testdata/theme/`.
+- Daemon callbacks: `tools/webproxy.go` and `tools/sudogate.go` send `EL_WEB_TOKEN`, the
+  web Daemon's machine token (see `emberloop-web/AGENTS.md`), as a bearer on every call;
+  `restart.go` reads the same token for `el restart`, and `update.go` for its health probe.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not; the web
   Daemon's `web` parent, `web-worker` child and `scout` roles take their

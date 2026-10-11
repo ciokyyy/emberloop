@@ -29,6 +29,7 @@ func UsesSudo(command string) bool {
 const (
 	SudoGateSessionEnv = "EL_WEB_PARENT"
 	SudoGateDaemonEnv  = "EL_WEB_DAEMON_URL"
+	SudoGateTokenEnv   = "EL_WEB_TOKEN"
 )
 
 // SudoGateFromEnv returns an HTTP gate when the environment names a Daemon
@@ -38,13 +39,14 @@ func SudoGateFromEnv() func(ctx context.Context, root, command string) (string, 
 	if url == "" || session == "" {
 		return nil
 	}
-	return HTTPSudoGate(url, session)
+	return HTTPSudoGate(url, session, os.Getenv(SudoGateTokenEnv))
 }
 
 // HTTPSudoGate posts the command to the Daemon at daemonURL as a sudo
-// request of one Session. A Daemon that cannot be reached refuses the
-// command rather than running it unapproved.
-func HTTPSudoGate(daemonURL, sessionID string) func(ctx context.Context, root, command string) (string, bool) {
+// request of one Session, presenting token as the machine token when set. A
+// Daemon that cannot be reached refuses the command rather than running it
+// unapproved.
+func HTTPSudoGate(daemonURL, sessionID, token string) func(ctx context.Context, root, command string) (string, bool) {
 	daemonURL = strings.TrimSuffix(daemonURL, "/")
 	return func(ctx context.Context, root, command string) (string, bool) {
 		body, _ := json.Marshal(map[string]string{"command": command, "cwd": root})
@@ -55,6 +57,9 @@ func HTTPSudoGate(daemonURL, sessionID string) func(ctx context.Context, root, c
 			return "sudo refused: " + err.Error(), true
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return "sudo refused: approval service unreachable: " + err.Error(), true

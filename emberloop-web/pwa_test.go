@@ -12,7 +12,7 @@ import (
 // install and push depend on.
 func TestServesPWAInstallFiles(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	// Manifest: right content type, Emberloop standalone metadata.
@@ -108,7 +108,7 @@ func TestServesPWAInstallFiles(t *testing.T) {
 // The shell entry still advertises the manifest and install meta.
 func TestIndexAdvertisesPWA(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/")

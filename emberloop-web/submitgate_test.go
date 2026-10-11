@@ -95,7 +95,7 @@ func TestGateChildThatSubmitsIsUntouched(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -125,7 +125,7 @@ func TestGateRemindsOnceThenChildSubmits(t *testing.T) {
 	withSubmitGate(t)
 	be := &submitScriptBackend{FakeBackend: NewFakeBackend(), submitOn: map[int]bool{2: true}}
 	d := NewDaemon(tempDir(t), be)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -154,7 +154,7 @@ func TestGateRemindsOnceThenChildSubmits(t *testing.T) {
 func TestGateGiveUpDeliversStoppedNoticeOnce(t *testing.T) {
 	withSubmitGate(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -197,7 +197,7 @@ func TestGateKilledChildGetsNoReminder(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 500 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -226,7 +226,7 @@ func TestGateInterruptedChildGetsNoReminder(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -254,7 +254,7 @@ func TestSettleDeliversLastMessageWithoutSubmit(t *testing.T) {
 		t.Fatal("WebSubmitEnabled must default false")
 	}
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -289,7 +289,7 @@ func TestSettleDeliversSubmitTextWhenSubmitted(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -334,7 +334,7 @@ func TestSettleFailedChildDeliversStatus(t *testing.T) {
 		t.Fatal("WebSubmitEnabled must default false")
 	}
 	d := NewDaemon(tempDir(t), &failReplyBackend{FakeBackend: NewFakeBackend()})
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
