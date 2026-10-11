@@ -121,40 +121,78 @@ func TestInvariant_EveryRuleGroundedInUserEvent(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated || out.RuleID == "" {
-		t.Fatalf("slash remember = %d %+v, want 201 with a ruleId", resp.StatusCode, out)
+	if resp.StatusCode != http.StatusCreated || out.RuleID == "" || out.Seq == 0 {
+		t.Fatalf("slash remember = %d %+v, want 201 with a ruleId and event seq", resp.StatusCode, out)
 	}
 	rules, err := ownerBank(t, d, owner).Recall(context.Background(), "wrap errors", 10)
 	if err != nil || len(rules) != 1 || rules[0].RuleID != out.RuleID {
 		t.Fatalf("recall = %+v %v, want the direct Rule %s", rules, err, out.RuleID)
 	}
+	// The stored Rule cites its grounding Event: out.Seq names a sender=user
+	// prompt in the log holding the Rule text verbatim.
 	evs := transcriptOf(t, base, id)
 	var ground *Event
 	for i := range evs {
-		if evs[i].Kind == "prompt" && evs[i].Sender == senderUser && strings.Contains(evs[i].Text, rules[0].Text) {
+		if evs[i].Seq == out.Seq {
 			ground = &evs[i]
 			break
 		}
 	}
 	if ground == nil {
-		t.Fatalf("no sender=user Event holds Rule %q in %+v", rules[0].Text, evs)
+		t.Fatalf("no Event with seq %d in %+v", out.Seq, evs)
+	}
+	if ground.Kind != "prompt" || ground.Sender != senderUser || !strings.Contains(ground.Text, rules[0].Text) {
+		t.Fatalf("cited Event %+v does not ground Rule %q as a user message", ground, rules[0].Text)
 	}
 	if err := memory.CheckGrounding("evt", rules[0].Text, memory.GroundEvent{Found: true, Sender: ground.Sender, Text: ground.Text}); err != nil {
-		t.Fatalf("Rule is not grounded in its Event: %v", err)
+		t.Fatalf("Rule is not grounded in its cited Event: %v", err)
 	}
-	// The verifier itself rejects the three non-grounded shapes.
-	if err := memory.CheckGrounding("1", "wrap", memory.GroundEvent{}); err == nil {
-		t.Error("CheckGrounding accepted a missing Event")
-	}
-	if err := memory.CheckGrounding("1", "wrap errors", memory.GroundEvent{Found: true, Sender: senderSystem, Text: "wrap errors here"}); err == nil {
-		t.Error("CheckGrounding accepted a sender=system Event")
-	}
-	if err := memory.CheckGrounding("1", "words nobody typed", memory.GroundEvent{Found: true, Sender: senderUser, Text: "the team wraps errors"}); err == nil {
-		t.Error("CheckGrounding accepted a non-substring quote")
-	}
-	// An ungrounded remember proposal is refused without a model call.
+	before := len(queueRules(t, d, owner))
+	// Missing Event: an ungrounded quote is refused through the Daemon with
+	// nothing queued.
 	if code, _ := postRemember(t, base, id, map[string]any{"text": "something else", "reason": "r", "quote": "words nobody typed"}); code != http.StatusBadRequest {
 		t.Fatalf("ungrounded remember = %d, want 400", code)
+	}
+	// System sender: a quote that appears only in a machine-token (system)
+	// message is refused through the Daemon with nothing queued.
+	sysBody, _ := json.Marshal(map[string]string{"text": "system-only zircon marker for grounding"})
+	sysReq, _ := http.NewRequest("POST", base+"/api/sessions/"+id+"/prompt", bytes.NewReader(sysBody))
+	sysReq.Header.Set("Content-Type", "application/json")
+	sysReq.Header.Set("Authorization", "Bearer "+d.MachineToken())
+	sysResp, err := http.DefaultClient.Do(sysReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sysResp.Body.Close()
+	if code, _ := postRemember(t, base, id, map[string]any{"text": "zircon note", "reason": "r", "quote": "zircon marker"}); code != http.StatusBadRequest {
+		t.Fatalf("system-grounded remember = %d, want 400", code)
+	}
+	// Non-substring quote: refused through the Daemon with nothing queued.
+	if code, _ := postRemember(t, base, id, map[string]any{"text": "wrap note", "reason": "r", "quote": "wrap errors with context plus extra words"}); code != http.StatusBadRequest {
+		t.Fatalf("non-substring remember = %d, want 400", code)
+	}
+	if got := len(queueRules(t, d, owner)); got != before {
+		t.Fatalf("queue rules = %d, want %d after three refused proposes", got, before)
+	}
+	// Miner path through the Daemon: a correction in a system Event stores
+	// nothing, while the same words as a user correction store once.
+	d2 := NewDaemon(tempDir(t), NewFakeBackend())
+	seedEndedSession(t, d2, "sys-only", "alice", []Event{
+		{Kind: "prompt", Sender: senderSystem, Text: "No, use tabs here for zircon", Seq: 1},
+	})
+	if res, err := d2.MineSession("sys-only"); err != nil {
+		t.Fatal(err)
+	} else if res.Stored != 0 || res.Kept != 0 {
+		t.Fatalf("system mine = %+v, want 0 kept and 0 stored", res)
+	}
+	if obs := bankQuotes(t, d2, "alice", "zircon"); len(obs) != 0 {
+		t.Fatalf("system observations = %+v, want none", obs)
+	}
+	seedEndedSession(t, d2, "user-only", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for zircon")})
+	if res, err := d2.MineSession("user-only"); err != nil {
+		t.Fatal(err)
+	} else if res.Stored != 1 {
+		t.Fatalf("user mine = %+v, want 1 stored", res)
 	}
 }
 
@@ -218,6 +256,22 @@ func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
 	}
 	putAs(asAdmin.URL, "admin profile alpha line")
 	putAs(asBob.URL, "bob profile beta line")
+	// Queue seeds: one Rule candidate and one Profile patch per User, through
+	// the Daemon so bank routing is pinned, not just file separation.
+	runPrompt(t, asAdmin.URL, adminSession, "admin queue decree preparation with tabs")
+	runPrompt(t, asBob.URL, bobSession, "bob queue edict preparation with spaces")
+	if code, _ := postRemember(t, asAdmin.URL, adminSession, map[string]any{"text": "admin queue decree note", "reason": "admin queue decree reason", "quote": "queue decree preparation"}); code != http.StatusCreated {
+		t.Fatalf("admin remember queue seed = %d, want 201", code)
+	}
+	if code, _ := postRemember(t, asBob.URL, bobSession, map[string]any{"text": "bob queue edict note", "reason": "bob queue edict reason", "quote": "queue edict preparation"}); code != http.StatusCreated {
+		t.Fatalf("bob remember queue seed = %d, want 201", code)
+	}
+	if _, err := d.proposeProfilePatch(ctx, adminID, memory.ProfilePatch{Ops: []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "admin queue profile marker decree line", Tag: memory.ProfileWorkflow}}}, "admin queue decree reason", adminSession, adminID); err != nil {
+		t.Fatalf("admin profile queue seed: %v", err)
+	}
+	if _, err := d.proposeProfilePatch(ctx, bobID, memory.ProfilePatch{Ops: []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "bob queue profile marker edict line", Tag: memory.ProfileWorkflow}}}, "bob queue edict reason", bobSession, bobID); err != nil {
+		t.Fatalf("bob profile queue seed: %v", err)
+	}
 
 	// Recall stays in the caller's bank.
 	for _, tc := range []struct{ base, sid, want, notWant string }{
@@ -279,7 +333,7 @@ func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
 		t.Fatalf("injection Event %+v, want admin Rule %s without bob %s", lastIE, adminRules[0].RuleID, bobRules[0].RuleID)
 	}
 
-	// The Memory page (Profile and queue) is per-User.
+	// The Memory page (Profile and queue) is per-User, in both directions.
 	getAs := func(base, path string) string {
 		t.Helper()
 		resp, err := http.Get(base + path)
@@ -297,8 +351,28 @@ func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
 	if body := getAs(asBob.URL, "/api/profile"); !strings.Contains(body, "bob profile beta line") || strings.Contains(body, "admin profile alpha line") {
 		t.Fatalf("bob Memory profile = %s, want only bob lines", body)
 	}
-	if body := getAs(asAdmin.URL, "/api/profile/queue"); strings.Contains(body, "bob") && strings.Contains(body, "edict") {
-		t.Fatalf("admin queue leaks bob: %s", body)
+	// Rule candidates stay in the sender's bank.
+	for _, tc := range []struct {
+		owner, want, notWant string
+	}{
+		{adminID, "admin queue decree note", "bob queue edict note"},
+		{bobID, "bob queue edict note", "admin queue decree note"},
+	} {
+		var payloads []string
+		for _, it := range queueRules(t, d, tc.owner) {
+			payloads = append(payloads, it.Payload)
+		}
+		joined := strings.Join(payloads, "\n")
+		if !strings.Contains(joined, tc.want) || strings.Contains(joined, tc.notWant) {
+			t.Fatalf("queue bank %s = %q, want %q without %q", tc.owner, joined, tc.want, tc.notWant)
+		}
+	}
+	// Profile patches stay on the Memory page of their owner, both ways.
+	if body := getAs(asAdmin.URL, "/api/profile/queue"); !strings.Contains(body, "admin queue decree reason") || strings.Contains(body, "bob queue edict reason") {
+		t.Fatalf("admin Memory queue = %s, want admin patch without bob's", body)
+	}
+	if body := getAs(asBob.URL, "/api/profile/queue"); !strings.Contains(body, "bob queue edict reason") || strings.Contains(body, "admin queue decree reason") {
+		t.Fatalf("bob Memory queue = %s, want bob patch without admin's", body)
 	}
 }
 
@@ -431,7 +505,6 @@ func TestInvariant_OwnerToolsetBankBindingsIdenticalAcrossCompress(t *testing.T)
 	if !strings.Contains(last, "## Task") {
 		t.Fatalf("compress turn = %q, want the Handoff last", last)
 	}
-	_ = seen
 }
 
 // TestInvariant_NothingInjectedIsUserAndMinerReadsOnlyUser pins "Sender
@@ -624,19 +697,104 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 			t.Fatalf("remember queue lacks redaction marker: %s", it.Payload)
 		}
 	}
-	// Static: the three Daemon call sites name the redactor in the same file.
-	for path, want := range map[string]string{
-		"miner.go": "memory.Redact",
-		"remember.go": "memory.Redact",
-		"recall_inject.go": "ForDecider",
-	} {
+	// Static: the redactor wrappers exist as code for every egress role the
+	// spec names (distill LLM, Decider, Jev API), and each Daemon call site
+	// invokes one. Comment text never counts: the stripper drops // and
+	// /* */ comments before matching, and every match requires the call
+	// paren, so a prose mention like recall_inject.go's "memory.ForDecider
+	// before any model call" cannot satisfy the check.
+	stripGoComments := func(s string) string {
+		for {
+			start := strings.Index(s, "/*")
+			if start < 0 {
+				break
+			}
+			end := strings.Index(s[start+2:], "*/")
+			if end < 0 {
+				s = s[:start]
+				break
+			}
+			s = s[:start] + s[start+2+end+2:]
+		}
+		var out []string
+		for _, line := range strings.Split(s, "\n") {
+			if idx := strings.Index(line, "//"); idx >= 0 {
+				if strings.TrimSpace(line[:idx]) == "" {
+					continue
+				}
+				if line[idx-1] == ' ' || line[idx-1] == '\t' {
+					line = line[:idx]
+				}
+			}
+			out = append(out, line)
+		}
+		return strings.Join(out, "\n")
+	}
+	codeOf := func(path string) string {
+		t.Helper()
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(raw), want) {
-			t.Errorf("%s has no %s: the egress path bypasses the redactor", path, want)
+		return stripGoComments(string(raw))
+	}
+	for _, want := range []string{"func ForDistill(", "func ForDecider(", "func ForJev("} {
+		if code := codeOf(filepath.Join("memory", "redact.go")); !strings.Contains(code, want) {
+			t.Errorf("memory/redact.go has no %s: an egress role lost its wrapper", want)
 		}
+	}
+	for path, want := range map[string]string{
+		"miner.go":         "memory.Redact(",
+		"remember.go":      "memory.Redact(",
+		"recall_inject.go": "memory.ForDecider(",
+	} {
+		if code := codeOf(path); !strings.Contains(code, want) {
+			t.Errorf("%s has no %s call: the egress path bypasses the redactor", path, want)
+		}
+	}
+	// Any future call site that names an egress role and sends must invoke
+	// the redactor in code. Roles and sends match case-insensitively on
+	// stripped code; guards require the call paren.
+	err := filepath.WalkDir(".", func(path string, dEnt os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if dEnt.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		code := codeOf(path)
+		lowered := strings.ToLower(code)
+		role := strings.Contains(lowered, "distill") || strings.Contains(lowered, "decider") || strings.Contains(lowered, "jev")
+		// A transport Do with a request sends; once.Do(func...) and
+		// retry.Do(func...) schedule work and send nothing.
+		sendsDo := false
+		for idx := 0; ; {
+			i := strings.Index(lowered[idx:], ".do(")
+			if i < 0 {
+				break
+			}
+			if rest := strings.TrimSpace(lowered[idx+i+4:]); !strings.HasPrefix(rest, "func") {
+				sendsDo = true
+				break
+			}
+			idx += i + 4
+		}
+		send := strings.Contains(lowered, "http.post") || strings.Contains(lowered, "http.get") ||
+			strings.Contains(lowered, "http.head") || strings.Contains(lowered, "http.postform") ||
+			strings.Contains(lowered, "newrequest") || sendsDo ||
+			strings.Contains(lowered, "summariz") || strings.Contains(lowered, "complete") ||
+			strings.Contains(lowered, "chatcompletion") || strings.Contains(lowered, "/api/v1/decisions") ||
+			strings.Contains(lowered, "/v1/systemone")
+		guard := strings.Contains(code, "Redact(") || strings.Contains(code, "RedactedFor(") ||
+			strings.Contains(code, "ForDistill(") || strings.Contains(code, "ForDecider(") ||
+			strings.Contains(code, "ForJev(")
+		if role && send && !guard {
+			t.Errorf("%s names a memory egress and sends without the redactor", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	// The egress wrappers stay thin over Redact.
 	in := "token ghp_aBcDeFgHiJkLmNoPqRsT0123456789ABCD with passwort: hunter2supersecretvalue123"
