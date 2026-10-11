@@ -4,8 +4,8 @@
 
 **Blocked by:** minors-and-dispositions (10)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Review prompt includes declined findings with reasons
-- [ ] Reviewer prompt carries the no-re-raise rule
-- [ ] Run seam test asserts the prompt after a declined finding; `.emberloop/check` passes
+- [x] Review prompt includes declined findings with reasons
+- [x] Reviewer prompt carries the no-re-raise rule
+- [x] Run seam test asserts the prompt after a declined finding; `.emberloop/check` passes
