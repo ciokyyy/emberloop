@@ -28,6 +28,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "user" {
 		os.Exit(runUserCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "eval" {
+		os.Exit(runEvalCommand(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	addr := flag.String("addr", "127.0.0.1:0", "loopback address to bind")
 	stateDir := flag.String("state-dir", defaultStateDir(), "pig state directory (Sessions live in its enderbloom subtree)")
 	restartDrain := flag.Duration("restart-drain", 5*time.Minute, "longest wait for Sessions to go idle after a restart request")

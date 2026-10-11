@@ -69,6 +69,13 @@ func applyRecallDecider(ctx context.Context, query string, hits []memory.MergedH
 }
 
 func (d *Daemon) recallBlockFor(ctx context.Context, meta SessionMeta, query string) ([]string, []InjectedRule, error) {
+	// Run A/B Workers with recall off (ticket 30) inject the Profile but no
+	// Rules: the caller still logs a Profile-only injection, and the turn
+	// still runs. Children the Worker spawns carry their own meta and recall
+	// normally.
+	if meta.NoRecall {
+		return nil, nil, nil
+	}
 	if strings.TrimSpace(meta.Owner) == "" {
 		return nil, nil, nil
 	}

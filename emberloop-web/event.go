@@ -108,6 +108,11 @@ type SessionMeta struct {
 	// RunWorker marks a Run ticket Worker: it runs the run-worker el role,
 	// which always serves submit.
 	RunWorker bool `json:"runWorker,omitempty"`
+	// NoRecall marks a Run A/B Worker that runs with Rule recall off (ticket
+	// 30): create and compress inject the Profile but no recalled Rules, so
+	// reviewer verdicts give a paired comparison against recall-on Workers.
+	// Children the Worker spawns recall normally.
+	NoRecall bool `json:"noRecall,omitempty"`
 	// Reviewer marks a Run Reviewer Session with its type
 	// (reviewer-spec or reviewer-standards). Reviewers get the filtered
 	// Profile: workflow and style lines only, never barred lines.

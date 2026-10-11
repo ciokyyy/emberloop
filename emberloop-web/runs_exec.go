@@ -157,6 +157,18 @@ type runState struct {
 	// driver drops that ticket's needs-you mark, backoff, refusal streak
 	// and stall-nudge count on its next pass.
 	RetryGen map[string]int `json:"retryGen,omitempty"`
+	// RecallOffN is the Run A/B setting (ticket 30): every Nth ticket in
+	// ticket order starts with Rule recall off (SessionMeta.NoRecall), so
+	// reviewer verdicts give a paired comparison against recall-on Workers.
+	// 0 disables the A/B arm; 1 is refused at Start (no control arm left);
+	// large N is allowed and selects nothing in a small run. It is a Run
+	// setting and is recorded in the Run file.
+	RecallOffN int `json:"recallOffN,omitempty"`
+	// RecallOff marks the tickets whose Worker runs with recall off, by
+	// ticket ID. Assigned at worker start from RecallOffN in ticket order,
+	// stable across retries and resumes; old Run files without it read as
+	// no A/B Workers.
+	RecallOff map[string]bool `json:"recallOff,omitempty"`
 	// ResumeOnRestart marks a Run that a graceful restart paused: the next
 	// Daemon resumes it on its own (ResumeAfterRestart). A Pause by hand
 	// never sets it.
@@ -406,14 +418,22 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Spec    string `json:"spec"`
-		Repo    string `json:"repo"`
-		Harness string `json:"harness"`
-		Model   string `json:"model"`
-		Effort  string `json:"effort"`
+		Spec       string `json:"spec"`
+		Repo       string `json:"repo"`
+		Harness    string `json:"harness"`
+		Model      string `json:"model"`
+		Effort     string `json:"effort"`
+		RecallOffN int    `json:"recallOffN"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Spec == "" {
 		http.Error(w, "spec is required", http.StatusBadRequest)
+		return
+	}
+	// The A/B arm needs a control arm: 0 disables it, 1 would switch every
+	// Worker off and leave nothing to compare against. Large N is allowed;
+	// the arm then selects nothing in a small run.
+	if req.RecallOffN < 0 || req.RecallOffN == 1 {
+		http.Error(w, "recallOffN must be 0 or at least 2", http.StatusBadRequest)
 		return
 	}
 	specRun, err := el.ResolveSpec(req.Spec)
@@ -487,6 +507,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Harness:        harness,
 		Model:          model,
 		Effort:         effort,
+		RecallOffN:     req.RecallOffN,
 		CreatedAt:      time.Now().UTC(),
 		Owner:          creator.ID,
 		Sessions:       map[string]string{},
@@ -511,6 +532,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Parked:         map[string]bool{},
 		Discarded:      map[string]bool{},
 		RetryGen:       map[string]int{},
+		RecallOff:      map[string]bool{},
 
 		notify:  make(chan struct{}),
 		unpause: make(chan struct{}),
@@ -1367,6 +1389,11 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 	}
 	repo, harness, model, effort := rs.Repo, rs.Harness, rs.Model, rs.Effort
 	owner := rs.Owner
+	// Run A/B arm (ticket 30): the ticket's index in ticket order decides,
+	// so a retry, a pause/resume or a different start order never moves the
+	// arm. Tickets and RecallOffN are fixed at Start, so one read holds for
+	// every attempt below.
+	noRecall := RecallOffForTicket(rs.Tickets, tk.ID, rs.RecallOffN)
 	workerID := el.WorkerID(tk.Path)
 	branch := "implement/" + workerID
 	worktree := filepath.Join(repo, ".el-worktrees", workerID)
@@ -1404,6 +1431,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			ParentID:  runID,
 			Owner:     owner,
 			RunWorker: true,
+			NoRecall:  noRecall,
 		}
 		var be Backend
 		for i := 0; ; i++ {
@@ -1443,6 +1471,12 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			cleanup()
 			d.pauseGate(runID)
 			continue
+		}
+		if noRecall {
+			if rs.RecallOff == nil {
+				rs.RecallOff = map[string]bool{}
+			}
+			rs.RecallOff[tk.ID] = true
 		}
 		rs.Sessions[tk.ID] = meta.ID
 		rs.Branches[tk.ID] = branch
@@ -1833,13 +1867,14 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 			"branch": rs.Branches[t.ID], "body": body, "boxes": boxes,
 			"effort": rs.Effort, "lastRefusal": lastRefusal, "needsYou": needsYou,
 			"followups": rs.Followups[t.ID], "agents": d.ticketAgentsLocked(rs, t.ID),
-			"rounds": rounds,
+			"rounds": rounds, "recallOff": rs.RecallOff[t.ID],
 		})
 	}
 	return map[string]any{
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
+		"recallOffN": rs.RecallOffN,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
 }
@@ -2165,6 +2200,9 @@ func (d *Daemon) loadRuns() {
 		}
 		if rs.RetryGen == nil {
 			rs.RetryGen = map[string]int{}
+		}
+		if rs.RecallOff == nil {
+			rs.RecallOff = map[string]bool{}
 		}
 		if rs.Rows == nil {
 			rs.Rows = map[string]savedRow{}
