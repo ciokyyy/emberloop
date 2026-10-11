@@ -304,6 +304,24 @@ export function openRunStream(id, onRun, opts = {}) {
   return source;
 }
 
+// Checkpoint actions on the Run's spec branch. Rebase reports conflicts in
+// the returned Run snapshot; abandon is exposed only behind UI confirmation.
+export const rebaseRun = (id) =>
+  fetch(url(`/api/runs/${id}/rebase`), { method: 'POST' }).then(json);
+
+export const abandonRun = async (id) => {
+  const res = await fetch(url(`/api/runs/${id}/abandon`), { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event(UNAUTHORIZED));
+    const err = new Error(body.error || `request failed: ${res.status}`);
+    err.status = res.status;
+    err.run = body.run;
+    throw err;
+  }
+  return body;
+};
+
 export const pauseRun = (id) =>
   fetch(url(`/api/runs/${id}/pause`), {
     method: 'POST',

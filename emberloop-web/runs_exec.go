@@ -11,20 +11,24 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	el "example.com/emberloop"
 )
 
-// Run statuses: running while the driver polls, done when it reaches a stable
-// state (which may leave Needs-you or parked Tickets), failed on driver error,
-// and paused when loaded from disk without a driver (resume arrives later).
+// Run statuses: running while the driver polls; done when it reaches a stable
+// state (which may include ticket-level Needs-you or parked Tickets), failed
+// on driver error, and paused while the driver is stopped. Needs-you marks a
+// checkpoint rebase conflict; abandoned Runs remain readable after git cleanup.
 const (
-	runStatusRunning = "running"
-	runStatusDone    = "done"
-	runStatusFailed  = "failed"
-	runStatusPaused  = "paused"
+	runStatusRunning   = "running"
+	runStatusDone      = "done"
+	runStatusFailed    = "failed"
+	runStatusPaused    = "paused"
+	runStatusNeedsYou  = "needs-you"
+	runStatusAbandoned = "abandoned"
 )
 
 // staticTicket is one Ticket as previewed at Start: its identity for the
@@ -550,6 +554,10 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 		d.pauseRun(w, r, id)
 	case sub == "resume" && r.Method == "POST":
 		d.resumeRun(w, r, id)
+	case sub == "rebase" && r.Method == "POST":
+		d.rebaseRun(w, r, id)
+	case sub == "abandon" && r.Method == "POST":
+		d.abandonRun(w, r, id)
 	case strings.HasPrefix(sub, "tickets/") && r.Method == "POST":
 		rest := strings.TrimPrefix(sub, "tickets/")
 		parts := strings.SplitN(rest, "/", 2)
@@ -650,7 +658,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 	max := d.MaxRunning()
 	d.mu.Lock()
 	for _, rs := range d.runs {
-		if rs.Spec == specRun.Spec && rs.Status == runStatusRunning {
+		if rs.Spec == specRun.Spec && (rs.Status == runStatusRunning || rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou) {
 			d.mu.Unlock()
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "a run is already active for this spec"})
 			return
@@ -754,13 +762,15 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	}
 	rs.driving = false
 	d.snapshotRowsLocked(rs)
-	if err != nil {
-		rs.Status = runStatusFailed
-		rs.Error = err.Error()
-	} else {
-		rs.Status = runStatusDone
-		for _, m := range res.Merged {
-			rs.Merged[m.ID] = m.SHA
+	if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou {
+		if err != nil {
+			rs.Status = runStatusFailed
+			rs.Error = err.Error()
+		} else {
+			rs.Status = runStatusDone
+			for _, m := range res.Merged {
+				rs.Merged[m.ID] = m.SHA
+			}
 		}
 	}
 	d.persistRun(rs)
@@ -2393,6 +2403,10 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("unknown run %q", runID)
 	}
+	if rs.Status == runStatusAbandoned {
+		d.mu.Unlock()
+		return fmt.Errorf("run %s was abandoned", runID)
+	}
 	repo, harness, model, effort, specPath := rs.Repo, rs.Harness, rs.Model, rs.Effort, rs.Spec
 	owner := rs.Owner
 	specBranch := rs.SpecBranch
@@ -2410,9 +2424,9 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		_, _ = runGit(repo, "worktree", "remove", "--force", worktree)
 		_, _ = runGit(repo, "branch", "-D", branch)
 	}
-	// A Pause landing anywhere below never records a Worker: the
-	// record-time check drops the attempt and waits for the Resume, then
-	// the start runs again from a clean worktree.
+	// A Pause or checkpoint conflict landing below never records a Worker: the
+	// record-time check drops the attempt and waits for Resume, then starts from
+	// a clean worktree.
 	for {
 		// Ticket branches fork from the Run's spec branch, not master: every
 		// ticket in one spec sees the earlier merges. Runs predating the
@@ -2509,7 +2523,16 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			cleanup()
 			return fmt.Errorf("unknown run %q", runID)
 		}
-		if rs.Status == runStatusPaused {
+		if rs.Status == runStatusAbandoned {
+			d.mu.Unlock()
+			if be != nil {
+				be.CloseSession(meta.ID)
+			}
+			d.removeSession(meta.ID)
+			cleanup()
+			return fmt.Errorf("run %s was abandoned", runID)
+		}
+		if rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou {
 			// Pause won the race after the gate: drop this attempt so no
 			// Worker exists for a paused Run, then wait for the Resume
 			// and start over.
@@ -2593,11 +2616,20 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string, from promptSender) 
 // moves here: the final merge into master is a later ticket. Runs predating
 // the spec branch (no SpecBranch recorded) keep the old master merge.
 func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error) {
+	d.pauseGate(runID)
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
 		d.mu.Unlock()
 		return el.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
+	}
+	if rs.Status == runStatusAbandoned {
+		d.mu.Unlock()
+		return el.DriverFinish{}, fmt.Errorf("run %s was abandoned", runID)
+	}
+	if rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou {
+		d.mu.Unlock()
+		return el.DriverFinish{}, nil
 	}
 	repo, branch, worktree, target, _, path := rs.Repo, rs.Branches[ticketID], rs.Worktrees[ticketID], rs.Targets[ticketID], rs.Bases[ticketID], ticketPath(rs, ticketID)
 	specBranch := rs.SpecBranch
@@ -2619,6 +2651,14 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	if !ok {
 		d.mu.Unlock()
 		return el.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
+	}
+	if rs.Status == runStatusAbandoned {
+		d.mu.Unlock()
+		return el.DriverFinish{}, fmt.Errorf("run %s was abandoned", runID)
+	}
+	if rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou {
+		d.mu.Unlock()
+		return el.DriverFinish{}, nil
 	}
 	verdicts := map[string]storedReview{}
 	for typ, r := range rs.Reviews[ticketID] {
@@ -3289,12 +3329,22 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 	if warnings == nil {
 		warnings = []runWarning{}
 	}
+	var specBehind any
+	if rs.SpecBranch != "" {
+		if master, err := masterTip(rs.Repo); err == nil {
+			if count, err := runGit(rs.Repo, "rev-list", "--count", rs.SpecBranch+".."+master); err == nil {
+				if behind, err := strconv.Atoi(count); err == nil {
+					specBehind = behind
+				}
+			}
+		}
+	}
 	return map[string]any{
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"recallOffN": rs.RecallOffN,
-		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase,
+		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase, "specBehind": specBehind,
 		"warnings":  warnings,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
@@ -3989,14 +4039,14 @@ func (d *Daemon) snapshotAndPersist(runID string) {
 	d.broadcastRunLocked(rs)
 }
 
-// pauseGate blocks while the Run is paused and returns once it runs again.
-// It holds no lock while waiting, so Pause and Resume never block on the
-// driver. An unknown Run returns at once; its caller reports it.
+// pauseGate blocks while a Run is paused or needs User intervention and
+// returns once it runs again or has been abandoned. It holds no lock while
+// waiting, so Pause, Resume and Abandon never block on the driver.
 func (d *Daemon) pauseGate(runID string) {
 	for {
 		d.mu.Lock()
 		rs, ok := d.runs[runID]
-		if !ok || rs.Status != runStatusPaused {
+		if !ok || (rs.Status != runStatusPaused && rs.Status != runStatusNeedsYou) {
 			d.mu.Unlock()
 			return
 		}
@@ -4033,9 +4083,8 @@ func (d *Daemon) pauseRun(w http.ResponseWriter, r *http.Request, id string) {
 	writeJSON(w, http.StatusOK, map[string]any{"run": out})
 }
 
-// resumeRun continues a paused Run without starting a second Worker for a
-// Ticket that already has one: started Tickets keep their Sessions and
-// merged ones seed from their shas. Anything else is 409.
+// resumeRun continues a paused, failed or needs-you Run without starting a
+// second Worker for a Ticket that already has one. Anything else is 409.
 func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 	out, code, msg := d.resumeRunCore(id)
 	switch code {
@@ -4050,9 +4099,9 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 	}
 }
 
-// resumeRunCore is the Resume of a paused or failed Run without the HTTP: it answers the fresh Run
-// snapshot, or a status code (404, 409, 500) and message. A restarted Daemon
-// calls it for Runs saved with ResumeOnRestart.
+// resumeRunCore resumes a paused, failed or needs-you Run without the HTTP:
+// it answers the fresh Run snapshot, or a status code and message. A restarted
+// Daemon calls it for Runs saved with ResumeOnRestart.
 func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	d.mu.Lock()
 	rs, ok := d.runs[id]
@@ -4060,9 +4109,9 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		d.mu.Unlock()
 		return nil, http.StatusNotFound, "not found"
 	}
-	if rs.Status != runStatusPaused && rs.Status != runStatusFailed {
+	if rs.Status != runStatusPaused && rs.Status != runStatusFailed && rs.Status != runStatusNeedsYou {
 		d.mu.Unlock()
-		return nil, http.StatusConflict, "run is not paused or failed"
+		return nil, http.StatusConflict, "run is not paused, needs-you or failed"
 	}
 	spec := rs.Spec
 	d.mu.Unlock()
@@ -4083,9 +4132,9 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		d.mu.Unlock()
 		return nil, http.StatusNotFound, "not found"
 	}
-	if rs.Status != runStatusPaused && rs.Status != runStatusFailed {
+	if rs.Status != runStatusPaused && rs.Status != runStatusFailed && rs.Status != runStatusNeedsYou {
 		d.mu.Unlock()
-		return nil, http.StatusConflict, "run is not paused or failed"
+		return nil, http.StatusConflict, "run is not paused, needs-you or failed"
 	}
 	rs.SpecRun = specRun
 	rs.Status = runStatusRunning

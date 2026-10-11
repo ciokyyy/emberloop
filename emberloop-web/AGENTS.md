@@ -92,20 +92,22 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   steering its own child on both tool paths, non-child and scout refusals at
   the same seam; `runs_test.go` covers spec discovery and
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
-  with a fake Backend and fake git (order, cap, box ticks, dirty and
-  conflict refusals, roles); `runs_worktree_test.go` covers worktree identity
-  and the read-only spec mirror (the direct tick helper never writes the
-  mirror); `runs_markdone_basered_test.go` covers merge-ordered ticket
-  status/boxes, deferred spec status, red-base Needs-you and per-tip check
-  caching; `runs_reviewers_test.go` covers both Reviewer
+  with a fake Backend and fake git (order, cap, box ticks, dirty and conflict
+  refusals, roles); `runs_specbranch_test.go` covers spec-branch creation,
+  Ticket merges, checkpoint rebase, conflict reporting and abandon cleanup;
+  `runs_worktree_test.go` covers worktree identity and the read-only spec
+  mirror (the direct tick helper never writes the mirror);
+  `runs_markdone_basered_test.go` covers merge-ordered Ticket status and
+  boxes, deferred spec status, red-base Needs-you and per-tip check caching;
+  `runs_reviewers_test.go` covers both Reviewer
   Sessions per Ticket, the gate, rework, staleness, roles, the cap and the
   reviewer submit tool (scripted tool submits, empty-ran and minors-only
   refusals, stale-tip records with the current tip, minors-pass merges) at the
   same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
-  reload with nothing spawned, pause, resume without a second Worker, a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused and failed Runs; Restart Run starts from zero), and
-  finished Runs staying listed, at the same seam; `RunsView.test.js` covers
-  the live Ticket table with Worker links, the verdict columns, and the
-  paused and failed states with their Resume button; `quota_test.go` covers
+  reload with nothing spawned, pause, resume without a second Worker, and a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused, failed and needs-you Runs; Restart Run starts from zero), and
+  finished Runs staying listed; `RunsView.test.js` covers the live Ticket table
+  and verdict columns, plus the spec branch distance, rebase action, abandon
+  confirmation and needs-you state; `quota_test.go` covers
   `GET /api/quota` and `POST /api/quota/refresh` with local HTTP stubs for
   the opencode and Antigravity endpoints (cards, not-configured, stale
   fallback, forced refresh, Claude re-read, unknown-key 400); `pig_test.go`
@@ -614,10 +616,14 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   SSE). Start creates the Run's `spec/<slug>` branch from the master tip
   (the master ref when present, else main) when absent and reuses it
   as it stands otherwise, recording the branch and the master tip at Start
-  (`specBranch`, `specBase`) on the Run row; the main checkout
-  never moves. Each Ticket starts in number order once blockers merged, up to the
-  live-Session cap, in its own worktree forked from the spec branch as a
-  Subagent of the Run (ParentID the Run). Worktree creation enables
+  (`specBranch`, `specBase`) on the Run row; the main checkout never moves.
+  `specBehind` in each Run snapshot counts commits on master not on its spec
+  branch. `POST /api/runs/{id}/rebase` rebases onto the current master in a
+  detached temporary worktree; a conflict leaves the branch unchanged, sets
+  the Run to needs-you and lists conflicted files in `error`. Each Ticket starts
+  in number order once blockers merged, up to the live-Session cap, in its own
+  worktree forked from the spec branch as a Subagent of the Run (ParentID the Run).
+  Worktree creation enables
   extensions.worktreeConfig once per repo, then sets per-worktree
   user.name/user.email (emberloop) and a per-worktree spec excludes file, so
   the User's shared repo config is untouched; it also mirrors missing spec
@@ -706,13 +712,16 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   and `tip` with the last refusal. The Run view also streams `warnings` (overlap
   Events).
   Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
-  (state, tip, last refusal, times) written after every driver pass (plus
-  the overlap `warnings`), and reload paused with nothing spawned. `POST /api/runs/{id}/pause`
-  freezes the driver (no new Workers or Reviewers, live Sessions untouched)
-  and `POST /api/runs/{id}/resume` continues it; started Tickets keep their
-  Worker Sessions and merged ones seed from their shas, so a Resume never
-  starts a second Worker. The UI shows the live table with Worker links to
-  the Session view plus Pause and Resume buttons on running and paused Runs.
+  (state, tip, last refusal, times) after every driver pass (plus `warnings`).
+  Reload spawns nothing: running Runs become paused and needs-you Runs stay needs-you.
+  `POST /api/runs/{id}/pause` freezes the driver (no new Workers or Reviewers,
+  live Sessions untouched); `POST /api/runs/{id}/resume` continues it. Started
+  Tickets keep their Worker Sessions and merged ones seed from their shas, so
+  Resume never starts a second Worker. `POST /api/runs/{id}/abandon` ends Run-owned
+  Sessions and removes its Ticket worktrees/branches and spec branch; the Run
+  remains listed as abandoned.
+  The Run view shows the branch and distance from master, Rebase and confirmed
+  Abandon actions, plus Pause/Resume and Worker links.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

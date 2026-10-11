@@ -188,7 +188,7 @@ export function ticketFinished(ticket) {
 }
 
 export function runFinished(run) {
-  return run?.status === 'done' || run?.status === 'failed';
+  return run?.status === 'done' || run?.status === 'failed' || run?.status === 'abandoned';
 }
 
 // agentsOf lists one ticket's sessions: worker, both reviewers, scouts.

@@ -8,7 +8,7 @@
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
   import RunsGraph from './RunsGraph.svelte';
-  import { startRun, getRun, openRunStream, pauseRun, resumeRun } from './api.js';
+  import { startRun, getRun, openRunStream, pauseRun, resumeRun, rebaseRun, abandonRun } from './api.js';
   import TicketPage from './TicketPage.svelte';
   import { soundPlayer, runTransitions, seedRun } from './sound.js';
   import {
@@ -39,13 +39,18 @@
       return;
     }
     const snap = seedRun(next);
-    for (const t of runTransitions(prevRun.snap, snap)) sounds?.playEvent(t.event, { key: t.key });
+    for (const t of runTransitions(prevRun.snap, next)) sounds?.playEvent(t.event, { key: t.key });
     prevRun = { id: next.id, snap };
   }
 
   const merged = $derived((run?.tickets ?? []).filter((t) => t.state === 'merged').length);
-  const runBadge = (status) =>
-    status === 'done' ? 'success' : status === 'failed' ? 'destructive' : status === 'paused' ? 'warning' : 'secondary';
+  const runBadge = (status) => {
+    if (status === 'done') return 'success';
+    if (status === 'failed') return 'destructive';
+    if (status === 'paused' || status === 'needs-you') return 'warning';
+    if (status === 'abandoned') return 'outline';
+    return 'secondary';
+  };
   const stateBadge = (state) =>
     state === 'merged' ? 'success' : state === 'needs-you' ? 'warning' : state === 'discarded' || state === 'parked' ? 'outline' : state === 'queued' ? 'outline' : 'secondary';
   const reviewerLabel = (type) => (type === 'reviewer-spec' ? 'spec' : type === 'reviewer-standards' ? 'standards' : String(type));
@@ -65,6 +70,7 @@
   let runError = $state('');
   let starting = $state(false);
   let acting = $state(false);
+  let confirmAbandon = $state(false);
   // List/Graph toggle for the live tickets; the graph is the default view.
   let graphView = $state('graph');
   // Tickets waving the needs-you banner: the driver marks them after the
@@ -85,10 +91,10 @@
     runSource = null;
   }
 
-  // Only a finished Run closes the stream: a paused Run stays subscribed,
-  // so the table wakes when the Resume continues it.
+  // Completed, failed and abandoned Runs stop changing; paused and needs-you
+  // Runs stay subscribed so Resume can wake the view.
   function liveDone(r) {
-    return r && (r.status === 'done' || r.status === 'failed');
+    return r && (r.status === 'done' || r.status === 'failed' || r.status === 'abandoned');
   }
 
   // A sidebar spec pick drops a live Run started from another spec: the
@@ -127,6 +133,7 @@
   // overwrite B or double-subscribe the stream.
   async function openRun(id) {
     if (!id) return;
+    confirmAbandon = false;
     const token = ++openToken;
     closeRunStream();
     runStreamDown = false;
@@ -196,8 +203,13 @@
     try {
       const body = await fn(run.id);
       applyRun(body.run ?? body);
-      if (run?.id) subscribeRun(run.id);
-    } catch {
+      if (liveDone(run)) closeRunStream();
+      else if (run?.id) subscribeRun(run.id);
+    } catch (e) {
+      if (e?.run) {
+        applyRun(e.run);
+        if (liveDone(run)) closeRunStream();
+      }
       runError = failed;
     } finally {
       acting = false;
@@ -211,6 +223,14 @@
   async function resume() {
     await act(resumeRun, 'Could not resume the Run.');
   }
+  async function rebase() {
+    await act(rebaseRun, 'Could not rebase the spec branch onto master.');
+  }
+
+  async function abandon() {
+    confirmAbandon = false;
+    await act(abandonRun, 'Could not abandon the Run.');
+  }
 
   function clearRun() {
     openToken++;
@@ -218,6 +238,7 @@
     run = null;
     runError = '';
     runStreamDown = false;
+    confirmAbandon = false;
     prevRun = null;
   }
 
@@ -268,15 +289,40 @@
   <h2 class="text-lg font-semibold tracking-tight">Runs</h2>
 
   {#if run?.id && run.tickets}
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="run-header">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="run-header">
       <h3 class="text-sm font-semibold tracking-tight">{run.title || discovery.previewTitle || run.spec}</h3>
       <Badge variant={runBadge(run.status)}>{run.status ?? ''}</Badge>
       <span class="text-xs text-muted-foreground">
         {merged}/{run.tickets.length} merged · {run.harness} · {String(run.model ?? '').split('/').pop()}{run.effort ? ` · ${run.effort}` : ''}
       </span>
-      {#if run.status === 'done' || run.status === 'failed'}
-        <Button size="sm" variant="outline" class="ml-auto" disabled={starting || !discovery.selected} onclick={start}>Restart Run</Button>
+      {#if run.specBranch}
+        <span class="text-xs text-muted-foreground" data-testid="run-spec-branch">
+          <span class="font-mono">{run.specBranch}</span> ·
+          {#if run.status === 'abandoned'}
+            abandoned
+          {:else if Number.isInteger(run.specBehind)}
+            {run.specBehind} {run.specBehind === 1 ? 'commit' : 'commits'} behind master
+          {:else}
+            distance unavailable from master
+          {/if}
+        </span>
       {/if}
+      <div class="ml-auto flex flex-wrap items-center gap-2">
+        {#if run.status === 'done' || run.status === 'failed' || run.status === 'abandoned'}
+          <Button size="sm" variant="outline" disabled={starting || !discovery.selected} onclick={start}>Restart Run</Button>
+        {/if}
+        {#if run.specBranch && (run.status !== 'abandoned' || run.error?.startsWith('abandon cleanup incomplete'))}
+          {#if run.status !== 'abandoned'}
+            <Button size="sm" variant="outline" disabled={acting} onclick={rebase}>Rebase</Button>
+          {/if}
+          {#if confirmAbandon}
+            <Button size="sm" variant="destructive" disabled={acting} onclick={abandon}>Confirm abandon</Button>
+            <Button size="sm" variant="ghost" disabled={acting} onclick={() => (confirmAbandon = false)}>Cancel</Button>
+          {:else}
+            <Button size="sm" variant="ghost" disabled={acting} onclick={() => (confirmAbandon = true)}>Abandon spec</Button>
+          {/if}
+        {/if}
+      </div>
     </div>
     {#if run.error}
       <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{run.error}</p>
@@ -358,7 +404,7 @@
             <Button size="sm" variant={graphView === 'graph' ? 'secondary' : 'ghost'} class="rounded-full" aria-pressed={graphView === 'graph'} onclick={() => (graphView = 'graph')}>Graph</Button>
             <Button size="sm" variant={graphView === 'list' ? 'secondary' : 'ghost'} class="rounded-full" aria-pressed={graphView === 'list'} onclick={() => (graphView = 'list')}>List</Button>
           </div>
-          {#if run.status === 'paused' || run.status === 'failed'}
+          {#if run.status === 'paused' || run.status === 'failed' || run.status === 'needs-you'}
             <Button size="sm" variant="outline" disabled={acting} onclick={resume}>Resume</Button>
           {:else if run.status === 'running'}
             <Button size="sm" variant="outline" disabled={acting} onclick={pause}>Pause</Button>

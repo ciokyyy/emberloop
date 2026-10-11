@@ -57,7 +57,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/router.js` — pure route parse/build (`/s/<id>` with `?at=`, `/runs[/<runId>[/<ticketId>]]`, `/settings`, `/quota`, `/memory`, `/` as last-viewed `eb.last` else newest); `App.svelte` owns pushState/popstate around it
 - `src/lib/DraftBar.svelte` — harness, model and effort pickers for a new chat draft (effort for claude and pig)
 - `src/lib/Transcript.svelte`, `src/lib/transcript.js` — TanStack-virtualized transcript (dynamic measurement, overscan, stick-to-bottom unless scrolled up with time-based glide, jump-to-latest) with a load-earlier sentinel (auto-load on scroll up, scroll-anchored, spinner, stops at `hasMore=false`); pure stick/anchor/seq helpers in `transcript.js`
-- `src/lib/api.js` — Daemon client (configurable base URL), incl. Session snapshot paging params (`getSession(id, { tail, before, turns, at })`), settings read/write, spec list, ticket preview, Run start/get and Run SSE stream, per-ticket steer/retry/park/discard, build version read, prompt image ids, Session image upload/list/serve, and the Memory page calls (`getRules`, `getObservations`, `getRulesQueue`, `decideRuleQueue`, `batchRuleQueue`, `getRuleQueueStats`, `getMemoryLedger`, `getMemoryStatus`, `purgeMemory` alongside the profile calls)
+- `src/lib/api.js` — Daemon client (configurable base URL), incl. Session snapshot paging params (`getSession(id, { tail, before, turns, at })`), settings read/write, spec list, ticket preview, Run start/get and Run SSE stream, per-ticket steer/retry/park/discard, Run pause/resume/rebase/abandon actions, build version read, prompt image ids, Session image upload/list/serve, and the Memory page calls (`getRules`, `getObservations`, `getRulesQueue`, `decideRuleQueue`, `batchRuleQueue`, `getRuleQueueStats`, `getMemoryLedger`, `getMemoryStatus`, `purgeMemory` alongside the profile calls)
 - `src/lib/api.js` auth calls (`getAuthState`, `getMe`, `login`, `signup`, `logout`) and the `UNAUTHORIZED` window event that any 401 from a non-auth route fires
 - `src/lib/live.js` — the one EventSource channel: `watch(topic, fn)` per topic; `stopLive` closes it and drops the watchers on sign-out
 - `src/lib/version.js` — the bundle's own build hash, the Daemon version fetch, the stale predicate, the badge line and the clipboard copy
@@ -113,12 +113,11 @@ keyboard, empty state and windowing (`ui/combobox.test.js`), Card rendering per 
 plus the echoed-prompt no-animation swap (`Card.test.js`), Runs spec-discovery
 form, list and pick plus the Run list picker (newest first, counts, navigate)
 and the needs-you strip (`RunsSidebar.test.js`), picked preview, Start, live graph
-default/toggle with card deep-link, live table with Worker links plus the
-reviewer verdict columns, the needs-you banner with ticket deep-links, the cold deep-link sidebar seeding via
-`ensureDiscoveryContext` (single-flight, no repo clobber), stale-navigation
-races, stream close on unmount and SSE-only live updates against a mocked API
-and Run stream (`RunsView.test.js`), graph layout, state mapping, edges, cyclic
-graphs, duplicate-id dedupe and legend counts (`runsGraph.test.js`), graph cards, legend,
+default/toggle with card deep-link, live table with Worker links and reviewer
+verdict columns, the needs-you banner, spec branch distance, checkpoint rebase,
+confirmed abandon and SSE-only Run updates (`RunsView.test.js`), graph layout,
+state mapping, edges, cyclic graphs, duplicate-id dedupe and legend counts
+(`runsGraph.test.js`), graph cards, legend,
 select, zoom, keyboard pan, duplicate ids and wheel-listener cleanup (`RunsGraph.test.js`),
 ticket state mapping, rounds and dispositions, gate, exact echo drops and finished helpers
 (`ticketPage.test.js`), the mounted ticket page (state track, rounds, finding blocking

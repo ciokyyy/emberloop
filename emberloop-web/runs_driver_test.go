@@ -83,6 +83,8 @@ type runJSON struct {
 	Effort     string          `json:"effort"`
 	SpecBranch string          `json:"specBranch"`
 	SpecBase   string          `json:"specBase"`
+	SpecBehind int             `json:"specBehind"`
+	Error      string          `json:"error"`
 	Tickets    []runTicketJSON `json:"tickets"`
 }
 

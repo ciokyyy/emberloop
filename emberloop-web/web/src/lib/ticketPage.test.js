@@ -210,6 +210,8 @@ describe('finished helpers', () => {
     expect(runFinished({ status: 'done' })).toBe(true);
     expect(runFinished({ status: 'failed' })).toBe(true);
     expect(runFinished({ status: 'running' })).toBe(false);
+    expect(runFinished({ status: 'needs-you' })).toBe(false);
+    expect(runFinished({ status: 'abandoned' })).toBe(true);
     expect(runFinished({ status: 'paused' })).toBe(false);
   });
 });

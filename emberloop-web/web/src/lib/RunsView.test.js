@@ -444,6 +444,75 @@ describe('RunsView preview and live run', () => {
     vi.unstubAllGlobals();
   });
 
+  it('shows the spec branch distance, rebases on demand, and confirms abandon', async () => {
+    let behind = 2;
+    let status = 'running';
+    let abandonAttempts = 0;
+    const calls = [];
+    const live = () => ({
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      title: 'Demo spec',
+      status,
+      specBranch: 'spec/demo',
+      specBehind: behind,
+      error: abandonAttempts === 1 ? 'abandon cleanup incomplete: remove branch spec/demo failed' : '',
+      tickets: [{ id: '01-first', num: 1, title: 'First', state: 'running', blockers: [], workerSession: '' }],
+    });
+    seedPreview();
+    stubRuns(async (u, opts) => {
+      const path = String(u);
+      calls.push({ path, method: opts?.method ?? 'GET' });
+      if (path.endsWith('/rebase')) {
+        behind = 0;
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.endsWith('/abandon')) {
+        abandonAttempts++;
+        status = 'abandoned';
+        if (abandonAttempts === 1) {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ error: 'abandon cleanup incomplete', run: live() }),
+          };
+        }
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.includes('/api/runs/')) return { ok: true, json: async () => ({ run: live() }) };
+      if (path.includes('/api/runs') && opts?.method === 'POST') return { ok: true, json: async () => ({ run: live() }) };
+      if (path.includes('/api/specs/preview')) return { ok: true, json: async () => preview };
+      return { ok: true, json: async () => ({ specs: [specRow] }) };
+    });
+
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    await fireEvent.click(await within(container).findByText(/start run/i));
+    const branch = await within(container).findByTestId('run-spec-branch');
+    expect(branch.textContent).toContain('spec/demo');
+    expect(branch.textContent).toContain('2 commits behind master');
+
+    await fireEvent.click(within(container).getByRole('button', { name: 'Rebase' }));
+    expect(calls.some((c) => c.path.endsWith('/api/runs/run-1/rebase') && c.method === 'POST')).toBe(true);
+    expect(await within(container).findByText(/0 commits behind master/)).toBeTruthy();
+    expect(within(container).getByTestId('run-spec-branch').textContent).toContain('0 commits behind master');
+
+    await fireEvent.click(within(container).getByRole('button', { name: 'Abandon spec' }));
+    expect(within(container).getByRole('button', { name: 'Confirm abandon' })).toBeTruthy();
+    expect(calls.some((c) => c.path.endsWith('/api/runs/run-1/abandon'))).toBe(false);
+    await fireEvent.click(within(container).getByRole('button', { name: 'Cancel' }));
+    expect(within(container).queryByRole('button', { name: 'Confirm abandon' })).toBeNull();
+
+    await fireEvent.click(within(container).getByRole('button', { name: 'Abandon spec' }));
+    await fireEvent.click(within(container).getByRole('button', { name: 'Confirm abandon' }));
+    expect(await within(container).findByText(/abandon cleanup incomplete/)).toBeTruthy();
+    expect(within(container).getByRole('button', { name: 'Abandon spec' })).toBeTruthy();
+
+    await fireEvent.click(within(container).getByRole('button', { name: 'Abandon spec' }));
+    await fireEvent.click(within(container).getByRole('button', { name: 'Confirm abandon' }));
+    expect(calls.filter((c) => c.path.endsWith('/api/runs/run-1/abandon') && c.method === 'POST')).toHaveLength(2);
+    expect(await within(container).findByText('abandoned')).toBeTruthy();
+  });
+
   it('banners needs-you tickets with deep-links to their ticket pages', async () => {
     const live = {
       id: 'run-1',

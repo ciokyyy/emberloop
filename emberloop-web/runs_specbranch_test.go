@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -420,5 +421,107 @@ func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
 	}
 	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")); got != specTip {
 		t.Fatalf("spec/demo = %q, want the reused tip %q", got, specTip)
+	}
+}
+
+// A checkpoint rebase updates the spec branch to master, records the new
+// base and reports how many master commits the branch was behind.
+func TestRebaseSpecBranchOntoMaster(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	if run.SpecBehind != 0 {
+		t.Fatalf("specBehind at start = %d, want 0", run.SpecBehind)
+	}
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+
+	writeFile(t, repo, "master-only.txt", "master\n")
+	testGit(t, repo, "add", "master-only.txt")
+	testGit(t, repo, "commit", "-m", "master moves")
+	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	if got := getRun(t, srv.URL, run.ID).SpecBehind; got != 1 {
+		t.Fatalf("specBehind after master moves = %d, want 1", got)
+	}
+
+	rebased, code := postRunAction(t, srv.URL, run.ID, "rebase")
+	if code != http.StatusOK {
+		t.Fatalf("rebase status = %d, want 200", code)
+	}
+	if !isAncestor(t, repo, master, "spec/demo") {
+		t.Fatalf("master tip %s is not an ancestor of rebased spec branch", master)
+	}
+	if rebased.SpecBase != master || rebased.SpecBehind != 0 {
+		t.Fatalf("rebased base/distance = %s/%d, want %s/0", rebased.SpecBase, rebased.SpecBehind, master)
+	}
+}
+
+// A checkpoint conflict leaves the spec ref unchanged and publishes a
+// needs-you Run snapshot naming the conflicting files.
+func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+
+	branchTip := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
+	specWorktree := filepath.Join(repo, ".el-worktrees", "manual-spec")
+	testGit(t, repo, "worktree", "add", specWorktree, "spec/demo")
+	t.Cleanup(func() { _, _ = runGit(repo, "worktree", "remove", "--force", specWorktree) })
+	writeFile(t, specWorktree, "shared.txt", "spec version\n")
+	testGit(t, specWorktree, "add", "shared.txt")
+	testGit(t, specWorktree, "commit", "-m", "spec change")
+	branchTip = strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
+	writeFile(t, repo, "shared.txt", "master version\n")
+	testGit(t, repo, "add", "shared.txt")
+	testGit(t, repo, "commit", "-m", "master change")
+
+	conflicted, code := postRunAction(t, srv.URL, run.ID, "rebase")
+	if code != http.StatusOK {
+		t.Fatalf("rebase status = %d, want 200", code)
+	}
+	if conflicted.Status != runStatusNeedsYou || !strings.Contains(conflicted.Error, "shared.txt") {
+		t.Fatalf("rebase conflict snapshot = status %q error %q, want needs-you naming shared.txt", conflicted.Status, conflicted.Error)
+	}
+	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")); got != branchTip {
+		t.Fatalf("spec branch tip = %s after conflict, want unchanged %s", got, branchTip)
+	}
+}
+
+// Abandon ends the Run's Sessions and removes its Ticket and spec worktrees
+// and branches, while keeping an abandoned Run row for the UI.
+func TestAbandonRunRemovesBranchesAndWorktrees(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	run = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(run, "01-first").WorkerSession
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+
+	abandoned, code := postRunAction(t, srv.URL, run.ID, "abandon")
+	if code != http.StatusOK || abandoned.Status != runStatusAbandoned {
+		t.Fatalf("abandon = status %d, Run %q; want 200 abandoned", code, abandoned.Status)
+	}
+	for _, branch := range []string{"spec/demo", "implement/01-first"} {
+		if exists, err := specBranchExists(repo, branch); err != nil || exists {
+			t.Fatalf("branch %s exists after abandon: exists=%v err=%v", branch, exists, err)
+		}
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Fatalf("Ticket worktree still exists after abandon: stat err=%v", err)
+	}
+	if got := getSession(t, srv.URL, worker).Meta.Status; got != "ended" {
+		t.Fatalf("Worker status after abandon = %q, want ended", got)
 	}
 }
