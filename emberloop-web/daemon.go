@@ -1139,9 +1139,6 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 		// and the child settles on its turn alone.
 		d.enforceSubmitGate(id, be, mark, harness)
 	}
-	if !handoff {
-		d.maybeAutoCompress(id)
-	}
 	d.finishTurn(id)
 	// A Run Reviewer's settled turn carries its verdict: record it (a no-op
 	// for every other Session).
@@ -1151,8 +1148,18 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 	// A settled Subagent may complete its Group: the last member to finish
 	// delivers one grouped result to the parent as a Steer.
 	d.maybeDeliverGroup(id)
-	// A compress held by a Group of this Session may run now.
+	// A compress held by a Group of this Session may run now. An explicit
+	// wait wins over an automatic one: the auto check runs last, so it sees
+	// the busy claim a deferred compress just took and skips to the next
+	// turn end.
 	d.runDeferredCompress(id)
+	// Auto-compress runs after the Session settles, so the usage Event of
+	// this turn is in the log and requestCompress sees an idle Session. A
+	// handoff turn never auto-compresses: its reply would loop on the same
+	// threshold, and the cooldown already guards the next one.
+	if !handoff {
+		d.maybeAutoCompress(id)
+	}
 }
 
 // listQueue reports not-yet-delivered messages.

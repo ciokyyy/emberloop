@@ -592,22 +592,6 @@ func TestBlockCompressDropsDeferredCompress(t *testing.T) {
 	}
 }
 
-// Auto-compress on the Handoff path lands in ticket 14. Until then
-// maybeAutoCompress starts nothing, so no turn auto-compresses.
-func TestNoAutoCompressUntilTicket14(t *testing.T) {
-	useSettings(t, "")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
-	srv := httptest.NewServer(authedHandler(t, d))
-	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
-	sendPrompt(t, srv.URL, id, "hello")
-	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
-	d.maybeAutoCompress(id)
-	if n := len(eventsOfKind(transcriptOf(t, srv.URL, id), "compressed")); n != 0 {
-		t.Fatalf("compressed events = %d, want 0 until ticket 14", n)
-	}
-}
-
 // A compress that gets a credit failure from the start-handle step blocks and
 // leaves the old handle alone.
 func TestCompressStartHandleTransientRetriesThenSwaps(t *testing.T) {

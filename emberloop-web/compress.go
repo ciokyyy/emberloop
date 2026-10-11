@@ -94,11 +94,120 @@ func usageText(used, size int) string {
 	return string(b)
 }
 
-// maybeAutoCompress runs after a turn, before the Session settles. Handoff
-// auto-compress lands in ticket 14: until then it does nothing, so manual
-// compress is the only path.
+// maybeAutoCompress runs after a turn settles, before Group delivery settles
+// a deferred manual compress. When auto_compress is on and the newest usage
+// Event sits at or past compress_threshold_percent, it starts a Handoff
+// compress through the shared requestCompress path (same swap, same fallback
+// chain, same block policy). It fires only at a tool boundary (no open tool
+// call, per openTask) or when the Session is idle, never mid-token: the gate
+// is the one session.Idle definition (quiet 0, so a settled turn needs no
+// quiet wait), and a turn, queued input or resume/release in flight skips to
+// the next turn end. An outstanding Group is not idle, but it still routes to
+// requestCompress, which holds the compress as a compressWait instead of
+// skipping it, so runDeferredCompress runs it at Group delivery.
+// compress_cooldown counts non-Handoff prompts since the last compressed Event
+// (turns to wait); the first compress is never cooled. An unset or unauthed
+// compress model, a blocked Session, a scout or an ended Session never starts
+// one: the Session GET compressNote and the Settings warning already name the
+// missing model.
 func (d *Daemon) maybeAutoCompress(id string) {
-	_ = id
+	set := readCompressSettings()
+	if !set.Auto {
+		return
+	}
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	now := d.now()
+	groupOpen := d.groupOutstandingLocked(id)
+	if s.meta.Status == "ended" || s.meta.Scout || s.swapping || s.compressWait || s.meta.CompressBlock != "" {
+		d.mu.Unlock()
+		return
+	}
+	if !s.Idle(now, 0, groupOpen) && !groupOpen {
+		d.mu.Unlock()
+		return
+	}
+	events := append([]Event(nil), s.events...)
+	d.mu.Unlock()
+	hb, _ := d.handoffFor(id)
+	if hb == nil {
+		return
+	}
+	if compressNote(set.Model) != "" {
+		return
+	}
+	used, size, ok := usageOf(events)
+	if !ok || size <= 0 {
+		return
+	}
+	if used*100 < int64(set.ThresholdPercent)*size {
+		return
+	}
+	if openTask(events) {
+		return
+	}
+	if !cooldownPassed(events, set.Cooldown) {
+		return
+	}
+	d.requestCompress(id, "")
+}
+
+// usageOf reports the newest usage Event's used and size counts, false when
+// the log holds none.
+func usageOf(events []Event) (int64, int64, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind != "usage" {
+			continue
+		}
+		var u struct {
+			Used int64 `json:"used"`
+			Size int64 `json:"size"`
+		}
+		if json.Unmarshal([]byte(events[i].Text), &u) != nil || u.Size <= 0 {
+			continue
+		}
+		return u.Used, u.Size, true
+	}
+	return 0, 0, false
+}
+
+// promptsSinceCompress counts the non-Handoff prompts after the last
+// compressed Event, false when no compress ran yet.
+func promptsSinceCompress(events []Event) (int, bool) {
+	last := -1
+	for i, e := range events {
+		if e.Kind == "compressed" {
+			last = i
+		}
+	}
+	if last < 0 {
+		return 0, false
+	}
+	n := 0
+	for _, e := range events[last+1:] {
+		if e.Kind == "prompt" && !e.Handoff {
+			n++
+		}
+	}
+	return n, true
+}
+
+// cooldownPassed reports whether enough turns ran since the last compress.
+// Cooldown counts non-Handoff prompts (the Settings "Turns to wait"); the
+// first compress is never cooled and a non-positive cooldown never blocks.
+func cooldownPassed(events []Event, cooldown int) bool {
+	if cooldown <= 0 {
+		return true
+	}
+	n, had := promptsSinceCompress(events)
+	if !had {
+		return true
+	}
+	return n >= cooldown
 }
 
 // handleCompress is POST /api/sessions/{id}/compress: compress now, or once
