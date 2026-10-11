@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Fake Backend can script a Reviewer `submit`
-- [ ] `pass` with empty `ran` is refused with a tool error
-- [ ] Stale-tip verdict is recorded and does not count
-- [ ] `changes` with only minors is refused
-- [ ] Reviewer prompts describe the tool and drop the text format
-- [ ] Run seam tests cover each case; `.emberloop/check` passes
+- [x] Fake Backend can script a Reviewer `submit`
+- [x] `pass` with empty `ran` is refused with a tool error
+- [x] Stale-tip verdict is recorded and does not count
+- [x] `changes` with only minors is refused
+- [x] Reviewer prompts describe the tool and drop the text format
+- [x] Run seam tests cover each case; `.emberloop/check` passes
