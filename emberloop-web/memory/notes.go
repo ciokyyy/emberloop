@@ -109,22 +109,22 @@ func ParseNote(path string, data []byte) (Note, error) {
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return Note{}, fmt.Errorf("memory: note %s: missing frontmatter", path)
 	}
-	close := -1
+	end := -1
 	for i := 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) == "---" {
-			close = i
+			end = i
 			break
 		}
 	}
-	if close < 0 {
+	if end < 0 {
 		return Note{}, fmt.Errorf("memory: note %s: unclosed frontmatter", path)
 	}
-	fields, lists := parseFrontmatter(lines[1:close])
+	fields, lists := parseFrontmatter(lines[1:end])
 	id := stripQuotes(fields["id"])
 	if strings.TrimSpace(id) == "" {
 		return Note{}, fmt.Errorf("memory: note %s: id missing", path)
 	}
-	body := strings.TrimSpace(strings.Join(lines[close+1:], "\n"))
+	body := strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
 	if body == "" {
 		return Note{}, fmt.Errorf("memory: note %s: empty body", path)
 	}
@@ -179,16 +179,11 @@ func parseAnchorsField(scalar string, list []string) []string {
 	var raw []string
 	if s := strings.TrimSpace(scalar); s != "" {
 		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
-			for _, part := range strings.Split(s[len(s[:1]):len(s)-1], ",") {
-				if a := stripQuotes(strings.TrimSpace(part)); a != "" {
-					raw = append(raw, a)
-				}
-			}
-		} else {
-			for _, part := range strings.Split(s, ",") {
-				if a := stripQuotes(strings.TrimSpace(part)); a != "" {
-					raw = append(raw, a)
-				}
+			s = s[1 : len(s)-1]
+		}
+		for _, part := range strings.Split(s, ",") {
+			if a := stripQuotes(strings.TrimSpace(part)); a != "" {
+				raw = append(raw, a)
 			}
 		}
 	}
