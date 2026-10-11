@@ -243,6 +243,19 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   with the counts, budget and latency. A single mention never promotes; the
   same key in two Sessions does unless situational. `rules_test.go` covers
   each path on the fake clock at the Daemon seam.
+- Memory page (`memory_page.go`, `memory.go` list methods): the User's own bank
+  only, admins get no extra read; the machine token answers 401. `GET /api/rules`
+  and `GET /api/observations` list newest first with an empty q and search
+  through Recall/SearchObservations with one (redacted); `GET /api/memory/ledger`
+  lists ledger rows; `GET /api/memory/status` answers the engine chip plus queue
+  stats, ledger size, last row and last nightly (newest non-queue run), 503 with
+  available false when the engine fails; `POST /api/memory/purge` deletes the
+  chosen selection only with the typed PURGE confirmation and reports counts.
+  `memory_page_test.go` covers privacy, queue evidence and decide/batch, profile
+  versions, purge confirmation, and status plus ledger at the Daemon seam. The UI
+  is `MemoryPage.svelte` (`memory.js` normalizers that accept Go-case and
+  lowercase rows, `MemoryPage.test.js`, `memory.test.js`) on the rail (`/memory`
+  in `router.js`, `Rail.svelte`, `App.svelte`) beside the reused `ProfileSettings`.
 - Auto-recall injection (`recall_inject.go`): at create and compress the Daemon
   builds Profile plus recall from the task prompt (the Handoff text for
   compress) through `recallBlockFor`: bank `Recall` (20 candidates, `Redact`ed

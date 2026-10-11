@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { Plus, SquarePen, Menu, MessageSquare, Settings, Layers, Gauge, FolderPlus, GitBranch, Search, LogOut } from '@lucide/svelte';
+  import { Plus, SquarePen, Menu, MessageSquare, Settings, Layers, Gauge, Brain, FolderPlus, GitBranch, Search, LogOut } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Input from './lib/ui/input.svelte';
   import Badge from './lib/ui/badge.svelte';
@@ -16,6 +16,7 @@
   import SettingsPage from './lib/SettingsPage.svelte';
   import RunsView from './lib/RunsView.svelte';
   import QuotaPage from './lib/QuotaPage.svelte';
+  import MemoryPage from './lib/MemoryPage.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
   import VersionBadge from './lib/VersionBadge.svelte';
   import Rail from './lib/Rail.svelte';
@@ -187,7 +188,7 @@
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
   let overlayH = $state(176);
 
-  // Routes: /s/<id>, /runs[/<runId>[/<ticketId>]], /settings, /quota, / (last viewed).
+  // Routes: /s/<id>, /runs[/<runId>[/<ticketId>]], /settings, /quota, /memory, / (last viewed).
   const TAIL_TURNS = 6;
   const LAST_KEY = 'eb.last';
   let hasMore = $state(false);
@@ -222,6 +223,11 @@
     }
     if (r.name === 'quota') {
       view = 'quota';
+      menuOpen = false;
+      return;
+    }
+    if (r.name === 'memory') {
+      view = 'memory';
       menuOpen = false;
       return;
     }
@@ -646,7 +652,7 @@
 </script>
 
 {#snippet rail2(inDrawer = false)}
-  {#if view !== 'quota'}
+  {#if view !== 'quota' && view !== 'memory'}
   <div class="animate-rise flex min-h-0 flex-1 flex-col gap-3">
     {#if view === 'runs'}
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Specs and Runs</h1></div>
@@ -694,8 +700,8 @@
 {/snippet}
 
 <div class="flex h-dvh">
-  <Rail view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : 'chat'} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : '/settings')} />
-  <aside data-testid="sidebar" inert={sideCollapsed || view === 'quota'} aria-hidden={sideCollapsed || view === 'quota'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'quota' ? 'w-0 border-transparent' : 'w-64'}">
+  <Rail view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : view === 'memory' ? 'memory' : 'chat'} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : id === 'memory' ? '/memory' : '/settings')} />
+  <aside data-testid="sidebar" inert={sideCollapsed || view === 'quota' || view === 'memory'} aria-hidden={sideCollapsed || view === 'quota' || view === 'memory'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'quota' || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
     <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3" aria-hidden={sideCollapsed}>
       {#key view}
         {@render rail2(false)}
@@ -714,6 +720,11 @@
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
       <QuotaPage onBack={() => navigate('/')} />
+    {:else if view === 'memory'}
+      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
+      </header>
+      <MemoryPage onBack={() => navigate('/')} />
     {:else if view === 'runs'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
@@ -824,12 +835,13 @@
   </div>
 </div>
 
-<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota' : 'Sessions'}>
+<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota' : view === 'memory' ? 'Memory' : 'Sessions'}>
   {#key view}
     {@render rail2(true)}
   {/key}
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/')}><MessageSquare />Chat</Button>
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/runs')}><Layers />Runs</Button>
+  <Button variant="ghost" class="justify-start" onclick={() => navigate('/memory')}><Brain />Memory</Button>
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/quota')}><Gauge />Quota</Button>
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/settings')}><Settings />Settings</Button>
   {@render accountFooter()}

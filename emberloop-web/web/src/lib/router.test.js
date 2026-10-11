@@ -7,6 +7,7 @@ describe('parsePath', () => {
     expect(parsePath('')).toEqual({ name: 'home' });
     expect(parsePath('/settings')).toEqual({ name: 'settings' });
     expect(parsePath('/quota')).toEqual({ name: 'quota' });
+    expect(parsePath('/memory')).toEqual({ name: 'memory' });
     expect(parsePath('/runs')).toEqual({ name: 'runs' });
     expect(parsePath('/runs/')).toEqual({ name: 'runs' });
   });
@@ -39,6 +40,7 @@ describe('buildPath', () => {
       { name: 'ticket', runId: 'r1', ticketId: 't2' },
       { name: 'settings' },
       { name: 'quota' },
+      { name: 'memory' },
     ];
     for (const r of routes) {
       expect(parsePath(buildPath(r))).toEqual(r);

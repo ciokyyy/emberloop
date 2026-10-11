@@ -1,9 +1,10 @@
-// Browser router: real paths for sessions, runs and settings. Pure
-// parse/build functions live here so tests cover them without the DOM;
+// Browser router: real paths for sessions, runs, settings, quota and memory.
+// Pure parse/build functions live here so tests cover them without the DOM;
 // App.svelte owns history.pushState and popstate around them.
 //
 // Paths: /s/<id> session (optional ?at=<seq> deep link), /runs,
-// /runs/<runId>, /runs/<runId>/<ticketId>, /settings, /quota, / home.
+// /runs/<runId>, /runs/<runId>/<ticketId>, /settings, /quota, /memory,
+// / home.
 export function parsePath(input) {
   const raw = String(input ?? '');
   const q = raw.indexOf('?');
@@ -36,6 +37,7 @@ export function parsePath(input) {
     return { name: 'ticket', runId: segs[1], ticketId: segs[2] };
   if (segs[0] === 'settings' && segs.length === 1) return { name: 'settings' };
   if (segs[0] === 'quota' && segs.length === 1) return { name: 'quota' };
+  if (segs[0] === 'memory' && segs.length === 1) return { name: 'memory' };
   return { name: 'unknown', path };
 }
 
@@ -61,6 +63,8 @@ export function buildPath(route) {
       return '/settings';
     case 'quota':
       return '/quota';
+    case 'memory':
+      return '/memory';
     default:
       return '/';
   }

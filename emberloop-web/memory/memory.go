@@ -60,6 +60,9 @@ const (
 	MaxRuleChars = 300
 	// MaxRecall caps the result size of one search.
 	MaxRecall = 20
+	// MaxList caps one Memory page list. Search stays at MaxRecall;
+	// an empty query lists the newest records instead.
+	MaxList = 100
 	// SnapshotKeep is how many snapshots a bank keeps.
 	SnapshotKeep = 10
 	// SnapshotInterval is the minimum age of the newest snapshot before another is taken.
@@ -94,6 +97,10 @@ type Memory interface {
 	// subject key, oldest first. The queue promotion stage reads it to test
 	// recurrence across Sessions.
 	ObservationsBySubjectKey(ctx context.Context, subjectKey string) ([]Observation, error)
+	// ListObservations returns the newest observations, newest first, at most
+	// MaxList. An empty bank gives an empty list, not an error. The Memory
+	// page lists from it; search uses SearchObservations.
+	ListObservations(ctx context.Context, limit int) ([]Observation, error)
 	AddRule(ctx context.Context, r Rule) (Rule, error)
 	ReviseRule(ctx context.Context, next Rule) (Rule, error)
 	SetRuleStatus(ctx context.Context, ruleID, status string) error
@@ -103,6 +110,10 @@ type Memory interface {
 	// subject key, ordered by rule ID then version. Callers keep the latest
 	// live version per Rule for supersession and disagreement checks.
 	RulesBySubjectKey(ctx context.Context, subjectKey string) ([]Rule, error)
+	// ListRules returns the latest live version of every Rule, newest first,
+	// at most MaxList. Superseded and dormant versions stay out, like Recall.
+	// The Memory page lists from it; search uses Recall.
+	ListRules(ctx context.Context, limit int) ([]Rule, error)
 
 	Enqueue(ctx context.Context, item QueueItem) (int64, error)
 	Decide(ctx context.Context, id int64, status, decidedBy string) error
@@ -364,6 +375,15 @@ func parseTimeText(s string) time.Time {
 func clampLimit(n int) int {
 	if n <= 0 || n > MaxRecall {
 		return MaxRecall
+	}
+	return n
+}
+
+// clampList caps a Memory page list limit to MaxList; zero and negative mean
+// the cap. Lists show more than one search page.
+func clampList(n int) int {
+	if n <= 0 || n > MaxList {
+		return MaxList
 	}
 	return n
 }

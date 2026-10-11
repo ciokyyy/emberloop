@@ -215,6 +215,16 @@ func (b *Bank) SearchObservations(ctx context.Context, text string, limit int) (
 		LIMIT ?`, q, clampLimit(limit))
 }
 
+// ListObservations returns the newest observations, newest first.
+func (b *Bank) ListObservations(ctx context.Context, limit int) ([]Observation, error) {
+	out, err := queryAll(ctx, b.rdb, scanObservation, `SELECT `+observationCols+`
+		FROM observations AS o ORDER BY o.id DESC LIMIT ?`, clampList(limit))
+	if out == nil {
+		return nil, err
+	}
+	return out, err
+}
+
 // ObservationByEvent returns the observation stored for one Session Event,
 // or ErrNotFound. The lookup is by Session ID and Event ID, so it finds a
 // replayed Event exactly, whatever else its quote matches.
@@ -413,6 +423,22 @@ func (b *Bank) Recall(ctx context.Context, text string, limit int) ([]Rule, erro
 		                AND live.status NOT IN ('superseded', 'dormant'))
 		ORDER BY bm25(rules_fts), r.id
 		LIMIT ?`, q, clampLimit(limit))
+}
+
+// ListRules returns the latest live version of every Rule, newest first.
+// The latest row per rule_id wins; superseded and dormant latest versions
+// stay out, like Recall. VACUUM-safe: the latest id per rule_id is resolved
+// in SQL, never assumed from rowid order.
+func (b *Bank) ListRules(ctx context.Context, limit int) ([]Rule, error) {
+	out, err := queryAll(ctx, b.rdb, scanRule, `SELECT `+ruleCols+`
+		FROM rules AS r
+		WHERE r.id IN (SELECT MAX(id) FROM rules GROUP BY rule_id)
+		  AND r.status NOT IN ('superseded', 'dormant')
+		ORDER BY r.id DESC LIMIT ?`, clampList(limit))
+	if out == nil {
+		return nil, err
+	}
+	return out, err
 }
 
 // RulesBySubjectKey returns every Rule version with the normalized subject

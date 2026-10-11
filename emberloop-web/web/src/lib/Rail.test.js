@@ -26,4 +26,12 @@ describe('rail collapse toggle', () => {
     btn.click();
     expect(onSelect).toHaveBeenCalledWith('quota');
   });
+
+  it('offers a Memory area', () => {
+    const onSelect = vi.fn();
+    const { getByRole } = render(Rail, { props: { view: 'chat', onSelect } });
+    const btn = getByRole('button', { name: 'Memory' });
+    btn.click();
+    expect(onSelect).toHaveBeenCalledWith('memory');
+  });
 });

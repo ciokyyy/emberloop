@@ -132,6 +132,26 @@ describe('Quota navigation', () => {
   });
 });
 
+describe('Memory navigation', () => {
+  it('opens the Memory view from the rail', async () => {
+    history.replaceState(null, '', '/');
+    localStorage.clear();
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/api/memory/status'))
+          return { ok: true, json: async () => ({ available: true, queue: { pending: 0 }, ledgerSize: 0 }) };
+        if (String(u).includes('/api/profile')) return { ok: true, json: async () => ({ version: 0, lines: [], rendered: '' }) };
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App);
+    await fireEvent.click(await within(container).findByLabelText('Memory'));
+    expect(await within(container).findByTestId('memory-page')).toBeTruthy();
+  });
+});
+
 describe('Account footer', () => {
   afterEach(() => cleanup());
 

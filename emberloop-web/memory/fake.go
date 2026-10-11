@@ -126,6 +126,21 @@ func (f *Fake) ObservationsBySubjectKey(_ context.Context, subjectKey string) ([
 	return out, nil
 }
 
+func (f *Fake) ListObservations(_ context.Context, limit int) ([]Observation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := clampList(limit)
+	if len(f.obs) == 0 {
+		return nil, nil
+	}
+	out := append([]Observation(nil), f.obs...)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out, nil
+}
+
 func (f *Fake) AddRule(_ context.Context, r Rule) (Rule, error) {
 	if r.RuleID == "" {
 		r.RuleID = newID()
@@ -253,6 +268,38 @@ func (f *Fake) RulesBySubjectKey(_ context.Context, subjectKey string) ([]Rule, 
 		}
 		return out[i].Version < out[j].Version
 	})
+	return out, nil
+}
+
+func (f *Fake) ListRules(_ context.Context, limit int) ([]Rule, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := clampList(limit)
+	latest := make(map[string]Rule)
+	for _, r := range f.rules {
+		if cur, ok := latest[r.RuleID]; !ok || r.Version > cur.Version {
+			latest[r.RuleID] = copyRule(r)
+		}
+	}
+	var out []Rule
+	for _, r := range latest {
+		if !live(r.Status) {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].ApprovedAt.Equal(out[j].ApprovedAt) {
+			return out[i].ApprovedAt.After(out[j].ApprovedAt)
+		}
+		return out[i].RuleID > out[j].RuleID
+	})
+	if len(out) > n {
+		out = out[:n]
+	}
+	if out == nil {
+		return nil, nil
+	}
 	return out, nil
 }
 

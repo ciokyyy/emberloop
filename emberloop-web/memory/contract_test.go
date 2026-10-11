@@ -181,6 +181,44 @@ func TestContract(t *testing.T) {
 				}
 			})
 
+			t.Run("lists return newest live rows first", func(t *testing.T) {
+				clock := newTestClock()
+				m := fac.open(t, clock)
+				ctx := context.Background()
+				if got, _ := m.ListRules(ctx, 10); len(got) != 0 {
+					t.Fatalf("empty list = %d, want none", len(got))
+				}
+				if got, _ := m.ListObservations(ctx, 10); len(got) != 0 {
+					t.Fatalf("empty observations = %d, want none", len(got))
+				}
+				first, _ := m.AddRule(ctx, Rule{Text: "first list rule note", Kind: KindFact, ApprovedBy: "u1"})
+				clock.Advance(time.Second)
+				second, _ := m.AddRule(ctx, Rule{Text: "second list rule note", Kind: KindFact, ApprovedBy: "u1"})
+				if err := m.SetRuleStatus(ctx, first.RuleID, StatusDormant); err != nil {
+					t.Fatal(err)
+				}
+				got, err := m.ListRules(ctx, 10)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(got) != 1 || got[0].RuleID != second.RuleID {
+					t.Fatalf("list = %v, want only the live second rule", ruleIDs(got))
+				}
+				if _, err := m.AddObservation(ctx, Observation{SessionID: "s1", EventID: "e1", Author: "u1", Quote: "first list observation", Kind: KindFact}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := m.AddObservation(ctx, Observation{SessionID: "s1", EventID: "e2", Author: "u1", Quote: "second list observation", Kind: KindFact}); err != nil {
+					t.Fatal(err)
+				}
+				obs, err := m.ListObservations(ctx, 10)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(obs) != 2 || obs[0].EventID != "e2" || obs[1].EventID != "e1" {
+					t.Fatalf("observations = %+v, want newest first", obs)
+				}
+			})
+
 			t.Run("rule versions append and keep the old text", func(t *testing.T) {
 				clock := newTestClock()
 				m := fac.open(t, clock)

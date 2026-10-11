@@ -182,6 +182,50 @@ export const decideProfileQueue = (id, status, ops = null) =>
     body: JSON.stringify(ops ? { status, ops } : { status }),
   }).then(json);
 
+// Memory page: the User's own bank. Rules and observations list newest first
+// with an empty query and search through FTS5 with one; the queue lists rule
+// proposals with their quotes and source Sessions; status carries the engine
+// chip plus queue and ledger stats; purge deletes the chosen records after
+// the typed PURGE confirmation and reports what it removed.
+export const getRules = (q = '', limit = 50) => {
+  const qs = q ? `?q=${encodeURIComponent(q)}&limit=${limit}` : `?limit=${limit}`;
+  return fetch(url(`/api/rules${qs}`)).then(json);
+};
+
+export const getObservations = (q = '', limit = 50) => {
+  const qs = q ? `?q=${encodeURIComponent(q)}&limit=${limit}` : `?limit=${limit}`;
+  return fetch(url(`/api/observations${qs}`)).then(json);
+};
+
+export const getRulesQueue = () => fetch(url('/api/rules/queue')).then(json);
+
+export const decideRuleQueue = (id, status, edit = null) =>
+  fetch(url(`/api/rules/queue/${id}/decide`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(edit ? { status, ...edit } : { status }),
+  }).then(json);
+
+export const batchRuleQueue = (body) =>
+  fetch(url('/api/rules/queue/batch'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(json);
+
+export const getRuleQueueStats = () => fetch(url('/api/rules/queue/stats')).then(json);
+
+export const getMemoryLedger = () => fetch(url('/api/memory/ledger')).then(json);
+
+export const getMemoryStatus = () => fetch(url('/api/memory/status')).then(json);
+
+export const purgeMemory = (selection, confirm) =>
+  fetch(url('/api/memory/purge'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...selection, confirm }),
+  }).then(json);
+
 export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURIComponent(repo)}`)).then(json);
 
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);

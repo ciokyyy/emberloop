@@ -2,13 +2,14 @@
      sliding pill so switching areas glides instead of snapping. The header
      holds the rail-2 collapse toggle (Ctrl/⌘+B, persisted). -->
 <script>
-  import { MessageSquare, Layers, Gauge, Settings, PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
+  import { MessageSquare, Layers, Gauge, Brain, Settings, PanelLeftClose, PanelLeftOpen } from '@lucide/svelte';
 
   let { view = 'chat', collapsed = false, onSelect = () => {}, onToggleSidebar = () => {} } = $props();
 
   const items = [
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'runs', label: 'Specs and Runs', icon: Layers },
+    { id: 'memory', label: 'Memory', icon: Brain },
     { id: 'quota', label: 'Quota', icon: Gauge },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
