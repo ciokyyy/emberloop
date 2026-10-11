@@ -59,6 +59,12 @@ type Daemon struct {
 	// sttKeyFn overrides the OpenRouter key lookup (tests).
 	sttKeyFn func(context.Context) string
 	stateDir string
+	// hostClaudeDir and hostPigDir are the host's own harness dirs. Owner
+	// dirs are seeded from them (harnessdirs.go); no harness starts on them.
+	hostClaudeDir string
+	hostPigDir    string
+	// dirsMu serializes owner dir seeding across concurrent starts.
+	dirsMu sync.Mutex
 	// users are the accounts under stateDir. machineToken is the bearer that
 	// local machine clients send (see auth.go).
 	users        *userStore
@@ -187,16 +193,18 @@ type interruptBackend interface {
 // Loaded Sessions hold history only; a new prompt resumes them.
 func NewDaemon(stateDir string, backend Backend) *Daemon {
 	d := &Daemon{
-		stateDir:  stateDir,
-		backend:   backend,
-		live:      newLiveHub(),
-		push:      newPushStore(stateDir),
-		sessions:  map[string]*session{},
-		backends:  map[string]Backend{},
-		groups:    map[string]*spawnGroup{},
-		runs:      map[string]*runState{},
-		submits:   map[string]*submitRec{},
-		restartCh: make(chan struct{}, 1),
+		stateDir:      stateDir,
+		hostClaudeDir: claudeHostDir(),
+		hostPigDir:    userPigAgentDir(),
+		backend:       backend,
+		live:          newLiveHub(),
+		push:          newPushStore(stateDir),
+		sessions:      map[string]*session{},
+		backends:      map[string]Backend{},
+		groups:        map[string]*spawnGroup{},
+		runs:          map[string]*runState{},
+		submits:       map[string]*submitRec{},
+		restartCh:     make(chan struct{}, 1),
 	}
 	d.users = newUserStore(stateDir)
 	tok, err := newMachineToken(stateDir)
@@ -376,6 +384,11 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		meta.ProjectID = d.projectIDForPath(meta.WorkDir)
 	}
 	h := startHandle(meta, handleCreate)
+	dirs, err := d.ownerDirsFor(meta.Owner)
+	if err != nil {
+		return nil, &startError{code: http.StatusInternalServerError, msg: err.Error(), asJSON: true}
+	}
+	meta.Dirs = dirs
 	// The cap counts Sessions holding an agent process. Over it the
 	// start is refused with a clear message.
 	d.mu.Lock()
@@ -794,9 +807,14 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 	}
 	d.mu.Unlock()
 	if resume {
-		if err := be.ResumeSession(meta, func(kind, text, status string) {
-			d.appendEvent(id, kind, text, status)
-		}); err != nil {
+		dirs, err := d.ownerDirsFor(meta.Owner)
+		if err == nil {
+			meta.Dirs = dirs
+			err = be.ResumeSession(meta, func(kind, text, status string) {
+				d.appendEvent(id, kind, text, status)
+			})
+		}
+		if err != nil {
 			d.mu.Lock()
 			d.starting--
 			d.mu.Unlock()

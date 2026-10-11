@@ -185,7 +185,7 @@ func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
 
 func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 	b, _ := newTestGrokBackend(t)
-	meta := b.meta("s1", "grok-4.7", "", tempDir(t), "web")
+	meta := b.meta("s1", "grok-4.7", "", tempDir(t), "web", ownerDirs{})
 	if meta["yoloMode"] != true {
 		t.Fatalf("yoloMode %v", meta["yoloMode"])
 	}

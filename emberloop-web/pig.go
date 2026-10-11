@@ -502,6 +502,9 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 	}
 	agentDir := b.AgentDir
 	b.mu.Unlock()
+	if meta.Dirs.pig != "" {
+		agentDir = meta.Dirs.pig
+	}
 	svcs, model, err := buildPigServices(agentDir, tools, meta)
 	if err != nil {
 		return err
@@ -511,12 +514,19 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		svcs.Close()
 		return fmt.Errorf("pig: runtime: %w", err)
 	}
+	resources, err := ownerResources(svcs)
+	if err != nil {
+		_ = rt.Close()
+		svcs.Close()
+		return fmt.Errorf("pig: resources: %w", err)
+	}
 	sess, err := rt.New(coding.SessionStartOptions{
 		Model:              model,
 		ThinkingLevel:      ai.ThinkingLevel(meta.Effort),
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
 		ExtraTools:         tools,
+		ResourceLoader:     resources,
 	})
 	if err != nil {
 		_ = rt.Close()
@@ -537,6 +547,23 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 	}
 	b.sessions[meta.ID].log.write("create", map[string]any{"model": meta.Model, "effort": meta.Effort, "workDir": meta.WorkDir, "scout": meta.Scout, "parent": meta.ParentID, "extraTools": names})
 	return nil
+}
+
+// ownerResources loads a Session's resources from its agent dir without
+// ambient skills or prompt templates. Pig reads ~/.agents/skills from HOME,
+// which no owner owns. Context files from the WorkDir chain still load.
+func ownerResources(svcs *coding.Services) (coding.ResourceLoader, error) {
+	loader := coding.NewDefaultResourceLoader(coding.DefaultResourceLoaderOptions{
+		CWD:               svcs.CWD(),
+		AgentDir:          svcs.AgentDir(),
+		SettingsManager:   svcs.SettingsManager(),
+		NoSkills:          true,
+		NoPromptTemplates: true,
+	})
+	if err := loader.Reload(); err != nil {
+		return nil, err
+	}
+	return loader, nil
 }
 
 // buildPigServices builds the Services and model for one Daemon Session. An
@@ -973,6 +1000,9 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 	b.mu.Lock()
 	agentDir := b.AgentDir
 	b.mu.Unlock()
+	if meta.Dirs.pig != "" {
+		agentDir = meta.Dirs.pig
+	}
 	svcs, model, err := buildPigServices(agentDir, tools, meta)
 	if err != nil {
 		return err
@@ -982,12 +1012,19 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 		svcs.Close()
 		return fmt.Errorf("pig: runtime: %w", err)
 	}
+	resources, err := ownerResources(svcs)
+	if err != nil {
+		_ = rt.Close()
+		svcs.Close()
+		return fmt.Errorf("pig: resources: %w", err)
+	}
 	sess, err := rt.Resume(meta.ResumeToken, coding.SessionStartOptions{
 		Model:              model,
 		ThinkingLevel:      ai.ThinkingLevel(meta.Effort),
 		SkipBuiltinTools:   true,
 		SkipExtensionTools: true,
 		ExtraTools:         tools,
+		ResourceLoader:     resources,
 	})
 	if err != nil {
 		_ = rt.Close()

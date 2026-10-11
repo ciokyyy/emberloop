@@ -32,8 +32,10 @@ const (
 
 // titleBackend is the one-off completion seam. Claude implements it with a
 // throwaway ACP session, pig with a bare SDK completion: no tools, no history.
+// dirs are the owner's dirs, so a throwaway session writes to the owner's
+// claude config dir and never the host's.
 type titleBackend interface {
-	Title(model, prompt string) (string, error)
+	Title(dirs ownerDirs, model, prompt string) (string, error)
 }
 
 // titlePrompt wraps the first user message for the title call.
@@ -106,6 +108,7 @@ func (d *Daemon) maybeTitle(id, text string) {
 	}
 	s.titleTried = true
 	harness := s.meta.Harness
+	owner := s.meta.Owner
 	d.mu.Unlock()
 	roleHarness, model := titleTarget(harness)
 	if roleHarness == "" {
@@ -117,8 +120,12 @@ func (d *Daemon) maybeTitle(id, text string) {
 	if tb == nil {
 		return
 	}
+	dirs, err := d.ownerDirsFor(owner)
+	if err != nil {
+		return
+	}
 	go func() {
-		raw, err := tb.Title(model, titlePrompt(text))
+		raw, err := tb.Title(dirs, model, titlePrompt(text))
 		if err != nil {
 			return
 		}
@@ -153,14 +160,14 @@ func titleWorkDir() string {
 // servers, the title system prompt in place of the preset, one prompt. The
 // adapter process dies with the call; Sessions' own adapters are untouched
 // because ACP callbacks are per connection.
-func (b *ClaudeBackend) Title(model, prompt string) (string, error) {
+func (b *ClaudeBackend) Title(dirs ownerDirs, model, prompt string) (string, error) {
 	if !validClaudeModel(model) {
 		return "", fmt.Errorf("unknown claude model (want opus, sonnet or haiku)")
 	}
 	newConn := b.newConn
 	if newConn == nil {
 		cfg := append([]string{}, b.adapterCommand...)
-		newConn = func() (acpConn, error) { return spawnACPConn(cfg) }
+		newConn = func() (acpConn, error) { return spawnACPConnEnv(cfg, claudeEnv(dirs)) }
 	}
 	conn, err := newConn()
 	if err != nil {
@@ -197,10 +204,13 @@ func (b *ClaudeBackend) Title(model, prompt string) (string, error) {
 // Title is one bare SDK completion: the model's own provider, the title
 // system prompt, one user message, a tiny token cap. No Runtime, no Session,
 // no tools, no session file.
-func (b *PigBackend) Title(model, prompt string) (string, error) {
-	b.mu.Lock()
-	agentDir := b.AgentDir
-	b.mu.Unlock()
+func (b *PigBackend) Title(dirs ownerDirs, model, prompt string) (string, error) {
+	agentDir := dirs.pig
+	if agentDir == "" {
+		b.mu.Lock()
+		agentDir = b.AgentDir
+		b.mu.Unlock()
+	}
 	return pigOneShot(agentDir, model, titleSystemPrompt, prompt, titleMaxTokens, titleCallTimeout)
 }
 

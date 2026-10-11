@@ -211,12 +211,12 @@ type ClaudeBackend struct {
 	// session/set_config_option.
 	plain bool
 	// newConnFor, when set, starts the adapter for one Daemon Session, so
-	// the process can carry per-Session environment.
-	newConnFor func(sessionID, role string) (acpConn, error)
+	// the process can carry per-Session environment, role and the owner's dirs.
+	newConnFor func(sessionID, role string, dirs ownerDirs) (acpConn, error)
 	// metaHook, when set, builds the session/new and session/load _meta
 	// for a plain adapter (grok: system prompt override, yolo mode) from
-	// the Daemon Session id, model, effort and WorkDir.
-	metaHook func(daemonID, model, effort, workDir, role string) map[string]any
+	// the Daemon Session id, model, effort, WorkDir, role and owner dirs.
+	metaHook func(daemonID, model, effort, workDir, role string, dirs ownerDirs) map[string]any
 	// promptWrap, when set, rewrites each prompt before it goes on the wire
 	// (grok: the per-turn register reminder, since ACP has no hook). The
 	// stored prompt Event keeps the user's own text.
@@ -280,13 +280,14 @@ func newStubClaudeBackend(newConn func() (acpConn, error)) *ClaudeBackend {
 // strippingMeta returns the full _meta set for this Backend with the base
 // prompt (the title path, which overwrites the prompt anyway).
 func (b *ClaudeBackend) strippingMeta(model string) map[string]any {
-	return b.strippingMetaFor(model, "")
+	return b.strippingMetaFor(model, "", "")
 }
 
 // strippingMetaFor is strippingMeta with the Session WorkDir's project
-// context injected into the system prompt. settingSources stays []: context
-// arrives as content, never as project settings.
-func (b *ClaudeBackend) strippingMetaFor(model, workDir string) map[string]any {
+// context and the owner's global file (agentDir) injected into the system
+// prompt. settingSources stays []: context arrives as content, never as
+// project settings.
+func (b *ClaudeBackend) strippingMetaFor(model, workDir, agentDir string) map[string]any {
 	if b.plain {
 		return nil
 	}
@@ -300,7 +301,7 @@ func (b *ClaudeBackend) strippingMetaFor(model, workDir string) map[string]any {
 	// injected project context, as the CLI harness does with --system-prompt.
 	return map[string]any{
 		"claudeCode":   map[string]any{"options": opts},
-		"systemPrompt": claudeSystemPromptFor(workDir),
+		"systemPrompt": claudeSystemPromptWith(workDir, agentDir),
 	}
 }
 
@@ -321,8 +322,8 @@ func validClaudeEffort(e string) bool {
 
 // strippingMetaEffort is strippingMetaFor with the Session's reasoning
 // effort set in the SDK options; an empty effort keeps the model default.
-func (b *ClaudeBackend) strippingMetaEffort(model, effort, workDir string) map[string]any {
-	m := b.strippingMetaFor(model, workDir)
+func (b *ClaudeBackend) strippingMetaEffort(model, effort, workDir, agentDir string) map[string]any {
+	m := b.strippingMetaFor(model, workDir, agentDir)
 	if m == nil || effort == "" {
 		return m
 	}
@@ -339,7 +340,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 	if err != nil {
 		return err
 	}
-	newConn := b.connFactory(meta.ID, role)
+	newConn := b.connFactory(meta.ID, role, meta.Dirs)
 	conn, err := newConn()
 	if err != nil {
 		return fmt.Errorf("start claude adapter: %w", err)
@@ -354,7 +355,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		b.drop(meta.ID, conn)
 		return err
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, meta.Dirs))
 	if err != nil {
 		err = fmt.Errorf("acp session/new: %w", err)
 		b.drop(meta.ID, conn)
@@ -373,17 +374,17 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 
 // LoadSession restarts the adapter around a known ACP session id. It repeats
 // the full stripping set: without it the loaded session re-asks permission.
-func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd, role string) error {
-	return b.loadSessionEffort(daemonID, acpID, model, "", cwd, role)
+func (b *ClaudeBackend) LoadSession(daemonID, acpID, model, cwd, role string, dirs ownerDirs) error {
+	return b.loadSessionEffort(daemonID, acpID, model, "", cwd, role, dirs)
 }
 
 // loadSessionEffort is LoadSession carrying the Session's reasoning effort.
-func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, role string) error {
+func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, role string, dirs ownerDirs) error {
 	mcp, err := b.mcpServersFor(daemonID, role)
 	if err != nil {
 		return err
 	}
-	newConn := b.connFactory(daemonID, role)
+	newConn := b.connFactory(daemonID, role, dirs)
 	conn, err := newConn()
 	if err != nil {
 		return fmt.Errorf("restart claude adapter: %w", err)
@@ -398,7 +399,7 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 		b.drop(daemonID, conn)
 		return err
 	}
-	if err := conn.LoadSession(acpID, cwd, mcp, b.sessionMeta(daemonID, model, effort, cwd, role)); err != nil {
+	if err := conn.LoadSession(acpID, cwd, mcp, b.sessionMeta(daemonID, model, effort, cwd, role, dirs)); err != nil {
 		err = fmt.Errorf("acp session/load: %w", err)
 		b.drop(daemonID, conn)
 		return err
@@ -414,15 +415,16 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 }
 
 // connFactory picks how the adapter process starts for one Daemon Session.
-func (b *ClaudeBackend) connFactory(sessionID, role string) func() (acpConn, error) {
+// The adapter runs under the owner's dirs (claudeEnv).
+func (b *ClaudeBackend) connFactory(sessionID, role string, dirs ownerDirs) func() (acpConn, error) {
 	if b.newConnFor != nil {
-		return func() (acpConn, error) { return b.newConnFor(sessionID, role) }
+		return func() (acpConn, error) { return b.newConnFor(sessionID, role, dirs) }
 	}
 	if b.newConn != nil {
 		return b.newConn
 	}
 	cfg := append([]string{}, b.adapterCommand...)
-	return func() (acpConn, error) { return spawnACPConn(cfg) }
+	return func() (acpConn, error) { return spawnACPConnEnv(cfg, claudeEnv(dirs)) }
 }
 
 // acpModelSetter is the optional seam to pick the Session's model after
@@ -550,7 +552,7 @@ func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 	if meta.ResumeToken == "" {
 		return fmt.Errorf("claude: no saved session to resume")
 	}
-	return b.loadSessionEffort(meta.ID, meta.ResumeToken, meta.Model, meta.Effort, meta.WorkDir, elRoleFor(meta))
+	return b.loadSessionEffort(meta.ID, meta.ResumeToken, meta.Model, meta.Effort, meta.WorkDir, elRoleFor(meta), meta.Dirs)
 }
 
 // acpSteerer is the optional steering seam of an acpConn: the adapter
@@ -992,7 +994,18 @@ type acpProcessConn struct {
 }
 
 func spawnACPConn(command []string) (acpConn, error) {
-	return spawnACPConnEnv(command, append(os.Environ(), claudeAdapterEnv()...))
+	return spawnACPConnEnv(command, claudeEnv(ownerDirs{}))
+}
+
+// claudeEnv is the claude adapter's environment for one owner: the host env,
+// the disabling set and the owner's CLAUDE_CONFIG_DIR. The last entry wins,
+// so it overrides a host CLAUDE_CONFIG_DIR. An empty owner dir keeps the host's.
+func claudeEnv(dirs ownerDirs) []string {
+	env := append(os.Environ(), claudeAdapterEnv()...)
+	if dirs.claude != "" {
+		env = append(env, "CLAUDE_CONFIG_DIR="+dirs.claude)
+	}
+	return env
 }
 
 // spawnACPConnEnv starts one adapter process with exactly this environment.
@@ -1455,12 +1468,13 @@ func prettyJSON(v any) string {
 }
 
 // sessionMeta is the _meta for session/new and session/load: the plain-adapter
-// hook when set, the claude stripping set otherwise.
-func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir, role string) map[string]any {
+// hook when set, the claude stripping set otherwise. The owner's global file
+// comes from dirs.pig.
+func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir, role string, dirs ownerDirs) map[string]any {
 	if b.metaHook != nil {
-		return b.metaHook(daemonID, model, effort, workDir, role)
+		return b.metaHook(daemonID, model, effort, workDir, role, dirs)
 	}
-	return b.strippingMetaEffort(model, effort, workDir)
+	return b.strippingMetaEffort(model, effort, workDir, dirs.pig)
 }
 
 // wrapPrompt applies the per-turn prompt rewrite, if any.

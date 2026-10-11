@@ -206,11 +206,34 @@ func (f *FakeBackend) ResumeOK(meta SessionMeta) (bool, string) {
 }
 
 // handleStart is one start the fake Backend received: the operation and the
-// handle startHandle derived from the record it was handed.
+// handle startHandle derived from the record it was handed, plus the owner
+// env the Daemon handed the harness start with.
 type handleStart struct {
 	op     handleOp
 	handle handle
+	owner  string
+	env    []string
 }
+
+// Kind is the harness-start kind owner-dir tests read: create, resume or
+// handoff (a compress handle swap).
+func (s handleStart) Kind() string {
+	switch s.op {
+	case handleCreate:
+		return "create"
+	case handleResume:
+		return "resume"
+	default:
+		return "handoff"
+	}
+}
+
+// Owner is the User who owns the started Session.
+func (s handleStart) Owner() string { return s.owner }
+
+// Env is the owner-dirs env the Daemon handed the harness start with
+// (CLAUDE_CONFIG_DIR and PIG_CODING_AGENT_DIR per owner).
+func (s handleStart) Env() []string { return s.env }
 
 // recordStart keeps what one start received, in order per Session.
 func (f *FakeBackend) recordStart(meta SessionMeta, op handleOp) {
@@ -219,7 +242,7 @@ func (f *FakeBackend) recordStart(meta SessionMeta, op handleOp) {
 	if f.starts == nil {
 		f.starts = map[string][]handleStart{}
 	}
-	f.starts[meta.ID] = append(f.starts[meta.ID], handleStart{op: op, handle: startHandle(meta, op)})
+	f.starts[meta.ID] = append(f.starts[meta.ID], handleStart{op: op, handle: startHandle(meta, op), owner: meta.Owner, env: meta.Dirs.env()})
 }
 
 // Starts lists the starts one Session got, in order: create, then each

@@ -118,6 +118,10 @@ type SessionMeta struct {
 	// failure. Non-empty means the Session is blocked: its messages queue until
 	// Retry succeeds or the block is dismissed.
 	CompressBlock string `json:"compressBlock,omitempty"`
+	// Dirs are the owner's harness config dirs for the current start. The
+	// Daemon sets them from Owner on every create, resume and Handoff, and
+	// they are never persisted.
+	Dirs ownerDirs `json:"-"`
 }
 
 // ToolCall is the one tool-call shape every Backend normalizes to. It rides

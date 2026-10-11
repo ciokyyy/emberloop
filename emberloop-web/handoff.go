@@ -241,6 +241,12 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	events := append([]Event(nil), s.events...)
 	meta := s.meta
 	d.mu.Unlock()
+	dirs, err := d.ownerDirsFor(meta.Owner)
+	if err != nil {
+		d.appendEvent(id, "error", "compress failed: "+err.Error(), "")
+		return
+	}
+	meta.Dirs = dirs
 
 	number := 1
 	for _, e := range events {

@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/MichaelKinsy/PiG/coding"
 )
 
 // claudeContextCap caps the injected project-context block at 64 KB.
@@ -21,17 +19,10 @@ type claudeContextFile struct {
 	Content string
 }
 
-// claudeSystemPromptFor is the Session system prompt for a WorkDir: el's
-// rule set plus the WorkDir's project context as real content. Scouts get it
-// too; it is content, so read-only still holds. The global file loads from
-// pig's default agent dir, matching what pig Sessions get from the SDK
-// loader.
-func claudeSystemPromptFor(workDir string) string {
-	return claudeSystemPromptWith(workDir, coding.DefaultAgentDir())
-}
-
-// claudeSystemPromptWith is claudeSystemPromptFor with an explicit global
-// agent dir; tests point it at a temp dir.
+// claudeSystemPromptWith is the Session system prompt for a WorkDir: el's rule
+// set plus the WorkDir's project context as real content. Scouts get it too; it
+// is content, so read-only still holds. The global file loads from agentDir,
+// the owner's pig agent dir; an empty agentDir loads none.
 func claudeSystemPromptWith(workDir, agentDir string) string {
 	p := claudeSystemPrompt()
 	if block := claudeProjectContextBlock(loadClaudeContextFiles(workDir, agentDir)); block != "" {

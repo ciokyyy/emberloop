@@ -35,8 +35,8 @@ type PigACPBackend struct {
 }
 
 // Title names a Session through the pig SDK, as the SDK Backend does.
-func (b *PigACPBackend) Title(model, prompt string) (string, error) {
-	return b.sdk.Title(model, prompt)
+func (b *PigACPBackend) Title(dirs ownerDirs, model, prompt string) (string, error) {
+	return b.sdk.Title(dirs, model, prompt)
 }
 
 // PigACPAdapterPackage is the pinned pi-acp release.
@@ -196,8 +196,8 @@ func (b *PigACPBackend) agentDir(sessionID string) string {
 }
 
 // connFor prepares the Session's agent dir and starts its adapter process.
-func (b *PigACPBackend) connFor(sessionID, role string) (acpConn, error) {
-	dir, err := b.prepareAgentDir(sessionID, role)
+func (b *PigACPBackend) connFor(sessionID, role string, dirs ownerDirs) (acpConn, error) {
+	dir, err := b.prepareAgentDir(sessionID, role, dirs)
 	if err != nil {
 		return nil, err
 	}
@@ -210,11 +210,12 @@ func (b *PigACPBackend) connFor(sessionID, role string) (acpConn, error) {
 	return spawnACPConnEnv(b.runner, env)
 }
 
-// prepareAgentDir builds <dir>/agent (the user's pig agent dir by symlink,
-// except settings.json and mcp.json, written fresh) and <dir>/bin/pi, a
-// shim that runs pig. The shim hides the version so pi-acp prints no update
-// notice, and adds the scout tool allowlist.
-func (b *PigACPBackend) prepareAgentDir(sessionID, role string) (string, error) {
+// prepareAgentDir builds <dir>/agent (links to the owner's pig agent dir,
+// except settings.json and mcp.json: settings.json is the owner's copy, mcp.json
+// is written fresh) and <dir>/bin/pi, a shim that runs pig. The shim hides the
+// version so pi-acp prints no update notice, adds the scout tool allowlist and
+// turns off ambient skills and prompt templates, which pig reads from HOME.
+func (b *PigACPBackend) prepareAgentDir(sessionID, role string, dirs ownerDirs) (string, error) {
 	dir := b.agentDir(sessionID)
 	agent := filepath.Join(dir, "agent")
 	bin := filepath.Join(dir, "bin")
@@ -224,7 +225,10 @@ func (b *PigACPBackend) prepareAgentDir(sessionID, role string) (string, error) 
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		return "", err
 	}
-	home := userPigAgentDir()
+	home := dirs.pig
+	if home == "" {
+		home = userPigAgentDir()
+	}
 	if entries, err := os.ReadDir(home); err == nil {
 		for _, e := range entries {
 			name := e.Name()
@@ -257,9 +261,9 @@ func (b *PigACPBackend) prepareAgentDir(sessionID, role string) (string, error) 
 	// sudo gating, image reads and the scout limit hold for both harnesses.
 	var shim string
 	if b.shimBin != "" {
-		shim = "#!/bin/sh\n[ \"$1\" = \"--version\" ] && exit 0\nexec " + shellQuote(b.shimBin) + " " + PigShimMode + " " + shellQuote(b.pigBin) + " --no-builtin-tools \"$@\"\n"
+		shim = "#!/bin/sh\n[ \"$1\" = \"--version\" ] && exit 0\nexec " + shellQuote(b.shimBin) + " " + PigShimMode + " " + shellQuote(b.pigBin) + " --no-builtin-tools --no-skills --no-prompt-templates \"$@\"\n"
 	} else {
-		shim = "#!/bin/sh\n[ \"$1\" = \"--version\" ] && exit 0\nexec " + shellQuote(b.pigBin) + " --no-builtin-tools \"$@\"\n"
+		shim = "#!/bin/sh\n[ \"$1\" = \"--version\" ] && exit 0\nexec " + shellQuote(b.pigBin) + " --no-builtin-tools --no-skills --no-prompt-templates \"$@\"\n"
 	}
 	if err := os.WriteFile(filepath.Join(bin, "pi"), []byte(shim), 0o700); err != nil {
 		return "", err

@@ -246,7 +246,7 @@ func TestLiveStreamTiming(t *testing.T) {
 		t.Fatalf("no ACP session id to load")
 	}
 	be2 := newTimingBackend(env, pc.teeLog)
-	if err := be2.LoadSession("live-timing-2", acpID, "haiku", cwd, "web"); err != nil {
+	if err := be2.LoadSession("live-timing-2", acpID, "haiku", cwd, "web", ownerDirs{}); err != nil {
 		t.Fatalf("phase C load: %v", err)
 	}
 	runTimingPrompt(be2, "live-timing-2", "Reply with exactly this line and nothing else: LOADED-OK", pc)
@@ -304,7 +304,7 @@ func TestLiveStreamTimingBig(t *testing.T) {
 		t.Fatalf("no ACP session id to load")
 	}
 	be2 := newTimingBackend(env, pd3.teeLog)
-	if err := be2.LoadSession("live-timing-big-2", acpID, "haiku", cwd, "web"); err != nil {
+	if err := be2.LoadSession("live-timing-big-2", acpID, "haiku", cwd, "web", ownerDirs{}); err != nil {
 		t.Fatalf("phase D3 load: %v", err)
 	}
 	runTimingPrompt(be2, "live-timing-big-2", fmt.Sprintf(essay, "BEACON"), pd3)

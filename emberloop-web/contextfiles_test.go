@@ -125,7 +125,7 @@ func TestClaudeContextReachesSessionParams(t *testing.T) {
 
 	loadStub := &stubConn{}
 	beLoad := newStubClaudeBackend(func() (acpConn, error) { return loadStub, nil })
-	if err := beLoad.LoadSession("s1", "acp-session-1", "sonnet", work, "web"); err != nil {
+	if err := beLoad.LoadSession("s1", "acp-session-1", "sonnet", work, "web", ownerDirs{}); err != nil {
 		t.Fatal(err)
 	}
 	lsp, _ := loadStub.loadMeta["systemPrompt"].(string)

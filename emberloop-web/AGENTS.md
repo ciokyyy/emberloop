@@ -52,6 +52,21 @@ the driver ticks boxes and marks done, nothing else writes them.
   home directory at the same seam.
 - Users list and presence (`handleUsers` in `auth.go`, `presence` in `live.go`): `GET /api/users` lists every account in creation order as `{id, username, admin, online}` for a signed-in User; the machine token answers 401. `online` holds while the User has an open `GET /api/live` channel: the first join and the last leave publish the `users` topic. `users_list_test.go` covers the list, presence and the gate at the same seam.
 - `handle_test.go` covers `startHandle` at the Daemon seam on the fake Backend: owner, role and injections across create, resume and compress; the Profile, recall, Handoff order and the no-op before memory; the tool set and parent links across a compress; and the pig loadout per role.
+- Owner harness dirs (`harnessdirs.go`): `Daemon.ownerDirsFor(owner)` gives
+  `<stateDir>/enderbloom/users/<userId>/config/{claude,pig}` on every harness
+  start (create, resume, Handoff, spawn, Run, title) and seeds them from the
+  host (`hostClaudeDir`, `hostPigDir`). The claude dir links only the host
+  `.credentials.json`. The pig dir links only `pigSharedEntries` (auth, models, models-store,
+  sessions, extensions, bin, npm, git, trust, keybindings) and a `settings.json`
+  without `skills` and `prompts`, so no host instruction file, skill or prompt
+  reaches an owner. `SessionMeta.Dirs` carries the dirs to each Backend, never
+  persisted; the fake records each start's owner and env on its `handleStart`
+  (`Starts(sessionID)`, `Kind`/`Owner`/`Env`). Owner
+  IDs must be plain names: no path separators, `.` or `..`. Known gaps: the
+  WorkDir chain still loads ancestor AGENTS.md/CLAUDE.md for every owner; claude
+  Sessions created before this change keep their transcripts in the host dir and
+  do not resume (no migration). `harnessdirs_test.go` covers the seam and the
+  seeding rules.
 - Real Backends prove out in live probes, never the main check.
 - Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
   goroutines write after a test returns and fail `t.TempDir()` cleanup with
@@ -103,19 +118,23 @@ the driver ticks boxes and marks done, nothing else writes them.
   Steer and Follow-up use the SDK native queues (`QueuedMessages`/
   `ClearQueued` expose them); the Daemon merges them with its own pending
   list. Backends register per harness; the fake stays default.
+- Pig SDK Sessions read the owner's pig dir through `ownerResources`: no ambient
+  skills or prompt templates (pig reads `~/.agents/skills` from HOME). Context
+  files from the WorkDir chain still load. `pigOneShot` builds Services only, so
+  the summarizer and pig titles load no instruction files.
 - `pigacp.go` is the default pig Backend (`EL_PIG_SDK=1` or a missing
   `pig`/`el-mcp`/`bunx` falls back to the SDK Backend): it runs the pi-acp
   adapter (`bunx pi-acp@0.0.34`, `npx -y` fallback) through the generalized
   `ClaudeBackend` ACP path, so pig Sessions behave like claude ones. Each
   Session gets its own pig agent dir under
-  `<stateDir>/enderbloom/pig-acp/<id>/agent` (symlinks to the user's pig
-  auth/models/sessions/extensions, never `herdr-report`, plus a generated
+  `<stateDir>/enderbloom/pig-acp/<id>/agent` (symlinks to the owner's pig dir,
+  `harnessdirs.go`; never `herdr-report`; plus a generated
   `settings.json` with `compaction.enabled=false` and `quietStartup`, and an
   `mcp.json` (direct exposure): the single `el-mcp` server under the Session's
   role (`--role web`, `--role web-worker` for spawned group children,
   `--role scout` for scouts); the user's own MCP servers are not merged. A
   generated `bin/pi` shim (first on PATH, hides `--version`) re-executes the
-  Daemon binary as `pig-shim` (`pigshim.go`), which runs `pig --no-builtin-tools`
+  Daemon binary as `pig-shim` (`pigshim.go`), which runs `pig --no-builtin-tools --no-skills --no-prompt-templates`
   and owns a unix socket (`EL_PIG_STEER_SOCK`) that injects native `steer`,
   `follow_up` and `clear_queue` rpc commands and reports the queue, so
   `PigACPBackend` is a `steerBackend`. Compression is off for ACP pig: the
@@ -219,6 +238,10 @@ the driver ticks boxes and marks done, nothing else writes them.
   not split, so it goes to the floor at once. At the floor the tool results are
   cut to 500 characters of head and the run is sent once more. Still refused:
   `errNoFit`, and the deterministic Handoff.
+- Grok Sessions (`grokacp.go`) load no user-level files by themselves: each
+  Session has its own HOME and GROK_HOME, `config.toml` turns memory and
+  `[compat.claude]` scans off, and the only host file copied in is `auth.json`.
+  The Daemon's global context file for a grok Session is the owner's pig dir.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
   <file> stdio` on the user's Grok subscription login, through the plain
   `ClaudeBackend` ACP path (`metaHook`, `promptWrap`, `waitMCP`, `mcpEnv`).
@@ -258,11 +281,14 @@ the driver ticks boxes and marks done, nothing else writes them.
   preset and the caveman ultra register (system prompt plus a per-turn
   `UserPromptSubmit` reminder hook via inline `settings`), `_session/steering`, allow-once auto-approve) with stub-transport
   tests in `claude_*_test.go` and a `-tags live` probe for the real adapter.
+  The adapter process runs under the owner's `CLAUDE_CONFIG_DIR` (`claudeEnv`).
   Project context (`contextfiles.go`, table-tested in `contextfiles_test.go`)
   injects the Session WorkDir's AGENTS.md/CLAUDE.md chain (outermost-first,
-  global pig agent-dir file first, 64 KB cap with truncation note) into the
+  owner's pig dir global file first (`dirs.pig`), 64 KB cap with truncation note) into the
   system prompt on create and resume, scouts included; `settingSources`
   stays empty.
+- Handoff restarts and title calls run under the owner's dirs (`ownerDirsFor`).
+  The summarizer call uses the host's pig auth and loads no instruction files.
 - `titles.go` names root Sessions for the list: the first prompt starts one
   background, one-off title call (`Title` on a Backend: claude a throwaway
   ACP session with a string `systemPrompt`, no MCP, no tools; pig a bare
