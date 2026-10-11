@@ -4,11 +4,11 @@
 
 **Blocked by:** 06, 08
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A pig SDK Session compresses by Handoff restart; the in-place compact path is gone
-- [ ] A pig-over-ACP Session compresses by Handoff restart and reports compressible
-- [ ] Thinking level and model survive the new handle
-- [ ] The resume token rotates and a Daemon restart then resumes the new handle
-- [ ] Tests at the Daemon seam cover both Backends against their existing test doubles
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A pig SDK Session compresses by Handoff restart; the in-place compact path is gone
+- [x] A pig-over-ACP Session compresses by Handoff restart and reports compressible
+- [x] Thinking level and model survive the new handle
+- [x] The resume token rotates and a Daemon restart then resumes the new handle
+- [x] Tests at the Daemon seam cover both Backends against their existing test doubles
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
