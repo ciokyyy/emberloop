@@ -4,12 +4,12 @@
 
 **Blocked by:** 06, 15
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Profile renders from the latest version; an over-2 KB result is refused with a condense message
-- [ ] An agent proposes patches only on explicit User request; patches wait in the queue
-- [ ] Approve, edit and reject work from the settings view; each approval appends a version and a `profile_updated` Event
-- [ ] Reviewers receive only lines tagged for them; lines that assert expertise or lower the review bar cannot carry that tag
-- [ ] Profile is injected into every Session of its owner including Subagents and scouts
-- [ ] Tests cover cap, versions, retire, filter and Events
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Profile renders from the latest version; an over-2 KB result is refused with a condense message
+- [x] An agent proposes patches only on explicit User request; patches wait in the queue
+- [x] Approve, edit and reject work from the settings view; each approval appends a version and a `profile_updated` Event
+- [x] Reviewers receive only lines tagged for them; lines that assert expertise or lower the review bar cannot carry that tag
+- [x] Profile is injected into every Session of its owner including Subagents and scouts
+- [x] Tests cover cap, versions, retire, filter and Events
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
