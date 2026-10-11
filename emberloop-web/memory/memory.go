@@ -106,6 +106,10 @@ type Memory interface {
 	SetRuleStatus(ctx context.Context, ruleID, status string) error
 	RuleVersions(ctx context.Context, ruleID string) ([]Rule, error)
 	Recall(ctx context.Context, text string, limit int) ([]Rule, error)
+	// LiveRules returns the latest version of every live Rule (not superseded,
+	// not dormant), ordered by rule ID. The nightly anchor check refreshes
+	// dormant status over it; parked Rules stay live for manual recall.
+	LiveRules(ctx context.Context) ([]Rule, error)
 	// RulesBySubjectKey returns every Rule version with the normalized
 	// subject key, ordered by rule ID then version. Callers keep the latest
 	// live version per Rule for supersession and disagreement checks.
@@ -117,6 +121,12 @@ type Memory interface {
 
 	Enqueue(ctx context.Context, item QueueItem) (int64, error)
 	Decide(ctx context.Context, id int64, status, decidedBy string) error
+	// AnnotateQueueRelation records contradiction pairing on a pending
+	// kind=rule queue item: the relation (duplicate, refines or contradicts)
+	// to the stored Rule the candidate overlaps, so the approver sees the
+	// conflict without recomputing it. Only pending items are annotated;
+	// decided items stay as labels. An empty relation clears an annotation.
+	AnnotateQueueRelation(ctx context.Context, id int64, relation, relatedRuleID string) error
 	Queue(ctx context.Context) ([]QueueItem, error)
 	// ApproveRule approves one pending kind=rule queue item and creates its
 	// Rule in one transaction: the item must be pending, the rule text is

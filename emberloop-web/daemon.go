@@ -126,6 +126,15 @@ type Daemon struct {
 	// clock is the Daemon clock seam: idle quiet time and the runs driver read
 	// it; nil reads time.Now (idle.go).
 	clock func() time.Time
+	// Nightly job (nightly.go): distillOneShot and profileOneShot script the
+	// cheap-LLM calls in tests; nil runs the bare pig one-shot. nightlyFailStage
+	// forces one stage to fail (the test seam for abort and continue paths).
+	// nightlyMu serializes runs; nightlyLastDay is the last auto-run local day.
+	nightlyMu        sync.Mutex
+	distillOneShot   func(model, system, user string) (string, error)
+	profileOneShot   func(model, system, user string) (string, error)
+	nightlyFailStage string
+	nightlyLastDay   string
 }
 
 type session struct {
@@ -288,6 +297,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/memory/ledger", d.handleMemoryLedger)
 	mux.HandleFunc("/api/memory/status", d.handleMemoryStatus)
 	mux.HandleFunc("/api/memory/purge", d.handleMemoryPurge)
+	mux.HandleFunc("/api/memory/nightly", d.handleNightly)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	mux.HandleFunc("/api/specs", d.handleSpecs)

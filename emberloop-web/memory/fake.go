@@ -249,6 +249,25 @@ func (f *Fake) Recall(_ context.Context, text string, limit int) ([]Rule, error)
 	return out, nil
 }
 
+func (f *Fake) LiveRules(_ context.Context) ([]Rule, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	latest := make(map[string]Rule)
+	for _, r := range f.rules {
+		if cur, ok := latest[r.RuleID]; !ok || r.Version > cur.Version {
+			latest[r.RuleID] = r
+		}
+	}
+	var out []Rule
+	for _, r := range latest {
+		if live(r.Status) {
+			out = append(out, copyRule(r))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RuleID < out[j].RuleID })
+	return out, nil
+}
+
 func (f *Fake) RulesBySubjectKey(_ context.Context, subjectKey string) ([]Rule, error) {
 	key := NormalizeSubjectKey(subjectKey)
 	if key == "" {
@@ -339,6 +358,49 @@ func (f *Fake) Decide(_ context.Context, id int64, status, decidedBy string) err
 		f.queue[i].Status = status
 		f.queue[i].DecidedBy = decidedBy
 		f.queue[i].DecidedAt = f.now()
+		return nil
+	}
+	return fmt.Errorf("%w: queue item %d", ErrNotFound, id)
+}
+
+func (f *Fake) AnnotateQueueRelation(_ context.Context, id int64, relation, relatedRuleID string) error {
+	switch relation {
+	case RelDuplicate, RelRefines, RelContradicts:
+		if strings.TrimSpace(relatedRuleID) == "" {
+			return fmt.Errorf("%w: relation %q needs a related rule", ErrInvalid, relation)
+		}
+	case "":
+		if strings.TrimSpace(relatedRuleID) != "" {
+			return fmt.Errorf("%w: empty relation with related rule %q", ErrInvalid, relatedRuleID)
+		}
+	default:
+		return fmt.Errorf("%w: relation %q", ErrInvalid, relation)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.queue {
+		if f.queue[i].ID != id {
+			continue
+		}
+		if f.queue[i].Kind != QueueRule {
+			return fmt.Errorf("%w: queue item %d is %q, not a rule", ErrInvalid, id, f.queue[i].Kind)
+		}
+		if f.queue[i].Status != QueuePending {
+			return fmt.Errorf("%w: queue item %d already decided", ErrInvalid, id)
+		}
+		proposal, err := DecodeRememberProposal(f.queue[i].Payload)
+		if err != nil {
+			return err
+		}
+		if proposal.Relation == relation && proposal.RelatedRuleID == relatedRuleID {
+			return nil
+		}
+		proposal.Relation, proposal.RelatedRuleID = relation, relatedRuleID
+		raw := EncodeRuleProposal(proposal)
+		if !validJSON(raw) {
+			return fmt.Errorf("%w: queue payload is not JSON", ErrInvalid)
+		}
+		f.queue[i].Payload = raw
 		return nil
 	}
 	return fmt.Errorf("%w: queue item %d", ErrNotFound, id)

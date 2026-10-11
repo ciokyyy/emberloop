@@ -441,6 +441,17 @@ func (b *Bank) ListRules(ctx context.Context, limit int) ([]Rule, error) {
 	return out, err
 }
 
+// LiveRules returns the latest version of every live Rule (not superseded,
+// not dormant), ordered by rule ID. Parked Rules stay live for manual
+// recall; the nightly anchor check verifies them like active ones.
+func (b *Bank) LiveRules(ctx context.Context) ([]Rule, error) {
+	return queryAll(ctx, b.rdb, scanRule, `SELECT `+ruleCols+`
+			FROM rules AS r
+			WHERE r.version = (SELECT MAX(version) FROM rules WHERE rule_id = r.rule_id)
+			  AND r.status NOT IN ('superseded', 'dormant')
+			ORDER BY r.rule_id`)
+}
+
 // RulesBySubjectKey returns every Rule version with the normalized subject
 // key, ordered by rule ID then version. Callers keep the latest live version
 // per Rule for supersession and disagreement checks.
@@ -515,6 +526,56 @@ func (b *Bank) Decide(ctx context.Context, id int64, status, decidedBy string) e
 			return fmt.Errorf("%w: queue item %d", ErrNotFound, id)
 		}
 		return fmt.Errorf("%w: queue item %d already decided", ErrInvalid, id)
+	})
+}
+
+// AnnotateQueueRelation records contradiction pairing on a pending kind=rule
+// queue item: the FTS5 relation to the stored Rule the candidate overlaps, so
+// the approver sees the conflict without recomputing it. Only pending items
+// are annotated; decided items stay as labels. The payload keeps every other
+// field: only the relation and the related Rule change. An empty relation
+// with no related Rule clears an annotation.
+func (b *Bank) AnnotateQueueRelation(ctx context.Context, id int64, relation, relatedRuleID string) error {
+	switch relation {
+	case RelDuplicate, RelRefines, RelContradicts:
+		if strings.TrimSpace(relatedRuleID) == "" {
+			return fmt.Errorf("%w: relation %q needs a related rule", ErrInvalid, relation)
+		}
+	case "":
+		if strings.TrimSpace(relatedRuleID) != "" {
+			return fmt.Errorf("%w: empty relation with related rule %q", ErrInvalid, relatedRuleID)
+		}
+	default:
+		return fmt.Errorf("%w: relation %q", ErrInvalid, relation)
+	}
+	return b.write(ctx, func(db *sql.DB) error {
+		var kind, status, payload string
+		if err := db.QueryRowContext(ctx, `SELECT kind, status, payload FROM queue WHERE id = ?`, id).Scan(&kind, &status, &payload); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: queue item %d", ErrNotFound, id)
+			}
+			return err
+		}
+		if kind != QueueRule {
+			return fmt.Errorf("%w: queue item %d is %q, not a rule", ErrInvalid, id, kind)
+		}
+		if status != QueuePending {
+			return fmt.Errorf("%w: queue item %d already decided", ErrInvalid, id)
+		}
+		proposal, err := DecodeRememberProposal(payload)
+		if err != nil {
+			return err
+		}
+		if proposal.Relation == relation && proposal.RelatedRuleID == relatedRuleID {
+			return nil
+		}
+		proposal.Relation, proposal.RelatedRuleID = relation, relatedRuleID
+		raw := EncodeRuleProposal(proposal)
+		if !validJSON(raw) {
+			return fmt.Errorf("%w: queue payload is not JSON", ErrInvalid)
+		}
+		_, err = db.ExecContext(ctx, `UPDATE queue SET payload = ? WHERE id = ? AND status = 'pending'`, raw, id)
+		return err
 	})
 }
 
