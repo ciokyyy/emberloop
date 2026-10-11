@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
@@ -52,6 +53,41 @@ func firstHandoffAndTask(events []Event) (handoff, task Event, ok bool) {
 		}
 	}
 	return handoff, task, false
+}
+
+func TestSetChainPositionSeedsTicketRowState(t *testing.T) {
+	rs := &runState{}
+	setChainPosition(rs, "01-first", "worker", 0)
+	row := rs.Rows["01-first"]
+	if row.State != "queued" {
+		t.Fatalf("saved Ticket state = %q, want queued before the first driver snapshot", row.State)
+	}
+}
+
+func TestLoadRunsDefaultsLegacyChainRowState(t *testing.T) {
+	stateDir := tempDir(t)
+	runsDir := filepath.Join(stateDir, "enderbloom", "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rs := runState{
+		ID: "legacy-run", Status: runStatusPaused,
+		Rows: map[string]savedRow{"01-first": {ChainPositions: map[string]int{"worker": 1}}},
+	}
+	raw, err := json.Marshal(rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "legacy-run.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(stateDir, NewFakeBackend())
+	d.mu.Lock()
+	row := d.runs["legacy-run"].Rows["01-first"]
+	d.mu.Unlock()
+	if row.State != "queued" || row.ChainPositions["worker"] != 1 {
+		t.Fatalf("loaded legacy Ticket row = %+v, want queued with its Chain position", row)
+	}
 }
 
 func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
@@ -138,6 +174,12 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				if len(eventsOfKind(oldSession.Events, "error")) == 0 {
 					t.Fatal("failed Session lost its error Event")
 				}
+				d.mu.Lock()
+				pending := d.runs[run.ID].ChainPendingSubmit["01-first"]
+				d.mu.Unlock()
+				if pending {
+					t.Fatal("non-advancing Worker failure set the pending-submit marker")
+				}
 				pauseTestRun(t, srv.URL, run.ID)
 				return
 			}
@@ -157,6 +199,12 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 			injections := injectionEventsOf(t, fallback.Events)
 			if len(injections) != 1 || injections[0].ProfileVersion != 11 {
 				t.Fatalf("fallback task injection = %+v, want one create-time injection", injections)
+			}
+			d.mu.Lock()
+			pending := d.runs[run.ID].ChainPendingSubmit["01-first"]
+			d.mu.Unlock()
+			if !pending {
+				t.Fatal("advancing Worker failure did not set the pending-submit marker")
 			}
 			found := false
 			for _, e := range oldSession.Events {
@@ -358,6 +406,12 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	submitSession(t, srv.URL, fallbackID, "done", []string{"alpha"})
+	d.mu.Lock()
+	pendingSubmit := d.runs[run.ID].ChainPendingSubmit["01-first"]
+	d.mu.Unlock()
+	if pendingSubmit {
+		t.Fatal("replacement done submit did not clear its pending-submit marker")
+	}
 	for _, typ := range requiredReviewerTypes {
 		id := oldReviewers[typ]
 		review := waitSessionCond(t, srv.URL, id, func(s sessionBody) bool {
@@ -535,6 +589,75 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 	}
 }
 
+func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
+	cases := []struct {
+		name  string
+		error string
+	}{
+		{name: "quota", error: "quota exceeded"},
+		{name: "credit", error: "payment required"},
+		{name: "session limit", error: "session limit reached"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, spec := initRunRepo(t, map[string]string{
+				"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+			})
+			useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+			fake := NewFakeBackend()
+			var failOnce sync.Once
+			var mu sync.Mutex
+			failedID := ""
+			fake.TurnFailure = func(id, prompt string) (string, bool) {
+				if !strings.Contains(prompt, "Review ticket 01-first for spec") || !strings.Contains(prompt, "as reviewer-spec") {
+					return "", false
+				}
+				fired := false
+				failOnce.Do(func() {
+					fired = true
+					mu.Lock()
+					failedID = id
+					mu.Unlock()
+				})
+				return tc.error, fired
+			}
+			d := NewDaemon(tempDir(t), fake)
+			srv := newRunTestServer(t, d)
+			defer srv.Close()
+
+			run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+			r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+				return ticketByID(r, "01-first").WorkerSession != ""
+			}, "Worker")
+			submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+			r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+				tk := ticketByID(r, "01-first")
+				return tk.Chain[reviewerSpecType].Position == 2 && tk.Verdicts[reviewerSpecType].Verdict == "pass"
+			}, "fallback spec Reviewer")
+			tk := ticketByID(r, "01-first")
+			mu.Lock()
+			oldID := failedID
+			mu.Unlock()
+			if oldID == "" || tk.ReviewerSessions[reviewerSpecType] == oldID {
+				t.Fatalf("Reviewer Session was not replaced after %s: old=%q current=%q", tc.name, oldID, tk.ReviewerSessions[reviewerSpecType])
+			}
+			old := getSession(t, srv.URL, oldID)
+			if old.Meta.Status != "failed" || len(eventsOfKind(old.Events, "error")) == 0 {
+				t.Fatalf("failed Reviewer did not retain its %s error: %+v", tc.name, old.Events)
+			}
+			fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
+				_, _, ok := firstHandoffAndTask(s.Events)
+				return ok && s.Meta.Status == "idle"
+			}, "Reviewer Handoff and task")
+			handoff, task, ok := firstHandoffAndTask(fallback.Events)
+			if !ok || handoff.Seq >= task.Seq {
+				t.Fatalf("Reviewer fallback prompt order = handoff %+v, task %+v", handoff, task)
+			}
+			pauseTestRun(t, srv.URL, run.ID)
+		})
+	}
+}
+
 func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -553,8 +676,8 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != 200 {
 		t.Fatalf("pause status = %d, want 200", code)
 	}
-	// Persist the crash window: the provider failure is logged, but the Run
-	// process stops before handleRunChainFailure can replace the Session.
+	// Persist a failed Session while paused, without the post-turn handler,
+	// so Resume exercises reconciliation after reload.
 	d.appendEvent(worker, "prompt", "recover after restart", "")
 	d.appendEvent(worker, "status", "", "working")
 	d.appendEvent(worker, "error", "quota exceeded", "")
@@ -628,6 +751,15 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 	}
 	if got := ticketByID(loaded, "01-first").WorkerSession; got != worker {
 		t.Fatalf("reloaded Worker = %q, want %q", got, worker)
+	}
+	if got := ticketByID(loaded, "01-first").State; got == "" {
+		t.Fatal("reloaded Ticket row has an empty state")
+	}
+	d2.mu.Lock()
+	pendingSubmit := d2.runs[run.ID].ChainPendingSubmit["01-first"]
+	d2.mu.Unlock()
+	if !pendingSubmit {
+		t.Fatal("reloaded Run lost the replacement Worker's pending-submit marker")
 	}
 	rows := runFileRows(t, stateDir, run.ID)
 	if rows["01-first"] == nil {

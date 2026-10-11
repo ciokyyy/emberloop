@@ -717,17 +717,21 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   A start failure advances without a Handoff because no Session exists; a turn
   failure keeps the old Session `failed` with its Event log and starts the next
   entry on the same Ticket worktree with a Handoff followed by the normal
-  injected role task. A replacement Worker must submit done before old same-tip
-  verdicts can merge; its Reviewer re-prompt counter resets so changed tips are
-  reviewed again. A failed fallback resume or task send marks Needs-you, not
-  Chain exhaustion. Exhaustion marks the whole Ticket Needs-you and stops
-  further Reviewer starts for that Ticket. Chain positions persist, and Resume
-  reconciles a failed active Session before the driver re-prompts it. Ticket
-  Retry clears its alert and driver backoff but retains the active Session and
-  Chain positions; it does not restart a failed Session or rewind an exhausted
-  Chain. `runs_chain_test.go` covers Worker and Reviewer turn failures and start
-  fallback, replacement-worker re-review, fallback dispatch failure, exhaustion,
-  Resume reconciliation and persisted Ticket positions.
+  injected role task. A Ticket row first created by a Chain-position write
+  starts as `queued` until the driver's next snapshot publishes its live state.
+  An advancing Worker failure persists a Ticket-scoped pending-submit marker:
+  old same-tip verdicts cannot merge until the replacement Worker submits done,
+  while other Tickets and Runs keep the existing finish gate. The replacement's
+  Reviewer re-prompt counter resets so changed tips are reviewed again. A failed
+  fallback resume or task send marks Needs-you, not Chain exhaustion. Exhaustion
+  marks the whole Ticket Needs-you and stops further Reviewer starts for that
+  Ticket. Chain positions persist, and Resume reconciles a failed active Session
+  before the driver re-prompts it. Ticket Retry clears its alert and driver
+  backoff but retains the active Session and Chain positions; it does not restart
+  a failed Session or rewind an exhausted Chain. `runs_chain_test.go` covers
+  Worker and Reviewer failure classes, start fallback, replacement-worker
+  re-review, fallback dispatch failure, exhaustion, Resume reconciliation and
+  persisted Ticket rows.
   Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
   (state, tip, last refusal, times) after every driver pass (plus `warnings`).
   Reload spawns nothing: running Runs become paused and needs-you Runs stay needs-you.

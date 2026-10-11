@@ -400,8 +400,8 @@ func TestHeldPassNoRerun(t *testing.T) {
 	worker := ticketByID(r, "01-first").WorkerSession
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
-	// The driver merges as soon as both passes land, so create the dirty file
-	// before the reviewers finish. This deterministically holds the finish.
+	// Dirty the branch before the verdicts arrive so the finish cannot merge
+	// in the race between a pass and this setup.
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "dirty.txt", "uncommitted\n")
 	passReviewers(t, srv.URL, run.ID, "01-first")

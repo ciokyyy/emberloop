@@ -236,12 +236,15 @@ type runState struct {
 	Rows            map[string]savedRow     `json:"rows,omitempty"`
 	Chains          map[string][]chainEntry `json:"chains,omitempty"`
 	ChainExhausted  map[string]bool         `json:"chainExhausted,omitempty"`
-	chainHandling   map[string]bool         `json:"-"`
-	SpecRun         el.SpecRun              `json:"-"`
-	Driver          *el.DriverRun           `json:"-"`
-	notify          chan struct{}           `json:"-"`
-	unpause         chan struct{}           `json:"-"`
-	driving         bool                    `json:"-"`
+	// ChainPendingSubmit invalidates an old Worker done submit on a provider
+	// Chain failure until the replacement Worker submits done.
+	ChainPendingSubmit map[string]bool `json:"chainPendingSubmit,omitempty"`
+	chainHandling      map[string]bool `json:"-"`
+	SpecRun            el.SpecRun      `json:"-"`
+	Driver             *el.DriverRun   `json:"-"`
+	notify             chan struct{}   `json:"-"`
+	unpause            chan struct{}   `json:"-"`
+	driving            bool            `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -693,43 +696,44 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs := &runState{
-		ID:             newID(),
-		Spec:           specRun.Spec,
-		Repo:           repo,
-		Status:         runStatusRunning,
-		Harness:        harness,
-		Model:          model,
-		Effort:         effort,
-		RecallOffN:     req.RecallOffN,
-		CreatedAt:      time.Now().UTC(),
-		Owner:          creator.ID,
-		SpecBranch:     specRun.Branch,
-		SpecBase:       specBase,
-		Sessions:       map[string]string{},
-		Branches:       map[string]string{},
-		Worktrees:      map[string]string{},
-		Targets:        map[string]string{},
-		Bases:          map[string]string{},
-		Merged:         map[string]string{},
-		Reviewers:      map[string]map[string]string{},
-		Reviews:        map[string]map[string]storedReview{},
-		ReviewTips:     map[string]map[string]string{},
-		ReviewPending:  map[string]map[string][]string{},
-		Reprompted:     map[string]int{},
-		ReviewStarted:  map[string]map[string]time.Time{},
-		FormatReprompt: map[string]map[string]bool{},
-		Rounds:         map[string][]ticketRound{},
-		NeedsYouReason: map[string]string{},
-		Followups:      map[string]string{},
-		Rows:           map[string]savedRow{},
-		Chains:         configuredRunChains(harness, model, effort),
-		ChainExhausted: map[string]bool{},
-		SpecRun:        specRun,
-		Driver:         el.NewDriverRun(nil),
-		Parked:         map[string]bool{},
-		Discarded:      map[string]bool{},
-		RetryGen:       map[string]int{},
-		RecallOff:      map[string]bool{},
+		ID:                 newID(),
+		Spec:               specRun.Spec,
+		Repo:               repo,
+		Status:             runStatusRunning,
+		Harness:            harness,
+		Model:              model,
+		Effort:             effort,
+		RecallOffN:         req.RecallOffN,
+		CreatedAt:          time.Now().UTC(),
+		Owner:              creator.ID,
+		SpecBranch:         specRun.Branch,
+		SpecBase:           specBase,
+		Sessions:           map[string]string{},
+		Branches:           map[string]string{},
+		Worktrees:          map[string]string{},
+		Targets:            map[string]string{},
+		Bases:              map[string]string{},
+		Merged:             map[string]string{},
+		Reviewers:          map[string]map[string]string{},
+		Reviews:            map[string]map[string]storedReview{},
+		ReviewTips:         map[string]map[string]string{},
+		ReviewPending:      map[string]map[string][]string{},
+		Reprompted:         map[string]int{},
+		ReviewStarted:      map[string]map[string]time.Time{},
+		FormatReprompt:     map[string]map[string]bool{},
+		Rounds:             map[string][]ticketRound{},
+		NeedsYouReason:     map[string]string{},
+		Followups:          map[string]string{},
+		Rows:               map[string]savedRow{},
+		Chains:             configuredRunChains(harness, model, effort),
+		ChainExhausted:     map[string]bool{},
+		ChainPendingSubmit: map[string]bool{},
+		SpecRun:            specRun,
+		Driver:             el.NewDriverRun(nil),
+		Parked:             map[string]bool{},
+		Discarded:          map[string]bool{},
+		RetryGen:           map[string]int{},
+		RecallOff:          map[string]bool{},
 
 		notify:  make(chan struct{}),
 		unpause: make(chan struct{}),
@@ -2736,17 +2740,17 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		submitStatus = rec.Status
 	}
 	workerID := el.WorkerID(ticketID)
+	pendingChainSubmit := rs.ChainPendingSubmit[ticketID]
 	d.mu.Unlock()
 	if branch == "" || worktree == "" {
 		return el.DriverFinish{}, fmt.Errorf("ticket %s has no worker", ticketID)
 	}
-	if submitStatus == "" {
-		// A replacement Worker has no submit of its own yet. Old Reviewer
-		// verdicts must not let the driver merge its branch before the new
-		// Session reports done.
+	if pendingChainSubmit {
+		// A failed Worker invalidates its old done submit until the replacement
+		// Session submits done; preserve same-tip Reviewer verdicts meanwhile.
 		return el.DriverFinish{}, nil
 	}
-	if submitStatus != "done" {
+	if submitStatus != "" && submitStatus != "done" {
 		return el.DriverFinish{Merged: false, Detail: fmt.Sprintf("worker submitted %q, waiting for done; submit done with the completed checkboxes", submitStatus)}, nil
 	}
 	d.ensureReviewers(runID, ticketID)
@@ -3709,6 +3713,9 @@ func (d *Daemon) storeSubmitLocked(sessionID, ticketID string, rs *runState, sta
 	rec.Summary = summary
 	count := rec.Count
 	if rs != nil && ticketID != "" {
+		if status == "done" && rs.ChainPendingSubmit != nil {
+			delete(rs.ChainPendingSubmit, ticketID)
+		}
 		if n := rs.Reprompted[ticketID]; rec.Count <= n {
 			rec.Count = n + 1
 			count = rec.Count
@@ -4144,8 +4151,17 @@ func (d *Daemon) loadRuns() {
 		if rs.Rows == nil {
 			rs.Rows = map[string]savedRow{}
 		}
+		for ticket, row := range rs.Rows {
+			if row.State == "" {
+				row.State = "queued"
+				rs.Rows[ticket] = row
+			}
+		}
 		if rs.ChainExhausted == nil {
 			rs.ChainExhausted = map[string]bool{}
+		}
+		if rs.ChainPendingSubmit == nil {
+			rs.ChainPendingSubmit = map[string]bool{}
 		}
 		rs.chainHandling = map[string]bool{}
 		rs.Driver = el.NewDriverRun(nil)
