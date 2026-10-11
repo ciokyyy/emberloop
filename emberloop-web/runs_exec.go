@@ -2141,7 +2141,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"recallOffN": rs.RecallOffN,
-		"createdAt":  rs.CreatedAt, "error": rs.Error, "tickets": tickets,
+		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
 }
 

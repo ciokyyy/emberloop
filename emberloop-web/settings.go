@@ -114,8 +114,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		defer d.live.publish("settings")
 		var body struct {
 			Roles         map[string]roleSetting `json:"roles"`
-			RunSkills     map[string][]string    `json:"run_skills"`
-			RunSkillsSet  bool                   `json:"-"`
+			RunSkills     json.RawMessage        `json:"run_skills"`
 			MaxWorkers    *int                   `json:"max_workers"`
 			SessionTitles *bool                  `json:"session_titles"`
 			SignupEnabled *bool                  `json:"signup_enabled"`
@@ -123,44 +122,26 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Decider       *deciderPatch          `json:"decider"`
 			Jev           *jevPatch              `json:"jev"`
 		}
-		// Detect an explicit run_skills key (including null/empty) so a
-		// write can clear a role without touching other settings.
-		var rawBody map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		if rawSkills, ok := rawBody["run_skills"]; ok {
-			body.RunSkillsSet = true
-			if string(rawSkills) != "null" {
-				if err := json.Unmarshal(rawSkills, &body.RunSkills); err != nil {
+		// An explicit run_skills key (including null/empty) clears or merges;
+		// an absent key leaves custom skills untouched. RawMessage is nil
+		// when absent, so one decode detects presence without a second struct.
+		var runSkills map[string][]string
+		runSkillsSet := body.RunSkills != nil
+		if runSkillsSet {
+			trimmed := strings.TrimSpace(string(body.RunSkills))
+			if trimmed != "" && trimmed != "null" {
+				if err := json.Unmarshal(body.RunSkills, &runSkills); err != nil {
 					http.Error(w, "run_skills must be an object of string arrays", http.StatusBadRequest)
 					return
 				}
+			} else {
+				runSkills = map[string][]string{}
 			}
 		}
-		// Decode the rest through the typed shape.
-		rawRest, _ := json.Marshal(rawBody)
-		var typed struct {
-			Roles         map[string]roleSetting `json:"roles"`
-			MaxWorkers    *int                   `json:"max_workers"`
-			SessionTitles *bool                  `json:"session_titles"`
-			SignupEnabled *bool                  `json:"signup_enabled"`
-			Compress      *compressPatch         `json:"compress"`
-			Decider       *deciderPatch          `json:"decider"`
-			Jev           *jevPatch              `json:"jev"`
-		}
-		if err := json.Unmarshal(rawRest, &typed); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
-			return
-		}
-		body.Roles = typed.Roles
-		body.MaxWorkers = typed.MaxWorkers
-		body.SessionTitles = typed.SessionTitles
-		body.SignupEnabled = typed.SignupEnabled
-		body.Compress = typed.Compress
-		body.Decider = typed.Decider
-		body.Jev = typed.Jev
 		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
 				http.Error(w, "only the admin can change signup, decider and jev settings", http.StatusForbidden)
@@ -183,8 +164,8 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "max_workers must be a whole number above zero", http.StatusBadRequest)
 			return
 		}
-		if body.RunSkillsSet {
-			if msg := validateRunSkills(body.RunSkills); msg != "" {
+		if runSkillsSet {
+			if msg := validateRunSkills(runSkills); msg != "" {
 				http.Error(w, msg, http.StatusBadRequest)
 				return
 			}
@@ -240,9 +221,9 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			raw, _ := json.Marshal(*body.SignupEnabled)
 			all["signup_enabled"] = raw
 		}
-		if body.RunSkillsSet {
+		if runSkillsSet {
 			merged := readRunSkillsRaw()
-			for role, list := range body.RunSkills {
+			for role, list := range runSkills {
 				kept := make([]string, 0, len(list))
 				for _, s := range list {
 					if strings.TrimSpace(s) == "" {
@@ -257,7 +238,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 				merged[role] = kept
 			}
 			// An explicit empty object clears all custom skills.
-			if len(body.RunSkills) == 0 {
+			if len(runSkills) == 0 {
 				merged = map[string][]string{}
 			}
 			raw, _ := json.Marshal(merged)

@@ -4,9 +4,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+)
+
+// Optional-section markers, matched case-insensitively on the original text:
+// lowercasing first can change byte length for some non-ASCII runes, so the
+// offsets would no longer line up with the original for slicing.
+var (
+	optionalStartRe   = regexp.MustCompile(`(?i)<!-- optional:start -->`)
+	optionalEndRe     = regexp.MustCompile(`(?i)<!-- optional:end -->`)
+	optionalHeadingRe = regexp.MustCompile(`(?i)\(optional\)`)
 )
 
 // Run prompt injection (ticket 04): the driver builds each Worker and
@@ -175,7 +185,7 @@ func trimRunSkill(s string) string {
 			if skipLevel != 0 && level <= skipLevel {
 				skipLevel = 0
 			}
-			if skipLevel == 0 && strings.Contains(strings.ToLower(rest), "(optional)") {
+			if skipLevel == 0 && optionalHeadingRe.MatchString(rest) {
 				skipLevel = level
 				continue
 			}
@@ -194,23 +204,20 @@ func trimRunSkill(s string) string {
 }
 
 // dropOptionalHTMLBlocks removes <!-- optional:start --> ... <!-- optional:end -->
-// blocks (case-insensitive). An unclosed start drops to the end.
+// blocks case-insensitively. An unclosed start drops to the end. Indices come
+// from the original text, never a lowercased copy.
 func dropOptionalHTMLBlocks(s string) string {
-	lower := strings.ToLower(s)
-	const start = "<!-- optional:start -->"
-	const end = "<!-- optional:end -->"
 	for {
-		i := strings.Index(lower, start)
-		if i < 0 {
+		startLoc := optionalStartRe.FindStringIndex(s)
+		if startLoc == nil {
 			return s
 		}
-		j := strings.Index(lower[i+len(start):], end)
-		if j < 0 {
-			return s[:i]
+		rest := s[startLoc[1]:]
+		endLoc := optionalEndRe.FindStringIndex(rest)
+		if endLoc == nil {
+			return s[:startLoc[0]]
 		}
-		j += i + len(start)
-		s = s[:i] + s[j+len(end):]
-		lower = strings.ToLower(s)
+		s = s[:startLoc[0]] + rest[endLoc[1]:]
 	}
 }
 

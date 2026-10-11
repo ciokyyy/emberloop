@@ -47,6 +47,12 @@ func TestTrimRunSkillDropsOptional(t *testing.T) {
 			drop: []string{"Drop."},
 		},
 		{
+			name: "uppercase markers with non-ascii kept intact",
+			in:   "keep İ\n<!-- OPTIONAL:START -->\ndrop\n<!-- OPTIONAL:END -->\nmore",
+			keep: []string{"keep İ", "more"},
+			drop: []string{"drop"},
+		},
+		{
 			name: "sublevel stays dropped",
 			in:   "# S\nKeep.\n\n## Opt (optional)\nDrop.\n\n### Sub\nStill drop.\n\n## Back\nKeep back.",
 			keep: []string{"Keep.", "Back", "Keep back."},
