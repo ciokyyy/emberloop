@@ -131,7 +131,9 @@ func TestSpawnedSessionsNestUnderParent(t *testing.T) {
 // Slice 2: when the last Group member finishes, the parent receives exactly
 // one grouped result as a Steer.
 func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	fake := NewFakeBackend()
+	fake.Delay = 100 * time.Millisecond // Let every child start before the first fake turn settles.
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

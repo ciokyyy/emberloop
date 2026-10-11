@@ -135,7 +135,10 @@ type Daemon struct {
 	profileOneShot     func(model, system, user string) (string, error)
 	consolidateOneShot func(model, system, user string) (string, error)
 	nightlyFailStage   string
-	nightlyLastDay     string
+	// baseCheck scripts the spec-branch base-red gate in tests; nil runs
+	// .emberloop/check at the requested tip in a detached worktree.
+	baseCheck      func(repo, specBranch, tip string) (bool, []string)
+	nightlyLastDay string
 	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
 	// holds one in-flight/again flag per Session, mineWG lets tests and
 	// Shutdown wait for running scans.

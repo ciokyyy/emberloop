@@ -370,10 +370,10 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 	_ = r
 }
 
-// Slice 4: checkboxes tick from the Worker completed list, written only by
-// the driver. The spec branch's ticket file gains [x] and Status done after
-// the merge into it; master never moves here.
-func TestRunTicksBoxesFromCompletedList(t *testing.T) {
+// The Worker completed list is report-only before merge; after the reviewed
+// branch merges into the spec branch the driver writes Status done and ticks
+// every box there, leaving the main checkout unchanged.
+func TestRunMarksTicketDoneAfterSpecMerge(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
@@ -410,8 +410,8 @@ func TestRunTicksBoxesFromCompletedList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "- [x] alpha") {
-		t.Fatalf("ticket file = %q, want alpha ticked", raw)
+	if !strings.Contains(string(raw), "- [ ] alpha") || strings.Contains(string(raw), "- [x] alpha") || !strings.Contains(string(raw), "Status:** open") {
+		t.Fatalf("main ticket = %q, want open with boxes unticked", raw)
 	}
 	// The done mark lands on the spec branch, not master: the merge target
 	// is spec/demo and the main checkout stays behind.

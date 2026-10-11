@@ -94,8 +94,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
   with a fake Backend and fake git (order, cap, box ticks, dirty and
   conflict refusals, roles); `runs_worktree_test.go` covers worktree identity
-  and the read-only spec mirror (driver ticks only the main checkout) at the
-  same seam; `runs_reviewers_test.go` covers both Reviewer
+  and the read-only spec mirror (the direct tick helper never writes the
+  mirror); `runs_markdone_basered_test.go` covers merge-ordered ticket
+  status/boxes, deferred spec status, red-base Needs-you and per-tip check
+  caching; `runs_reviewers_test.go` covers both Reviewer
   Sessions per Ticket, the gate, rework, staleness, roles, the cap and the
   reviewer submit tool (scripted tool submits, empty-ran and minors-only
   refusals, stale-tip records with the current tip, minors-pass merges) at the
@@ -659,8 +661,18 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   against the other live spec branches in the same repo and records a
   warning Event (`warnings`, with the shared files) on both Runs when the
   sets intersect. Start refuses a spec outside the repo.
-  Boxes tick from the submit completed list through the per-file lock, the
-  driver the only writer. Roles from
+  On spec-branch Runs, submitted completed names are report-only until the
+  reviewed Ticket branch merges into the spec branch; then the driver commits
+  Status done and all boxes ticked there, without changing the main checkout.
+  Legacy Runs without a spec branch retain direct progress ticks. Before an
+  unstarted Ticket starts, `.emberloop/check` runs against the current spec
+  tip once per SHA, cached on the Run. A missing check file means no check;
+  a red or unverifiable base marks the Ticket Needs-you with failures and
+  starts no Worker. With no Worker live, the driver ends at a stable state;
+  the Run reads done while the Needs-you banner remains, so fix the base and
+  start a new Run. Ticket merges never update the spec file's status; only
+  the final merge to master may write that status. The driver remains the
+  only ticket-file writer. Roles from
   settings choose harness, model and effort, falling back to the Start
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent

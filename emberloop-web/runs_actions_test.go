@@ -475,11 +475,12 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	}
 	waitActionState(t, srv.URL, run.ID, "01-first", "needs-you", "refusal needs-you")
 
-	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", "clean up and submit again"); code != http.StatusOK {
+	code, retryRun := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", "clean up and submit again")
+	if code != http.StatusOK {
 		t.Fatalf("retry status = %d, want 200", code)
 	}
-	if got := actionTicketByID(getActionRun(t, srv.URL, run.ID), "01-first"); got.NeedsYou != "" {
-		t.Fatalf("needsYou = %q after retry, want cleared", got.NeedsYou)
+	if got := actionTicketByID(retryRun, "01-first"); got.NeedsYou != "" {
+		t.Fatalf("needsYou in retry response = %q, want cleared", got.NeedsYou)
 	}
 	// The retry's steer reached the worker.
 	waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")

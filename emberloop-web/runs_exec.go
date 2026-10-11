@@ -17,9 +17,9 @@ import (
 	el "example.com/emberloop"
 )
 
-// Run statuses: a Run is running while its driver loop polls, done when
-// every Ticket merged, failed when the driver returned an error, and paused
-// when loaded from disk without a driver (resume arrives in a later ticket).
+// Run statuses: running while the driver polls, done when it reaches a stable
+// state (which may leave Needs-you or parked Tickets), failed on driver error,
+// and paused when loaded from disk without a driver (resume arrives later).
 const (
 	runStatusRunning = "running"
 	runStatusDone    = "done"
@@ -160,6 +160,9 @@ type runState struct {
 	// file.
 	SpecBranch string `json:"specBranch,omitempty"`
 	SpecBase   string `json:"specBase,omitempty"`
+	// BaseCheckCache stores each spec-branch tip's repo-check result. A tip is
+	// checked once per Run, and the cache survives a Daemon restart.
+	BaseCheckCache map[string]baseCheckResult `json:"baseCheckCache,omitempty"`
 	// Warnings holds the overlap warnings published at Ticket merges: one
 	// entry per live spec branch this Run's changed files intersect with.
 	// It survives a restart in the Run file and streams with the Run table.
@@ -773,16 +776,41 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		// The Daemon spawns the Reviewers after a done submit, so a stalled
 		// Worker is told to finish, never to spawn its own reviewers.
 		StallNudge: webStallNudge,
-		// clock is the test seam for the idle and stall needs-you
-		// alerts; nil reads the real clock through the driver's default.
+		// clock is the test seam for idle and stall alerts; nil uses time.Now.
 		Now: d.clock,
-		// Parked and Discarded read the user's per-ticket actions every
-		// pass, so parking or discarding mid-run takes effect at once;
-		// RetryGen starts a retried ticket over on the next pass.
+		// Parked and Discarded read the user's actions each pass. For an
+		// unstarted spec-branch Ticket, Parked also runs the base-red gate;
+		// a red or unverifiable base blocks the start and publishes Needs-you.
 		Parked: func(ticketID string) bool {
 			d.mu.Lock()
-			defer d.mu.Unlock()
-			return rs.Parked[ticketID]
+			userParked := rs.Parked[ticketID]
+			started := rs.Sessions[ticketID] != ""
+			discarded := rs.Discarded[ticketID]
+			repo, specBranch, runID := rs.Repo, rs.SpecBranch, rs.ID
+			d.mu.Unlock()
+			if discarded {
+				return true
+			}
+			if userParked || started || specBranch == "" {
+				return userParked
+			}
+			tip, err := runGit(repo, "rev-parse", specBranch)
+			if err != nil || strings.TrimSpace(tip) == "" {
+				cause := "empty spec-branch tip"
+				if err != nil {
+					cause = strings.TrimSpace(err.Error())
+				}
+				d.recordBaseRedForTicket(runID, ticketID, specBranch, "unknown", []string{"base check could not read spec branch: " + cause})
+				return true
+			}
+			tip = strings.TrimSpace(tip)
+			green, failing := d.cachedBaseCheck(runID, repo, specBranch, tip)
+			if !green {
+				d.recordBaseRedForTicket(runID, ticketID, specBranch, tip, failing)
+				return true
+			}
+			d.clearBaseRedForTicket(runID, ticketID)
+			return false
 		},
 		Discarded: func(ticketID string) bool {
 			d.mu.Lock()
@@ -854,14 +882,26 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		TickCheckboxes: func(ticketID string, boxes []string) ([]string, error) {
 			d.mu.Lock()
 			path := ticketPath(rs, ticketID)
+			repo, specBranch := rs.Repo, rs.SpecBranch
 			d.mu.Unlock()
 			if path == "" {
 				return boxes, nil
 			}
+			if specBranch != "" {
+				// Ticket progress is report-only until the reviewed branch is merged
+				// into the spec branch. The done-mark commit ticks the boxes there.
+				body := readTicketFile(path)
+				if rel, err := filepath.Rel(repo, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					if out, err := runGit(repo, "show", specBranch+":"+filepath.ToSlash(rel)); err == nil {
+						body = out
+					}
+				}
+				return ticketUnknownBoxes(body, boxes), nil
+			}
 			miss, err := el.TickDriverTicketFile(path, boxes)
 			if err == nil {
-				// Boxes are ticket-page state: publish the tick at once
-				// so the UI never polls for it.
+				// Legacy Runs without an integration branch still publish progress
+				// ticks directly; spec-branch Runs defer them until merge.
 				d.snapshotAndPersist(rs.ID)
 			}
 			return miss, err
@@ -959,6 +999,192 @@ func runTicketBody(rs *runState, ticketID string) string {
 		}
 	}
 	return readTicketFile(path)
+}
+
+// baseCheckResult is one spec-branch tip's repo-check outcome, cached on
+// the Run so every Ticket starting from that tip shares the same result.
+type baseCheckResult struct {
+	OK      bool     `json:"ok"`
+	Failing []string `json:"failing,omitempty"`
+}
+
+// ticketUnknownBoxes reports submitted names absent from the ticket file
+// without mutating it. Spec-branch Runs defer every tick until merge.
+func ticketUnknownBoxes(content string, boxes []string) []string {
+	have := map[string]bool{}
+	for _, box := range parseTicketBoxes(content) {
+		have[strings.TrimSpace(box.Text)] = true
+	}
+	var unknown []string
+	for _, box := range boxes {
+		if !have[strings.TrimSpace(box)] {
+			unknown = append(unknown, box)
+		}
+	}
+	return unknown
+}
+
+func isBaseRedReason(reason string) bool {
+	return strings.Contains(reason, ": base ") && strings.Contains(reason, " is red")
+}
+
+func baseRedReason(ticketID, specBranch, tip string, failing []string) string {
+	list := strings.Join(failing, ", ")
+	if list == "" {
+		list = "check failed"
+	}
+	return fmt.Sprintf("ticket %s needs you: base %s at %s is red: failing: %s", ticketID, specBranch, shortSHA(tip), list)
+}
+
+// cachedBaseCheck runs the repo check once per spec-branch tip and persists
+// its result. Git and check work stay outside d.mu; cache accesses are locked.
+func (d *Daemon) cachedBaseCheck(runID, repo, specBranch, tip string) (bool, []string) {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return false, []string{"base check could not run: Run no longer exists"}
+	}
+	if result, exists := rs.BaseCheckCache[tip]; exists {
+		d.mu.Unlock()
+		return result.OK, append([]string(nil), result.Failing...)
+	}
+	d.mu.Unlock()
+
+	green, failing := true, []string(nil)
+	if d.baseCheck != nil {
+		green, failing = d.baseCheck(repo, specBranch, tip)
+	} else {
+		green, failing = runRepoCheckAtTip(repo, tip)
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rs, ok = d.runs[runID]
+	if !ok {
+		return false, []string{"base check could not run: Run no longer exists"}
+	}
+	if rs.BaseCheckCache == nil {
+		rs.BaseCheckCache = map[string]baseCheckResult{}
+	}
+	if cached, exists := rs.BaseCheckCache[tip]; exists {
+		return cached.OK, append([]string(nil), cached.Failing...)
+	}
+	rs.BaseCheckCache[tip] = baseCheckResult{OK: green, Failing: append([]string(nil), failing...)}
+	d.persistRun(rs)
+	return green, append([]string(nil), failing...)
+}
+
+// recordBaseRedForTicket persists and publishes a red-base Needs-you banner.
+// The Parked callback calls it only for tickets that have not started.
+func (d *Daemon) recordBaseRedForTicket(runID, ticketID, specBranch, tip string, failing []string) {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok || rs.Sessions[ticketID] != "" || rs.Merged[ticketID] != "" || rs.Parked[ticketID] || rs.Discarded[ticketID] {
+		d.mu.Unlock()
+		return
+	}
+	reason := baseRedReason(ticketID, specBranch, tip, failing)
+	if rs.NeedsYouReason[ticketID] == reason {
+		d.mu.Unlock()
+		return
+	}
+	if rs.NeedsYouReason == nil {
+		rs.NeedsYouReason = map[string]string{}
+	}
+	rs.NeedsYouReason[ticketID] = reason
+	push := d.noteNeedsYouPushLocked(rs, ticketID, reason)
+	num, title := ticketNumTitleLocked(rs, ticketID)
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	if push {
+		d.pushRunNeedsYou(runID, ticketID, num, title, reason)
+	}
+}
+
+// clearBaseRedForTicket clears only this gate's banner after a later tip
+// checks green; unrelated Needs-you reasons are left untouched.
+func (d *Daemon) clearBaseRedForTicket(runID, ticketID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		return
+	}
+	reason := rs.NeedsYouReason[ticketID]
+	if !isBaseRedReason(reason) {
+		return
+	}
+	delete(rs.NeedsYouReason, ticketID)
+	if rs.pushedNeedsYou[ticketID] == reason {
+		delete(rs.pushedNeedsYou, ticketID)
+	}
+	d.persistRun(rs)
+	d.broadcastRunLocked(rs)
+}
+
+// runRepoCheckAtTip runs .emberloop/check in a detached worktree at tip.
+// A repository with no check file is green; a check that cannot be verified
+// or run fails closed so no Worker starts on an unknown base.
+func runRepoCheckAtTip(repo, tip string) (bool, []string) {
+	if _, err := runGit(repo, "cat-file", "-e", tip); err != nil {
+		return false, []string{"base check could not run: base tip: " + strings.TrimSpace(err.Error())}
+	}
+	if _, err := runGit(repo, "show", tip+":.emberloop/check"); err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return true, nil
+		}
+		return false, []string{"base check could not run: check file: " + strings.TrimSpace(err.Error())}
+	}
+	dir, err := os.MkdirTemp("", "el-base-check-*")
+	if err != nil {
+		return false, []string{"base check could not run: temp dir: " + strings.TrimSpace(err.Error())}
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	if _, err := runGit(repo, "worktree", "add", "--detach", dir, tip); err != nil {
+		return false, []string{"base check could not run: worktree: " + strings.TrimSpace(err.Error())}
+	}
+	defer func() { _, _ = runGit(repo, "worktree", "remove", "--force", dir) }()
+	cmd := exec.Command("sh", ".emberloop/check")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return false, []string{"base check could not run: " + strings.TrimSpace(err.Error())}
+	}
+	return false, parseCheckFailing(string(out))
+}
+
+// parseCheckFailing extracts failing Go tests and packages for Needs-you.
+// A check failure without parseable test output still gets a useful banner.
+func parseCheckFailing(output string) []string {
+	var failing []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name != "" && !seen[name] && len(failing) < 20 {
+			seen[name] = true
+			failing = append(failing, name)
+		}
+	}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if i := strings.Index(line, "--- FAIL:"); i >= 0 {
+			rest := strings.TrimSpace(line[i+len("--- FAIL:"):])
+			if fields := strings.Fields(rest); len(fields) > 0 {
+				add(fields[0])
+			}
+		} else if strings.HasPrefix(line, "FAIL") {
+			add(line)
+		}
+	}
+	if len(failing) == 0 {
+		failing = []string{"check failed"}
+	}
+	return failing
 }
 
 // runReviews returns one Ticket's reviewer verdicts as the driver sees them:
@@ -2593,16 +2819,29 @@ func ffUpdateSpecBranch(repo, branch, specBranch, ticketID string) (sha, kept st
 
 // stageAndCommitTicketDone marks the ticket file done (ticking every box)
 // and commits it in gitDir: the spec-branch finish commits in the ticket
-// worktree, the legacy finish in the main checkout. Changed reports whether
-// a commit landed; a ticket without a Status line is not an error (changed
-// false), the merge still stands and the boxes already ticked stay.
+// worktree, the legacy finish in the main checkout. For a file without a
+// Status line it still ticks and commits its boxes after merge, when present.
 func stageAndCommitTicketDone(gitDir, filePath, rel, workerID string) (changed bool, err error) {
 	done, merr := el.MarkDriverTicketDone(filePath)
 	if merr != nil {
 		if !strings.Contains(merr.Error(), "has no status line") {
 			return false, merr
 		}
-		return false, nil
+		raw, err := os.ReadFile(filePath)
+		if err != nil {
+			return false, err
+		}
+		var boxes []string
+		for _, box := range parseTicketBoxes(string(raw)) {
+			boxes = append(boxes, box.Text)
+		}
+		if len(boxes) == 0 {
+			return false, nil
+		}
+		if _, err := el.TickDriverTicketFile(filePath, boxes); err != nil {
+			return false, err
+		}
+		done = true
 	}
 	if !done {
 		return false, nil
@@ -2951,9 +3190,9 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 			state = runStatusPaused
 		}
 		needsYou := rs.NeedsYouReason[t.ID]
-		if needsYou != "" && state != "merged" && state != "discarded" && state != "parked" && state != "needs-you" {
-			// A reviewer-format failure needs the user while the driver
-			// still shows the ticket running: surface it as needs-you.
+		if needsYou != "" && state != "merged" && state != "discarded" && state != "needs-you" && (state != "parked" || !rs.Parked[t.ID]) {
+			// A base-red gate uses the driver's parked state to block a start;
+			// expose its Needs-you reason unless the User explicitly parked it.
 			state = "needs-you"
 		}
 		// A user park or discard shows at once, ahead of the driver's

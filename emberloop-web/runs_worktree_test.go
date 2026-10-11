@@ -94,9 +94,10 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 	}
 }
 
-// Ticket 03: the driver ticks the main checkout, never the worktree mirror.
-// Ticking the main ticket file succeeds while the mirror stays unticked.
-func TestRunWorktreeMirrorStaysUntickedWhenDriverTicks(t *testing.T) {
+// The low-level file-tick helper still writes the source ticket directly;
+// the read-only worktree mirror remains unchanged. Spec-branch Run progress
+// uses report-only completed names until the merge done-mark commit.
+func TestWorktreeMirrorStaysUntickedWhenSourceTicketIsTicked(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))

@@ -400,12 +400,11 @@ func TestHeldPassNoRerun(t *testing.T) {
 	worker := ticketByID(r, "01-first").WorkerSession
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
-	passReviewers(t, srv.URL, run.ID, "01-first")
-
-	// Block the merge with a dirty worktree so the same tip gets a second
-	// done and a second round.
+	// The driver merges as soon as both passes land, so create the dirty file
+	// before the reviewers finish. This deterministically holds the finish.
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "dirty.txt", "uncommitted\n")
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		tk := extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first")
