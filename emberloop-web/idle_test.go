@@ -28,7 +28,7 @@ func TestIdleFollowsTurnAndFakeClock(t *testing.T) {
 	d := NewDaemon(tempDir(t), fb)
 	clock := newFakeClock()
 	d.clock = clock.get
-	srv := httptest.NewServer(d.Handler())
+	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
