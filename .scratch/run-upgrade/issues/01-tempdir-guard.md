@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Scan test fails on a `t.TempDir()` call in a test file and ignores comments
-- [ ] All current call sites converted, including `cmd/emberloop-web`
-- [ ] Shared test helper exported; `emberloop-web/AGENTS.md` names the guard
-- [ ] `.emberloop/check` passes
+- [x] Scan test fails on a `t.TempDir()` call in a test file and ignores comments
+- [x] All current call sites converted, including `cmd/emberloop-web`
+- [x] Shared test helper exported; `emberloop-web/AGENTS.md` names the guard
+- [x] `.emberloop/check` passes
