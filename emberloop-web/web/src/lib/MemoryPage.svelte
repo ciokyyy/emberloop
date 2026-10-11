@@ -1,11 +1,13 @@
 <!-- Memory page: the User's own bank. Rules and observations list newest
-     first and search through FTS5; the queue shows each proposal with its
+     first and search through FTS5; each Rule offers Promote to file it as a
+     promotion against its own worktree; the queue shows each proposal with its
      quotes and source Sessions with approve, edit, reject and batch approve;
-     the Profile editor (versions plus restore) lives below; purge needs the
-     typed PURGE confirmation and reports what it removed; the header chip
-     shows engine status and stats show queue size, approval latency, the last
-     nightly run and the ledger. Loads once on mount and never polls; only the
-     buttons fetch again. -->
+     the promotions queue below approves proposed diffs; the Profile editor
+     (versions plus restore) lives below; purge needs the typed PURGE
+     confirmation and reports what it removed; the header chip shows engine
+     status and stats show queue size, approval latency, the last nightly run
+     and the ledger. Loads once on mount and never polls; only the buttons
+     fetch again. -->
 <script>
   import { ArrowLeft, RefreshCw } from '@lucide/svelte';
   import Button from './ui/button.svelte';
@@ -13,6 +15,7 @@
   import Input from './ui/input.svelte';
   import FloatingInput from './ui/floating-input.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
+  import PromotionQueue from './PromotionQueue.svelte';
   import {
     getRules,
     getObservations,
@@ -22,6 +25,7 @@
     getMemoryLedger,
     getMemoryStatus,
     purgeMemory,
+    proposePromotion,
   } from './api.js';
   import {
     normalizeRule,
@@ -58,10 +62,14 @@
   let confirm = $state('');
   let purging = $state(false);
   let purgeResult = $state('');
-
   // Queue edit state: one item at a time.
   let editingId = $state(0);
   let editText = $state('');
+
+  // Promotion propose state: one Rule at a time. The queue section below is
+  // the PromotionQueue component; proposing refreshes it in place.
+  let promoQueue = $state(null);
+  let promoteBusy = $state('');
 
   function toggle(list, id) {
     const i = list.indexOf(id);
@@ -131,6 +139,24 @@
       error = e.message || 'Search failed.';
     } finally {
       searching = false;
+    }
+  }
+
+  // Promote one Rule from the list: file it as a promotion against its own
+  // worktree (the Daemon resolves the Session from the Rule's provenance),
+  // then refresh the promotions queue below so its diff is ready to approve.
+  async function promoteRule(r) {
+    promoteBusy = r.ruleId;
+    error = '';
+    notice = '';
+    try {
+      const item = await proposePromotion(r.ruleId, '', '');
+      notice = `Promotion proposed for ${item.target_path ?? 'project knowledge'}; approve its diff below.`;
+      await promoQueue?.refresh();
+    } catch (e) {
+      error = e.message || 'Request failed.';
+    } finally {
+      promoteBusy = '';
     }
   }
 
@@ -299,6 +325,17 @@
                     <div class="text-sm">{r.text}</div>
                     <div class="mt-1 text-xs text-muted-foreground">{r.kind} · {r.subjectKey} · {r.status} · v{r.version}</div>
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="shrink-0"
+                    disabled={promoteBusy === r.ruleId}
+                    aria-label={`Promote rule ${r.ruleId}`}
+                    title="Propose this Rule as an edit to the nearest AGENTS.md"
+                    onclick={() => promoteRule(r)}
+                  >
+                    {promoteBusy === r.ruleId ? 'Promoting…' : 'Promote'}
+                  </Button>
                 </li>
               {/each}
             </ul>
@@ -418,6 +455,11 @@
             {/if}
           {/if}
         </section>
+
+        <!-- Promotions: Rules filed as project knowledge. Each item shows its
+          target path and diff preview with approve and reject; approving
+          writes the worktree file and leaves it uncommitted for review. -->
+        <PromotionQueue bind:this={promoQueue} />
 
         <!-- Profile: standing instructions with versions. -->
         <ProfileSettings />

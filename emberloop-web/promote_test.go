@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -431,10 +432,11 @@ func TestPromoteRefusesMachineToken(t *testing.T) {
 	}
 }
 
-// Unknown rules and Sessions fail without queueing anything.
+// Unknown rules and Sessions fail without queueing anything. A missing
+// session with no provenance to resolve fails the same way.
 func TestPromoteBadInputsQueueNothing(t *testing.T) {
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root\n"})
-	_, base, sessionID, _ := promoteDaemon(t, repo)
+	d, base, sessionID, owner := promoteDaemon(t, repo)
 	if code, _ := postPromotion(t, base, "missing-rule", sessionID, ""); code != http.StatusNotFound {
 		t.Fatalf("missing rule = %d, want 404", code)
 	}
@@ -444,7 +446,38 @@ func TestPromoteBadInputsQueueNothing(t *testing.T) {
 	if code, _ := postPromotion(t, base, "missing-rule", sessionID, "bogus"); code != http.StatusBadRequest {
 		t.Fatalf("bad target = %d, want 400", code)
 	}
+	// A rule with no source sessions and no session_id names no worktree.
+	rule := addPromoteRule(t, d, owner, nil)
+	raw, _ := json.Marshal(map[string]string{"rule_id": rule.RuleID})
+	resp, err := http.Post(base+"/api/promotions", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	buf, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(strings.ToLower(string(buf)), "session") {
+		t.Fatalf("sourceless rule without session = %d %q, want 404 naming session_id", resp.StatusCode, buf)
+	}
 	if got := getPromotionQueue(t, base); len(got) != 0 {
 		t.Fatalf("queue = %+v, want nothing queued for bad inputs", got)
+	}
+}
+
+// Without a session_id the worktree resolves from the Rule's provenance: the
+// newest source-observation Session still known to the Daemon.
+func TestPromoteResolvesSessionFromProvenance(t *testing.T) {
+	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root\n"})
+	d, base, sessionID, owner := promoteDaemon(t, repo)
+	obs := addPromoteObservation(t, d, owner, sessionID)
+	rule := addPromoteRule(t, d, owner, []int64{obs})
+	code, out := postPromotion(t, base, rule.RuleID, "", "")
+	if code != http.StatusCreated {
+		t.Fatalf("propose without session = %d %v, want 201 via provenance", code, out)
+	}
+	if out["target_path"] != "AGENTS.md" {
+		t.Fatalf("target_path = %v, want the repo root AGENTS.md", out["target_path"])
+	}
+	if diff, _ := out["diff"].(string); !strings.Contains(diff, rule.Text) {
+		t.Fatalf("diff = %q, want the rule text", diff)
 	}
 }

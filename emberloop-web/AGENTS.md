@@ -282,9 +282,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   the note target with its parseable frontmatter, rejection, the human gate,
   bad inputs, provenance session fallback and the rules-route decision, all on
   temp git repos at the Daemon seam. The Memory page proposes from its rules
-  list (`MemoryPage.svelte` Promote button per Rule) and approves from the
-  promotion queue section (`PromotionQueue.svelte` target path plus diff
-  preview with approve and reject; `PromotionQueue.test.js`); the chat side is
+  list (`MemoryPage.svelte` Promote button per Rule, resolving the worktree
+  from the Rule's provenance) and approves from the embedded promotion queue
+  section (`PromotionQueue.svelte` target path plus diff preview with approve
+  and reject; `PromotionQueue.test.js`, `MemoryPage.test.js`); the chat side is
   the Promote button per injected Rule on the memory divider (`Card.svelte`
   via the `rules` the `injection` card carries in `events.js`; `api.js`
   `promoteSessionRule`; `Card.test.js`, `events.test.js`, `api.test.js`).

@@ -27,6 +27,12 @@
   }
   load();
 
+  // Refresh the queue from the Daemon. The Memory page calls this after
+  // proposing so the new item appears without a full reload.
+  export async function refresh() {
+    await load();
+  }
+
   async function decide(item, status) {
     error = '';
     notice = '';

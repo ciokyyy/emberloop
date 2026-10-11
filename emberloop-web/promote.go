@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"example.com/emberloop-web/memory"
 )
@@ -96,8 +98,43 @@ func latestRuleVersion(ctx context.Context, bank memory.Memory, ruleID string) (
 	return latest, nil
 }
 
+// sessionWorkDirForRule resolves the worktree for a promotion without an
+// explicit Session: the work dir of the newest source-observation Session
+// that is still known (live or persisted) with a work dir. Rules carry their
+// provenance (source observation IDs), so the Memory page can propose from
+// its rules list without picking a Session. When no source Session resolves,
+// it reports ErrNotFound naming session_id, and the caller passes one.
+func (d *Daemon) sessionWorkDirForRule(ctx context.Context, bank memory.Memory, rule memory.Rule) (string, string, error) {
+	type candidate struct {
+		id string
+		at time.Time
+	}
+	var cands []candidate
+	for _, oid := range rule.SourceObservationIDs {
+		o, err := bank.ObservationByID(ctx, oid)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(o.SessionID) == "" {
+			continue
+		}
+		cands = append(cands, candidate{id: o.SessionID, at: o.CreatedAt})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].at.After(cands[j].at) })
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, c := range cands {
+		if s, ok := d.sessions[c.id]; ok && s.meta.Owner != "" && strings.TrimSpace(s.meta.WorkDir) != "" {
+			return c.id, s.meta.WorkDir, nil
+		}
+	}
+	return "", "", fmt.Errorf("%w: no live session for rule %s; pass session_id", memory.ErrNotFound, rule.RuleID)
+}
+
 // buildPromotionProposal resolves the Rule and the target paths for a
 // promotion, returning the proposal (with its diff preview) for the queue.
+// An empty sessionID resolves through the Rule's provenance
+// (sessionWorkDirForRule); otherwise the named Session's work dir applies.
 func (d *Daemon) buildPromotionProposal(ctx context.Context, bank memory.Memory, ruleID, sessionID, target, author string) (memory.PromotionProposal, error) {
 	ruleID = strings.TrimSpace(ruleID)
 	if ruleID == "" {
@@ -110,13 +147,21 @@ func (d *Daemon) buildPromotionProposal(ctx context.Context, bank memory.Memory,
 			return memory.PromotionProposal{}, fmt.Errorf("%w: promotion target %q", memory.ErrInvalid, target)
 		}
 	}
-	workDir, err := d.sessionWorkDir(sessionID)
-	if err != nil {
-		return memory.PromotionProposal{}, err
-	}
 	rule, err := latestRuleVersion(ctx, bank, ruleID)
 	if err != nil {
 		return memory.PromotionProposal{}, err
+	}
+	var workDir string
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID, workDir, err = d.sessionWorkDirForRule(ctx, bank, rule)
+		if err != nil {
+			return memory.PromotionProposal{}, err
+		}
+	} else {
+		workDir, err = d.sessionWorkDir(sessionID)
+		if err != nil {
+			return memory.PromotionProposal{}, err
+		}
 	}
 	text := strings.TrimSpace(rule.Text)
 	if text == "" {
@@ -165,8 +210,9 @@ func promotionViewOf(it memory.QueueItem) promotionView {
 }
 
 // handlePromotions serves POST /api/promotions: propose a Rule as project
-// knowledge. The body names the Rule and the Session worktree to propose
-// against; the answer carries the queue item with its diff preview for
+// knowledge. The body names the Rule and optionally the Session worktree to
+// propose against; without a session the worktree resolves from the Rule's
+// provenance. The answer carries the queue item with its diff preview for
 // approval. A pending promotion for the same Rule answers 200 with the
 // existing item instead of enqueuing twice.
 func (d *Daemon) handlePromotions(w http.ResponseWriter, r *http.Request) {
@@ -181,10 +227,6 @@ func (d *Daemon) handlePromotions(w http.ResponseWriter, r *http.Request) {
 	var body promotionCreateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(body.SessionID) == "" {
-		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
 	item, created, err := d.proposePromotionResult(r.Context(), user.ID, body.RuleID, body.SessionID, body.Target)

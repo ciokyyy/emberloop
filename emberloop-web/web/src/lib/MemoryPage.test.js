@@ -13,6 +13,7 @@ function stubMemory({
   observations = [],
   queue = [],
   ledger = [],
+  promotions = [],
   status = null,
   profile = { version: 0, lines: [], rendered: '' },
   versions = [],
@@ -38,6 +39,14 @@ function stubMemory({
         if (failStatus) return { ok: false, status: 503, json: async () => ({ available: false }) };
         return { ok: true, json: async () => status ?? defaultStatus };
       }
+      if (url === '/api/promotions' && method === 'POST') {
+        return { ok: true, json: async () => ({ id: 9, status: 'pending', target: 'agents_md', target_path: 'AGENTS.md', diff: '--- a/AGENTS.md\n+++ b/AGENTS.md\n@@\n+- use tabs for Go files\n' }) };
+      }
+      if (url.includes('/api/promotions/queue/') && url.endsWith('/decide') && method === 'POST') {
+        seen.promoteDecide = body;
+        return { ok: true, json: async () => ({ status: body.status, rule_id: 'r1' }) };
+      }
+      if (url.includes('/api/promotions/queue') && method === 'GET') return { ok: true, json: async () => promotions };
       if (url.includes('/api/rules/queue/batch') && method === 'POST') {
         seen.batch = body;
         return { ok: true, json: async () => [{ id: 1, status: 'approved', ruleId: 'r1' }] };
@@ -209,5 +218,40 @@ describe('MemoryPage status', () => {
     stubMemory({ rules: [], observations: [], queue: [], failStatus: true });
     const { container } = render(MemoryPage);
     await waitFor(() => expect(within(container).getByTestId('memory-status').textContent).toMatch(/Unavailable/));
+  });
+});
+
+describe('MemoryPage promotions', () => {
+  it('promotes a Rule from the list without picking a Session', async () => {
+    const seen = stubMemory({ rules: [ruleA], observations: [], queue: [] });
+    const { container } = render(MemoryPage);
+    const row = await within(container).findByTestId('memory-rule-r1');
+    await fireEvent.click(within(row).getByRole('button', { name: /Promote rule/ }));
+    await waitFor(() =>
+      expect(seen['POST /api/promotions']).toEqual({ rule_id: 'r1', session_id: '', target: '' }),
+    );
+    expect(await within(container).findByText(/approve its diff below/)).toBeTruthy();
+  });
+
+  it('approves a proposed diff in the promotions queue', async () => {
+    const seen = stubMemory({
+      rules: [],
+      observations: [],
+      queue: [],
+      promotions: [
+        {
+          id: 9,
+          status: 'pending',
+          target: 'agents_md',
+          target_path: 'AGENTS.md',
+          diff: '--- a/AGENTS.md\n+++ b/AGENTS.md\n@@\n+- use tabs for Go files\n',
+        },
+      ],
+    });
+    const { container } = render(MemoryPage);
+    const row = await within(container).findByTestId('promotion-queue-9');
+    expect(within(row).getByTestId('promotion-diff-9').textContent).toContain('+- use tabs for Go files');
+    await fireEvent.click(within(row).getByText('Approve'));
+    await waitFor(() => expect(seen.promoteDecide).toEqual({ status: 'approved' }));
   });
 });

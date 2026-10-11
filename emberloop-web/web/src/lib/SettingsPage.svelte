@@ -10,7 +10,6 @@
   import Notifications from './Notifications.svelte';
   import InstallApp from './InstallApp.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
-  import PromotionQueue from './PromotionQueue.svelte';
   import SoundSettings from './SoundSettings.svelte';
   import VoiceSettings from './VoiceSettings.svelte';
   let { onBack = () => {}, admin = false } = $props();
@@ -360,7 +359,6 @@
         </section>
         {/if}
         <ProfileSettings />
-        <PromotionQueue />
         <Notifications />
         <InstallApp />
         <SoundSettings />
