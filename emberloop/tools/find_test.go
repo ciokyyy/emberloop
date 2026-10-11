@@ -158,6 +158,29 @@ func TestFindGraphFailureLeavesBehaviorUnchanged(t *testing.T) {
 		t.Errorf("empty graph changed output:\nplain %q\ngot   %q", plain, got)
 	}
 }
+func TestFindGraphDuplicatePathListsOnce(t *testing.T) {
+	dir := project(t)
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "none.json"))
+	graph := func(_ context.Context, _ string, _ []string, _ string) ([]SearchHit, error) {
+		return []SearchHit{{
+			Path:   "auth.go",
+			Score:  0.9,
+			Source: SourceGraph,
+			Symbol: "VerifyToken",
+			Ranges: []PassageRange{{StartLine: 3, EndLine: 5, Score: 0.9, Snippet: "func VerifyToken()"}},
+		}}, nil
+	}
+	out, err := run(t, findTool{lexicalOnly: true, graph: graph}, dir, findArgs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "auth.go  "); n != 1 {
+		t.Errorf("auth.go listed %d times, want once:\n%s", n, out)
+	}
+	if !strings.Contains(out, "[graph]") {
+		t.Errorf("fused hit keeps the exact-match winner's source:\n%s", out)
+	}
+}
 
 func TestFindGraphAnswersWhenCascadeHasNoCandidates(t *testing.T) {
 	dir := project(t)
@@ -191,11 +214,11 @@ func TestFindGraphAnswersWhenCascadeHasNoCandidates(t *testing.T) {
 func TestParseGraphResultsJSONAndText(t *testing.T) {
 	dir := project(t)
 	body := `{"results":[{"file":"auth.go","symbol":"VerifyToken","line":3,"snippet":"func VerifyToken()","score":0.9}]}`
-	hits := parseGraphResults(body, dir, dir, []string{"VerifyToken"}, "tokens")
+	hits := parseGraphResults(body, dir, dir)
 	if len(hits) != 1 || hits[0].Source != SourceGraph || hits[0].Path != "auth.go" || hits[0].Symbol != "VerifyToken" {
 		t.Fatalf("json parse = %+v", hits)
 	}
-	hits = parseGraphResults("see auth.go:12 and other.go", dir, dir, nil, "x")
+	hits = parseGraphResults("see auth.go:12 and other.go", dir, dir)
 	found := map[string]bool{}
 	for _, h := range hits {
 		found[h.Path] = true
@@ -206,8 +229,27 @@ func TestParseGraphResultsJSONAndText(t *testing.T) {
 	if !found["auth.go"] {
 		t.Errorf("text parse missed auth.go: %+v", hits)
 	}
-	if got := parseGraphResults("nothing here", dir, dir, nil, "x"); len(got) != 0 {
+	if got := parseGraphResults("nothing here", dir, dir); len(got) != 0 {
 		t.Errorf("garbage text parsed as %d hits", len(got))
+	}
+}
+
+func TestParseGraphResultsSkipsEnvelopesAndEscapes(t *testing.T) {
+	dir := project(t)
+	// An envelope's metadata "name" is not a file hit, and a symbol-only
+	// object maps to no workspace path.
+	body := `{"project":"p","name":"meta","results":[{"file":"auth.go","symbol":"VerifyToken"}]}`
+	hits := parseGraphResults(body, dir, dir)
+	if len(hits) != 1 || hits[0].Path != "auth.go" {
+		t.Fatalf("envelope parse = %+v", hits)
+	}
+	body = `{"results":[{"symbol":"VerifyToken","snippet":"func VerifyToken()"}]}`
+	if hits := parseGraphResults(body, dir, dir); len(hits) != 0 {
+		t.Fatalf("symbol-only object became %d hits", len(hits))
+	}
+	// A relative path escaping the root is dropped, confined or not.
+	if got := graphHitPath("../x.go", dir, dir); got != "" {
+		t.Errorf("escape kept as %q", got)
 	}
 }
 

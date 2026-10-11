@@ -10,20 +10,23 @@ import (
 )
 
 // defaultGraphSourceForRoot builds the production graph source for a find
-// search rooted at workDir. It reads the codebase-memory index only when one
-// exists for the project and degrades to nothing otherwise: disabled graph,
-// missing binary, unready index, and query failures all answer nil without
-// an error, so the cascade behavior is unchanged.
+// search rooted at workDir, or nil when no index can answer: a disabled
+// graph or a missing binary wires nothing, so the search degrades to the
+// jev and grep sources. An unready index and query failures also answer nil
+// without an error, so the cascade behavior is unchanged.
 func defaultGraphSourceForRoot(workDir string) GraphSource {
+	s := EffectiveSettings(workDir)
+	if !s.GraphEnabled() {
+		return nil
+	}
+	cfg, ok := GraphServerSetting(s)
+	if !ok {
+		return nil
+	}
 	return func(ctx context.Context, query string, keywords []string, root string) ([]SearchHit, error) {
-		s := EffectiveSettings(workDir)
-		if !s.GraphEnabled() {
-			return nil, nil
-		}
-		cfg, ok := GraphServerSetting(s)
-		if !ok {
-			return nil, nil
-		}
+		// Keywords shape the cascade's lexical scan; the index ranks from
+		// the query alone, so they are intentionally unread here.
+		_ = keywords
 		reg := NewRegistry(map[string]MCPServerSetting{GraphServerName: cfg})
 		defer reg.Close()
 		call := func(c context.Context, tool string, args json.RawMessage) (string, error) {
@@ -49,7 +52,7 @@ func defaultGraphSourceForRoot(workDir string) GraphSource {
 		if searchRoot == "" {
 			searchRoot = workDir
 		}
-		return parseGraphResults(text, searchRoot, workDir, keywords, query), nil
+		return parseGraphResults(text, searchRoot, workDir), nil
 	}
 }
 
@@ -77,7 +80,7 @@ var graphFileRe = regexp.MustCompile(`[A-Za-z0-9_.\-][A-Za-z0-9_.\-/\\]*\.[A-Za-
 // arrays of file/symbol/line/snippet/score objects, case-insensitively) and
 // falls back to file paths in free text. Unrecognized text yields no hits,
 // never an error: an index the parser cannot read is an absent source.
-func parseGraphResults(text, searchRoot, workDir string, keywords []string, query string) []SearchHit {
+func parseGraphResults(text, searchRoot, workDir string) []SearchHit {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -112,7 +115,7 @@ func parseGraphJSON(text, searchRoot, workDir string) []SearchHit {
 	}
 	var hits []SearchHit
 	for _, o := range objs {
-		path := graphHitPath(o.file, o.symbol, searchRoot, workDir)
+		path := graphHitPath(o.file, searchRoot, workDir)
 		if path == "" {
 			continue
 		}
@@ -145,7 +148,10 @@ func parseGraphJSON(text, searchRoot, workDir string) []SearchHit {
 	return hits
 }
 
-// collectGraphObjs appends every map that looks like a file/symbol result.
+// collectGraphObjs appends every map that names a file. Only the file fields
+// qualify: a symbol without a file (or an envelope's metadata, which often
+// carries a "name") cannot map to a workspace path, so it is skipped rather
+// than turning the symbol into a bogus file path.
 func collectGraphObjs(v any, out *[]graphResultObj) {
 	switch t := v.(type) {
 	case []any:
@@ -162,11 +168,10 @@ func collectGraphObjs(v any, out *[]graphResultObj) {
 			collectGraphObjs(val, out)
 		}
 		file := graphStringField(lower, "file", "path", "filepath", "filename")
-		symbol := graphStringField(lower, "symbol", "name", "function", "method", "class")
-		if file == "" && symbol == "" {
+		if file == "" {
 			return
 		}
-		o := graphResultObj{file: file, symbol: symbol}
+		o := graphResultObj{file: file, symbol: graphStringField(lower, "symbol", "name", "function", "method", "class")}
 		o.snippet = graphStringField(lower, "snippet", "code", "text", "content", "excerpt")
 		if n, ok := graphLineField(lower, "line", "lineno", "startline", "start_line"); ok {
 			o.line, o.hasLine = n, true
@@ -246,14 +251,12 @@ func graphScoreField(m map[string]any, names ...string) (float64, bool) {
 }
 
 // graphHitPath relativizes a graph file to the search root. Absolute paths
-// under the root stay; anything outside a confined root is dropped; bare
-// names and repo-relative paths are kept as named. Ignored build output is
-// dropped.
-func graphHitPath(file, symbol, searchRoot, workDir string) string {
+// under the root stay; bare names and repo-relative paths inside the root
+// are kept as named. Anything that escapes the search root, and ignored
+// build output, is dropped. A bare symbol is never a file path: callers
+// pass only file fields, so there is no symbol fallback here.
+func graphHitPath(file, searchRoot, workDir string) string {
 	clean := strings.TrimSpace(file)
-	if clean == "" {
-		clean = strings.TrimSpace(symbol)
-	}
 	if clean == "" {
 		return ""
 	}
@@ -272,6 +275,9 @@ func graphHitPath(file, symbol, searchRoot, workDir string) string {
 		}
 	}
 	clean = filepath.Clean(clean)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return ""
+	}
 	if filepath.IsAbs(clean) {
 		rel, err := filepath.Rel(searchRoot, clean)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -282,18 +288,14 @@ func graphHitPath(file, symbol, searchRoot, workDir string) string {
 		}
 		return rel
 	}
-	// Repo-relative or bare: keep when it does not escape, drop ignored noise.
+	// Repo-relative or bare: keep when it stays inside the search root,
+	// drop ignored noise. Any escape is rejected, confined or not.
 	if shouldIgnorePath(clean) {
 		return ""
 	}
-	if rel, err := filepath.Rel(searchRoot, filepath.Join(workDir, clean)); err == nil {
-		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			// Outside a confined root: drop. Without confinement
-			// searchRoot == workDir, so this never triggers.
-			if searchRoot != workDir {
-				return ""
-			}
-		}
+	rel, err := filepath.Rel(searchRoot, filepath.Join(workDir, clean))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
 	}
 	return clean
 }
@@ -303,7 +305,7 @@ func parseGraphTextPaths(text, searchRoot, workDir string) []SearchHit {
 	seen := map[string]bool{}
 	var hits []SearchHit
 	for _, m := range graphFileRe.FindAllString(text, -1) {
-		path := graphHitPath(m, "", searchRoot, workDir)
+		path := graphHitPath(m, searchRoot, workDir)
 		if path == "" || seen[path] {
 			continue
 		}

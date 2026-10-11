@@ -498,6 +498,9 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 		// stand, exactly as when the index is absent.
 	}
 
+	// One file lists once: a path the graph and the cascade both name fuses
+	// into a single hit carrying the merged ranges and the winner's source.
+	hits = mergeHitsByPath(hits, query, keywords)
 	sortFindHits(hits, query, keywords)
 
 	// A stage-1 error with no hits anywhere stays an error: a failing graph
@@ -506,6 +509,50 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 		return nil, stageErr
 	}
 	return hits, nil
+}
+
+// mergeHitsByPath fuses hits that name the same path into one entry, so a
+// file the graph and the cascade both name lists once. Ranges merge through
+// MergePassageRanges and cap at three, as cascade hits do; the score is the
+// highest either source gave. The source and symbol come from the winner: an
+// exact symbol-name graph hit beats a passage guess, else the higher score
+// wins, else the first hit (the cascade's) stands.
+func mergeHitsByPath(hits []SearchHit, query string, keywords []string) []SearchHit {
+	if len(hits) <= 1 {
+		return hits
+	}
+	terms := extractTerms(query, keywords)
+	byPath := make(map[string]int, len(hits))
+	out := make([]SearchHit, 0, len(hits))
+	for _, h := range hits {
+		i, dup := byPath[h.Path]
+		if !dup {
+			byPath[h.Path] = len(out)
+			out = append(out, h)
+			continue
+		}
+		dst := &out[i]
+		hExact, dExact := isExactSymbolHit(h, terms), isExactSymbolHit(*dst, terms)
+		merged := MergePassageRanges(append(append([]PassageRange(nil), dst.Ranges...), h.Ranges...))
+		if len(merged) > 3 {
+			merged = merged[:3]
+		}
+		max := dst.Score
+		if h.Score > max {
+			max = h.Score
+		}
+		switch {
+		case hExact && !dExact:
+			dst.Source, dst.Symbol = h.Source, h.Symbol
+		case !dExact && !hExact && h.Score > dst.Score:
+			dst.Source, dst.Symbol = h.Source, h.Symbol
+		case dExact && hExact && h.Score > dst.Score:
+			dst.Source, dst.Symbol = h.Source, h.Symbol
+		}
+		dst.Ranges = merged
+		dst.Score = max
+	}
+	return out
 }
 
 // cascadeSource names the cascade hit source for this searcher: the

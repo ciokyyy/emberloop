@@ -67,7 +67,10 @@ func (f findTool) Execute(ctx context.Context, root string, args json.RawMessage
 	searcher := NewCascadeSearcher(provider, systemone.CanonicalModel(cfg.DecisionModel), cfg.Threshold, root)
 	if f.graph != nil {
 		searcher.WithGraphSource(f.graph)
-	} else if graphAvailable(root) {
+	} else {
+		// Nil when the graph is disabled or its binary is absent: the
+		// availability check lives in defaultGraphSourceForRoot, so it is
+		// written once. WithGraphSource(nil) wires nothing.
 		searcher.WithGraphSource(defaultGraphSourceForRoot(root))
 	}
 
@@ -88,18 +91,6 @@ func (f findTool) Execute(ctx context.Context, root string, args json.RawMessage
 		}
 	}
 	return strings.TrimRight(sb.String(), "\n"), nil
-}
-
-// graphAvailable reports whether a graph source is worth wiring: enabled in
-// settings with a binary behind the seam. The index-status check itself stays
-// in the source, so an unindexed project still degrades without failing.
-func graphAvailable(workDir string) bool {
-	s := EffectiveSettings(workDir)
-	if !s.GraphEnabled() {
-		return false
-	}
-	_, ok := GraphServerSetting(s)
-	return ok
 }
 
 // previewLine is the first non-blank line of a snippet, or the first one that
