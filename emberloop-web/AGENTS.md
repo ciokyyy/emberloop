@@ -114,10 +114,16 @@ the driver ticks boxes and marks done, nothing else writes them.
   with usable auth
   (`CheckProviderAuth` over `auth.json`, env keys, OAuth; `?current=` keeps
   one unlisted model visible), one SDK stack per live Session
-  released on idle or DELETE and reloaded through `Runtime.Resume`.
-  Steer and Follow-up use the SDK native queues (`QueuedMessages`/
-  `ClearQueued` expose them); the Daemon merges them with its own pending
-  list. Backends register per harness; the fake stays default.
+  released on idle or DELETE and reloaded through `Runtime.Resume` (`buildHandle`
+  builds one stack for create and Handoff alike).
+  Steer and Follow-up use the SDK native queues and report whether they queued
+  (`QueuedMessages`/`ClearQueued` expose them; false falls back to the Daemon
+  pending list); the Daemon merges them with its own pending
+  list. Compress is Handoff restart (`StartHandle`): a fresh SDK Session with
+  the record's model and thinking level, native queues carried across as
+  follow-ups (held steers degrade), old
+  handle released after the Handoff turn starts; the in-place compact path is
+  gone. Backends register per harness; the fake stays default.
 - Pig SDK Sessions read the owner's pig dir through `ownerResources`: no ambient
   skills or prompt templates (pig reads `~/.agents/skills` from HOME). Context
   files from the WorkDir chain still load. `pigOneShot` builds Services only, so
@@ -135,11 +141,15 @@ the driver ticks boxes and marks done, nothing else writes them.
   `--role scout` for scouts); the user's own MCP servers are not merged. A
   generated `bin/pi` shim (first on PATH, hides `--version`) re-executes the
   Daemon binary as `pig-shim` (`pigshim.go`), which runs `pig --no-builtin-tools --no-skills --no-prompt-templates`
-  and owns a unix socket (`EL_PIG_STEER_SOCK`) that injects native `steer`,
+  and owns a per-handle unix socket (`EL_PIG_STEER_SOCK`, unique per handle so a
+  swap never shares one) that injects native `steer`,
   `follow_up` and `clear_queue` rpc commands and reports the queue, so
-  `PigACPBackend` is a `steerBackend`. Compression is off for ACP pig: the
-  Backend is neither a `compactBackend` nor a `handoffBackend`, the Session
-  GET reports `compressible:false` and the UI hides the Compress button.
+  `PigACPBackend` is a `steerBackend` (false falls back to the Daemon pending
+  list) and a `handoffBackend`: compress swaps by
+  Handoff (`StartHandle`, new ACP session with MCP ready before the Handoff,
+  record model and thinking level re-applied, native queues carried as
+  follow-ups with held steers degraded, token rotates), the Session GET
+  reports `compressible:true` and the UI shows Compress.
 - `handle.go` derives the identity of every harness handle start:
   `startHandle(meta, op)` returns the owner, the el role (`elRoleFor`: web,
   web-worker, run-worker or scout, which sets the tool set) and the injection
@@ -178,7 +188,8 @@ the driver ticks boxes and marks done, nothing else writes them.
   retire, filter, queue, gate recency and Events at the Daemon seam;
   `ProfileSettings.svelte` with `ProfileSettings.test.js` covers the settings
   view.
-- `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
+- `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK and
+  pig-over-ACP Backends):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
   compress model is unset or unauthed. Else `runHandoff` writes the body
   (`writeHandoff`, `summarize.go`) through a `retryingSummarizer`
@@ -197,7 +208,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   `runDeferredCompress` runs it at the next turn end or Group delivery. A claude
   Steer that arrives while a Handoff swap runs (`swapping`) degrades to a
   Follow-up, so the Handoff leads. Tests: `handoff_test.go`,
-  `handoff_queue_test.go`.
+  `handoff_queue_test.go`, `pig_handoff_test.go`.
 - `compress_retry.go` owns the compress failure policy:
   - `classifyCompressError` sorts a failure by its text: block (401 or 402
     status, payment required, no or insufficient credits, quota, billing limit,
@@ -253,8 +264,8 @@ the driver ticks boxes and marks done, nothing else writes them.
   three backticks and `memory`, closed by a bare three-backtick line) from all
   text except the user's, in the summarizer input and output. Compress gate:
   `compress_model` (the spec's `compressModel`) must name an authed pig model
-  (`pigModelAuthed`, the new-Session picker's test). In-place SDK compaction
-  (`compactBackend`) is not gated and does not use the summarizer. Tests:
+  (`pigModelAuthed`, the new-Session picker's test). Every compress runs the
+  Handoff path and uses the summarizer. Tests:
   `summarize_test.go`, `summarize_fold_test.go`.
 - `summarize_fold.go` folds oversize Handoff input. Tool results are cut to
   head and tail at 2000 characters. Input over the budget is packed into runs;
@@ -349,7 +360,8 @@ the driver ticks boxes and marks done, nothing else writes them.
 - Steering is `POST /api/sessions/{id}/steer|followup` with `{"text"}`.
   `POST .../prompt` accepts an optional `mode` (prompt, steer, followup).
   Live idle Sessions start a turn at once; mid-turn messages queue: pig
-  steers and follow-ups in the SDK native queues, everything else in the
+  steers and follow-ups in the native queues when pig takes them (a miss falls
+  back to the Daemon pending list), everything else in the
   Daemon pending list. A mid-turn claude Steer is injected through the adapter's
   `_session/steering`; when that is unavailable or no turn runs it degrades
   to a Follow-up. Messages that queue behind a turn in the Daemon pending list
@@ -364,7 +376,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   Sessions are 404, empty text is 400, ended Sessions are 410 on send.
 - Voice input: the browser records in live segments (fresh MediaRecorder per segment, closed on silence pause or timer), `stt.go` (`POST /api/stt`, raw audio body, `{"text"}` back) forwards each to OpenRouter `openai/gpt-transcribe` (`EL_STT_MODEL` overrides) with the key `systemone.APIKey` finds (`OPENROUTER_API_KEY`, else the one pig holds via `pig auth login`, else the openrouter `api_key` in `~/.pig/agent/auth.json` when pig is not on PATH); the key never reaches the browser. With `?format=1` each transcript goes through the cleanup model `openai/gpt-4o-mini` (`EL_STT_FORMAT_MODEL` overrides; fail open to raw text), which fixes punctuation/casing/filler with the transcript pinned as untrusted data. The Composer appends each part to the draft in order (pending dimmed, failed parts skipped, typed text kept). No key is 503, an upstream failure is 502 with its message, `GET /api/stt` reports `{enabled,model,formatModel}`. Audio is capped at 25 MB per segment. The mic needs a secure context, so a plain http tailnet IP has no mic: use `tailscale serve`.
 - Interrupt: `POST /api/sessions/{id}/interrupt` drops every queued message, then asks an `interruptBackend` to stop the running turn (ACP `session/cancel` for claude and pig ACP, `Session.RequestAbort` for the SDK Backend). The turn ends idle and the Session stays usable; an idle Session answers `{"interrupted":false}`. The Composer shows a Stop button while the Session works.
-- Image attachments: `POST /api/sessions/{id}/prompt` takes `images: [{mime,data}]` (base64; png, jpeg, gif, webp; 8 per message, 5 MB each; text may be empty). Only `images.go` `imageBackend` Backends take them (pig via `SendContent`, claude via ACP image blocks); others fail the turn with an error Event. The prompt Event stores `images` as a count, never the bytes. A pig message with images takes the native queue too (`imageSteerBackend`: the shim forwards pig RPC image blocks); other harnesses keep a mid-turn image message in the Daemon pending list as a Follow-up. `steer` and `followup` routes stay text-only.
+- Image attachments: `POST /api/sessions/{id}/prompt` takes `images: [{mime,data}]` (base64; png, jpeg, gif, webp; 8 per message, 5 MB each; text may be empty). Only `images.go` `imageBackend` Backends take them (pig via `SendContent`, claude via ACP image blocks); others fail the turn with an error Event. The prompt Event stores `images` as a count, never the bytes. A pig message with images stays in the Daemon pending list as a Follow-up (native queues carry text only, so images never enter them); other harnesses do the same. `steer` and `followup` routes stay text-only.
 - `sudo.go` gates sudo: the shared `bash` tool (claude through el-mcp, which gets `EL_WEB_PARENT` and `EL_WEB_DAEMON_URL`; pig through `PigBackend.SudoGate`) posts any command that uses sudo to `POST /api/sessions/{id}/sudo` instead of running it, and the model is told the request went to the user. The UI card (`sudo_request` Event, updated by `sudo_resolved`) offers Approve or Deny via `POST /api/sessions/{id}/sudo/{rid}` with an optional password. Approved commands run in the background (`sudo -n`, or `sudo -S` with the password, held in memory only); the output returns to the Session as a TOON `sudo_result:` Follow-up, shown as a result card. Requests live in memory: a Daemon restart expires pending ones.
 - `read` returns images: `pigtools.go` turns the shared tool's images into `ai.ImageContent` (a model without image input gets pig's placeholder); claude gets MCP image blocks from el-mcp.
 - `push.go` is Web Push (stdlib, RFC 8291 + VAPID): `GET /api/push/key`, `POST|DELETE /api/push/subscribe`; the VAPID key and subscriptions persist in `enderbloom/push/`. A root chat turn going working to idle or failed notifies every subscription; gone ones (404, 410) drop. Browsers allow push only in a secure context, so a plain http tailnet IP cannot subscribe: use `tailscale serve` (https) with `-allow-host`. `web/public/sw.js` shows the notification.

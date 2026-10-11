@@ -207,7 +207,6 @@ func summaryDaemon(t *testing.T, replies ...string) (*Daemon, *scriptedSummarize
 	t.Cleanup(srv.Close)
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "build the thing")
-	waitStatus(t, srv.URL, id, "working", 5*time.Second)
 	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
 	return d, sum, srv.URL, id
 }
@@ -228,7 +227,6 @@ func handoffText(evs []Event) string {
 func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sendPrompt(t, base, id, "and then the docs")
-	waitStatus(t, base, id, "working", 5*time.Second)
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	if code, body := compressReq(t, base, id, "keep ticket ids"); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)

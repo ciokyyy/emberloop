@@ -586,6 +586,52 @@ func validPigEffort(e string) bool {
 	return false
 }
 
+// buildHandle builds a fresh SDK stack (Services, Runtime, Session) for one
+// Daemon Session. It holds no lock; callers snapshot AgentDir and ExtraTools
+// first. The model and thinking level come from the record.
+func (b *PigBackend) buildHandle(meta SessionMeta, tools []agent.AgentTool, agentDir string) (*coding.Session, *coding.Runtime, *coding.Services, error) {
+	svcs, model, err := buildPigServices(agentDir, tools, meta)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	rt, err := coding.NewRuntime(coding.RuntimeOptions{Services: svcs})
+	if err != nil {
+		svcs.Close()
+		return nil, nil, nil, fmt.Errorf("pig: runtime: %w", err)
+	}
+	resources, err := ownerResources(svcs)
+	if err != nil {
+		_ = rt.Close()
+		svcs.Close()
+		return nil, nil, nil, fmt.Errorf("pig: resources: %w", err)
+	}
+	sess, err := rt.New(coding.SessionStartOptions{
+		Model:              model,
+		ThinkingLevel:      ai.ThinkingLevel(meta.Effort),
+		SkipBuiltinTools:   true,
+		SkipExtensionTools: true,
+		ExtraTools:         tools,
+		ResourceLoader:     resources,
+	})
+	if err != nil {
+		_ = rt.Close()
+		svcs.Close()
+		return nil, nil, nil, fmt.Errorf("pig: session: %w", err)
+	}
+	return sess, rt, svcs, nil
+}
+
+// agentDirFor snapshots the pig config directory for one Session record.
+func (b *PigBackend) agentDirFor(meta SessionMeta) string {
+	b.mu.Lock()
+	agentDir := b.AgentDir
+	b.mu.Unlock()
+	if meta.Dirs.pig != "" {
+		agentDir = meta.Dirs.pig
+	}
+	return agentDir
+}
+
 // CreateSession builds the SDK stack (Services, Runtime, Session) for one
 // Daemon Session and subscribes the normalized Event stream. An unknown
 // model or unusable working directory returns an error for a 400.
@@ -599,38 +645,10 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 		b.mu.Unlock()
 		return fmt.Errorf("pig: session %s already exists", meta.ID)
 	}
-	agentDir := b.AgentDir
 	b.mu.Unlock()
-	if meta.Dirs.pig != "" {
-		agentDir = meta.Dirs.pig
-	}
-	svcs, model, err := buildPigServices(agentDir, tools, meta)
+	sess, rt, svcs, err := b.buildHandle(meta, tools, b.agentDirFor(meta))
 	if err != nil {
 		return err
-	}
-	rt, err := coding.NewRuntime(coding.RuntimeOptions{Services: svcs})
-	if err != nil {
-		svcs.Close()
-		return fmt.Errorf("pig: runtime: %w", err)
-	}
-	resources, err := ownerResources(svcs)
-	if err != nil {
-		_ = rt.Close()
-		svcs.Close()
-		return fmt.Errorf("pig: resources: %w", err)
-	}
-	sess, err := rt.New(coding.SessionStartOptions{
-		Model:              model,
-		ThinkingLevel:      ai.ThinkingLevel(meta.Effort),
-		SkipBuiltinTools:   true,
-		SkipExtensionTools: true,
-		ExtraTools:         tools,
-		ResourceLoader:     resources,
-	})
-	if err != nil {
-		_ = rt.Close()
-		svcs.Close()
-		return fmt.Errorf("pig: session: %w", err)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -723,15 +741,6 @@ func (b *PigBackend) subscribe(id string, sess *coding.Session, rt *coding.Runti
 			// "no usage yet" for its whole life.
 			if u := sess.ContextUsage(); u != nil && u.ContextWindow > 0 && u.Tokens != nil {
 				emit("usage", usageText(*u.Tokens, u.ContextWindow), "")
-			}
-		}
-		if u := sess.ContextUsage(); u != nil {
-			for _, ne := range compactionNormEvents(e, u.ContextWindow) {
-				emit(ne.kind, ne.text, ne.status)
-			}
-		} else {
-			for _, ne := range compactionNormEvents(e, 0) {
-				emit(ne.kind, ne.text, ne.status)
 			}
 		}
 	})
@@ -914,30 +923,38 @@ func watchPigStall(turn context.Context, ps *pigSession) <-chan struct{} {
 // Steer delivers text at the next tool boundary through the SDK queue.
 // FollowUp delivers it after the turn. The Daemon routes working Sessions
 // here and lists both through QueuedMessages; messages queued with no turn
-// running buffer until the next Send.
-func (b *PigBackend) Steer(sessionID, text string) {
+// running buffer until the next Send. It reports whether the message queued;
+// false means no live handle held it and the Daemon must hold it itself.
+func (b *PigBackend) Steer(sessionID, text string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if ps, ok := b.sessions[sessionID]; ok {
 		ps.sess.QueueSteer(text, nil)
+		return true
 	}
+	return false
 }
 
-// SteerImages and FollowUpImages queue with image attachments.
-func (b *PigBackend) SteerImages(sessionID, text string, images []Image) {
+// SteerImages and FollowUpImages queue with image attachments. See Steer for
+// the return.
+func (b *PigBackend) SteerImages(sessionID, text string, images []Image) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if ps, ok := b.sessions[sessionID]; ok {
 		ps.sess.QueueSteer(text, imageContents(images))
+		return true
 	}
+	return false
 }
 
-func (b *PigBackend) FollowUpImages(sessionID, text string, images []Image) {
+func (b *PigBackend) FollowUpImages(sessionID, text string, images []Image) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if ps, ok := b.sessions[sessionID]; ok {
 		ps.sess.QueueFollowUp(text, imageContents(images))
+		return true
 	}
+	return false
 }
 
 func imageContents(images []Image) []ai.ImageContent {
@@ -961,12 +978,14 @@ func (b *PigBackend) Interrupt(sessionID string) bool {
 	return true
 }
 
-func (b *PigBackend) FollowUp(sessionID, text string) {
+func (b *PigBackend) FollowUp(sessionID, text string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if ps, ok := b.sessions[sessionID]; ok {
 		ps.sess.QueueFollowUp(text, nil)
+		return true
 	}
+	return false
 }
 
 // QueuedMessages lists the pig native queues oldest-first, steering ahead
@@ -1080,6 +1099,52 @@ func (b *PigBackend) ResumeOK(meta SessionMeta) (bool, string) {
 		return false, "pig Session has no saved agent to load (it started before resume support); history is read-only"
 	}
 	return true, ""
+}
+
+// StartHandle starts a fresh SDK handle for the Session and returns its
+// resume token. It implements handoffBackend: Handoff compress swaps to the
+// new handle and releases the old one once the Handoff turn starts cleanly.
+// The model and thinking level come from the Session record, so they survive
+// the swap. Text-only queued native messages move to the new handle as
+// follow-ups: a held steer degrades per the swap contract, so the Handoff
+// leads. Image attachments never enter the native queue (the Daemon holds
+// them in pending, which survives the swap); the SDK queue carries text only.
+// The old handle stays alive until the returned release runs, so a failed swap
+// leaves it untouched.
+func (b *PigBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
+	if !validPigEffort(meta.Effort) {
+		return "", nil, fmt.Errorf("pig: unknown effort %q (want off, minimal, low, medium, high, xhigh or max)", meta.Effort)
+	}
+	tools := b.sessionTools(meta)
+	sess, rt, svcs, err := b.buildHandle(meta, tools, b.agentDirFor(meta))
+	if err != nil {
+		return "", nil, err
+	}
+	b.mu.Lock()
+	old, hadOld := b.sessions[meta.ID]
+	var steering, followUp []string
+	if hadOld && old.sess != nil {
+		steering = append([]string(nil), old.sess.GetSteeringMessages()...)
+		followUp = append([]string(nil), old.sess.GetFollowUpMessages()...)
+	}
+	for _, text := range steering {
+		sess.QueueFollowUp(text, nil)
+	}
+	for _, text := range followUp {
+		sess.QueueFollowUp(text, nil)
+	}
+	b.subscribe(meta.ID, sess, rt, svcs, emit)
+	b.sessions[meta.ID].meta = meta
+	token := sess.ID()
+	b.sessions[meta.ID].log.write("handoff", map[string]any{"pigSession": token, "model": meta.Model, "effort": meta.Effort})
+	b.mu.Unlock()
+	var release func()
+	if hadOld {
+		release = func() { b.closePig(old) }
+	} else {
+		release = func() {}
+	}
+	return token, release, nil
 }
 
 // ResumeSession rebuilds the SDK stack and reloads the saved pig Session.

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/MichaelKinsy/PiG/ai"
 )
@@ -32,6 +33,15 @@ type PigACPBackend struct {
 	// sdk serves the stateless one-off completions (session titles), which
 	// need no agent process.
 	sdk *PigBackend
+	// sockMu guards the per-handle steer sockets: each live handle gets a
+	// unique path so a Handoff swap never shares one. Two handles sharing a
+	// path collide: the new shim steals the Listen and the old shim's exit
+	// removes the new shim's live socket, after which Steer dials a missing
+	// path and drops messages.
+	sockMu       sync.Mutex
+	socks        map[string]string
+	pendingSocks map[string]string
+	sockGen      int
 }
 
 // Title names a Session through the pig SDK, as the SDK Backend does.
@@ -80,9 +90,12 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 	if !validPigEffort(meta.Effort) {
 		return fmt.Errorf("pig: unknown effort %q (want off, minimal, low, medium, high, xhigh or max)", meta.Effort)
 	}
+	sock := b.allocSock(meta.ID)
+	b.setPendingSock(meta.ID, sock)
 	if err := b.StartSession(meta); err != nil {
 		return err
 	}
+	b.claimSock(meta.ID, sock)
 	if err := b.applyPigEffort(meta.ID, meta.Effort); err != nil {
 		b.DropSession(meta.ID)
 		return err
@@ -92,16 +105,129 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 
 // ResumeSession reloads the ACP session and re-applies its thinking level.
 // The role comes from the record, so the new adapter keeps the same
-// read-only tool allowlist.
+// read-only tool allowlist. The resumed handle gets a fresh steer socket:
+// the released handle's shim is gone.
 func (b *PigACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	sock := b.allocSock(meta.ID)
+	b.setPendingSock(meta.ID, sock)
 	if err := b.ClaudeBackend.ResumeSession(meta, emit); err != nil {
 		return err
 	}
+	b.claimSock(meta.ID, sock)
 	if err := b.applyPigEffort(meta.ID, meta.Effort); err != nil {
 		b.DropSession(meta.ID)
 		return err
 	}
 	return nil
+}
+
+// StartHandle starts a fresh ACP handle for the Session and returns its
+// resume token. It implements handoffBackend: Handoff compress swaps to the
+// new handle and releases the old one once the Handoff turn starts cleanly.
+// The new ACP session is ready, with the MCP tools, before the Handoff prompt
+// is sent: StartHandle returns only after session/new answers. The model and
+// thinking level come from the Session record, so they survive the swap. The
+// old handle stays alive until the returned release runs, so a failed swap
+// leaves it untouched. Each handle gets its own steer socket (see socks), so
+// Steer never crosses handles; queued native messages move to the new handle
+// as follow-ups, degrading held steers per the swap contract.
+func (b *PigACPBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
+	_ = emit
+	if _, ok := ai.LookupModel(meta.Model); !ok {
+		return "", nil, fmt.Errorf("pig: unknown model %q", meta.Model)
+	}
+	if !validPigEffort(meta.Effort) {
+		return "", nil, fmt.Errorf("pig: unknown effort %q (want off, minimal, low, medium, high, xhigh or max)", meta.Effort)
+	}
+	oldSock := b.steerSock(meta.ID)
+	oldQueue := readSockQueue(oldSock)
+	newSock := b.allocSock(meta.ID)
+	b.setPendingSock(meta.ID, newSock)
+	role := elRoleFor(meta)
+	mcp, err := b.mcpServersFor(meta.ID, role)
+	if err != nil {
+		return "", nil, err
+	}
+	newConn := b.connFactory(meta.ID, role, meta.Dirs)
+	conn, err := newConn()
+	if err != nil {
+		return "", nil, fmt.Errorf("start pig adapter: %w", err)
+	}
+	b.applyTimeouts(conn)
+	if err := conn.Initialize(); err != nil {
+		_ = conn.Close()
+		return "", nil, fmt.Errorf("acp initialize: %w", err)
+	}
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, meta.Dirs))
+	if err != nil {
+		_ = conn.Close()
+		return "", nil, fmt.Errorf("acp session/new: %w", err)
+	}
+	if err := b.afterStart(conn, acpID, meta.Model); err != nil {
+		_ = conn.Close()
+		return "", nil, err
+	}
+	fresh := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{})}
+	fresh.signalReady()
+	if ts, ok := conn.(acpThoughtLevelSetter); ok && meta.Effort != "" {
+		if err := ts.SetThoughtLevel(acpID, meta.Effort); err != nil {
+			_ = conn.Close()
+			return "", nil, fmt.Errorf("pig: set thinking level %q: %w", meta.Effort, err)
+		}
+	}
+	b.claimSock(meta.ID, newSock)
+	b.mu.Lock()
+	old, hadOld := b.sessions[meta.ID]
+	b.sessions[meta.ID] = fresh
+	b.mu.Unlock()
+	carrySockQueue(newSock, oldQueue)
+	var release func()
+	if hadOld && old != nil {
+		oldConn := old.conn
+		release = func() { _ = oldConn.Close(); old.signalReady() }
+	} else {
+		release = func() {}
+	}
+	return acpID, release, nil
+}
+
+// readSockQueue reads the native pig queue behind one steer socket. A missing
+// or unreachable shim reports empty, so a Handoff with no queued messages
+// carries nothing.
+func readSockQueue(sock string) pigQueue {
+	var resp struct {
+		Data pigQueue `json:"data"`
+	}
+	if !shimCall(sock, map[string]any{"op": "queue"}, &resp) {
+		return pigQueue{}
+	}
+	return resp.Data
+}
+
+// carrySockQueue moves queued native messages to the new handle's shim as
+// follow-ups. Held steers degrade per the swap contract: the Handoff leads,
+// so nothing steers the fresh turn.
+func carrySockQueue(newSock string, q pigQueue) {
+	for _, text := range q.Steering {
+		shimQueueCmd(newSock, "follow_up", text, nil)
+	}
+	for _, text := range q.FollowUp {
+		shimQueueCmd(newSock, "follow_up", text, nil)
+	}
+}
+
+// CloseSession releases the adapter process and forgets the Session's steer
+// socket mapping. The shim removes its own socket file on exit.
+func (b *PigACPBackend) CloseSession(sessionID string) {
+	b.dropSock(sessionID)
+	b.ClaudeBackend.CloseSession(sessionID)
+}
+
+// DropSession releases a Session id without reporting. See CloseSession for
+// the socket cleanup.
+func (b *PigACPBackend) DropSession(id string) {
+	b.dropSock(id)
+	b.ClaudeBackend.DropSession(id)
 }
 
 // applyPigEffort picks the Session's thinking level through the adapter's
@@ -127,9 +253,9 @@ func (b *PigACPBackend) applyPigEffort(sessionID, effort string) error {
 	return nil
 }
 
-// steerSock is the shim's steer socket. It lives in the temp dir: unix
-// socket paths are short, and the state dir path can be long.
-func (b *PigACPBackend) steerSock(sessionID string) string {
+// legacySteerSock is the pre-Handoff socket path, kept as the fallback before
+// any handle allocates its own.
+func legacySteerSock(sessionID string) string {
 	id := sessionID
 	if len(id) > 16 {
 		id = id[:16]
@@ -137,28 +263,107 @@ func (b *PigACPBackend) steerSock(sessionID string) string {
 	return filepath.Join(os.TempDir(), "elp-"+id+".sock")
 }
 
+// steerSock is the live handle's steer socket. Each handle gets a unique path
+// (see allocSock); the map holds the current one. Before any handle exists it
+// falls back to the legacy path.
+func (b *PigACPBackend) steerSock(sessionID string) string {
+	b.sockMu.Lock()
+	defer b.sockMu.Unlock()
+	if s, ok := b.socks[sessionID]; ok && s != "" {
+		return s
+	}
+	return legacySteerSock(sessionID)
+}
+
+// allocSock mints a unique steer socket path for one handle start. The caller
+// stores it via claimSock on success; a failed start leaves the current
+// mapping untouched so Steer still reaches the old handle.
+func (b *PigACPBackend) allocSock(sessionID string) string {
+	b.sockMu.Lock()
+	defer b.sockMu.Unlock()
+	b.sockGen++
+	id := sessionID
+	if len(id) > 16 {
+		id = id[:16]
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("elp-%s-%d.sock", id, b.sockGen))
+}
+
+// claimSock makes path the current steer socket for the Session and clears
+// any staged pending socket for it.
+func (b *PigACPBackend) claimSock(sessionID, path string) {
+	b.sockMu.Lock()
+	defer b.sockMu.Unlock()
+	if b.socks == nil {
+		b.socks = map[string]string{}
+	}
+	b.socks[sessionID] = path
+	if b.pendingSocks != nil {
+		delete(b.pendingSocks, sessionID)
+	}
+}
+
+// dropSock forgets the Session's steer socket mapping. The shim removes its
+// own socket file on exit; this only drops the pointer.
+func (b *PigACPBackend) dropSock(sessionID string) {
+	b.sockMu.Lock()
+	defer b.sockMu.Unlock()
+	delete(b.socks, sessionID)
+	if b.pendingSocks != nil {
+		delete(b.pendingSocks, sessionID)
+	}
+}
+
+// takePendingSock takes the pre-allocated socket for one handle start, when
+// present.
+func (b *PigACPBackend) takePendingSock(sessionID string) (string, bool) {
+	b.sockMu.Lock()
+	defer b.sockMu.Unlock()
+	if b.pendingSocks == nil {
+		return "", false
+	}
+	s, ok := b.pendingSocks[sessionID]
+	if ok {
+		delete(b.pendingSocks, sessionID)
+	}
+	return s, ok
+}
+
+// setPendingSock stages the socket one handle start will use. connFor takes
+// it when the adapter starts.
+func (b *PigACPBackend) setPendingSock(sessionID, path string) {
+	b.sockMu.Lock()
+	defer b.sockMu.Unlock()
+	if b.pendingSocks == nil {
+		b.pendingSocks = map[string]string{}
+	}
+	b.pendingSocks[sessionID] = path
+}
+
 // Steer, FollowUp, QueuedMessages and ClearQueued make the Backend a
 // steerBackend: pig's native steer and follow-up queues, reached through the
 // Session's shim. A steer lands after the running tool call, as with the SDK.
 
-// Steer queues text as a native pig steer.
-func (b *PigACPBackend) Steer(sessionID, text string) {
-	shimQueueCmd(b.steerSock(sessionID), "steer", text, nil)
+// Steer queues text as a native pig steer. It reports whether pig queued it;
+// false means the shim was unreachable and the Daemon must hold the message
+// itself instead of assuming it queued.
+func (b *PigACPBackend) Steer(sessionID, text string) bool {
+	return shimQueueCmd(b.steerSock(sessionID), "steer", text, nil)
 }
 
 // SteerImages is Steer with image attachments (imageSteerBackend).
-func (b *PigACPBackend) SteerImages(sessionID, text string, images []Image) {
-	shimQueueCmd(b.steerSock(sessionID), "steer", text, images)
+func (b *PigACPBackend) SteerImages(sessionID, text string, images []Image) bool {
+	return shimQueueCmd(b.steerSock(sessionID), "steer", text, images)
 }
 
 // FollowUpImages is FollowUp with image attachments (imageSteerBackend).
-func (b *PigACPBackend) FollowUpImages(sessionID, text string, images []Image) {
-	shimQueueCmd(b.steerSock(sessionID), "follow_up", text, images)
+func (b *PigACPBackend) FollowUpImages(sessionID, text string, images []Image) bool {
+	return shimQueueCmd(b.steerSock(sessionID), "follow_up", text, images)
 }
 
-// FollowUp queues text as a native pig follow-up.
-func (b *PigACPBackend) FollowUp(sessionID, text string) {
-	shimQueueCmd(b.steerSock(sessionID), "follow_up", text, nil)
+// FollowUp queues text as a native pig follow-up. See Steer for the return.
+func (b *PigACPBackend) FollowUp(sessionID, text string) bool {
+	return shimQueueCmd(b.steerSock(sessionID), "follow_up", text, nil)
 }
 
 // QueuedMessages lists the steers and follow-ups pig has not delivered yet.
@@ -196,18 +401,32 @@ func (b *PigACPBackend) agentDir(sessionID string) string {
 }
 
 // connFor prepares the Session's agent dir and starts its adapter process.
+// Each handle gets its own steer socket: a staged pending socket when
+// CreateSession or StartHandle pre-allocated one, else a fresh unique path.
+// The socket is claimed as current only after the caller confirms the handle
+// started; connFor stages it so a failed start never steals Steer from the
+// old handle.
 func (b *PigACPBackend) connFor(sessionID, role string, dirs ownerDirs) (acpConn, error) {
 	dir, err := b.prepareAgentDir(sessionID, role, dirs)
 	if err != nil {
 		return nil, err
 	}
+	sock, ok := b.takePendingSock(sessionID)
+	if !ok {
+		sock = b.allocSock(sessionID)
+	}
 	env := append(os.Environ(),
 		"PIG_CODING_AGENT_DIR="+filepath.Join(dir, "agent"),
 		"PATH="+filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PI_SKIP_VERSION_CHECK=1",
-		"EL_PIG_STEER_SOCK="+b.steerSock(sessionID),
+		"EL_PIG_STEER_SOCK="+sock,
 	)
-	return spawnACPConnEnv(b.runner, env)
+	conn, err := spawnACPConnEnv(b.runner, env)
+	if err != nil {
+		return nil, err
+	}
+	b.setPendingSock(sessionID, sock)
+	return conn, nil
 }
 
 // prepareAgentDir builds <dir>/agent (links to the owner's pig agent dir,

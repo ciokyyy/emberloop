@@ -1,20 +1,17 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/MichaelKinsy/PiG/agent"
 )
 
-// Context compression for pig Sessions. The pig SDK compacts a Session in
-// place: it summarizes old history, keeps recent turns, and keeps the same
-// Session id, so nothing restarts. The Daemon exposes a manual action and an
-// automatic pass that runs when a turn settles above a threshold.
+// Context compression is Handoff restart on every Backend. The Daemon writes
+// one Handoff document from the Event log, starts a fresh harness handle for
+// the same Session, and sends the Handoff as its first prompt. The Session
+// ID, Event log and owner stay. The Daemon exposes manual compress; the
+// automatic pass lands in ticket 14.
 
 // compressSettings are the knobs stored in the settings file. They mirror the
 // terminal system's auto_compress and compress_cooldown names.
@@ -73,45 +70,7 @@ func readCompressSettings() compressSettings {
 	return s
 }
 
-// compactBackend is the seam a Backend implements to compress in place.
-type compactBackend interface {
-	// Compact summarizes the Session history; it blocks until done.
-	Compact(sessionID, instructions string) error
-	// ContextUsage reports tokens in context and the model window.
-	ContextUsage(sessionID string) (used, size int, ok bool)
-}
-
-// CompactionEvent is the JSON Text of a "compaction" Event.
-type CompactionEvent struct {
-	Reason       string `json:"reason"`
-	Aborted      bool   `json:"aborted,omitempty"`
-	TokensBefore int    `json:"tokensBefore"`
-	TokensAfter  int    `json:"tokensAfter"`
-	Window       int    `json:"window,omitempty"`
-	Summary      string `json:"summary,omitempty"`
-	Error        string `json:"error,omitempty"`
-}
-
-func (c CompactionEvent) text() string {
-	b, _ := json.Marshal(c)
-	return string(b)
-}
-
-// Compact compresses one live pig Session in place.
-func (b *PigBackend) Compact(sessionID, instructions string) error {
-	b.mu.Lock()
-	ps, ok := b.sessions[sessionID]
-	b.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("pig: unknown session")
-	}
-	ctx, cancel := context.WithTimeout(ps.ctx, compressTimeout)
-	defer cancel()
-	return ps.sess.Compact(ctx, instructions)
-}
-
 // ContextUsage reports the projected context tokens and the model window.
-// Tokens are unknown right after a compaction until the next reply.
 func (b *PigBackend) ContextUsage(sessionID string) (int, int, bool) {
 	b.mu.Lock()
 	ps, ok := b.sessions[sessionID]
@@ -135,92 +94,17 @@ func usageText(used, size int) string {
 	return string(b)
 }
 
-// compactionNormEvents maps the SDK compaction events. The end event also
-// refreshes the context meter from the SDK's estimate after compaction.
-func compactionNormEvents(e agent.AgentEvent, window int) []normEvent {
-	switch e := e.(type) {
-	case agent.CompactionStartEvent:
-		return []normEvent{{kind: "compaction_started", text: CompactionEvent{Reason: e.Reason}.text()}}
-	case agent.CompactionEndEvent:
-		ev := CompactionEvent{
-			Reason: e.Reason, Aborted: e.Aborted, TokensBefore: e.TokensBefore,
-			TokensAfter: e.EstimatedTokensAfter, Window: window, Summary: e.Summary, Error: e.ErrorMessage,
-		}
-		out := []normEvent{{kind: "compaction", text: ev.text()}}
-		if !e.Aborted && e.ErrorMessage == "" && window > 0 && e.EstimatedTokensAfter > 0 {
-			out = append(out, normEvent{kind: "usage", text: usageText(e.EstimatedTokensAfter, window)})
-		}
-		return out
-	}
-	return nil
-}
-
-// autoCompressDue reports whether usage crosses the threshold.
-func autoCompressDue(used, size int, s compressSettings) bool {
-	if !s.Auto || size <= 0 || used <= 0 {
-		return false
-	}
-	return used*100 >= size*s.ThresholdPercent
-}
-
-func (d *Daemon) compactorFor(id string) (compactBackend, *session, bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	s, ok := d.sessions[id]
-	if !ok {
-		return nil, nil, false
-	}
-	cb, _ := d.backendForLocked(s.meta.Harness).(compactBackend)
-	return cb, s, cb != nil
-}
-
-// runCompaction compresses a Session that is already marked busy. The SDK
-// compaction events stream into the transcript on their own; this adds only
-// the failure Event the SDK did not emit and resets the cooldown counter.
-func (d *Daemon) runCompaction(id string, cb compactBackend, instructions string) {
-	err := cb.Compact(id, instructions)
-	if err != nil {
-		d.appendEvent(id, "compaction", CompactionEvent{Reason: "manual", Aborted: true, Error: err.Error()}.text(), "")
-	}
-	d.mu.Lock()
-	if s, ok := d.sessions[id]; ok {
-		s.turnsSinceCompress = 0
-	}
-	d.mu.Unlock()
-	if used, size, ok := cb.ContextUsage(id); ok {
-		d.appendEvent(id, "usage", usageText(used, size), "")
-	}
-}
-
-// maybeAutoCompress runs after a turn, before the Session settles. It only
-// acts for Backends that compact in place, above the threshold, outside the
-// cooldown, and never for read-only scouts.
+// maybeAutoCompress runs after a turn, before the Session settles. Handoff
+// auto-compress lands in ticket 14: until then it does nothing, so manual
+// compress is the only path.
 func (d *Daemon) maybeAutoCompress(id string) {
-	cb, s, ok := d.compactorFor(id)
-	if !ok {
-		return
-	}
-	set := readCompressSettings()
-	d.mu.Lock()
-	s.turnsSinceCompress++
-	skip := s.meta.Scout || s.meta.Status == "ended" || s.meta.CompressBlock != "" || s.turnsSinceCompress < set.Cooldown
-	d.mu.Unlock()
-	if skip || !set.Auto {
-		return
-	}
-	used, size, ok := cb.ContextUsage(id)
-	if !ok || !autoCompressDue(used, size, set) {
-		return
-	}
-	d.appendEvent(id, "status", "", "working")
-	d.runCompaction(id, cb, set.Instructions)
-	d.appendEvent(id, "status", "", "idle")
+	_ = id
 }
 
 // handleCompress is POST /api/sessions/{id}/compress: compress now, or once
 // the Session's Group is no longer outstanding. It answers 202 once the
-// compaction runs or waits; the transcript carries the result. A Handoff
-// Backend answers 409 with the reason while no authed compress model is set.
+// Handoff runs or waits; the transcript carries the result. It answers 409
+// with the reason while no authed compress model is set.
 func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Instructions string `json:"instructions"`
@@ -234,15 +118,11 @@ func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id strin
 	writeJSON(w, code, out)
 }
 
-// requestCompress starts a compress of id, or holds it while a Group of the
-// Session is outstanding. It returns the HTTP code and the body to answer.
+// requestCompress starts a Handoff compress of id, or holds it while a Group
+// of the Session is outstanding. It returns the HTTP code and the body to answer.
 func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) {
-	cb, s, ok := d.compactorFor(id)
-	var hb handoffBackend
-	if !ok {
-		hb, s = d.handoffFor(id)
-	}
-	if !ok && hb == nil {
+	hb, s := d.handoffFor(id)
+	if hb == nil {
 		d.mu.Lock()
 		_, exists := d.sessions[id]
 		d.mu.Unlock()
@@ -258,10 +138,8 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 		return http.StatusForbidden, map[string]any{"error": "this Session cannot be compressed"}
 	}
 	set := readCompressSettings()
-	if hb != nil {
-		if note := compressNote(set.Model); note != "" {
-			return http.StatusConflict, map[string]any{"error": note}
-		}
+	if note := compressNote(set.Model); note != "" {
+		return http.StatusConflict, map[string]any{"error": note}
 	}
 	if instructions == "" {
 		instructions = set.Instructions
@@ -295,23 +173,12 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	}
 	s.busy = true
 	s.active++
-	s.swapping = hb != nil
+	s.swapping = true
 	// This run settles any wait that held a compress of the Session.
 	s.compressWait = false
 	s.compressInstr = ""
 	d.mu.Unlock()
-	if hb != nil {
-		go d.runHandoff(id, hb, set.Model, instructions)
-		return http.StatusAccepted, map[string]any{"ok": true}
-	}
-	go func() {
-		d.appendEvent(id, "status", "", "working")
-		d.runCompaction(id, cb, instructions)
-		d.appendEvent(id, "status", "", "idle")
-		d.finishTurn(id)
-		d.maybeDeliverGroup(id)
-		d.runDeferredCompress(id)
-	}()
+	go d.runHandoff(id, hb, set.Model, instructions)
 	return http.StatusAccepted, map[string]any{"ok": true}
 }
 

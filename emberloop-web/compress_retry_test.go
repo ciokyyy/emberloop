@@ -63,29 +63,6 @@ func (w *waitRecorder) got() []time.Duration {
 	return append([]time.Duration(nil), w.waits...)
 }
 
-// compactingFake is a FakeBackend that also compacts in place, so auto-compress runs.
-type compactingFake struct {
-	*FakeBackend
-	mu       sync.Mutex
-	compacts int
-}
-
-func (c *compactingFake) Compact(sessionID, instructions string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.compacts++
-	return nil
-}
-
-// ContextUsage reports a Session at 90% of its window.
-func (c *compactingFake) ContextUsage(sessionID string) (int, int, bool) { return 90, 100, true }
-
-func (c *compactingFake) compactCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.compacts
-}
-
 // sessionMetaOf reads the Session metadata through the Daemon API.
 func sessionMetaOf(t *testing.T, base, id string) SessionMeta {
 	t.Helper()
@@ -615,31 +592,19 @@ func TestBlockCompressDropsDeferredCompress(t *testing.T) {
 	}
 }
 
-// Auto-compress runs on a Session above the threshold. A block stops it.
-func TestBlockedSessionNotAutoCompressed(t *testing.T) {
+// Auto-compress on the Handoff path lands in ticket 14. Until then
+// maybeAutoCompress starts nothing, so no turn auto-compresses.
+func TestNoAutoCompressUntilTicket14(t *testing.T) {
 	useSettings(t, "")
-	cf := &compactingFake{FakeBackend: NewFakeBackend()}
-	d := NewDaemon(tempDir(t), cf)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
-	due := func() {
-		d.mu.Lock()
-		d.sessions[id].turnsSinceCompress = 10
-		d.mu.Unlock()
-	}
-	due()
 	d.maybeAutoCompress(id)
-	if n := cf.compactCount(); n != 1 {
-		t.Fatalf("control: compacts = %d, want 1", n)
-	}
-	d.blockCompress(id, CompressBlockedEvent{Error: "402 Payment Required"})
-	due()
-	d.maybeAutoCompress(id)
-	if n := cf.compactCount(); n != 1 {
-		t.Fatalf("compacts on a blocked Session = %d, want 1", n)
+	if n := len(eventsOfKind(transcriptOf(t, srv.URL, id), "compressed")); n != 0 {
+		t.Fatalf("compressed events = %d, want 0 until ticket 14", n)
 	}
 }
 

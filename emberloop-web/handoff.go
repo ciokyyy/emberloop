@@ -296,7 +296,6 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 		// A successful swap clears a block: held messages go on after the Handoff.
 		cur.meta.CompressBlock = ""
 		d.persistMeta(cur.meta)
-		cur.turnsSinceCompress = 0
 		cur.inject = h.inject
 	}
 	d.mu.Unlock()

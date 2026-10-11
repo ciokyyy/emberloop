@@ -121,12 +121,9 @@ type session struct {
 	meta SessionMeta
 	// titleTried is set once a title was attempted, so a failure is not retried.
 	titleTried bool
-	// turnsSinceCompress counts settled turns since the last compression, for the
-	// auto-compress cooldown.
-	turnsSinceCompress int
-	events             []Event
-	notify             chan struct{}
-	last               time.Time
+	events     []Event
+	notify     chan struct{}
+	last       time.Time
 	// live tells whether the backend holds an agent process. Released
 	// and never-started Sessions keep history only.
 	live bool
@@ -175,19 +172,21 @@ type queuedMsg struct {
 }
 
 // steerBackend is the harness native queue seam. Pig implements it; the
-// Daemon owns the queue for every other harness.
+// Daemon owns the queue for every other harness. Steer and FollowUp report
+// whether pig queued the message; false means the shim was unreachable and
+// the Daemon must hold the message itself.
 type steerBackend interface {
-	Steer(sessionID, text string)
-	FollowUp(sessionID, text string)
+	Steer(sessionID, text string) bool
+	FollowUp(sessionID, text string) bool
 	QueuedMessages(sessionID string) []QueuedMessage
 	ClearQueued(sessionID string) int
 }
 
 // imageSteerBackend is the optional native-queue seam for steers and
-// follow-ups that carry images.
+// follow-ups that carry images. See steerBackend for the return.
 type imageSteerBackend interface {
-	SteerImages(sessionID, text string, images []Image)
-	FollowUpImages(sessionID, text string, images []Image)
+	SteerImages(sessionID, text string, images []Image) bool
+	FollowUpImages(sessionID, text string, images []Image) bool
 }
 
 // interruptBackend stops the turn a Session is running. It reports whether
@@ -992,29 +991,44 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		mode = "followup"
 		degraded = true
 	}
-	// A working pig Session steers through the SDK native queue, which
-	// delivers at the next tool boundary. The native call and the prompt
+	if harness == "pig" && s.swapping && (mode == "steer" || mode == "followup") {
+		// During a Handoff swap the old handle is dying: a native queue would
+		// land on the handle release closes. Hold in the Daemon pending list
+		// instead, like claude, so the message survives to the new handle.
+		// A held steer degrades: the Handoff turn must lead.
+		if mode == "steer" {
+			mode = "followup"
+			degraded = true
+		}
+		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded, from: from})
+		pos := len(s.pending)
+		d.mu.Unlock()
+		return sendResult{queued: true, position: pos}, http.StatusAccepted
+	}
+	// A working pig Session steers text-only messages through the native
+	// queue, which delivers at the next tool boundary. Image messages stay in
+	// the Daemon pending list so a Handoff swap never drops their attachments
+	// (the SDK and shim queues carry text only). The native call and the prompt
 	// Event land under d.mu together, so the turn cannot end between
 	// them and strand the message until the turn after next. Lock order
 	// is d.mu before the backend lock; no Backend path takes them in
 	// the reverse order. The Event lands at once so the transcript shows
 	// what was queued, even if it is cleared before delivery.
-	if harness == "pig" && s.busy && (!hasImages || imgSteer) && (mode == "steer" || mode == "followup") {
+	if harness == "pig" && s.busy && !hasImages && (mode == "steer" || mode == "followup") {
 		if qb, ok := be.(steerBackend); ok {
-			ib, _ := be.(imageSteerBackend)
-			switch {
-			case len(bimages) > 0 && mode == "steer":
-				ib.SteerImages(id, btext, bimages)
-			case len(bimages) > 0:
-				ib.FollowUpImages(id, btext, bimages)
-			case mode == "steer":
-				qb.Steer(id, text)
-			default:
-				qb.FollowUp(id, text)
+			queued := false
+			if mode == "steer" {
+				queued = qb.Steer(id, text)
+			} else {
+				queued = qb.FollowUp(id, text)
 			}
-			e := d.appendPromptEventLocked(id, text, mode, len(images), imageIDs, from)
-			d.mu.Unlock()
-			return sendResult{seq: e.Seq, queued: true}, http.StatusAccepted
+			if queued {
+				e := d.appendPromptEventLocked(id, text, mode, len(images), imageIDs, from)
+				d.mu.Unlock()
+				return sendResult{seq: e.Seq, queued: true}, http.StatusAccepted
+			}
+			// The native queue missed (shim unreachable): fall through to the
+			// Daemon pending list so the message waits instead of dropping.
 		}
 	}
 	// A blocked Session queues every message until Retry or Dismiss.
@@ -1360,9 +1374,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		live := s.live
 		resumable, note := d.resumeViewLocked(s)
 		be := d.backendForLocked(meta.Harness)
-		_, isCompact := be.(compactBackend)
 		_, isHandoff := be.(handoffBackend)
-		compressible := isCompact || isHandoff
+		compressible := isHandoff
 		d.mu.Unlock()
 		var compressBlocked string
 		if isHandoff {

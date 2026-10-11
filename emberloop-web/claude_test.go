@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -35,8 +36,10 @@ type stubConn struct {
 	// blockPrompt holds a turn open until closed, so queue tests can
 	// Steer mid-turn.
 	blockPrompt chan struct{}
+	// newCount counts NewSession calls so Handoff swaps rotate the token.
+	// The first call still answers acp-session-1, keeping existing tests.
+	newCount int
 }
-
 type stubPermission struct {
 	toolName string
 	options  []any
@@ -57,9 +60,9 @@ func (s *stubConn) NewSession(cwd string, mcp []acpMCPServer, meta map[string]an
 	if s.newErr != nil {
 		return "", s.newErr
 	}
-	return "acp-session-1", nil
+	s.newCount++
+	return fmt.Sprintf("acp-session-%d", s.newCount), nil
 }
-
 func (s *stubConn) LoadSession(acpID, cwd string, mcp []acpMCPServer, meta map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
