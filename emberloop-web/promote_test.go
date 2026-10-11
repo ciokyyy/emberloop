@@ -481,3 +481,104 @@ func TestPromoteResolvesSessionFromProvenance(t *testing.T) {
 		t.Fatalf("diff = %q, want the rule text", diff)
 	}
 }
+
+// Another User's Sessions read as missing for promotion: proposing,
+// chat-promoting, approving with an override, and provenance fallback all
+// answer 404 and write nothing into the other User's worktree.
+func TestPromoteRefusesCrossUserSession(t *testing.T) {
+	repoA := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root A\n"})
+	repoB := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root B\n"})
+	d, base, adminSession, _ := promoteDaemon(t, repoA)
+	before, err := os.ReadFile(filepath.Join(repoA, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob is a second signed-in User with his own authed base.
+	cookieB := signedIn(t, d.Handler(), "bob")
+	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.AddCookie(cookieB)
+		d.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(srvB.Close)
+	bobUser, ok := d.users.userForToken(cookieB.Value)
+	if !ok {
+		t.Fatalf("no user for bob's cookie")
+	}
+	bob, bobBase := bobUser.ID, srvB.URL
+	bobSession := createSession(t, bobBase, "fake", "fake-model", repoB)
+
+	bobBank, err := d.profileBankFor(bob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobRule, err := bobBank.AddRule(context.Background(), memory.Rule{
+		Text: "bob prefers tabs", Kind: memory.KindPreference, ApprovedBy: bob,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Bob proposes his Rule against the admin's Session.
+	if code, _ := postPromotion(t, bobBase, bobRule.RuleID, adminSession, ""); code != http.StatusNotFound {
+		t.Fatalf("cross-user propose = %d, want 404", code)
+	}
+	// 2. Bob uses the chat action inside the admin's Session.
+	if code, _ := postSessionPromote(t, bobBase, adminSession, bobRule.RuleID, ""); code != http.StatusNotFound {
+		t.Fatalf("cross-user chat promote = %d, want 404", code)
+	}
+	// 3. Bob's own pending promotion cannot be approved into the admin's
+	// worktree through the session_id override.
+	if code, _ := postPromotion(t, bobBase, bobRule.RuleID, bobSession, ""); code != http.StatusCreated {
+		t.Fatalf("bob propose = %d, want 201", code)
+	}
+	items, err := bobBank.Queue(context.Background())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("bob queue = %+v %v, want the one pending promotion", items, err)
+	}
+	raw, _ := json.Marshal(map[string]any{"status": "approved", "session_id": adminSession})
+	resp, err := http.Post(bobBase+"/api/promotions/queue/"+strconv.FormatInt(items[0].ID, 10)+"/decide", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user decide override = %d, want 404", resp.StatusCode)
+	}
+	// 4. Provenance fallback skips Sessions owned by another User: Bob's Rule
+	// citing the admin's Session resolves to nothing.
+	foreign, err := bobBank.AddObservation(context.Background(), memory.Observation{
+		SessionID: adminSession, EventID: "e9", Author: bob,
+		Quote: "tabs everywhere", Kind: memory.KindPreference, SubjectKey: "tabs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := bobBank.AddRule(context.Background(), memory.Rule{
+		Text: "tabs everywhere firmly", Kind: memory.KindPreference, ApprovedBy: bob,
+		SourceObservationIDs: []int64{foreign},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := postPromotion(t, bobBase, linked.RuleID, "", ""); code != http.StatusNotFound {
+		t.Fatalf("cross-user fallback propose = %d, want 404", code)
+	}
+
+	// Nothing queued for Bob beyond his one still-pending item, and the
+	// admin's worktree is untouched.
+	if got, _ := bobBank.Queue(context.Background()); len(got) != 1 || got[0].Status != memory.QueuePending {
+		t.Fatalf("bob queue = %+v, want the one still-pending item", got)
+	}
+	// Admin's view is untouched too.
+	if got := getPromotionQueue(t, base); len(got) != 0 {
+		t.Fatalf("admin queue = %+v, want nothing", got)
+	}
+	after, err := os.ReadFile(filepath.Join(repoA, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("admin AGENTS.md changed: %q", after)
+	}
+}

@@ -63,15 +63,17 @@ func (d *Daemon) promotionUserOf(w http.ResponseWriter, r *http.Request) (User, 
 	return *who.user, true
 }
 
-// sessionWorkDir returns the WorkDir of a visible Session, or ErrNotFound.
-func (d *Daemon) sessionWorkDir(sessionID string) (string, error) {
+// sessionWorkDir returns the WorkDir of one of owner's Sessions, or
+// ErrNotFound. Another User's Sessions (and ownerless ones) read as missing,
+// so a promotion can never write into a worktree its User does not own.
+func (d *Daemon) sessionWorkDir(sessionID, owner string) (string, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return "", fmt.Errorf("%w: session required", memory.ErrInvalid)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.sessions[sessionID]
-	if !ok || s.meta.Owner == "" {
+	if !ok || s.meta.Owner == "" || s.meta.Owner != owner {
 		return "", fmt.Errorf("%w: session %s", memory.ErrNotFound, sessionID)
 	}
 	if strings.TrimSpace(s.meta.WorkDir) == "" {
@@ -100,11 +102,13 @@ func latestRuleVersion(ctx context.Context, bank memory.Memory, ruleID string) (
 
 // sessionWorkDirForRule resolves the worktree for a promotion without an
 // explicit Session: the work dir of the newest source-observation Session
-// that is still known (live or persisted) with a work dir. Rules carry their
-// provenance (source observation IDs), so the Memory page can propose from
-// its rules list without picking a Session. When no source Session resolves,
-// it reports ErrNotFound naming session_id, and the caller passes one.
-func (d *Daemon) sessionWorkDirForRule(ctx context.Context, bank memory.Memory, rule memory.Rule) (string, string, error) {
+// that is still known (live or persisted) with a work dir. Only owner's own
+// Sessions resolve; another User's Sessions read as missing, so the resolved
+// worktree is always one the caller owns. Rules carry their provenance
+// (source observation IDs), so the Memory page can propose from its rules
+// list without picking a Session. When no source Session resolves, it reports
+// ErrNotFound naming session_id, and the caller passes one.
+func (d *Daemon) sessionWorkDirForRule(ctx context.Context, bank memory.Memory, owner string, rule memory.Rule) (string, string, error) {
 	type candidate struct {
 		id string
 		at time.Time
@@ -124,7 +128,7 @@ func (d *Daemon) sessionWorkDirForRule(ctx context.Context, bank memory.Memory, 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, c := range cands {
-		if s, ok := d.sessions[c.id]; ok && s.meta.Owner != "" && strings.TrimSpace(s.meta.WorkDir) != "" {
+		if s, ok := d.sessions[c.id]; ok && s.meta.Owner != "" && s.meta.Owner == owner && strings.TrimSpace(s.meta.WorkDir) != "" {
 			return c.id, s.meta.WorkDir, nil
 		}
 	}
@@ -135,7 +139,9 @@ func (d *Daemon) sessionWorkDirForRule(ctx context.Context, bank memory.Memory, 
 // promotion, returning the proposal (with its diff preview) for the queue.
 // An empty sessionID resolves through the Rule's provenance
 // (sessionWorkDirForRule); otherwise the named Session's work dir applies.
-func (d *Daemon) buildPromotionProposal(ctx context.Context, bank memory.Memory, ruleID, sessionID, target, author string) (memory.PromotionProposal, error) {
+// The worktree always belongs to owner: another User's Sessions read as
+// missing, so a promotion can never write outside its User's Sessions.
+func (d *Daemon) buildPromotionProposal(ctx context.Context, bank memory.Memory, owner, ruleID, sessionID, target string) (memory.PromotionProposal, error) {
 	ruleID = strings.TrimSpace(ruleID)
 	if ruleID == "" {
 		return memory.PromotionProposal{}, fmt.Errorf("%w: rule_id is required", memory.ErrInvalid)
@@ -153,12 +159,12 @@ func (d *Daemon) buildPromotionProposal(ctx context.Context, bank memory.Memory,
 	}
 	var workDir string
 	if strings.TrimSpace(sessionID) == "" {
-		sessionID, workDir, err = d.sessionWorkDirForRule(ctx, bank, rule)
+		sessionID, workDir, err = d.sessionWorkDirForRule(ctx, bank, owner, rule)
 		if err != nil {
 			return memory.PromotionProposal{}, err
 		}
 	} else {
-		workDir, err = d.sessionWorkDir(sessionID)
+		workDir, err = d.sessionWorkDir(sessionID, owner)
 		if err != nil {
 			return memory.PromotionProposal{}, err
 		}
@@ -268,7 +274,7 @@ func (d *Daemon) proposePromotionResult(ctx context.Context, owner, ruleID, sess
 			}
 		}
 	}
-	proposal, err := d.buildPromotionProposal(ctx, bank, ruleID, sessionID, target, owner)
+	proposal, err := d.buildPromotionProposal(ctx, bank, owner, ruleID, sessionID, target)
 	if err != nil {
 		return memory.QueueItem{}, false, err
 	}
@@ -357,7 +363,7 @@ func (d *Daemon) approvePromotionQueueItem(ctx context.Context, owner, decidedBy
 	if body != nil && strings.TrimSpace(body.SessionID) != "" {
 		sessionID = strings.TrimSpace(body.SessionID)
 	}
-	workDir, err := d.sessionWorkDir(sessionID)
+	workDir, err := d.sessionWorkDir(sessionID, owner)
 	if err != nil {
 		return nil, err
 	}

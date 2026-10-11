@@ -275,15 +275,18 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   every version, status and provenance untouched) and decides the item
   approved; the edit is idempotent (an `AGENTS.md` holding the line and an
   identical note file both succeed) while an existing different note file
-  refuses. Only a signed-in User promotes (the machine token answers 401).
-  Every approval and rejection writes a `promote_*` ledger row.
+  refuses. Only a signed-in User promotes (the machine token answers 401),
+  and only into its own Sessions: another User's `session_id` (explicit,
+  override, chat route or provenance-resolved) reads as missing with 404, so
+  a promotion can never write into a worktree its User does not own.
   `promote_test.go` covers the diff against the nearest `AGENTS.md`, the
   uncommitted write with HEAD still, the stamp with provenance, idempotency,
   the note target with its parseable frontmatter, rejection, the human gate,
-  bad inputs, provenance session fallback and the rules-route decision, all on
-  temp git repos at the Daemon seam. The Memory page proposes from its rules
-  list (`MemoryPage.svelte` Promote button per Rule, resolving the worktree
-  from the Rule's provenance) and approves from the embedded promotion queue
+  bad inputs, provenance session fallback, cross-User refusal on all four
+  paths and the rules-route decision, all on temp git repos at the Daemon
+  seam. The Memory page proposes from its rules list (`MemoryPage.svelte`
+  Promote button per Rule, resolving the worktree from the Rule's provenance)
+  and approves from the embedded promotion queue
   section (`PromotionQueue.svelte` target path plus diff preview with approve
   and reject; `PromotionQueue.test.js`, `MemoryPage.test.js`); the chat side is
   the Promote button per injected Rule on the memory divider (`Card.svelte`
