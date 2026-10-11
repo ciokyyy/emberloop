@@ -4,8 +4,8 @@
 
 **Blocked by:** spec-branch-core (09)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Warning Event on both Runs with the shared files
-- [ ] No warning for disjoint specs
-- [ ] Two-Run seam test; `.emberloop/check` passes
+- [x] Warning Event on both Runs with the shared files
+- [x] No warning for disjoint specs
+- [x] Two-Run seam test; `.emberloop/check` passes
