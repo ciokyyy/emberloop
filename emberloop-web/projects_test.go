@@ -35,8 +35,8 @@ func apiJSON(t *testing.T, method, url string, body any) (int, []byte) {
 // Projects persist across Daemon restarts, dedupe by path and start Sessions
 // whose cwd is the Project path; worktree Sessions resolve to their Project.
 func TestProjectsPersistAndStartSessions(t *testing.T) {
-	state := t.TempDir()
-	repo := t.TempDir()
+	state := tempDir(t)
+	repo := tempDir(t)
 	d := NewDaemon(state, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -82,7 +82,7 @@ func TestProjectGitView(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	repo := t.TempDir()
+	repo := tempDir(t)
 	run := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -96,7 +96,7 @@ func TestProjectGitView(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(repo, "b.txt"), []byte("new\n"), 0o644)
 
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	_, b := apiJSON(t, "POST", srv.URL+"/api/projects", map[string]string{"path": repo})

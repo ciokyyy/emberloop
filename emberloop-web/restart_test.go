@@ -5,7 +5,7 @@ import "testing"
 // A Daemon with no work is idle; a turn in flight, a starting Session or a
 // driving Run each make it busy.
 func TestDaemonIdle(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	if !d.Idle() {
 		t.Fatal("empty Daemon should be idle")
 	}

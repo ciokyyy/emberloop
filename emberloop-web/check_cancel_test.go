@@ -101,18 +101,18 @@ func proxyCallOne(t *testing.T, daemonURL, parent, name, args string) (string, e
 	if tool == nil {
 		t.Fatalf("unknown proxy tool %q", name)
 	}
-	return tool.Execute(context.Background(), t.TempDir(), json.RawMessage(args))
+	return tool.Execute(context.Background(), tempDir(t), json.RawMessage(args))
 }
 
 // Check with no id lists the caller's own children, worker and scout alike,
 // without messaging them.
 func TestCheckListsOwnChildren(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "look only", "type": "scout"}},
 	})
@@ -137,7 +137,7 @@ func TestCheckListsOwnChildren(t *testing.T) {
 		}
 	}
 	// A stranger's own list is empty: peeking filters by recorded parent.
-	stranger := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	stranger := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	stool := pigCheckTool(t, pb, stranger)
 	sres, err := stool.Execute(context.Background(), "c2", json.RawMessage(`{}`), nil)
 	if err != nil {
@@ -158,12 +158,12 @@ func TestCheckListsOwnChildren(t *testing.T) {
 // Check with an id shows the child's summary plus its recent events, and the
 // tool description tells callers not to poll.
 func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "slow job")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -201,13 +201,13 @@ func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
 
 // A stranger's id is refused on every check path.
 func TestCheckNonChildRefused(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	owner := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
-	stranger := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	owner := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	stranger := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, owner, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -233,11 +233,11 @@ func TestCheckNonChildRefused(t *testing.T) {
 // Both proxy check forms read the bound parent's own children through the
 // same session routes the UI uses.
 func TestProxyCheckReadsOwnChildren(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -263,12 +263,12 @@ func TestProxyCheckReadsOwnChildren(t *testing.T) {
 func TestCancelInterruptsWorkingChild(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	a, b := spawnTwo(t, srv.URL, parent, "slow A", "slow B")
 	waitStatus(t, srv.URL, a, "working", 5*time.Second)
 	waitStatus(t, srv.URL, b, "working", 5*time.Second)
@@ -302,12 +302,12 @@ func TestCancelInterruptsWorkingChild(t *testing.T) {
 
 // Cancelling an idle child is a no-op that says so.
 func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "quick job")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -335,12 +335,12 @@ func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
 // Kill ends the child Session like DELETE does: it reads ended and refuses
 // further sends, while the parent keeps going.
 func TestCancelKillEndsChild(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "doomed job")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -372,13 +372,13 @@ func TestCancelKillEndsChild(t *testing.T) {
 // A stranger cannot cancel or kill another parent's child on any path, while
 // a parent may stop its own scout: a stop is not a message.
 func TestCancelNonChildRefusedScoutStoppable(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigFamily(d)
 
-	owner := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
-	stranger := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	owner := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	stranger := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, owner, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -427,11 +427,11 @@ func TestCancelNonChildRefusedScoutStoppable(t *testing.T) {
 func TestProxyCancelInterruptsAndKills(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "slow job")
 	waitStatus(t, srv.URL, child, "working", 5*time.Second)
 

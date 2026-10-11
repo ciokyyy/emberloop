@@ -221,8 +221,8 @@ func checkTimingPhase(t *testing.T, p *timingPhase) {
 // session/load (the Daemon's idle-resume path). Short replies.
 func TestLiveStreamTiming(t *testing.T) {
 	env := setupTiming(t)
-	cwd := t.TempDir()
-	tmp := t.TempDir()
+	cwd := tempDir(t)
+	tmp := tempDir(t)
 
 	pa := &timingPhase{name: "A-new-plain", teeLog: filepath.Join(tmp, "tee-a.log"), markNeed: "PLAIN-OK"}
 	be := newTimingBackend(env, pa.teeLog)
@@ -267,8 +267,8 @@ func TestLiveStreamTiming(t *testing.T) {
 // sessions that burst in production.
 func TestLiveStreamTimingBig(t *testing.T) {
 	env := setupTiming(t)
-	cwd := t.TempDir()
-	tmp := t.TempDir()
+	cwd := tempDir(t)
+	tmp := tempDir(t)
 
 	essay := "Write a 400-word essay on the history of lighthouses, ending with the word %s on its own last line."
 
@@ -322,8 +322,8 @@ func TestLiveStreamTimingBig(t *testing.T) {
 // burst-scale reply, so session age and resume play no role.
 func TestLiveStreamTimingModel(t *testing.T) {
 	env := setupTiming(t)
-	cwd := t.TempDir()
-	tmp := t.TempDir()
+	cwd := tempDir(t)
+	tmp := tempDir(t)
 	essay := "Write a 400-word essay on the history of %s, ending with the word %s on its own last line."
 	type cfg struct {
 		name   string

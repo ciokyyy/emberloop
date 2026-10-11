@@ -23,6 +23,11 @@ the driver ticks boxes and marks done, nothing else writes them.
 - `spike/` holds live-only probe programs, never imported by product code.
 - Terms follow root `GLOSSARY.md`.
 - Real Backends prove out in live probes, never the main check.
+- Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
+  goroutines write after a test returns and fail `t.TempDir()` cleanup with
+  "directory not empty". `main_test.go` shrinks the pig stall watchdog
+  (`pigTailStallTimeout`, `pigStallTick`): the SDK sometimes leaves a finished
+  stream open and the real 20s watchdog added ~30s per hit.
 - API is the test seam: `api_test.go` drives the Daemon's HTTP and SSE API
   with the fake Backend (create, prompt, replay, guard, restart, UI);
   `lifecycle_test.go` covers the cap, idle release, restart resume and

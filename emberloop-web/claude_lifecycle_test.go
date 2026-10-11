@@ -12,7 +12,7 @@ import (
 func TestClaudeReleaseAndResumeRoundTrip(t *testing.T) {
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
 	if err := be.StartSession(meta); err != nil {
 		t.Fatal(err)
 	}
@@ -49,14 +49,14 @@ func TestClaudeReleaseAndResumeRoundTrip(t *testing.T) {
 // The full lifecycle through the API with the stub adapter: create, prompt,
 // idle release, resume on the next prompt, and resume after a restart.
 func TestClaudeLifecycleOverAPI(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	stub := &stubConn{updates: []map[string]any{chunk("hello")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(dir, NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
 	sendPrompt(t, srv.URL, id, "first")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	waitForLive(t, srv.URL, id, false, 5*time.Second)

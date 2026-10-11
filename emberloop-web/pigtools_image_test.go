@@ -12,7 +12,7 @@ import (
 
 // A pig Session's read of a PNG yields an ImageContent next to the text.
 func TestPigReadReturnsImageContent(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89")
 	if err := os.WriteFile(filepath.Join(dir, "a.png"), png, 0o644); err != nil {
 		t.Fatal(err)

@@ -12,8 +12,8 @@ import (
 // the fresh stack answers the next prompt.
 func TestPigRecoverWedgedRebuildsFromSavedSession(t *testing.T) {
 	pb := newPigTestBackend(t)
-	pb.LogDir = t.TempDir()
-	meta := SessionMeta{ID: "wedge1", Harness: "pig", Model: pigFauxModel, WorkDir: t.TempDir()}
+	pb.LogDir = tempDir(t)
+	meta := SessionMeta{ID: "wedge1", Harness: "pig", Model: pigFauxModel, WorkDir: tempDir(t)}
 	emit := func(kind, text, status string) {}
 	if err := pb.CreateSession(meta, emit); err != nil {
 		t.Fatal(err)

@@ -57,12 +57,12 @@ func TestLivePigBackend(t *testing.T) {
 
 	var calls atomic.Int64
 	pb := NewPigBackend(liveEchoTool{calls: &calls})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.RegisterBackend("pig", pb)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", model, t.TempDir())
+	id := createSession(t, srv.URL, "pig", model, tempDir(t))
 	if names := pb.ToolNames(id); len(names) != 1 || names[0] != "mcp__el__live_echo" {
 		t.Fatalf("live session tools = %q, want only the echo tool", names)
 	}

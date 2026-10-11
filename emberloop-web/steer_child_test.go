@@ -78,12 +78,12 @@ func waitPrompt(t *testing.T, base, id, substr string, timeout time.Duration) {
 func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigSteer(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "slow job")
 	waitStatus(t, srv.URL, child, "working", 5*time.Second)
 
@@ -107,11 +107,11 @@ func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
 // A parent steers its idle child through the Daemon: it starts as a
 // follow-up turn.
 func TestSteerChildIdleStartsFollowup(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "quick job")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -129,13 +129,13 @@ func TestSteerChildIdleStartsFollowup(t *testing.T) {
 
 // A stranger's child is refused on every path: no cross-session messaging.
 func TestSteerChildNonChildRefused(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigSteer(d)
 
-	owner := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
-	stranger := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	owner := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	stranger := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, owner, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 
@@ -169,12 +169,12 @@ func TestSteerChildNonChildRefused(t *testing.T) {
 
 // Scout targets stay read-only on every path.
 func TestSteerChildScoutRefused(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	pb := wirePigSteer(d)
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "look only", "type": "scout"}},
 	})
@@ -205,11 +205,11 @@ func TestSteerChildScoutRefused(t *testing.T) {
 // The proxy steer tool steers the bound parent's own child through the same
 // HTTP route the UI uses.
 func TestProxySteerSteersOwnChild(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 

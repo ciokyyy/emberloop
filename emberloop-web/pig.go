@@ -729,11 +729,15 @@ func (b *PigBackend) OnPromptImages(sessionID, text string, images []Image, appe
 // while no tool runs. The SDK can hang inside a provider stream with no
 // error (seen in the field: awaitContinuation never returns), and a hung
 // turn would hold its Session working and its cap slot forever.
-const pigStallTimeout = 90 * time.Second
+var pigStallTimeout = 90 * time.Second
 
 // pigTailStallTimeout is the shorter silence allowed once the model has
 // already written its final text: the provider stream then just failed to close.
-const pigTailStallTimeout = 20 * time.Second
+var pigTailStallTimeout = 20 * time.Second
+
+// pigStallTick is how often the watchdog checks for silence. Tests shrink
+// it with the two timeouts.
+var pigStallTick = 5 * time.Second
 
 // pigStallRetries is how many times a stalled turn is nudged to continue.
 const pigStallRetries = 2
@@ -745,7 +749,7 @@ func watchPigStall(turn context.Context, ps *pigSession) <-chan struct{} {
 	fired := make(chan struct{})
 	ps.lastEvent.Store(time.Now().UnixNano())
 	go func() {
-		t := time.NewTicker(5 * time.Second)
+		t := time.NewTicker(pigStallTick)
 		defer t.Stop()
 		for {
 			select {

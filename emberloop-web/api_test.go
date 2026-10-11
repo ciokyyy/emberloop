@@ -18,11 +18,11 @@ import (
 // Slice 1: create a Session, send a prompt, read Events over SSE in order
 // with sequence numbers.
 func TestCreatePromptStreamsOrderedEvents(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	seq := sendPrompt(t, srv.URL, id, "hello")
 	if seq < 1 {
 		t.Fatalf("prompt event seq = %d, want >= 1", seq)
@@ -139,11 +139,11 @@ func readSSE(t *testing.T, base, id string, since int64, want int, timeout time.
 // Slice 2: reconnecting with a last-seen sequence number delivers only the
 // missed Events.
 func TestReconnectSinceDeliversOnlyMissed(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "first")
 	all := readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	last := all[len(all)-1].Seq
@@ -168,11 +168,11 @@ func TestReconnectSinceDeliversOnlyMissed(t *testing.T) {
 
 // Slice 3: reloading replays the whole log and shows the same transcript.
 func TestReloadReplaysWholeLog(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	first := readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 
@@ -201,7 +201,7 @@ func TestReloadReplaysWholeLog(t *testing.T) {
 
 // Slice 4: a request with a foreign Origin or Host is rejected.
 func TestForeignOriginOrHostRejected(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -230,10 +230,10 @@ func TestForeignOriginOrHostRejected(t *testing.T) {
 
 // Slice 5: restarting the Daemon keeps the Session readable as history.
 func TestRestartKeepsHistory(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	srv.Close()
@@ -262,7 +262,7 @@ func TestRestartKeepsHistory(t *testing.T) {
 
 // Slice 6: starting the Daemon serves the embedded UI on loopback only.
 func TestServesEmbeddedUI(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -287,7 +287,7 @@ func TestServesEmbeddedUI(t *testing.T) {
 // Review gaps: validation, not-found, ordering, malformed log lines,
 // Last-Event-ID header and finite replay.
 func TestValidationAndNotFound(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -316,7 +316,7 @@ func TestValidationAndNotFound(t *testing.T) {
 		t.Fatalf("prompt unknown status = %d, want 404", resp.StatusCode)
 	}
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	resp, err = http.Post(srv.URL+"/api/sessions/"+id+"/prompt", "application/json", strings.NewReader(`{"text":""}`))
 	if err != nil {
 		t.Fatal(err)
@@ -339,13 +339,13 @@ func TestValidationAndNotFound(t *testing.T) {
 }
 
 func TestListNewestActivityFirst(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	first := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	first := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	time.Sleep(10 * time.Millisecond)
-	second := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	second := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	resp, err := http.Get(srv.URL + "/api/sessions")
 	if err != nil {
@@ -378,10 +378,10 @@ func TestListNewestActivityFirst(t *testing.T) {
 }
 
 func TestMalformedLogLineSkippedOnReload(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	srv.Close()
 
 	logPath := filepath.Join(dir, "enderbloom", "sessions", id, "events.jsonl")
@@ -417,11 +417,11 @@ func TestMalformedLogLineSkippedOnReload(t *testing.T) {
 }
 
 func TestLastEventIDHeaderAndFiniteReplay(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 
@@ -452,12 +452,12 @@ func TestLastEventIDHeaderAndFiniteReplay(t *testing.T) {
 }
 
 func TestConcurrentPromptsStayOrdered(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	const n = 5
 	done := make(chan struct{}, n)
 	for i := 0; i < n; i++ {

@@ -94,10 +94,10 @@ func quotaEnv(t *testing.T, stub *quotaStubState, auth string) (base, stateDir s
 	t.Cleanup(srv.Close)
 	restore := el.SetUsageEndpointsForTest(srv.URL+"/zen/go/v1/usage", srv.URL, srv.URL+"/token")
 	t.Cleanup(restore)
-	stateDir = t.TempDir()
+	stateDir = tempDir(t)
 	t.Setenv("EL_STATE_DIR", stateDir)
 	if auth != "" {
-		path := filepath.Join(t.TempDir(), "auth.json")
+		path := filepath.Join(tempDir(t), "auth.json")
 		if err := os.WriteFile(path, []byte(auth), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func quotaEnv(t *testing.T, stub *quotaStubState, auth string) (base, stateDir s
 	}
 	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
 	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	api := httptest.NewServer(d.Handler())
 	t.Cleanup(api.Close)
 	return api.URL, stateDir

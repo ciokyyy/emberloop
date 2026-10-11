@@ -18,9 +18,9 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 	}
 
 	t.Run("root only", func(t *testing.T) {
-		work := t.TempDir()
+		work := tempDir(t)
 		write(t, work, "AGENTS.md", "root rules\n")
-		sp := claudeSystemPromptWith(work, t.TempDir())
+		sp := claudeSystemPromptWith(work, tempDir(t))
 		if !strings.Contains(sp, "# Project context") {
 			t.Fatalf("prompt lacks the project-context block")
 		}
@@ -36,14 +36,14 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 	})
 
 	t.Run("nested outermost first", func(t *testing.T) {
-		root := t.TempDir()
+		root := tempDir(t)
 		sub := filepath.Join(root, "sub")
 		if err := os.Mkdir(sub, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		write(t, root, "AGENTS.md", "outer rules\n")
 		write(t, sub, "AGENTS.md", "inner rules\n")
-		sp := claudeSystemPromptWith(sub, t.TempDir())
+		sp := claudeSystemPromptWith(sub, tempDir(t))
 		if !strings.Contains(sp, "outer rules") || !strings.Contains(sp, "inner rules") {
 			t.Fatalf("prompt lacks both layers: %q", sp)
 		}
@@ -53,23 +53,23 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 	})
 
 	t.Run("claude.md fallback", func(t *testing.T) {
-		work := t.TempDir()
+		work := tempDir(t)
 		write(t, work, "CLAUDE.md", "claude rules\n")
-		sp := claudeSystemPromptWith(work, t.TempDir())
+		sp := claudeSystemPromptWith(work, tempDir(t))
 		if !strings.Contains(sp, "claude rules") {
 			t.Fatalf("prompt lacks the CLAUDE.md fallback: %q", sp)
 		}
 		// AGENTS.md wins over CLAUDE.md in the same directory.
 		write(t, work, "AGENTS.md", "agents rules\n")
-		sp = claudeSystemPromptWith(work, t.TempDir())
+		sp = claudeSystemPromptWith(work, tempDir(t))
 		if !strings.Contains(sp, "agents rules") || strings.Contains(sp, "claude rules") {
 			t.Fatalf("AGENTS.md must win per directory: %q", sp)
 		}
 	})
 
 	t.Run("global first", func(t *testing.T) {
-		global := t.TempDir()
-		work := t.TempDir()
+		global := tempDir(t)
+		work := tempDir(t)
 		write(t, global, "AGENTS.md", "global rules\n")
 		write(t, work, "AGENTS.md", "work rules\n")
 		sp := claudeSystemPromptWith(work, global)
@@ -82,10 +82,10 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 	})
 
 	t.Run("oversize cap", func(t *testing.T) {
-		work := t.TempDir()
+		work := tempDir(t)
 		write(t, work, "AGENTS.md", strings.Repeat("x", claudeContextCap+1024))
 		base := claudeSystemPrompt()
-		sp := claudeSystemPromptWith(work, t.TempDir())
+		sp := claudeSystemPromptWith(work, tempDir(t))
 		if !strings.Contains(sp, "truncated") {
 			t.Fatalf("over-cap prompt lacks the truncation note")
 		}
@@ -95,7 +95,7 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 	})
 
 	t.Run("none", func(t *testing.T) {
-		sp := claudeSystemPromptWith(t.TempDir(), t.TempDir())
+		sp := claudeSystemPromptWith(tempDir(t), tempDir(t))
 		if strings.Contains(sp, "# Project context") {
 			t.Fatalf("prompt carries a block with no files: %q", sp)
 		}
@@ -107,7 +107,7 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 
 // The injected context reaches the ACP session params on create and resume.
 func TestClaudeContextReachesSessionParams(t *testing.T) {
-	work := t.TempDir()
+	work := tempDir(t)
 	marker := "session-marker-rules"
 	if err := os.WriteFile(filepath.Join(work, "AGENTS.md"), []byte(marker+"\n"), 0o644); err != nil {
 		t.Fatal(err)

@@ -90,10 +90,10 @@ func TestGrokProfileAllowlist(t *testing.T) {
 
 func newTestGrokBackend(t *testing.T) (*GrokACPBackend, string) {
 	t.Helper()
-	src := t.TempDir()
+	src := tempDir(t)
 	cb := &ClaudeBackend{plain: true, waitMCP: true, mcpName: "el", sessions: map[string]*claudeState{}}
 	b := &GrokACPBackend{
-		ClaudeBackend: cb, stateDir: t.TempDir(), grokBin: "/bin/true", srcHome: src,
+		ClaudeBackend: cb, stateDir: tempDir(t), grokBin: "/bin/true", srcHome: src,
 		scouts: map[string]bool{}, groups: map[string]string{},
 		catalogs: map[string]string{"web": "- el__read(path:str)", "scout": "- el__read(path:str)"},
 	}
@@ -186,7 +186,7 @@ func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
 
 func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 	b, _ := newTestGrokBackend(t)
-	meta := b.meta("s1", "grok-4.7", "", t.TempDir())
+	meta := b.meta("s1", "grok-4.7", "", tempDir(t))
 	if meta["yoloMode"] != true {
 		t.Fatalf("yoloMode %v", meta["yoloMode"])
 	}
@@ -252,7 +252,7 @@ func newStubGrok(t *testing.T, conn *grokStubConn) *GrokACPBackend {
 func TestGrokStartWaitsForMCPAndSendsOverrideMeta(t *testing.T) {
 	conn := &grokStubConn{stubConn: &stubConn{}}
 	b := newStubGrok(t, conn)
-	meta := SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", Effort: "max", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", Effort: "max", WorkDir: tempDir(t)}
 	if err := b.CreateSession(meta, func(string, string, string) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestGrokStartWaitsForMCPAndSendsOverrideMeta(t *testing.T) {
 func TestGrokStartFailsWhenMCPNeverReady(t *testing.T) {
 	conn := &grokStubConn{stubConn: &stubConn{}, waitErr: errors.New("adapter MCP servers not ready after 45s")}
 	b := newStubGrok(t, conn)
-	err := b.CreateSession(SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", WorkDir: t.TempDir()}, func(string, string, string) {})
+	err := b.CreateSession(SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", WorkDir: tempDir(t)}, func(string, string, string) {})
 	if err == nil || !strings.Contains(err.Error(), "not ready") {
 		t.Fatalf("want MCP not ready error, got %v", err)
 	}
@@ -281,10 +281,10 @@ func TestGrokStartFailsWhenMCPNeverReady(t *testing.T) {
 
 func TestGrokCreateRejectsUnknownModelAndEffort(t *testing.T) {
 	b := newStubGrok(t, &grokStubConn{stubConn: &stubConn{}})
-	if err := b.CreateSession(SessionMeta{ID: "a", Model: "nope", WorkDir: t.TempDir()}, nil); err == nil || !strings.Contains(err.Error(), "unknown model") {
+	if err := b.CreateSession(SessionMeta{ID: "a", Model: "nope", WorkDir: tempDir(t)}, nil); err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("unknown model: %v", err)
 	}
-	if err := b.CreateSession(SessionMeta{ID: "b", Model: "grok-4.7", Effort: "turbo", WorkDir: t.TempDir()}, nil); err == nil || !strings.Contains(err.Error(), "unknown effort") {
+	if err := b.CreateSession(SessionMeta{ID: "b", Model: "grok-4.7", Effort: "turbo", WorkDir: tempDir(t)}, nil); err == nil || !strings.Contains(err.Error(), "unknown effort") {
 		t.Fatalf("unknown effort: %v", err)
 	}
 }
@@ -292,7 +292,7 @@ func TestGrokCreateRejectsUnknownModelAndEffort(t *testing.T) {
 func TestGrokPromptReachesAgentWithReminder(t *testing.T) {
 	conn := &grokStubConn{stubConn: &stubConn{}}
 	b := newStubGrok(t, conn)
-	if err := b.CreateSession(SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", WorkDir: t.TempDir()}, func(string, string, string) {}); err != nil {
+	if err := b.CreateSession(SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", WorkDir: tempDir(t)}, func(string, string, string) {}); err != nil {
 		t.Fatal(err)
 	}
 	b.OnPrompt("s1", "hello", func(string, string, string) {})
@@ -302,7 +302,7 @@ func TestGrokPromptReachesAgentWithReminder(t *testing.T) {
 }
 
 func TestUnregisteredGrokHarnessAnswers503(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/models?harness=grok")
@@ -314,7 +314,7 @@ func TestUnregisteredGrokHarnessAnswers503(t *testing.T) {
 		t.Fatalf("models status %d, want 503", resp.StatusCode)
 	}
 	resp, err = http.Post(srv.URL+"/api/sessions", "application/json",
-		strings.NewReader(`{"harness":"grok","model":"grok-4.7","workDir":"`+t.TempDir()+`"}`))
+		strings.NewReader(`{"harness":"grok","model":"grok-4.7","workDir":"`+tempDir(t)+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

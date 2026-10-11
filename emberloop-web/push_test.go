@@ -85,7 +85,7 @@ func TestPushNotifySendsVapidAndDropsGone(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
-	p := newPushStore(t.TempDir())
+	p := newPushStore(tempDir(t))
 	p.client = srv.Client()
 	sub, ua, auth := newTestSub(t, srv.URL+"/sub")
 	p.add(sub)
@@ -113,7 +113,7 @@ func TestPushNotifySendsVapidAndDropsGone(t *testing.T) {
 }
 
 func TestPushAPI(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	res, err := http.Get(srv.URL + "/api/push/key")

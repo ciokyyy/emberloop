@@ -18,7 +18,7 @@ import (
 
 func newPigTestBackend(t *testing.T) *PigBackend {
 	t.Helper()
-	return newPigTestBackendAt(t, t.TempDir())
+	return newPigTestBackendAt(t, tempDir(t))
 }
 
 func newPigTestBackendAt(t *testing.T, agentDir string) *PigBackend {
@@ -37,7 +37,7 @@ func newPigTestBackendAt(t *testing.T, agentDir string) *PigBackend {
 func newPigDaemon(t *testing.T) (*Daemon, *PigBackend) {
 	t.Helper()
 	pb := newPigTestBackend(t)
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.RegisterBackend("pig", pb)
 	return d, pb
 }
@@ -102,7 +102,7 @@ func TestPigModelsEnvKeyAuth(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "fake-key")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	pb := NewPigBackend()
-	pb.AgentDir = t.TempDir()
+	pb.AgentDir = tempDir(t)
 	models := pb.Models()
 	openrouter := ai.ListModels("openrouter")
 	if len(openrouter) == 0 {
@@ -165,7 +165,7 @@ func TestPigSessionStrippedToMCPOnly(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	if names := pb.ToolNames(id); len(names) != 0 {
 		t.Fatalf("stripped session tools = %q, want none", names)
 	}
@@ -177,7 +177,7 @@ func TestPigPromptStreamsNormalizedEvents(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	sendPrompt(t, srv.URL, id, "What is 20+22?")
 
 	events := readSSE(t, srv.URL, id, 0, 5, 30*time.Second)
@@ -215,7 +215,7 @@ func TestPigUnknownModelRejected(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	body, _ := json.Marshal(map[string]string{"harness": "pig", "model": "nope/nonexistent-1", "workDir": t.TempDir()})
+	body, _ := json.Marshal(map[string]string{"harness": "pig", "model": "nope/nonexistent-1", "workDir": tempDir(t)})
 	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestPigEndClosesSession(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	sendPrompt(t, srv.URL, id, "What is 20+22?")
 	readSSE(t, srv.URL, id, 0, 5, 30*time.Second)
 
@@ -336,14 +336,14 @@ func normEqual(a, b []normEvent) bool {
 // restart resume it through Runtime.Resume with the same answer.
 func TestPigIdleReleaseAndRestartResume(t *testing.T) {
 	t.Helper()
-	stateDir := t.TempDir()
-	agentDir := t.TempDir()
+	stateDir := tempDir(t)
+	agentDir := tempDir(t)
 	pb := newPigTestBackendAt(t, agentDir)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	d.RegisterBackend("pig", pb)
 	srv := httptest.NewServer(d.Handler())
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	sendPrompt(t, srv.URL, id, "What is 20+22?")
 	_ = readSSE(t, srv.URL, id, 0, 5, 30*time.Second)
 	waitForLive(t, srv.URL, id, false, 10*time.Second)
@@ -391,7 +391,7 @@ func TestPigDeleteEmitsSingleEnded(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	deleteSession(t, srv.URL, id)
 	deleteSession(t, srv.URL, id)
 
@@ -413,7 +413,7 @@ func TestPigFauxModelRejectedWithoutEnv(t *testing.T) {
 	if err := os.Unsetenv("PIG_TEST_FAUX"); err != nil {
 		t.Fatal(err)
 	}
-	err := pb.CreateSession(SessionMeta{ID: "ghost", Model: pigFauxModel, WorkDir: t.TempDir()}, func(kind, text, status string) {})
+	err := pb.CreateSession(SessionMeta{ID: "ghost", Model: pigFauxModel, WorkDir: tempDir(t)}, func(kind, text, status string) {})
 	if err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("create err = %v, want unknown model", err)
 	}
@@ -423,7 +423,7 @@ func TestPigFauxModelRejectedWithoutEnv(t *testing.T) {
 // failed can never regress an ended Session.
 func TestPigPromptAfterCloseEmitsNoStatus(t *testing.T) {
 	pb := newPigTestBackend(t)
-	meta := SessionMeta{ID: "late", Model: pigFauxModel, WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "late", Model: pigFauxModel, WorkDir: tempDir(t)}
 	noop := func(kind, text, status string) {}
 	if err := pb.CreateSession(meta, noop); err != nil {
 		t.Fatal(err)
@@ -444,7 +444,7 @@ func TestEndedTerminalAgainstLateEdges(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	deleteSession(t, srv.URL, id)
 	d.appendEvent(id, "status", "", "failed")
 
@@ -512,11 +512,11 @@ func lastSeqOf(events []Event) int64 {
 }
 
 func TestPigSpawnToolSpawnsUnderItsSession(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	var gotParent string
 	var gotAgents []SpawnAgent
 	pb := NewPigBackend()

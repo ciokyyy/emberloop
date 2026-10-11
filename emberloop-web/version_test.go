@@ -41,7 +41,7 @@ func TestCurrentPrefersStamps(t *testing.T) {
 // GET /api/version answers the build identity with no login and no state;
 // anything else is 405.
 func TestVersionEndpoint(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -81,7 +81,7 @@ func TestVersionEndpoint(t *testing.T) {
 // GET /api/health is the update gate's probe: 200 with ok true; anything
 // else is 405.
 func TestHealthEndpoint(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 

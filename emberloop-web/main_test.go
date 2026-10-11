@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestMain keeps session titles off for the whole package: title calls start
@@ -27,6 +28,10 @@ func TestMain(m *testing.M) {
 	os.Unsetenv("EL_WEB_PARENT")
 	os.Unsetenv("EL_WEB_DAEMON_URL")
 	os.Setenv("EL_SESSION_TITLES", "0")
+	// The SDK sometimes leaves a finished turn stream open; the stall
+	// watchdog ends it. Real timings cost ~30s per hit, so shrink them.
+	pigTailStallTimeout = 2 * time.Second
+	pigStallTick = 200 * time.Millisecond
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)

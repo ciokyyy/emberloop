@@ -121,7 +121,7 @@ func TestClaudeModelsAreOpusSonnetHaiku(t *testing.T) {
 func TestNewAndLoadShareFullStrippingSet(t *testing.T) {
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
 	if err := be.StartSession(meta); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestPromptStreamsNormalizedEvents(t *testing.T) {
 			"content": []any{map[string]any{"type": "diff", "path": "/w/f.txt", "newText": "new"}}},
 	}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "haiku", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "haiku", WorkDir: tempDir(t)}
 	if err := be.StartSession(meta); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestPermissionAutoApprovedAndLogged(t *testing.T) {
 		},
 	}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "opus", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "opus", WorkDir: tempDir(t)}
 	if err := be.StartSession(meta); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestFirstPromptWaitsForMCPReady(t *testing.T) {
 	started := make(chan struct{})
 	stub := &stubConn{blockNew: block, promptStarted: started, updates: []map[string]any{chunk("late")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
 	done := make(chan error, 1)
 	go func() { done <- be.StartSession(meta) }()
 	<-started
@@ -326,7 +326,7 @@ func TestPromptAfterFailedStartReportsFailed(t *testing.T) {
 	started := make(chan struct{})
 	stub := &stubConn{blockNew: block, promptStarted: started, newErr: errNoAdapter}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
 	startDone := make(chan error, 1)
 	go func() { startDone <- be.StartSession(meta) }()
 	<-started
@@ -373,7 +373,7 @@ func TestPromptAfterDropDuringStartReportsFailed(t *testing.T) {
 	started := make(chan struct{})
 	stub := &stubConn{blockNew: block, promptStarted: started, newErr: errNoAdapter}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: t.TempDir()}
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
 	startDone := make(chan error, 1)
 	go func() { startDone <- be.StartSession(meta) }()
 	<-started
@@ -414,7 +414,7 @@ func TestPromptAfterDropDuringStartReportsFailed(t *testing.T) {
 // Every claude Session carries the caveman ultra per-turn reminder as an
 // inline UserPromptSubmit hook, and the system prompt holds the ultra layer.
 func TestClaudeSessionsCarryVoiceReminder(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	bin := filepath.Join(dir, "el")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestClaudeSessionsCarryVoiceReminder(t *testing.T) {
 	if sp, _ := meta["systemPrompt"].(string); !strings.Contains(sp, "level: ultra") {
 		t.Fatalf("systemPrompt lacks the ultra register: %q", sp)
 	}
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", tempDir(t))
 	opts = newStubClaudeBackend(nil).strippingMeta("sonnet")["claudeCode"].(map[string]any)["options"].(map[string]any)
 	if _, ok := opts["settings"]; ok {
 		t.Fatal("settings set without an el binary")

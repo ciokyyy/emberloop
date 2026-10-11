@@ -94,11 +94,11 @@ func TestGateChildThatSubmitsIsUntouched(t *testing.T) {
 	withSubmitGate(t)
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	// Submit while the turn runs, the way the submit tool would; the working
 	// status proves the gate's baseline is taken and the submit lands after it.
@@ -124,11 +124,11 @@ func TestGateChildThatSubmitsIsUntouched(t *testing.T) {
 func TestGateRemindsOnceThenChildSubmits(t *testing.T) {
 	withSubmitGate(t)
 	be := &submitScriptBackend{FakeBackend: NewFakeBackend(), submitOn: map[int]bool{2: true}}
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 	waitGroupSteer(t, srv.URL, parent, group, 10*time.Second)
@@ -153,11 +153,11 @@ func TestGateRemindsOnceThenChildSubmits(t *testing.T) {
 // grouped notice naming it.
 func TestGateGiveUpDeliversStoppedNoticeOnce(t *testing.T) {
 	withSubmitGate(t)
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	steer := waitGroupSteer(t, srv.URL, parent, group, 15*time.Second)
 	if !strings.Contains(steer.Text, "stopped without submitting") {
@@ -196,11 +196,11 @@ func TestGateKilledChildGetsNoReminder(t *testing.T) {
 	withSubmitGate(t)
 	fake := NewFakeBackend()
 	fake.Delay = 500 * time.Millisecond
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	_, child := spawnOneWithGroup(t, srv.URL, parent, "doomed job")
 	waitStatus(t, srv.URL, child, "working", 5*time.Second)
 	req, _ := http.NewRequest("DELETE", srv.URL+"/api/sessions/"+child, nil)
@@ -225,11 +225,11 @@ func TestGateInterruptedChildGetsNoReminder(t *testing.T) {
 	withSubmitGate(t)
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	_, child := spawnOneWithGroup(t, srv.URL, parent, "slow job")
 	waitStatus(t, srv.URL, child, "working", 5*time.Second)
 	resp, err := http.Post(srv.URL+"/api/sessions/"+child+"/interrupt", "application/json", bytes.NewReader(nil))
@@ -253,11 +253,11 @@ func TestSettleDeliversLastMessageWithoutSubmit(t *testing.T) {
 	if el.WebSubmitEnabled {
 		t.Fatal("WebSubmitEnabled must default false")
 	}
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 	steer := waitGroupSteer(t, srv.URL, parent, group, 10*time.Second)
@@ -288,11 +288,11 @@ func TestSettleDeliversSubmitTextWhenSubmitted(t *testing.T) {
 	}
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "working", 5*time.Second)
 	body, _ := json.Marshal(map[string]any{"status": "done", "completed": []string{"alpha"}, "report": "settled report"})
@@ -333,11 +333,11 @@ func TestSettleFailedChildDeliversStatus(t *testing.T) {
 	if el.WebSubmitEnabled {
 		t.Fatal("WebSubmitEnabled must default false")
 	}
-	d := NewDaemon(t.TempDir(), &failReplyBackend{FakeBackend: NewFakeBackend()})
+	d := NewDaemon(tempDir(t), &failReplyBackend{FakeBackend: NewFakeBackend()})
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "failed", 10*time.Second)
 	steer := waitGroupSteer(t, srv.URL, parent, group, 10*time.Second)

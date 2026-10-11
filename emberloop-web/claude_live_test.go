@@ -32,7 +32,7 @@ func TestLiveClaudeBackend(t *testing.T) {
 		t.Fatalf("echo server missing: %v", err)
 	}
 	absEcho, _ := filepath.Abs(echo)
-	cwd := t.TempDir()
+	cwd := tempDir(t)
 
 	be := NewClaudeBackend()
 	be.mcpName = "spike"

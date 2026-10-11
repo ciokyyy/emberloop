@@ -62,15 +62,15 @@ func stubSequence(stubs ...*stubConn) func() (acpConn, error) {
 // throwaway ACP session on haiku, the title system prompt, no MCP servers.
 func TestClaudeSessionGetsTitle(t *testing.T) {
 	t.Setenv("EL_SESSION_TITLES", "1")
-	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "settings.json"))
 	own := &stubConn{updates: []map[string]any{chunk("answer")}}
 	title := &stubConn{updates: []map[string]any{chunk("**Fix flaky retry test**")}}
 	be := newStubClaudeBackend(stubSequence(own, title))
-	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
 	sendPrompt(t, srv.URL, id, "the retry test is flaky")
 	if got := waitTitle(t, srv.URL, id, true); got != "Fix flaky retry test" {
 		t.Fatalf("title = %q", got)
@@ -99,15 +99,15 @@ func TestClaudeSessionGetsTitle(t *testing.T) {
 // A failed title call leaves the label alone and the Session working.
 func TestTitleFailureLeavesLabel(t *testing.T) {
 	t.Setenv("EL_SESSION_TITLES", "1")
-	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
+	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "settings.json"))
 	own := &stubConn{updates: []map[string]any{chunk("answer")}}
 	title := &stubConn{promptErr: errNoAdapter}
 	be := newStubClaudeBackend(stubSequence(own, title))
-	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	events := readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	if len(events) < 3 {
@@ -121,12 +121,12 @@ func TestTitleFailureLeavesLabel(t *testing.T) {
 // Sessions on a harness without a title role stay untitled: fake has no
 // default, so nothing is spent.
 func TestNoTitleWithoutRole(t *testing.T) {
-	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "settings.json"))
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "settings.json"))
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	readSSE(t, srv.URL, id, 0, 4, 5*time.Second)
 	if got := waitTitle(t, srv.URL, id, true); got != "" {
@@ -138,20 +138,20 @@ func TestNoTitleWithoutRole(t *testing.T) {
 // a model; the title persists in the Session meta.
 func TestPigSessionGetsTitleFromRole(t *testing.T) {
 	t.Setenv("EL_SESSION_TITLES", "1")
-	settings := filepath.Join(t.TempDir(), "settings.json")
+	settings := filepath.Join(tempDir(t), "settings.json")
 	role := `{"roles":{"pig-title":{"harness":"pig","model":"` + pigFauxModel + `"}}}`
 	if err := os.WriteFile(settings, []byte(role), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	pb := newPigTestBackend(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	d.RegisterBackend("pig", pb)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	sendPrompt(t, srv.URL, id, "What is 20+22?")
 	got := waitTitle(t, srv.URL, id, true)
 	if got == "" {
@@ -168,7 +168,7 @@ func TestPigSessionGetsTitleFromRole(t *testing.T) {
 
 // The environment and the settings key both switch titles off.
 func TestTitlesEnabledSwitch(t *testing.T) {
-	settings := filepath.Join(t.TempDir(), "settings.json")
+	settings := filepath.Join(tempDir(t), "settings.json")
 	t.Setenv("EL_SETTINGS", settings)
 	t.Setenv("EL_SESSION_TITLES", "")
 	if !titlesEnabled() {
@@ -189,7 +189,7 @@ func TestTitlesEnabledSwitch(t *testing.T) {
 // Claude naming is the switch alone (haiku); pig naming is the pig-title
 // role alone; the claude switch never touches pig and vice versa.
 func TestTitleTargetSplitsClaudeAndPig(t *testing.T) {
-	settings := filepath.Join(t.TempDir(), "settings.json")
+	settings := filepath.Join(tempDir(t), "settings.json")
 	t.Setenv("EL_SETTINGS", settings)
 	t.Setenv("EL_SESSION_TITLES", "")
 	if h, m := titleTarget("claude"); h != "claude" || m != "haiku" {

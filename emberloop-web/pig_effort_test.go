@@ -29,7 +29,7 @@ func TestPigUnknownEffortRejected(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	body, _ := json.Marshal(map[string]string{"harness": "pig", "model": pigFauxModel, "workDir": t.TempDir(), "effort": "ultra"})
+	body, _ := json.Marshal(map[string]string{"harness": "pig", "model": pigFauxModel, "workDir": tempDir(t), "effort": "ultra"})
 	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestPigEffortAcceptedAndKept(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	body, _ := json.Marshal(map[string]string{"harness": "pig", "model": pigFauxModel, "workDir": t.TempDir(), "effort": "high"})
+	body, _ := json.Marshal(map[string]string{"harness": "pig", "model": pigFauxModel, "workDir": tempDir(t), "effort": "high"})
 	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatal(err)
@@ -73,10 +73,10 @@ func TestPigEffortAcceptedAndKept(t *testing.T) {
 func TestPigCreateSessionValidatesEffortFirst(t *testing.T) {
 	pb := NewPigBackend()
 	emit := func(kind, text, status string) {}
-	if err := pb.CreateSession(SessionMeta{ID: "effort-bad", Model: pigFauxModel, WorkDir: t.TempDir(), Effort: "ultra"}, emit); err == nil {
+	if err := pb.CreateSession(SessionMeta{ID: "effort-bad", Model: pigFauxModel, WorkDir: tempDir(t), Effort: "ultra"}, emit); err == nil {
 		t.Fatal("bad effort accepted")
 	}
-	if err := pb.CreateSession(SessionMeta{ID: "effort-model", Model: "nope/nonexistent-1", WorkDir: t.TempDir(), Effort: "high"}, emit); err == nil || !strings.Contains(err.Error(), "unknown model") {
+	if err := pb.CreateSession(SessionMeta{ID: "effort-model", Model: "nope/nonexistent-1", WorkDir: tempDir(t), Effort: "high"}, emit); err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("good effort with bad model err = %v", err)
 	}
 	pb.mu.Lock()

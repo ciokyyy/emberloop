@@ -10,7 +10,7 @@ import (
 // The built UI is a static bundle: index plus its hashed assets must all
 // serve from the embedded dist with correct content types.
 func TestServesBuiltStaticAssets(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 

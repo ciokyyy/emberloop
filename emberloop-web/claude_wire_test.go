@@ -149,7 +149,7 @@ func TestACPWireStreamsAndAutoApproves(t *testing.T) {
 	if err := conn.Initialize(); err != nil {
 		t.Fatal(err)
 	}
-	sid, err := conn.NewSession(t.TempDir(), []acpMCPServer{{Name: "m", Command: "/abs/mcp"}}, map[string]any{})
+	sid, err := conn.NewSession(tempDir(t), []acpMCPServer{{Name: "m", Command: "/abs/mcp"}}, map[string]any{})
 	if err != nil {
 		t.Fatal(err)
 	}

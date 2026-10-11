@@ -12,12 +12,12 @@ import (
 // A spawn name lands on the child meta, the list, and the parent's
 // spawned payload; an empty name falls back to four prompt words.
 func TestSpawnNamesAndFallback(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	base := srv.URL
 
-	parent := createSession(t, base, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, base, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, base, parent, map[string]any{
 		"agents": []map[string]any{
 			{"prompt": "job A does things", "name": "Alpha"},
@@ -82,12 +82,12 @@ func TestAgentDisplayName(t *testing.T) {
 
 // An unknown deliver mode is refused with no half Group.
 func TestSpawnUnknownDeliverRefused(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	base := srv.URL
 
-	parent := createSession(t, base, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, base, "fake", "fake-model", tempDir(t))
 	if code, _ := postSpawn(t, base, parent, map[string]any{
 		"deliver": "broadcast",
 		"agents":  []map[string]any{{"prompt": "job A"}},
@@ -101,12 +101,12 @@ func TestSpawnUnknownDeliverRefused(t *testing.T) {
 
 // Each delivery sends one notice per child as it settles.
 func TestDeliverEachSendsOneNoticePerChild(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	base := srv.URL
 
-	parent := createSession(t, base, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, base, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, base, parent, map[string]any{
 		"deliver": "each",
 		"agents": []map[string]any{

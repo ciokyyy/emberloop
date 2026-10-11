@@ -28,7 +28,7 @@ func TestInterruptStopsWorkingPigSession(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	startChainedSlowTurns(t, srv.URL, id)
 	if code, _ := postMode(t, srv.URL, id, "followup", "never runs"); code != http.StatusAccepted {
 		t.Fatalf("followup status = %d", code)
@@ -50,7 +50,7 @@ func TestInterruptIdleSessionReportsFalse(t *testing.T) {
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	code, body := postInterrupt(t, srv.URL, id)
 	if code != http.StatusOK || body["interrupted"] != false {
 		t.Fatalf("idle interrupt = %d %v, want 200 false", code, body)
@@ -67,7 +67,7 @@ func TestPigSteerWithImagesQueuesNatively(t *testing.T) {
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	startChainedSlowTurns(t, srv.URL, id)
 	body, _ := json.Marshal(map[string]any{"text": "look", "mode": "steer",
 		"images": []Image{{Mime: "image/png", Data: "iVBORw0KGgo="}}})

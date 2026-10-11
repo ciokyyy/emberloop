@@ -12,11 +12,11 @@ import (
 // A voice recording uploads through the images route, keeps its duration and
 // peaks, serves back, and never reaches the model as a file path or pixels.
 func TestAudioUploadKeepsPeaksAndStaysOutOfModelInput(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("webm-bytes"))
 	code, out := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "voice.webm", "mediaType": "audio/webm;codecs=opus", "data": data,
@@ -52,10 +52,10 @@ func TestAudioUploadKeepsPeaksAndStaysOutOfModelInput(t *testing.T) {
 }
 
 func TestUploadRejectsOtherMediaTypes(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, _ := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.txt", "mediaType": "text/plain", "data": base64.StdEncoding.EncodeToString([]byte("x")),
 	})

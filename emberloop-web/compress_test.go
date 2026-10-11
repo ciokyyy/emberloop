@@ -74,7 +74,7 @@ func (c *compactFake) callCount() int {
 
 func useSettings(t *testing.T, json string) {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "settings.json")
+	p := filepath.Join(tempDir(t), "settings.json")
 	t.Setenv("EL_SETTINGS", p)
 	if json != "" {
 		if err := os.WriteFile(p, []byte(json), 0o600); err != nil {
@@ -132,10 +132,10 @@ func TestCompressManualRunsAndReportsResult(t *testing.T) {
 	useSettings(t, "")
 	be := newCompactFake()
 	be.used = 900
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	code, _ := compressReq(t, srv.URL, id, "keep the API notes")
 	if code != http.StatusAccepted {
@@ -162,10 +162,10 @@ func TestCompressFailureIsReportedAndSessionRecovers(t *testing.T) {
 	useSettings(t, "")
 	be := newCompactFake()
 	be.err = errString("summary model unavailable")
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	if code, _ := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d", code)
@@ -188,10 +188,10 @@ func TestCompressGuards(t *testing.T) {
 	useSettings(t, "")
 	be := newCompactFake()
 	be.Delay = 300 * time.Millisecond
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	sendPrompt(t, srv.URL, id, "slow")
 	waitStatus(t, srv.URL, id, "working", 5*time.Second)
@@ -205,10 +205,10 @@ func TestCompressGuards(t *testing.T) {
 	}
 
 	// A Backend without in-place compaction swaps by Handoff.
-	plain := NewDaemon(t.TempDir(), NewFakeBackend())
+	plain := NewDaemon(tempDir(t), NewFakeBackend())
 	srv2 := httptest.NewServer(plain.Handler())
 	defer srv2.Close()
-	pid := createSession(t, srv2.URL, "fake", "fake-model", t.TempDir())
+	pid := createSession(t, srv2.URL, "fake", "fake-model", tempDir(t))
 	if code, body := compressReq(t, srv2.URL, pid, ""); code != http.StatusAccepted {
 		t.Fatalf("handoff compress = %d %v, want 202", code, body)
 	}
@@ -223,10 +223,10 @@ func TestCompressQueuesMessagesUntilDone(t *testing.T) {
 	be := newCompactFake()
 	be.used = 900
 	be.hold = make(chan struct{})
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	compressReq(t, srv.URL, id, "")
 	waitStatus(t, srv.URL, id, "working", 5*time.Second)
@@ -270,10 +270,10 @@ func TestAutoCompress(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			useSettings(t, tc.settings)
 			be := newCompactFake()
-			d := NewDaemon(t.TempDir(), be)
+			d := NewDaemon(tempDir(t), be)
 			srv := httptest.NewServer(d.Handler())
 			defer srv.Close()
-			id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+			id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 			for i := 0; i < tc.prompts; i++ {
 				be.mu.Lock()
 				be.used = tc.used
@@ -294,7 +294,7 @@ func TestAutoCompress(t *testing.T) {
 // Settings round-trip through GET and PUT, with defaults and validation.
 func TestCompressSettings(t *testing.T) {
 	useSettings(t, "")
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -352,7 +352,7 @@ func TestPigCompressUsesSDKCompaction(t *testing.T) {
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "pig", pigFauxModel, t.TempDir())
+	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 
 	for i := 0; i < 3; i++ {
 		sendPrompt(t, srv.URL, id, "work item "+strings.Repeat("x", 200))

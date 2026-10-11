@@ -17,14 +17,14 @@ import (
 
 func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	settings := filepath.Join(dir, "settings.json")
 	if err := os.WriteFile(settings, []byte(settingsBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
 	t.Setenv("EL_MAX_WORKERS", "")
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	t.Cleanup(srv.Close)
 	return srv, settings
@@ -154,7 +154,7 @@ func TestSettingsWriteValidatesAndSavesMaxWorkers(t *testing.T) {
 // A write changes the live cap; over-cap behaviour is unchanged.
 func TestSettingsWriteChangesLiveCap(t *testing.T) {
 	srv, _ := settingsServer(t, `{"max_workers": 1, "roles": {}}`)
-	workDir := t.TempDir()
+	workDir := tempDir(t)
 
 	_ = createSession(t, srv.URL, "fake", "fake-model", workDir)
 	body, _ := json.Marshal(map[string]string{"harness": "fake", "model": "fake-model", "workDir": workDir})
@@ -224,7 +224,7 @@ func TestSettingsEnvOverrideWinsOverWrite(t *testing.T) {
 		t.Fatalf("saved max_workers = %d, want 3 kept for when the env is unset", saved.MaxWorkers)
 	}
 
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	if got := d.MaxRunning(); got != 1 {
 		t.Fatalf("live cap under env = %d, want 1", got)
 	}

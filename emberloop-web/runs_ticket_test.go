@@ -158,7 +158,7 @@ func TestReviewerSubmitRefused409(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -195,7 +195,7 @@ func TestReviewerMessagesRefused409(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -247,7 +247,7 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(t.TempDir(), fb)
+	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -296,7 +296,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 
@@ -357,7 +357,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 		t.Fatalf("reloaded followups = %q, want the note", tk2.Followups)
 	}
 
-	legacyDir := t.TempDir()
+	legacyDir := tempDir(t)
 	legacy := map[string]any{
 		"id": "run-legacy", "spec": spec, "repo": repo, "status": "paused",
 		"harness": "fake", "model": "m", "tickets": []any{},
@@ -388,7 +388,7 @@ func TestHeldPassNoRerun(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -452,7 +452,7 @@ func TestRunTicketJSONExposesPageFields(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -584,7 +584,7 @@ func TestRunSSEPublishesTicketChanges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -624,7 +624,7 @@ func TestRunSSEPublishesScoutAgent(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -664,7 +664,7 @@ func TestRunNeedsYouReasonSameRefusal(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 

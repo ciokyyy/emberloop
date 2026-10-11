@@ -110,7 +110,7 @@ func runFileRows(t *testing.T, stateDir, id string) map[string]map[string]any {
 // Worker for any Ticket, and the finished Run stays listed and readable.
 func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	repo, spec := initRunRepo(t, chainTickets())
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -203,7 +203,7 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 // Run shows its Ticket rows.
 func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 
@@ -283,7 +283,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 // Pause and Resume refuse the wrong states and unknown Runs.
 func TestPauseResumeValidation(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
@@ -325,7 +325,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 			t.Fatalf("pause never landed before the first start in 6 rounds")
 		}
 		repo, spec := initRunRepo(t, tickets)
-		d := NewDaemon(t.TempDir(), NewFakeBackend())
+		d := NewDaemon(tempDir(t), NewFakeBackend())
 		srv := httptest.NewServer(d.Handler())
 		run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 		if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
@@ -382,7 +382,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 // No API call deletes a Run, so starting for an unknown Run is unreachable
 // outside these defensive branches: both error instead of touching a nil Run.
 func TestRunStartUnknownRunErrors(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	if err := d.runStartWorker("no-such-run", el.DriverTicket{ID: "01-first"}); err == nil {
 		t.Fatalf("runStartWorker unknown run = nil, want error")
 	}
@@ -396,7 +396,7 @@ func TestRunStartUnknownRunErrors(t *testing.T) {
 // user paused by hand stays paused.
 func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 

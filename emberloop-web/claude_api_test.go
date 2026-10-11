@@ -18,11 +18,11 @@ var errNoAdapter = errors.New("no adapter")
 func TestClaudeSessionOverAPIStreamsEvents(t *testing.T) {
 	stub := &stubConn{updates: []map[string]any{chunk("real answer")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	events := readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	seen := map[string]bool{}
@@ -39,11 +39,11 @@ func TestClaudeSessionOverAPIStreamsEvents(t *testing.T) {
 func TestClaudeSessionCreationValidates(t *testing.T) {
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	body, _ := json.Marshal(map[string]string{"harness": "claude", "model": "gpt-9", "workDir": t.TempDir()})
+	body, _ := json.Marshal(map[string]string{"harness": "claude", "model": "gpt-9", "workDir": tempDir(t)})
 	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -53,10 +53,10 @@ func TestClaudeSessionCreationValidates(t *testing.T) {
 		t.Fatalf("bad model status = %d, want 400", resp.StatusCode)
 	}
 
-	plain := NewDaemon(t.TempDir(), NewFakeBackend())
+	plain := NewDaemon(tempDir(t), NewFakeBackend())
 	srv2 := httptest.NewServer(plain.Handler())
 	defer srv2.Close()
-	body, _ = json.Marshal(map[string]string{"harness": "claude", "model": "sonnet", "workDir": t.TempDir()})
+	body, _ = json.Marshal(map[string]string{"harness": "claude", "model": "sonnet", "workDir": tempDir(t)})
 	resp, err = http.Post(srv2.URL+"/api/sessions", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -71,11 +71,11 @@ func TestClaudeSessionCreationValidates(t *testing.T) {
 // state behind.
 func TestClaudeStartFailureRemovesSession(t *testing.T) {
 	be := newStubClaudeBackend(func() (acpConn, error) { return &stubConn{newErr: errNoAdapter}, nil })
-	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	body, _ := json.Marshal(map[string]string{"harness": "claude", "model": "sonnet", "workDir": t.TempDir()})
+	body, _ := json.Marshal(map[string]string{"harness": "claude", "model": "sonnet", "workDir": tempDir(t)})
 	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestClaudeStartFailureRemovesSession(t *testing.T) {
 }
 
 func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 

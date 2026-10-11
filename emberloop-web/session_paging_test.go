@@ -175,7 +175,7 @@ func getSnapshot(t *testing.T, base, id, query string) (events []Event, hasMore 
 }
 
 func TestSessionTailBeforePagingOverHTTP(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedDirectSession(d, "s1", mkEvents(4)) // prompts at seqs 1,4,7,10
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -223,7 +223,7 @@ func TestSessionTailBeforePagingOverHTTP(t *testing.T) {
 }
 
 func TestSessionSnapshotCompactsOverHTTP(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedDirectSession(d, "s1", []Event{
 		{Kind: "prompt", Text: "hi"},
 		{Kind: "tool_call_started", Text: toolText("a", "ec", "")},
@@ -270,7 +270,7 @@ func readAll(t *testing.T, resp *http.Response) string {
 }
 
 func TestSPAFallback(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 

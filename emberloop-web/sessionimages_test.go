@@ -42,11 +42,11 @@ func listImages(t *testing.T, base, session string) (int, []ImageMeta) {
 
 // Upload, list and serve round-trip one image with its metadata.
 func TestImageUploadListServe(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	code, out := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.png", "mediaType": "image/png", "data": data,
@@ -84,11 +84,11 @@ func TestImageUploadListServe(t *testing.T) {
 
 // Uploads refuse non-images, bad data and oversized payloads.
 func TestImageUploadRefusals(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("x"))
 	if code, _ := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.txt", "mediaType": "text/plain", "data": data,
@@ -117,11 +117,11 @@ func TestImageUploadRefusals(t *testing.T) {
 // agent receives their file paths (the fake Backend echoes its prompt, so
 // the reply carries the resolved path).
 func TestPromptWithImageIDsReachesAgentAsPaths(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	_, out := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.png", "mediaType": "image/png", "data": data,
@@ -164,11 +164,11 @@ func TestPromptWithImageIDsReachesAgentAsPaths(t *testing.T) {
 
 // A prompt naming an unattached image is refused.
 func TestPromptUnknownImageIDRefused(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	body, _ := json.Marshal(map[string]any{"text": "hi", "imageIds": []string{"nope"}})
 	resp, err := http.Post(srv.URL+"/api/sessions/"+id+"/prompt", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -182,12 +182,12 @@ func TestPromptUnknownImageIDRefused(t *testing.T) {
 
 // Deleting the Session deletes its attached images with it.
 func TestDeleteSessionDeletesImages(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	if code, _ := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.png", "mediaType": "image/png", "data": data,
@@ -221,11 +221,11 @@ func TestMergePendingKeepsImageIDs(t *testing.T) {
 // bytes too, while the prompt Event keeps the clean text plus the ids.
 func TestPromptWithImageIDsReachesBackendAsInlineBytes(t *testing.T) {
 	be := &imageFake{}
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	_, out := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.png", "mediaType": "image/png", "data": data,
@@ -279,11 +279,11 @@ func TestPromptWithImageIDsReachesBackendAsInlineBytes(t *testing.T) {
 func TestQueuedImageIDsDeliverInlineBytesAfterTurn(t *testing.T) {
 	be := &imageFake{}
 	be.Delay = 500 * time.Millisecond
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	_, out := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.png", "mediaType": "image/png", "data": data,
@@ -331,11 +331,11 @@ func TestQueuedImageIDsDeliverInlineBytesAfterTurn(t *testing.T) {
 
 // Unknown stored ids resolve to nothing: the text-only path stays intact.
 func TestStoredImagesAsInlineSkipsUnknown(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	data := base64.StdEncoding.EncodeToString([]byte("png-bytes"))
 	_, out := uploadImage(t, srv.URL, id, map[string]any{
 		"name": "a.png", "mediaType": "image/png", "data": data,

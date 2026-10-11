@@ -22,16 +22,16 @@ func TestLivePigACP(t *testing.T) {
 	if model == "" {
 		model = "opencode-go/muse-spark-1.3-contributor"
 	}
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	be, err := NewPigACPBackend(t.TempDir(), bin, srv.URL)
+	be, err := NewPigACPBackend(tempDir(t), bin, srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.RegisterBackend("pig", be)
 
-	id := createSession(t, srv.URL, "pig", model, t.TempDir())
+	id := createSession(t, srv.URL, "pig", model, tempDir(t))
 	sendPrompt(t, srv.URL, id, "Run bash: echo ACP-TOOL-OK. Then reply with exactly: TURN-ONE-DONE")
 	es := pollEvents(t, srv.URL, id, 3*time.Minute, func(es []Event) bool {
 		return strings.Contains(assistantText(es), "TURN-ONE-DONE")

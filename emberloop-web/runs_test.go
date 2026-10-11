@@ -12,11 +12,11 @@ import (
 
 // Slice 1: a directory with no spec returns an empty list.
 func TestListSpecsEmptyDir(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/specs?repo=" + url.QueryEscape(t.TempDir()))
+	resp, err := http.Get(srv.URL + "/api/specs?repo=" + url.QueryEscape(tempDir(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,11 +44,11 @@ func TestListSpecsEmptyDir(t *testing.T) {
 
 // Slice 2: the list returns title and ticket count for each spec found.
 func TestListSpecsFindsSpecWithTitleAndCount(t *testing.T) {
-	repo := t.TempDir()
+	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [ ] a box\n")
 	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Blocked by:** 01\n\n- [ ] a box\n")
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/specs?repo=" + url.QueryEscape(repo))
@@ -83,7 +83,7 @@ func TestListSpecsFindsSpecWithTitleAndCount(t *testing.T) {
 
 // Specs under a directory named archive are never listed.
 func TestListSpecsSkipsArchive(t *testing.T) {
-	repo := t.TempDir()
+	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/live/spec.md", "# Live spec\n")
 	writeFile(t, repo, ".scratch/archive/old/spec.md", "# Old spec\n")
 	got, err := discoverSpecs(repo)
@@ -108,11 +108,11 @@ func writeFile(t *testing.T, root, name, content string) {
 
 // Slice 3: the preview returns number, title, blockers and checkbox progress.
 func TestSpecPreviewBlockersAndProgress(t *testing.T) {
-	repo := t.TempDir()
+	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [x] done box\n- [ ] todo box\n")
 	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Blocked by:** 01\n\n- [ ] a box\n")
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	spec := filepath.Join(repo, ".scratch", "demo", "spec.md")
@@ -158,11 +158,11 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 // Slice 4: an unparsable Blocked by line surfaces as an error on that
 // ticket and blocks nothing else in the list.
 func TestSpecPreviewBadBlockedByIsRowError(t *testing.T) {
-	repo := t.TempDir()
+	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [ ] a box\n")
 	writeFile(t, repo, ".scratch/demo/issues/02-bad.md", "# 02: Bad\n\n**Blocked by** none\n\n- [ ] a box\n")
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 	spec := filepath.Join(repo, ".scratch", "demo", "spec.md")

@@ -44,10 +44,10 @@ func postImgJSON(t *testing.T, url string, body any) *http.Response {
 
 func TestPromptWithImagesReachesBackendAndCountsInEvent(t *testing.T) {
 	be := &imageFake{}
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
 	res := postImgJSON(t, srv.URL+"/api/sessions/"+id+"/prompt", map[string]any{
 		"text":   "what is this",
@@ -82,10 +82,10 @@ func TestPromptWithImagesReachesBackendAndCountsInEvent(t *testing.T) {
 }
 
 func TestPromptImagesOnlyIsAccepted(t *testing.T) {
-	d := NewDaemon(t.TempDir(), &imageFake{})
+	d := NewDaemon(tempDir(t), &imageFake{})
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	res := postImgJSON(t, srv.URL+"/api/sessions/"+id+"/prompt", map[string]any{
 		"images": []Image{{Mime: "image/png", Data: tinyPNG}},
 	})
@@ -95,10 +95,10 @@ func TestPromptImagesOnlyIsAccepted(t *testing.T) {
 }
 
 func TestPromptRejectsBadImages(t *testing.T) {
-	d := NewDaemon(t.TempDir(), &imageFake{})
+	d := NewDaemon(tempDir(t), &imageFake{})
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	for name, img := range map[string]Image{
 		"mime":   {Mime: "text/html", Data: tinyPNG},
 		"base64": {Mime: "image/png", Data: "!!!"},

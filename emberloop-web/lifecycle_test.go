@@ -100,14 +100,14 @@ func (b *probeBackend) counts() (creates, closes, releases, resumes int) {
 
 // Starting a Session over the cap is refused with a clear message.
 func TestSessionCapRefusedOverMax(t *testing.T) {
-	d := NewDaemon(t.TempDir(), newProbeBackend())
+	d := NewDaemon(tempDir(t), newProbeBackend())
 	d.SetMaxRunning(1)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	_ = createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	_ = createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
-	body, _ := json.Marshal(map[string]string{"harness": "fake", "model": "fake-model", "workDir": t.TempDir()})
+	body, _ := json.Marshal(map[string]string{"harness": "fake", "model": "fake-model", "workDir": tempDir(t)})
 	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestSessionCapRefusedOverMax(t *testing.T) {
 // The cap reads the global max_workers setting: env wins, then the settings
 // file, then the built-in default.
 func TestMaxRunningReadsGlobalSetting(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	t.Setenv("HOME", dir)
 	t.Setenv("EL_MAX_WORKERS", "")
 	t.Setenv("EL_SETTINGS", "")
@@ -160,11 +160,11 @@ func TestMaxRunningReadsGlobalSetting(t *testing.T) {
 // still answers.
 func TestIdleSessionReleasedAndResumed(t *testing.T) {
 	be := newProbeBackend()
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "first")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	waitForLive(t, srv.URL, id, false, 5*time.Second)
@@ -192,11 +192,11 @@ func TestIdleSessionReleasedAndResumed(t *testing.T) {
 
 // After a Daemon restart a resumable Session accepts a new prompt.
 func TestRestartResumesSession(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	be := newProbeBackend()
 	d := NewDaemon(dir, be)
 	srv := httptest.NewServer(d.Handler())
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "before")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	srv.Close()
@@ -224,11 +224,11 @@ func TestRestartResumesSession(t *testing.T) {
 // A non-resumable Session keeps readable history, says why, and refuses a
 // new prompt.
 func TestNonResumableSessionReadOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	be := newProbeBackend()
 	d := NewDaemon(dir, be)
 	srv := httptest.NewServer(d.Handler())
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv.URL, id, "hello")
 	_ = readSSE(t, srv.URL, id, 0, 5, 5*time.Second)
 	srv.Close()

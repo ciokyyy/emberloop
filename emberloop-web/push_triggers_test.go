@@ -69,10 +69,10 @@ func decodePushMessage(t *testing.T, decrypt func([]byte) []byte, body []byte) p
 }
 
 func TestPushTurnDoneCueKeyAndPath(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
 
 	d.appendEvent(id, "status", "", "working")
@@ -91,10 +91,10 @@ func TestPushTurnDoneCueKeyAndPath(t *testing.T) {
 }
 
 func TestPushTurnFailedUsesErrorCue(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
 
 	d.appendEvent(id, "status", "", "working")
@@ -107,10 +107,10 @@ func TestPushTurnFailedUsesErrorCue(t *testing.T) {
 }
 
 func TestPushSudoRequestUsesMentionCue(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
 
 	body, _ := json.Marshal(map[string]string{"command": "sudo apt-get update"})
@@ -136,7 +136,7 @@ func TestPushSudoRequestUsesMentionCue(t *testing.T) {
 }
 
 func TestPushRunNeedsYouUsesBlockedCueAndTicketPath(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	cap, decrypt := capturePush(t, d)
 
 	reason := "same refusal 3 times: boom"
@@ -155,7 +155,7 @@ func TestPushRunNeedsYouUsesBlockedCueAndTicketPath(t *testing.T) {
 }
 
 func TestNoteNeedsYouPushDedupsPerReason(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	rs := &runState{ID: "run-1"}
 
 	if !d.noteNeedsYouPushLocked(rs, "t1", "same refusal 3 times") {
@@ -213,7 +213,7 @@ func TestNeedsYouKeyIncludesReasonHash(t *testing.T) {
 // with a new key. This drives the same per-reason gate the driver Notify
 // holds before pushRunNeedsYou, through the real encrypted push path.
 func TestPushDuplicateNotifySendsOnce(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	cap, decrypt := capturePush(t, d)
 	rs := &runState{ID: "run-1", Tickets: []staticTicket{{ID: "01-first", Num: 1, Title: "First"}}}
 	notify := func(ticketID, reason string) {
@@ -256,10 +256,10 @@ func TestPushDuplicateNotifySendsOnce(t *testing.T) {
 // A settling child or scout sends no push of its own: only the parent's
 // grouped-result turn notifies. Driven through spawn and real turn settles.
 func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, decrypt := capturePush(t, d)
 
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
@@ -295,10 +295,10 @@ func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
 func TestPushEndedSessionStaysSilent(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = time.Second
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	cap, _ := capturePush(t, d)
 
 	sendPrompt(t, srv.URL, id, "slow job")
@@ -337,7 +337,7 @@ func TestPushNotifyDropsGoneSubscriptions(t *testing.T) {
 		w.WriteHeader(code)
 	}))
 	defer srv.Close()
-	p := newPushStore(t.TempDir())
+	p := newPushStore(tempDir(t))
 	p.client = srv.Client()
 	for _, want := range []int{http.StatusNotFound, http.StatusGone} {
 		sub, _, _ := newTestSub(t, srv.URL+"/sub")

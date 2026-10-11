@@ -9,7 +9,7 @@ import (
 // The guard accepts loopback, plus hostnames on the allow list (a local
 // reverse proxy forwards its public name), and nothing else.
 func TestGuardAllowedHosts(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetAllowedHosts([]string{"Box.tail1234.ts.net."})
 	h := d.Handler()
 	cases := []struct {
@@ -35,7 +35,7 @@ func TestGuardAllowedHosts(t *testing.T) {
 			t.Errorf("host %q origin %q = %d, want %d", c.host, c.origin, rec.Code, c.want)
 		}
 	}
-	plain := NewDaemon(t.TempDir(), NewFakeBackend()).Handler()
+	plain := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	req := httptest.NewRequest("GET", "/api/projects", nil)
 	req.Host = "box.tail1234.ts.net"
 	rec := httptest.NewRecorder()
@@ -47,7 +47,7 @@ func TestGuardAllowedHosts(t *testing.T) {
 
 // Tailnet mode accepts Tailscale addresses (100.64.0.0/10) and nothing else new.
 func TestGuardTailnetAddresses(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.AllowTailnet(true)
 	h := d.Handler()
 	for host, want := range map[string]int{
@@ -65,7 +65,7 @@ func TestGuardTailnetAddresses(t *testing.T) {
 			t.Errorf("host %s = %d, want %d", host, rec.Code, want)
 		}
 	}
-	off := NewDaemon(t.TempDir(), NewFakeBackend()).Handler()
+	off := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	req := httptest.NewRequest("GET", "/api/projects", nil)
 	req.Host = "100.94.50.96:7940"
 	rec := httptest.NewRecorder()

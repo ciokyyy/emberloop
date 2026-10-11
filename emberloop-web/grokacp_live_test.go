@@ -17,17 +17,17 @@ func TestLiveGrokACP(t *testing.T) {
 	if os.Getenv("EL_LIVE_GROK") == "" {
 		t.Skip("set EL_LIVE_GROK=1 (grok logged in, el-mcp on PATH) for the grok probe")
 	}
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	be, err := NewGrokACPBackend(t.TempDir(), srv.URL)
+	be, err := NewGrokACPBackend(tempDir(t), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.RegisterBackend("grok", be)
 
 	model := be.Models()[0]
-	wd := t.TempDir()
+	wd := tempDir(t)
 	if err := os.WriteFile(wd+"/hello.txt", []byte("the magic word is KUMQUAT\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

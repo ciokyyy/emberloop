@@ -26,7 +26,7 @@ func TestSTTProxiesAudioToOpenRouter(t *testing.T) {
 		_, _ = w.Write([]byte(`{"text":" hello world "}`))
 	}))
 	defer or.Close()
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	srv := httptest.NewServer(d.Handler())
@@ -51,7 +51,7 @@ func TestSTTProxiesAudioToOpenRouter(t *testing.T) {
 }
 
 func TestSTTWithoutKeyIs503AndGetReportsDisabled(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "" }
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -69,7 +69,7 @@ func TestSTTWithoutKeyIs503AndGetReportsDisabled(t *testing.T) {
 }
 
 func TestSTTRejectsUnknownAudioType(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -85,7 +85,7 @@ func TestSTTUpstreamErrorIs502WithMessage(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"no credits"}}`))
 	}))
 	defer or.Close()
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	srv := httptest.NewServer(d.Handler())
@@ -107,7 +107,7 @@ func TestSTTModelEnvOverride(t *testing.T) {
 	if got := sttFormatModelName(); got != "google/gemma-3-4b-it" {
 		t.Fatalf("format model = %q", got)
 	}
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
@@ -144,7 +144,7 @@ func TestSTTFormatPassCleansPerSegment(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Hello, world."}}]}`))
 	}))
 	defer chat.Close()
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	d.sttChatURL = chat.URL
@@ -186,7 +186,7 @@ func TestSTTWithoutFormatSkipsChat(t *testing.T) {
 		chatCalls++
 	}))
 	defer chat.Close()
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	d.sttChatURL = chat.URL
@@ -217,7 +217,7 @@ func TestSTTFormatFailsOpenOnChatError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"overloaded"}}`))
 	}))
 	defer chat.Close()
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	d.sttURL = or.URL
 	d.sttChatURL = chat.URL

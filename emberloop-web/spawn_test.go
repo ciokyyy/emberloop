@@ -29,11 +29,11 @@ func postSpawn(t *testing.T, base, parent string, body any) (int, map[string]any
 // Slice 1: a spawn call creates one Subagent Session per requested agent,
 // each recording its parent and Group.
 func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{
 			{"prompt": "job A"},
@@ -85,11 +85,11 @@ func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
 // Slice 1: the session list links Subagents to their parent, so the tree
 // nests them underneath it.
 func TestSpawnedSessionsNestUnderParent(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	_, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
 	})
@@ -131,11 +131,11 @@ func TestSpawnedSessionsNestUnderParent(t *testing.T) {
 // Slice 2: when the last Group member finishes, the parent receives exactly
 // one grouped result as a Steer.
 func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
 	})
@@ -185,11 +185,11 @@ func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
 
 // Slice 3: a scout Subagent is read-only: user sends are refused.
 func TestScoutSubagentCannotWrite(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "look only", "type": "scout"}},
 	})
@@ -246,11 +246,11 @@ func countKind(events []Event, kind string) int {
 
 // The parent transcript names every spawn and the one grouped finish.
 func TestSpawnEmitsParentNotifications(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	if code, _ := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
 	}); code != http.StatusCreated {
@@ -279,12 +279,12 @@ func TestSpawnEmitsParentNotifications(t *testing.T) {
 
 // Over the cap the whole spawn call is refused with no half Group.
 func TestSpawnOverCapRefusesWithoutHalfGroup(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, _ := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}},
 	})
@@ -320,11 +320,11 @@ func (b *flakyBackend) CreateSession(meta SessionMeta, emit func(kind, text, sta
 // no stranded child.
 func TestSpawnFailureRollsBackGroup(t *testing.T) {
 	be := &flakyBackend{FakeBackend: NewFakeBackend()}
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	be.failOn = be.calls + 2
 	code, _ := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
@@ -344,12 +344,12 @@ func TestSpawnFailureRollsBackGroup(t *testing.T) {
 
 // A restart after delivery never resends the grouped result.
 func TestRestartAfterDeliveryNeverResends(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
 	})
@@ -393,11 +393,11 @@ func TestRestartAfterDeliveryNeverResends(t *testing.T) {
 func TestEndedParentKeepsMarkerWithoutSteer(t *testing.T) {
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
-	d := NewDaemon(t.TempDir(), fake)
+	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	parent := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, out := postSpawn(t, srv.URL, parent, map[string]any{
 		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
 	})
