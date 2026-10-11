@@ -609,15 +609,20 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   (`POST /api/runs` starts with spec, repo, harness, model; a second active
   Start on the same spec is 409; `GET /api/runs` lists, `GET /api/runs/{id}`
   shows the live Ticket table, `GET /api/runs/{id}/events` streams it over
-  SSE). Each Ticket starts in number order once blockers merged, up to the
-  live-Session cap, in its own worktree and branch as a Subagent of the Run
-  (ParentID the Run). Worktree creation enables extensions.worktreeConfig once
-  per repo, then sets per-worktree user.name/user.email (emberloop) and a
-  per-worktree spec excludes file, so the User's shared repo config is
-  untouched; it also mirrors missing spec files read-only into the worktree
-  at the same repo-relative path (existing files untouched; copied gap files
-  go in the excludes file, so the mirror never dirties the checkout); only
-  the driver ticks boxes in the main checkout.
+  SSE). Start creates the Run's `spec/<slug>` branch from the master tip
+  (the master ref when present, else main) when absent and reuses it
+  as it stands otherwise, recording the branch and the master tip at Start
+  (`specBranch`, `specBase`) on the Run row; the main checkout
+  never moves. Each Ticket starts in number order once blockers merged, up to the
+  live-Session cap, in its own worktree forked from the spec branch as a
+  Subagent of the Run (ParentID the Run). Worktree creation enables
+  extensions.worktreeConfig once per repo, then sets per-worktree
+  user.name/user.email (emberloop) and a per-worktree spec excludes file, so
+  the User's shared repo config is untouched; it also mirrors missing spec
+  files read-only into the worktree at the same repo-relative path (existing
+  files untouched; copied gap files go in the excludes file, so the mirror
+  never dirties the checkout); only the driver ticks boxes in the main
+  checkout.
   The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
@@ -634,17 +639,23 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   containing `(optional)`, fenced code excluded) are trimmed.
   `runs_inject_test.go` pins the content per role.
   The system prompt carries the role extra, no `remember` in any of them. A submitted
-  done (`POST /api/sessions/{id}/submit`) merges by rebase plus
-  fast-forward-only through the shared core checks; a non-done submit waits
-  for done instead of merging; the submit gate refuses a done with no new
-  commit since the last changes verdict and a done whose report or summary
-  says the work is not done (both 409 with a reason), and a second blocked
-  submit with the same question hash becomes needs-you; a dirty worktree or
+  done (`POST /api/sessions/{id}/submit`) merges into the spec branch
+  by rebase plus fast-forward-only (`mergeTicketIntoSpec` via
+  `ffUpdateSpecBranch`'s update-ref, so a hand-checked-out spec branch still
+  merges; same dirty-worktree and rebase-conflict refusals as the shared
+  core checks, the done mark committed on the spec branch); a non-done
+  submit waits for done instead of merging; the submit gate refuses a done
+  with no new commit since the last changes verdict and a done whose report
+  or summary says the work is not done (both 409 with a reason), and a second
+  blocked submit with the same question hash becomes needs-you; a dirty
+  worktree or
   rebase conflict keeps the Worker alive with the refusal on its row and
-  tells the Worker. With no target branch (detached repo) the rebase falls
-  back to the repo HEAD as it stands at finish, never the recorded base.
-  Start refuses a spec outside the repo. Boxes tick from the submit completed
-  list through the per-file lock, the driver the only writer. Roles from
+  tells the Worker. Runs predating the spec branch keep the old master merge
+  (detached: rebase onto the repo HEAD as it stands at finish, never the
+  recorded base). The live table reads each ticket file from the spec branch,
+  so ticks and the done mark show. Start refuses a spec outside the repo.
+  Boxes tick from the submit completed list through the per-file lock, the
+  driver the only writer. Roles from
   settings choose harness, model and effort, falling back to the Start
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent

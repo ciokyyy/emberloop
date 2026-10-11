@@ -10,7 +10,8 @@ import (
 
 // A seeded Worker that commits the seed as its task instructs merges cleanly
 // in a real git repo that lacks a root AGENTS.md: the seed rides the branch
-// onto main instead of tripping the dirty-worktree refusal on every finish.
+// onto the spec branch instead of tripping the dirty-worktree refusal on
+// every finish. Master never moves here; the final merge carries it later.
 func TestSeededWorkerCommitsAndMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -58,11 +59,8 @@ func TestSeededWorkerCommitsAndMerges(t *testing.T) {
 			t.Fatalf("ticket %s state = %q, want merged", tk.ID, tk.State)
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(repo, "AGENTS.md"))
-	if err != nil {
-		t.Fatalf("no AGENTS.md on main after merge: %v", err)
-	}
-	if !strings.Contains(string(raw), "Child DOX Index") {
+	raw := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:AGENTS.md"))
+	if !strings.Contains(raw, "Child DOX Index") {
 		t.Fatalf("merged file lacks the DOX shape: %q", raw)
 	}
 }

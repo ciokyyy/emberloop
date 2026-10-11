@@ -75,13 +75,15 @@ type runTicketJSON struct {
 }
 
 type runJSON struct {
-	ID      string          `json:"id"`
-	Spec    string          `json:"spec"`
-	Status  string          `json:"status"`
-	Harness string          `json:"harness"`
-	Model   string          `json:"model"`
-	Effort  string          `json:"effort"`
-	Tickets []runTicketJSON `json:"tickets"`
+	ID         string          `json:"id"`
+	Spec       string          `json:"spec"`
+	Status     string          `json:"status"`
+	Harness    string          `json:"harness"`
+	Model      string          `json:"model"`
+	Effort     string          `json:"effort"`
+	SpecBranch string          `json:"specBranch"`
+	SpecBase   string          `json:"specBase"`
+	Tickets    []runTicketJSON `json:"tickets"`
 }
 
 func startRun(t *testing.T, base, spec, repo, harness, model string) runJSON {
@@ -369,7 +371,8 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 }
 
 // Slice 4: checkboxes tick from the Worker completed list, written only by
-// the driver. The ticket file gains [x] and Status done after the merge.
+// the driver. The spec branch's ticket file gains [x] and Status done after
+// the merge into it; master never moves here.
 func TestRunTicksBoxesFromCompletedList(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
@@ -410,8 +413,14 @@ func TestRunTicksBoxesFromCompletedList(t *testing.T) {
 	if !strings.Contains(string(raw), "- [x] alpha") {
 		t.Fatalf("ticket file = %q, want alpha ticked", raw)
 	}
-	if !strings.Contains(string(raw), "Status:") || !strings.Contains(string(raw), "done") {
-		t.Fatalf("ticket file = %q, want Status done", raw)
+	// The done mark lands on the spec branch, not master: the merge target
+	// is spec/demo and the main checkout stays behind.
+	specRaw := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/issues/01-first.md"))
+	if !strings.Contains(specRaw, "- [x] alpha") || !strings.Contains(specRaw, "- [x] beta") {
+		t.Fatalf("spec ticket file = %q, want every box ticked", specRaw)
+	}
+	if !strings.Contains(specRaw, "Status:") || !strings.Contains(specRaw, "done") {
+		t.Fatalf("spec ticket file = %q, want Status done", specRaw)
 	}
 }
 
@@ -480,6 +489,8 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 }
 
 // Slice 5b: a rebase conflict keeps the Worker alive and shows the refusal.
+// The conflict is against the spec branch, the merge target: a main move
+// alone never blocks a ticket.
 func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -507,9 +518,14 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 	writeFile(t, worktree, "conflict.txt", "worker\n")
 	testGit(t, worktree, "add", "conflict.txt")
 	testGit(t, worktree, "commit", "-m", "worker change")
-	writeFile(t, repo, "conflict.txt", "main\n")
-	testGit(t, repo, "add", "conflict.txt")
-	testGit(t, repo, "commit", "-m", "main moves")
+	// Move the spec branch under the ticket through a throwaway worktree,
+	// so the main checkout never moves: the finish rebases onto spec/demo.
+	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
+	testGit(t, repo, "worktree", "add", specWT, "spec/demo")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", specWT) })
+	writeFile(t, specWT, "conflict.txt", "spec\n")
+	testGit(t, specWT, "add", "conflict.txt")
+	testGit(t, specWT, "commit", "-m", "spec moves")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -527,6 +543,9 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 			}
 			if !strings.Contains(tk.LastRefusal, "rebase onto") || !strings.Contains(tk.LastRefusal, "conflicted") {
 				t.Fatalf("lastRefusal = %q, want the rebase conflict", tk.LastRefusal)
+			}
+			if !strings.Contains(tk.LastRefusal, "spec/demo") {
+				t.Fatalf("lastRefusal = %q, want the spec branch named", tk.LastRefusal)
 			}
 		}
 	}

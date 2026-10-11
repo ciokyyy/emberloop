@@ -136,6 +136,15 @@ type runState struct {
 	ReviewTips    map[string]map[string]string       `json:"reviewTips,omitempty"`
 	ReviewPending map[string]map[string][]string     `json:"reviewPending,omitempty"`
 	Reprompted    map[string]int                     `json:"reprompted,omitempty"`
+	// SpecBranch is the Run's integration branch (spec/<slug>), created
+	// from HEAD as it stands at Start (the master tip when the checkout
+	// sits on it) when absent and reused as it stands otherwise. Ticket
+	// branches fork from it and finish back into it; master moves only at
+	// the final merge (a later ticket). SpecBase is the HEAD the branch was
+	// created or reused from, for the later rebase. Both survive a restart
+	// in the Run file.
+	SpecBranch string `json:"specBranch,omitempty"`
+	SpecBase   string `json:"specBase,omitempty"`
 	// SubmitRecs keeps each Worker's last submit by ticket so a Daemon
 	// restart does not reset the submit count below Reprompted.
 	SubmitRecs map[string]submitRec `json:"submitRecs,omitempty"`
@@ -309,6 +318,45 @@ func runGitOnce(dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// specBranchExists reports whether branch exists in repo, without failing
+// on its absence: show-ref exits 1 when the ref is missing, which is the
+// reuse signal, not an error.
+func specBranchExists(repo, branch string) (bool, error) {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	cmd.Dir = repo
+	if err := cmd.Run(); err == nil {
+		return true, nil
+	} else if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
+		return false, nil
+	} else {
+		return false, err
+	}
+}
+
+// ensureSpecBranch creates the Run's spec/<slug> branch from HEAD as it
+// stands at Start (the master tip when the checkout sits on it; a checkout
+// on another branch or detached forks from that HEAD instead) when absent
+// and reuses it as it stands otherwise. It returns the HEAD the Run records
+// as its base: the later rebase compares against it. The main checkout never
+// moves, so two specs run at once.
+func ensureSpecBranch(repo, branch string) (base string, created bool, err error) {
+	base, err = runGit(repo, "rev-parse", "HEAD")
+	if err != nil || base == "" {
+		return "", false, fmt.Errorf("could not read HEAD in %s: %v", repo, err)
+	}
+	exists, err := specBranchExists(repo, branch)
+	if err != nil {
+		return "", false, err
+	}
+	if exists {
+		return base, false, nil
+	}
+	if _, err := runGit(repo, "branch", branch, base); err != nil {
+		return "", false, err
+	}
+	return base, true, nil
 }
 
 // runStagedDiff reports whether rel has staged changes: git diff --cached
@@ -565,7 +613,6 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "harness and model are required", http.StatusBadRequest)
 		return
 	}
-
 	max := d.MaxRunning()
 	d.mu.Lock()
 	for _, rs := range d.runs {
@@ -574,6 +621,19 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "a run is already active for this spec"})
 			return
 		}
+	}
+	// The Run works on its own spec/<slug> branch, created from HEAD as it
+	// stands at Start (the master tip when the checkout sits on it) when
+	// absent and reused as it stands otherwise. It runs after the
+	// duplicate-Run check, so a refused Start leaves no branch behind.
+	// Ticket branches fork from it and finish back into it; the main
+	// checkout never moves, so two specs run at once. The branch and the
+	// base SHA persist on the Run row and survive a restart.
+	specBase, _, err := ensureSpecBranch(repo, specRun.Branch)
+	if err != nil {
+		d.mu.Unlock()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	pathByID := map[string]string{}
 	for path := range files {
@@ -592,6 +652,8 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		RecallOffN:     req.RecallOffN,
 		CreatedAt:      time.Now().UTC(),
 		Owner:          creator.ID,
+		SpecBranch:     specRun.Branch,
+		SpecBase:       specBase,
 		Sessions:       map[string]string{},
 		Branches:       map[string]string{},
 		Worktrees:      map[string]string{},
@@ -845,6 +907,26 @@ func ticketPath(rs *runState, ticketID string) string {
 		}
 	}
 	return ""
+}
+
+// runTicketBody returns the ticket file content the live table shows: from
+// the Run's spec branch when it has one (the merge target, so ticks and the
+// done mark show the way they did when tickets merged to master), else from
+// the checkout. Missing files read empty; callers fall back.
+func runTicketBody(rs *runState, ticketID string) string {
+	path := ticketPath(rs, ticketID)
+	if path == "" {
+		return ""
+	}
+	if rs.SpecBranch != "" {
+		rel, err := filepath.Rel(rs.Repo, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			if out, err := runGit(rs.Repo, "show", rs.SpecBranch+":"+filepath.ToSlash(rel)); err == nil {
+				return out
+			}
+		}
+	}
+	return readTicketFile(path)
 }
 
 // runReviews returns one Ticket's reviewer verdicts as the driver sees them:
@@ -2038,9 +2120,10 @@ func stripWriteBits(root string) error {
 // replace it to simulate a seeding failure without touching the filesystem.
 var ensureWorktreeDOX = ensureAgentsMD
 
-// runStartWorker creates the Ticket's worktree and branch and its Worker
-// Session, a Subagent of the Run, and runs the Ticket prompt on it. A
-// refused live-Session cap retries briefly before failing the Run.
+// runStartWorker creates the Ticket's worktree and branch from the Run's
+// spec branch and starts its Worker Session, a Subagent of the Run, running
+// the Ticket prompt on it. A refused live-Session cap retries briefly
+// before failing the Run.
 func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 	// A paused Run starts nothing new: wait for the Resume while holding
 	// no lock, so the Resume itself never blocks on this worker. Running
@@ -2054,6 +2137,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 	}
 	repo, harness, model, effort, specPath := rs.Repo, rs.Harness, rs.Model, rs.Effort, rs.Spec
 	owner := rs.Owner
+	specBranch := rs.SpecBranch
 	// Run A/B arm (ticket 30): the ticket's index in ticket order decides,
 	// so a retry, a pause/resume or a different start order never moves the
 	// arm. Tickets and RecallOffN are fixed at Start, so one read holds for
@@ -2072,15 +2156,26 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 	// record-time check drops the attempt and waits for the Resume, then
 	// the start runs again from a clean worktree.
 	for {
-		target, err := runGit(repo, "symbolic-ref", "--quiet", "--short", "HEAD")
-		if err != nil {
-			target = ""
-		}
-		base := "HEAD"
-		if sha, err := runGit(repo, "rev-parse", "HEAD"); err == nil {
+		// Ticket branches fork from the Run's spec branch, not master: every
+		// ticket in one spec sees the earlier merges. Runs predating the
+		// spec branch (SpecBranch empty) keep the old HEAD fork.
+		target, base := "", "HEAD"
+		if specBranch != "" {
+			target = specBranch
+			sha, err := runGit(repo, "rev-parse", specBranch)
+			if err != nil || sha == "" {
+				return fmt.Errorf("could not read spec branch %s in %s: %v", specBranch, repo, err)
+			}
 			base = sha
 		} else {
-			return fmt.Errorf("could not read HEAD in %s: %w", repo, err)
+			if t, err := runGit(repo, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
+				target = t
+			}
+			if sha, err := runGit(repo, "rev-parse", "HEAD"); err == nil {
+				base = sha
+			} else {
+				return fmt.Errorf("could not read HEAD in %s: %w", repo, err)
+			}
 		}
 		if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
 			return err
@@ -2227,16 +2322,18 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string, from promptSender) 
 	return nil
 }
 
-// runFinishWorker merges a submitted done through the reviewer gate and the
-// shared core checks: without both Passes at the current tip, or with a
+// runFinishWorker merges a submitted done through the reviewer gate into the
+// Run's spec branch: without both Passes at the current tip, or with a
 // dirty worktree or a rebase conflict, the Worker stays alive with the
 // refusal. A Ticket with no verdict on the current tip is still under
 // review, not refused:
 // the finish reports nothing and the driver polls again. The gate judges
-// the pre-rebase tip: the rebase replays the reviewed commits onto the
-// target without changing their content. On a merge the
-// ticket is marked done and committed on the target, and the worktree is
-// removed; the Worker Session stays for its transcript.
+// the pre-rebase tip: the rebase replays the reviewed commits onto the spec
+// branch without changing their content. On a merge the
+// ticket is marked done and committed on the spec branch, and the worktree
+// is removed; the Worker Session stays for its transcript. Master never
+// moves here: the final merge into master is a later ticket. Runs predating
+// the spec branch (no SpecBranch recorded) keep the old master merge.
 func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
@@ -2245,6 +2342,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		return el.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
 	}
 	repo, branch, worktree, target, _, path := rs.Repo, rs.Branches[ticketID], rs.Worktrees[ticketID], rs.Targets[ticketID], rs.Bases[ticketID], ticketPath(rs, ticketID)
+	specBranch := rs.SpecBranch
 	submitStatus := ""
 	if rec, ok := d.submits[rs.Sessions[ticketID]]; ok && rec != nil {
 		submitStatus = rec.Status
@@ -2332,6 +2430,34 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		d.mu.Unlock()
 		return el.DriverFinish{Merged: false, Detail: why}, nil
 	}
+	// Ticket branches merge into the spec branch, never master: the rebase
+	// lands on the spec branch as it stands at finish, since another Ticket
+	// may have merged after this worker started. The main checkout never
+	// moves, so two specs run at once. Runs predating the spec branch keep
+	// the old master merge below.
+	if specBranch != "" {
+		sha, kept, err := d.mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, ticketID, workerID)
+		if err != nil {
+			return el.DriverFinish{}, err
+		}
+		if kept != "" {
+			return el.DriverFinish{Merged: false, Detail: kept}, nil
+		}
+		if _, err := runGit(repo, "worktree", "remove", "--force", worktree); err != nil {
+			return el.DriverFinish{}, err
+		}
+		d.mu.Lock()
+		if rs, ok := d.runs[runID]; ok {
+			rs.Merged[ticketID] = sha
+			if rs.NeedsYouReason != nil {
+				delete(rs.NeedsYouReason, ticketID)
+			}
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
+		}
+		d.mu.Unlock()
+		return el.DriverFinish{Merged: true, SHA: sha}, nil
+	}
 	// A detached repo has no target branch: rebase onto the repo HEAD as it
 	// stands at finish, since another Ticket may have moved it after this
 	// worker started. The recorded base is too old then; it only proves the
@@ -2352,34 +2478,15 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		return el.DriverFinish{Merged: false, Detail: kept}, nil
 	}
 	if path != "" {
-		changed, err := el.MarkDriverTicketDone(path)
+		rel, err := filepath.Rel(repo, path)
 		if err != nil {
-			// A ticket without a Status line is not one finish completes,
-			// the way the CLI completion leaves it alone: the merge still
-			// stands and the boxes already ticked stay.
-			if !strings.Contains(err.Error(), "has no status line") {
-				return el.DriverFinish{}, err
-			}
-		} else if changed {
-			rel, err := filepath.Rel(repo, path)
-			if err != nil {
-				return el.DriverFinish{}, err
-			}
-			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				return el.DriverFinish{}, fmt.Errorf("ticket %s is outside the repo", ticketID)
-			}
-			if _, err := runGit(repo, "add", "--", rel); err != nil {
-				return el.DriverFinish{}, err
-			}
-			if staged, err := runStagedDiff(repo, rel); err != nil {
-				return el.DriverFinish{}, err
-			} else if staged {
-				if out, err := runGitCommitDone(repo, rel, workerID); err != nil {
-					if !strings.Contains(out+err.Error(), "nothing to commit") {
-						return el.DriverFinish{}, err
-					}
-				}
-			}
+			return el.DriverFinish{}, err
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return el.DriverFinish{}, fmt.Errorf("ticket %s is outside the repo", ticketID)
+		}
+		if _, err := stageAndCommitTicketDone(repo, path, rel, workerID); err != nil {
+			return el.DriverFinish{}, err
 		}
 	}
 	if _, err := runGit(repo, "worktree", "remove", "--force", worktree); err != nil {
@@ -2399,6 +2506,140 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	}
 	d.mu.Unlock()
 	return el.DriverFinish{Merged: true, SHA: sha}, nil
+}
+
+// isAncestorRef reports whether ancestor contains ref in repo: git
+// merge-base --is-ancestor exits 0 when it holds and 1 when it does not,
+// and runGit fails either nonzero exit, so this reads the exit code.
+func isAncestorRef(repo, ancestor, ref string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, ref)
+	cmd.Dir = repo
+	if err := cmd.Run(); err == nil {
+		return true, nil
+	} else if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
+		return false, nil
+	} else {
+		return false, err
+	}
+}
+
+// ffUpdateSpecBranch fast-forwards the spec branch to the ticket branch tip
+// without touching any checkout: update-ref moves the ref only when the tip
+// contains the spec tip, so a spec branch a User has checked out in another
+// worktree still merges (that worktree simply falls behind). sha is the new
+// spec tip; kept holds the refusal when the tip is not ahead (the next
+// finish rebases onto the moved spec and retries); err is a hard git
+// failure.
+func ffUpdateSpecBranch(repo, branch, specBranch, ticketID string) (sha, kept string, err error) {
+	tip, err := runGit(repo, "rev-parse", branch)
+	if err != nil || tip == "" {
+		return "", "", fmt.Errorf("ticket %s has no tip; start its worker again", ticketID)
+	}
+	old, err := runGit(repo, "rev-parse", specBranch)
+	if err != nil || old == "" {
+		return "", "", fmt.Errorf("could not read spec branch %s in %s: %v", specBranch, repo, err)
+	}
+	if old == tip {
+		return tip, "", nil
+	}
+	ok, err := isAncestorRef(repo, old, tip)
+	if err != nil {
+		return "", "", err
+	}
+	if !ok {
+		return "", fmt.Sprintf("could not fast-forward %s: it moved under the ticket; finish again", specBranch), nil
+	}
+	if out, err := runGit(repo, "update-ref", "refs/heads/"+specBranch, tip, old); err != nil {
+		return "", fmt.Sprintf("could not fast-forward %s: %s; finish again", specBranch, strings.TrimSpace(out+err.Error())), nil
+	}
+	return tip, "", nil
+}
+
+// stageAndCommitTicketDone marks the ticket file done (ticking every box)
+// and commits it in gitDir: the spec-branch finish commits in the ticket
+// worktree, the legacy finish in the main checkout. Changed reports whether
+// a commit landed; a ticket without a Status line is not an error (changed
+// false), the merge still stands and the boxes already ticked stay.
+func stageAndCommitTicketDone(gitDir, filePath, rel, workerID string) (changed bool, err error) {
+	done, merr := el.MarkDriverTicketDone(filePath)
+	if merr != nil {
+		if !strings.Contains(merr.Error(), "has no status line") {
+			return false, merr
+		}
+		return false, nil
+	}
+	if !done {
+		return false, nil
+	}
+	if _, err := runGit(gitDir, "add", "--", rel); err != nil {
+		return false, err
+	}
+	staged, err := runStagedDiff(gitDir, rel)
+	if err != nil {
+		return false, err
+	}
+	if !staged {
+		return false, nil
+	}
+	if out, err := runGitCommitDone(gitDir, rel, workerID); err != nil {
+		if !strings.Contains(out+err.Error(), "nothing to commit") {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// mergeTicketIntoSpec runs the git half of a spec-branch finish: the
+// dirty-worktree check, a rebase of the ticket branch onto the spec branch
+// as it stands at finish (aborted on conflict), a fast-forward of the spec
+// branch to the rebased tip, and the ticket done mark committed on the spec
+// branch. sha is the spec tip after the merge; kept holds the refusal text
+// when the branch is kept and the worker stays alive; err is a hard git
+// failure. The main checkout never moves.
+func (d *Daemon) mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, ticketID, workerID string) (sha, kept string, err error) {
+	if out, err := runGit(worktree, "status", "--porcelain"); err != nil {
+		return "", "", err
+	} else if strings.TrimSpace(out) != "" {
+		return "", "the worktree has uncommitted changes, which would be lost; have it commit them and submit done again", nil
+	}
+	if _, err := runGit(worktree, "rebase", specBranch); err != nil {
+		files := ""
+		if u, uerr := runGit(worktree, "diff", "--name-only", "--diff-filter=U"); uerr == nil {
+			files = strings.Join(strings.Fields(u), ", ")
+		}
+		_, _ = runGit(worktree, "rebase", "--abort")
+		detail := "rebase onto " + specBranch + " conflicted"
+		if files != "" {
+			detail += " in " + files
+		} else {
+			detail += ": " + strings.TrimSpace(strings.Replace(err.Error(), "\n", " ", -1))
+		}
+		return "", detail + "; the rebase was aborted, the branch is unchanged", nil
+	}
+	sha, kept, err = ffUpdateSpecBranch(repo, branch, specBranch, ticketID)
+	if err != nil || kept != "" {
+		return "", kept, err
+	}
+	if path != "" {
+		rel, rerr := filepath.Rel(repo, path)
+		if rerr != nil {
+			return "", "", rerr
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", "", fmt.Errorf("ticket %s is outside the repo", ticketID)
+		}
+		changed, err := stageAndCommitTicketDone(worktree, filepath.Join(worktree, rel), rel, workerID)
+		if err != nil {
+			return "", "", err
+		}
+		if changed {
+			sha, kept, err = ffUpdateSpecBranch(repo, branch, specBranch, ticketID)
+			if err != nil || kept != "" {
+				return "", kept, err
+			}
+		}
+	}
+	return sha, "", nil
 }
 
 // reviewGateReady says the finish may judge the gate: every required
@@ -2550,7 +2791,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 			"required": append([]string(nil), requiredReviewerTypes...),
 			"verdicts": verdicts,
 		}
-		body := readTicketFile(ticketPath(rs, t.ID))
+		body := runTicketBody(rs, t.ID)
 		title := parseTicketTitle(body)
 		if title == "" {
 			title = t.Title
@@ -2575,6 +2816,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"recallOffN": rs.RecallOffN,
+		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase,
 		"createdAt":  rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
 }
