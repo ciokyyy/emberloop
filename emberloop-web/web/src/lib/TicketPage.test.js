@@ -67,6 +67,28 @@ const ticket = (over = {}) => ({
         'reviewer-spec': { verdict: 'pass', findings: [], at: 'bad73e8aaa01', durationMs: 65000 },
       },
       declined: ['Full shadcn registry port: same tokens.'],
+      sentFindings: [
+        {
+          findingId: 'r1-reviewer-standards-1',
+          reviewer: 'reviewer-standards',
+          file: 'events.js',
+          line: 78,
+          severity: 'major',
+          problem: 'tool blocks all open',
+          blocking: true,
+          disposition: { findingId: 'r1-reviewer-standards-1', disposition: 'fixed' },
+        },
+        {
+          findingId: 'r1-reviewer-spec-1',
+          reviewer: 'reviewer-spec',
+          file: 'RunsView.svelte',
+          line: 12,
+          severity: 'minor',
+          problem: 'align the button',
+          blocking: false,
+          disposition: { findingId: 'r1-reviewer-spec-1', disposition: 'declined', reason: 'same tokens' },
+        },
+      ],
       sentToWorkerAt: '2026-10-09T10:03:00Z',
     },
     {
@@ -131,10 +153,17 @@ describe('TicketPage', () => {
     expect(dividers[1].textContent).toMatch(/review round 2/);
     expect(within(page).getByText('pass held')).toBeTruthy();
     expect(within(page).getByText('re-judging')).toBeTruthy();
-    // Round 1 findings and the declined-with-reason card.
-    expect(within(page).getByText(/tool blocks all open/)).toBeTruthy();
-    expect(within(page).getByText('Declined with reason')).toBeTruthy();
-    expect(within(page).getByText(/Full shadcn registry port/)).toBeTruthy();
+    // The finding-response card identifies blocking state and the stored
+    // worker dispositions, including a declined reason for a minor.
+    const sentFindings = within(page).getByTestId('sent-findings-card');
+    expect(within(sentFindings).getByText('Review findings sent to worker')).toBeTruthy();
+    expect(within(sentFindings).getByText('blocking')).toBeTruthy();
+    expect(within(sentFindings).getByText('non-blocking')).toBeTruthy();
+    expect(within(sentFindings).getByText('r1-reviewer-standards-1')).toBeTruthy();
+    const dispositions = within(sentFindings).getAllByTestId('finding-disposition');
+    expect(dispositions[0].textContent).toContain('fixed');
+    expect(dispositions[1].textContent).toContain('declined');
+    expect(dispositions[1].textContent).toContain('same tokens');
 
     const panel = within(page).getByTestId('ticket-panel');
     expect(within(panel).getByText('07-ui-design')).toBeTruthy();

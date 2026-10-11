@@ -78,23 +78,23 @@ func WebProxyTool(name string) Tool {
 			"kill": map[string]any{"type": "boolean"},
 		}, "id"), run: webProxyCancel}
 	case "submit":
-		// One tool, two shapes: workers send status/completed/report, reviewers
-		// send verdict/tip/ran/findings. No field is required at the schema
-		// level because neither shape's required fields fit the other; Execute
-		// below and the Daemon route validate each shape instead (a worker
-		// without status gets "status is required", a reviewer payload goes
-		// through the verdict rules). The reviewer properties mirror the pig
-		// reviewer submit ExtraTool schema and ValidateReviewerSubmit in
-		// emberloop-web: the three live in different modules (el core never
-		// imports the web Daemon), so a schema change must be made in each.
-		return webProxy{name: "submit", desc: "Submit your result to the Daemon when the work is complete: a worker reports done with the completed checkbox texts, a reviewer reports verdict pass or changes with tip, ran and findings. Every turn ends with a submit; a turn that ends without one is re-prompted.", schema: webProxySchema(map[string]any{
-			"status":    map[string]any{"type": "string"},
-			"completed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"report":    map[string]any{"type": "string"},
-			"verdict":   map[string]any{"type": "string", "enum": []string{"pass", "changes"}},
-			"tip":       map[string]any{"type": "string"},
-			"ran":       map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "exitCode": map[string]any{"type": "integer"}}, "required": []string{"command"}}},
-			"findings":  map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"file": map[string]any{"type": "string"}, "line": map[string]any{"type": "integer"}, "severity": map[string]any{"type": "string", "enum": []string{"blocker", "major", "minor"}}, "problem": map[string]any{"type": "string"}}, "required": []string{"file", "severity", "problem"}}},
+		// One tool, two shapes: workers send status/completed/report and
+		// Dispositions, reviewers send verdict/tip/ran/findings. No field is
+		// required at the schema level because neither shape's required fields
+		// fit the other; Execute below and the Daemon route validate each shape.
+		// The reviewer properties mirror the pig reviewer submit ExtraTool schema
+		// and ValidateReviewerSubmit in emberloop-web: the three live in different
+		// modules (el core never imports the web Daemon), so a schema change must
+		// be made in each.
+		return webProxy{name: "submit", desc: "Submit your result to the Daemon when the work is complete: a worker reports done with completed checkbox texts and dispositions for findings (blocker/major dispositions are required); a reviewer reports verdict pass or changes with tip, ran and findings. Every turn ends with a submit; a turn that ends without one is re-prompted.", schema: webProxySchema(map[string]any{
+			"status":       map[string]any{"type": "string"},
+			"completed":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"report":       map[string]any{"type": "string"},
+			"verdict":      map[string]any{"type": "string", "enum": []string{"pass", "changes"}},
+			"tip":          map[string]any{"type": "string"},
+			"ran":          map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "exitCode": map[string]any{"type": "integer"}}, "required": []string{"command"}}},
+			"findings":     map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"file": map[string]any{"type": "string"}, "line": map[string]any{"type": "integer"}, "severity": map[string]any{"type": "string", "enum": []string{"blocker", "major", "minor"}}, "problem": map[string]any{"type": "string"}}, "required": []string{"file", "severity", "problem"}}},
+			"dispositions": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"findingId": map[string]any{"type": "string"}, "disposition": map[string]any{"type": "string", "enum": []string{"fixed", "declined", "deferred"}}, "reason": map[string]any{"type": "string"}, "ticket": map[string]any{"type": "string"}}, "required": []string{"findingId", "disposition"}}},
 		}), run: webProxySubmit}
 	case "profile":
 		return webProxy{name: "profile", desc: "Read your standing Profile (memory://profile), or propose a patch to it. A patch is add, edit or retire operations by line ID and always waits for human approval in the settings view; it never applies directly. Call propose only after the User explicitly asks to change the Profile.", schema: webProxySchema(map[string]any{
@@ -396,17 +396,18 @@ func webProxyCancel(ctx context.Context, daemonURL, parentID string, args json.R
 }
 
 // webProxySubmit records the bound Session's own result through the same
-// submit route Runs use: a worker reports done with the completed checkbox
-// texts, a reviewer reports verdict pass|changes with tip, ran and findings.
+// submit route Runs use: a worker reports done with completed checkbox texts
+// and Dispositions, a reviewer sends verdict pass|changes with tip, ran and findings.
 func webProxySubmit(ctx context.Context, daemonURL, sessionID string, args json.RawMessage) (string, error) {
 	var req struct {
-		Status    string           `json:"status"`
-		Completed []string         `json:"completed,omitempty"`
-		Report    string           `json:"report,omitempty"`
-		Verdict   string           `json:"verdict,omitempty"`
-		Tip       string           `json:"tip,omitempty"`
-		Ran       []map[string]any `json:"ran,omitempty"`
-		Findings  []map[string]any `json:"findings,omitempty"`
+		Status       string           `json:"status"`
+		Completed    []string         `json:"completed,omitempty"`
+		Report       string           `json:"report,omitempty"`
+		Verdict      string           `json:"verdict,omitempty"`
+		Tip          string           `json:"tip,omitempty"`
+		Ran          []map[string]any `json:"ran,omitempty"`
+		Findings     []map[string]any `json:"findings,omitempty"`
+		Dispositions []map[string]any `json:"dispositions,omitempty"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return "", fmt.Errorf("submit: bad arguments")
@@ -449,7 +450,7 @@ func webProxySubmit(ctx context.Context, daemonURL, sessionID string, args json.
 	if strings.TrimSpace(req.Status) == "" {
 		return "", fmt.Errorf("submit: status is required")
 	}
-	body, _ := json.Marshal(map[string]any{"status": req.Status, "completed": req.Completed, "report": req.Report})
+	body, _ := json.Marshal(map[string]any{"status": req.Status, "completed": req.Completed, "report": req.Report, "dispositions": req.Dispositions})
 	resp, err := webProxyPost(ctx, daemonURL+"/api/sessions/"+sessionID+"/submit", "application/json", body)
 	if err != nil {
 		return "", fmt.Errorf("submit: %s", err.Error())

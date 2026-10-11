@@ -1229,7 +1229,7 @@ func (d *Daemon) runSubmitCount(runID, ticketID string) int {
 // workerReviewNote tells a Worker who reviews its work. The Daemon starts the
 // spec and standards Reviewers itself after the first done submit, so a Worker
 // never spawns reviewers of its own.
-const workerReviewNote = "Do not spawn reviewers: after you submit done, the Daemon starts the spec and standards reviewers itself and sends you their findings. Spawn scouts only for read-only research."
+const workerReviewNote = "Do not spawn reviewers: after you submit done, the Daemon starts the spec and standards reviewers itself and sends you every recorded finding, including minors, marked blocking or non-blocking. When you receive findings, answer every blocker/major in your next done submit using dispositions with the exact findingId and disposition; declined also needs reason, deferred also needs ticket (the Ticket number). Minor dispositions are optional. Spawn scouts only for read-only research."
 
 // webStallNudge is the fixed nudge for a Worker that went idle with no submit.
 const webStallNudge = "Nudge: you have not submitted. Finish the ticket and submit done with the completed checkboxes; the reviewers start after your submit."
@@ -2657,36 +2657,76 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		if open {
 			return el.DriverFinish{}, nil
 		}
+		detail := why
 		d.mu.Lock()
 		if rs, ok := d.runs[runID]; ok {
 			if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
-				idx := len(rounds) - 1
+				idx := -1
 				for i := len(rounds) - 1; i >= 0; i-- {
 					if rounds[i].Tip == tip {
 						idx = i
 						break
 					}
 				}
-				var declined []string
-				for _, typ := range requiredReviewerTypes {
-					if r, ok := verdicts[typ]; ok && r.Verdict != "pass" && r.At == tip {
-						for _, f := range r.Findings {
-							declined = append(declined, f.File+":"+fmt.Sprintf("%d", f.Line)+" "+f.Severity+": "+strings.ReplaceAll(f.Problem, "\n", " / "))
+				if idx >= 0 {
+					var declined []string
+					for _, typ := range requiredReviewerTypes {
+						if r, ok := verdicts[typ]; ok && r.Verdict != "pass" && r.At == tip {
+							for _, f := range r.Findings {
+								declined = append(declined, f.File+":"+fmt.Sprintf("%d", f.Line)+" "+f.Severity+": "+strings.ReplaceAll(f.Problem, "\n", " / "))
+							}
 						}
 					}
+					if len(declined) == 0 {
+						declined = []string{why}
+					}
+					rounds[idx].Declined = declined
+					rs.Rounds[ticketID] = rounds
 				}
-				if len(declined) == 0 {
-					declined = []string{why}
-				}
-				now := time.Now().UTC()
-				rs.Rounds[ticketID][idx].Declined = declined
-				rs.Rounds[ticketID][idx].SentToWorkerAt = &now
-				d.persistRun(rs)
-				d.broadcastRunLocked(rs)
 			}
+			feedback, _ := recordWorkerFindingsSentLocked(rs, ticketID, tip)
+			if feedback == "" {
+				// A legacy Run can hold only the aggregate refusal, with no
+				// structured round findings. Preserve its sent marker so the
+				// ticket page and old Worker behavior remain consistent.
+				for i := len(rs.Rounds[ticketID]) - 1; i >= 0; i-- {
+					if rs.Rounds[ticketID][i].Tip == tip && rs.Rounds[ticketID][i].SentToWorkerAt == nil {
+						now := time.Now().UTC()
+						rs.Rounds[ticketID][i].SentToWorkerAt = &now
+						break
+					}
+				}
+			}
+			if feedback != "" {
+				detail += "\n\n" + feedback
+			}
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
 		}
 		d.mu.Unlock()
-		return el.DriverFinish{Merged: false, Detail: why}, nil
+		return el.DriverFinish{Merged: false, Detail: detail}, nil
+	}
+	// Passing verdicts can still carry minor findings. They do not hold the
+	// merge, but are sent to the Worker and persisted on the review round.
+	var workerSessionID, feedback string
+	d.mu.Lock()
+	if rs, ok := d.runs[runID]; ok {
+		workerSessionID = rs.Sessions[ticketID]
+		var newlySent bool
+		feedback, newlySent = recordWorkerFindingsSentLocked(rs, ticketID, tip)
+		if newlySent {
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
+		}
+		if !newlySent {
+			feedback = ""
+		}
+	}
+	d.mu.Unlock()
+	if feedback != "" && workerSessionID != "" {
+		// Minor findings are advisory: a failed notice cannot turn them into
+		// a gate refusal or hold an otherwise passing Ticket.
+		_ = d.runTellSession(workerSessionID, feedback)
 	}
 	// Ticket branches merge into the spec branch, never master: the rebase
 	// lands on the spec branch as it stands at finish, since another Ticket
@@ -3480,16 +3520,73 @@ func (d *Daemon) storeSubmitLocked(sessionID, ticketID string, rs *runState, sta
 	return count
 }
 
+// recordWorkerDispositionsLocked validates and stores the Worker's decisions
+// on the most recently delivered finding set. Callers hold d.mu.
+func recordWorkerDispositionsLocked(rs *runState, ticketID string, submitted []ReviewDisposition) error {
+	rounds := rs.Rounds[ticketID]
+	idx := -1
+	for i := len(rounds) - 1; i >= 0; i-- {
+		if len(rounds[i].SentFindings) > 0 {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		_, err := validateWorkerDispositions(nil, submitted)
+		return err
+	}
+	decisions, err := validateWorkerDispositions(rounds[idx].SentFindings, submitted)
+	if err != nil {
+		return err
+	}
+	for i := range rounds[idx].SentFindings {
+		if decision, ok := decisions[rounds[idx].SentFindings[i].FindingID]; ok {
+			copy := decision
+			rounds[idx].SentFindings[i].Disposition = &copy
+		}
+	}
+	rs.Rounds[ticketID] = rounds
+	return nil
+}
+
+// recordWorkerFindingsSentLocked snapshots the current tip's full finding
+// list on its round. The boolean reports whether the Worker has not yet been
+// notified; callers hold d.mu.
+func recordWorkerFindingsSentLocked(rs *runState, ticketID, tip string) (string, bool) {
+	rounds := rs.Rounds[ticketID]
+	for i := len(rounds) - 1; i >= 0; i-- {
+		if rounds[i].Tip != tip {
+			continue
+		}
+		round := &rounds[i]
+		if len(round.SentFindings) == 0 {
+			round.SentFindings = workerFindingsForRound(*round)
+		}
+		if len(round.SentFindings) == 0 {
+			return "", false
+		}
+		newlySent := round.SentToWorkerAt == nil
+		if newlySent {
+			now := time.Now().UTC()
+			round.SentToWorkerAt = &now
+		}
+		rs.Rounds[ticketID] = rounds
+		return workerReviewFeedback(tip, round.SentFindings), newlySent
+	}
+	return "", false
+}
+
 func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
-		Status    string          `json:"status"`
-		Completed []string        `json:"completed"`
-		Report    string          `json:"report"`
-		Summary   string          `json:"summary"`
-		Verdict   string          `json:"verdict"`
-		Tip       string          `json:"tip"`
-		Ran       []ReviewRan     `json:"ran"`
-		Findings  []ReviewFinding `json:"findings"`
+		Status       string              `json:"status"`
+		Completed    []string            `json:"completed"`
+		Report       string              `json:"report"`
+		Summary      string              `json:"summary"`
+		Verdict      string              `json:"verdict"`
+		Tip          string              `json:"tip"`
+		Ran          []ReviewRan         `json:"ran"`
+		Findings     []ReviewFinding     `json:"findings"`
+		Dispositions []ReviewDisposition `json:"dispositions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -3522,7 +3619,7 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 	}
 	switch req.Status {
 	case "done":
-		d.handleWorkerDoneSubmit(w, r, id, workerRun, workerTicket, rs, req.Completed, req.Report, req.Summary)
+		d.handleWorkerDoneSubmit(w, r, id, workerRun, workerTicket, rs, req.Completed, req.Report, req.Summary, req.Dispositions)
 	case "blocked":
 		d.handleWorkerBlockedSubmit(w, r, id, workerRun, workerTicket, rs, req.Completed, req.Report, req.Summary)
 	default:
@@ -3539,7 +3636,7 @@ func (d *Daemon) handleSessionSubmit(w http.ResponseWriter, r *http.Request, id 
 // concurrent done submits cannot both pass the empty-resubmit check:
 // rev-parse never touches the index, so holding the lock is a short,
 // single-attempt read.
-func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, id, workerRun, workerTicket string, rs *runState, completed []string, report, summary string) {
+func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, id, workerRun, workerTicket string, rs *runState, completed []string, report, summary string, dispositions []ReviewDisposition) {
 	if msg := refuseNotDoneText(report, summary); msg != "" {
 		d.mu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": msg})
@@ -3560,6 +3657,23 @@ func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, 
 			}
 			break
 		}
+	}
+	if err := recordWorkerDispositionsLocked(rs, workerTicket, dispositions); err != nil {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	if rs.Merged[workerTicket] != "" {
+		count := 0
+		if rec := d.submits[id]; rec != nil {
+			count = rec.Count
+		}
+		d.persistRun(rs)
+		d.broadcastRunLocked(rs)
+		d.mu.Unlock()
+		d.appendEvent(id, "submit", "done", "")
+		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
+		return
 	}
 	count := d.storeSubmitLocked(id, workerTicket, rs, "done", completed, report, summary)
 	if rs.Followups == nil {

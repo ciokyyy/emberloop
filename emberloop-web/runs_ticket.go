@@ -1,6 +1,8 @@
 package web
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -27,14 +29,15 @@ type ticketAgent struct {
 // ticketRound is one review round on a ticket: one prompted tip with its
 // verdicts. N counts from 1 per ticket. A pass carried without a rerun
 // appears as HeldFromRound pointing at the round that ran it, never as a
-// fresh verdict. Declined holds the changes findings sent back, with the
-// time they reached the worker.
+// fresh verdict. SentFindings records each finding delivered to the Worker
+// and its optional or required Disposition; Declined is legacy display data.
 type ticketRound struct {
 	N              int                    `json:"n"`
 	Tip            string                 `json:"tip"`
 	StartedAt      time.Time              `json:"startedAt"`
 	EndedAt        *time.Time             `json:"endedAt,omitempty"`
 	Reviews        map[string]roundReview `json:"reviews,omitempty"`
+	SentFindings   []workerReviewFinding  `json:"sentFindings,omitempty"`
 	Declined       []string               `json:"declined,omitempty"`
 	SentToWorkerAt *time.Time             `json:"sentToWorkerAt,omitempty"`
 }
@@ -46,6 +49,116 @@ type roundReview struct {
 	HeldFromRound *int            `json:"heldFromRound,omitempty"`
 	At            string          `json:"at"`
 	DurationMs    int64           `json:"durationMs,omitempty"`
+}
+
+// ReviewDisposition is one Worker's decision about a finding sent by the
+// Run driver. Declined requires a reason; deferred requires a Ticket number.
+type ReviewDisposition struct {
+	FindingID   string `json:"findingId"`
+	Disposition string `json:"disposition"`
+	Reason      string `json:"reason,omitempty"`
+	Ticket      string `json:"ticket,omitempty"`
+}
+
+// workerReviewFinding is the review finding as delivered to a Worker and
+// recorded on its review round. Blocking is true only for blocker and major.
+type workerReviewFinding struct {
+	FindingID   string             `json:"findingId"`
+	Reviewer    string             `json:"reviewer"`
+	File        string             `json:"file"`
+	Line        int                `json:"line"`
+	Severity    string             `json:"severity"`
+	Problem     string             `json:"problem"`
+	Blocking    bool               `json:"blocking"`
+	Disposition *ReviewDisposition `json:"disposition,omitempty"`
+}
+
+// workerFindingID names one finding by the round and reviewer that produced
+// it. The index is one-based and stable for that recorded verdict.
+func workerFindingID(round int, reviewer string, index int) string {
+	return fmt.Sprintf("r%d-%s-%d", round, reviewer, index+1)
+}
+
+// workerFindingsForRound creates the ordered, stable set delivered to the
+// Worker: every finding, including non-blocking minors, from recorded verdicts.
+func workerFindingsForRound(round ticketRound) []workerReviewFinding {
+	var out []workerReviewFinding
+	for _, reviewer := range requiredReviewerTypes {
+		review, ok := round.Reviews[reviewer]
+		if !ok || review.Verdict == "" {
+			continue
+		}
+		for i, f := range review.Findings {
+			severity := strings.ToLower(strings.TrimSpace(f.Severity))
+			out = append(out, workerReviewFinding{
+				FindingID: workerFindingID(round.N, reviewer, i), Reviewer: reviewer,
+				File: f.File, Line: f.Line, Severity: severity, Problem: f.Problem,
+				Blocking: severity == "blocker" || severity == "major",
+			})
+		}
+	}
+	return out
+}
+
+// workerReviewFeedback is the exact prompt sent with a closed review round.
+// IDs let the Worker attach each submit Disposition to one finding.
+func workerReviewFeedback(tip string, findings []workerReviewFinding) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	raw, err := json.MarshalIndent(findings, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("Recorded review findings at tip %s (blocking is true for blocker/major and false for minor):\n%s\nFor every blocking finding, include a Disposition in your next done submit. Minor Dispositions are optional. Use dispositions [{findingId, disposition}], where disposition is fixed, declined (also supply reason), or deferred (also supply ticket as a Ticket number). Copy each findingId exactly. A pass with minors does not block the Ticket.", tip, raw)
+}
+
+// validateWorkerDispositions validates a submit against the findings this
+// Worker actually received. Every unanswered blocker/major is mandatory;
+// minors may be omitted. It returns canonical values keyed by finding id.
+func validateWorkerDispositions(findings []workerReviewFinding, submitted []ReviewDisposition) (map[string]ReviewDisposition, error) {
+	byID := make(map[string]workerReviewFinding, len(findings))
+	for _, finding := range findings {
+		byID[finding.FindingID] = finding
+	}
+	out := make(map[string]ReviewDisposition, len(submitted))
+	for i, d := range submitted {
+		d.FindingID = strings.TrimSpace(d.FindingID)
+		d.Disposition = strings.ToLower(strings.TrimSpace(d.Disposition))
+		d.Reason = strings.TrimSpace(d.Reason)
+		d.Ticket = strings.TrimSpace(d.Ticket)
+		if d.FindingID == "" {
+			return nil, fmt.Errorf("disposition %d: findingId is required", i)
+		}
+		if _, ok := byID[d.FindingID]; !ok {
+			return nil, fmt.Errorf("disposition %d: findingId %q was not sent to the Worker", i, d.FindingID)
+		}
+		if _, ok := out[d.FindingID]; ok {
+			return nil, fmt.Errorf("disposition for finding %q is duplicated", d.FindingID)
+		}
+		switch d.Disposition {
+		case "fixed":
+		case "declined":
+			if d.Reason == "" {
+				return nil, fmt.Errorf("disposition for finding %q: declined requires a reason", d.FindingID)
+			}
+		case "deferred":
+			if d.Ticket == "" {
+				return nil, fmt.Errorf("disposition for finding %q: deferred requires a Ticket number", d.FindingID)
+			}
+		default:
+			return nil, fmt.Errorf("disposition for finding %q must be fixed, declined or deferred", d.FindingID)
+		}
+		out[d.FindingID] = d
+	}
+	for _, finding := range findings {
+		if finding.Blocking && finding.Disposition == nil {
+			if _, ok := out[finding.FindingID]; !ok {
+				return nil, fmt.Errorf("missing Disposition for blocking finding %s (%s:%d)", finding.FindingID, finding.File, finding.Line)
+			}
+		}
+	}
+	return out, nil
 }
 
 // parseTicketBoxes reads checkbox lines the way the driver's tick does: a

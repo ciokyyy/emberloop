@@ -37,8 +37,9 @@ via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
   profile reads memory://profile and proposes patches that wait for human
   approval, only on an explicit User request; remember proposes Rule candidates
   that wait for human approval, only on top-level Sessions; recall searches the
-  caller's bank and Project notes on every role; submit stays defined but
-  unoffered while `WebSubmitEnabled` in `toolresolve.go` is false),
+  caller's bank and Project notes on every role; Run-worker submit carries one
+  Disposition per finding (blocker/major required, minor optional); submit stays
+  defined but unoffered while `WebSubmitEnabled` in `toolresolve.go` is false),
   `websearch.go`
 (the provider-neutral search tool: Brave then Exa under auto, a 15-minute
 answer cache, quota rows; adapters and response parsing live in

@@ -197,7 +197,7 @@ owns its `_test.go` and the behaviour below):
   live under the state dir (`themes/`); golden fixtures are `testdata/theme/`.
 - Daemon callbacks: `tools/webproxy.go` and `tools/sudogate.go` send `EL_WEB_TOKEN`, the
   web Daemon's machine token (see `emberloop-web/AGENTS.md`), as a bearer on every call;
-  `restart.go` reads the same token for `el restart`, and `update.go` for its health probe.
+  the Run-worker `submit` proxy also forwards typed per-finding Dispositions.
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not; the web
   Daemon's `web` parent, `web-worker` child and `scout` roles take their
@@ -208,10 +208,10 @@ owns its `_test.go` and the behaviour below):
   Session; workers, scouts and Reviewers never propose either, and put Project
   knowledge in the nearest `AGENTS.md` instead), while every web role takes
   `recall` (the caller's bank plus Project notes); `WebSubmitEnabled` in
-  `toolresolve.go` (off)
-  keeps `submit` unoffered to web children while the herdr-era submit and Run
-  submits stay; the `run-worker` role (a Run ticket Worker) always serves
-  `submit` and `spawn`), `toolresolve.go`
+  `toolresolve.go` (off) keeps `submit` unoffered to web children while the
+  herdr-era submit and Run submits stay; the `run-worker` role (a Run ticket
+  Worker) always serves `submit` and `spawn`, and its `submit` accepts worker
+  Dispositions as well as Reviewer verdicts), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
   `read` refuses an oversized file with `bash` for roles that serve it and
   `tools.grep` in `execute` or offset/limit otherwise), `readhint.go` (that

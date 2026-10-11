@@ -88,6 +88,11 @@ _Avoid_: Judge, checker
 A Reviewer verdict recorded at a specific tip of a Ticket's branch. A Pass at an older tip is stale and does not count.
 _Avoid_: Approval
 
+
+**Disposition**:
+A Worker's recorded response to a Reviewer finding: fixed, declined with a reason, or deferred to a Ticket. Blocker and major findings require one; minor findings are optional and do not block.
+_Avoid_: Resolution, answer
+
 **Needs-you**:
 The state of a Ticket that the Run cannot advance without the user. The UI shows it as a banner with actions.
 _Avoid_: Alert, escalation

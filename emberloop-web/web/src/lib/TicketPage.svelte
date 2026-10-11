@@ -633,7 +633,29 @@
               </div>
             {/each}
           </div>
-          {#if (round.declined ?? []).length}
+          {#if (round.sentFindings ?? []).length}
+            <div class="animate-rise rounded-2xl border bg-card px-4 py-3 text-xs" data-testid="sent-findings-card">
+              <div class="mb-2 font-medium">Review findings sent to worker</div>
+              <ul class="space-y-2">
+                {#each round.sentFindings as finding (finding.findingId)}
+                  <li class="space-y-1 border-t pt-2 first:border-0 first:pt-0">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <Badge variant={finding.blocking ? 'destructive' : 'secondary'}>{finding.blocking ? 'blocking' : 'non-blocking'}</Badge>
+                      <span class="text-muted-foreground">{finding.reviewer}</span>
+                      <code class="rounded bg-muted px-1">{finding.findingId}</code>
+                      <span class="font-mono">{finding.file}:{finding.line}</span>
+                      <span class="text-muted-foreground">{finding.severity}</span>
+                    </div>
+                    <p class="text-muted-foreground">{finding.problem}</p>
+                    {#if finding.disposition}
+                      <p data-testid="finding-disposition"><span class="font-medium text-foreground">Disposition:</span> {finding.disposition.disposition}{#if finding.disposition.reason} — {finding.disposition.reason}{/if}{#if finding.disposition.ticket} · Ticket {finding.disposition.ticket}{/if}</p>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+          {#if !(round.sentFindings ?? []).length && (round.declined ?? []).length}
             {#if round.sentToWorkerAt}
               <div class="flex items-center gap-3">
                 <div class="h-px flex-1 bg-border"></div>

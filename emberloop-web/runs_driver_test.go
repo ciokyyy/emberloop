@@ -984,9 +984,13 @@ func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
 
 // submitGateRaw posts one Worker submit with report and summary and returns
 // the status code and error text, so gate refusals can assert 409.
-func submitGateRaw(t *testing.T, base, id, status string, completed []string, report, summary string) (int, string) {
+func submitGateRaw(t *testing.T, base, id, status string, completed []string, report, summary string, dispositions ...ReviewDisposition) (int, string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"status": status, "completed": completed, "report": report, "summary": summary})
+	payload := map[string]any{"status": status, "completed": completed, "report": report, "summary": summary}
+	if len(dispositions) > 0 {
+		payload["dispositions"] = dispositions
+	}
+	body, _ := json.Marshal(payload)
 	resp, err := http.Post(base+"/api/sessions/"+id+"/submit", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -1051,7 +1055,7 @@ func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
 	writeFile(t, worktree, "work.go", "package main\n")
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "fix nil")
-	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", ""); code != http.StatusAccepted {
+	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", "", ReviewDisposition{FindingID: "r1-reviewer-spec-1", Disposition: "fixed"}); code != http.StatusAccepted {
 		t.Fatalf("done after a new commit status = %d, want 202", code)
 	}
 }

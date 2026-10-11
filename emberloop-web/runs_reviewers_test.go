@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -143,8 +144,8 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 
 // A changes verdict is delivered to the same Worker unchanged; the rework
 // loop keeps the Reviewer sessions and merges once both pass at the new tip.
-// The spec reviewer reports changes on its first turn and passes after the
-// rework; the standards reviewer always passes.
+// The spec reviewer reports a blocker; the standards reviewer passes with a
+// minor so the Worker receives both blocking and non-blocking findings.
 func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -164,6 +165,9 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 			if n == 1 {
 				return "VERDICT: changes\nwork.go:1 blocker: handle nil", true
 			}
+		}
+		if strings.Contains(text, "reviewer-standards") {
+			return "VERDICT: pass\nstyle.go:2 minor: align", true
 		}
 		return "VERDICT: pass", true
 	}
@@ -187,15 +191,43 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		t.Fatalf("ticket merged with a changes verdict, want it kept")
 	}
 	sess := getSession(t, srv.URL, worker)
-	if !strings.Contains(sessTranscript(sess), "handle nil") {
-		t.Fatalf("worker transcript misses the findings")
+	if transcript := sessTranscript(sess); !strings.Contains(transcript, "handle nil") || !strings.Contains(transcript, "r1-reviewer-spec-1") || !strings.Contains(transcript, `"blocking": true`) || !strings.Contains(transcript, "r1-reviewer-standards-1") || !strings.Contains(transcript, `"blocking": false`) {
+		t.Fatalf("worker transcript misses the full typed finding list:\n%s", transcript)
 	}
 
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "work.go", "package main\n")
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "fix nil")
-	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, nil); code != http.StatusConflict || !strings.Contains(strings.ToLower(fmt.Sprint(out["error"])), "missing disposition") {
+		t.Fatalf("done without the blocker disposition = %d (%v), want 409 with the missing disposition", code, out)
+	}
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "declined"}}); code != http.StatusConflict || !strings.Contains(strings.ToLower(fmt.Sprint(out["error"])), "reason") {
+		t.Fatalf("declined without a reason = %d (%v), want 409 requiring a reason", code, out)
+	}
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "deferred"}}); code != http.StatusConflict || !strings.Contains(strings.ToLower(fmt.Sprint(out["error"])), "ticket") {
+		t.Fatalf("deferred without a Ticket = %d (%v), want 409 requiring a Ticket number", code, out)
+	}
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "deferred", Ticket: "11"}}); code != http.StatusAccepted {
+		t.Fatalf("done with the blocker deferred to Ticket 11 = %d (%v), want 202", code, out)
+	}
+	storedRound := extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first").Rounds[0]
+	if len(storedRound.SentFindings) != 2 {
+		t.Fatalf("stored findings = %+v, want blocker and minor", storedRound.SentFindings)
+	}
+	var blocker, minor *workerReviewFinding
+	for i := range storedRound.SentFindings {
+		finding := &storedRound.SentFindings[i]
+		if finding.FindingID == "r1-reviewer-spec-1" {
+			blocker = finding
+		}
+		if finding.FindingID == "r1-reviewer-standards-1" {
+			minor = finding
+		}
+	}
+	if blocker == nil || blocker.Disposition == nil || blocker.Disposition.Ticket != "11" || minor == nil || minor.Blocking || minor.Disposition != nil {
+		t.Fatalf("stored findings = %+v, want deferred blocker and optional undisposed minor", storedRound.SentFindings)
+	}
 	// A new commit leaves older verdicts behind; while the re-prompt for
 	// the new tip is out the Ticket is under review, not refused, so no
 	// new Tell reaches the Worker.
@@ -509,6 +541,21 @@ func submitReview(t *testing.T, base, sessionID string, payload map[string]any) 
 	return resp.StatusCode, out
 }
 
+// submitWorkerWithDispositions posts a Run Worker's done payload and returns
+// the gate response so tests can assert typed Disposition refusals.
+func submitWorkerWithDispositions(t *testing.T, base, sessionID string, dispositions []ReviewDisposition) (int, map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"status": "done", "completed": []string{"alpha"}, "dispositions": dispositions})
+	resp, err := http.Post(base+"/api/sessions/"+sessionID+"/submit", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
 // A scripted reviewer `submit` through the fake Backend records both verdicts
 // and merges: the tool path needs no VERDICT text. A pass may carry minors
 // without blocking.
@@ -690,7 +737,7 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
-	fb.Delay = 30 * time.Second
+	fb.ReplyFunc = func(string, string) (string, bool) { return "", true }
 	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -699,7 +746,8 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
-	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	worker := ticketByID(r, "01-first").WorkerSession
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	r = getRun(t, srv.URL, run.ID)
 	tip := ticketByID(r, "01-first").Tip
@@ -721,6 +769,29 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 	}, "run done after tool passes with minors")
 	if tk := ticketByID(r, "01-first"); tk.State != "merged" {
 		t.Fatalf("ticket state = %q, want merged", tk.State)
+	}
+	transcript := sessTranscript(getSession(t, srv.URL, worker))
+	if !strings.Contains(transcript, `"blocking": false`) || !strings.Contains(transcript, `"problem": "nit"`) {
+		t.Fatalf("non-blocking pass findings did not reach the worker:\n%s", transcript)
+	}
+	round := extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first").Rounds[0]
+	if len(round.SentFindings) != 2 || round.SentToWorkerAt == nil {
+		t.Fatalf("sent findings = %+v, want both minor findings recorded before the non-blocking merge", round)
+	}
+	for _, finding := range round.SentFindings {
+		if finding.Blocking || finding.Disposition != nil {
+			t.Fatalf("minor finding = %+v, want non-blocking with optional disposition absent", finding)
+		}
+	}
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{
+		{FindingID: "r1-reviewer-standards-1", Disposition: "declined", Reason: "style is consistent"},
+		{FindingID: "r1-reviewer-spec-1", Disposition: "deferred", Ticket: "12"},
+	}); code != http.StatusAccepted {
+		t.Fatalf("optional minor dispositions after merge = %d (%v), want 202", code, out)
+	}
+	round = extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first").Rounds[0]
+	if round.SentFindings[0].Disposition == nil || round.SentFindings[0].Disposition.Reason != "style is consistent" || round.SentFindings[1].Disposition == nil || round.SentFindings[1].Disposition.Ticket != "12" {
+		t.Fatalf("minor dispositions = %+v, want declined reason and deferred Ticket on the recorded findings", round.SentFindings)
 	}
 }
 
@@ -816,7 +887,9 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 	if t2 == "" || t1 == t2 {
 		t.Fatalf("tips = %q and %q, want two different SHAs", t1, t2)
 	}
-	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "fixed"}}); code != http.StatusAccepted {
+		t.Fatalf("done with blocker disposition after identical rebase = %d (%v), want 202", code, out)
+	}
 
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -1016,7 +1089,9 @@ func TestReviewRereviewUsesSameSession(t *testing.T) {
 	writeFile(t, worktree, "work.go", "package main\n\nfunc f() {}\n")
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "work v2")
-	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "fixed"}}); code != http.StatusAccepted {
+		t.Fatalf("done with blocker disposition after rework = %d (%v), want 202", code, out)
+	}
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done after the re-review passes")

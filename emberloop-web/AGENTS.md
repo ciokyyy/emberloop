@@ -690,16 +690,21 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   each verdict answers the oldest queued tip, so a mid-review Worker commit
   reads stale, never fresh; a verdict already stale at birth re-prompts its
   reviewer once at the current tip unless that re-prompt is already out.
-  The finish merges only when both types passed at the current tip; a fresh
-  refusal lands on the row and reaches the Worker unchanged, retried after the
-  next submit, while stale findings stay behind (at only, never the old
-  report) and a Ticket with no verdict on the current tip stays under review
-  with no new Tell: a Reviewer turn that ended without a recorded verdict
-  counts as no verdict and never merges. The done submit runs the ensure sync (bounded to two
-  starts plus two steers) so prompts queue in submit order. Reviewer Sessions
-  start through the shared live-Session cap like every other Session. The row
-  carries `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with
-  the last refusal. The Run view also streams `warnings` (overlap Events).
+- The finish merges only when both types passed at the current tip. A closed
+  review round sends every recorded finding, minors included, to the Worker
+  with a blocking mark; a `done` submit must disposition each blocker/major as
+  `fixed`, `declined` with a reason, or `deferred` to a Ticket, while minor
+  dispositions are optional. The round persists the exact `sentFindings` and
+  returned dispositions for the Ticket page. Fresh refusals carry this typed
+  finding list to the Worker; stale findings stay behind (at only, never the
+  old report), and a Ticket with no verdict on the current tip stays under
+  review with no new Tell: a Reviewer turn that ended without a recorded
+  verdict counts as no review and never merges. The done submit runs the ensure
+  sync (bounded to two starts plus two steers) so prompts queue in submit order.
+  Reviewer Sessions start through the shared live-Session cap like every other
+  Session. The row carries `reviewerSessions`, `verdicts` (verdict, at, fresh)
+  and `tip` with the last refusal. The Run view also streams `warnings` (overlap
+  Events).
   Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
   (state, tip, last refusal, times) written after every driver pass (plus
   the overlap `warnings`), and reload paused with nothing spawned. `POST /api/runs/{id}/pause`

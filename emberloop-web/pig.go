@@ -262,13 +262,14 @@ func (t *submitAgentTool) Label() string { return "submit work" }
 func (t *submitAgentTool) Schema() ai.ToolSchema {
 	return ai.ToolSchema{
 		Name:        t.Name(),
-		Description: "Submit your result to the Daemon when the ticket work is complete: status done with the completed checkbox texts. A done submit starts the reviewers.",
+		Description: "Submit your result to the Daemon when the ticket work is complete: status done with completed checkbox texts and dispositions for findings (blocker/major dispositions are required). A done submit starts the reviewers.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"status":    map[string]any{"type": "string"},
-				"completed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"report":    map[string]any{"type": "string"},
+				"status":       map[string]any{"type": "string"},
+				"completed":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"report":       map[string]any{"type": "string"},
+				"dispositions": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"findingId": map[string]any{"type": "string"}, "disposition": map[string]any{"type": "string", "enum": []string{"fixed", "declined", "deferred"}}, "reason": map[string]any{"type": "string"}, "ticket": map[string]any{"type": "string"}}, "required": []string{"findingId", "disposition"}}},
 			},
 			"required": []string{"status"},
 		},
@@ -276,9 +277,10 @@ func (t *submitAgentTool) Schema() ai.ToolSchema {
 }
 func (t *submitAgentTool) Execute(ctx context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
 	var req struct {
-		Status    string   `json:"status"`
-		Completed []string `json:"completed"`
-		Report    string   `json:"report"`
+		Status       string              `json:"status"`
+		Completed    []string            `json:"completed"`
+		Report       string              `json:"report"`
+		Dispositions []ReviewDisposition `json:"dispositions,omitempty"`
 	}
 	if err := json.Unmarshal(params, &req); err != nil || req.Status == "" {
 		return agent.AgentToolResult{}, fmt.Errorf("submit: status is required")

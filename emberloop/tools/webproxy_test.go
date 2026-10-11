@@ -319,7 +319,7 @@ func TestWebProxySubmitPostsOwnResult(t *testing.T) {
 	defer srv.Close()
 	bindProxy(t, srv, "child")
 
-	out, err := proxyCall(t, "submit", `{"status":"done","completed":["box one"]}`)
+	out, err := proxyCall(t, "submit", `{"status":"done","completed":["box one"],"dispositions":[{"findingId":"r1-reviewer-spec-1","disposition":"deferred","ticket":"11"}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +328,9 @@ func TestWebProxySubmitPostsOwnResult(t *testing.T) {
 	}
 	if len(d.submits) != 1 || d.submits[0]["status"] != "done" {
 		t.Fatalf("submits = %v", d.submits)
+	}
+	if got, ok := d.submits[0]["dispositions"].([]any); !ok || len(got) != 1 {
+		t.Fatalf("worker dispositions = %v, want the disposition forwarded", d.submits[0]["dispositions"])
 	}
 	if _, err := proxyCall(t, "submit", `{}`); err == nil || !strings.Contains(err.Error(), "status is required") {
 		t.Errorf("submit without status err = %v", err)
