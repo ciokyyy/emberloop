@@ -1,8 +1,8 @@
-# 05: Handoff compress on pig SDK and pig-over-ACP
+# 11: Handoff compress on pig SDK and pig-over-ACP
 
-**What to build:** Compress by Handoff restart on the pig SDK Backend, replacing the in-place compact, and on pig-over-ACP, which could not compress before. Both report Sessions as compressible.
+**What to build:** Compress by Handoff restart on the pig SDK Backend, replacing the in-place compact, and on pig-over-ACP. Both report Sessions as compressible.
 
-**Blocked by:** 02
+**Blocked by:** 06, 08
 
 **Status:** ready-for-agent
 
@@ -11,3 +11,4 @@
 - [ ] Thinking level and model survive the new handle
 - [ ] The resume token rotates and a Daemon restart then resumes the new handle
 - [ ] Tests at the Daemon seam cover both Backends against their existing test doubles
+- [ ] Owning `AGENTS.md` files and root index updated; repo check passes

@@ -1,8 +1,8 @@
-# 08: Auto-compress on the Handoff path
+# 14: Auto-compress on the Handoff path
 
-**What to build:** Auto-compress fires at the existing percent threshold on the Handoff path, at a tool boundary or when idle, with the cooldown.
+**What to build:** Auto-compress fires at the existing percent threshold on the Handoff path, at a tool boundary or when `session.Idle()` holds, with the cooldown.
 
-**Blocked by:** 04, 05, 06, 07
+**Blocked by:** 07, 10, 11, 12, 13
 
 **Status:** ready-for-agent
 
@@ -12,3 +12,4 @@
 - [ ] With the compress model unset, auto shows a warning and does not run
 - [ ] A blocked Session does not auto-compress again until Retry or dismiss
 - [ ] Tests at the Daemon seam cover threshold, boundary timing, cooldown and unset model
+- [ ] Owning `AGENTS.md` files and root index updated; repo check passes

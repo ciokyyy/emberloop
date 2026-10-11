@@ -1,10 +1,10 @@
-# 07: Queue carry-over and Group wait
+# 13: Queue carry-over and Group wait
 
-**What to build:** Queued follow-ups and held steers arrive after the Handoff in order. Compress waits while a spawn Group of the Session is outstanding, so Group and Steer links survive the swap.
+**What to build:** Queued follow-ups and held steers arrive after the Handoff in order. Compress waits while a spawn Group of the Session is outstanding. The boxes were checked in the old spec; verify them against the code before closing.
 
-**Blocked by:** 01
+**Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Queued follow-ups move to the new handle in order, after the Handoff prompt
 - [x] A held steer degrades to a follow-up across the swap and is not lost
