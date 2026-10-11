@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Ticket branches fork from the spec branch and finish into it, not master
-- [ ] Branch name and base SHA persist and resume after restart
-- [ ] Fake git models two branch levels and a moving master
-- [ ] Run seam tests cover create, reuse, merge-in and restart; `.emberloop/check` passes
+- [x] Ticket branches fork from the spec branch and finish into it, not master
+- [x] Branch name and base SHA persist and resume after restart
+- [x] Fake git models two branch levels and a moving master
+- [x] Run seam tests cover create, reuse, merge-in and restart; `.emberloop/check` passes
