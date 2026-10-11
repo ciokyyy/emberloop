@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -362,6 +364,22 @@ func TestRecallNeverCrossesUsers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Rules cross the same boundary: one direct Rule per bank on disjoint
+	// vocabulary, so an OR query cannot match both.
+	for _, tc := range []struct{ base, sid, text string }{
+		{asAdmin.URL, adminSession, "/remember admin tabs decree"},
+		{asBob.URL, bobSession, "/remember bob spaces edict"},
+	} {
+		body, _ := json.Marshal(map[string]string{"text": tc.text})
+		resp, err := http.Post(tc.base+"/api/sessions/"+tc.sid+"/prompt", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("slash remember %q = %d, want 201", tc.text, resp.StatusCode)
+		}
+	}
 	for _, tc := range []struct {
 		base, sid, want, notWant string
 	}{
@@ -372,6 +390,18 @@ func TestRecallNeverCrossesUsers(t *testing.T) {
 			t.Fatalf("recall = %d, want 200", code)
 		} else if !strings.Contains(text, tc.want) || strings.Contains(text, tc.notWant) {
 			t.Fatalf("recall = %q, want %q without %q", text, tc.want, tc.notWant)
+		}
+	}
+	for _, tc := range []struct {
+		base, sid, query, want, notWant string
+	}{
+		{asAdmin.URL, adminSession, "tabs decree", "admin tabs decree", "bob spaces edict"},
+		{asBob.URL, bobSession, "spaces edict", "bob spaces edict", "admin tabs decree"},
+	} {
+		if code, text, _ := getRecall(t, tc.base, tc.sid, tc.query); code != http.StatusOK {
+			t.Fatalf("recall = %d, want 200", code)
+		} else if !strings.Contains(text, tc.want) || strings.Contains(text, tc.notWant) {
+			t.Fatalf("recall %q = %q, want %q without %q", tc.query, text, tc.want, tc.notWant)
 		}
 	}
 }
@@ -426,5 +456,212 @@ func TestPigMemoryToolGating(t *testing.T) {
 		if tl.Name() == "remember" || tl.Name() == "recall" {
 			t.Fatalf("unwired backend serves %q", tl.Name())
 		}
+	}
+}
+
+// A quote from User B's steer inside A's Session lands in B's bank,
+// never A's: candidates follow the grounded Event's sender.
+func TestRememberCrossUserSteerStaysInSenderBank(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	h := d.Handler()
+	admin := signedIn(t, h, "admin")
+	adminID := userOf(t, h, admin).ID
+	bob := signedIn(t, h, "bob")
+	bobID := userOf(t, h, bob).ID
+	asAdmin := httptest.NewServer(withCookie(h, admin))
+	defer asAdmin.Close()
+	asBob := httptest.NewServer(withCookie(h, bob))
+	defer asBob.Close()
+	sess := createSession(t, asAdmin.URL, "fake", "fake-model", tempDir(t))
+	body, _ := json.Marshal(map[string]string{"text": "bob prefers spaces for indentation"})
+	resp, err := http.Post(asBob.URL+"/api/sessions/"+sess+"/steer", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("bob steer = %d, want 202", resp.StatusCode)
+	}
+	if code, _ := postRemember(t, asAdmin.URL, sess, map[string]any{
+		"text": "bob spaces note", "reason": "r", "quote": "prefers spaces for indentation",
+	}); code != http.StatusCreated {
+		t.Fatalf("remember = %d, want 201", code)
+	}
+	if n := len(queueRules(t, d, adminID)); n != 0 {
+		t.Fatalf("owner bank queue rules = %d, want none for B's words", n)
+	}
+	items := queueRules(t, d, bobID)
+	if len(items) != 1 {
+		t.Fatalf("sender bank queue rules = %d, want 1", len(items))
+	}
+	var payload rememberQueuePayload
+	if err := json.Unmarshal([]byte(items[0].Payload), &payload); err != nil || payload.SessionID != sess {
+		t.Fatalf("payload = %+v %v, want the session", payload, err)
+	}
+}
+
+// The structural command acts on every typed path: steer and follow-up
+// create Rules directly, just like prompt. All three route through
+// sendMessage, so one hook covers them.
+func TestSlashRememberSteerAndFollowupCreateRules(t *testing.T) {
+	d, base, id, owner := rememberDaemon(t)
+	for _, tc := range []struct{ sub, text, want string }{
+		{"steer", "/remember steer rule text", "steer rule text"},
+		{"followup", "/remember followup rule text", "followup rule text"},
+	} {
+		body, _ := json.Marshal(map[string]string{"text": tc.text})
+		resp, err := http.Post(base+"/api/sessions/"+id+"/"+tc.sub, "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out struct {
+			RuleID string `json:"ruleId"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated || out.RuleID == "" {
+			t.Fatalf("%s %s = %d %+v, want 201 with a ruleId", tc.sub, tc.text, resp.StatusCode, out)
+		}
+	}
+	for _, tc := range []struct{ query, want string }{
+		{"steer", "steer rule text"},
+		{"followup", "followup rule text"},
+	} {
+		if got, err := ownerBank(t, d, owner).Recall(context.Background(), tc.query, 10); err != nil || len(got) != 1 || got[0].Text != tc.want {
+			t.Fatalf("recall %q = %+v %v, want the direct Rule", tc.query, got, err)
+		}
+	}
+}
+
+// A rejected command logs nothing: an empty /remember and an over-long
+// one answer 400 with no prompt Event behind them.
+func TestSlashRememberInvalidLogsNothing(t *testing.T) {
+	_, base, id, _ := rememberDaemon(t)
+	for _, text := range []string{"/remember", "/remember   ", "/remember " + strings.Repeat("x", memory.MaxRuleChars+1)} {
+		body, _ := json.Marshal(map[string]string{"text": text})
+		resp, err := http.Post(base+"/api/sessions/"+id+"/prompt", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("prompt %q = %d, want 400", text[:min(len(text), 20)], resp.StatusCode)
+		}
+	}
+	for _, e := range transcriptOf(t, base, id) {
+		if e.Kind == "prompt" {
+			t.Fatalf("transcript holds a prompt Event for a rejected command: %+v", e)
+		}
+	}
+}
+
+// Leftover lines after the /remember first line still route as the turn:
+// the Rule is created and the agent sees only the remainder.
+func TestSlashRememberWithRemainderRoutesTurn(t *testing.T) {
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	seen := &promptsSeen{}
+	be := NewFakeBackend()
+	be.ReplyFunc = seen.reply
+	d := NewDaemon(tempDir(t), be)
+	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	base := srv.URL
+	id := createSession(t, base, "fake", "fake-model", tempDir(t))
+	meta, _ := sessionMeta(t, base, id)
+	body, _ := json.Marshal(map[string]string{"text": "/remember keep replies short\nnow fix the build"})
+	resp, err := http.Post(base+"/api/sessions/"+id+"/prompt", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		RuleID string `json:"ruleId"`
+		Seq    int64  `json:"seq"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted || out.RuleID == "" {
+		t.Fatalf("prompt = %d %+v, want 202 with a ruleId", resp.StatusCode, out)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		evs := transcriptOf(t, base, id)
+		n := len(evs)
+		if n > 0 && evs[n-1].Kind == "status" && evs[n-1].Status == "idle" && promptIndex(evs, "now fix the build") >= 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("remainder turn did not settle: %+v", evs)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got, err := ownerBank(t, d, meta.Owner).Recall(context.Background(), "replies short", 10); err != nil || len(got) != 1 {
+		t.Fatalf("rules = %+v %v, want the direct Rule", got, err)
+	}
+	got := seen.all()
+	if len(got) == 0 || got[len(got)-1] != "now fix the build" {
+		t.Fatalf("backend prompts = %q, want only the remainder", got)
+	}
+}
+
+// Concurrent agent calls cannot exceed the limit together: the check and
+// the enqueue are one critical section.
+func TestRememberLimitHoldsUnderConcurrency(t *testing.T) {
+	t.Setenv("EL_REMEMBER_LIMIT", "3")
+	d, base, id, owner := rememberDaemon(t)
+	runPrompt(t, base, id, "alpha beta gamma delta")
+	var wg sync.WaitGroup
+	created := make([]bool, 10)
+	for i := range created {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := d.RememberFromSession(id, "concurrent note", "reason", "alpha"); err == nil {
+				created[i] = true
+			}
+		}(i)
+	}
+	wg.Wait()
+	n := 0
+	for _, ok := range created {
+		if ok {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Fatalf("concurrent creates = %d, want exactly the limit 3", n)
+	}
+	if got := len(queueRules(t, d, owner)); got != 3 {
+		t.Fatalf("queue rules = %d, want 3", got)
+	}
+}
+
+// Recall formatting renders Rules and notes with verify flags, appends
+// observations, and drops a failing observation search while keeping the
+// Rule and note hits.
+func TestFormatRecallResults(t *testing.T) {
+	flagged := memory.VerifyResult{Status: memory.VerifyChanged, CommitDate: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)}
+	hits := []memory.MergedHit{
+		{Source: memory.MergeRule, Rule: memory.Rule{RuleID: "r1", Text: "use tabs"}, RuleResult: memory.VerifyResult{Status: memory.VerifyClean}},
+		{Source: memory.MergeNote, Note: memory.Note{ID: "n1", Text: "upload note"}, NoteResult: flagged},
+	}
+	obs := []memory.Observation{{ID: 9, Quote: "tabs observation"}}
+	text, out, err := formatRecallResults(hits, obs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "rule: use tabs") || !strings.Contains(text, "note n1: upload note (code changed since 2026-10-02, verify)") || !strings.Contains(text, "observation: tabs observation") {
+		t.Fatalf("formatted = %q", text)
+	}
+	if len(out) != 3 || out[0].Source != "rule" || out[1].Source != "note" || out[2].Source != "observation" {
+		t.Fatalf("results = %+v, want rule, note, observation", out)
+	}
+	text, out, err = formatRecallResults(hits, nil, errors.New("index gone"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "observation:") || len(out) != 2 {
+		t.Fatalf("on observation failure = %q %+v, want only the Rule and note hits", text, out)
 	}
 }

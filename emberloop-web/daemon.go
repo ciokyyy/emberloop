@@ -108,6 +108,11 @@ type Daemon struct {
 	// compress paths that hold mu can still read the Profile.
 	memMu  sync.Mutex
 	memEng *memory.Engine
+	// rememberMu serializes an agent remember's limit check with its enqueue,
+	// so concurrent calls in one Session cannot pass the limit together and
+	// exceed it. It is Daemon-wide (not per Session): the critical section is
+	// two quick bank calls, and no path takes it while holding mu.
+	rememberMu sync.Mutex
 	// restartCh fires once after RequestRestart; the binary waits on it,
 	// drains and re-executes. restartReq guards repeats (restart.go).
 	restartCh  chan struct{}
@@ -910,9 +915,13 @@ func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, t
 	}
 	from := d.senderOf(r)
 	// A structural /remember action on the first line of a typed sender=user
-	// message creates a Rule directly after grounding. Pasted blocks (the
-	// command on a later line), colon forms and system messages route as
-	// normal prompts and create nothing.
+	// message creates a Rule directly after grounding. The slash line names the
+	// Rule; leftover lines are still the user's task, so they route on as the
+	// turn without the slash line. Pasted blocks (the command on a later line),
+	// colon forms and system messages route as normal prompts and create
+	// nothing. A routed remainder that fails to start still reports its ruleId,
+	// so a resend knows the Rule already exists (each send is a new grounding
+	// Event, so resending the same text records a second Rule).
 	if from.kind == senderUser {
 		if _, _, isCommand := parseRememberCommand(text); isCommand {
 			res, code, msg := d.handleRememberCommand(id, mode, text, images, imageIDs, from)

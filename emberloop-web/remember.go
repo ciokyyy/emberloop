@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,6 +25,13 @@ const defaultRememberLimit = 5
 // Pasted "remember:" text and tool output never match it.
 const rememberCommandPrefix = "/remember"
 
+// Sentinel errors for the remember tool's HTTP mapping. Handlers switch on
+// these with errors.Is, so a reworded message never changes the status.
+var (
+	errRememberForbidden = errors.New("only top-level Sessions propose Rules")
+	errRememberLimited   = errors.New("remember limit per session reached")
+)
+
 // rememberQueuePayload is the JSON of a rule queue item proposed through the
 // remember tool: the proposed text plus who asked for it and why, with the
 // grounding quote and Event. Origin marks remember proposals so the
@@ -38,7 +46,8 @@ type rememberQueuePayload struct {
 	Origin    string `json:"origin,omitempty"`
 }
 
-// recallHit is one structured recall result: a User Rule or a Project note.
+// recallHit is one structured recall result: a User Rule, an observation or
+// a Project note.
 type recallHit struct {
 	Source string `json:"source"`
 	ID     string `json:"id"`
@@ -80,14 +89,17 @@ func rememberAllowed(meta SessionMeta) bool {
 	return elRoleFor(meta) == "web"
 }
 
-// groundingSeq finds the newest sender=user prompt Event of the Session whose
-// text holds quote, for the remember grounding check. Callers hold no lock.
-func (d *Daemon) groundingSeq(sessionID, quote string) (int64, bool) {
+// groundingEvent finds the newest sender=user prompt Event of the Session
+// whose text holds quote, for the remember grounding check. It returns the
+// Event's sequence number, its sender's User ID and its text. The sender
+// matters: a quote from User B's steer inside A's Session grounds in B's
+// bank, never A's. Callers hold no lock.
+func (d *Daemon) groundingEvent(sessionID, quote string) (seq int64, user, text string, found bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	s, ok := d.sessions[sessionID]
 	if !ok {
-		return 0, false
+		return 0, "", "", false
 	}
 	for i := len(s.events) - 1; i >= 0; i-- {
 		e := s.events[i]
@@ -95,15 +107,15 @@ func (d *Daemon) groundingSeq(sessionID, quote string) (int64, bool) {
 			continue
 		}
 		if quote != "" && strings.Contains(e.Text, quote) {
-			return e.Seq, true
+			return e.Seq, e.User, e.Text, true
 		}
 	}
-	return 0, false
+	return 0, "", "", false
 }
 
-// rememberCount counts the remember proposals of one Session in the owner's
-// bank. Only origin=remember items count, so future miner candidates never
-// consume the agent limit.
+// rememberCount counts the remember proposals of one Session in the bank.
+// Only origin=remember items count, so future miner candidates never consume
+// the agent limit.
 func rememberCount(ctx context.Context, bank memory.Memory, sessionID string) (int, error) {
 	items, err := bank.Queue(ctx)
 	if err != nil {
@@ -126,9 +138,14 @@ func rememberCount(ctx context.Context, bank memory.Memory, sessionID string) (i
 }
 
 // proposeRemember grounds the quote in a User message of the Session, checks
-// the per-Session limit, and enqueues a Rule candidate in the owner's bank.
-// It never writes a Rule. Bank is always the Session owner's bank; author
-// records who asked ("" for agent calls over the machine token).
+// the per-Session limit, and enqueues a Rule candidate. It never writes a
+// Rule. The candidate lands in the bank of the grounded Event's sender:
+// usually the Session owner, but a quote from User B's steer inside A's
+// Session lands in B's bank, never A's. Author records who asked ("" for
+// agent calls over the machine token).
+//
+// The limit check and the enqueue hold d.rememberMu, so concurrent agent
+// calls in one Session cannot pass the limit together and exceed it.
 func (d *Daemon) proposeRemember(ctx context.Context, sessionID, text, reason, quote, author string) (int64, error) {
 	d.mu.Lock()
 	s, ok := d.sessions[sessionID]
@@ -144,7 +161,7 @@ func (d *Daemon) proposeRemember(ctx context.Context, sessionID, text, reason, q
 		return 0, fmt.Errorf("%w: session %s", memory.ErrNotFound, sessionID)
 	}
 	if !rememberAllowed(meta) {
-		return 0, fmt.Errorf("only top-level Sessions propose Rules")
+		return 0, errRememberForbidden
 	}
 	text = strings.TrimSpace(text)
 	reason = strings.TrimSpace(reason)
@@ -161,18 +178,27 @@ func (d *Daemon) proposeRemember(ctx context.Context, sessionID, text, reason, q
 	if quote == "" {
 		quote = text
 	}
-	seq, found := d.groundingSeq(sessionID, quote)
+	seq, eventUser, eventText, found := d.groundingEvent(sessionID, quote)
 	if !found {
 		return 0, fmt.Errorf("%w: quote is not a substring of any user message in this session", memory.ErrInvalid)
 	}
-	bank, err := d.profileBankFor(meta.Owner)
+	if err := memory.CheckGrounding(strconv.FormatInt(seq, 10), quote, memory.GroundEvent{Found: true, Sender: senderUser, Text: eventText}); err != nil {
+		return 0, err
+	}
+	bankOwner := eventUser
+	if bankOwner == "" {
+		bankOwner = meta.Owner
+	}
+	d.rememberMu.Lock()
+	defer d.rememberMu.Unlock()
+	bank, err := d.profileBankFor(bankOwner)
 	if err != nil {
 		return 0, err
 	}
 	if n, err := rememberCount(ctx, bank, sessionID); err != nil {
 		return 0, err
 	} else if n >= rememberLimit() {
-		return 0, fmt.Errorf("remember limit %d per session reached", rememberLimit())
+		return 0, fmt.Errorf("%w (%d per session)", errRememberLimited, rememberLimit())
 	}
 	raw, _ := json.Marshal(rememberQueuePayload{
 		Text: memory.Redact(text), Reason: reason, Quote: memory.Redact(quote),
@@ -189,9 +215,9 @@ func (d *Daemon) RememberFromSession(sessionID, text, reason, quote string) (int
 
 // handleSessionRemember serves the agent propose path:
 // POST /api/sessions/{id}/remember {"text","reason","quote"?}. It always
-// creates a queue item in the Session owner's bank, never a Rule. Only the
-// web role (top-level Sessions) may propose; scouts, workers, Reviewers and
-// Run Sessions are refused, as is anything past the per-Session limit.
+// creates a queue item, never a Rule. Only the web role (top-level Sessions)
+// may propose; scouts, workers, Reviewers and Run Sessions are refused, as is
+// anything past the per-Session limit.
 func (d *Daemon) handleSessionRemember(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -220,9 +246,9 @@ func (d *Daemon) handleSessionRemember(w http.ResponseWriter, r *http.Request, i
 	qid, err := d.proposeRemember(r.Context(), id, body.Text, body.Reason, body.Quote, author)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "only top-level"):
+		case errors.Is(err, errRememberForbidden):
 			http.Error(w, err.Error(), http.StatusForbidden)
-		case strings.Contains(err.Error(), "limit"):
+		case errors.Is(err, errRememberLimited):
 			http.Error(w, err.Error(), http.StatusTooManyRequests)
 		default:
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -232,9 +258,9 @@ func (d *Daemon) handleSessionRemember(w http.ResponseWriter, r *http.Request, i
 	writeJSON(w, http.StatusCreated, map[string]any{"id": qid})
 }
 
-// recallText searches the Session owner bank and the worktree Project
+// recallText searches the Session owner's bank and the worktree's Project
 // notes for query and renders the fused hits, best match first. It never
-// returns another User bank: the bank is always the owner. A notes or
+// returns another User's bank: the bank is always the owner's. A notes or
 // verification failure still returns the bank hits; only a bank failure
 // errors.
 func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (string, []recallHit, error) {
@@ -281,8 +307,31 @@ func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (strin
 	if len(hits) > 10 {
 		hits = hits[:10]
 	}
+	obs, obsErr := bank.SearchObservations(ctx, memory.Redact(query), 10)
+	return formatRecallResults(hits, obs, obsErr)
+}
+
+// formatRecallHit renders one fused hit as its structured result and its text
+// line, with the verify flag in parentheses when the anchored code changed.
+func formatRecallHit(source, id, text, flag string) (recallHit, string) {
+	display := "rule: " + text
+	if source == "note" {
+		display = "note " + id + ": " + text
+	}
+	line := display
+	if flag != "" {
+		line += " (" + flag + ")"
+	}
+	return recallHit{Source: source, ID: id, Text: text, Flag: flag}, line
+}
+
+// formatRecallResults renders fused Rule/note hits plus observation hits.
+// Observations are candidates, never injected, but searchable through recall
+// like Rules. An observation search failure still returns the Rule and note
+// hits; only a bank failure (which never reaches here) errors.
+func formatRecallResults(hits []memory.MergedHit, obs []memory.Observation, obsErr error) (string, []recallHit, error) {
 	var out []recallHit
-	var textLines []string
+	var lines []string
 	for _, h := range hits {
 		switch h.Source {
 		case memory.MergeNote:
@@ -290,34 +339,24 @@ func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (strin
 			if h.NoteResult.NeedsFlag() {
 				flag = h.NoteResult.FlagNote()
 			}
-			out = append(out, recallHit{Source: "note", ID: h.Note.ID, Text: h.Note.Text, Flag: flag})
-			if line := "note " + h.Note.ID + ": " + h.Note.Text; flag != "" {
-				textLines = append(textLines, line+" ("+flag+")")
-			} else {
-				textLines = append(textLines, line)
-			}
+			hit, line := formatRecallHit("note", h.Note.ID, h.Note.Text, flag)
+			out, lines = append(out, hit), append(lines, line)
 		default:
 			flag := ""
 			if h.RuleResult.NeedsFlag() {
 				flag = h.RuleResult.FlagNote()
 			}
-			out = append(out, recallHit{Source: "rule", ID: h.Rule.RuleID, Text: h.Rule.Text, Flag: flag})
-			if line := "rule: " + h.Rule.Text; flag != "" {
-				textLines = append(textLines, line+" ("+flag+")")
-			} else {
-				textLines = append(textLines, line)
-			}
+			hit, line := formatRecallHit("rule", h.Rule.RuleID, h.Rule.Text, flag)
+			out, lines = append(out, hit), append(lines, line)
 		}
 	}
-	// Observations are candidates, never injected, but searchable through
-	// recall like Rules. They stay bank-scoped with everything else.
-	if obs, err := bank.SearchObservations(ctx, memory.Redact(query), 10); err == nil {
+	if obsErr == nil {
 		for _, o := range obs {
 			out = append(out, recallHit{Source: "observation", ID: strconv.FormatInt(o.ID, 10), Text: o.Quote})
-			textLines = append(textLines, "observation: "+o.Quote)
+			lines = append(lines, "observation: "+o.Quote)
 		}
 	}
-	return strings.Join(textLines, "\n"), out, nil
+	return strings.Join(lines, "\n"), out, nil
 }
 
 // RecallForSession is the pig in-process search path: the Session owner's
@@ -345,7 +384,14 @@ func (d *Daemon) handleSessionRecall(w http.ResponseWriter, r *http.Request, id 
 	}
 	text, hits, err := d.recallText(r.Context(), id, r.URL.Query().Get("query"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		switch {
+		case errors.Is(err, memory.ErrNotFound):
+			http.Error(w, err.Error(), http.StatusNotFound)
+		case errors.Is(err, memory.ErrInvalid):
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		default:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 	if hits == nil {
@@ -377,6 +423,10 @@ func gitHead(workDir string) string {
 // a steer from User B inside A's Session lands in B's bank. The quote is the
 // Rule text itself, which is a substring of the message by construction, so
 // the action is self-grounding. It returns the new Rule ID.
+//
+// The Rule kind is fact, the neutral default: the author stated the text as
+// something to keep, and no signal picks a narrower kind. The approval queue
+// (ticket 22) may reclassify candidates it mines.
 func (d *Daemon) applyRememberCommand(sessionID, senderID, fullText, ruleText string, eventSeq int64) (string, error) {
 	ruleText = strings.TrimSpace(ruleText)
 	if ruleText == "" {
@@ -416,13 +466,30 @@ type rememberCommandResult struct {
 	rest   string
 }
 
+// validateRememberText refuses an empty or over-long /remember text before
+// anything is logged, so a rejected command leaves no prompt Event behind.
+func validateRememberText(ruleText string) error {
+	ruleText = strings.TrimSpace(ruleText)
+	if ruleText == "" {
+		return fmt.Errorf("%w: remember text is required", memory.ErrInvalid)
+	}
+	if utf8.RuneCountInString(ruleText) > memory.MaxRuleChars {
+		return fmt.Errorf("%w: rule text %d chars, max %d", memory.ErrInvalid, utf8.RuneCountInString(ruleText), memory.MaxRuleChars)
+	}
+	return nil
+}
+
 // handleRememberCommand stores the typed message as its prompt Event and
 // creates its Rule directly. Callers checked the sender (user) and the first
-// line (the /remember prefix) already. The full text stays in the log as the
+// line (the /remember prefix) already, and validated the text, so the log
+// holds exactly the commands that act. The full text stays in the log as the
 // grounding Event; only rest routes on as the turn, so the agent never sees
 // the slash line.
 func (d *Daemon) handleRememberCommand(id, mode, text string, images []Image, imageIDs []string, from promptSender) (rememberCommandResult, int, string) {
 	ruleText, rest, _ := parseRememberCommand(text)
+	if err := validateRememberText(ruleText); err != nil {
+		return rememberCommandResult{}, http.StatusBadRequest, err.Error()
+	}
 	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs, from)
 	ruleID, err := d.applyRememberCommand(id, from.user, text, ruleText, e.Seq)
 	if err != nil {
