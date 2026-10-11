@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Worktree creation sets local `user.name` and `user.email`
-- [ ] Spec directory readable from the worktree and read-only; only the driver ticks boxes
-- [ ] Run seam test asserts both on the fake git
-- [ ] `.emberloop/check` passes
+- [x] Worktree creation sets local `user.name` and `user.email`
+- [x] Spec directory readable from the worktree and read-only; only the driver ticks boxes
+- [x] Run seam test asserts both on the fake git
+- [x] `.emberloop/check` passes
