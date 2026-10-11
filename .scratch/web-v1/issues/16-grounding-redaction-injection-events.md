@@ -4,10 +4,10 @@
 
 **Blocked by:** 02, 15
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Grounding rejects missing Events, `sender=system` Events and quotes that are not substrings
-- [ ] Redactor golden tests cover every pattern family including non-English key words and CLI flags
-- [ ] `injection` Events are appended on every injection and are never read by the miner
-- [ ] The redactor is the only path to the distill LLM, the Decider LLM and the Jev client (a test fails if a call site bypasses it)
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Grounding rejects missing Events, `sender=system` Events and quotes that are not substrings
+- [x] Redactor golden tests cover every pattern family including non-English key words and CLI flags
+- [x] `injection` Events are appended on every injection and are never read by the miner
+- [x] The redactor is the only path to the distill LLM, the Decider LLM and the Jev client (a test fails if a call site bypasses it)
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
