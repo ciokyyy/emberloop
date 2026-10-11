@@ -181,6 +181,13 @@ export function cardForEvent(e) {
       const bits = [`#${c.number ?? '?'}`, c.tokensBefore ? `${c.tokensBefore} tokens before` : '', c.model !== 'none' ? c.model : '' /* wire sentinel, see AGENTS.md */, c.fallback, retries, transientLabel, c.error ? `error: ${c.error}` : ''].filter(Boolean);
       return { card: 'divider', title: 'Context compressed', body: bits.join(' · '), collapsed: false };
     }
+    case 'injection': {
+      let c = {};
+      try { c = JSON.parse(text); } catch { /* keep the divider */ }
+      const rules = Array.isArray(c.rules) ? c.rules : [];
+      const bits = [c.profileVersion ? `profile v${c.profileVersion}` : '', rules.length === 1 ? '1 rule' : rules.length ? `${rules.length} rules` : ''].filter(Boolean);
+      return { card: 'divider', title: 'Memory injected', body: bits.join(' · '), collapsed: false };
+    }
     case 'compress_blocked': {
       let c = {};
       try { c = JSON.parse(text); } catch { /* keep the card */ }

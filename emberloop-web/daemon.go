@@ -152,9 +152,9 @@ type session struct {
 	compressInstr string
 	// swapping marks a Handoff from its claim until its turn ends.
 	swapping bool
-	// inject holds the memory texts the next turn carries ahead of its
+	// inject holds the memory bundle the next turn carries ahead of its
 	// prompt (handle.go). A fresh handle sets it; the first turn takes it.
-	inject []string
+	inject injection
 }
 
 // queuedMsg is one not-yet-delivered message. Mode is prompt, steer or
@@ -398,8 +398,8 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	// The Profile leads the injection block: owner Sessions, Subagents and
 	// scouts all carry it, Reviewers the filtered one. A missing engine or
 	// an empty Profile injects nothing and never blocks the start.
-	if pb := d.profileBlockFor(meta); len(pb) > 0 {
-		h.inject = append(pb, h.inject...)
+	if pb, pv := d.profileBlockFor(meta); len(pb) > 0 {
+		h.inject.prepend(pb, pv)
 	}
 	dirs, err := d.ownerDirsFor(meta.Owner)
 	if err != nil {
@@ -445,6 +445,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		}
 		d.mu.Lock()
 		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject}
+
 		d.persistMeta(meta)
 		d.starting--
 		d.mu.Unlock()
@@ -455,6 +456,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	// publishes live to hold its cap slot while it starts.
 	d.mu.Lock()
 	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject}
+
 	d.persistMeta(meta)
 	cb := d.claude
 	d.mu.Unlock()
@@ -844,8 +846,8 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 			cur.live = true
 			// Resume injects the Profile only (recall is create-time).
 			rh := startHandle(cur.meta, handleResume)
-			if pb := d.profileBlockFor(cur.meta); len(pb) > 0 {
-				rh.inject = append(pb, rh.inject...)
+			if pb, pv := d.profileBlockFor(cur.meta); len(pb) > 0 {
+				rh.inject.prepend(pb, pv)
 			}
 			cur.inject = rh.inject
 			if tok := be.ResumeToken(id); tok != "" {
@@ -1116,8 +1118,12 @@ func (d *Daemon) runTurn(id string, be Backend, text string, images []Image) {
 func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image, handoff bool, tap func(kind, text, status string)) {
 	mark, harness, gated := d.gateBaseline(id)
 	gated = gated && !handoff
-	if block := d.takeInjection(id); block != "" {
-		text = block + "\n\n" + text
+	in := d.takeInjection(id)
+	if !in.empty() {
+		d.appendInjectionEvent(id, in.profile, in.refs)
+		if block := in.block(); block != "" {
+			text = block + "\n\n" + text
+		}
 	}
 	promptBackend(be, id, text, images, func(kind, text, status string) {
 		if tap != nil {

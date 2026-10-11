@@ -46,10 +46,18 @@ the driver ticks boxes and marks done, nothing else writes them.
   User's ID in `user` when a signed-in User sent it (prompt, steer and
   follow-up routes, Run ticket steer and retry, spawn requests), else
   `system` (machine token callers, the Daemon, grouped results, sudo results,
-  the Handoff, gate reminders, Run driver prompts). Queued messages merge only
+  the Handoff, gate reminders, Run driver prompts). Every injection appends
+  an `injection` Event (`injection.go`: Profile version and Rule IDs with
+  versions, `sender=system`, never a user message), rendered as a Memory
+  injected divider (`events.js`, covered in `events.test.js`). The miner reads
+  Sessions only through `FilterMinerEvents` (`sender=user` prompts via
+  `MinerReadable`), so injections, Handoffs and Daemon-made prompts are never
+  mined; a scan in `injection_test.go` fails a miner that reads the log raw.
+  Queued messages merge only
   within one sender, so no prompt Event joins two Users' texts.
   `owner_test.go` covers owners, inheritance, hiding, sender typing and the
-  home directory at the same seam.
+  home directory at the same seam; `injection_test.go` covers the injection
+  Event on every injection and the miner filter.
 - Users list and presence (`handleUsers` in `auth.go`, `presence` in `live.go`): `GET /api/users` lists every account in creation order as `{id, username, admin, online}` for a signed-in User; the machine token answers 401. `online` holds while the User has an open `GET /api/live` channel: the first join and the last leave publish the `users` topic. `users_list_test.go` covers the list, presence and the gate at the same seam.
 - `handle_test.go` covers `startHandle` at the Daemon seam on the fake Backend: owner, role and injections across create, resume and compress; the Profile, recall, Handoff order and the no-op before memory; the tool set and parent links across a compress; and the pig loadout per role.
 - Owner harness dirs (`harnessdirs.go`): `Daemon.ownerDirsFor(owner)` gives
@@ -152,16 +160,19 @@ the driver ticks boxes and marks done, nothing else writes them.
   reports `compressible:true` and the UI shows Compress.
 - `handle.go` derives the identity of every harness handle start:
   `startHandle(meta, op)` returns the owner, the el role (`elRoleFor`: web,
-  web-worker, run-worker or scout, which sets the tool set) and the injection
-  texts for one start (`handleCreate`, `handleResume`, `handleCompress`).
+  web-worker, run-worker or scout, which sets the tool set) and the memory
+  bundle for one start (`handleCreate`, `handleResume`, `handleCompress`).
   Create (`startSession`), resume (`resumeReleased`) and compress (`runHandoff`)
   all call it; the fake Backend records each start it gets. Backends hold no
   identity maps: they read the role from the record they are handed, through
   `elRoleFor`. `Daemon.profileBlockFor` (profile.go) leads the block with the
-  owner's Profile (Reviewers the filtered one) ahead of the `memoryInjections`
-  hook (recall, ticket 24). Its texts go in front of the next turn's prompt
-  (`takeInjection` in `runTurnWith`), once per start, in order: Profile,
-  recall, then the Handoff. The Event log keeps the prompt alone.
+  owner's Profile (Reviewers the filtered one) ahead of the `memoryInjection`
+  hook (recall, ticket 24), and records its version for the injection Event.
+  Its texts go in front of the next turn's prompt (`takeInjection` in
+  `runTurnWith`), once per start, in order: Profile, recall, then the
+  Handoff. The Event log keeps the prompt alone. Texts, Profile version and
+  Rule refs travel as one `injection` value so the injection Event
+  (`injection.go`) always describes exactly what the model saw.
 - Profile (`profile.go`, `memory/profile.go`): per-User lines with stable IDs
   in `profile_versions`; ops add, edit, retire by line ID, every version kept,
   retire hides; restore copies an old version as new (the version-safe revert).

@@ -33,14 +33,14 @@ func (p *promptsSeen) all() []string {
 
 // handleDaemon starts a Daemon on the fake Backend with one Session created by
 // the admin User. A non-nil hook replaces the injection hook until the test ends.
-func handleDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
+func handleDaemon(t *testing.T, hook func(SessionMeta, handleOp) injection) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
 	t.Helper()
 	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
-		prev := memoryInjections
-		memoryInjections = hook
-		t.Cleanup(func() { memoryInjections = prev })
+		prev := memoryInjection
+		memoryInjection = hook
+		t.Cleanup(func() { memoryInjection = prev })
 	}
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
@@ -160,7 +160,7 @@ func TestStartHandleDerivesFromRecord(t *testing.T) {
 	for _, c := range cases {
 		for _, op := range []handleOp{handleCreate, handleResume, handleCompress} {
 			h := startHandle(c.meta, op)
-			if h.role != c.role || h.owner != "u1" || len(h.inject) != 0 {
+			if h.role != c.role || h.owner != "u1" || !h.inject.empty() {
 				t.Fatalf("%s op %d: handle = %+v, want role %q, owner u1, no injections", c.name, op, h, c.role)
 			}
 		}
@@ -168,11 +168,11 @@ func TestStartHandleDerivesFromRecord(t *testing.T) {
 }
 
 func TestCreateInjectsOnlyBeforeFirstTurn(t *testing.T) {
-	hook := func(_ SessionMeta, op handleOp) []string {
+	hook := func(_ SessionMeta, op handleOp) injection {
 		if op == handleCreate {
-			return []string{"PROFILE", "RECALL"}
+			return injection{texts: []string{"PROFILE", "RECALL"}}
 		}
-		return nil
+		return injection{}
 	}
 	d, be, seen, base, id := handleDaemon(t, hook)
 	runPrompt(t, base, id, "build the thing")
@@ -184,17 +184,17 @@ func TestCreateInjectsOnlyBeforeFirstTurn(t *testing.T) {
 		t.Fatalf("prompts received = %q, want %q", got, want)
 	}
 	starts := be.Starts(id)
-	if starts[0].op != handleCreate || strings.Join(starts[0].handle.inject, "|") != "PROFILE|RECALL" {
+	if starts[0].op != handleCreate || strings.Join(starts[0].handle.inject.texts, "|") != "PROFILE|RECALL" {
 		t.Fatalf("create start = %+v, want PROFILE then RECALL", starts[0])
 	}
 }
 
 func TestCompressInjectsProfileRecallThenHandoff(t *testing.T) {
-	hook := func(_ SessionMeta, op handleOp) []string {
+	hook := func(_ SessionMeta, op handleOp) injection {
 		if op == handleCompress {
-			return []string{"PROFILE", "RECALL"}
+			return injection{texts: []string{"PROFILE", "RECALL"}}
 		}
-		return nil
+		return injection{}
 	}
 	_, be, seen, base, id := handleDaemon(t, hook)
 	runPrompt(t, base, id, "build the thing")
@@ -211,7 +211,7 @@ func TestCompressInjectsProfileRecallThenHandoff(t *testing.T) {
 	}
 	starts := be.Starts(id)
 	last := starts[len(starts)-1]
-	if last.op != handleCompress || strings.Join(last.handle.inject, "|") != "PROFILE|RECALL" {
+	if last.op != handleCompress || strings.Join(last.handle.inject.texts, "|") != "PROFILE|RECALL" {
 		t.Fatalf("compress start = %+v, want PROFILE then RECALL", last)
 	}
 }
@@ -227,18 +227,18 @@ func TestCompressWithoutMemorySendsHandoffAlone(t *testing.T) {
 		t.Fatalf("compress turn = %q, want the Handoff alone", got[len(got)-1])
 	}
 	for _, s := range be.Starts(id) {
-		if len(s.handle.inject) != 0 {
+		if !s.handle.inject.empty() {
 			t.Fatalf("start %+v injects with no memory", s)
 		}
 	}
 }
 
 func TestResumeInjectsOnEachResumedTurn(t *testing.T) {
-	hook := func(_ SessionMeta, op handleOp) []string {
+	hook := func(_ SessionMeta, op handleOp) injection {
 		if op == handleResume {
-			return []string{"PROFILE"}
+			return injection{texts: []string{"PROFILE"}}
 		}
-		return nil
+		return injection{}
 	}
 	d, be, seen, base, id := handleDaemon(t, hook)
 	for _, p := range []string{"one", "two", "three"} {

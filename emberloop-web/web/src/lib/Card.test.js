@@ -141,6 +141,9 @@ describe('Card compress blocked', () => {
     expect(card.textContent).toContain('402 Payment Required');
     await fireEvent.click(within(container).getByRole('button', { name: 'Retry' }));
     expect(compressSession).toHaveBeenCalledWith('s1');
+  });
+});
+
 describe('user prompt sender badge', () => {
   const prompt = (over) => ({ key: 1, card: 'user', title: 'You', body: 'hello', collapsed: false, imageIds: [], ...over });
 

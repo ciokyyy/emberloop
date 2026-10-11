@@ -6,9 +6,11 @@ import (
 )
 
 // Event is the normalized record shared by Backends, the Event log and the UI.
-// Kinds: prompt, assistant_chunk, thinking_chunk, tool_call_started,
-// tool_call_updated, diff, permission, status, subagent_spawned,
-// subagent_finished, sudo_request, sudo_resolved, error.
+// Kinds: prompt, injection, assistant_chunk, thinking_chunk,
+// tool_call_started, tool_call_updated, diff, permission, status,
+// subagent_spawned, subagent_finished, sudo_request, sudo_resolved, error.
+// An injection Event records one memory injection (Profile version and Rule
+// IDs with versions) with sender=system; the miner never reads it.
 // Mode marks which delivery a prompt Event used: "" (a plain first prompt),
 // "steer" (next tool boundary) or "followup" (after the turn). A claude
 // Steer degrades to a followup and is stored so.
@@ -24,7 +26,8 @@ type Event struct {
 	// renders it as a collapsed block, not a user message.
 	Handoff bool `json:"handoff,omitempty"`
 	// Sender types a prompt Event: "user" for a message a signed-in User
-	// sent, "system" for one the Daemon or an agent made. Empty on other kinds.
+	// sent, "system" for one the Daemon or an agent made. An injection
+	// Event is always "system". Empty on other kinds.
 	Sender string `json:"sender,omitempty"`
 	// User is the ID of the User who sent a "user" prompt; empty otherwise.
 	User string `json:"user,omitempty"`

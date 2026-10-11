@@ -15,6 +15,7 @@ describe('cardForEvent maps every Event kind to a card', () => {
     ['subagent_spawned', 'subagent'],
     ['subagent_finished', 'subagent'],
     ['error', 'error'],
+    ['injection', 'divider'],
   ];
   for (const [kind, card] of cases) {
     it(`${kind} renders as ${card} card`, () => {
@@ -67,6 +68,19 @@ describe('cardForEvent maps every Event kind to a card', () => {
   });
   it('labels plain prompts as You', () => {
     expect(cardForEvent(ev(1, 'prompt', 'hi')).title).toBe('You');
+  });
+  it('renders an injection Event as a Memory injected divider, never raw JSON', () => {
+    const c = cardForEvent(ev(1, 'injection', JSON.stringify({ profileVersion: 4, rules: [{ id: 'r1', version: 1 }, { id: 'r2', version: 3 }] })));
+    expect(c.card).toBe('divider');
+    expect(c.title).toBe('Memory injected');
+    expect(c.body).toBe('profile v4 · 2 rules');
+    const one = cardForEvent(ev(2, 'injection', JSON.stringify({ rules: [{ id: 'r', version: 2 }] })));
+    expect(one.body).toBe('1 rule');
+  });
+  it('renders a malformed injection Event as an empty divider, never nothing', () => {
+    const c = cardForEvent(ev(1, 'injection', 'not json'));
+    expect(c.card).toBe('divider');
+    expect(c.body).toBe('');
   });
 });
 
@@ -244,6 +258,9 @@ describe('compress blocked and compressed Events', () => {
   it('compressBlockReason reads the error and falls back on bad JSON', () => {
     expect(compressBlockReason(JSON.stringify({ error: 'boom' }))).toBe('boom');
     expect(compressBlockReason('not json')).toBe('compress blocked');
+  });
+});
+
 describe('prompt senders on user cards', () => {
   it('carries the sender and the sending User id on a user prompt', () => {
     expect(cardForEvent({ ...ev(1, 'prompt', 'hi'), sender: 'user', user: 'u-mira' })).toMatchObject({

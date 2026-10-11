@@ -269,8 +269,8 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	emit := func(kind, text, status string) { d.appendEvent(id, kind, text, status) }
 	h := startHandle(meta, handleCompress)
 	// Compress behaves like create: Profile, fresh recall, then the Handoff.
-	if pb := d.profileBlockFor(meta); len(pb) > 0 {
-		h.inject = append(pb, h.inject...)
+	if pb, pv := d.profileBlockFor(meta); len(pb) > 0 {
+		h.inject.prepend(pb, pv)
 	}
 	var token string
 	var release func()

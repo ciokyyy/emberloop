@@ -90,19 +90,21 @@ func isReviewerSession(meta SessionMeta) bool {
 
 // profileBlockFor returns the injection block for one handle start: the
 // preamble plus the owner's Profile in a fenced block the Handoff writer
-// drops. Reviewers get the filtered Profile. Empty Profile, missing engine
-// or an over-cap render injects nothing and never blocks the turn.
-func (d *Daemon) profileBlockFor(meta SessionMeta) []string {
+// drops, with the Profile version the injection Event records (0 when the
+// block is empty). Reviewers get the filtered Profile. Empty Profile,
+// missing engine or an over-cap render injects nothing and never blocks the
+// turn.
+func (d *Daemon) profileBlockFor(meta SessionMeta) ([]string, int) {
 	if strings.TrimSpace(meta.Owner) == "" {
-		return nil
+		return nil, 0
 	}
 	bank, err := d.profileBankFor(meta.Owner)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 	v, err := bank.GetProfile(context.Background())
 	if err != nil || v.Version == 0 {
-		return nil
+		return nil, 0
 	}
 	var rendered string
 	if isReviewerSession(meta) {
@@ -111,9 +113,9 @@ func (d *Daemon) profileBlockFor(meta SessionMeta) []string {
 		rendered, err = memory.RenderProfile(v)
 	}
 	if err != nil || strings.TrimSpace(rendered) == "" {
-		return nil
+		return nil, 0
 	}
-	return []string{formatProfileBlock(rendered)}
+	return []string{formatProfileBlock(rendered)}, v.Version
 }
 
 // formatProfileBlock wraps a rendered Profile with the precedence preamble
