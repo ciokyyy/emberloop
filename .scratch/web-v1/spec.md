@@ -65,7 +65,7 @@ Anchors are paths, packages and `module@version` pairs from `go.mod`, plus the c
 
 ## Mining
 
-- The miner scans `events.jsonl` per Session from a byte-offset cursor stored with the file size and a hash of the first 4 KB. A changed head or a shrunk file resets the cursor. It reads only up to the last newline, and only a Session that has been idle for the settle window (default 10 minutes) or has ended. It reads only `sender=user` prompt, steer and follow-up Events.
+- Ingestion runs at turn end (the mnemopi `agent_end` shape): when a turn settles, the miner reads only the bytes added to `events.jsonl` since its cursor, off the turn path, with at most one scan in flight per Session. The nightly job catches up from the same cursor, and for a Session that is not live it still waits for the settle window (default 10 minutes) or an ended Session. The cursor is a byte offset stored with the file size and a hash of the first 4 KB. A changed head or a shrunk file resets the cursor. It reads only up to the last newline. It reads only `sender=user` prompt, steer and follow-up Events. Turn-end scans run the heuristic pass and the confirming Decider only; distill, consolidation and Profile proposals stay nightly.
 - Heuristic first pass, in a fixed order: slash-command guard, length floor, explicit statements, guardrail phrases ("don't add X unless asked"), a false-positive reject list (questions, requests), a non-correction deny list ("no problem", "never mind"), positive phrases (25-char floor, forward-pivot reject), strong corrections (`^no`, `^don't`, `^stop|^never`, "that's wrong", "I meant", "use X not Y"), weak corrections (short messages only), CJK correction patterns. Pattern tables are ported from `claude-reflect` (MIT); keep the notice in the source.
 - Each correction is stored with the thing it corrected: the preceding tool call or diff hunk.
 - Redaction (ported from `deja-vu`, MIT) runs before anything is stored or sent.
@@ -100,6 +100,7 @@ Runs at 03:00 local when `session.Idle()` holds for the Daemon, and on demand fr
 1. Snapshot every bank with `VACUUM INTO`, keep 10, at most one per 6 hours. Abort the run on failure.
 2. Mine settled Sessions into observations (grounding, redaction, dedup with counts).
 3. Distill: for each Session with new observations, one cheap-LLM call returns a brief or the sentinel `FLUSH_OK` when nothing durable exists. Input is capped at 15 KB of redacted text.
+3b. Consolidate: per User bank, one cheap-LLM call reads the last 48 hours of observations that no queued proposal covers, their FTS5 neighbours and the nearest stored Rules, and returns `generalize`, `refine` or `contradict` proposals, or `none`. Go validates ids, source counts, text length, redaction, rationale and confidence; a valid proposal is a pending `rule` queue item. Nothing is created, merged or deleted.
 4. Contradiction pairing: for each new candidate, FTS5 finds stored Rules with the same subject key or high overlap; the relation (duplicate, refines, contradicts) goes to the queue.
 5. Profile patch proposals: add, edit or retire operations by line ID, JSON-only, `none` when no stable signal. Proposals go to the queue.
 6. Anchor check: refresh `dormant` status against the current main branch.
