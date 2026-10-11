@@ -441,42 +441,54 @@ func (b *Bank) AppendProfileVersion(ctx context.Context, patch ProfilePatch, app
 	}
 	var out ProfileVersion
 	err := b.write(ctx, func(db *sql.DB) error {
-		rows, err := queryAll(ctx, db, scanProfileVersion, `SELECT `+profileCols+`
-			FROM profile_versions ORDER BY version`)
+		rows, err := loadProfileRows(ctx, db)
 		if err != nil {
 			return err
 		}
 		var current []ProfileLine
-		version := 0
+		latest := 0
 		if n := len(rows); n > 0 {
 			current = rows[n-1].Lines
-			version = rows[n-1].Version
+			latest = rows[n-1].Version
 		}
 		next, err := ApplyProfilePatch(current, patch)
 		if err != nil {
 			return err
 		}
-		if n := profileLinesBytes(next); n > MaxProfileBytes {
-			return fmt.Errorf("%w: profile is %d bytes, max %d: condense it to fewer, shorter lines",
-				ErrInvalid, n, MaxProfileBytes)
-		}
-		linesDoc, err := json.Marshal(nonNilProfileLines(next))
-		if err != nil {
+		if err := checkProfileCap(next); err != nil {
 			return err
 		}
-		out = ProfileVersion{
-			Version:    version + 1,
-			Lines:      next,
-			Patch:      profilePatchJSON(patch),
-			ApprovedBy: approvedBy,
-			CreatedAt:  b.now(),
-		}
-		_, err = db.ExecContext(ctx, `INSERT INTO profile_versions
-			(version, lines_json, patch_json, approved_by, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			out.Version, string(linesDoc), out.Patch, out.ApprovedBy, timeText(out.CreatedAt))
+		out, err = insertProfileRow(ctx, db, latest, next, profilePatchJSON(patch), approvedBy, b.now())
 		return err
 	})
+	return out, err
+}
+
+// loadProfileRows reads every Profile version, oldest first, for Append and
+// Restore inside one writer transaction.
+func loadProfileRows(ctx context.Context, db *sql.DB) ([]ProfileVersion, error) {
+	return queryAll(ctx, db, scanProfileVersion, `SELECT `+profileCols+`
+		FROM profile_versions ORDER BY version`)
+}
+
+// insertProfileRow stores lines as the version after latest and returns it.
+// Callers hold the bank writer.
+func insertProfileRow(ctx context.Context, db *sql.DB, latest int, lines []ProfileLine, patchDoc, approvedBy string, now time.Time) (ProfileVersion, error) {
+	linesDoc, err := json.Marshal(nonNilProfileLines(lines))
+	if err != nil {
+		return ProfileVersion{}, err
+	}
+	out := ProfileVersion{
+		Version:    latest + 1,
+		Lines:      append([]ProfileLine(nil), lines...),
+		Patch:      patchDoc,
+		ApprovedBy: approvedBy,
+		CreatedAt:  now,
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO profile_versions
+		(version, lines_json, patch_json, approved_by, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		out.Version, string(linesDoc), out.Patch, out.ApprovedBy, timeText(out.CreatedAt))
 	return out, err
 }
 
@@ -498,8 +510,7 @@ func (b *Bank) RestoreProfileVersion(ctx context.Context, version int, approvedB
 	}
 	var out ProfileVersion
 	err := b.write(ctx, func(db *sql.DB) error {
-		rows, err := queryAll(ctx, db, scanProfileVersion, `SELECT `+profileCols+`
-			FROM profile_versions ORDER BY version`)
+		rows, err := loadProfileRows(ctx, db)
 		if err != nil {
 			return err
 		}
@@ -517,21 +528,7 @@ func (b *Bank) RestoreProfileVersion(ctx context.Context, version int, approvedB
 			return fmt.Errorf("%w: profile version %d", ErrNotFound, version)
 		}
 		latest := rows[len(rows)-1].Version
-		linesDoc, err := json.Marshal(nonNilProfileLines(src.Lines))
-		if err != nil {
-			return err
-		}
-		out = ProfileVersion{
-			Version:    latest + 1,
-			Lines:      append([]ProfileLine(nil), src.Lines...),
-			Patch:      fmt.Sprintf(`{"restore":%d}`, version),
-			ApprovedBy: approvedBy,
-			CreatedAt:  b.now(),
-		}
-		_, err = db.ExecContext(ctx, `INSERT INTO profile_versions
-			(version, lines_json, patch_json, approved_by, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			out.Version, string(linesDoc), out.Patch, out.ApprovedBy, timeText(out.CreatedAt))
+		out, err = insertProfileRow(ctx, db, latest, src.Lines, fmt.Sprintf(`{"restore":%d}`, version), approvedBy, b.now())
 		return err
 	})
 	return out, err

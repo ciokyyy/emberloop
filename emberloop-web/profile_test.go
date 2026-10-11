@@ -453,3 +453,37 @@ func TestPigProfileToolGating(t *testing.T) {
 		}
 	}
 }
+
+func TestIsReviewerSessionShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		meta SessionMeta
+		want bool
+	}{
+		{"top-level has no parent", SessionMeta{ID: "top"}, false},
+		{"subagent carries a group", SessionMeta{ID: "w", ParentID: "p", GroupID: "g"}, false},
+		{"scout flag wins", SessionMeta{ID: "s", ParentID: "run-1", Scout: true}, false},
+		{"run worker flag wins", SessionMeta{ID: "r", ParentID: "run-1", RunWorker: true}, false},
+		{"reviewer flag marks", SessionMeta{ID: "rev", ParentID: "run-1", Reviewer: "reviewer-spec"}, true},
+		{"old reviewer without the flag", SessionMeta{ID: "old", ParentID: "run-1"}, true},
+	}
+	for _, c := range cases {
+		if got := isReviewerSession(c.meta); got != c.want {
+			t.Errorf("%s: isReviewerSession = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestProfileGateNeedsLatestUserMessage(t *testing.T) {
+	_, _, _, base, id := profileDaemon(t)
+	ops := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "prefer tabs", Tag: memory.ProfileWorkflow}}
+	runPrompt(t, base, id, "please update my profile to prefer tabs")
+	if code, _ := proposeViaSession(t, base, id, ops, "tabs"); code != http.StatusCreated {
+		t.Fatalf("propose after a profile request = %d, want 201", code)
+	}
+	// A later user message about something else closes the gate again.
+	runPrompt(t, base, id, "now fix the build output")
+	if code, _ := proposeViaSession(t, base, id, ops, "tabs again"); code != http.StatusBadRequest {
+		t.Fatalf("propose after an unrelated message = %d, want 400", code)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -430,16 +431,18 @@ func webProxyProfile(ctx context.Context, daemonURL, sessionID string, args json
 			return "", fmt.Errorf("profile: %s", err.Error())
 		}
 		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			if msg := strings.TrimSpace(string(raw)); msg != "" {
+				return "", fmt.Errorf("profile: %s", msg)
+			}
+			return "", fmt.Errorf("profile: read refused: %d", resp.StatusCode)
+		}
 		var out struct {
 			Rendered string `json:"rendered"`
-			Err      string `json:"error"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&out)
-		if resp.StatusCode != http.StatusOK {
-			if out.Err == "" {
-				out.Err = fmt.Sprintf("read refused: %d", resp.StatusCode)
-			}
-			return "", fmt.Errorf("profile: %s", out.Err)
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return "", fmt.Errorf("profile: bad session response")
 		}
 		if strings.TrimSpace(out.Rendered) == "" {
 			return "(no profile saved)", nil
@@ -458,15 +461,18 @@ func webProxyProfile(ctx context.Context, daemonURL, sessionID string, args json
 			return "", fmt.Errorf("profile: %s", err.Error())
 		}
 		defer resp.Body.Close()
-		var out struct {
-			ID  int64  `json:"id"`
-			Err string `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&out)
+		raw, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusCreated {
-			// The Daemon answers plain-text errors on this route; the JSON
-			// decode above leaves Err empty, so read the body text instead.
+			if msg := strings.TrimSpace(string(raw)); msg != "" {
+				return "", fmt.Errorf("profile: %s", msg)
+			}
 			return "", fmt.Errorf("profile: refused: %d", resp.StatusCode)
+		}
+		var out struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return "", fmt.Errorf("profile: bad session response")
 		}
 		return fmt.Sprintf("proposed profile patch %d for human approval", out.ID), nil
 	default:

@@ -12,6 +12,7 @@ import (
 
 	"example.com/emberloop-web/memory"
 )
+
 // profilePreamble sets precedence for the injected Profile. The task prompt
 // beats everything; AGENTS.md beats the Profile for code in the repo; the
 // Profile governs workflow and communication.
@@ -72,9 +73,14 @@ func (d *Daemon) profileBankFor(owner string) (memory.Memory, error) {
 	return eng.Bank(owner)
 }
 
-// isReviewerSession reports a Run Reviewer Session: a child of a Run that is
-// neither a Worker, a spawned Subagent nor a scout. The Reviewer field marks
-// new Sessions; the ParentID shape covers Sessions persisted before it.
+// isReviewerSession reports a Run Reviewer Session. The Reviewer field marks
+// new Sessions. The ParentID shape (a ParentID with no GroupID on a Session
+// that is neither a Run worker nor a scout) covers Sessions persisted before
+// the field existed. With the current Session shapes only Reviewers match
+// it: top-level Sessions have no ParentID, Subagents carry a GroupID, and
+// Workers and scouts carry their flags. TestIsReviewerSessionShapes locks
+// those cases so a new ParentID-only shape cannot silently gain the filtered
+// Profile.
 func isReviewerSession(meta SessionMeta) bool {
 	if meta.Reviewer != "" {
 		return true
@@ -136,9 +142,13 @@ func (d *Daemon) broadcastProfileUpdated(owner string, v memory.ProfileVersion, 
 	}
 }
 
-// profileRequestSeen reports whether the Session's user messages mention the
-// Profile: the explicit-request gate for agent proposals. Callers do not hold
-// mu.
+// profileRequestSeen reports whether the Session's latest user message asks
+// about the Profile: the explicit-request gate for agent proposals. Only the
+// most recent sender=user prompt, steer or follow-up counts, so a passing
+// mention in an older turn does not leave the gate open. The check is a
+// keyword match on the word "profile", not a semantic judgement: a user who
+// means the Profile without naming it is refused, and precise wording that
+// names it is accepted. Callers do not hold mu.
 func (d *Daemon) profileRequestSeen(sessionID string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -146,16 +156,15 @@ func (d *Daemon) profileRequestSeen(sessionID string) bool {
 	if !ok {
 		return false
 	}
-	for _, e := range s.events {
+	for i := len(s.events) - 1; i >= 0; i-- {
+		e := s.events[i]
 		if e.Kind != "prompt" {
 			continue
 		}
 		if e.Sender != senderUser {
 			continue
 		}
-		if strings.Contains(strings.ToLower(e.Text), "profile") {
-			return true
-		}
+		return strings.Contains(strings.ToLower(e.Text), "profile")
 	}
 	return false
 }
@@ -429,7 +438,7 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var body struct {
-		Status string              `json:"status"`
+		Status string             `json:"status"`
 		Ops    []memory.ProfileOp `json:"ops,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

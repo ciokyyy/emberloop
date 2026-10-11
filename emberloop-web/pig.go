@@ -414,7 +414,7 @@ func (t *profileAgentTool) Schema() ai.ToolSchema {
 }
 func (t *profileAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
 	var req struct {
-		Action string              `json:"action"`
+		Action string             `json:"action"`
 		Ops    []memory.ProfileOp `json:"ops"`
 		Reason string             `json:"reason"`
 	}

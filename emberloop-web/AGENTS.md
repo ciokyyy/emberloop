@@ -154,23 +154,30 @@ the driver ticks boxes and marks done, nothing else writes them.
   recall, then the Handoff. The Event log keeps the prompt alone.
 - Profile (`profile.go`, `memory/profile.go`): per-User lines with stable IDs
   in `profile_versions`; ops add, edit, retire by line ID, every version kept,
-  retire hides. `GET/PUT /api/profile`, `GET /api/profile/versions`,
+  retire hides; restore copies an old version as new (the version-safe revert).
+  `GET/PUT /api/profile`, `GET /api/profile/versions`,
   `POST /api/profile/restore`, `GET /api/profile/queue` and
   `POST /api/profile/queue/{id}/decide` serve the settings view (approve with
-  an optional edit, reject keeps the label); each approval appends a version
-  and a `profile_updated` Event to every Session of the owner. `GET` and
-  `POST /api/sessions/{id}/profile[/propose]` serve the agent `profile` tool
-  (memory://profile read, patch proposals that wait for approval, only on an
-  explicit User request mentioning the Profile with a reason; only top-level
-  web Sessions propose; workers, scouts, Reviewers and Run workers are
-  refused). The pig `profile` ExtraTool (`pig.go`) and the el-mcp `profile`
-  proxy (`emberloop/tools/webproxy.go`, `web` role only) share that gate.
-  Tags are workflow, style or other; workflow and style go to Reviewers
-  (`SessionMeta.reviewer`, set on Run Reviewer start), never barred lines
-  (expertise or review-bar phrases stay `other`). Over-2 KB renders are
+  an optional edit, reject keeps the label); PUT applies directly because the
+  signed-in User is the approver, while agent proposals always queue. Each
+  approval appends a version and a `profile_updated` Event to every Session of
+  the owner. `GET` and `POST /api/sessions/{id}/profile[/propose]` serve the
+  agent `profile` tool (memory://profile read, patch proposals that wait for
+  approval with a reason; only top-level web Sessions propose; workers,
+  scouts, Reviewers and Run workers are refused). The gate is the Session's
+  latest sender=user message naming the Profile: a keyword match, not a
+  semantic judgement, so an older passing mention does not open it but
+  unworded intent is refused. The pig `profile` ExtraTool (`pig.go`) and the
+  el-mcp `profile` proxy (`emberloop/tools/webproxy.go`, `web` role only)
+  share that gate and return the Daemon's refusal text. Tags are workflow,
+  style or other; workflow and style go to Reviewers (`SessionMeta.reviewer`,
+  set on Run Reviewer start, with a ParentID-shape fallback for old Sessions
+  locked by TestIsReviewerSessionShapes), never barred lines (heuristic
+  expertise and review-bar phrases stay `other`). Over-2 KB renders are
   refused with a condense message. `profile_test.go` covers cap, versions,
-  retire, filter, queue and Events at the Daemon seam; `ProfileSettings.svelte`
-  with `ProfileSettings.test.js` covers the settings view.
+  retire, filter, queue, gate recency and Events at the Daemon seam;
+  `ProfileSettings.svelte` with `ProfileSettings.test.js` covers the settings
+  view.
 - `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
   compress model is unset or unauthed. Else `runHandoff` writes the body

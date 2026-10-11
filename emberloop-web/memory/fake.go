@@ -252,27 +252,19 @@ func (f *Fake) AppendProfileVersion(_ context.Context, patch ProfilePatch, appro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var current []ProfileLine
-	version := 0
+	latest := 0
 	if n := len(f.profiles); n > 0 {
 		current = f.profiles[n-1].Lines
-		version = f.profiles[n-1].Version
+		latest = f.profiles[n-1].Version
 	}
 	next, err := ApplyProfilePatch(current, patch)
 	if err != nil {
 		return ProfileVersion{}, err
 	}
-	if n := profileLinesBytes(next); n > MaxProfileBytes {
-		return ProfileVersion{}, fmt.Errorf("%w: profile is %d bytes, max %d: condense it to fewer, shorter lines",
-			ErrInvalid, n, MaxProfileBytes)
+	if err := checkProfileCap(next); err != nil {
+		return ProfileVersion{}, err
 	}
-	out := ProfileVersion{
-		Version:    version + 1,
-		Lines:      next,
-		Patch:      profilePatchJSON(patch),
-		ApprovedBy: approvedBy,
-		CreatedAt:  f.now(),
-	}
-	f.profiles = append(f.profiles, copyProfile(out))
+	out := f.insertProfileVersionLocked(latest, next, profilePatchJSON(patch), approvedBy)
 	return out, nil
 }
 
@@ -299,15 +291,22 @@ func (f *Fake) RestoreProfileVersion(_ context.Context, version int, approvedBy 
 		return ProfileVersion{}, fmt.Errorf("%w: profile version %d", ErrNotFound, version)
 	}
 	latest := f.profiles[len(f.profiles)-1].Version
+	out := f.insertProfileVersionLocked(latest, src.Lines, fmt.Sprintf(`{"restore":%d}`, version), approvedBy)
+	return out, nil
+}
+
+// insertProfileVersionLocked stores lines as the version after latest.
+// Callers hold f.mu.
+func (f *Fake) insertProfileVersionLocked(latest int, lines []ProfileLine, patchDoc, approvedBy string) ProfileVersion {
 	out := ProfileVersion{
 		Version:    latest + 1,
-		Lines:      append([]ProfileLine(nil), src.Lines...),
-		Patch:      fmt.Sprintf(`{"restore":%d}`, version),
+		Lines:      append([]ProfileLine(nil), lines...),
+		Patch:      patchDoc,
 		ApprovedBy: approvedBy,
 		CreatedAt:  f.now(),
 	}
 	f.profiles = append(f.profiles, copyProfile(out))
-	return out, nil
+	return out
 }
 
 func (f *Fake) RecordLedger(_ context.Context, row LedgerRow) (int64, error) {

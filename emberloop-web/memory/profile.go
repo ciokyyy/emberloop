@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // MaxProfileBytes caps the rendered Profile, counted in bytes. An over-cap
@@ -74,11 +73,26 @@ func RenderProfile(v ProfileVersion) (string, error) {
 		}
 	}
 	out := strings.Join(live, "\n")
-	if len(out) > MaxProfileBytes {
-		return "", fmt.Errorf("%w: profile is %d bytes, max %d: condense it to fewer, shorter lines",
-			ErrInvalid, len(out), MaxProfileBytes)
+	if err := checkProfileBytes(len(out)); err != nil {
+		return "", err
 	}
 	return out, nil
+}
+
+// checkProfileBytes refuses an over-cap render with the condense message.
+// Bank.AppendProfileVersion, Fake.AppendProfileVersion and RenderProfile all
+// use it so the cap cannot drift apart.
+func checkProfileBytes(n int) error {
+	if n > MaxProfileBytes {
+		return fmt.Errorf("%w: profile is %d bytes, max %d: condense it to fewer, shorter lines",
+			ErrInvalid, n, MaxProfileBytes)
+	}
+	return nil
+}
+
+// checkProfileCap renders lines for the cap check without building a version.
+func checkProfileCap(lines []ProfileLine) error {
+	return checkProfileBytes(profileLinesBytes(lines))
 }
 
 // ReviewerLines returns the lines a Reviewer may see: live lines tagged
@@ -122,6 +136,8 @@ func validProfileTag(tag string) bool {
 
 // barredPhrases are substrings of lines that assert expertise or lower the
 // review bar. Such lines must stay tagged other so Reviewers never see them.
+// The list is a heuristic, not a semantic judge: reviewers still read the
+// approved tag, and borderline wording stays visible until a human retags it.
 var barredPhrases = []string{
 	"you are an expert",
 	"i am an expert",
@@ -287,15 +303,6 @@ func profileLinesBytes(lines []ProfileLine) int {
 	return len(strings.Join(live, "\n"))
 }
 
-// validProfilePatchJSON reports whether the stored patch document is JSON.
-// Empty (versions written before patches) counts as valid.
-func validProfilePatchJSON(doc string) bool {
-	if doc == "" {
-		return true
-	}
-	return json.Valid([]byte(doc))
-}
-
 // profilePatchJSON marshals ops for profile_versions.patch_json.
 func profilePatchJSON(patch ProfilePatch) string {
 	raw, err := json.Marshal(patch)
@@ -331,6 +338,3 @@ func scanProfileVersion(s rowScanner) (ProfileVersion, error) {
 	}
 	return v, nil
 }
-
-// profileCharLen counts characters for error messages.
-func profileCharLen(s string) int { return utf8.RuneCountInString(s) }
