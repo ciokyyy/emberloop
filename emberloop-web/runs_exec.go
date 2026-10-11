@@ -1639,20 +1639,36 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	return nil
 }
 
-// worktreeGitIdentity is the local git identity every Ticket worktree
+// worktreeGitIdentity is the per-worktree git identity every Ticket worktree
 // carries, so Worker commits and the finish rebase never abort on a
-// missing user.name/user.email (ticket 03).
+// missing user.name/user.email (ticket 03). It is scoped with
+// `git config --worktree`, never the shared repo config, so the User's own
+// identity in the main checkout is untouched.
 const (
 	worktreeGitUserName  = "emberloop"
 	worktreeGitUserEmail = "emberloop@localhost"
 )
 
-// ensureWorktreeGitIdentity sets the worktree local user.name and user.email.
-func ensureWorktreeGitIdentity(worktree string) error {
-	if _, err := runGit(worktree, "config", "user.name", worktreeGitUserName); err != nil {
+// ensureWorktreeConfigExtension enables extensions.worktreeConfig once per
+// repo, so per-worktree config (`git config --worktree`: the identity below
+// and the spec excludes file) takes effect. Repeating it is a no-op, and it
+// changes nothing else about how git reads the shared config.
+func ensureWorktreeConfigExtension(repo string) error {
+	if _, err := runGit(repo, "config", "extensions.worktreeConfig", "true"); err != nil {
 		return err
 	}
-	if _, err := runGit(worktree, "config", "user.email", worktreeGitUserEmail); err != nil {
+	return nil
+}
+
+// ensureWorktreeGitIdentity sets the worktree's own user.name and user.email
+// via `git config --worktree`, which lands in the worktree's private
+// config.worktree and leaves the shared repo config alone. Callers enable
+// the worktreeConfig extension first: without it git refuses --worktree.
+func ensureWorktreeGitIdentity(worktree string) error {
+	if _, err := runGit(worktree, "config", "--worktree", "user.name", worktreeGitUserName); err != nil {
+		return err
+	}
+	if _, err := runGit(worktree, "config", "--worktree", "user.email", worktreeGitUserEmail); err != nil {
 		return err
 	}
 	return nil
@@ -1940,8 +1956,14 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		// Ticket 03: every worktree carries its own git identity so Worker
 		// commits and the finish rebase never abort on a missing
 		// user.name/user.email, and a read-only mirror of the spec directory
-		// so the Worker never hits a stat error on spec or ticket files. A
-		// failure here stops this worker like any other start error.
+		// so the Worker never hits a stat error on spec or ticket files. The
+		// worktreeConfig extension scopes both to the worktree, leaving the
+		// User's shared repo config untouched. A failure here stops this
+		// worker like any other start error.
+		if err := ensureWorktreeConfigExtension(repo); err != nil {
+			cleanup()
+			return fmt.Errorf("could not enable worktreeConfig in %s: %w", repo, err)
+		}
 		if err := ensureWorktreeGitIdentity(worktree); err != nil {
 			cleanup()
 			return fmt.Errorf("could not set git identity in %s: %w", worktree, err)

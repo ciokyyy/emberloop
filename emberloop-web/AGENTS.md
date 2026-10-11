@@ -618,11 +618,13 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   shows the live Ticket table, `GET /api/runs/{id}/events` streams it over
   SSE). Each Ticket starts in number order once blockers merged, up to the
   live-Session cap, in its own worktree and branch as a Subagent of the Run
-  (ParentID the Run). Worktree creation sets local user.name/user.email
-  (emberloop) and mirrors missing spec files read-only into the worktree at
-  the same repo-relative path (existing files untouched; copied gap files go
-  in a per-worktree excludes file, so the mirror never dirties the checkout);
-  only the driver ticks boxes in the main checkout.
+  (ParentID the Run). Worktree creation enables extensions.worktreeConfig once
+  per repo, then sets per-worktree user.name/user.email (emberloop) and a
+  per-worktree spec excludes file, so the User's shared repo config is
+  untouched; it also mirrors missing spec files read-only into the worktree
+  at the same repo-relative path (existing files untouched; copied gap files
+  go in the excludes file, so the mirror never dirties the checkout); only
+  the driver ticks boxes in the main checkout.
   The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`

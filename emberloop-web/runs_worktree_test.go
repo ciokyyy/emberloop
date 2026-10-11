@@ -3,6 +3,7 @@ package web
 import (
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,12 +40,20 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 		t.Fatalf("worktree = %v, %v; want the 01-first checkout", worktree, err)
 	}
 
-	// Local git identity: commits and the finish rebase need it.
+	// Per-worktree git identity: commits and the finish rebase need it, and
+	// it must not leak into the shared repo config that the main checkout
+	// (and every other worktree) reads.
 	if got := strings.TrimSpace(testGit(t, worktree, "config", "user.name")); got != worktreeGitUserName {
 		t.Fatalf("worktree user.name = %q, want %q", got, worktreeGitUserName)
 	}
 	if got := strings.TrimSpace(testGit(t, worktree, "config", "user.email")); got != worktreeGitUserEmail {
 		t.Fatalf("worktree user.email = %q, want %q", got, worktreeGitUserEmail)
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "user.name").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("main repo user.name = %q, want unchanged (unset): the worktree identity leaked into the shared config", strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("git", "-C", repo, "config", "user.email").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("main repo user.email = %q, want unchanged (unset): the worktree identity leaked into the shared config", strings.TrimSpace(string(out)))
 	}
 
 	// Spec mirror: the same repo-relative directory, readable in the
