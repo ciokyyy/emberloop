@@ -163,6 +163,58 @@ func TestMineSessionContradictsNotMerged(t *testing.T) {
 	if got := memory.Relation(obs[0].Quote, obs[1].Quote); got != memory.RelContradicts {
 		t.Fatalf("relation = %q, want contradicts", got)
 	}
+	// The later observation records the relation and the related row, so
+	// the queue stage reads it without recomputing from quotes.
+	var first, second memory.Observation
+	for _, o := range obs {
+		if strings.Contains(o.Quote, "always return") {
+			first = o
+		} else {
+			second = o
+		}
+	}
+	var doc struct {
+		Relation string `json:"relation"`
+		Related  int64  `json:"related_observation_id"`
+	}
+	if err := json.Unmarshal([]byte(second.DeciderJSON), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Relation != memory.RelContradicts || doc.Related != first.ID {
+		t.Fatalf("stored relation = %+v, want contradicts row %d", doc, first.ID)
+	}
+	if strings.Contains(first.DeciderJSON, `"relation"`) {
+		t.Fatalf("novel observation carries a relation: %s", first.DeciderJSON)
+	}
+}
+
+func TestMineSessionContextComesFromBefore(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	evs := []Event{
+		{Kind: "tool_call_started", Text: `{"name":"first-tool","input":"a"}`, Seq: 1},
+		userPrompt(2, "alice", "that's wrong, the retry belongs in the caller"),
+		{Kind: "tool_call_started", Text: `{"name":"later-tool","input":"b"}`, Seq: 3},
+	}
+	seedEndedSession(t, d, "s1", "alice", evs)
+	if _, err := d.MineSession("s1"); err != nil {
+		t.Fatal(err)
+	}
+	got := bankQuotes(t, d, "alice", "retry")
+	if len(got) != 1 {
+		t.Fatalf("observations = %+v, want 1", got)
+	}
+	var ctx struct {
+		Context string `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(got[0].DeciderJSON), &ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx.Context, "first-tool") {
+		t.Fatalf("context = %q, want the preceding tool call", ctx.Context)
+	}
+	if strings.Contains(ctx.Context, "later-tool") {
+		t.Fatalf("context = %q, want nothing from after the correction", ctx.Context)
+	}
 }
 
 func TestMineSessionRedactsBeforeStorage(t *testing.T) {
@@ -327,5 +379,29 @@ func TestMineSessionOnlyWhenSettled(t *testing.T) {
 	}
 	if res.Stored != 1 {
 		t.Fatalf("ended session mined = %+v, want 1 stored", res)
+	}
+}
+
+func TestMineSessionBankErrorHoldsCursor(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
+	// Break the author's bank: the store fails transiently, so the scan
+	// must report the error and leave the cursor unsaved for a retry.
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bank.(*memory.Bank).Close(); err != nil {
+		t.Fatal(err)
+	}
+	res, err := d.MineSession("s1")
+	if err == nil {
+		t.Fatalf("mine with a broken bank = %+v, want an error", res)
+	}
+	if res.Stored != 0 {
+		t.Fatalf("mine with a broken bank stored %d, want 0", res.Stored)
+	}
+	if _, statErr := os.Stat(d.minerCursorPath("s1")); !os.IsNotExist(statErr) {
+		t.Fatalf("cursor saved despite the store error: %v", statErr)
 	}
 }

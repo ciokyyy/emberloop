@@ -14,6 +14,8 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"unicode"
 )
@@ -233,9 +235,11 @@ func Relation(a, b string) string {
 // DedupAndStore stores obs in mem with dedup: a replay of the same Session
 // Event returns its ID without bumping, a duplicate of a stored observation
 // bumps that row's evidence_count and returns its ID, while refines,
-// contradicts and novel quotes are all inserted and nothing is dropped. It
-// returns the stored ID and the relation to the closest stored observation
-// (empty when novel).
+// contradicts and novel quotes are all inserted and nothing is dropped. An
+// inserted row carries the relation to its closest stored observation and
+// that row's ID in its decider_json, so the later queue stage reads it
+// without recomputing from quotes. It returns the stored ID and the
+// relation (empty when novel).
 func DedupAndStore(ctx context.Context, mem Memory, obs Observation) (int64, string, error) {
 	hits, err := mem.SearchObservations(ctx, obs.Quote, 20)
 	if err != nil {
@@ -246,7 +250,7 @@ func DedupAndStore(ctx context.Context, mem Memory, obs Observation) (int64, str
 			return h.ID, RelDuplicate, nil
 		}
 	}
-	best := ""
+	best, bestID := "", int64(0)
 	for _, h := range hits {
 		rel := Relation(obs.Quote, h.Quote)
 		if rel == "" {
@@ -255,17 +259,39 @@ func DedupAndStore(ctx context.Context, mem Memory, obs Observation) (int64, str
 		if rel == RelDuplicate {
 			updated, err := mem.BumpObservationEvidence(ctx, h.ID)
 			if err != nil {
+				if errors.Is(err, ErrNotFound) {
+					break // the row vanished under us; store anew below.
+				}
 				return 0, "", err
 			}
 			return updated.ID, RelDuplicate, nil
 		}
 		if best == "" {
-			best = rel
+			best, bestID = rel, h.ID
 		}
+	}
+	if best != "" {
+		obs.DeciderJSON = withRelation(obs.DeciderJSON, best, bestID)
 	}
 	id, err := mem.AddObservation(ctx, obs)
 	if err != nil {
 		return 0, "", err
 	}
 	return id, best, nil
+}
+
+// withRelation records the dedup relation to a stored observation in a
+// decider_json document, merging into the existing keys when it parses.
+func withRelation(doc, rel string, relatedID int64) string {
+	var m map[string]any
+	if doc == "" || json.Unmarshal([]byte(doc), &m) != nil {
+		m = map[string]any{}
+	}
+	m["relation"] = rel
+	m["related_observation_id"] = relatedID
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return doc
+	}
+	return string(raw)
 }

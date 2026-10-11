@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -90,6 +91,24 @@ func TestDedupAndStore(t *testing.T) {
 			obs, _ = m.SearchObservations(ctx, "wrap errors", 10)
 			if len(obs) != 2 {
 				t.Fatalf("contradiction merged: %d observations, want 2", len(obs))
+			}
+			// The contradiction records its relation and the first row, so
+			// the queue stage reads it without recomputing from quotes.
+			var contraRow Observation
+			for _, o := range obs {
+				if strings.Contains(o.Quote, "never") {
+					contraRow = o
+				}
+			}
+			var doc struct {
+				Relation string `json:"relation"`
+				Related  int64  `json:"related_observation_id"`
+			}
+			if err := json.Unmarshal([]byte(contraRow.DeciderJSON), &doc); err != nil {
+				t.Fatal(err)
+			}
+			if doc.Relation != RelContradicts || doc.Related != first {
+				t.Fatalf("stored relation = %+v, want contradicts row %d", doc, first)
 			}
 		})
 	}

@@ -58,6 +58,9 @@ func LoadCursor(path string) (Cursor, error) {
 	return c, nil
 }
 
+// SaveCursor persists c at path, creating the parent directory. The write
+// goes through a temp file and rename, so a crash never leaves a half
+// cursor behind.
 func SaveCursor(path string, c Cursor) error {
 	raw, err := json.Marshal(c)
 	if err != nil {

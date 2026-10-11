@@ -3,12 +3,14 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"example.com/emberloop-web/memory"
 )
@@ -62,7 +64,10 @@ type minerDeciderDoc struct {
 // sender=system Event never reach the classifier. Each hit is redacted, then
 // grounded, then stored with dedup in the Event sender's bank: a steer from
 // User B inside User A's Session lands in B's bank only. Duplicates fold into
-// evidence_count; refines and contradicts are stored, nothing is dropped.
+// evidence_count; refines and contradicts are stored with the relation and
+// the related observation ID in decider_json, nothing is dropped. A transient
+// bank error aborts the scan without advancing the cursor, so the bytes mine
+// again; permanently invalid records are skipped.
 func (d *Daemon) MineSession(id string) (MineResult, error) {
 	res := MineResult{SessionID: id}
 	d.mu.Lock()
@@ -125,12 +130,15 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 	}
 	res.Scanned = len(fresh)
 	ctx := context.Background()
-	prior := append([]Event(nil), memCopy...)
+	// Context for a correction comes only from Events before it: the
+	// in-memory history cut where this chunk starts, then earlier fresh
+	// Events as the scan advances.
+	prior := minerPriorEvents(memCopy, fresh)
 	for i, e := range fresh {
-		// The miner reads Sessions only through this filter, never the raw
-		// log: injections, Handoffs and Daemon-made prompts are dropped here.
-		// FilterMinerEvents keeps the same set MinerReadable admits per Event.
-		if !MinerReadable(e) || len(FilterMinerEvents([]Event{e})) == 0 {
+		// The miner reads Sessions only through MinerReadable, the
+		// per-Event predicate of FilterMinerEvents: injections, Handoffs
+		// and Daemon-made prompts are dropped here, never mined raw.
+		if !MinerReadable(e) {
 			prior = append(prior, e)
 			continue
 		}
@@ -173,10 +181,13 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		})
 		bank, err := d.profileBankFor(author)
 		if err != nil {
-			prior = append(prior, e)
-			continue
+			if errors.Is(err, memory.ErrInvalid) {
+				prior = append(prior, e)
+				continue // permanent: no bank for this author; later bytes still mine.
+			}
+			return res, fmt.Errorf("miner: bank for %s: %w", author, err)
 		}
-		stored, rel, err := memory.DedupAndStore(ctx, bank, memory.Observation{
+		_, rel, err := memory.DedupAndStore(ctx, bank, memory.Observation{
 			SessionID:   id,
 			EventID:     eventID,
 			Author:      author,
@@ -184,10 +195,12 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			Kind:        memory.KindPreference,
 			DeciderJSON: string(doc),
 		})
-		_ = stored
 		if err != nil {
-			prior = append(prior, e)
-			continue
+			if errors.Is(err, memory.ErrInvalid) {
+				prior = append(prior, e)
+				continue // permanent: the record itself is invalid.
+			}
+			return res, fmt.Errorf("miner: store session %s event %s: %w", id, eventID, err)
 		}
 		if rel == memory.RelDuplicate {
 			res.Duplicates++
@@ -196,8 +209,9 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		}
 		prior = append(prior, e)
 	}
-	// The cursor advances after the scan, so a crash re-reads (same-Event
-	// hits return without bumping) rather than losing bytes.
+	// The cursor advances only after a clean scan. A crash or a returned
+	// error re-reads the bytes; same-Event replays return without bumping,
+	// so neither path loses a hit nor inflates evidence.
 	if err := memory.SaveCursor(d.minerCursorPath(id), next); err != nil {
 		return res, err
 	}
@@ -229,6 +243,30 @@ func (d *Daemon) MineSettledSessions() ([]MineResult, error) {
 	return out, nil
 }
 
+// minerPriorEvents returns the history before the first fresh Event: the
+// in-memory log cut where the new chunk starts. The scan appends earlier
+// fresh Events as it advances, so a correction's context comes from before
+// it, never from the Session tail. The chunk start is matched by sequence
+// number; when it carries none the fallback drops the trailing overlap
+// (memory and file are written together, so a full in-memory history ends
+// with the fresh Events).
+func minerPriorEvents(mem, fresh []Event) []Event {
+	if len(fresh) == 0 {
+		return mem
+	}
+	if fresh[0].Seq != 0 {
+		for j := range mem {
+			if mem[j].Seq == fresh[0].Seq {
+				return append([]Event(nil), mem[:j]...)
+			}
+		}
+	}
+	if len(mem) >= len(fresh) {
+		return append([]Event(nil), mem[:len(mem)-len(fresh)]...)
+	}
+	return nil
+}
+
 // minerContextOf returns the text of the nearest preceding tool call or diff
 // hunk: the thing a correction corrected. Empty when none precedes.
 func minerContextOf(prior []Event) string {
@@ -243,12 +281,20 @@ func minerContextOf(prior []Event) string {
 	return ""
 }
 
-// truncateMinerContext caps stored context so one giant tool result cannot
-// bloat the bank.
+// truncateMinerContext caps stored context at maxMinerContextRunes runes so
+// one giant tool result cannot bloat the bank. It cuts on a rune boundary,
+// so CJK text stays valid UTF-8.
 func truncateMinerContext(s string) string {
-	const cap = 2000
-	if len(s) <= cap {
+	const maxMinerContextRunes = 2000
+	if utf8.RuneCountInString(s) <= maxMinerContextRunes {
 		return s
 	}
-	return s[:cap]
+	n := 0
+	for i := range s {
+		if n >= maxMinerContextRunes {
+			return s[:i]
+		}
+		n++
+	}
+	return s
 }
