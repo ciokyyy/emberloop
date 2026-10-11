@@ -93,11 +93,13 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   the same seam; `runs_test.go` covers spec discovery and
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
   with a fake Backend and fake git (order, cap, box ticks, dirty and
- conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
- Sessions per Ticket, the gate, rework, staleness, roles, the cap and the
- reviewer submit tool (scripted tool submits, empty-ran and minors-only
- refusals, stale-tip records with the current tip, minors-pass merges) at the
- same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
+  conflict refusals, roles); `runs_worktree_test.go` covers worktree identity
+  and the read-only spec mirror (driver ticks only the main checkout) at the
+  same seam; `runs_reviewers_test.go` covers both Reviewer
+  Sessions per Ticket, the gate, rework, staleness, roles, the cap and the
+  reviewer submit tool (scripted tool submits, empty-ran and minors-only
+  refusals, stale-tip records with the current tip, minors-pass merges) at the
+  same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
   reload with nothing spawned, pause, resume without a second Worker, a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused and failed Runs; Restart Run starts from zero), and
   finished Runs staying listed, at the same seam; `RunsView.test.js` covers
   the live Ticket table with Worker links, the verdict columns, and the
@@ -616,7 +618,11 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   shows the live Ticket table, `GET /api/runs/{id}/events` streams it over
   SSE). Each Ticket starts in number order once blockers merged, up to the
   live-Session cap, in its own worktree and branch as a Subagent of the Run
-  (ParentID the Run). The fresh worktree is seeded a root `AGENTS.md` first
+  (ParentID the Run). Worktree creation sets local user.name/user.email
+  (emberloop) and mirrors missing spec files read-only into the worktree at
+  the same repo-relative path (existing files untouched, so the mirror never
+  dirties the checkout); only the driver ticks boxes in the main checkout.
+  The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
   (`workerTaskPrompt` plus the Ticket file, the spec, the root AGENTS.md chain

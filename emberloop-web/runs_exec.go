@@ -1639,6 +1639,157 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	return nil
 }
 
+// worktreeGitIdentity is the local git identity every Ticket worktree
+// carries, so Worker commits and the finish rebase never abort on a
+// missing user.name/user.email (ticket 03).
+const (
+	worktreeGitUserName  = "emberloop"
+	worktreeGitUserEmail = "emberloop@localhost"
+)
+
+// ensureWorktreeGitIdentity sets the worktree local user.name and user.email.
+func ensureWorktreeGitIdentity(worktree string) error {
+	if _, err := runGit(worktree, "config", "user.name", worktreeGitUserName); err != nil {
+		return err
+	}
+	if _, err := runGit(worktree, "config", "user.email", worktreeGitUserEmail); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureWorktreeSpecDir mirrors the spec directory (the spec file parent,
+// holding spec.md and issues/) from the main checkout into the worktree at
+// the same repo-relative path, then strips write bits from the mirrored files
+// so the Worker reads them read-only. Only files missing in the worktree are
+// copied, so a committed spec (the common case) stays clean for the finish
+// dirty-worktree check; a fresh worktree add already carries committed files
+// and the mirror only fills uncommitted gaps that used to surface as stat
+// errors. Only the driver ticks boxes, and it ticks the main checkout ticket
+// files (TickCheckboxes), never the mirror: the read-only bit keeps a Worker
+// from ticking its own copy and diverging.
+func ensureWorktreeSpecDir(repo, spec, worktree string) error {
+	specDir := filepath.Dir(spec)
+	rel, err := filepath.Rel(repo, specDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	if rel == "." {
+		return mirrorSpecRootFiles(repo, spec, worktree)
+	}
+	dst := filepath.Join(worktree, rel)
+	return mirrorDirReadOnly(specDir, dst)
+}
+
+// mirrorSpecRootFiles mirrors a repo-root spec without touching the rest of
+// the worktree: the spec file plus the sibling issues/ directory when one
+// exists. Every mirrored path lands read-only.
+func mirrorSpecRootFiles(repo, spec, worktree string) error {
+	if err := mirrorFileReadOnly(spec, filepath.Join(worktree, filepath.Base(spec))); err != nil {
+		return err
+	}
+	tickets := filepath.Join(repo, "issues")
+	if st, err := os.Stat(tickets); err != nil || !st.IsDir() {
+		return nil
+	}
+	return mirrorDirReadOnly(tickets, filepath.Join(worktree, "issues"))
+}
+
+// mirrorDirReadOnly fills files missing in dst from src, then strips write
+// bits from the mirrored files. Existing worktree files are never
+// overwritten, so a committed spec stays clean for the finish
+// dirty-worktree check; only gaps (uncommitted new files a fresh worktree add
+// missed) become readable instead of missing. The source tree is never
+// chmodded.
+func mirrorDirReadOnly(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	walkErr := filepath.WalkDir(src, func(path string, e os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if e.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if !e.Type().IsRegular() {
+			return nil
+		}
+		if err := copyFileIfMissing(path, target); err != nil {
+			return err
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return walkErr
+	}
+	return stripWriteBits(dst)
+}
+
+// copyFileIfMissing copies src to dst when dst does not exist yet, leaving
+// an existing worktree file untouched so the mirror never dirties a
+// checkout. Parent directories are created as needed.
+func copyFileIfMissing(src, dst string) error {
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(dst, raw, 0o644)
+}
+
+// mirrorFileReadOnly copies one file into place read-only, leaving an
+// existing worktree file untouched so the mirror never dirties a checkout.
+func mirrorFileReadOnly(src, dst string) error {
+	if err := copyFileIfMissing(src, dst); err != nil {
+		return err
+	}
+	return stripWriteBits(dst)
+}
+
+// stripWriteBits removes every write bit from files under root; directories
+// stay writable so `git worktree remove --force` can still delete the mirror
+// (unlinking needs write on the parent dir, not on the file). Files keep
+// their read bits, so the mirror stays readable but a Worker cannot overwrite
+// (tick) its own copy. Git tracks only the executable bit, so a 644->444
+// demotion stays clean for the finish status --porcelain check.
+func stripWriteBits(root string) error {
+	return filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if e.IsDir() {
+			// Traversable and deletable; the read-only guarantee lives on
+			// the files, not their parents.
+			if err := os.Chmod(path, 0o755); err != nil {
+				return err
+			}
+			return nil
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		if err := os.Chmod(path, info.Mode().Perm()&^0o222); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // ensureWorktreeDOX seeds the DOX chain helper for runStartWorker. Tests
 // replace it to simulate a seeding failure without touching the filesystem.
 var ensureWorktreeDOX = ensureAgentsMD
@@ -1657,7 +1808,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("unknown run %q", runID)
 	}
-	repo, harness, model, effort := rs.Repo, rs.Harness, rs.Model, rs.Effort
+	repo, harness, model, effort, specPath := rs.Repo, rs.Harness, rs.Model, rs.Effort, rs.Spec
 	owner := rs.Owner
 	// Run A/B arm (ticket 30): the ticket's index in ticket order decides,
 	// so a retry, a pause/resume or a different start order never moves the
@@ -1689,6 +1840,19 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		}
 		if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
 			return err
+		}
+		// Ticket 03: every worktree carries its own git identity so Worker
+		// commits and the finish rebase never abort on a missing
+		// user.name/user.email, and a read-only mirror of the spec directory
+		// so the Worker never hits a stat error on spec or ticket files. A
+		// failure here stops this worker like any other start error.
+		if err := ensureWorktreeGitIdentity(worktree); err != nil {
+			cleanup()
+			return fmt.Errorf("could not set git identity in %s: %w", worktree, err)
+		}
+		if err := ensureWorktreeSpecDir(repo, specPath, worktree); err != nil {
+			cleanup()
+			return fmt.Errorf("could not mirror spec directory into %s: %w", worktree, err)
 		}
 		// A Run-launched Worker reads its DOX chain from its own worktree
 		// root. Seed a root AGENTS.md there when the checkout has none, so
