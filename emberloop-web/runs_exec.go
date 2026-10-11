@@ -2779,10 +2779,12 @@ func (d *Daemon) checkSpecOverlap(runID string) {
 		if id == runID || rs.Repo != repo || rs.SpecBranch == "" || rs.SpecBranch == branch || rs.SpecBase == "" {
 			continue
 		}
-		// Liveness is the branch, not the status: a paused Run resumes, a
-		// done Run's branch still conflicts at final merge, and a failed
-		// Run's branch still holds its changes, so running, paused, done
-		// and failed all count. A deleted branch simply yields no files.
+		// Live means running or paused: a paused Run resumes on the same
+		// branch, while done and failed Runs are over and never merge
+		// again.
+		if rs.Status != runStatusRunning && rs.Status != runStatusPaused {
+			continue
+		}
 		others = append(others, other{id: id, specBranch: rs.SpecBranch, specBase: rs.SpecBase})
 	}
 	d.mu.Unlock()

@@ -19,7 +19,9 @@ type overlapWarningJSON struct {
 
 // initTwoSpecRepo builds one repo holding two independent specs with
 // distinct ticket ids, so their ticket branches and worktrees never
-// collide while their spec branches share the repo.
+// collide while their spec branches share the repo. Each spec chains a
+// second ticket behind its first, so both Runs stay live while the first
+// tickets merge and the overlap check sees two running Runs.
 func initTwoSpecRepo(t *testing.T) (repo, demoSpec, otherSpec string) {
 	t.Helper()
 	t.Setenv("GIT_AUTHOR_NAME", "web-test")
@@ -32,8 +34,10 @@ func initTwoSpecRepo(t *testing.T) (repo, demoSpec, otherSpec string) {
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n")
+	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n")
 	writeFile(t, repo, ".scratch/other/spec.md", "# Other spec\n")
 	writeFile(t, repo, ".scratch/other/issues/01-other.md", "# 01: Other\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n")
+	writeFile(t, repo, ".scratch/other/issues/02-followup.md", "# 02: Followup\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n")
 	writeFile(t, repo, "AGENTS.md", "# AGENTS.md — demo\n\n## Child DOX Index\n\n(none)\n")
 	testGit(t, repo, "add", "-A")
 	testGit(t, repo, "commit", "-m", "spec")
@@ -93,7 +97,8 @@ func warningFiles(w []overlapWarningJSON) []string {
 
 // Two live specs that dirty the same file warn on both Runs: after each
 // spec branch carries the shared file, both Runs hold a warning Event
-// naming it and the other Run.
+// naming it and the other Run. The chained second tickets keep both Runs
+// running while the first tickets merge, so the check sees live Runs.
 func TestSpecOverlapWarnsBothRuns(t *testing.T) {
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -196,5 +201,54 @@ func TestSpecOverlapDisjointNoWarning(t *testing.T) {
 	}
 	if w := getWarnings(t, srv.URL, runB.ID); len(w) != 0 {
 		t.Fatalf("other warnings = %v, want none for disjoint specs", w)
+	}
+}
+
+//
+// A finished Run is not live: when one spec is already done, the other
+// merging the same file warns on neither Run.
+func TestSpecOverlapDoneRunExcluded(t *testing.T) {
+	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	runA := startRun(t, srv.URL, demoSpec, repo, "fake", "fake-model")
+	runB := startRun(t, srv.URL, otherSpec, repo, "fake", "fake-model")
+
+	rA := waitRunCond(t, srv.URL, runA.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "demo worker started")
+	rB := waitRunCond(t, srv.URL, runB.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-other").WorkerSession != ""
+	}, "other worker started")
+
+	// Finish the whole demo Run first: both tickets merge, so its status
+	// is done before the other spec merges.
+	commitWorktreeFile(t, filepath.Join(repo, ".el-worktrees", "01-first"), "shared.txt", "demo\n", "demo change")
+	submitSession(t, srv.URL, ticketByID(rA, "01-first").WorkerSession, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, runA.ID, "01-first")
+	rA = waitRunCond(t, srv.URL, runA.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "merged" &&
+			ticketByID(r, "02-second").WorkerSession != ""
+	}, "demo first merged and second started")
+	submitSession(t, srv.URL, ticketByID(rA, "02-second").WorkerSession, "done", []string{"beta"})
+	passReviewers(t, srv.URL, runA.ID, "02-second")
+	waitRunCond(t, srv.URL, runA.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "demo run done")
+
+	commitWorktreeFile(t, filepath.Join(repo, ".el-worktrees", "01-other"), "shared.txt", "other\n", "other change")
+	submitSession(t, srv.URL, ticketByID(rB, "01-other").WorkerSession, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, runB.ID, "01-other")
+	waitRunCond(t, srv.URL, runB.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-other").State == "merged"
+	}, "other merged")
+
+	if w := getWarnings(t, srv.URL, runA.ID); len(w) != 0 {
+		t.Fatalf("demo warnings = %v, want none: the run is done, not live", w)
+	}
+	if w := getWarnings(t, srv.URL, runB.ID); len(w) != 0 {
+		t.Fatalf("other warnings = %v, want none: the other run is done, not live", w)
 	}
 }
