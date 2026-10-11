@@ -440,3 +440,43 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 		t.Fatalf("sessions = %d, want %d (no second Worker)", got, before)
 	}
 }
+
+// A failed Run (the driver hit an error such as a git failure) resumes from
+// its saved state: the same Worker Session, no restart from zero, error
+// cleared.
+func TestFailedRunResumesWithSameWorker(t *testing.T) {
+	repo, spec := initRunRepo(t, demoTickets())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "01-first started")
+	first := ticketByID(r, "01-first").WorkerSession
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+		t.Fatalf("pause status = %d, want 200", code)
+	}
+	d.mu.Lock()
+	d.runs[run.ID].Status = runStatusFailed
+	d.runs[run.ID].Error = "could not finish 01-first: exit status 128"
+	d.mu.Unlock()
+
+	resumed, code := postRunAction(t, srv.URL, run.ID, "resume")
+	if code != http.StatusOK {
+		t.Fatalf("resume of a failed Run = %d, want 200", code)
+	}
+	if resumed.Status != "running" {
+		t.Fatalf("resumed status = %q, want running", resumed.Status)
+	}
+	d.mu.Lock()
+	errText := d.runs[run.ID].Error
+	d.mu.Unlock()
+	if errText != "" {
+		t.Fatalf("error after resume = %q, want cleared", errText)
+	}
+	if got := ticketByID(resumed, "01-first").WorkerSession; got != first {
+		t.Fatalf("resumed worker = %q, want the same %q", got, first)
+	}
+}

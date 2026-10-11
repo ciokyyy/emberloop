@@ -45,10 +45,10 @@ the driver ticks boxes and marks done, nothing else writes them.
   conflict refusals, roles); `runs_reviewers_test.go` covers both Reviewer
   Sessions per Ticket, the gate, rework, staleness, roles and the cap at the
   same seam; `runs_persist_test.go` covers per-pass Run persistence, paused
-  reload with nothing spawned, pause, resume without a second Worker, and
+  reload with nothing spawned, pause, resume without a second Worker, a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused and failed Runs; Restart Run starts from zero), and
   finished Runs staying listed, at the same seam; `RunsView.test.js` covers
   the live Ticket table with Worker links, the verdict columns, and the
-  paused state with its Resume button; `quota_test.go` covers
+  paused and failed states with their Resume button; `quota_test.go` covers
   `GET /api/quota` and `POST /api/quota/refresh` with local HTTP stubs for
   the opencode and Antigravity endpoints (cards, not-configured, stale
   fallback, forced refresh, Claude re-read, unknown-key 400); `pig_test.go`

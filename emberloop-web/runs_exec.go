@@ -2254,7 +2254,7 @@ func (d *Daemon) resumeRun(w http.ResponseWriter, r *http.Request, id string) {
 	}
 }
 
-// resumeRunCore is the Resume without the HTTP: it answers the fresh Run
+// resumeRunCore is the Resume of a paused or failed Run without the HTTP: it answers the fresh Run
 // snapshot, or a status code (404, 409, 500) and message. A restarted Daemon
 // calls it for Runs saved with ResumeOnRestart.
 func (d *Daemon) resumeRunCore(id string) (any, int, string) {
@@ -2264,9 +2264,9 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		d.mu.Unlock()
 		return nil, http.StatusNotFound, "not found"
 	}
-	if rs.Status != runStatusPaused {
+	if rs.Status != runStatusPaused && rs.Status != runStatusFailed {
 		d.mu.Unlock()
-		return nil, http.StatusConflict, "run is not paused"
+		return nil, http.StatusConflict, "run is not paused or failed"
 	}
 	spec := rs.Spec
 	d.mu.Unlock()
@@ -2287,13 +2287,17 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		d.mu.Unlock()
 		return nil, http.StatusNotFound, "not found"
 	}
-	if rs.Status != runStatusPaused {
+	if rs.Status != runStatusPaused && rs.Status != runStatusFailed {
 		d.mu.Unlock()
-		return nil, http.StatusConflict, "run is not paused"
+		return nil, http.StatusConflict, "run is not paused or failed"
 	}
 	rs.SpecRun = specRun
 	rs.Status = runStatusRunning
 	rs.ResumeOnRestart = false
+	// A failed Run (the driver hit an error such as a git failure) resumes
+	// from its saved state like a paused one: merged tickets, rounds and
+	// worker Sessions stay; only the error clears.
+	rs.Error = ""
 	if rs.unpause != nil {
 		close(rs.unpause)
 	}

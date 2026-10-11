@@ -174,6 +174,43 @@ describe('RunsView preview and live run', () => {
     await within(container).findByRole('button', { name: /resume/i });
   });
 
+  it('offers Resume on a failed Run so it continues instead of restarting from zero', async () => {
+    let status = 'failed';
+    const live = () => ({
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      status,
+      error: 'could not finish 01-first: exit status 128',
+      tickets: [
+        { id: '01-first', title: 'First', state: 'running', workerSession: 'sess-abcdef123456', lastRefusal: '' },
+      ],
+    });
+    const calls = [];
+    seedPreview();
+    stubRuns(async (u, opts) => {
+      calls.push(String(u));
+      if (String(u).endsWith('/resume')) {
+        status = 'running';
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      return {
+        ok: true,
+        json: async () => {
+          const s = String(u);
+          if (s.includes('/api/runs/')) return { run: live() };
+          if (s.includes('/api/runs') && opts?.method === 'POST') return { run: live() };
+          if (s.includes('/api/specs/preview')) return preview;
+          return { specs: [specRow] };
+        },
+      };
+    });
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    await fireEvent.click(await within(container).findByText(/start run/i));
+    await fireEvent.click(await within(container).findByRole('button', { name: /^resume/i }));
+    expect(calls.some((u) => u.endsWith('/api/runs/run-1/resume'))).toBe(true);
+    await within(container).findByRole('button', { name: /^pause/i });
+  });
+
   it('seeds the sidebar spec picker from the Run on a cold deep link', async () => {
     const live = {
       id: 'run-9',

@@ -358,7 +358,7 @@
             <Button size="sm" variant={graphView === 'graph' ? 'secondary' : 'ghost'} class="rounded-full" aria-pressed={graphView === 'graph'} onclick={() => (graphView = 'graph')}>Graph</Button>
             <Button size="sm" variant={graphView === 'list' ? 'secondary' : 'ghost'} class="rounded-full" aria-pressed={graphView === 'list'} onclick={() => (graphView = 'list')}>List</Button>
           </div>
-          {#if run.status === 'paused'}
+          {#if run.status === 'paused' || run.status === 'failed'}
             <Button size="sm" variant="outline" disabled={acting} onclick={resume}>Resume</Button>
           {:else if run.status === 'running'}
             <Button size="sm" variant="outline" disabled={acting} onclick={pause}>Pause</Button>
