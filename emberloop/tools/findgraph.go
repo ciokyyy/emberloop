@@ -292,8 +292,10 @@ func graphHitPath(file, searchRoot, workDir string) string {
 		}
 		return rel
 	}
-	// Repo-relative or bare: keep when it stays inside the search root,
-	// drop ignored noise. Any escape is rejected, confined or not.
+	// Repo-relative or bare: answer relative to the search root, the same
+	// base the cascade relativizes to, so one file fuses in mergeHitsByPath
+	// with or without confinement. Anything escaping the search root, and
+	// ignored noise, is dropped.
 	if shouldIgnorePath(clean) {
 		return ""
 	}
@@ -301,7 +303,7 @@ func graphHitPath(file, searchRoot, workDir string) string {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return ""
 	}
-	return clean
+	return rel
 }
 
 // parseGraphTextPaths builds one hit per distinct file path in free text.

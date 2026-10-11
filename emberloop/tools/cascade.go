@@ -537,10 +537,6 @@ func mergeHitsByPath(hits []SearchHit, terms []string) []SearchHit {
 		if len(merged) > 3 {
 			merged = merged[:3]
 		}
-		max := dst.Score
-		if h.Score > max {
-			max = h.Score
-		}
 		// The winner lends its source and symbol: an exact symbol-name hit
 		// beats a passage guess at any score, else the higher score wins
 		// and a tie keeps the first hit (the cascade's).
@@ -548,7 +544,7 @@ func mergeHitsByPath(hits []SearchHit, terms []string) []SearchHit {
 			dst.Source, dst.Symbol = h.Source, h.Symbol
 		}
 		dst.Ranges = merged
-		dst.Score = max
+		dst.Score = max(dst.Score, h.Score)
 	}
 	return out
 }

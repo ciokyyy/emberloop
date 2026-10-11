@@ -252,6 +252,58 @@ func TestParseGraphResultsSkipsEnvelopesAndEscapes(t *testing.T) {
 		t.Errorf("escape kept as %q", got)
 	}
 }
+func TestGraphHitPathConfinedRootRelativizes(t *testing.T) {
+	dir := project(t)
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "x.go"), []byte("package sub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A repo-relative graph path answers relative to the confined root,
+	// the same base the cascade relativizes to.
+	if got := graphHitPath("sub/x.go", sub, dir); got != "x.go" {
+		t.Errorf("confined graphHitPath = %q, want %q", got, "x.go")
+	}
+	// A path outside the confined root is dropped.
+	if got := graphHitPath("auth.go", sub, dir); got != "" {
+		t.Errorf("outside-confined path kept as %q", got)
+	}
+	// Without confinement the path stays as named.
+	if got := graphHitPath("auth.go", dir, dir); got != "auth.go" {
+		t.Errorf("unconfined graphHitPath = %q, want %q", got, "auth.go")
+	}
+}
+
+func TestFindConfinedRootFusesGraphAndCascade(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "auth.go"), []byte("package auth\n\nfunc VerifyToken() bool {\n\treturn true\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "none.json"))
+	args := map[string]any{"query": "how are tokens verified", "grep_keywords": []string{"VerifyToken"}, "path": "sub"}
+	// The stub routes through the real parser: the index names the
+	// repo-relative path while the search is confined to sub.
+	graph := func(_ context.Context, _ string, _ []string, root string) ([]SearchHit, error) {
+		body := `{"results":[{"file":"sub/auth.go","symbol":"VerifyToken","line":3,"snippet":"func VerifyToken()","score":0.9}]}`
+		return parseGraphResults(body, root, dir), nil
+	}
+	out, err := run(t, findTool{lexicalOnly: true, graph: graph}, dir, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "auth.go  "); n != 1 {
+		t.Errorf("confined auth.go listed %d times, want once:\n%s", n, out)
+	}
+	if !strings.Contains(out, "[graph]") || strings.Contains(out, "[grep]") {
+		t.Errorf("confined fused hit must carry the exact-match winner's source:\n%s", out)
+	}
+}
 
 func TestFindRefusesAPathOutsideTheWorkspace(t *testing.T) {
 	a := findArgs()
