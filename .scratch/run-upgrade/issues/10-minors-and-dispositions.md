@@ -4,9 +4,9 @@
 
 **Blocked by:** reviewer-submit-tool (02)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Worker prompt lists all findings with blocking marks
-- [ ] Worker `submit` carries Dispositions; missing blocker or major Disposition is refused
-- [ ] Dispositions recorded on the Ticket and shown in the Run view
-- [ ] Run seam tests; `.emberloop/check` passes
+- [x] Worker prompt lists all findings with blocking marks
+- [x] Worker `submit` carries Dispositions; missing blocker or major Disposition is refused
+- [x] Dispositions recorded on the Ticket and shown in the Run view
+- [x] Run seam tests; `.emberloop/check` passes
