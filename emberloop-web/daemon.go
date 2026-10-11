@@ -125,6 +125,12 @@ type session struct {
 	// runs, so a stale release never kills a freshly resumed process.
 	resuming  bool
 	releasing bool
+	// compressWait holds a compress until no Group of the Session is
+	// outstanding; compressInstr keeps its instructions for the wait.
+	compressWait  bool
+	compressInstr string
+	// swapping marks a Handoff from its claim until its turn ends.
+	swapping bool
 }
 
 // queuedMsg is one not-yet-delivered message. Mode is prompt, steer or
@@ -468,6 +474,8 @@ func (d *Daemon) finishTurn(id string) {
 		if s.active > 0 {
 			s.active--
 		}
+		// The turn that set swapping has ended.
+		s.swapping = false
 		if s.meta.Status == "ended" {
 			s.pending = nil
 			s.busy = false
@@ -883,7 +891,8 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		// at priority now, which pre-empts a running tool, so the Daemon holds
 		// the message in pending and injects it when a tool call completes.
 		// If the turn ends first, finishTurn delivers it as a Follow-up.
-		if _, ok := be.(*ClaudeBackend); ok && inject {
+		// During a Handoff a claude Steer degrades too: the Handoff turn must lead.
+		if _, ok := be.(*ClaudeBackend); ok && inject && !s.swapping {
 			s.pending = append(s.pending, queuedMsg{mode: "steer", text: text, images: images, imageIDs: imageIDs, held: true})
 			pos := len(s.pending)
 			d.mu.Unlock()
@@ -1017,6 +1026,8 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 	// A settled Subagent may complete its Group: the last member to finish
 	// delivers one grouped result to the parent as a Steer.
 	d.maybeDeliverGroup(id)
+	// A compress held by a Group of this Session may run now.
+	d.runDeferredCompress(id)
 }
 
 // listQueue reports not-yet-delivered messages.

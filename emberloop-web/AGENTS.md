@@ -92,7 +92,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   stores `handoff-N.md` in the Session directory, appends a `compressed`
   Event (number, tokens before, model `none` when no summarizer ran (the divider hides `none`), fallback) and the Handoff prompt Event (`handoff:true`, `sender:"system"`), and
   runs the Handoff as the first turn through `runTurn` and releases the old handle once that turn works (or ends); compress instructions are ignored. Session
-  ID, Event log and metadata stay. Tests: `handoff_test.go`.
+  ID, Event log and metadata stay. A compress waits while a Group of the Session is outstanding (`groupOutstandingLocked`: a Group spawned in this process with results not all sent, or a member with a turn running or queued): it answers 202 `{"waiting":"group"}` and `runDeferredCompress` runs it at the next turn end or Group delivery. A claude Steer that arrives while a Handoff swap runs (`swapping`) degrades to a Follow-up, so the Handoff leads. Tests: `handoff_test.go`, `handoff_queue_test.go`.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
   <file> stdio` on the user's Grok subscription login, through the plain
   `ClaudeBackend` ACP path (`metaHook`, `promptWrap`, `waitMCP`, `mcpEnv`).

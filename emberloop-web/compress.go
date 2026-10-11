@@ -210,13 +210,25 @@ func (d *Daemon) maybeAutoCompress(id string) {
 	d.appendEvent(id, "status", "", "idle")
 }
 
-// handleCompress is POST /api/sessions/{id}/compress: compress now. It
-// answers 202 once the compaction runs; the transcript carries the result.
+// handleCompress is POST /api/sessions/{id}/compress: compress now, or once
+// the Session's Group is no longer outstanding. It answers 202 once the
+// compaction runs or waits; the transcript carries the result.
 func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Instructions string `json:"instructions"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	code, out := d.requestCompress(id, strings.TrimSpace(req.Instructions))
+	if code == http.StatusNotFound {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, code, out)
+}
+
+// requestCompress starts a compress of id, or holds it while a Group of the
+// Session is outstanding. It returns the HTTP code and the body to answer.
+func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) {
 	cb, s, ok := d.compactorFor(id)
 	var hb handoffBackend
 	if !ok {
@@ -227,53 +239,97 @@ func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id strin
 		_, exists := d.sessions[id]
 		d.mu.Unlock()
 		if !exists {
-			http.NotFound(w, r)
-			return
+			return http.StatusNotFound, nil
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "compression is not available for this Session"})
-		return
+		return http.StatusBadRequest, map[string]any{"error": "compression is not available for this Session"}
 	}
 	d.mu.Lock()
 	scout, ended := s.meta.Scout, s.meta.Status == "ended"
 	d.mu.Unlock()
 	if scout || ended {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "this Session cannot be compressed"})
-		return
+		return http.StatusForbidden, map[string]any{"error": "this Session cannot be compressed"}
 	}
-	if code, msg := d.resumeReleased(id); code != 0 {
-		writeJSON(w, code, map[string]any{"error": msg})
-		return
-	}
-	instructions := strings.TrimSpace(req.Instructions)
 	if instructions == "" {
 		instructions = readCompressSettings().Instructions
+	}
+	// The Handoff must carry the Group's result, so the compress waits for
+	// the Group. runDeferredCompress resumes it at a turn end or a delivery.
+	d.mu.Lock()
+	if d.groupOutstandingLocked(id) {
+		s.compressWait = true
+		s.compressInstr = instructions
+		d.mu.Unlock()
+		return http.StatusAccepted, map[string]any{"ok": true, "waiting": "group"}
+	}
+	d.mu.Unlock()
+	if code, msg := d.resumeReleased(id); code != 0 {
+		return code, map[string]any{"error": msg}
 	}
 	d.mu.Lock()
 	if !s.live {
 		d.mu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "session is resuming; try again"})
-		return
+		return http.StatusConflict, map[string]any{"error": "session is resuming; try again"}
 	}
 	if s.busy {
 		d.mu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "session is working; compress when it is idle"})
-		return
+		return http.StatusConflict, map[string]any{"error": "session is working; compress when it is idle"}
 	}
 	s.busy = true
 	s.active++
+	s.swapping = hb != nil
+	// This run settles any wait that held a compress of the Session.
+	s.compressWait = false
+	s.compressInstr = ""
 	d.mu.Unlock()
 	if hb != nil {
 		go d.runHandoff(id, hb)
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
-		return
+		return http.StatusAccepted, map[string]any{"ok": true}
 	}
 	go func() {
 		d.appendEvent(id, "status", "", "working")
 		d.runCompaction(id, cb, instructions)
 		d.appendEvent(id, "status", "", "idle")
 		d.finishTurn(id)
+		d.maybeDeliverGroup(id)
+		d.runDeferredCompress(id)
 	}()
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+	return http.StatusAccepted, map[string]any{"ok": true}
+}
+
+// runDeferredCompress runs a compress that waited on a Group, once no Group
+// of the Session is outstanding and no turn runs. A Session that turns busy
+// again keeps the wait for its next turn end.
+func (d *Daemon) runDeferredCompress(id string) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok || !s.compressWait || s.busy || d.groupOutstandingLocked(id) {
+		d.mu.Unlock()
+		return
+	}
+	if s.meta.Status == "ended" {
+		s.compressWait = false
+		d.mu.Unlock()
+		return
+	}
+	s.compressWait = false
+	instructions := s.compressInstr
+	s.compressInstr = ""
+	d.mu.Unlock()
+	code, out := d.requestCompress(id, instructions)
+	if code == http.StatusAccepted {
+		return
+	}
+	d.mu.Lock()
+	if cur, ok := d.sessions[id]; ok && cur.busy && cur.meta.Status != "ended" {
+		// A turn started after the check: wait for its end instead.
+		cur.compressWait = true
+		cur.compressInstr = instructions
+		d.mu.Unlock()
+		return
+	}
+	d.mu.Unlock()
+	msg, _ := out["error"].(string)
+	d.appendEvent(id, "error", "compress failed: "+msg, "")
 }
 
 // compressPatch is the PUT shape: every field optional.

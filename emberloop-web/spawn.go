@@ -35,6 +35,10 @@ type spawnGroup struct {
 	Deliver   string          `json:"deliver,omitempty"`
 	Delivered bool            `json:"delivered"`
 	EachDone  map[string]bool `json:"eachDone,omitempty"`
+	// fresh marks a Group spawned by this process. A Group loaded after a
+	// restart is not fresh: its undelivered result never arrives, so it
+	// holds no compress.
+	fresh bool
 }
 
 // spawnedPayload is the parent transcript's subagent_spawned Event text:
@@ -157,7 +161,7 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent, deliver string) (st
 	// Publish the Group before any child can finish: a fast child must
 	// find its Group when its first turn settles. The pointer stays local
 	// so the persist below never reads the map outside the lock.
-	g := &spawnGroup{ID: gid, Parent: parentID, Members: append([]string(nil), members...), Deliver: deliver}
+	g := &spawnGroup{ID: gid, Parent: parentID, Members: append([]string(nil), members...), Deliver: deliver, fresh: true}
 	d.mu.Lock()
 	d.groups[gid] = g
 	d.mu.Unlock()
@@ -616,6 +620,42 @@ func settledLocked(ms *session) bool {
 	return false
 }
 
+// groupOutstandingLocked reports whether a Group of parentID still holds the
+// parent's compress: a fresh Group with results not all sent, or a member
+// with a turn running or queued. A Group stranded by a restart is not fresh,
+// so only its running members count. Callers hold d.mu.
+func (d *Daemon) groupOutstandingLocked(parentID string) bool {
+	for _, g := range d.groups {
+		if g.Parent != parentID {
+			continue
+		}
+		if g.fresh && !d.groupSentLocked(g) {
+			return true
+		}
+		for _, m := range g.Members {
+			if ms, ok := d.sessions[m]; ok && (ms.busy || len(ms.pending) > 0 || ms.active > 0) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// groupSentLocked reports whether every result of the Group is sent: the
+// grouped result for deliver group, one notice per member for deliver each.
+// Callers hold d.mu.
+func (d *Daemon) groupSentLocked(g *spawnGroup) bool {
+	if g.Deliver != "each" {
+		return g.Delivered
+	}
+	for _, m := range g.Members {
+		if _, ok := d.sessions[m]; ok && !g.EachDone[m] {
+			return false
+		}
+	}
+	return true
+}
+
 // maybeDeliverGroup sends the Group's result when id's turn settled it.
 // Group delivery sends one grouped result as the last member settles; each
 // delivery sends one notice per child as it settles. Results go to the
@@ -651,6 +691,7 @@ func (d *Daemon) maybeDeliverGroup(id string) {
 		g.EachDone[id] = true
 		d.persistGroup(g)
 		parent := g.Parent
+		defer d.runDeferredCompress(parent)
 		name := s.meta.Name
 		d.mu.Unlock()
 
@@ -683,6 +724,7 @@ func (d *Daemon) maybeDeliverGroup(id string) {
 	g.Delivered = true
 	d.persistGroup(g)
 	parent, gid := g.Parent, g.ID
+	defer d.runDeferredCompress(parent)
 	d.mu.Unlock()
 
 	d.appendEvent(parent, "subagent_finished", gid, "")

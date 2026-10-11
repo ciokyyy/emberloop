@@ -180,6 +180,8 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 		if !settled {
 			d.appendEvent(id, "status", "", "idle")
 			d.finishTurn(id)
+			d.maybeDeliverGroup(id)
+			d.runDeferredCompress(id)
 		}
 	}()
 

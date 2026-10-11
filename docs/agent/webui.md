@@ -85,7 +85,7 @@ The prod unit runs `el-web -addr 127.0.0.1:7940 -tailnet -allow-host cachy-cioky
 
 Pig Sessions compress in place with the SDK compaction: older history becomes a summary, recent turns stay, the Session id stays. Claude Sessions have no compaction hook.
 
-- Manual: the Compress button under the chat, or `POST /api/sessions/<id>/compress` with `{"instructions": "..."}`. It answers 409 while the Session works.
+- Manual: the Compress button under the chat, or `POST /api/sessions/<id>/compress` with `{"instructions": "..."}`. It answers 409 while the Session works. During a spawn Group of the Session it answers 202 `{"waiting":"group"}` and compresses once the Group reports.
 - Auto: after a turn, when context is at or above `compress_threshold_percent` (default 80) and at least `compress_cooldown` turns (default 5) passed since the last compression. `auto_compress` (default true) turns it off.
 - Settings page section "Context compression" writes `auto_compress`, `compress_threshold_percent`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
 - The transcript shows a "Context compressed" card with token counts and the summary; the meter under the chat refreshes.
