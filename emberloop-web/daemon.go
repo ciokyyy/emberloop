@@ -73,6 +73,7 @@ type Daemon struct {
 	projects []Project
 	backend  Backend
 	live     *liveHub
+	presence presence
 	push     *pushStore
 	claude   *ClaudeBackend
 	// maxRunning overrides the max_workers setting when positive.
@@ -261,6 +262,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/auth/logout", d.handleLogout)
 	mux.HandleFunc("/api/auth/me", d.handleMe)
 	mux.HandleFunc("/api/auth/state", d.handleAuthState)
+	mux.HandleFunc("/api/users", d.handleUsers)
 	return guardHosts(d.requireRequester(mux), d.allowHosts, d.allowTailnet)
 }
 

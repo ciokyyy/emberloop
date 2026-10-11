@@ -244,5 +244,16 @@ describe('compress blocked and compressed Events', () => {
   it('compressBlockReason reads the error and falls back on bad JSON', () => {
     expect(compressBlockReason(JSON.stringify({ error: 'boom' }))).toBe('boom');
     expect(compressBlockReason('not json')).toBe('compress blocked');
+describe('prompt senders on user cards', () => {
+  it('carries the sender and the sending User id on a user prompt', () => {
+    expect(cardForEvent({ ...ev(1, 'prompt', 'hi'), sender: 'user', user: 'u-mira' })).toMatchObject({
+      card: 'user',
+      sender: 'user',
+      senderId: 'u-mira',
+    });
+  });
+
+  it('types a system prompt with no sender id, so it shows no badge', () => {
+    expect(cardForEvent({ ...ev(2, 'prompt', 'go'), sender: 'system' })).toMatchObject({ card: 'user', sender: 'system', senderId: '' });
   });
 });

@@ -144,9 +144,12 @@ export function cardForEvent(e) {
       // thumbnails, replacing the literal note.
       const imageIds = e.imageIds ?? [];
       const body = imageIds.length ? text : withImageNote(text, e.images);
-      if (e.mode === 'steer') return { card: 'user', title: 'Steer', body, collapsed: false, imageIds };
-      if (e.mode === 'followup') return { card: 'user', title: 'Follow-up', body, collapsed: false, imageIds };
-      return { card: 'user', title: 'You', body, collapsed: false, imageIds };
+      // sender and senderId type the prompt: a user prompt shows its sender badge,
+      // a system prompt (Daemon, Handoff, grouped results) shows none.
+      const from = { sender: e.sender ?? '', senderId: e.user ?? '' };
+      if (e.mode === 'steer') return { card: 'user', title: 'Steer', body, collapsed: false, imageIds, ...from };
+      if (e.mode === 'followup') return { card: 'user', title: 'Follow-up', body, collapsed: false, imageIds, ...from };
+      return { card: 'user', title: 'You', body, collapsed: false, imageIds, ...from };
     }
     case 'assistant_chunk':
       return { card: 'assistant', title: 'Agent', body: text, collapsed: false };

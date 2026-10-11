@@ -167,6 +167,39 @@ func (d *Daemon) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, who.user)
 }
 
+// userView is one account in GET /api/users: who exists and whether it is
+// online.
+type userView struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Admin    bool   `json:"admin"`
+	Online   bool   `json:"online"`
+}
+
+// handleUsers serves GET /api/users: every account in creation order, for the
+// sidebar's User groups, the sender badges and the Session header. Only a
+// signed-in User may read it; the machine token answers 401 as on /api/auth/me.
+func (d *Daemon) handleUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if who, ok := d.requesterOf(r); !ok || who.user == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	file, err := d.users.read()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	out := make([]userView, 0, len(file.Users))
+	for _, u := range file.Users {
+		out = append(out, userView{ID: u.ID, Username: u.Username, Admin: u.Admin, Online: d.presence.online(u.ID)})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleAuthState tells the sign-in screen whether the Daemon has no account
 // yet and whether signup is open. It reveals nothing else: no names, no counts.
 func (d *Daemon) handleAuthState(w http.ResponseWriter, r *http.Request) {

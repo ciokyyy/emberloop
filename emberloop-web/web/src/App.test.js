@@ -36,7 +36,9 @@ describe('Header', () => {
 });
 
 describe('Sidebar collapse', () => {
-  const sessionsBody = [{ id: 's1', harness: 'fake', model: 'fake-model', title: 'Fix sidebar', status: 'idle', projectId: 'p1' }];
+  const sessionsBody = [{ id: 's1', harness: 'fake', model: 'fake-model', title: 'Fix sidebar', status: 'idle', projectId: 'p1', owner: 'u1' }];
+  const usersBody = [{ id: 'u1', username: 'cioky', admin: true, online: true }];
+  const me = { id: 'u1', username: 'cioky', admin: true };
   const projectsBody = [{ id: 'p1', name: 'demo', path: '/tmp/el-e2e/repo' }];
   afterEach(() => cleanup());
   function stubApp() {
@@ -54,6 +56,7 @@ describe('Sidebar collapse', () => {
           if (String(u).includes('/api/sessions/s1')) return { session: sessionsBody[0], events: [], resumable: true, hasMore: false, firstSeq: 0 };
           if (String(u).includes('/api/sessions')) return sessionsBody;
           if (String(u).includes('/api/projects')) return projectsBody;
+          if (String(u).includes('/api/users')) return usersBody;
           if (String(u).includes('/api/specs')) return { specs: [] };
           return [];
         },
@@ -92,12 +95,19 @@ describe('Sidebar collapse', () => {
 
   it('opens the drawer from the top bar and closes it on navigate', async () => {
     stubApp();
-    const { container } = render(App);
+    const { container } = render(App, { props: { user: me } });
     await within(container).findByTestId('sidebar');
     await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
     expect(await screen.findAllByLabelText('Filter chats')).toHaveLength(2);
     await fireEvent.click(screen.getAllByText('Fix sidebar')[0]);
     expect(await screen.findAllByLabelText('Filter chats')).toHaveLength(1);
+  });
+
+  it('shows the creator in the Session header', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    const { container } = render(App, { props: { user: me } });
+    await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('created by cioky'));
   });
 });
 

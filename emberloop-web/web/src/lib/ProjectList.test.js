@@ -1,58 +1,72 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, within } from '@testing-library/svelte';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, within, fireEvent, cleanup } from '@testing-library/svelte';
 import ProjectList from './ProjectList.svelte';
 
-const projects = [
-  { id: 'p1', name: 'emberloop', path: '/x/emberloop' },
-  { id: 'p2', name: 'wick', path: '/y/wick' },
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
+
+const sections = [
+  { key: 'p1', name: 'emberloop', path: '/src/emberloop', roots: [{ id: 'a1', harness: 'claude', status: 'idle', title: 'Fix sidebar' }] },
+  { key: '', name: 'Other', path: '', roots: [{ id: 'b1', harness: 'pig', status: 'idle', title: 'Loose chat' }] },
 ];
-const sessions = [
-  { id: 's1', harness: 'claude', title: 'Fix sidebar', status: 'idle', projectId: 'p1' },
-  { id: 's2', harness: 'pig', title: 'Audio plan', status: 'working', projectId: 'p1' },
-  { id: 's3', harness: 'claude', title: 'Rename pass', status: 'idle', projectId: 'p2' },
-];
 
-const props = {
-  projects,
-  sessions,
-  currentId: null,
-  activeProjectId: null,
-  onSelect: vi.fn(),
-  onNew: vi.fn(),
-  onRename: vi.fn(),
-  onRemove: vi.fn(),
-};
+function mount(props = {}) {
+  return render(ProjectList, { props: { ownerId: 'u1', sections, ...props } });
+}
 
-beforeEach(() => localStorage.clear());
+// The collapsible header of the emberloop section: its name is a plain span.
+const header = (view) => view.getByText('emberloop').closest('button');
 
-describe('chat filter', () => {
-  it('shows everything without a query', () => {
-    const { container } = render(ProjectList, { props: { ...props, query: '' } });
-    expect(within(container).getByText('Fix sidebar')).toBeTruthy();
-    expect(within(container).getByText('Rename pass')).toBeTruthy();
+describe('ProjectList sections', () => {
+  it('shows a header per Project with its rows open by default', () => {
+    const view = mount();
+    expect(header(view).getAttribute('aria-expanded')).toBe('true');
+    expect(view.getByText('Fix sidebar')).toBeTruthy();
+    expect(view.getByText('Loose chat')).toBeTruthy();
   });
 
-  it('filters sessions by title across projects', () => {
-    const { container } = render(ProjectList, { props: { ...props, query: 'sidebar' } });
-    expect(within(container).getByText('Fix sidebar')).toBeTruthy();
-    expect(within(container).queryByText('Audio plan')).toBeNull();
-    expect(within(container).queryByText('Rename pass')).toBeNull();
+  it('collapses a Project on its header, hides its rows and keeps the state', async () => {
+    const view = mount();
+    await fireEvent.click(header(view));
+    expect(view.queryByText('Fix sidebar')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('eb.projects-collapsed'))).toEqual({ 'u1/p1': true });
   });
 
-  it('matches project names with all their sessions', () => {
-    const { container } = render(ProjectList, { props: { ...props, query: 'wick' } });
-    expect(within(container).getByText('Rename pass')).toBeTruthy();
-    expect(within(container).queryByText('Fix sidebar')).toBeNull();
+  it('opens every section while a chat filter runs, even collapsed ones', async () => {
+    const view = mount();
+    await fireEvent.click(header(view));
+    expect(view.queryByText('Fix sidebar')).toBeNull();
+    await view.rerender({ ownerId: 'u1', sections, force: true });
+    expect(view.queryByText('Fix sidebar')).not.toBeNull();
   });
 
-  it('force-opens collapsed projects with matches', () => {
-    localStorage.setItem('eb.collapsed', JSON.stringify(['p1']));
-    const { container } = render(ProjectList, { props: { ...props, query: 'sidebar' } });
-    expect(within(container).getByText('Fix sidebar')).toBeTruthy();
+  it('shows the row count on a collapsed Project header', async () => {
+    const view = mount();
+    await fireEvent.click(header(view));
+    expect(within(header(view)).getByText('1')).toBeTruthy();
   });
 
-  it('reports no matches', () => {
-    const { container } = render(ProjectList, { props: { ...props, query: 'zzz' } });
-    expect(within(container).getByText(/no chats match/i)).toBeTruthy();
+  it('starts a draft chat in a Project with the plus button', async () => {
+    const onNew = vi.fn();
+    const view = mount({ onNew });
+    await fireEvent.click(view.getByRole('button', { name: 'New chat in emberloop' }));
+    expect(onNew).toHaveBeenCalledWith('p1');
+  });
+
+  it('renames and removes real Projects only, never Other', () => {
+    const view = mount({ onRename: vi.fn(), onRemove: vi.fn() });
+    expect(view.getByRole('button', { name: 'Rename emberloop' })).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Remove emberloop' })).toBeTruthy();
+    expect(view.queryByRole('button', { name: 'Rename Other' })).toBeNull();
+    expect(view.queryByRole('button', { name: 'New chat in Other' })).toBeNull();
+  });
+
+  it('calls onRename with the Project, not the section', async () => {
+    const onRename = vi.fn();
+    const view = mount({ onRename });
+    await fireEvent.click(view.getByRole('button', { name: 'Rename emberloop' }));
+    expect(onRename).toHaveBeenCalledWith({ id: 'p1', name: 'emberloop', path: '/src/emberloop' });
   });
 });

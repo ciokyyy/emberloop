@@ -6,7 +6,7 @@
   import Badge from './lib/ui/badge.svelte';
   import Sheet from './lib/ui/sheet.svelte';
   import Transcript from './lib/Transcript.svelte';
-  import ProjectList from './lib/ProjectList.svelte';
+  import OwnerGroups from './lib/OwnerGroups.svelte';
   import AddProjectDialog from './lib/AddProjectDialog.svelte';
   import DraftBar from './lib/DraftBar.svelte';
   import GitPanel from './lib/GitPanel.svelte';
@@ -26,7 +26,8 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit, listRuns } from './lib/api.js';
+  import { people, refreshPeople, personFor } from './lib/people.svelte.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
   let { user = null, onSignOut = () => {} } = $props();
@@ -43,6 +44,7 @@
   let lastSeq = $state(0);
   let connected = $state(true);
   let projects = $state([]);
+  let runs = $state([]);
   let draftProjectId = $state(null);
   let addOpen = $state(false);
   let adding = $state(false);
@@ -87,6 +89,7 @@
   const activeProjectId = $derived(currentId ? (meta?.projectId ?? null) : draftProjectId);
   const activeProject = $derived(projects.find((p) => p.id === activeProjectId) ?? null);
   const drafting = $derived(!currentId && !!draftProjectId);
+  const creatorName = $derived(meta?.owner ? (personFor(meta.owner)?.username ?? meta.owner.slice(0, 8)) : '');
   let view = $state('chat');
   // Rail 2 for Settings: jump to a section by its heading.
   let settingsSections = $state([]);
@@ -197,6 +200,7 @@
   let openToken = 0;
 
   const goSession = (id) => navigate(buildPath({ name: 'session', id }));
+  const openRow = (row) => (row.kind === 'run' ? navigate(buildPath({ name: 'run', runId: row.id })) : goSession(row.id));
   function navigate(path, { replace = false } = {}) {
     // Any navigation closes the phone drawer (backdrop taps close it
     // through the dialog itself).
@@ -351,6 +355,14 @@
       if (currentId && !sessionMissing && !sessions.some((s) => s.id === currentId)) sessionMissing = true;
     } catch {
       loadError = 'Daemon unreachable. Start it and reload.';
+    }
+  }
+
+  async function refreshRuns() {
+    try {
+      runs = (await listRuns()).runs ?? [];
+    } catch {
+      // Keep the last good Run list.
     }
   }
 
@@ -577,9 +589,14 @@
   // appear without a reload. The router owns the initial open, so refresh
   // never auto-opens here.
   watch('sessions', () => refresh());
+  watch('runs', () => refreshRuns());
+  watch('users', () => refreshPeople());
   loadProjects();
   // Sign-out unmounts App: close the live stream and drop its watchers.
   onDestroy(stopLive);
+  onDestroy(() => {
+    people.list = [];
+  });
 
   // Back/forward follows the URL without pushing a new entry.
   const onPop = () => applyRoute(window.location.pathname + window.location.search);
@@ -621,6 +638,8 @@
 
   // Boot from the URL: sessions first (home falls back to newest), then route.
   (async () => {
+    void refreshPeople();
+    void refreshRuns();
     await refresh();
     await applyRoute(window.location.pathname + window.location.search);
   })();
@@ -650,11 +669,11 @@
         <Input type="search" placeholder="Filter chats" aria-label="Filter chats" bind:value={chatQuery} class="h-9 rounded-full bg-muted pr-3 pl-10" />
       </div>
       <div class="flex items-center justify-between px-2">
-        <span class="text-xs font-medium text-muted-foreground">Projects</span>
+        <span class="text-xs font-medium text-muted-foreground">Sessions</span>
         <Button variant="ghost" size="icon-sm" class="size-6" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }} aria-label="Add project"><FolderPlus class="size-3.5" /></Button>
       </div>
       <div class="min-h-0 flex-1 overflow-auto">
-        <ProjectList {projects} {sessions} {currentId} {activeProjectId} query={chatQuery} onSelect={goSession} onNew={startDraft} onRename={rename} onRemove={remove} />
+        <OwnerGroups users={people.list} me={user} {sessions} {runs} {projects} {currentId} {activeProjectId} query={chatQuery} onSelect={openRow} onNew={startDraft} onRename={rename} onRemove={remove} />
       </div>
     {/if}
   </div>
@@ -705,7 +724,7 @@
       <Button variant="ghost" size="icon-sm" class="md:hidden" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       <div class="flex min-w-0 flex-col leading-tight" data-testid="header-title">
         <span class="truncate text-sm font-semibold">{meta?.title || activeProject?.name || (drafting ? 'New chat' : 'No Session')}</span>
-        <span class="truncate text-xs text-muted-foreground">{[meta?.title ? activeProject?.name : '', meta ? `${meta.harness} · ${modelLabel(meta.harness, meta.model)}${meta.effort ? ` · ${meta.effort}` : ''}` : drafting ? `${draftHarness} · ${modelLabel(draftHarness, draftModel)}${(draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? ` · ${draftEffort}` : ''}` : ''].filter(Boolean).join(' · ')}</span>
+        <span class="truncate text-xs text-muted-foreground">{[creatorName ? `created by ${creatorName}` : '', meta?.title ? activeProject?.name : '', meta ? `${meta.harness} · ${modelLabel(meta.harness, meta.model)}${meta.effort ? ` · ${meta.effort}` : ''}` : drafting ? `${draftHarness} · ${modelLabel(draftHarness, draftModel)}${(draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? ` · ${draftEffort}` : ''}` : ''].filter(Boolean).join(' · ')}</span>
       </div>
       {#if connected}
         <span class="size-2 shrink-0 rounded-full bg-green-500" title="Live" role="status" aria-label="Live" data-testid="live"></span>

@@ -48,6 +48,13 @@
   --border: #3a3a3c;
   --input: #48484a;
   --ring: #0a84ff;
+  /* Owner palette: one slot per User in account order (owners.js ownerTone). */
+  --owner-1: #0a84ff;
+  --owner-2: #bf5af2;
+  --owner-3: #30d158;
+  --owner-4: #ff9f0a;
+  --owner-5: #64d2ff;
+  --owner-6: #ff375f;
 }
 
 /* Streamed text: each new run of characters fades in once. Spans carry a

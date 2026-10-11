@@ -50,6 +50,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   within one sender, so no prompt Event joins two Users' texts.
   `owner_test.go` covers owners, inheritance, hiding, sender typing and the
   home directory at the same seam.
+- Users list and presence (`handleUsers` in `auth.go`, `presence` in `live.go`): `GET /api/users` lists every account in creation order as `{id, username, admin, online}` for a signed-in User; the machine token answers 401. `online` holds while the User has an open `GET /api/live` channel: the first join and the last leave publish the `users` topic. `users_list_test.go` covers the list, presence and the gate at the same seam.
 - Real Backends prove out in live probes, never the main check.
 - Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
   goroutines write after a test returns and fail `t.TempDir()` cleanup with

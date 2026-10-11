@@ -153,6 +153,7 @@ export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURICompone
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);
 
 export const listRuns = () => fetch(url('/api/runs')).then(json);
+export const listUsers = () => fetch(url('/api/users')).then(json);
 
 export const startRun = (body) =>
   fetch(url('/api/runs'), {

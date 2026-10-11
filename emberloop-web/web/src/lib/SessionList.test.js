@@ -1,69 +1,74 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, within, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, within, fireEvent, cleanup } from '@testing-library/svelte';
 import SessionList from './SessionList.svelte';
+import { buildTree } from './sidebar.js';
 
-const sessions = [
-  { id: 'a', harness: 'claude', title: 'Failed chat', status: 'failed' },
-  { id: 'b', harness: 'pig', title: 'Working chat', status: 'working' },
-  { id: 'c', harness: 'claude', title: 'Old chat', status: 'idle' },
-  { id: 'd', harness: 'claude', name: 'kid-1', status: 'ended', parentId: 'c' },
-  { id: 'e', harness: 'claude', name: 'kid-2', status: 'ended', parentId: 'c' },
-  { id: 'f', harness: 'claude', title: 'Running parent', status: 'working' },
-  { id: 'g', harness: 'claude', name: 'kid-3', status: 'working', parentId: 'f' },
-];
-
-beforeEach(() => localStorage.clear());
-
-describe('attention tiers', () => {
-  it('renders Needs you / Working / Recent sections with counts', async () => {
-    const { container } = render(SessionList, { props: { sessions, onSelect: vi.fn() } });
-    for (const [name, count] of [['Needs you', '1'], ['Working', '2'], ['Recent', '1']]) {
-      const section = container.querySelector(`section[aria-label="${name}"]`);
-      expect(section?.textContent).toContain(name);
-      expect(section?.textContent).toContain(count);
-    }
-    expect(within(container).getByText('Failed chat')).toBeTruthy();
-    expect(within(container).getByText('Working chat')).toBeTruthy();
-    expect(within(container).getByText('Old chat')).toBeTruthy();
-  });
-  it('marks failed rows loud and keeps the rest quiet', async () => {
-    const { container } = render(SessionList, { props: { sessions, onSelect: vi.fn() } });
-    const failed = (await within(container).findByText('Failed chat')).closest('button');
-    expect(failed.className).toContain('bg-amber-500/10');
-    const idle = (await within(container).findByText('Old chat')).closest('button');
-    expect(idle.className).not.toContain('bg-amber-500/10');
-  });
-
-  it('skips headers when a single tier is populated', async () => {
-    const { container } = render(SessionList, {
-      props: { sessions: [{ id: 'x', harness: 'claude', title: 'Solo', status: 'idle' }], onSelect: vi.fn() },
-    });
-    expect(await within(container).findByText('Solo')).toBeTruthy();
-    expect(within(container).queryByRole('button', { name: /recent/i })).toBeNull();
-  });
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
 });
 
-describe('nested subagents', () => {
-  it('collapses a settled group by default and expands on chevron', async () => {
-    const { container } = render(SessionList, { props: { sessions, onSelect: vi.fn() } });
-    expect(within(container).queryByText('kid-1')).toBeNull();
-    const chevron = await within(container).findByRole('button', { name: /expand subagents of old chat/i });
-    await fireEvent.click(chevron);
-    expect(await within(container).findByText('kid-1')).toBeTruthy();
-    expect(await within(container).findByText('kid-2')).toBeTruthy();
-    const prefs = JSON.parse(localStorage.getItem('eb.subagents-collapsed'));
-    expect(prefs.c).toBe(false);
+// Rows as buildOwnerGroups hands them over: a Run row, its Worker, and loose
+// Sessions. The parent-child tree comes from buildTree, like the real list.
+function mount(list, props = {}) {
+  const { roots, kids } = buildTree(list);
+  return render(SessionList, { props: { roots, kids, ...props } });
+}
+
+const run = { id: 'r1', kind: 'run', title: 'Web run', status: 'running', owner: 'u1' };
+const worker = { id: 'w1', harness: 'claude', status: 'working', title: 'Fix rebase', parentId: 'r1', runWorker: true };
+const loose = { id: 'a1', harness: 'pig', status: 'failed', title: 'Quota bug' };
+
+describe('SessionList rows', () => {
+  it('tags a Run row with the Run badge and leaves Sessions untagged', () => {
+    const { getByRole, queryAllByText } = mount([run, loose]);
+    expect(within(getByRole('button', { name: /Web run/ })).getByText('Run')).toBeTruthy();
+    expect(queryAllByText('Run')).toHaveLength(1);
   });
 
-  it('keeps a running group expanded by default', async () => {
-    const { container } = render(SessionList, { props: { sessions, onSelect: vi.fn() } });
-    expect(await within(container).findByText('kid-3')).toBeTruthy();
+  it('nests a Run Worker under its Run row, open while the Worker runs', () => {
+    const { getByRole, getByText } = mount([run, worker]);
+    expect(getByRole('button', { name: /Expand|Collapse subagents of Web run/ }).getAttribute('aria-expanded')).toBe('true');
+    expect(getByText('Fix rebase')).toBeTruthy();
   });
 
-  it('selects sessions on row click', async () => {
+  it('collapses a settled Run by default and expands it on the chevron', async () => {
+    const settled = { ...worker, status: 'ended' };
+    const { getByRole, queryByText } = mount([run, settled]);
+    expect(queryByText('Fix rebase')).toBeNull();
+    await fireEvent.click(getByRole('button', { name: 'Expand subagents of Web run' }));
+    expect(queryByText('Fix rebase')).not.toBeNull();
+  });
+
+  it('shows the failed status in text and a red dot, not the needs-you treatment', () => {
+    const { getByRole } = mount([loose]);
+    const row = getByRole('button', { name: /Quota bug/ });
+    expect(row.textContent).toContain('failed');
+    expect(row.querySelector('span.bg-red-500')).not.toBeNull();
+    expect(row.className).not.toContain('border-amber-500/30');
+  });
+
+  it('gives a needs-you row the amber treatment', () => {
+    const { getByRole } = mount([{ ...loose, status: 'idle', needsYou: true }]);
+    expect(getByRole('button', { name: /Quota bug/ }).className).toContain('border-amber-500/30');
+  });
+
+  it('marks a scout row with the scout badge', () => {
+    const { getByRole } = mount([{ id: 's1', harness: 'claude', status: 'idle', title: 'Find callers', scout: true }]);
+    expect(within(getByRole('button', { name: /Find callers/ })).getByText('scout')).toBeTruthy();
+  });
+
+  it('passes the whole row to onSelect on click, so a Run opens its own page', async () => {
     const onSelect = vi.fn();
-    const { container } = render(SessionList, { props: { sessions, onSelect } });
-    await fireEvent.click(await within(container).findByText('Working chat'));
-    expect(onSelect).toHaveBeenCalledWith('b');
+    const { getByRole } = mount([run, loose], { onSelect });
+    await fireEvent.click(getByRole('button', { name: /Web run/ }));
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1', kind: 'run' }));
+    await fireEvent.click(getByRole('button', { name: /Quota bug/ }));
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'a1' }));
+  });
+
+  it('marks the open row as the current one', () => {
+    const { getByRole } = mount([loose], { currentId: 'a1' });
+    expect(getByRole('button', { name: /Quota bug/ }).getAttribute('aria-current')).toBe('true');
   });
 });

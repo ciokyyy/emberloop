@@ -13,7 +13,8 @@ import (
 // the topic's normal GET endpoint, so each payload keeps one definition.
 //
 // Topics: "sessions" (the list), "session:<id>" (one Session's meta and
-// queue), "runs" (the list), "run:<id>" (one Run), "settings".
+// queue), "runs" (the list), "run:<id>" (one Run), "settings", "users" (the
+// User list and who is online).
 // Transcript Events keep their own append-only stream; they are a log, not
 // state.
 type liveHub struct {
@@ -56,6 +57,50 @@ func (h *liveHub) unsubscribe(ch chan string) {
 	h.mu.Unlock()
 }
 
+// presence counts the live channels each User holds open. A User is online
+// while one channel is open. The first join and the last leave publish
+// "users", so the sidebar refetches GET /api/users.
+type presence struct {
+	mu   sync.Mutex
+	open map[string]int
+}
+
+// join records one open channel of userID. It reports true when userID just
+// turned online.
+func (p *presence) join(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.open == nil {
+		p.open = map[string]int{}
+	}
+	p.open[userID]++
+	return p.open[userID] == 1
+}
+
+// leave closes one channel of userID. It reports true when userID just turned
+// offline.
+func (p *presence) leave(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := p.open[userID]
+	if n == 0 {
+		return false
+	}
+	if n == 1 {
+		delete(p.open, userID)
+		return true
+	}
+	p.open[userID] = n - 1
+	return false
+}
+
+// online reports whether userID holds at least one open channel.
+func (p *presence) online(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.open[userID] > 0
+}
+
 // handleLive serves GET /api/live. A new connection first gets a "hello"
 // message, which tells the client to refetch everything it shows.
 func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +115,18 @@ func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 	}
 	ch := d.live.subscribe()
 	defer d.live.unsubscribe(ch)
+	// A signed-in User with an open channel is online. The machine token is no User.
+	if who, ok := d.requesterOf(r); ok && who.user != nil {
+		uid := who.user.ID
+		if d.presence.join(uid) {
+			d.live.publish("users")
+		}
+		defer func() {
+			if d.presence.leave(uid) {
+				d.live.publish("users")
+			}
+		}()
+	}
 	fmt.Fprint(w, "data: hello\n\n")
 	flush()
 	heartbeat := time.NewTicker(15 * time.Second)

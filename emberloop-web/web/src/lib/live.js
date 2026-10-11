@@ -5,7 +5,7 @@
 // Daemon sends "hello" and every watcher refetches, so a dropped connection
 // loses nothing.
 //
-// Topics: sessions, session:<id>, runs, run:<id>, settings.
+// Topics: sessions, session:<id>, runs, run:<id>, settings, users.
 import { apiBase } from './api.js';
 
 const watchers = new Map(); // topic -> Set<fn>

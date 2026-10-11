@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, within } from '@testing-library/svelte';
 import Card from './Card.svelte';
 import { compressSession } from './api.js';
+import { people } from './people.svelte.js';
 
 vi.mock('./api.js', async (orig) => ({
   ...(await orig()),
@@ -140,5 +141,27 @@ describe('Card compress blocked', () => {
     expect(card.textContent).toContain('402 Payment Required');
     await fireEvent.click(within(container).getByRole('button', { name: 'Retry' }));
     expect(compressSession).toHaveBeenCalledWith('s1');
+describe('user prompt sender badge', () => {
+  const prompt = (over) => ({ key: 1, card: 'user', title: 'You', body: 'hello', collapsed: false, imageIds: [], ...over });
+
+  it('shows the sender name on a user prompt', () => {
+    people.list = [{ id: 'u-mira', username: 'mira', online: true }];
+    const { container } = render(Card, { props: { block: prompt({ sender: 'user', senderId: 'u-mira' }) } });
+    expect(within(container).getByTestId('sender-badge').textContent).toContain('mira');
+    people.list = [];
+  });
+
+  it('falls back to a short id when the User is not in the list', () => {
+    people.list = [];
+    const { container } = render(Card, { props: { block: prompt({ sender: 'user', senderId: 'u-ghost-account-id' }) } });
+    expect(within(container).getByTestId('sender-badge').textContent).toContain('u-ghost-');
+  });
+
+  it('shows no badge on a system prompt or a prompt without a sender', () => {
+    const system = render(Card, { props: { block: prompt({ sender: 'system', senderId: '' }) } });
+    expect(within(system.container).queryByTestId('sender-badge')).toBeNull();
+    system.unmount();
+    const legacy = render(Card, { props: { block: prompt({}) } });
+    expect(within(legacy.container).queryByTestId('sender-badge')).toBeNull();
   });
 });

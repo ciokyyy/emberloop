@@ -1,50 +1,10 @@
-// Sidebar helpers: attention tiers, the Session tree, chat filtering and the
+// Sidebar helpers: the Session tree, row labels, chat filtering and the
 // persisted collapse prefs. Pure except the localStorage helpers; the
-// components stay thin and the tests pin behavior here.
-
-// Attention tier for one Session row. Tiering reads only the status the
-// session list already carries: failed (or a needsYou flag, when the Daemon
-// reports one) needs you, working is working, everything else is recent.
-export function tierOf(s = {}) {
-  if (s.needsYou || s.status === 'failed' || s.status === 'needs-you') return 'needs';
-  if (s.status === 'working') return 'working';
-  return 'recent';
-}
-
-export const TIER_ORDER = ['needs', 'working', 'recent'];
-
-export const TIER_LABEL = {
-  needs: 'Needs you',
-  working: 'Working',
-  recent: 'Recent',
-};
-
-// Split a flat session list into tier buckets, keeping the incoming order
-// (the Daemon already sorts newest activity first) inside each tier.
-export function splitTiers(sessions = []) {
-  const tiers = { needs: [], working: [], recent: [] };
-  for (const s of sessions) tiers[tierOf(s)].push(s);
-  return tiers;
-}
-
-// Tier buckets of tree roots. A Subagent never gets its own row in a tier:
-// it always renders nested under its parent, and the parent sits in the most
-// urgent tier among itself and its children, so a working child still lifts
-// an idle parent into Working. Orphans (parent outside the list) are roots.
-export function rootTiers(sessions = []) {
-  const { roots, kids } = buildTree(sessions);
-  const rank = (t) => TIER_ORDER.indexOf(t);
-  const out = { needs: [], working: [], recent: [] };
-  for (const r of roots) {
-    let best = tierOf(r);
-    for (const k of kids.get(r.id) ?? []) if (rank(tierOf(k)) < rank(best)) best = tierOf(k);
-    out[best].push(r);
-  }
-  return out;
-}
+// components stay thin and the tests pin behavior here. Owner groups and row
+// status live in owners.js.
 
 // Build the one-level Subagent tree: roots plus children by parent id.
-// Orphans (a parent outside this list) stay roots, same as before.
+// Orphans (a parent outside this list) stay roots.
 export function buildTree(list = []) {
   const byId = new Map(list.map((s) => [s.id, s]));
   const kids = new Map();
@@ -100,17 +60,6 @@ export function writeJSON(key, value) {
   } catch {
     // Private mode: prefs just do not persist.
   }
-}
-
-// A persisted set of ids (collapsed projects, tiers, drawer state): arrays on
-// disk, Sets in memory.
-export function loadIdSet(key) {
-  const raw = readJSON(key, []);
-  return new Set(Array.isArray(raw) ? raw : []);
-}
-
-export function storeIdSet(key, set) {
-  writeJSON(key, [...set]);
 }
 
 // Collapsed preference with a dynamic default: an explicit override wins,

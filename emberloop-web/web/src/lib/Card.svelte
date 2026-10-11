@@ -9,6 +9,10 @@
   import { decideSudo, compressSession, imageSrc } from './api.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
+  import Badge from './ui/badge.svelte';
+  import UserAvatar from './UserAvatar.svelte';
+  import { people, personFor } from './people.svelte.js';
+  import { ownerTone } from './owners.js';
   let { block, sessionId = null, sessions = [], onOpenSession = () => {} } = $props();
   let sudoPassword = $state('');
   let sudoBusy = $state(false);
@@ -63,7 +67,14 @@
 </script>
 
 {#if block.card === 'user'}
-  <div class="flex justify-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-swap={block.noAnim ? 'true' : undefined}>
+<div class="flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-swap={block.noAnim ? 'true' : undefined}>
+  {#if block.sender === 'user' && block.senderId}
+    {@const who = personFor(block.senderId)}
+    <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
+      <UserAvatar name={who?.username ?? block.senderId} tone={ownerTone(people.list, block.senderId)} size="sm" />
+      <span class="max-w-40 truncate">{who?.username ?? block.senderId.slice(0, 8)}</span>
+    </Badge>
+  {/if}
     <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
       {#if block.title && block.title !== 'You'}
         <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
