@@ -4,11 +4,11 @@
 
 **Blocked by:** 05, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A claude Session compresses by Handoff restart and reports compressible
 - [x] The new ACP session has MCP ready before the Handoff prompt
 - [x] Model, effort and the voice reminder hook survive the new session
 - [x] The resume token rotates and a Daemon restart then resumes the new session
 - [x] Tests at the Daemon seam cover the case against the existing claude test double
-- [ ] The new session gets its tools and injections from `startHandle` (ticket 06)
+- [x] The new session gets its tools and injections from `startHandle` (ticket 06)
