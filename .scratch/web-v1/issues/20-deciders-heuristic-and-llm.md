@@ -4,12 +4,12 @@
 
 **Blocked by:** 08, 19
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Invalid or out-of-range Decider output is rejected and treated as `unavailable`, never as a yes
-- [ ] Ensemble drops below `confirmLow`, stores an observation between the thresholds, and makes a candidate queue-eligible at or above `confirmHigh`
-- [ ] Decider outputs are stored in `decider_json` with model and version
-- [ ] A fake Decider with scripted probabilities drives API tests
-- [ ] Redaction runs before every `llm` call
-- [ ] Settings panel exposes mode, model and thresholds (admin-only for global ones)
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Invalid or out-of-range Decider output is rejected and treated as `unavailable`, never as a yes
+- [x] Ensemble drops below `confirmLow`, stores an observation between the thresholds, and makes a candidate queue-eligible at or above `confirmHigh`
+- [x] Decider outputs are stored in `decider_json` with model and version
+- [x] A fake Decider with scripted probabilities drives API tests
+- [x] Redaction runs before every `llm` call
+- [x] Settings panel exposes mode, model and thresholds (admin-only for global ones)
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
