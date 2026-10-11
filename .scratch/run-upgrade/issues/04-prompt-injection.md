@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Per-role skill list in Run settings; optional sections dropped
-- [ ] Worker and Reviewer first prompts carry Ticket, spec, AGENTS.md chain and skills
-- [ ] Existing standards and spec briefs become the first skill entries
-- [ ] Run seam tests assert prompt content per role; `.emberloop/check` passes
+- [x] Per-role skill list in Run settings; optional sections dropped
+- [x] Worker and Reviewer first prompts carry Ticket, spec, AGENTS.md chain and skills
+- [x] Existing standards and spec briefs become the first skill entries
+- [x] Run seam tests assert prompt content per role; `.emberloop/check` passes
