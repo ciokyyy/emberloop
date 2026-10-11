@@ -4,12 +4,12 @@
 
 **Blocked by:** 17, 18, 22
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A User sees only their own bank; admins get no extra read access to other Users' notes
-- [ ] Queue shows each proposal with quotes and source Sessions; approve, edit, reject and batch approve work
-- [ ] Profile versions are listed; any version can be restored as a new version
-- [ ] Purge needs a typed confirmation and reports what it removed
-- [ ] Unavailable chip shows when the engine fails
-- [ ] vitest covers list, search, queue actions, versions, purge and status
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A User sees only their own bank; admins get no extra read access to other Users' notes
+- [x] Queue shows each proposal with quotes and source Sessions; approve, edit, reject and batch approve work
+- [x] Profile versions are listed; any version can be restored as a new version
+- [x] Purge needs a typed confirmation and reports what it removed
+- [x] Unavailable chip shows when the engine fails
+- [x] vitest covers list, search, queue actions, versions, purge and status
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
