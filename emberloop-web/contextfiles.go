@@ -22,13 +22,37 @@ type claudeContextFile struct {
 // claudeSystemPromptWith is the Session system prompt for a WorkDir: el's rule
 // set plus the WorkDir's project context as real content. Scouts get it too; it
 // is content, so read-only still holds. The global file loads from agentDir,
-// the owner's pig agent dir; an empty agentDir loads none.
+// the owner's pig agent dir; an empty agentDir loads none. Title calls use
+// this directly (no role extra); agent Sessions use claudeSystemPromptFor.
 func claudeSystemPromptWith(workDir, agentDir string) string {
 	p := claudeSystemPrompt()
 	if block := claudeProjectContextBlock(loadClaudeContextFiles(workDir, agentDir)); block != "" {
 		p += "\n\n" + block
 	}
 	return p
+}
+
+// claudeSystemPromptWithExtra is claudeSystemPromptWith with a role extra
+// between the base rules and the project context. Empty extra keeps the
+// title-call shape exactly.
+func claudeSystemPromptWithExtra(workDir, agentDir, extra string) string {
+	p := claudeSystemPrompt()
+	if extra != "" {
+		p += "\n\n" + extra
+	}
+	if block := claudeProjectContextBlock(loadClaudeContextFiles(workDir, agentDir)); block != "" {
+		p += "\n\n" + block
+	}
+	return p
+}
+
+// claudeSystemPromptFor is the agent Session system prompt for one record:
+// el's rule set, the role's memory/DOX extra (prompts.go, one place per
+// role), then the WorkDir's project context as real content. Reviewers get
+// the reviewer extra (no remember instruction) even though their el role is
+// web. Title and summarizer calls keep claudeSystemPromptWith (no role).
+func claudeSystemPromptFor(meta SessionMeta, workDir, agentDir string) string {
+	return claudeSystemPromptWithExtra(workDir, agentDir, rolePromptFor(meta))
 }
 
 // loadClaudeContextFiles mirrors pig's LoadProjectContextFiles: the global

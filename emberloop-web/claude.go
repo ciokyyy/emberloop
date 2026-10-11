@@ -216,7 +216,9 @@ type ClaudeBackend struct {
 	// metaHook, when set, builds the session/new and session/load _meta
 	// for a plain adapter (grok: system prompt override, yolo mode) from
 	// the Daemon Session id, model, effort, WorkDir, role and owner dirs.
-	metaHook func(daemonID, model, effort, workDir, role string, dirs ownerDirs) map[string]any
+	// extra carries the role's memory/DOX text (prompts.go); empty leaves
+	// the prompt without it (title calls, back-compat loads).
+	metaHook func(daemonID, model, effort, workDir, role string, dirs ownerDirs, extra string) map[string]any
 	// promptWrap, when set, rewrites each prompt before it goes on the wire
 	// (grok: the per-turn register reminder, since ACP has no hook). The
 	// stored prompt Event keeps the user's own text.
@@ -286,8 +288,16 @@ func (b *ClaudeBackend) strippingMeta(model string) map[string]any {
 // strippingMetaFor is strippingMeta with the Session WorkDir's project
 // context and the owner's global file (agentDir) injected into the system
 // prompt. settingSources stays []: context arrives as content, never as
-// project settings.
+// project settings. Title calls use this (no role extra); agent Sessions use
+// strippingMetaForExtra.
 func (b *ClaudeBackend) strippingMetaFor(model, workDir, agentDir string) map[string]any {
+	return b.strippingMetaForExtra(model, workDir, agentDir, "")
+}
+
+// strippingMetaForExtra is strippingMetaFor with the role's memory/DOX extra
+// (prompts.go, one place per role) between the base rules and the project
+// context. Empty extra keeps the title-call shape.
+func (b *ClaudeBackend) strippingMetaForExtra(model, workDir, agentDir, extra string) map[string]any {
 	if b.plain {
 		return nil
 	}
@@ -297,11 +307,12 @@ func (b *ClaudeBackend) strippingMetaFor(model, workDir, agentDir string) map[st
 	}
 	opts := claudeStrippingOptions(model)
 	opts["allowedTools"] = append([]string{}, allowed...)
-	// The whole Claude Code preset is replaced: el's own rules plus the
-	// injected project context, as the CLI harness does with --system-prompt.
+	// The whole Claude Code preset is replaced: el's own rules, the role
+	// extra, plus the injected project context, as the CLI harness does with
+	// --system-prompt.
 	return map[string]any{
 		"claudeCode":   map[string]any{"options": opts},
-		"systemPrompt": claudeSystemPromptWith(workDir, agentDir),
+		"systemPrompt": claudeSystemPromptWithExtra(workDir, agentDir, extra),
 	}
 }
 
@@ -334,8 +345,16 @@ func validClaudeEffort(e string) bool {
 
 // strippingMetaEffort is strippingMetaFor with the Session's reasoning
 // effort set in the SDK options; an empty effort keeps the model default.
+// Title calls use this (no role extra); agent Sessions use
+// strippingMetaEffortExtra.
 func (b *ClaudeBackend) strippingMetaEffort(model, effort, workDir, agentDir string) map[string]any {
-	m := b.strippingMetaFor(model, workDir, agentDir)
+	return b.strippingMetaEffortExtra(model, effort, workDir, agentDir, "")
+}
+
+// strippingMetaEffortExtra is strippingMetaEffort with the role's memory/DOX
+// extra. Empty extra keeps the title-call shape.
+func (b *ClaudeBackend) strippingMetaEffortExtra(model, effort, workDir, agentDir, extra string) map[string]any {
+	m := b.strippingMetaForExtra(model, workDir, agentDir, extra)
 	if m == nil || effort == "" {
 		return m
 	}
@@ -367,7 +386,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		b.drop(meta.ID, conn)
 		return err
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, meta.Dirs))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMetaFor(meta, meta.Dirs))
 	if err != nil {
 		err = fmt.Errorf("acp session/new: %w", err)
 		b.drop(meta.ID, conn)
@@ -555,13 +574,53 @@ func (b *ClaudeBackend) ResumeOK(meta SessionMeta) (bool, string) {
 	return true, ""
 }
 
-// ResumeSession restarts the adapter around the saved ACP session id.
+// ResumeSession restarts the adapter around the saved ACP session id. The
+// system prompt is rebuilt from the record, so the resumed handle keeps the
+// role's memory/DOX extra.
 func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	_ = emit
 	if meta.ResumeToken == "" {
 		return fmt.Errorf("claude: no saved session to resume")
 	}
-	return b.loadSessionEffort(meta.ID, meta.ResumeToken, meta.Model, meta.Effort, meta.WorkDir, elRoleFor(meta), meta.Dirs)
+	return b.loadSessionWithMeta(meta, meta.ResumeToken)
+}
+
+// loadSessionWithMeta is loadSessionEffort for one agent record: the role
+// comes from the record and the system prompt carries its memory/DOX extra.
+func (b *ClaudeBackend) loadSessionWithMeta(meta SessionMeta, acpID string) error {
+	role := elRoleFor(meta)
+	mcp, err := b.mcpServersFor(meta.ID, role)
+	if err != nil {
+		return err
+	}
+	newConn := b.connFactory(meta.ID, role, meta.Dirs)
+	conn, err := newConn()
+	if err != nil {
+		return fmt.Errorf("restart claude adapter: %w", err)
+	}
+	b.applyTimeouts(conn)
+	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{})}
+	b.mu.Lock()
+	b.sessions[meta.ID] = st
+	b.mu.Unlock()
+	if err := conn.Initialize(); err != nil {
+		err = fmt.Errorf("acp initialize: %w", err)
+		b.drop(meta.ID, conn)
+		return err
+	}
+	if err := conn.LoadSession(acpID, meta.WorkDir, mcp, b.sessionMetaFor(meta, meta.Dirs)); err != nil {
+		err = fmt.Errorf("acp session/load: %w", err)
+		b.drop(meta.ID, conn)
+		return err
+	}
+	if err := b.afterStart(conn, acpID, meta.Model); err != nil {
+		b.drop(meta.ID, conn)
+		return err
+	}
+	b.mu.Lock()
+	st.signalReady()
+	b.mu.Unlock()
+	return nil
 }
 
 // newHandoffConn starts a fresh adapter and ACP session beside the live one
@@ -588,7 +647,7 @@ func (b *ClaudeBackend) newHandoffConn(meta SessionMeta) (acpConn, string, error
 		_ = conn.Close()
 		return nil, "", fmt.Errorf("acp initialize: %w", err)
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, meta.Dirs))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMetaFor(meta, meta.Dirs))
 	if err != nil {
 		_ = conn.Close()
 		return nil, "", fmt.Errorf("acp session/new: %w", err)
@@ -1550,12 +1609,25 @@ func prettyJSON(v any) string {
 
 // sessionMeta is the _meta for session/new and session/load: the plain-adapter
 // hook when set, the claude stripping set otherwise. The owner's global file
-// comes from dirs.pig.
+// comes from dirs.pig. Back-compat loads use this (no role extra); agent
+// Sessions use sessionMetaFor.
 func (b *ClaudeBackend) sessionMeta(daemonID, model, effort, workDir, role string, dirs ownerDirs) map[string]any {
 	if b.metaHook != nil {
-		return b.metaHook(daemonID, model, effort, workDir, role, dirs)
+		return b.metaHook(daemonID, model, effort, workDir, role, dirs, "")
 	}
 	return b.strippingMetaEffort(model, effort, workDir, dirs.pig)
+}
+
+// sessionMetaFor is sessionMeta for one agent record: the role's memory/DOX
+// extra (prompts.go) rides the system prompt. Reviewers get the reviewer
+// extra (no remember instruction) even though their el role is web.
+func (b *ClaudeBackend) sessionMetaFor(meta SessionMeta, dirs ownerDirs) map[string]any {
+	extra := rolePromptFor(meta)
+	role := elRoleFor(meta)
+	if b.metaHook != nil {
+		return b.metaHook(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, dirs, extra)
+	}
+	return b.strippingMetaEffortExtra(meta.Model, meta.Effort, meta.WorkDir, dirs.pig, extra)
 }
 
 // wrapPrompt applies the per-turn prompt rewrite, if any.

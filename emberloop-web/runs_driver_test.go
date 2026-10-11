@@ -38,6 +38,10 @@ func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	for name, content := range tickets {
 		writeFile(t, repo, ".scratch/demo/issues/"+name, content)
 	}
+	// Run-launched worktrees seed a root AGENTS.md when the checkout lacks
+	// one (ticket 27); the fixture commits one so the seed stays a no-op
+	// here and fake-harness workers (which never commit) keep a clean tree.
+	writeFile(t, repo, "AGENTS.md", "# AGENTS.md — demo\n\n## Child DOX Index\n\n(none)\n")
 	testGit(t, repo, "add", "-A")
 	testGit(t, repo, "commit", "-m", "spec")
 	return repo, filepath.Join(repo, ".scratch", "demo", "spec.md")

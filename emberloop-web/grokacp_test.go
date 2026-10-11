@@ -185,7 +185,7 @@ func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
 
 func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 	b, _ := newTestGrokBackend(t)
-	meta := b.meta("s1", "grok-4.7", "", tempDir(t), "web", ownerDirs{})
+	meta := b.meta("s1", "grok-4.7", "", tempDir(t), "web", ownerDirs{}, webRolePrompt())
 	if meta["yoloMode"] != true {
 		t.Fatalf("yoloMode %v", meta["yoloMode"])
 	}
@@ -195,6 +195,9 @@ func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 	}
 	if _, ok := meta["claudeCode"]; ok {
 		t.Fatal("grok meta must not carry the claude stripping set")
+	}
+	if !strings.Contains(sys, "AGENTS.md") {
+		t.Fatalf("override lacks the role DOX extra: %q", sys)
 	}
 }
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -11,6 +12,35 @@ import (
 	"strings"
 	"time"
 )
+
+// agentsMDNames are the files that satisfy a root DOX contract, in the same
+// priority the project-context loader reads them. A directory holding any of
+// them already has a chain root.
+var agentsMDNames = []string{"AGENTS.override.md", "AGENTS.md", "AGENTS.MD"}
+
+// agentsMDTemplate seeds a root DOX contract. %s is the directory base name,
+// twice: the title and the purpose line.
+const agentsMDTemplate = "# AGENTS.md — %s\n\n## Purpose\n\nWorking contract for %s. Project knowledge lives here; keep it current so agents share one source of truth.\n\nBefore editing, read this file and any AGENTS.md nearer your target; after a contract-changing edit, update the owning file in the same task.\n\n## Child DOX Index\n\n(none yet — add `path/AGENTS.md — what it owns` lines as subcontracts appear)\n"
+
+// ensureAgentsMD creates a root AGENTS.md in dir when the directory holds no
+// AGENTS file. Run worker starts (runStartWorker) call this on the fresh
+// worktree before the Worker starts, so a Run-launched project always has a
+// DOX chain even when the repo root lacks one. (Seeding through `el init`
+// belongs to `.scratch/project-init/issues/02`, which owns that command; this
+// helper stays unhooked from project creation until that ticket lands.) An
+// existing file is never touched. It reports whether it created the file.
+func ensureAgentsMD(dir string) (bool, error) {
+	for _, n := range agentsMDNames {
+		if st, err := os.Stat(filepath.Join(dir, n)); err == nil && !st.IsDir() {
+			return false, nil
+		}
+	}
+	content := fmt.Sprintf(agentsMDTemplate, filepath.Base(dir), filepath.Base(dir))
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(content), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
 // Project is a recorded working directory. Sessions started in a Project run
 // with the Project path as their cwd. Projects persist in

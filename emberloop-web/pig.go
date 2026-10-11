@@ -718,7 +718,7 @@ func (b *PigBackend) buildHandle(meta SessionMeta, tools []agent.AgentTool, agen
 		svcs.Close()
 		return nil, nil, nil, fmt.Errorf("pig: runtime: %w", err)
 	}
-	resources, err := ownerResources(svcs)
+	resources, err := ownerResourcesExtra(svcs, rolePromptFor(meta))
 	if err != nil {
 		_ = rt.Close()
 		svcs.Close()
@@ -787,15 +787,28 @@ func (b *PigBackend) CreateSession(meta SessionMeta, emit func(kind, text, statu
 
 // ownerResources loads a Session's resources from its agent dir without
 // ambient skills or prompt templates. Pig reads ~/.agents/skills from HOME,
-// which no owner owns. Context files from the WorkDir chain still load.
+// which no owner owns. Context files from the WorkDir chain still load. extra
+// carries the role's memory/DOX text (prompts.go, one place per role) as an
+// appended system-prompt section; empty appends nothing (summarizer calls).
 func ownerResources(svcs *coding.Services) (coding.ResourceLoader, error) {
-	loader := coding.NewDefaultResourceLoader(coding.DefaultResourceLoaderOptions{
+	return ownerResourcesExtra(svcs, "")
+}
+
+// ownerResourcesExtra is ownerResources with the role extra appended to the
+// system prompt. Agent Sessions pass rolePromptFor(meta); one-off calls
+// (summarizer, titles) pass "".
+func ownerResourcesExtra(svcs *coding.Services, extra string) (coding.ResourceLoader, error) {
+	opts := coding.DefaultResourceLoaderOptions{
 		CWD:               svcs.CWD(),
 		AgentDir:          svcs.AgentDir(),
 		SettingsManager:   svcs.SettingsManager(),
 		NoSkills:          true,
 		NoPromptTemplates: true,
-	})
+	}
+	if extra != "" {
+		opts.AppendSystemPrompt = []string{extra}
+	}
+	loader := coding.NewDefaultResourceLoader(opts)
 	if err := loader.Reload(); err != nil {
 		return nil, err
 	}
@@ -1295,7 +1308,7 @@ func (b *PigBackend) ResumeSession(meta SessionMeta, emit func(kind, text, statu
 		svcs.Close()
 		return fmt.Errorf("pig: runtime: %w", err)
 	}
-	resources, err := ownerResources(svcs)
+	resources, err := ownerResourcesExtra(svcs, rolePromptFor(meta))
 	if err != nil {
 		_ = rt.Close()
 		svcs.Close()

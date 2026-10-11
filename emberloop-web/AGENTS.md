@@ -132,7 +132,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   gone. Backends register per harness; the fake stays default.
 - Pig SDK Sessions read the owner's pig dir through `ownerResources`: no ambient
   skills or prompt templates (pig reads `~/.agents/skills` from HOME). Context
-  files from the WorkDir chain still load. `pigOneShot` builds Services only, so
+  files from the WorkDir chain still load. Agent Sessions append the role's
+  memory/DOX extra (`ownerResourcesExtra` with `rolePromptFor`, prompts.go) to
+  the system prompt; `pigOneShot` builds Services only, so
   the summarizer and pig titles load no instruction files.
 - `pigacp.go` is the default pig Backend (`EL_PIG_SDK=1` or a missing
   `pig`/`el-mcp`/`bunx` falls back to the SDK Backend): it runs the pi-acp
@@ -244,6 +246,30 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   `recall_inject_test.go` covers order, fence, Events, empty query, caps,
   flags, dormancy, notes merge, identifiers, Decider fallback, resume,
   Reviewer filter, engine notice, compress and the fallback.
+- Role prompts (`prompts.go`): the memory/DOX extra per role, the one place
+  the wording lives. Web names the `remember` tool (User statements only,
+  needs a reason, queue approval, project facts go in AGENTS.md) and the
+  explicit-Profile rule; workers, scouts and Reviewers name no memory-write
+  tool and get `recall` only. Every role carries the AGENTS.md chain rule and
+  the untrusted-notes rule. `rolePromptFor` dispatches on the Session record
+  (Reviewers first, though their el role is web). claude (`sessionMetaFor`,
+  `claudeSystemPromptFor`), grok (`meta` hook with extra) and pig
+  (`ownerResourcesExtra`) inject it into the system prompt on every create,
+  resume and Handoff, exactly once per role: Run tasks (`workerTaskPrompt`,
+  `reviewerPrompt`) carry no memory text of their own. `prompts_test.go` pins
+  the exact texts and asserts no `remember` in worker, scout, reviewer or
+  task prompts; `prompts_wiring_test.go` covers the per-harness injection and
+  the task non-duplication. Title and summarizer calls use the role-free shape.
+- Projects (`projects.go`): `POST /api/projects` records a working directory;
+  it writes no files. `ensureAgentsMD` (template `agentsMDTemplate`, existing
+  files untouched) seeds a root `AGENTS.md` for Run-launched worktrees only:
+  `runStartWorker` (runs_exec.go, via `ensureWorktreeDOX`) calls it on the
+  fresh worktree before the Worker starts, so the Worker reads a DOX chain
+  even when the repo root lacks one; the main checkout stays clean and the
+  Worker commits the seed with its work. Seeding through `el init` belongs to
+  `.scratch/project-init/issues/02`, which owns that command. `dox_test.go`
+  covers the helper, the worktree seeding in a real git repo and the seeding
+  failure.
 - `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK,
   pig-over-ACP and claude Backends; grok reuses the same swap):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
@@ -348,7 +374,8 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   profile whose `tools` allowlist is `use_tool` only (`agent stdio` ignores
   the `--tools` flag; Grok has no setting to expose MCP tools directly).
   The el MCP tools therefore go through `use_tool`; the system prompt
-  (`_meta.systemPromptOverride`: el rules, project context, then a compact
+  (`_meta.systemPromptOverride`: el rules, the role's memory/DOX extra
+  (prompts.go, via the `meta` hook), project context, then a compact
   catalog rendered from the el-mcp `tools/list` of the Session's role) lets
   the model call them without `search_tool`, which the profile keeps only
   when the catalog could not be built. The register reminder is appended to
@@ -381,7 +408,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   Project context (`contextfiles.go`, table-tested in `contextfiles_test.go`)
   injects the Session WorkDir's AGENTS.md/CLAUDE.md chain (outermost-first,
   owner's pig dir global file first (`dirs.pig`), 64 KB cap with truncation note) into the
-  system prompt on create and resume, scouts included; `settingSources`
+  system prompt on create, resume and Handoff (`sessionMetaFor`,
+  `claudeSystemPromptFor`), scouts included, ahead of the context sits the
+  role's memory/DOX extra (prompts.go); title calls use the role-free shape;
+  `settingSources`
   stays empty.
 - Handoff restarts and title calls run under the owner's dirs (`ownerDirsFor`).
   The summarizer call uses the host's pig auth and loads no instruction files.
@@ -506,9 +536,14 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   shows the live Ticket table, `GET /api/runs/{id}/events` streams it over
   SSE). Each Ticket starts in number order once blockers merged, up to the
   live-Session cap, in its own worktree and branch as a Subagent of the Run
-  (ParentID the Run). A submitted done (`POST /api/sessions/{id}/submit`)
-  merges by rebase plus fast-forward-only through the shared core checks; a
-  non-done submit waits for done instead of merging; a dirty worktree or
+  (ParentID the Run). The fresh worktree is seeded a root `AGENTS.md` first
+  (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
+  lacks one; the Worker's first prompt is `workerTaskPrompt` and each
+  Reviewer's is `reviewerPrompt` (prompts.go: task text only, the system
+  prompt carries the role extra, no `remember` in any of them). A submitted
+  done (`POST /api/sessions/{id}/submit`) merges by rebase plus
+  fast-forward-only through the shared core checks; a non-done submit waits
+  for done instead of merging; a dirty worktree or
   rebase conflict keeps the Worker alive with the refusal on its row and
   tells the Worker. With no target branch (detached repo) the rebase falls
   back to the repo HEAD as it stands at finish, never the recorded base.

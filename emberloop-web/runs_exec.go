@@ -819,7 +819,10 @@ const webStallNudge = "Nudge: you have not submitted. Finish the ticket and subm
 // pass|changes`, then one finding per line as `file:line severity:
 // problem` (severity blocker|major|minor; a problem may continue on
 // indented lines). The Daemon records the verdict at the prompted tip, so
-// the reply never names it. Only the reply to this prompt counts.
+// the reply never names it. Only the reply to this prompt counts. It carries
+// no memory/DOX text of its own: the Reviewer's system prompt already
+// carries the reviewer extra (rolePromptFor), so repeating it here would
+// inject it twice. It names no remember instruction.
 func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 	axis := "correctness and this repo's standards"
 	if reviewerType == reviewerSpecType {
@@ -1373,6 +1376,10 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	return nil
 }
 
+// ensureWorktreeDOX seeds the DOX chain helper for runStartWorker. Tests
+// replace it to simulate a seeding failure without touching the filesystem.
+var ensureWorktreeDOX = ensureAgentsMD
+
 // runStartWorker creates the Ticket's worktree and branch and its Worker
 // Session, a Subagent of the Run, and runs the Ticket prompt on it. A
 // refused live-Session cap retries briefly before failing the Run.
@@ -1419,6 +1426,17 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		}
 		if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
 			return err
+		}
+		// A Run-launched Worker reads its DOX chain from its own worktree
+		// root. Seed a root AGENTS.md there when the checkout has none, so
+		// the chain exists even when the repo root lacks one; the file rides
+		// the worktree (never the main checkout, which stays clean) and the
+		// Worker commits it with its work like any other project file. An
+		// existing file is untouched and a failure stops this worker like any
+		// other start error.
+		if _, err := ensureWorktreeDOX(worktree); err != nil {
+			cleanup()
+			return fmt.Errorf("could not ensure AGENTS.md in %s: %w", worktree, err)
 		}
 		meta := SessionMeta{
 			ID:        newID(),
@@ -1490,7 +1508,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 
 		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
-		prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes. %s", tk.ID, spec, tk.Path, branch, workerReviewNote)
+		prompt := workerTaskPrompt(tk.ID, spec, tk.Path, branch)
 		d.mu.Lock()
 		if s, ok := d.sessions[meta.ID]; ok {
 			s.busy = true

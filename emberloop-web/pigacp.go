@@ -158,7 +158,7 @@ func (b *PigACPBackend) StartHandle(meta SessionMeta, emit func(kind, text, stat
 		_ = conn.Close()
 		return "", nil, fmt.Errorf("acp initialize: %w", err)
 	}
-	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, meta.Dirs))
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMetaFor(meta, meta.Dirs))
 	if err != nil {
 		_ = conn.Close()
 		return "", nil, fmt.Errorf("acp session/new: %w", err)

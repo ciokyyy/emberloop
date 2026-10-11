@@ -352,10 +352,12 @@ func (b *GrokACPBackend) catalogFor(role, sessionID string) string {
 }
 
 // meta is the session/new and session/load _meta: the el system prompt with
-// the project context and tool catalog replaces Grok's own, and the session
-// auto-approves tools. The owner's global file comes from dirs.pig.
-func (b *GrokACPBackend) meta(daemonID, model, effort, workDir, role string, dirs ownerDirs) map[string]any {
-	prompt := claudeSystemPromptWith(workDir, dirs.pig)
+// the role's memory/DOX extra (prompts.go, one place per role), the project
+// context and tool catalog replaces Grok's own, and the session
+// auto-approves tools. The owner's global file comes from dirs.pig. Empty
+// extra keeps the pre-role shape (back-compat loads).
+func (b *GrokACPBackend) meta(daemonID, model, effort, workDir, role string, dirs ownerDirs, extra string) map[string]any {
+	prompt := claudeSystemPromptWithExtra(workDir, dirs.pig, extra)
 	prompt += "\n\n" + grokToolBlock(b.catalogFor(role, daemonID))
 	return map[string]any{"systemPromptOverride": prompt, "yoloMode": true}
 }
