@@ -48,7 +48,7 @@ func factories() []factory {
 	return []factory{
 		{"bank", func(t *testing.T, clock *testClock) Memory {
 			t.Helper()
-			eng, err := Open(t.TempDir(), Options{Now: clock.Now})
+			eng, err := Open(tempDir(t), Options{Now: clock.Now})
 			if err != nil {
 				t.Fatal(err)
 			}

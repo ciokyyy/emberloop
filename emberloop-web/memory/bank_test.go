@@ -13,7 +13,7 @@ import (
 // engine is closed before the directory is removed.
 func openTestEngine(t *testing.T) (*Engine, string, *testClock) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	clock := newTestClock()
 	eng, err := Open(dir, Options{Now: clock.Now})
 	if err != nil {

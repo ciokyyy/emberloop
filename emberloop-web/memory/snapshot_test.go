@@ -78,7 +78,7 @@ func TestSnapshotSkipLeavesNoFile(t *testing.T) {
 
 func TestSnapshotTimeRoundTrip(t *testing.T) {
 	now := time.Date(2026, 10, 11, 3, 4, 5, 123456789, time.UTC)
-	path := filepath.Join(t.TempDir(), now.Format(snapLayout)+".db")
+	path := filepath.Join(tempDir(t), now.Format(snapLayout)+".db")
 	if got := snapshotTime(path); !got.Equal(now) {
 		t.Fatalf("snapshotTime(%s) = %v, want %v", path, got, now)
 	}
@@ -88,7 +88,7 @@ func TestSnapshotTimeRoundTrip(t *testing.T) {
 }
 
 func TestPruneSnapshotsRemovesOldest(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	var files []string
 	for i := 0; i < 4; i++ {
 		p := filepath.Join(dir, string(rune('a'+i))+".db")

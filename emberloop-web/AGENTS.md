@@ -74,9 +74,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   do not resume (no migration). `harnessdirs_test.go` covers the seam and the
   seeding rules.
 - Real Backends prove out in live probes, never the main check.
-- Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
+- Tests never call `t.TempDir()`: use `tempDir(t)` or `testsupport.TempDir(t)` (shared helper in `testsupport/`). Daemon
   goroutines write after a test returns and fail `t.TempDir()` cleanup with
-  "directory not empty". `main_test.go` shrinks the pig stall watchdog
+  "directory not empty". `TestNoTempDir` in `tempdir_test.go` fails it, comments excluded. `main_test.go` shrinks the pig stall watchdog
   (`pigTailStallTimeout`, `pigStallTick`): the SDK sometimes leaves a finished
   stream open and the real 20s watchdog added ~30s per hit.
 - API is the test seam: `api_test.go` drives the Daemon's HTTP and SSE API

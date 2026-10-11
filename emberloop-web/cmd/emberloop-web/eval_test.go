@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"example.com/emberloop-web/memory"
+	"example.com/emberloop-web/testsupport"
 )
 
 func writeEvalSession(t *testing.T, stateDir, id, project, createdAt, body string) {
@@ -28,7 +29,7 @@ func writeEvalSession(t *testing.T, stateDir, id, project, createdAt, body strin
 }
 
 func TestEvalReplayPrintsRecallAndRepeatRate(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	writeEvalSession(t, dir, "s1", "", "2026-10-11T09:00:00Z",
 		"{\"kind\":\"prompt\",\"sender\":\"user\",\"user\":\"u1\",\"seq\":1,\"text\":\"remember: always return wrapped errors\"}\n")
 	writeEvalSession(t, dir, "s2", "", "2026-10-11T10:00:00Z",
@@ -46,7 +47,7 @@ func TestEvalReplayPrintsRecallAndRepeatRate(t *testing.T) {
 }
 
 func TestEvalReplayWithEmbedderScoresPrintsGap(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	writeEvalSession(t, dir, "s1", "", "2026-10-11T09:00:00Z",
 		"{\"kind\":\"prompt\",\"sender\":\"user\",\"user\":\"u1\",\"seq\":1,\"text\":\"remember: always return wrapped errors\"}\n")
 	writeEvalSession(t, dir, "s2", "", "2026-10-11T10:00:00Z",
@@ -69,7 +70,7 @@ func TestEvalReplayWithEmbedderScoresPrintsGap(t *testing.T) {
 }
 
 func TestEvalDecidersPrintsPrecisionPerDecider(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	labels := "{\"id\":\"a\",\"text\":\"remember: always wrap errors\",\"durable\":true}\n" +
 		"{\"id\":\"b\",\"text\":\"What time is lunch?\",\"durable\":false}\n"
 	labelsPath := filepath.Join(dir, "labels.jsonl")
@@ -102,7 +103,7 @@ func TestEvalCommandUsage(t *testing.T) {
 }
 
 func TestEvalReplayPeriodBoundsSessions(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	writeEvalSession(t, dir, "s1", "", "2026-10-11T09:00:00Z",
 		"{\"kind\":\"prompt\",\"sender\":\"user\",\"user\":\"u1\",\"seq\":1,\"text\":\"remember: always return wrapped errors\"}\n")
 	writeEvalSession(t, dir, "s2", "", "2026-10-11T10:00:00Z",
@@ -121,7 +122,7 @@ func TestEvalReplayPeriodBoundsSessions(t *testing.T) {
 }
 
 func TestEvalDecidersMergesQueueLabels(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	labelsPath := filepath.Join(dir, "labels.jsonl")
 	if err := os.WriteFile(labelsPath, []byte("{\"id\":\"hand-1\",\"text\":\"remember: always wrap errors\",\"durable\":true}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -159,7 +160,7 @@ func TestEvalDecidersMergesQueueLabels(t *testing.T) {
 }
 
 func TestEvalDecidersWriteScoresGrowsTheFile(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	labelsPath := filepath.Join(dir, "labels.jsonl")
 	if err := os.WriteFile(labelsPath, []byte("{\"id\":\"a\",\"text\":\"remember: always wrap errors\",\"durable\":true}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -183,7 +184,7 @@ func TestEvalDecidersWriteScoresGrowsTheFile(t *testing.T) {
 }
 
 func TestEvalSampleWritesHitsFirst(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	writeEvalSession(t, dir, "s1", "", "2026-10-11T09:00:00Z",
 		"{\"kind\":\"prompt\",\"sender\":\"user\",\"user\":\"u1\",\"seq\":1,\"text\":\"remember: always return wrapped errors\"}\n"+
 			"{\"kind\":\"prompt\",\"sender\":\"user\",\"user\":\"u1\",\"seq\":2,\"text\":\"What time is lunch?\"}\n")

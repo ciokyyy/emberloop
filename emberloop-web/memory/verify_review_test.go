@@ -73,7 +73,7 @@ func TestVerifyModuleAnchorsPrecise(t *testing.T) {
 
 func TestVerifyOutsideWorktreeIsStale(t *testing.T) {
 	dir, base := initGitRepo(t, map[string]string{"app.go": "package app\n"})
-	outside := filepath.Join(t.TempDir(), "outside.go")
+	outside := filepath.Join(tempDir(t), "outside.go")
 	rule := Rule{Text: "keep app simple", Kind: KindFact, Status: StatusActive, ApprovedBy: "u1",
 		Anchors: []string{outside}, ObservedCommit: base}
 	res := VerifyRule(context.Background(), dir, rule)

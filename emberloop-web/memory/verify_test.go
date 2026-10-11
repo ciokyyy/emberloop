@@ -18,7 +18,7 @@ func gitEnv(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_NAME", "memory-test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", tempDir(t))
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 }
 
@@ -48,7 +48,7 @@ func writeRepoFile(t *testing.T, dir, name, content string) {
 func initGitRepo(t *testing.T, files map[string]string) (dir, head string) {
 	t.Helper()
 	gitEnv(t)
-	dir = t.TempDir()
+	dir = tempDir(t)
 	runGitTest(t, dir, "init", "-b", "main", ".")
 	for name, content := range files {
 		writeRepoFile(t, dir, name, content)
@@ -175,7 +175,7 @@ func TestVerifyPreferenceAndAnchorlessAreClean(t *testing.T) {
 	if res := VerifyRule(ctx, dir, bare); res.Status != VerifyClean {
 		t.Fatalf("empty commit status = %q, want clean", res.Status)
 	}
-	plain := t.TempDir()
+	plain := tempDir(t)
 	outside := Rule{Text: "keep app simple", Kind: KindFact, Status: StatusActive, ApprovedBy: "u1",
 		Anchors: []string{"app.go"}, ObservedCommit: base}
 	if res := VerifyRule(ctx, plain, outside); res.Status != VerifyStale {

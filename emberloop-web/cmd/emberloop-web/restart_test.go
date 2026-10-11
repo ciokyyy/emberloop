@@ -8,12 +8,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"example.com/emberloop-web/testsupport"
 )
 
 // The Daemon re-executes itself, same pid, once its binary is replaced and it
 // is idle.
 func TestRestartsWhenBinaryChanges(t *testing.T) {
-	dir := t.TempDir()
+	dir := testsupport.TempDir(t)
 	bin := filepath.Join(dir, "el-web")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)

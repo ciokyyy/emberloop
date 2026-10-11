@@ -123,7 +123,7 @@ func TestBuildAgentsMDEditAppendsOnSubstringCollision(t *testing.T) {
 }
 
 func TestAgentsMDDiffMissingFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	abs := filepath.Join(dir, "AGENTS.md")
 	updated, diff, err := AgentsMDDiff(abs, "AGENTS.md", "keep it simple")
 	if err != nil {
@@ -355,7 +355,7 @@ func TestPromotionMigrationVersion(t *testing.T) {
 }
 
 func TestIsPathInside(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	sub := filepath.Join(dir, "sub", "file.md")
 	if !IsPathInside(sub, dir) {
 		t.Fatalf("%s should be inside %s", sub, dir)
@@ -385,7 +385,7 @@ func TestSanitizeNoteID(t *testing.T) {
 	if got := sanitizeNoteID("../../etc"); got == "" || strings.Contains(got, "/") {
 		t.Fatalf("sanitize traversal = %q, want a safe stem", got)
 	}
-	abs, rel := NotesTargetPath(t.TempDir(), "../../etc")
+	abs, rel := NotesTargetPath(tempDir(t), "../../etc")
 	if strings.Contains(rel, "..") || strings.Contains(abs, "..") {
 		// The rel must be slash-clean; abs resolution keeps it inside.
 		t.Fatalf("note path escapes: %q %q", abs, rel)

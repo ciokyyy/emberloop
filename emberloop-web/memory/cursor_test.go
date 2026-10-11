@@ -17,7 +17,7 @@ func writeLog(t *testing.T, path, content string) {
 }
 
 func TestReadNewReadsUpToLastNewline(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
+	path := filepath.Join(tempDir(t), "events.jsonl")
 	writeLog(t, path, "{\"a\":1}\n{\"b\":2}\n{\"torn\":")
 	chunk, next, reset, err := ReadNew(path, Cursor{})
 	if err != nil {
@@ -63,7 +63,7 @@ func TestReadNewReadsUpToLastNewline(t *testing.T) {
 }
 
 func TestCursorResetsOnTruncate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
+	path := filepath.Join(tempDir(t), "events.jsonl")
 	writeLog(t, path, "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n")
 	_, cur, _, err := ReadNew(path, Cursor{})
 	if err != nil {
@@ -86,7 +86,7 @@ func TestCursorResetsOnTruncate(t *testing.T) {
 }
 
 func TestCursorResetsOnRewrite(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.jsonl")
+	path := filepath.Join(tempDir(t), "events.jsonl")
 	writeLog(t, path, "{\"a\":1}\n{\"b\":2}\n")
 	_, cur, _, err := ReadNew(path, Cursor{})
 	if err != nil {
@@ -107,7 +107,7 @@ func TestCursorResetsOnRewrite(t *testing.T) {
 }
 
 func TestCursorSaveLoadRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "miner.cursor.json")
+	path := filepath.Join(tempDir(t), "sub", "miner.cursor.json")
 	c := Cursor{Offset: 41, Size: 100, HeadHash: "abc"}
 	if err := SaveCursor(path, c); err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestCursorSaveLoadRoundTrip(t *testing.T) {
 	if got != c {
 		t.Fatalf("loaded cursor = %+v, want %+v", got, c)
 	}
-	if _, err := LoadCursor(filepath.Join(t.TempDir(), "missing.json")); err != nil {
+	if _, err := LoadCursor(filepath.Join(tempDir(t), "missing.json")); err != nil {
 		t.Fatalf("missing cursor err = %v, want nil", err)
 	}
 }

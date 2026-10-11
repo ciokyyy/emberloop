@@ -44,7 +44,7 @@ func openNotesIndexForTest(t *testing.T, notes []Note) *NotesIndex {
 // loads and recalls only its own branch's notes.
 func TestNotesBranchAwarenessTwoWorktrees(t *testing.T) {
 	gitEnv(t)
-	dir := t.TempDir()
+	dir := tempDir(t)
 	runGitTest(t, dir, "init", "-b", "main", ".")
 	writeRepoFile(t, dir, "app.go", "package app\n")
 	writeNoteFile(t, dir, "main-note.md", "main-note", nil, "", "u1", "app.main", "main branch upload handler zebra")
@@ -62,7 +62,7 @@ func TestNotesBranchAwarenessTwoWorktrees(t *testing.T) {
 	// Detach so both branches can take an added worktree: git refuses a
 	// second worktree for a checked-out branch.
 	runGitTest(t, dir, "checkout", "--detach", "HEAD")
-	wtBase := t.TempDir()
+	wtBase := tempDir(t)
 	wtMain := filepath.Join(wtBase, "wt-main")
 	wtFeature := filepath.Join(wtBase, "wt-feature")
 	runGitTest(t, dir, "worktree", "add", wtMain, "main")
@@ -156,7 +156,7 @@ func TestNotesDeletedAnchorsSkipped(t *testing.T) {
 // A malformed frontmatter file is skipped with a notice, not an error. The
 // good note still loads and recalls.
 func TestNotesMalformedSkippedWithNotice(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	notesDir := filepath.Join(dir, filepath.FromSlash(NotesSubdir))
 	if err := os.MkdirAll(notesDir, 0o755); err != nil {
 		t.Fatal(err)

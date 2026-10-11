@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	web "example.com/emberloop-web"
+	"example.com/emberloop-web/testsupport"
 )
 
 // Seam: `emberloop-web user set-password` against the Daemon HTTP API. The
@@ -49,7 +49,7 @@ func loginStatus(t *testing.T, base, name, password string) int {
 }
 
 func TestUserSetPasswordFromPipeResetsLogin(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	srv := httptest.NewServer(web.NewDaemon(dir, web.NewFakeBackend()).Handler())
 	defer srv.Close()
 	body, _ := json.Marshal(map[string]string{"username": cliUser, "password": cliOldPassword})
@@ -79,7 +79,7 @@ func TestUserSetPasswordFromPipeResetsLogin(t *testing.T) {
 }
 
 func TestUserSetPasswordRefusesUnknownUserAndShortPassword(t *testing.T) {
-	dir := tempDir(t)
+	dir := testsupport.TempDir(t)
 	srv := httptest.NewServer(web.NewDaemon(dir, web.NewFakeBackend()).Handler())
 	defer srv.Close()
 	body, _ := json.Marshal(map[string]string{"username": cliUser, "password": cliOldPassword})
@@ -114,25 +114,4 @@ func TestUserCommandUsage(t *testing.T) {
 			t.Errorf("args %q stderr = %q, want usage", args, errOut.String())
 		}
 	}
-}
-
-// tempDir replaces t.TempDir for tests that start Daemons: their writes can
-// land after the test returns, so cleanup retries removal for a few seconds
-// instead of failing the test (see emberloop-web/tempdir_test.go).
-func tempDir(t testing.TB) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "el-web-user-test-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if os.RemoveAll(dir) == nil || time.Now().After(deadline) {
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	})
-	return dir
 }
