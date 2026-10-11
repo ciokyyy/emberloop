@@ -45,6 +45,8 @@
   let sessionTitles = $state('on');
   let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '', model: 'none' });
   let compressNote = $state('');
+  let decider = $state({ mode: 'heuristic', model: 'none', low: '0.35', high: '0.7' });
+  let deciderNote = $state('');
   let signupOpen = $state('on');
   let titlesLocked = $state(false);
   let locked = $state(false);
@@ -55,7 +57,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress, signupOpen });
+  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress, decider, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -94,6 +96,14 @@
         model: c.compress_model || 'none',
       };
       compressNote = body.compress_note ?? '';
+      const md = body.decider ?? {};
+      decider = {
+        mode: md.decider_mode || 'heuristic',
+        model: md.memory_model || 'none',
+        low: String(md.decider_confirm_low ?? 0.35),
+        high: String(md.decider_confirm_high ?? 0.7),
+      };
+      deciderNote = body.decider_note ?? '';
       saved = snapshot();
     } catch (e) {
       error = e.message;
@@ -111,8 +121,15 @@
   }
 
   const pigTitleItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', pigTitle === 'none' ? '' : pigTitle)];
-
   const compressModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', compress.model === 'none' ? '' : compress.model)];
+
+  const deciderModeItems = [
+    { value: 'heuristic', label: 'Heuristic' },
+    { value: 'llm', label: 'LLM' },
+    { value: 'ensemble', label: 'Ensemble' },
+  ];
+
+  const deciderModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', decider.model === 'none' ? '' : decider.model)];
 
   async function save() {
     saving = true;
@@ -134,10 +151,18 @@
         compress_model: compress.model === 'none' ? '' : compress.model,
       };
       if (admin) payload.signup_enabled = signupOpen === 'on';
+      if (admin)
+        payload.decider = {
+          decider_mode: decider.mode,
+          memory_model: decider.model === 'none' ? '' : decider.model,
+          decider_confirm_low: Number(decider.low),
+          decider_confirm_high: Number(decider.high),
+        };
       const savedBody = await putSettings(payload);
       maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
       locked = !!savedBody.max_workers_from_env;
       compressNote = savedBody.compress_note ?? '';
+      deciderNote = savedBody.decider_note ?? '';
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -155,6 +180,7 @@
     pigTitle = prev.pigTitle;
     sessionTitles = prev.sessionTitles;
     compress = prev.compress;
+    decider = prev.decider;
     signupOpen = prev.signupOpen;
   }
 </script>
@@ -255,6 +281,45 @@
             </div>
           </div>
         </section>
+        {#if admin}
+        <section class="animate-rise flex flex-col gap-2" data-testid="decider-settings">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Memory deciders</h2>
+            <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model against the thresholds.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Decider mode</div>
+                <div class="text-xs text-muted-foreground">Heuristic is local. LLM and ensemble ask the memory model.</div>
+              </div>
+              <Combobox class="h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Memory model</div>
+                <div class="text-xs text-muted-foreground">Confirms candidates. Only authed pig models are listed.</div>
+                {#if deciderNote}<div class="text-xs text-amber-300">{deciderNote}</div>{/if}
+              </div>
+              <Combobox class="h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Confirm low</div>
+                <div class="text-xs text-muted-foreground">Below this the candidate is dropped, 0 to 1.</div>
+              </div>
+              <FloatingInput id="decider-low" label="Low" type="number" min="0" max="1" step="0.05" bind:value={decider.low} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Confirm high</div>
+                <div class="text-xs text-muted-foreground">At or above this the candidate is queue-eligible, 0 to 1.</div>
+              </div>
+              <FloatingInput id="decider-high" label="High" type="number" min="0" max="1" step="0.05" bind:value={decider.high} />
+            </div>
+          </div>
+        </section>
+        {/if}
         <ProfileSettings />
         <Notifications />
         <InstallApp />

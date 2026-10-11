@@ -73,6 +73,12 @@ type Daemon struct {
 	machineToken string
 	// summarizer writes Handoffs for Compress (summarize.go); tests replace it.
 	summarizer handoffSummarizer
+	// decider confirms mined candidates (decider.go); nil builds it from the
+	// decider settings on every mine. Tests set a scripted Decider.
+	decider memory.Decider
+	// deciderOneShot scripts the Decider's one-off completion in tests; nil
+	// runs the bare pig one-shot.
+	deciderOneShot func(model, system, user string) (string, error)
 	// compressSleep waits between compress retries (compress_retry.go). Nil
 	// sleeps for real; tests replace it.
 	compressSleep func(time.Duration)

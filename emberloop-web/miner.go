@@ -35,6 +35,7 @@ type MineResult struct {
 	Kept       int // miner-readable user prompts among them
 	Stored     int // observations inserted
 	Duplicates int // duplicate hits folded into evidence_count
+	Dropped    int // heuristic hits the Decider dropped below its cut
 	Reset      bool
 }
 
@@ -43,15 +44,25 @@ func (d *Daemon) minerCursorPath(id string) string {
 	return filepath.Join(d.sessionDir(id), "miner.cursor.json")
 }
 
-// minerDeciderDoc is the decider_json of a heuristic observation: what fired
-// and the redacted thing it corrected. Ticket 20's Decider extends this.
+// minerDeciderDoc is the decider_json of a mined observation: the Decider
+// that judged it (mode, model, version), its durable probability, kind and
+// scope, whether it is queue-eligible (ticket 22), and the heuristic detail
+// (what fired and the redacted thing it corrected).
 type minerDeciderDoc struct {
-	Miner      string  `json:"miner"`
-	Type       string  `json:"type"`
-	Patterns   string  `json:"patterns"`
-	Confidence float64 `json:"confidence"`
-	Sentiment  string  `json:"sentiment"`
-	Context    string  `json:"context,omitempty"`
+	Miner         string  `json:"miner"`
+	Type          string  `json:"type"`
+	Patterns      string  `json:"patterns"`
+	Confidence    float64 `json:"confidence"`
+	Sentiment     string  `json:"sentiment"`
+	Context       string  `json:"context,omitempty"`
+	Decider       string  `json:"decider"`
+	Model         string  `json:"model"`
+	Version       string  `json:"version"`
+	Durable       float64 `json:"durable"`
+	Kind          string  `json:"kind"`
+	Confirmed     bool    `json:"confirmed"`
+	Scope         string  `json:"scope_hint"`
+	QueueEligible bool    `json:"queue_eligible"`
 }
 
 // MineSession mines one settled Session's new events.jsonl bytes into the
@@ -60,8 +71,10 @@ type minerDeciderDoc struct {
 // cursor (offset, file size, hash of the first 4 KB); a rewritten head or a
 // shrunk file resets the cursor and a torn last line waits. Only
 // FilterMinerEvents prompts (MinerReadable: sender=user prompts, steers and
-// follow-ups) are classified; Handoffs, injection blocks and every
-// sender=system Event never reach the classifier. Each hit is redacted, then
+// follow-ups) are classified, then confirmed by the Decider (decideMine):
+// heuristic by default, the memory model in llm and ensemble modes. A drop
+// below its cut stores nothing. Handoffs, injection blocks and every
+// sender=system Event never reach the classifier. Each kept hit is redacted,
 // grounded, then stored with dedup in the Event sender's bank: a steer from
 // User B inside User A's Session lands in B's bank only. Duplicates fold into
 // evidence_count; refines and contradicts are stored with the relation and
@@ -163,6 +176,31 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			prior = append(prior, e)
 			continue
 		}
+		bank, err := d.profileBankFor(author)
+		if err != nil {
+			if errors.Is(err, memory.ErrInvalid) {
+				prior = append(prior, e)
+				continue // permanent: no bank for this author; later bytes still mine.
+			}
+			return res, fmt.Errorf("miner: bank for %s: %w", author, err)
+		}
+		// A replayed Event (cursor reset) is found here, before the Decider,
+		// so it never costs a confirming LLM call; the store below would
+		// return the same row without bumping or inserting.
+		if d.minedEventAlready(ctx, bank, id, eventID, redactedQuote) {
+			res.Duplicates++
+			prior = append(prior, e)
+			continue
+		}
+		// The heuristic proposes; the confirming Decider (decider.go) judges
+		// durable and offers kind and scope. A drop below its cut stores
+		// nothing; an unavailable confirmer leaves the heuristic standing.
+		dec := d.decideMine(e.Text, contextText, hit)
+		if !dec.keep {
+			res.Dropped++
+			prior = append(prior, e)
+			continue
+		}
 		if err := memory.CheckGrounding(eventID, redactedQuote, memory.GroundEvent{
 			Found:  true,
 			Sender: e.Sender,
@@ -172,27 +210,27 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 			continue
 		}
 		doc, _ := json.Marshal(minerDeciderDoc{
-			Miner:      "heuristic-v1",
-			Type:       hit.Type,
-			Patterns:   hit.Patterns,
-			Confidence: hit.Confidence,
-			Sentiment:  hit.Sentiment,
-			Context:    memory.Redact(truncateMinerContext(contextText)),
+			Miner:         "heuristic-v1",
+			Type:          hit.Type,
+			Patterns:      hit.Patterns,
+			Confidence:    hit.Confidence,
+			Sentiment:     hit.Sentiment,
+			Context:       memory.Redact(truncateMinerContext(contextText)),
+			Decider:       dec.decider,
+			Model:         dec.model,
+			Version:       dec.version,
+			Durable:       dec.durable,
+			Kind:          dec.kind,
+			Scope:         dec.scope,
+			QueueEligible: dec.eligible,
+			Confirmed:     dec.confirmed,
 		})
-		bank, err := d.profileBankFor(author)
-		if err != nil {
-			if errors.Is(err, memory.ErrInvalid) {
-				prior = append(prior, e)
-				continue // permanent: no bank for this author; later bytes still mine.
-			}
-			return res, fmt.Errorf("miner: bank for %s: %w", author, err)
-		}
 		_, rel, err := memory.DedupAndStore(ctx, bank, memory.Observation{
 			SessionID:   id,
 			EventID:     eventID,
 			Author:      author,
 			Quote:       redactedQuote,
-			Kind:        memory.KindPreference,
+			Kind:        dec.kind,
 			DeciderJSON: string(doc),
 		})
 		if err != nil {
@@ -216,6 +254,23 @@ func (d *Daemon) MineSession(id string) (MineResult, error) {
 		return res, err
 	}
 	return res, nil
+}
+
+// minedEventAlready reports whether this Session Event already has a stored
+// observation: a cursor reset replays it. It is the same lookup the store
+// runs (same Session, same Event), over local FTS only, so a replay never
+// reaches the Decider.
+func (d *Daemon) minedEventAlready(ctx context.Context, bank memory.Memory, id, eventID, quote string) bool {
+	hits, err := bank.SearchObservations(ctx, quote, 20)
+	if err != nil {
+		return false
+	}
+	for _, h := range hits {
+		if h.SessionID == id && h.EventID == eventID {
+			return true
+		}
+	}
+	return false
 }
 
 // MineSettledSessions mines every settled Session once, for the nightly job.

@@ -254,3 +254,58 @@ describe('SettingsPage accounts', () => {
     expect('signup_enabled' in seen.body).toBe(false);
   });
 });
+
+describe('SettingsPage memory deciders', () => {
+  it('shows saved values and sends the edited ones', async () => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        decider: { decider_mode: 'ensemble', memory_model: 'auto', decider_confirm_low: 0.4, decider_confirm_high: 0.8 },
+      },
+      seen,
+    });
+    const { container } = render(SettingsPage, { props: { admin: true } });
+    expect(await within(container).findByLabelText('Decider mode')).toBeTruthy();
+    expect(within(container).getByLabelText('Memory model').textContent).toMatch(/auto/i);
+    expect(within(container).getByLabelText('Low').value).toBe('0.4');
+    expect(within(container).getByLabelText('High').value).toBe('0.8');
+
+    await fireEvent.input(within(container).getByLabelText('High'), { target: { value: '0.9' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.decider).toEqual({
+      decider_mode: 'ensemble',
+      memory_model: 'auto',
+      decider_confirm_low: 0.4,
+      decider_confirm_high: 0.9,
+    });
+  });
+
+  it('uses the defaults when the Daemon sends none', async () => {
+    stubSettings({ settings: base });
+    const { container } = render(SettingsPage, { props: { admin: true } });
+    expect((await within(container).findByLabelText('Low')).value).toBe('0.35');
+    expect(within(container).getByLabelText('High').value).toBe('0.7');
+  });
+
+  it('shows why confirmation falls back to the heuristic', async () => {
+    stubSettings({ settings: { ...base, decider_note: 'no memory model: confirmation falls back to the heuristic' } });
+    const { container } = render(SettingsPage, { props: { admin: true } });
+    expect(await within(container).findByText('no memory model: confirmation falls back to the heuristic')).toBeTruthy();
+  });
+
+  it('hides the section from other Users and never sends the key', async () => {
+    const seen = {};
+    stubSettings({ settings: base, seen });
+    const { container } = render(SettingsPage);
+    const workers = await within(container).findByLabelText('Maximum workers');
+    expect(within(container).queryByTestId('decider-settings')).toBeNull();
+    await fireEvent.input(workers, { target: { value: '4' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect('decider' in seen.body).toBe(false);
+  });
+});

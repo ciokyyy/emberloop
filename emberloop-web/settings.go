@@ -88,6 +88,7 @@ func envMaxWorkers() (int, bool) {
 // whether the environment overrides the file, so the UI can lock the field.
 func settingsView() map[string]any {
 	_, fromEnv := envMaxWorkers()
+	decider := readDeciderSettings()
 	return map[string]any{
 		"roles":                   readRoles(),
 		"max_workers":             maxRunningFromSettings(),
@@ -97,6 +98,8 @@ func settingsView() map[string]any {
 		"compress":                readCompressSettings(),
 		"signup_enabled":          signupEnabledSetting(),
 		"compress_note":           compressNote(readCompressSettings().Model),
+		"decider":                 decider,
+		"decider_note":            deciderNote(decider),
 	}
 }
 
@@ -112,18 +115,23 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			SessionTitles *bool                  `json:"session_titles"`
 			SignupEnabled *bool                  `json:"signup_enabled"`
 			Compress      *compressPatch         `json:"compress"`
+			Decider       *deciderPatch          `json:"decider"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		if body.SignupEnabled != nil {
+		if body.SignupEnabled != nil || body.Decider != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
-				http.Error(w, "only the admin can change signup", http.StatusForbidden)
+				http.Error(w, "only the admin can change signup and decider settings", http.StatusForbidden)
 				return
 			}
 		}
 		if msg := body.Compress.validate(); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+		if msg := body.Decider.validate(); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
@@ -183,6 +191,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			all["signup_enabled"] = raw
 		}
 		body.Compress.apply(all)
+		body.Decider.apply(all)
 		out, _ := json.MarshalIndent(all, "", "  ")
 		p := settingsFile()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
