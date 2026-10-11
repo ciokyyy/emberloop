@@ -222,7 +222,7 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	settings := filepath.Join(t.TempDir(), "settings.json")
+	settings := filepath.Join(tempDir(t), "settings.json")
 	raw, _ := json.Marshal(map[string]any{
 		"roles": map[string]any{
 			"reviewer-spec": map[string]any{"harness": "fake", "model": "spec-model"},

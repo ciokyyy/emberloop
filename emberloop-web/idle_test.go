@@ -25,13 +25,13 @@ func waitIdle(t *testing.T, d *Daemon, quiet time.Duration) {
 func TestIdleFollowsTurnAndFakeClock(t *testing.T) {
 	fb := NewFakeBackend()
 	fb.Delay = time.Hour // holds the turn open until Interrupt
-	d := NewDaemon(t.TempDir(), fb)
+	d := NewDaemon(tempDir(t), fb)
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
 
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	if code, _ := postMode(t, srv.URL, id, "prompt", "hello"); code != http.StatusAccepted {
 		t.Fatalf("prompt status = %d, want 202", code)
 	}
@@ -88,7 +88,7 @@ func TestSessionIdleBlockers(t *testing.T) {
 // the Group closes even if its result never delivered (a restart cut it), so a
 // stale Group cannot block idle.
 func TestDaemonGroupHoldsParentOpen(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sessions["parent"] = &session{live: true}
 	d.sessions["child"] = &session{live: true, busy: true}
 	d.groups["g"] = &spawnGroup{ID: "g", Parent: "parent", Members: []string{"child"}}
@@ -110,7 +110,7 @@ func TestDaemonGroupHoldsParentOpen(t *testing.T) {
 // A waiting Follow-up is work the Daemon still owes, so it holds the Daemon
 // busy even when no turn is in flight.
 func TestDaemonIdleHoldsQueuedInput(t *testing.T) {
-	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sessions["queued"] = &session{live: true, pending: []queuedMsg{{mode: "followup", text: "next"}}}
 	if d.Idle(0) {
 		t.Fatal("queued input must keep the Daemon busy")
