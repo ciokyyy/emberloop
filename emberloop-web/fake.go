@@ -35,6 +35,16 @@ type FakeBackend struct {
 	// log it, so handleReviewerTurnEnd records the tool verdict. Tests drive
 	// the Run seam through it without a model.
 	ReviewSubmit func(sessionID, prompt string) (ReviewerSubmit, bool)
+	// TurnFailure, when non-nil, scripts a failed provider turn. Returning
+	// (error text, true) emits an error Event and status=failed; false uses
+	// the ordinary scripted reply. Run tests use it to exercise Chain advance.
+	TurnFailure func(sessionID, prompt string) (string, bool)
+	// CreateFailure, when non-nil, can refuse a CreateSession by metadata.
+	// Run tests use it to target a start failure at one role or harness.
+	CreateFailure func(meta SessionMeta) error
+	// CreateErrs, when set, fail the next CreateSession attempts in order.
+	// Run tests use it to script provider failures before a Session exists.
+	CreateErrs []error
 	// UsageSize, when positive, makes each turn emit a usage Event sized
 	// from the characters the current handle has seen, so tests can watch
 	// the context meter fall after a Handoff.
@@ -78,6 +88,14 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 		appendEvent("error", f.HandoffTurnErr, "")
 		appendEvent("status", "", "idle")
 		return
+	}
+	if f.TurnFailure != nil {
+		if detail, ok := f.TurnFailure(sessionID, text); ok {
+			appendEvent("status", "", "working")
+			appendEvent("error", detail, "")
+			appendEvent("status", "", "failed")
+			return
+		}
 	}
 	appendEvent("status", "", "working")
 	delay := f.Delay
@@ -158,6 +176,19 @@ func (f *FakeBackend) Interrupt(sessionID string) bool {
 
 func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	f.recordStart(meta, handleCreate)
+	if f.CreateFailure != nil {
+		if err := f.CreateFailure(meta); err != nil {
+			return err
+		}
+	}
+	f.mu.Lock()
+	if len(f.CreateErrs) > 0 {
+		err := f.CreateErrs[0]
+		f.CreateErrs = f.CreateErrs[1:]
+		f.mu.Unlock()
+		return err
+	}
+	f.mu.Unlock()
 	return nil
 }
 

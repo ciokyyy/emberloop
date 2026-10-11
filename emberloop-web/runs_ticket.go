@@ -194,6 +194,14 @@ func validateWorkerDispositions(findings []workerReviewFinding, submitted []Revi
 	}
 	return out, nil
 }
+// ticketChainEntry is the active position for one role on a Ticket row.
+// Position is one-based for display; Total names the configured Chain size.
+type ticketChainEntry struct {
+	Position int    `json:"position"`
+	Total    int    `json:"total"`
+	Backend  string `json:"backend"`
+	Model    string `json:"model"`
+}
 
 // parseTicketBoxes reads checkbox lines the way the driver's tick does: a
 // `- [ ]`/`- [x]` (or `*`) marker, text after it trimmed. Only real marker

@@ -72,6 +72,9 @@ type runTicketJSON struct {
 	Verdicts         map[string]reviewVerdictJSON `json:"verdicts"`
 	Tip              string                       `json:"tip"`
 	LastRefusal      string                       `json:"lastRefusal"`
+	Branch           string                       `json:"branch"`
+	NeedsYou         string                       `json:"needsYou"`
+	Chain            map[string]ticketChainEntry  `json:"chain"`
 }
 
 type runJSON struct {
@@ -745,6 +748,8 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 		Reviewers: map[string]map[string]string{},
 		Reviews:   map[string]map[string]storedReview{},
 	}
+	d.runs["r-detached"].Reprompted = map[string]int{"01-first": 1}
+	d.submits["sess1"] = &submitRec{Status: "done"}
 	tip := strings.TrimSpace(testGit(t, worktree, "rev-parse", "HEAD"))
 	d.runs["r-detached"].Reviewers["01-first"] = map[string]string{"reviewer-standards": "sess-std", "reviewer-spec": "sess-spec"}
 	d.runs["r-detached"].Reviews["01-first"] = map[string]storedReview{"reviewer-standards": {Verdict: "pass", At: tip}, "reviewer-spec": {Verdict: "pass", At: tip}}
@@ -893,6 +898,8 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 		Rounds: map[string][]ticketRound{"01-first": {{N: 2, Tip: tip, StartedAt: time.Now()}}},
 	}
 	d.runs["r-open"] = rs
+	rs.Reprompted = map[string]int{"01-first": 1}
+	d.submits["sess1"] = &submitRec{Status: "done"}
 
 	fin, err := d.runFinishWorker("r-open", "01-first")
 	if err != nil {

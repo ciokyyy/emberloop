@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -109,15 +110,15 @@ type runWarning struct {
 	Message     string    `json:"message"`
 }
 
-// savedRow is one Ticket's driver row as the Run file keeps it: the state
-// the driver last published, the branch tip and last refusal then, and when
-// the Ticket entered the state. Live rows come from the Driver while it
-// runs; these carry the table across a Daemon restart.
+// savedRow is one Ticket's persisted driver row: state, tip, refusal, state
+// entry time and per-role Chain positions. It carries the live table across a
+// Daemon restart.
 type savedRow struct {
-	State       string    `json:"state"`
-	Tip         string    `json:"tip,omitempty"`
-	LastRefusal string    `json:"lastRefusal,omitempty"`
-	Since       time.Time `json:"since"`
+	State          string         `json:"state"`
+	Tip            string         `json:"tip,omitempty"`
+	LastRefusal    string         `json:"lastRefusal,omitempty"`
+	Since          time.Time      `json:"since"`
+	ChainPositions map[string]int `json:"chainPositions,omitempty"`
 }
 
 // runState is one deterministic Run: the spec, the repo, one Worker Session
@@ -231,13 +232,16 @@ type runState struct {
 	// ResumeOnRestart marks a Run that a graceful restart paused: the next
 	// Daemon resumes it on its own (ResumeAfterRestart). A Pause by hand
 	// never sets it.
-	ResumeOnRestart bool                `json:"resumeOnRestart,omitempty"`
-	Rows            map[string]savedRow `json:"rows,omitempty"`
-	SpecRun         el.SpecRun          `json:"-"`
-	Driver          *el.DriverRun       `json:"-"`
-	notify          chan struct{}       `json:"-"`
-	unpause         chan struct{}       `json:"-"`
-	driving         bool                `json:"-"`
+	ResumeOnRestart bool                    `json:"resumeOnRestart,omitempty"`
+	Rows            map[string]savedRow     `json:"rows,omitempty"`
+	Chains          map[string][]chainEntry `json:"chains,omitempty"`
+	ChainExhausted  map[string]bool         `json:"chainExhausted,omitempty"`
+	chainHandling   map[string]bool         `json:"-"`
+	SpecRun         el.SpecRun              `json:"-"`
+	Driver          *el.DriverRun           `json:"-"`
+	notify          chan struct{}           `json:"-"`
+	unpause         chan struct{}           `json:"-"`
+	driving         bool                    `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -718,6 +722,8 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		NeedsYouReason: map[string]string{},
 		Followups:      map[string]string{},
 		Rows:           map[string]savedRow{},
+		Chains:         configuredRunChains(harness, model, effort),
+		ChainExhausted: map[string]bool{},
 		SpecRun:        specRun,
 		Driver:         el.NewDriverRun(nil),
 		Parked:         map[string]bool{},
@@ -844,7 +850,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		HasWorker: func(ticketID string) bool {
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			return rs.Sessions[ticketID] != ""
+			return rs.Sessions[ticketID] != "" || rs.ChainExhausted[ticketID]
 		},
 		MergedSHA: func(ticketID string) string {
 			d.mu.Lock()
@@ -1902,6 +1908,10 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		d.mu.Unlock()
 		return
 	}
+	if rs.ChainExhausted[ticketID] {
+		d.mu.Unlock()
+		return
+	}
 	rec := d.submits[rs.Sessions[ticketID]]
 	if rec == nil || rec.Status != "done" {
 		d.mu.Unlock()
@@ -2050,29 +2060,43 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		base = rs.Bases[ticketID]
 	}
 	owner := rs.Owner
-	harness, model := rs.Harness, rs.Model
-	if rh, rm := roleReviewerConfig(reviewerType); rh != "" {
-		harness, model = rh, rm
+	chain := append([]chainEntry(nil), runChain(rs, reviewerType)...)
+	if len(chain) == 0 {
+		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}
+	chainPos := clampChainPosition(chainPosition(rs, ticketID, reviewerType), len(chain))
 	d.mu.Unlock()
 	if branch == "" || worktree == "" {
 		return fmt.Errorf("ticket %s has no worker", ticketID)
 	}
-	meta := SessionMeta{
-		ID:        newID(),
-		Harness:   harness,
-		Model:     model,
-		WorkDir:   worktree,
-		Status:    "idle",
-		CreatedAt: time.Now().UTC(),
-		ParentID:  runID,
-		Owner:     owner,
-		Reviewer:  reviewerType,
-	}
+	var meta SessionMeta
 	var be Backend
-	be, serr := d.startSession(meta)
-	if serr != nil {
-		return fmt.Errorf("could not start %s for %s: %s", reviewerType, ticketID, serr.msg)
+	for {
+		entry := chain[chainPos]
+		meta = SessionMeta{
+			ID: newID(), Harness: entry.Backend, Model: entry.Model, Effort: entry.Effort,
+			WorkDir: worktree, Status: "idle", CreatedAt: time.Now().UTC(),
+			ParentID: runID, Owner: owner, Reviewer: reviewerType,
+		}
+		var serr *startError
+		be, serr = d.startSession(meta)
+		if serr == nil {
+			break
+		}
+		if !chainAdvances(errors.New(serr.msg)) {
+			return fmt.Errorf("could not start %s for %s: %s", reviewerType, ticketID, serr.msg)
+		}
+		if chainPos+1 >= len(chain) {
+			d.mu.Lock()
+			if rs := d.runs[runID]; rs != nil {
+				setChainPosition(rs, ticketID, reviewerType, chainPos)
+				d.persistRun(rs)
+			}
+			d.mu.Unlock()
+			d.markRunChainNeedsYou(runID, ticketID, reviewerType, serr.msg, true)
+			return fmt.Errorf("%s Chain exhausted", reviewerType)
+		}
+		chainPos++
 	}
 	d.mu.Lock()
 	rs, ok = d.runs[runID]
@@ -2110,6 +2134,10 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		}
 		d.removeSession(meta.ID)
 		return nil
+	}
+	setChainPosition(rs, ticketID, reviewerType, chainPos)
+	if rs.ChainExhausted != nil {
+		delete(rs.ChainExhausted, ticketID)
 	}
 	rs.Reviewers[ticketID][reviewerType] = meta.ID
 	if rs.ReviewTips == nil {
@@ -2435,7 +2463,14 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("run %s was abandoned", runID)
 	}
-	repo, harness, model, effort, specPath := rs.Repo, rs.Harness, rs.Model, rs.Effort, rs.Spec
+	chain := append([]chainEntry(nil), runChain(rs, "worker")...)
+	if len(chain) == 0 {
+		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
+	}
+	chainPos := clampChainPosition(chainPosition(rs, tk.ID, "worker"), len(chain))
+	firstEntry := chain[chainPos]
+	harness, model, effort := firstEntry.Backend, firstEntry.Model, firstEntry.Effort
+	repo, specPath := rs.Repo, rs.Spec
 	owner := rs.Owner
 	specBranch := rs.SpecBranch
 	// Run A/B arm (ticket 30): the ticket's index in ticket order decides,
@@ -2526,19 +2561,50 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			NoRecall:  noRecall,
 		}
 		var be Backend
-		for i := 0; ; i++ {
-			var serr *startError
-			be, serr = d.startSession(meta)
-			if serr == nil {
-				break
+		var startExhausted bool
+		for {
+			entry := chain[chainPos]
+			meta.ID = newID()
+			meta.Harness, meta.Model, meta.Effort = entry.Backend, entry.Model, entry.Effort
+			advanced := false
+			for i := 0; ; i++ {
+				var serr *startError
+				be, serr = d.startSession(meta)
+				if serr == nil {
+					break
+				}
+				if chainAdvances(errors.New(serr.msg)) {
+					if chainPos+1 < len(chain) {
+						chainPos++
+						advanced = true
+						break
+					}
+					startExhausted = true
+					break
+				}
+				if serr.code != http.StatusTooManyRequests || i >= 60 {
+					cleanup()
+					return fmt.Errorf("could not start worker for %s: %s", tk.ID, serr.msg)
+				}
+				// Freeze the cap wait while paused instead of burning retries.
+				d.pauseGate(runID)
+				time.Sleep(runPollInterval)
 			}
-			if serr.code != http.StatusTooManyRequests || i >= 60 {
+			if startExhausted {
 				cleanup()
-				return fmt.Errorf("could not start worker for %s: %s", tk.ID, serr.msg)
+				d.mu.Lock()
+				if rs := d.runs[runID]; rs != nil {
+					setChainPosition(rs, tk.ID, "worker", chainPos)
+					d.persistRun(rs)
+				}
+				d.mu.Unlock()
+				d.markRunChainNeedsYou(runID, tk.ID, "worker", "provider Chain exhausted while starting the Worker", true)
+				return nil
 			}
-			// Freeze the cap wait while paused instead of burning retries.
-			d.pauseGate(runID)
-			time.Sleep(runPollInterval)
+			if advanced {
+				continue
+			}
+			break
 		}
 		d.mu.Lock()
 		rs, ok = d.runs[runID]
@@ -2578,6 +2644,10 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				rs.RecallOff = map[string]bool{}
 			}
 			rs.RecallOff[tk.ID] = true
+		}
+		setChainPosition(rs, tk.ID, "worker", chainPos)
+		if rs.ChainExhausted != nil {
+			delete(rs.ChainExhausted, tk.ID)
 		}
 		rs.Sessions[tk.ID] = meta.ID
 		rs.Branches[tk.ID] = branch
@@ -2670,7 +2740,13 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	if branch == "" || worktree == "" {
 		return el.DriverFinish{}, fmt.Errorf("ticket %s has no worker", ticketID)
 	}
-	if submitStatus != "" && submitStatus != "done" {
+	if submitStatus == "" {
+		// A replacement Worker has no submit of its own yet. Old Reviewer
+		// verdicts must not let the driver merge its branch before the new
+		// Session reports done.
+		return el.DriverFinish{}, nil
+	}
+	if submitStatus != "done" {
 		return el.DriverFinish{Merged: false, Detail: fmt.Sprintf("worker submitted %q, waiting for done; submit done with the completed checkboxes", submitStatus)}, nil
 	}
 	d.ensureReviewers(runID, ticketID)
@@ -3393,7 +3469,7 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			"branch": rs.Branches[t.ID], "body": body, "boxes": boxes,
 			"effort": rs.Effort, "lastRefusal": lastRefusal, "needsYou": needsYou,
 			"followups": rs.Followups[t.ID], "agents": d.ticketAgentsLocked(rs, t.ID),
-			"rounds": rounds, "recallOff": rs.RecallOff[t.ID],
+			"rounds": rounds, "recallOff": rs.RecallOff[t.ID], "chain": ticketChainEntries(rs, t.ID),
 		})
 	}
 	warnings := rs.Warnings
@@ -4068,6 +4144,10 @@ func (d *Daemon) loadRuns() {
 		if rs.Rows == nil {
 			rs.Rows = map[string]savedRow{}
 		}
+		if rs.ChainExhausted == nil {
+			rs.ChainExhausted = map[string]bool{}
+		}
+		rs.chainHandling = map[string]bool{}
 		rs.Driver = el.NewDriverRun(nil)
 		rs.notify = make(chan struct{})
 		rs.unpause = make(chan struct{})
@@ -4093,7 +4173,9 @@ func (d *Daemon) snapshotRowsLocked(rs *runState) {
 		rs.Rows = map[string]savedRow{}
 	}
 	for _, row := range rs.Driver.Snapshot() {
-		rs.Rows[row.ID] = savedRow{State: string(row.State), Tip: row.Tip, LastRefusal: row.LastRefusal, Since: row.Since}
+		saved := rs.Rows[row.ID]
+		saved.State, saved.Tip, saved.LastRefusal, saved.Since = string(row.State), row.Tip, row.LastRefusal, row.Since
+		rs.Rows[row.ID] = saved
 		if row.State == el.DriverRowMerged && rs.NeedsYouReason != nil {
 			delete(rs.NeedsYouReason, row.ID)
 		}
@@ -4250,6 +4332,7 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
+	d.reconcileRunChainFailures(id)
 	out := d.runJSON(rs)
 	if startDriver {
 		go d.driveRun(rs.ID, world)
@@ -4364,6 +4447,9 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 		rs.NeedsYouReason = map[string]string{}
 	}
 	delete(rs.NeedsYouReason, ticketID)
+	if rs.ChainExhausted != nil {
+		delete(rs.ChainExhausted, ticketID)
+	}
 	if rs.pushedNeedsYou != nil {
 		delete(rs.pushedNeedsYou, ticketID)
 	}

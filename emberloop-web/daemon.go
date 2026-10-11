@@ -1264,9 +1264,10 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 		d.enforceSubmitGate(id, be, mark, harness)
 	}
 	d.finishTurn(id)
-	// A Run Reviewer's settled turn carries its verdict: record it (a no-op
-	// for every other Session).
-	if !handoff {
+	chainHandled := d.handleRunChainFailure(id)
+	// A Run Reviewer's settled turn carries its verdict unless the Chain
+	// already replaced a failed Session with its next entry.
+	if !handoff && !chainHandled {
 		d.handleReviewerTurnEnd(id)
 	}
 	// A settled Subagent may complete its Group: the last member to finish

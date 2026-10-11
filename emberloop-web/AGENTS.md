@@ -371,7 +371,7 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   Steer that arrives while a Handoff swap runs (`swapping`) degrades to a
   Follow-up, so the Handoff leads. Tests: `handoff_test.go`,
   `handoff_queue_test.go`, `pig_handoff_test.go`, `claude_handoff_test.go` (claude swap, token rotation, restart resume, injections, failure), `grok_handoff_test.go` (effort, login sync, failure).
-- `failures.go` owns the shared provider-failure classifier: `classifyFailure` sorts a failure by its text into quota, credit, auth, session-limit or other. A status counts only where the SDK puts one: at the start, after a colon or an open paren, or after HTTP or status. `classifyCompressError` maps that onto the compress policy: an advancing class (all but other) blocks, a transient failure (429 or 5xx status, rate limit, overloaded, timed out, connection error, fetch failed, unexpected EOF, unavailable) retries, and any other failure falls through. Advancing wins over transient. `chains.go` owns the Run fallback chains (`chainFor` resolves a role's chain, `chainAdvances` is the advance predicate, `validateChains` checks PUT bodies).
+- `failures.go` owns the shared provider-failure classifier: `classifyFailure` sorts a failure by its text into quota, credit, auth, session-limit or other. A status counts only where the SDK puts one: at the start, after a colon or an open paren, or after HTTP or status. `classifyCompressError` maps that onto the compress policy: an advancing class (all but other) blocks, a transient failure (429 or 5xx status, rate limit, overloaded, timed out, connection error, fetch failed, unexpected EOF, unavailable) retries, and any other failure falls through. Advancing wins over transient. `chains.go` owns role Chain settings and validation; `runs_chain.go` snapshots them on a Run, stores per-Ticket positions, and advances failed Run Workers and Reviewers with a Handoff, then their normal injected task.
 - `compress_retry.go` owns the compress retry and block mechanics: `retryTransient` retries a transient failure after 2s, 8s and 30s (`compressBackoff`; sleep seam `Daemon.compressSleep`). `retryingSummarizer` runs every summarizer call under that policy and counts the retries.
   - A one-off that hits its deadline (`oneShotDeadline`) is other: no retry.
   - A block sets `SessionMeta.CompressBlock` (persisted), drops a compress that
@@ -711,7 +711,23 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   Reviewer Sessions start through the shared live-Session cap like every other
   Session. The row carries `reviewerSessions`, `verdicts` (verdict, at, fresh)
   and `tip` with the last refusal. The Run view also streams `warnings` (overlap
-  Events).
+  Events). Each Run snapshots its role Chains; the Ticket's `chain` map shows
+  each active entry as one-based position, total, Backend and model.
+  `runs_chain.go` advances quota, credit, auth and session-limit failures only.
+  A start failure advances without a Handoff because no Session exists; a turn
+  failure keeps the old Session `failed` with its Event log and starts the next
+  entry on the same Ticket worktree with a Handoff followed by the normal
+  injected role task. A replacement Worker must submit done before old same-tip
+  verdicts can merge; its Reviewer re-prompt counter resets so changed tips are
+  reviewed again. A failed fallback resume or task send marks Needs-you, not
+  Chain exhaustion. Exhaustion marks the whole Ticket Needs-you and stops
+  further Reviewer starts for that Ticket. Chain positions persist, and Resume
+  reconciles a failed active Session before the driver re-prompts it. Ticket
+  Retry clears its alert and driver backoff but retains the active Session and
+  Chain positions; it does not restart a failed Session or rewind an exhausted
+  Chain. `runs_chain_test.go` covers Worker and Reviewer turn failures and start
+  fallback, replacement-worker re-review, fallback dispatch failure, exhaustion,
+  Resume reconciliation and persisted Ticket positions.
   Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
   (state, tip, last refusal, times) after every driver pass (plus `warnings`).
   Reload spawns nothing: running Runs become paused and needs-you Runs stay needs-you.
