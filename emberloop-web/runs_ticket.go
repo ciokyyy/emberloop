@@ -73,6 +73,40 @@ type workerReviewFinding struct {
 	Disposition *ReviewDisposition `json:"disposition,omitempty"`
 }
 
+// declinedReviewFinding is a prior Worker disposition included in later
+// Reviewer prompts. It retains the original citation and problem alongside
+// the reason the Worker declined it.
+type declinedReviewFinding struct {
+	Round     int    `json:"round"`
+	FindingID string `json:"findingId"`
+	Reviewer  string `json:"reviewer"`
+	File      string `json:"file"`
+	Line      int    `json:"line"`
+	Severity  string `json:"severity"`
+	Problem   string `json:"problem"`
+	Reason    string `json:"reason"`
+}
+
+// declinedFindingsForRounds returns the Ticket's declined findings in round
+// order, so every later review can see the original citation and reason.
+func declinedFindingsForRounds(rounds []ticketRound) []declinedReviewFinding {
+	var out []declinedReviewFinding
+	for _, round := range rounds {
+		for _, finding := range round.SentFindings {
+			if finding.Disposition == nil ||
+				!strings.EqualFold(strings.TrimSpace(finding.Disposition.Disposition), "declined") {
+				continue
+			}
+			out = append(out, declinedReviewFinding{
+				Round: round.N, FindingID: finding.FindingID, Reviewer: finding.Reviewer,
+				File: finding.File, Line: finding.Line, Severity: finding.Severity,
+				Problem: finding.Problem, Reason: finding.Disposition.Reason,
+			})
+		}
+	}
+	return out
+}
+
 // workerFindingID names one finding by the round and reviewer that produced
 // it. The index is one-based and stable for that recorded verdict.
 func workerFindingID(round int, reviewer string, index int) string {

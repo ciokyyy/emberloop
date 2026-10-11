@@ -1036,8 +1036,8 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 }
 
 // A re-review with a changed diff is a new message in the same persistent
-// Reviewer Session: the Sessions stay identical and each reviewer gets a
-// second gate prompt judging the new tip.
+// Reviewer Session. It carries the prior declined finding and reason, while
+// reminding the Reviewer not to re-raise it unless its cited lines changed.
 func TestReviewRereviewUsesSameSession(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -1089,7 +1089,7 @@ func TestReviewRereviewUsesSameSession(t *testing.T) {
 	writeFile(t, worktree, "work.go", "package main\n\nfunc f() {}\n")
 	testGit(t, worktree, "add", "work.go")
 	testGit(t, worktree, "commit", "-m", "work v2")
-	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "fixed"}}); code != http.StatusAccepted {
+	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-spec-1", Disposition: "declined", Reason: "The cited nil path is unreachable from this caller."}}); code != http.StatusAccepted {
 		t.Fatalf("done with blocker disposition after rework = %d (%v), want 202", code, out)
 	}
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -1100,8 +1100,22 @@ func TestReviewRereviewUsesSameSession(t *testing.T) {
 		if sess != revs[typ] {
 			t.Fatalf("reviewer %s session changed to %q, want the persistent %q", typ, sess, revs[typ])
 		}
-		if n := strings.Count(sessTranscript(getSession(t, srv.URL, sess)), "Review ticket"); n != 2 {
+		transcript := sessTranscript(getSession(t, srv.URL, sess))
+		if n := strings.Count(transcript, "Review ticket"); n != 2 {
 			t.Fatalf("reviewer %s got %d gate prompts, want two in the same session", typ, n)
+		}
+		for _, want := range []string{
+			"Previously declined findings and the Worker's reasons:",
+			"Do not re-raise any declined finding unless its cited lines have changed since the finding was declined.",
+			`"findingId": "r1-reviewer-spec-1"`,
+			`"file": "work.go"`,
+			`"line": 1`,
+			`"problem": "handle nil"`,
+			`"reason": "The cited nil path is unreachable from this caller."`,
+		} {
+			if !strings.Contains(transcript, want) {
+				t.Errorf("reviewer %s transcript lacks declined-feedback text %q:\n%s", typ, want, transcript)
+			}
 		}
 	}
 }

@@ -1257,7 +1257,21 @@ func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
 	}
-	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker.", ticketID, spec, reviewerType, axis, branch, tip)
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined.", ticketID, spec, reviewerType, axis, branch, tip)
+}
+
+// declinedFindingsPrompt adds prior Worker declines to each later review. The
+// citation and reason stay structured so the Reviewer can distinguish the
+// declined report from new findings.
+func declinedFindingsPrompt(findings []declinedReviewFinding) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	raw, err := json.MarshalIndent(findings, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return "Previously declined findings and the Worker's reasons:\n" + string(raw)
 }
 
 // reviewerPrompt asks one reviewer type to judge the Ticket's worker branch
@@ -1275,11 +1289,19 @@ func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string
 // (rolePromptFor), so repeating it here would inject it twice. It names no
 // remember instruction.
 func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
+	return reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip, nil)
+}
+
+func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string, declined []declinedReviewFinding) string {
 	brief := standardsBrief
 	if reviewerType == reviewerSpecType {
 		brief = specBrief
 	}
-	return reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip) + "\n\n" + brief
+	prefix := reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip)
+	if feedback := declinedFindingsPrompt(declined); feedback != "" {
+		prefix += "\n\n" + feedback
+	}
+	return prefix + "\n\n" + brief
 }
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
@@ -1427,7 +1449,7 @@ func storeReviewerVerdictLocked(rs *runState, ticketID, reviewerType string, sub
 		}
 		rs.ReviewStarted[ticketID][reviewerType] = now
 		appendReviewPending(rs, ticketID, reviewerType, cur)
-		return reviewerPrompt(ticketID, rs.Spec, reviewerType, rs.Branches[ticketID], cur)
+		return reviewerPromptWithDeclined(ticketID, rs.Spec, reviewerType, rs.Branches[ticketID], cur, declinedFindingsForRounds(rs.Rounds[ticketID]))
 	}
 	return ""
 }
@@ -1711,7 +1733,7 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 		}
 		rs.ReviewStarted[ticketID][typ] = now
 		appendReviewPending(rs, ticketID, typ, cur)
-		retell = reviewerPrompt(ticketID, spec, typ, branch, cur)
+		retell = reviewerPromptWithDeclined(ticketID, spec, typ, branch, cur, declinedFindingsForRounds(rs.Rounds[ticketID]))
 	}
 	if rs.ReviewSeen == nil {
 		rs.ReviewSeen = map[string]map[string]int64{}
@@ -1977,13 +1999,14 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	}
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
+	declined := declinedFindingsForRounds(rs.Rounds[ticketID])
 	d.mu.Unlock()
 	for _, typ := range requiredReviewerTypes {
 		if !need[typ] {
 			continue
 		}
 		if sess := existing[typ]; sess != "" {
-			_ = d.runTellSession(sess, reviewerPrompt(ticketID, spec, typ, branch, tip))
+			_ = d.runTellSession(sess, reviewerPromptWithDeclined(ticketID, spec, typ, branch, tip, declined))
 		}
 	}
 }
@@ -2108,12 +2131,13 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	// Rounds open in ensureReviewers per worker done submit, not here: a
 	// start alone never begins a round, so the spawn and the prompt share
 	// the one round the done submit opened.
+	declined := declinedFindingsForRounds(rs.Rounds[ticketID])
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
 	d.persistResumeToken(be, meta.ID)
 	d.appendEvent(meta.ID, "status", "", "idle")
-	prompt := buildReviewerFirstPrompt(ticketID, spec, ticketFile, reviewerType, branch, tip, worktree, repo, base)
+	prompt := buildReviewerFirstPromptWithDeclined(ticketID, spec, ticketFile, reviewerType, branch, tip, worktree, repo, base, declined)
 	d.mu.Lock()
 	if s, ok := d.sessions[meta.ID]; ok {
 		s.busy = true

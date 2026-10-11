@@ -388,8 +388,18 @@ func buildWorkerFirstPrompt(ticketID, specPath, ticketPath, branch string, seede
 
 // buildReviewerFirstPrompt reads the Ticket, spec, changed-paths chain and
 // reviewer skills for a Reviewer start. base is the Bases entry for the
-// ticket (empty falls back to the root chain).
+// ticket (empty falls back to the root chain). A read failure still names
+// the path.
 func buildReviewerFirstPrompt(ticketID, specPath, ticketPath, reviewerType, branch, tip, worktree, repo, base string) string {
+	return buildReviewerFirstPromptWithDeclined(ticketID, specPath, ticketPath, reviewerType, branch, tip, worktree, repo, base, nil)
+}
+
+// buildReviewerFirstPromptWithDeclined also carries prior Worker declines
+// when a Reviewer Session is started after earlier review rounds.
+func buildReviewerFirstPromptWithDeclined(ticketID, specPath, ticketPath, reviewerType, branch, tip, worktree, repo, base string, declined []declinedReviewFinding) string {
 	prefix := reviewerTaskPrefix(ticketID, specPath, reviewerType, branch, tip)
+	if feedback := declinedFindingsPrompt(declined); feedback != "" {
+		prefix += "\n\n" + feedback
+	}
 	return formatRunFirstPrompt(prefix, ticketPath, readRunFile(ticketPath), specPath, readRunFile(specPath), agentsChainForReviewer(worktree, repo, base, tip), reviewerType, runSkillsFor(reviewerType))
 }

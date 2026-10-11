@@ -635,14 +635,15 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
   lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
   (`workerTaskPrompt` plus the Ticket file, the spec, the root AGENTS.md chain
-  and the worker skills) and each Reviewer's is `buildReviewerFirstPrompt`
-  (`reviewerTaskPrefix` plus the Ticket, the spec, the changed-paths chain and
-  the role's skills; `reviewerPrompt` is the prefix plus its brief and serves
-  re-reviews) (prompts.go: task text only; the reviewer prompt describes the
-  submit tool, the `VERDICT:` text stays only as a fallback for a Backend
-  without the tool). Per-role skills live in settings `run_skills`: a role-keyed
-  map of string arrays (at most 20 entries per role, 16 KB per entry; null or
-  `{}` clears all custom skills; admin-only writes). The briefs come first;
+  and worker skills), and each Reviewer's is `buildReviewerFirstPrompt`
+  (`reviewerTaskPrefix` plus the Ticket, spec, changed-paths chain and role
+  skills; all Reviewer prompts carry prior declined findings with reasons
+  when present and say not to re-raise one unless its cited lines changed)
+  (prompts.go: task text only; the prompt describes the submit tool, the
+  `VERDICT:` text stays only as a fallback for a Backend without the tool).
+  Per-role skills live in settings `run_skills`: a role-keyed map of string
+  arrays (at most 20 entries per role, 16 KB per entry; null or `{}` clears all
+  custom skills; admin-only writes). The briefs come first;
   sections marked optional (`<!-- optional:start/end -->` blocks and headings
   containing `(optional)`, fenced code excluded) are trimmed.
   `runs_inject_test.go` pins the content per role.
