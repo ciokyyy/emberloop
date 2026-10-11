@@ -655,7 +655,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   tells the Worker. Runs predating the spec branch keep the old master merge
   (detached: rebase onto the repo HEAD as it stands at finish, never the
   recorded base). The live table reads each ticket file from the spec branch,
-  so ticks and the done mark show. Start refuses a spec outside the repo.
+  so ticks and the done mark show. Each Ticket merge diffs the spec branch
+  against the other live spec branches in the same repo and records a
+  warning Event (`warnings`, with the shared files) on both Runs when the
+  sets intersect. Start refuses a spec outside the repo.
   Boxes tick from the submit completed list through the per-file lock, the
   driver the only writer. Roles from
   settings choose harness, model and effort, falling back to the Start
@@ -684,9 +687,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   starts plus two steers) so prompts queue in submit order. Reviewer Sessions
   start through the shared live-Session cap like every other Session. The row
   carries `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with
-  the last refusal. Runs persist as `enderbloom/runs/{id}.json` with one row
-  per Ticket (state, tip, last refusal, times) written after every driver
-  pass, and reload paused with nothing spawned. `POST /api/runs/{id}/pause`
+  the last refusal. The Run view also streams `warnings` (overlap Events).
+  Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
+  (state, tip, last refusal, times) written after every driver pass (plus
+  the overlap `warnings`), and reload paused with nothing spawned. `POST /api/runs/{id}/pause`
   freezes the driver (no new Workers or Reviewers, live Sessions untouched)
   and `POST /api/runs/{id}/resume` continues it; started Tickets keep their
   Worker Sessions and merged ones seed from their shas, so a Resume never

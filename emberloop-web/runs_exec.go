@@ -90,6 +90,21 @@ type storedReview struct {
 	PatchID  string          `json:"patchId,omitempty"`
 }
 
+// runWarning is one overlap warning Event on a Run: at each Ticket merge
+// the driver diffs the Run's spec branch against every other live Run's
+// spec branch in the same repo, and when the changed-file sets intersect
+// it records the shared files here and on the other Run. The Event lives
+// on the Run row and streams with the Run table over SSE (the Run's event
+// channel); there is no Session Event log entry and no push. Old Run
+// files without it read as no warnings.
+type runWarning struct {
+	At          time.Time `json:"at"`
+	OtherRun    string    `json:"otherRun"`
+	OtherBranch string    `json:"otherBranch"`
+	Files       []string  `json:"files"`
+	Message     string    `json:"message"`
+}
+
 // savedRow is one Ticket's driver row as the Run file keeps it: the state
 // the driver last published, the branch tip and last refusal then, and when
 // the Ticket entered the state. Live rows come from the Driver while it
@@ -145,6 +160,10 @@ type runState struct {
 	// file.
 	SpecBranch string `json:"specBranch,omitempty"`
 	SpecBase   string `json:"specBase,omitempty"`
+	// Warnings holds the overlap warnings published at Ticket merges: one
+	// entry per live spec branch this Run's changed files intersect with.
+	// It survives a restart in the Run file and streams with the Run table.
+	Warnings []runWarning `json:"warnings,omitempty"`
 	// SubmitRecs keeps each Worker's last submit by ticket so a Daemon
 	// restart does not reset the submit count below Reprompted.
 	SubmitRecs map[string]submitRec `json:"submitRecs,omitempty"`
@@ -2469,6 +2488,10 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 			d.broadcastRunLocked(rs)
 		}
 		d.mu.Unlock()
+		// Each Ticket merge re-checks the spec branch against the other live
+		// spec branches in the same repo: an intersecting changed-file set
+		// warns on both Runs that a final-merge conflict is coming.
+		d.checkSpecOverlap(runID)
 		return el.DriverFinish{Merged: true, SHA: sha}, nil
 	}
 	// A detached repo has no target branch: rebase onto the repo HEAD as it
@@ -2664,6 +2687,154 @@ func (d *Daemon) mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, t
 	return sha, "", nil
 }
 
+// specChangedFiles lists the files the spec branch changed since its base:
+// `git diff --name-only base branch`, sorted. Empty when either ref is
+// missing or git fails; callers then warn on nothing, so a missing base
+// never blocks a merge.
+func specChangedFiles(repo, base, branch string) []string {
+	if repo == "" || base == "" || branch == "" {
+		return nil
+	}
+	out, err := runGit(repo, "diff", "--name-only", base, branch)
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, f := range strings.Fields(out) {
+		f = strings.TrimSpace(f)
+		if f != "" {
+			set[f] = true
+		}
+	}
+	files := make([]string, 0, len(set))
+	for f := range set {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return files
+}
+
+// intersectFiles returns the sorted intersection of two sorted file lists.
+func intersectFiles(a, b []string) []string {
+	set := map[string]bool{}
+	for _, f := range a {
+		set[f] = true
+	}
+	var out []string
+	for _, f := range b {
+		if set[f] {
+			out = append(out, f)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// warningCovers reports whether warnings already warn about otherRun with
+// at least these files: a later merge that adds nothing new stays silent
+// instead of repeating the same Event.
+func warningCovers(warnings []runWarning, otherRun string, files []string) bool {
+	have := map[string]bool{}
+	for _, w := range warnings {
+		if w.OtherRun != otherRun {
+			continue
+		}
+		for _, f := range w.Files {
+			have[f] = true
+		}
+	}
+	for _, f := range files {
+		if !have[f] {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+// overlapWarningText renders the warning Event text naming both spec
+// branches and the shared files, so the User knows a final-merge conflict
+// is coming.
+func overlapWarningText(branch, otherBranch string, files []string) string {
+	return fmt.Sprintf("%s and %s both touch %s; a conflict is coming at final merge", branch, otherBranch, strings.Join(files, ", "))
+}
+
+// checkSpecOverlap compares the just-merged Run's spec branch changed files
+// with every other live Run's spec branch in the same repo and publishes a
+// warning Event on both Runs when the sets intersect. It runs after a
+// Ticket merge with no lock held (git first, state second) and never fails
+// the merge: git errors simply warn on nothing.
+func (d *Daemon) checkSpecOverlap(runID string) {
+	d.mu.Lock()
+	cur, ok := d.runs[runID]
+	if !ok || cur.SpecBranch == "" || cur.SpecBase == "" {
+		d.mu.Unlock()
+		return
+	}
+	repo, branch, base := cur.Repo, cur.SpecBranch, cur.SpecBase
+	type other struct {
+		id, specBranch, specBase string
+	}
+	var others []other
+	for id, rs := range d.runs {
+		if id == runID || rs.Repo != repo || rs.SpecBranch == "" || rs.SpecBranch == branch || rs.SpecBase == "" {
+			continue
+		}
+		// Liveness is the branch, not the status: a paused Run resumes, a
+		// done Run's branch still conflicts at final merge, and a failed
+		// Run's branch still holds its changes, so running, paused, done
+		// and failed all count. A deleted branch simply yields no files.
+		others = append(others, other{id: id, specBranch: rs.SpecBranch, specBase: rs.SpecBase})
+	}
+	d.mu.Unlock()
+	if len(others) == 0 {
+		return
+	}
+	mine := specChangedFiles(repo, base, branch)
+	if len(mine) == 0 {
+		return
+	}
+	type hit struct {
+		id, otherBranch string
+		files           []string
+	}
+	var hits []hit
+	for _, o := range others {
+		theirs := specChangedFiles(repo, o.specBase, o.specBranch)
+		if shared := intersectFiles(mine, theirs); len(shared) > 0 {
+			hits = append(hits, hit{id: o.id, otherBranch: o.specBranch, files: shared})
+		}
+	}
+	if len(hits) == 0 {
+		return
+	}
+	now := time.Now().UTC()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cur, ok = d.runs[runID]
+	if !ok {
+		return
+	}
+	for _, h := range hits {
+		other, ok := d.runs[h.id]
+		if !ok {
+			continue
+		}
+		if warningCovers(cur.Warnings, h.id, h.files) && warningCovers(other.Warnings, runID, h.files) {
+			continue
+		}
+		if !warningCovers(cur.Warnings, h.id, h.files) {
+			cur.Warnings = append(cur.Warnings, runWarning{At: now, OtherRun: h.id, OtherBranch: h.otherBranch, Files: append([]string(nil), h.files...), Message: overlapWarningText(branch, h.otherBranch, h.files)})
+			d.persistRun(cur)
+			d.broadcastRunLocked(cur)
+		}
+		if !warningCovers(other.Warnings, runID, h.files) {
+			other.Warnings = append(other.Warnings, runWarning{At: now, OtherRun: runID, OtherBranch: branch, Files: append([]string(nil), h.files...), Message: overlapWarningText(h.otherBranch, branch, h.files)})
+			d.persistRun(other)
+			d.broadcastRunLocked(other)
+		}
+	}
+}
+
 // reviewGateReady says the finish may judge the gate: every required
 // reviewer type has a Session and a submitted verdict.
 func reviewGateReady(sessions map[string]string, verdicts map[string]storedReview) bool {
@@ -2833,12 +3004,17 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 			"rounds": rounds, "recallOff": rs.RecallOff[t.ID],
 		})
 	}
+	warnings := rs.Warnings
+	if warnings == nil {
+		warnings = []runWarning{}
+	}
 	return map[string]any{
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"recallOffN": rs.RecallOffN,
 		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase,
+		"warnings":  warnings,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
 }
