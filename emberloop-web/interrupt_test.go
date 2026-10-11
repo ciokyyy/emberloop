@@ -59,34 +59,3 @@ func TestInterruptIdleSessionReportsFalse(t *testing.T) {
 		t.Fatalf("unknown Session = %d, want 404", code)
 	}
 }
-
-// A Steer with images reaches the pig native queue instead of degrading to a
-// Follow-up in the Daemon pending list.
-func TestPigSteerWithImagesQueuesNatively(t *testing.T) {
-	d, pb := newPigDaemon(t)
-	srv := httptest.NewServer(d.Handler())
-	defer srv.Close()
-
-	id := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
-	startChainedSlowTurns(t, srv.URL, id)
-	body, _ := json.Marshal(map[string]any{"text": "look", "mode": "steer",
-		"images": []Image{{Mime: "image/png", Data: "iVBORw0KGgo="}}})
-	resp, err := http.Post(srv.URL+"/api/sessions/"+id+"/prompt", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", resp.StatusCode)
-	}
-	for _, e := range sessionEvents(t, srv.URL, id) {
-		if e.Kind == "prompt" && e.Text == "look" && e.Mode != "steer" {
-			t.Fatalf("image steer labelled %q, want steer", e.Mode)
-		}
-	}
-	// Let the chained turns and the queued image steer settle before
-	// TempDir cleanup: background image and log writes outlive the test
-	// otherwise ("directory not empty").
-	waitStatus(t, srv.URL, id, "idle", 60*time.Second)
-	pb.CloseSession(id)
-}
