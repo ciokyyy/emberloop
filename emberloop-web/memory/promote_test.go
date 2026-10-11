@@ -104,6 +104,24 @@ func TestBuildAgentsMDEditIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestBuildAgentsMDEditAppendsOnSubstringCollision(t *testing.T) {
+	// "use tabs" is a substring of the longer line, but it is not the same
+	// bullet: the edit must append instead of reporting already-applied.
+	existing := "# AGENTS.md\n\n- use tabs for Go files\n"
+	updated, diff := BuildAgentsMDEdit(existing, "use tabs", "AGENTS.md")
+	if !strings.Contains(updated, "- use tabs for Go files\n") || !strings.Contains(updated, "- use tabs\n") {
+		t.Fatalf("updated = %q, want both the long line and the new bullet", updated)
+	}
+	if !strings.Contains(diff, "+- use tabs") {
+		t.Fatalf("diff = %q, want the new bullet line", diff)
+	}
+	// The exact bullet still short-circuits, even with trailing whitespace.
+	updated, diff = BuildAgentsMDEdit("# AGENTS.md\n\n- use tabs   \n", "use tabs", "AGENTS.md")
+	if diff != "" || !strings.Contains(updated, "- use tabs") {
+		t.Fatalf("re-edit = %q %q, want the file unchanged with an empty diff", updated, diff)
+	}
+}
+
 func TestAgentsMDDiffMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "AGENTS.md")

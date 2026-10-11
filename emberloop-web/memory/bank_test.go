@@ -192,7 +192,7 @@ func TestRulesUpdateChangesOnlyStatus(t *testing.T) {
 		`UPDATE rules SET status = 'dormant', text = 'changed' WHERE rule_id = 'r1'`,
 	}
 	for _, stmt := range refused {
-		if _, err := b.wdb.Exec(stmt); err == nil || !strings.Contains(err.Error(), "only status") {
+		if _, err := b.wdb.Exec(stmt); err == nil || !strings.Contains(err.Error(), "only status or promotion may change") {
 			t.Errorf("%s err = %v, want refusal", stmt, err)
 		}
 	}

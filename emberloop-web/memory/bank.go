@@ -493,7 +493,7 @@ func scanRule(s rowScanner) (Rule, error) {
 // Status and provenance stay untouched: only the promoted columns change,
 // which the guard allows alongside status.
 func (b *Bank) MarkRulePromoted(ctx context.Context, ruleID, promotedBy string) error {
-	if err := MarkRulePromotedCommand(ruleID, promotedBy); err != nil {
+	if err := validatePromotedBy(ruleID, promotedBy); err != nil {
 		return err
 	}
 	return b.write(ctx, func(db *sql.DB) error {

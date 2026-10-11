@@ -475,7 +475,7 @@ func (f *Fake) ApproveRule(_ context.Context, itemID int64, decidedBy string, ru
 }
 
 func (f *Fake) MarkRulePromoted(_ context.Context, ruleID, promotedBy string) error {
-	if err := MarkRulePromotedCommand(ruleID, promotedBy); err != nil {
+	if err := validatePromotedBy(ruleID, promotedBy); err != nil {
 		return err
 	}
 	f.mu.Lock()

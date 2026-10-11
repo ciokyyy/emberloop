@@ -52,16 +52,13 @@ type PromotionProposal struct {
 }
 
 // ValidPromotionTarget reports whether t names a promotion target.
-func ValidPromotionTarget(t string) bool { return validPromotionTarget(t) }
-
-// validPromotionTarget reports whether t names a promotion target.
-func validPromotionTarget(t string) bool {
+func ValidPromotionTarget(t string) bool {
 	return t == PromotionAgentsMD || t == PromotionNote
 }
 
 // EncodePromotionProposal marshals p, defaulting an empty target to agents_md.
 func EncodePromotionProposal(p PromotionProposal) string {
-	if !validPromotionTarget(p.Target) {
+	if !ValidPromotionTarget(p.Target) {
 		p.Target = PromotionAgentsMD
 	}
 	raw, _ := json.Marshal(p)
@@ -81,7 +78,7 @@ func DecodePromotionProposal(payload string) (PromotionProposal, error) {
 	if strings.TrimSpace(p.Text) == "" {
 		return PromotionProposal{}, fmt.Errorf("%w: promotion text empty", ErrInvalid)
 	}
-	if !validPromotionTarget(p.Target) {
+	if !ValidPromotionTarget(p.Target) {
 		return PromotionProposal{}, fmt.Errorf("%w: promotion target %q", ErrInvalid, p.Target)
 	}
 	if strings.TrimSpace(p.TargetPath) == "" {
@@ -189,16 +186,18 @@ func sanitizeNoteID(ruleID string) string {
 
 // BuildAgentsMDEdit proposes the new AGENTS.md content for ruleText: the old
 // content with "- <text>" appended as one bullet. It also returns a unified
-// diff preview naming targetRel. When the file already holds the text the
-// content is unchanged and the diff is empty, so approval retries never
-// duplicate the line.
+// diff preview naming targetRel. When the file already holds that exact bullet
+// line the content is unchanged and the diff is empty, so approval retries
+// never duplicate the line. The match is a whole trimmed line, never a
+// substring: a short Rule such as "use tabs" still appends beside the longer
+// line "- use tabs for Go files".
 func BuildAgentsMDEdit(existing, ruleText, targetRel string) (newContent, diff string) {
 	ruleText = strings.TrimSpace(ruleText)
 	if ruleText == "" {
 		return existing, ""
 	}
 	line := "- " + ruleText
-	if strings.Contains(existing, ruleText) {
+	if hasBulletLine(existing, line) {
 		return existing, ""
 	}
 	var b strings.Builder
@@ -214,6 +213,17 @@ func BuildAgentsMDEdit(existing, ruleText, targetRel string) (newContent, diff s
 	}
 	diff = fmt.Sprintf("--- a/%s\n+++ b/%s\n@@\n+%s\n", rel, rel, line)
 	return newContent, diff
+}
+
+// hasBulletLine reports whether content already holds the exact bullet line,
+// comparing trimmed lines so trailing whitespace never duplicates an entry.
+func hasBulletLine(content, line string) bool {
+	for _, l := range strings.Split(content, "\n") {
+		if strings.TrimSpace(l) == line {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentsMDDiff reads the file at absPath (missing means empty) and returns the
@@ -318,9 +328,9 @@ func PromotionNotePreview(relPath, content string) string {
 	return b.String()
 }
 
-// MarkRulePromotedCommand validates the promoted-by identity for the marking
-// step shared by the bank and the fake.
-func MarkRulePromotedCommand(ruleID, promotedBy string) error {
+// validatePromotedBy validates the inputs for the mark-promoted step shared
+// by the bank and the fake: a rule to stamp and who stamped it.
+func validatePromotedBy(ruleID, promotedBy string) error {
 	if strings.TrimSpace(ruleID) == "" {
 		return fmt.Errorf("%w: rule id empty", ErrInvalid)
 	}

@@ -779,35 +779,21 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 			}
 			idx += i + 4
 		}
-		// Fuzzy stems count only as calls: a field named summarizer or a
-		// status word like completed must not read as a send. Every real
-		// model or completion send is a call, so the stem must run into a
-		// paren (after word chars and spaces) to count.
-		callsStem := func(s, stem string) bool {
-			for idx := 0; idx < len(s); {
-				i := strings.Index(s[idx:], stem)
-				if i < 0 {
-					return false
-				}
-				j := idx + i + len(stem)
-				for j < len(s) && (s[j] == '_' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= '0' && s[j] <= '9') {
-					j++
-				}
-				for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
-					j++
-				}
-				if j < len(s) && s[j] == '(' {
-					return true
-				}
-				idx += i + len(stem)
-			}
-			return false
-		}
+		// Fuzzy stems count only as calls, scored by callsSendStem below:
+		// a field named summarizer or a status word like completed must not
+		// read as a send. Every real model or completion send is a call, so
+		// the stem must run into a paren (after word chars and spaces) to
+		// count. Tightened from a bare substring when daemon.go's holder
+		// fields (summarizer, decider) and status words (completed) proved
+		// the bare match false-positive on a file with no memory egress;
+		// the precise signals (http.post, newrequest, .do with a request,
+		// /api/v1/decisions, /v1/systemone) are unchanged, so a real send
+		// without the redactor still fails this test.
 		send := strings.Contains(lowered, "http.post") || strings.Contains(lowered, "http.get") ||
 			strings.Contains(lowered, "http.head") || strings.Contains(lowered, "http.postform") ||
 			strings.Contains(lowered, "newrequest") || sendsDo ||
-			callsStem(lowered, "summariz") || callsStem(lowered, "complete") ||
-			callsStem(lowered, "chatcompletion") || strings.Contains(lowered, "/api/v1/decisions") ||
+			callsSendStem(lowered, "summariz") || callsSendStem(lowered, "complete") ||
+			callsSendStem(lowered, "chatcompletion") || strings.Contains(lowered, "/api/v1/decisions") ||
 			strings.Contains(lowered, "/v1/systemone")
 		guard := strings.Contains(code, "Redact(") || strings.Contains(code, "RedactedFor(") ||
 			strings.Contains(code, "ForDistill(") || strings.Contains(code, "ForDecider(") ||
@@ -824,5 +810,73 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 	in := "token ghp_aBcDeFgHiJkLmNoPqRsT0123456789ABCD with passwort: hunter2supersecretvalue123"
 	if want := memory.Redact(in); memory.ForDistill(in) != want || memory.ForDecider(in) != want || memory.ForJev(in) != want {
 		t.Fatalf("egress wrappers diverge from Redact for %q", in)
+	}
+}
+
+// callsSendStem reports whether the lowercased source s calls through stem.
+// The stem may run into its paren through trailing word chars, dotted method
+// chains and spaces, so function values and method values count as sends.
+// Field declarations (`summarizer handoffSummarizer`), status words
+// (`completed`) and string mentions never count.
+func callsSendStem(s, stem string) bool {
+	for idx := 0; idx < len(s); {
+		i := strings.Index(s[idx:], stem)
+		if i < 0 {
+			return false
+		}
+		j := idx + i + len(stem)
+		for {
+			for j < len(s) && (s[j] == '_' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= '0' && s[j] <= '9') {
+				j++
+			}
+			if j < len(s) && s[j] == '.' {
+				j++
+				continue
+			}
+			break
+		}
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+			j++
+		}
+		if j < len(s) && s[j] == '(' {
+			return true
+		}
+		idx += i + len(stem)
+	}
+	return false
+}
+
+func TestCallsSendStemOnlyCountsCalls(t *testing.T) {
+	call := []string{
+		"reply, err := sum.summarize(model, system, user)",
+		"func (pigsummarizer) summarize(model string) (string, error) {",
+		"out.complete(ctx, req)",
+		"chatcompletion.create(params)",
+	}
+	for _, s := range call {
+		stem := "summariz"
+		if strings.Contains(s, "complete") {
+			stem = "complete"
+		} else if strings.Contains(s, "chatcompletion") {
+			stem = "chatcompletion"
+		}
+		if !callsSendStem(s, stem) {
+			t.Errorf("callsSendStem(%q, %q) = false, want a call to count", s, stem)
+		}
+	}
+	quiet := []string{
+		"summarizer handoffsummarizer",
+		"decider memory.decider",
+		`return tc.status == "completed" || tc.status == "failed"`,
+		"// the summarizer writes handoffs for compress",
+		`"complete": map[string]any{"type": "array"}`,
+		"completed []string `json:\"completed\"`",
+	}
+	for _, s := range quiet {
+		for _, stem := range []string{"summariz", "complete", "chatcompletion"} {
+			if callsSendStem(s, stem) {
+				t.Errorf("callsSendStem(%q, %q) = true, want holder words and strings quiet", s, stem)
+			}
+		}
 	}
 }
