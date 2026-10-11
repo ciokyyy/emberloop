@@ -128,12 +128,18 @@ the driver ticks boxes and marks done, nothing else writes them.
   config option (`max` maps to `xhigh`). Grok Sessions get no titles and
   no compression. `grokacp_live_test.go` (`EL_LIVE_GROK=1`) drives a real
   agent.
-- `restart.go` (`Idle`, `Shutdown`) and `cmd/emberloop-web/restart.go` restart the
+- `restart.go` (`Shutdown`) and `cmd/emberloop-web/restart.go` restart the
   Daemon in place: every `-restart-check` (default 1m, 0 off) it compares its
   binary on disk with the one it started from and, after the change held for
-  two ticks and the Daemon is idle (no Session mid-turn, starting, resuming or
-  releasing, no Run driving), closes live agent processes and `exec`s itself
-  with the same args, keeping pid and address.
+  two ticks and `Daemon.Idle(0)` holds, closes live agent processes and `exec`s
+  itself with the same args, keeping pid and address.
+- `idle.go` holds the one idle definition. `session.Idle(now, quiet, open)` is
+  per Session: no turn running, starting or queued, no resume or release in
+  flight, no open Group led (`openParentsLocked`: a member still has work), and
+  at least `quiet` since its last Event. `Daemon.Idle(quiet)` is Daemon-wide:
+  also no Session starting and no Run running. Quiet time and the runs driver
+  read `d.clock` (test seam, nil reads `time.Now`). Restart passes 0: it waits
+  for work it would cut, not for quiet time. Tests: `idle_test.go`, `restart_test.go`.
 - `claude.go` holds the claude ACP Backend (pinned adapter, shared
   new/load stripping set, el system prompt replacing the Claude Code
   preset and the caveman ultra register (system prompt plus a per-turn

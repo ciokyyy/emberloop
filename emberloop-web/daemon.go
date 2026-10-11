@@ -93,8 +93,9 @@ type Daemon struct {
 	// drains and re-executes. restartReq guards repeats (restart.go).
 	restartCh  chan struct{}
 	restartReq bool
-	// runNow is the driver world's clock seam; nil reads time.Now (runs_exec.go).
-	runNow func() time.Time
+	// clock is the Daemon clock seam: idle quiet time and the runs driver read
+	// it; nil reads time.Now (idle.go).
+	clock func() time.Time
 }
 
 type session struct {
@@ -398,7 +399,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 			return nil, &startError{code: http.StatusBadRequest, msg: err.Error()}
 		}
 		d.mu.Lock()
-		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now()}
 		d.persistMeta(meta)
 		d.starting--
 		d.mu.Unlock()
@@ -408,7 +409,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	// are connected before the first prompt can go out. The Session
 	// publishes live to hold its cap slot while it starts.
 	d.mu.Lock()
-	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: time.Now()}
+	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now()}
 	d.persistMeta(meta)
 	cb := d.claude
 	d.mu.Unlock()
@@ -629,7 +630,7 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 		extra(&e)
 	}
 	s.events = append(s.events, e)
-	s.last = time.Now()
+	s.last = d.now()
 	if kind == "status" && status != "" {
 		prev := s.meta.Status
 		s.meta.Status = status

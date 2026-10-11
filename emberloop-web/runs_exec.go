@@ -560,9 +560,9 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		// The Daemon spawns the Reviewers after a done submit, so a stalled
 		// Worker is told to finish, never to spawn its own reviewers.
 		StallNudge: webStallNudge,
-		// runNow is the test seam for the idle and stall needs-you
+		// clock is the test seam for the idle and stall needs-you
 		// alerts; nil reads the real clock through the driver's default.
-		Now: d.runNow,
+		Now: d.clock,
 		// Parked and Discarded read the user's per-ticket actions every
 		// pass, so parking or discarding mid-run takes effect at once;
 		// RetryGen starts a retried ticket over on the next pass.

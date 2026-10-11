@@ -610,7 +610,7 @@ func eventLine(e Event) string {
 // settledLocked reports whether a member's turn is over: no turn running,
 // nothing queued, and a terminal status. Callers hold d.mu.
 func settledLocked(ms *session) bool {
-	if ms.busy || len(ms.pending) > 0 || ms.active > 0 {
+	if ms.hasWork() {
 		return false
 	}
 	switch ms.meta.Status {

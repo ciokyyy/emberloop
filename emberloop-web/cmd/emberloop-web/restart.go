@@ -54,7 +54,8 @@ func watchForUpdate(d *web.Daemon, exe string, every time.Duration) {
 			seen = now
 			continue
 		}
-		if !d.Idle() {
+		// No quiet time: restart waits for work it would cut, not for quiet.
+		if !d.Idle(0) {
 			continue
 		}
 		fmt.Println("el-web: binary changed and idle, restarting")
@@ -74,7 +75,7 @@ func watchForRestartRequest(d *web.Daemon, exe string, drain time.Duration) {
 	for range d.RestartCh() {
 		fmt.Println("el-web: restart requested, waiting for idle")
 		deadline := time.Now().Add(drain)
-		for !d.Idle() && time.Now().Before(deadline) {
+		for !d.Idle(0) && time.Now().Before(deadline) {
 			time.Sleep(500 * time.Millisecond)
 		}
 		fmt.Println("el-web: restarting")

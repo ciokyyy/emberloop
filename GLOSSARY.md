@@ -87,3 +87,7 @@ _Avoid_: Compact, summarize, reset
 **Handoff**:
 The document a pig model writes from a Session's Event log, sent as the first prompt of the new harness handle after a Compress. It is shown as a collapsed block, not as user input.
 _Avoid_: Summary, checkpoint
+
+**Idle**:
+A Session is idle when no turn runs or starts, no input is queued, no Group it leads has a member still working, and its last Event is older than the quiet time. The Daemon is idle when every Session is idle, none is starting and no Run runs.
+_Avoid_: Ready, free

@@ -6,29 +6,6 @@ import (
 	"os"
 )
 
-// Idle reports whether the Daemon holds no work a restart would cut short: no
-// Session mid-turn, starting, resuming or releasing, and no Run still driving.
-// Live Sessions that wait for a prompt do not count: they hold history and a
-// resume token, and the next prompt reloads them.
-func (d *Daemon) Idle() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.starting > 0 {
-		return false
-	}
-	for _, s := range d.sessions {
-		if s.busy || s.active > 0 || s.resuming || s.releasing {
-			return false
-		}
-	}
-	for _, rs := range d.runs {
-		if rs.Status == runStatusRunning {
-			return false
-		}
-	}
-	return true
-}
-
 // Shutdown closes every live Session's agent process without ending the
 // Session, so a restart leaves no adapter behind. History and resume tokens
 // are already on disk; the next Daemon loads the Sessions as released.

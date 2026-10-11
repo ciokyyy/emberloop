@@ -22,7 +22,7 @@ the UI unless its source is unchanged, rebuilds `el-web` with version stamps
 into `~/.local/bin/el-web`, keeps the previous set, and rolls back to it when
 the new binary fails its health check.
 
-Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and no Session is mid-turn and no Run is driving, it closes live agent processes and re-executes itself with the same pid and address. Idle Sessions reload on the next prompt.
+Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and the Daemon is idle (no turn running, nothing queued, no Run driving), it closes live agent processes and re-executes itself with the same pid and address. Idle Sessions reload on the next prompt.
 
 Check it: `curl -s -H "Authorization: Bearer $(cat ~/.local/share/pig/enderbloom/daemon.token)" http://127.0.0.1:7940/api/health` must print `{"ok":true}`, and `el-web --version` names the build. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds a browser runs; a stale browser offers `update available — reload`.
 

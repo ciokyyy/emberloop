@@ -305,22 +305,22 @@ func TestTicketActionsOnFinishedRunConflict(t *testing.T) {
 	}
 }
 
-// fakeRunClock is the Daemon clock override for needs-you tests: the web
-// driver world reads it instead of time.Now, so advancing it trips the
-// idle and stall alerts without waiting minutes.
-type fakeRunClock struct {
+// fakeClock is the Daemon clock override for tests: the web driver world and
+// idle quiet time read it instead of time.Now, so advancing it trips the idle
+// and stall alerts without waiting minutes.
+type fakeClock struct {
 	now atomic.Int64
 }
 
-func newFakeRunClock() *fakeRunClock {
-	c := &fakeRunClock{}
+func newFakeClock() *fakeClock {
+	c := &fakeClock{}
 	c.now.Store(time.Now().UnixNano())
 	return c
 }
 
-func (c *fakeRunClock) get() time.Time { return time.Unix(0, c.now.Load()).UTC() }
+func (c *fakeClock) get() time.Time { return time.Unix(0, c.now.Load()).UTC() }
 
-func (c *fakeRunClock) advance(d time.Duration) {
+func (c *fakeClock) advance(d time.Duration) {
 	c.now.Store(c.get().Add(d).UnixNano())
 }
 
@@ -329,8 +329,8 @@ func (c *fakeRunClock) advance(d time.Duration) {
 func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	clock := newFakeRunClock()
-	d.runNow = clock.get
+	clock := newFakeClock()
+	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -361,8 +361,8 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	clock := newFakeRunClock()
-	d.runNow = clock.get
+	clock := newFakeClock()
+	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
