@@ -681,11 +681,15 @@ func (b *ClaudeBackend) mcpServers() ([]acpMCPServer, error) {
 // elRoleFor is the el MCP role one Session's server runs under: spawned group
 // members run as workers (base tools plus, nesting kept, spawn), scouts stay
 // read-only, everything else runs as a top-level parent (base tools plus
-// spawn, steer, check and cancel). Submit stays registered for web-worker
-// and scout but is unoffered while el.WebSubmitEnabled is false.
+// spawn, steer, check and cancel). Run workers run run-worker, which
+// always serves submit. Submit stays registered for web-worker and scout
+// but is unoffered while el.WebSubmitEnabled is false.
 func elRoleFor(meta SessionMeta) string {
 	if meta.Scout {
 		return "scout"
+	}
+	if meta.RunWorker {
+		return "run-worker"
 	}
 	if meta.GroupID != "" {
 		return "web-worker"

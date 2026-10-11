@@ -1,9 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,6 +39,9 @@ type PigBackend struct {
 	// SteerChild messages one Subagent of the calling Session. The Daemon
 	// wires it to its SteerChild; nil keeps Sessions steer-free.
 	SteerChild func(parentID, childID, text string) (string, error)
+	// DaemonURL is the Daemon base URL a Run worker's submit tool posts to;
+	// empty leaves Run workers without submit.
+	DaemonURL string
 	// CheckChild peeks at the calling Session's Subagents. The Daemon wires
 	// it to its CheckChildren (empty child) and CheckChild; nil keeps
 	// Sessions check-free.
@@ -103,6 +108,9 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 		} else {
 			fmt.Fprintln(os.Stderr, "el-web: shared tools:", err)
 		}
+	}
+	if meta.RunWorker && b.DaemonURL != "" {
+		tools = append(tools, &submitAgentTool{session: meta.ID, daemonURL: b.DaemonURL})
 	}
 	if !meta.Scout {
 		if b.Spawn != nil {
@@ -195,6 +203,68 @@ func (t *steerAgentTool) Execute(_ context.Context, _ string, params json.RawMes
 	}, nil
 }
 func (t *steerAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
+
+// submitAgentTool is the Run worker submit tool as a pig ExtraTool. It posts
+// to the same submit route the el MCP proxy uses, so a done submit starts the
+// ticket's reviewers on every harness alike.
+type submitAgentTool struct {
+	session   string
+	daemonURL string
+}
+
+func (t *submitAgentTool) Name() string  { return "submit" }
+func (t *submitAgentTool) Label() string { return "submit work" }
+func (t *submitAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Submit your result to the Daemon when the ticket work is complete: status done with the completed checkbox texts. A done submit starts the reviewers.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"status":    map[string]any{"type": "string"},
+				"completed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"report":    map[string]any{"type": "string"},
+			},
+			"required": []string{"status"},
+		},
+	}
+}
+func (t *submitAgentTool) Execute(ctx context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		Status    string   `json:"status"`
+		Completed []string `json:"completed"`
+		Report    string   `json:"report"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || req.Status == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: status is required")
+	}
+	body, _ := json.Marshal(req)
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.daemonURL+"/api/sessions/"+t.session+"/submit", bytes.NewReader(body))
+	if err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %w", err)
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(hreq)
+	if err != nil {
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Submits int    `json:"submits"`
+		Err     string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != http.StatusAccepted {
+		if out.Err == "" {
+			out.Err = fmt.Sprintf("refused: %d", resp.StatusCode)
+		}
+		return agent.AgentToolResult{}, fmt.Errorf("submit: %s", out.Err)
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: fmt.Sprintf("submitted %s (submit %d)", req.Status, out.Submits)}},
+	}, nil
+}
+func (t *submitAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
 
 // checkAgentTool is the Daemon check tool as a pig ExtraTool. One instance
 // serves one Session: Execute peeks at the caller's own Subagents, listing

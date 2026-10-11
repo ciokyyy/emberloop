@@ -137,6 +137,17 @@ func waitRunTickets(t *testing.T, base, id string, want map[string]string) runJS
 			return r
 		}
 		if time.Now().After(deadline) {
+			for _, tk := range r.Tickets {
+				t.Logf("ticket %s state=%s refusal=%q reviewers=%v verdicts=%+v tip=%s", tk.ID, tk.State, tk.LastRefusal, tk.ReviewerSessions, tk.Verdicts, tk.Tip)
+			}
+			for _, tk := range r.Tickets {
+				for typ, sid := range tk.ReviewerSessions {
+					sess := getSession(t, base, sid)
+					for _, e := range sess.Events {
+						t.Logf("reviewer %s %s #%d %s %.80q %s", typ, sid[:6], e.Seq, e.Kind, e.Text, e.Status)
+					}
+				}
+			}
 			t.Fatalf("tickets = %v, want %v", got, want)
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -539,6 +550,33 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
 	if run.Harness != "fake" || run.Model != "role-model" || run.Effort != "high" {
 		t.Fatalf("run config = %s/%s/%s, want fake/role-model/high", run.Harness, run.Model, run.Effort)
+	}
+}
+
+// The settings page's implementer slot is the Run worker role and beats the
+// older worker slot.
+func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	raw, _ := json.Marshal(map[string]any{
+		"roles": map[string]any{
+			"worker":      map[string]any{"harness": "fake", "model": "worker-model"},
+			"implementer": map[string]any{"harness": "fake", "model": "impl-model", "effort": "max"},
+		},
+	})
+	if err := os.WriteFile(settings, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_SETTINGS", settings)
+	d := NewDaemon(t.TempDir(), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "request-model")
+	if run.Model != "impl-model" || run.Effort != "max" {
+		t.Fatalf("run config = %s/%s, want impl-model/max", run.Model, run.Effort)
 	}
 }
 

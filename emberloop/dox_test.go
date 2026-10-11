@@ -50,7 +50,7 @@ func doxTreeProblems(root string) []string {
 		}
 		// Sibling worktrees carry their own copy of the tree; they are not
 		// part of this checkout's index.
-		if info.IsDir() && (info.Name() == ".git" || info.Name() == ".emberloop-worktrees") {
+		if info.IsDir() && (info.Name() == ".git" || info.Name() == ".emberloop-worktrees" || info.Name() == ".el-worktrees" || info.Name() == "node_modules") {
 			return filepath.SkipDir
 		}
 		if !info.IsDir() && info.Name() == "AGENTS.md" {

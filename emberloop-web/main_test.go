@@ -4,15 +4,32 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 // TestMain keeps session titles off for the whole package: title calls start
 // extra adapter connections that would land in shared test stubs. The title
 // tests switch them back on per test.
+//
+// It also isolates the package from the developer's machine: HOME and
+// EL_SETTINGS point at an empty temp dir, so role settings (worker, scout,
+// reviewers) never route test Sessions to real claude or pig harnesses, and
+// the Daemon binding of a running Session never leaks in.
 func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "el-web-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", home)
+	os.Setenv("EL_SETTINGS", filepath.Join(home, "settings.json"))
+	os.Unsetenv("EL_MAX_WORKERS")
+	os.Unsetenv("EL_WEB_PARENT")
+	os.Unsetenv("EL_WEB_DAEMON_URL")
 	os.Setenv("EL_SESSION_TITLES", "0")
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
 }
 
 // getSessions lists every Session on the test Daemon.

@@ -450,6 +450,7 @@ func TestClaudeMCPServesSingleBoundServer(t *testing.T) {
 		{SessionMeta{ID: "top"}, "web"},
 		{SessionMeta{ID: "kid", ParentID: "top", GroupID: "g"}, "web-worker"},
 		{SessionMeta{ID: "look", ParentID: "top", GroupID: "g", Scout: true}, "scout"},
+		{SessionMeta{ID: "rw", ParentID: "run", RunWorker: true}, "run-worker"},
 	} {
 		if got := elRoleFor(tc.meta); got != tc.role {
 			t.Errorf("elRoleFor(%+v) = %q, want %q", tc.meta, got, tc.role)

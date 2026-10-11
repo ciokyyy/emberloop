@@ -205,7 +205,10 @@ the driver ticks boxes and marks done, nothing else writes them.
   per-Session ExtraTools bound to its own id, claude through the base server
   under the Session's role. Top-level parents run `--role web` (spawn, steer,
   check, cancel), spawned group children `--role web-worker`
-  (spawn; nesting kept, but no steer, check or cancel), scouts
+  (spawn; nesting kept, but no steer, check or cancel), Run ticket Workers
+  `--role run-worker` (`SessionMeta.RunWorker`; spawn and submit on every
+  harness: a done submit starts the ticket's reviewers; SDK pig gets a submit
+  ExtraTool via `PigBackend.DaemonURL`), scouts
   `--role scout` (read-only). A proxy registers only when its role allows
   it and `EL_WEB_PARENT`/`EL_WEB_DAEMON_URL` bind the server to the Session,
   and never reaches an execute script. `steer` (`SteerChild`: only the

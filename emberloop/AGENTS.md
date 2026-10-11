@@ -199,7 +199,8 @@ owns its `_test.go` and the behaviour below):
   Daemon's `web` parent, `web-worker` child and `scout` roles take their
   Daemon tools from `tools/webproxy.go`, never the parent's full set;
   `WebSubmitEnabled` in `toolresolve.go` (off) keeps `submit` unoffered to
-  web children while the herdr-era submit and Run submits stay), `toolresolve.go`
+  web children while the herdr-era submit and Run submits stay; the
+  `run-worker` role (a Run ticket Worker) always serves `submit` and `spawn`), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
   `read` refuses an oversized file with `bash` for roles that serve it and
   `tools.grep` in `execute` or offset/limit otherwise), `readhint.go` (that

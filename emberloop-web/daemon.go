@@ -229,6 +229,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/quota/refresh", d.handleQuotaRefresh)
 	mux.HandleFunc("/api/version", d.handleVersion)
 	mux.HandleFunc("/api/health", d.handleHealth)
+	mux.HandleFunc("/api/restart", d.handleRestart)
 	return guardHosts(mux, d.allowHosts, d.allowTailnet)
 }
 
@@ -985,6 +986,9 @@ func (d *Daemon) runTurn(id string, be Backend, text string, images []Image) {
 	}
 	d.maybeAutoCompress(id)
 	d.finishTurn(id)
+	// A Run Reviewer's settled turn carries its verdict: record it (a no-op
+	// for every other Session).
+	d.handleReviewerTurnEnd(id)
 	// A settled Subagent may complete its Group: the last member to finish
 	// delivers one grouped result to the parent as a Steer.
 	d.maybeDeliverGroup(id)
@@ -1092,6 +1096,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Harness   string `json:"harness"`
 			Model     string `json:"model"`
+			Effort    string `json:"effort"`
 			WorkDir   string `json:"workDir"`
 			ProjectID string `json:"projectId"`
 		}
@@ -1124,6 +1129,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			ID:        newID(),
 			Harness:   req.Harness,
 			Model:     req.Model,
+			Effort:    req.Effort,
 			WorkDir:   req.WorkDir,
 			ProjectID: req.ProjectID,
 			Status:    "idle",
@@ -1166,6 +1172,14 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 {
 		sub = parts[1]
 	}
+	// A Run Reviewer answers only the Daemon's gate prompts: user messages
+	// would corrupt the verdict reply it records.
+	if r.Method == "POST" && (sub == "prompt" || sub == "steer" || sub == "followup") {
+		if _, _, _, isReviewer := d.reviewerOf(id); isReviewer {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "reviewer sessions take no messages; steer the worker instead"})
+			return
+		}
+	}
 	switch {
 	case sub == "" && r.Method == "GET":
 		d.mu.Lock()
@@ -1181,8 +1195,18 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		resumable, note := d.resumeViewLocked(s)
 		_, compressible := d.backendForLocked(meta.Harness).(compactBackend)
 		d.mu.Unlock()
+		// Full log for old clients; ?tail= and ?before= page by turn.
+		tail, hasBefore, before, turns, at := parseSnapshotQuery(r.URL.Query())
+		start, end := 0, len(events)
+		if hasBefore {
+			start, end = beforeWindow(events, before, turns)
+		} else if tail >= 0 {
+			start = atStart(events, tailStart(events, tail), at)
+		}
+		window, firstSeq, hasMore := snapshotWindow(events, start, end)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"session": meta, "events": events,
+			"session": meta, "events": window,
+			"hasMore": hasMore, "firstSeq": firstSeq,
 			"live": live, "resumable": resumable, "resumeNote": note,
 			"compressible": compressible,
 		})

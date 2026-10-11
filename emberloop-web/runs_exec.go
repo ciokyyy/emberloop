@@ -171,18 +171,23 @@ type runState struct {
 // on this cadence instead of the CLI's slower poll.
 const runPollInterval = 500 * time.Millisecond
 
-// roleWorkerConfig reads the worker harness, model and effort from the
-// settings roles. Empty when the role is missing, so the caller falls back
-// to the Session default.
+// roleWorkerConfig reads the Run worker harness, model and effort from the
+// settings roles: the implementer slot of the settings page first, then the
+// older worker slot. Empty when neither is set, so the caller falls back to
+// the Session default.
 func roleWorkerConfig() (harness, model, effort string) {
-	r, ok := readRoles()["worker"]
-	if !ok || r.Harness == "" || r.Model == "" {
-		return "", "", ""
+	roles := readRoles()
+	for _, name := range []string{"implementer", "worker"} {
+		r, ok := roles[name]
+		if !ok || r.Harness == "" || r.Model == "" {
+			continue
+		}
+		if r.Harness == "claude" && !validClaudeModel(r.Model) {
+			continue
+		}
+		return r.Harness, r.Model, r.Effort
 	}
-	if r.Harness == "claude" && !validClaudeModel(r.Model) {
-		return "", "", ""
-	}
-	return r.Harness, r.Model, r.Effort
+	return "", "", ""
 }
 
 // roleReviewerConfig reads one reviewer type's harness and model from the
@@ -1311,7 +1316,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("unknown run %q", runID)
 	}
-	repo, harness, model := rs.Repo, rs.Harness, rs.Model
+	repo, harness, model, effort := rs.Repo, rs.Harness, rs.Model, rs.Effort
 	workerID := el.WorkerID(tk.Path)
 	branch := "implement/" + workerID
 	worktree := filepath.Join(repo, ".el-worktrees", workerID)
@@ -1342,10 +1347,12 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			ID:        newID(),
 			Harness:   harness,
 			Model:     model,
+			Effort:    effort,
 			WorkDir:   worktree,
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
 			ParentID:  runID,
+			RunWorker: true,
 		}
 		var be Backend
 		for i := 0; ; i++ {

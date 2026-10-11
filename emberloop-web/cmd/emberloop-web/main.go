@@ -61,6 +61,7 @@ func main() {
 	d.SetAllowedHosts(strings.Split(*allowHosts, ","))
 	pig := web.NewPigBackend()
 	pig.SharedTools = true
+	pig.DaemonURL = daemonURL
 	pig.LogDir = filepath.Join(*stateDir, "enderbloom", "pig-logs")
 	pig.Spawn = func(parentID string, agents []web.SpawnAgent, deliver string) (string, []web.SessionMeta, error) {
 		gid, kids, code, msg := d.Spawn(parentID, agents, deliver)

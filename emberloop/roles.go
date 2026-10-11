@@ -40,6 +40,10 @@ var roles = map[string][]string{
 	// to settle its turn and, nesting kept, spawn for its own children. It
 	// never manages them the way a parent does: no steer, check or cancel.
 	"web-worker": {"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "check", "grep", "git", "execute"},
+	// run-worker is a Run ticket Worker: the web-worker tools. Unlike
+	// web-worker it always serves submit, since the Run submit route and the
+	// Run gate need it whatever WebSubmitEnabled says.
+	"run-worker": {"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "check", "grep", "git", "execute"},
 	// full is everything.
 	"full": nil,
 }

@@ -89,6 +89,7 @@ var webProxyRoles = map[string][]string{
 	"web":        {"spawn", "steer", "check", "cancel"},
 	"web-worker": {"spawn", "submit"},
 	"scout":      {"submit"},
+	"run-worker": {"spawn", "submit"},
 }
 
 // withWebProxies serves the Daemon-hosted tools for one web role, but only
@@ -105,7 +106,7 @@ func withWebProxies(role string, base []tools.Tool) []tools.Tool {
 	if _, _, ok := tools.WebDaemonBinding(); !ok {
 		return base
 	}
-	if !WebSubmitEnabled {
+	if !WebSubmitEnabled && role != "run-worker" {
 		kept := names[:0:0]
 		for _, n := range names {
 			if n != "submit" {

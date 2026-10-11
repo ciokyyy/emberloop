@@ -282,11 +282,12 @@ type GrokACPBackend struct {
 	// copied from and refreshed tokens are written back to it.
 	srcHome string
 
-	gmu      sync.Mutex
-	scouts   map[string]bool
-	groups   map[string]string
-	catalogs map[string]string
-	models   []string
+	gmu        sync.Mutex
+	scouts     map[string]bool
+	groups     map[string]string
+	runWorkers map[string]bool
+	catalogs   map[string]string
+	models     []string
 }
 
 // NewGrokACPBackend finds the grok and el-mcp binaries. It fails when either
@@ -320,7 +321,7 @@ func NewGrokACPBackend(stateDir, daemonAddr string) (*GrokACPBackend, error) {
 	cb.daemonAddr = daemonAddr
 	b := &GrokACPBackend{
 		ClaudeBackend: cb, stateDir: stateDir, grokBin: grokBin, srcHome: srcHome,
-		scouts: map[string]bool{}, groups: map[string]string{}, catalogs: map[string]string{},
+		scouts: map[string]bool{}, groups: map[string]string{}, runWorkers: map[string]bool{}, catalogs: map[string]string{},
 	}
 	cb.newConnFor = b.connFor
 	cb.metaHook = b.meta
@@ -332,6 +333,10 @@ func (b *GrokACPBackend) setRole(meta SessionMeta) {
 	b.gmu.Lock()
 	b.scouts[meta.ID] = meta.Scout
 	b.groups[meta.ID] = meta.GroupID
+	if b.runWorkers == nil {
+		b.runWorkers = map[string]bool{}
+	}
+	b.runWorkers[meta.ID] = meta.RunWorker
 	b.gmu.Unlock()
 }
 
@@ -339,7 +344,7 @@ func (b *GrokACPBackend) setRole(meta SessionMeta) {
 func (b *GrokACPBackend) roleOf(id string) string {
 	b.gmu.Lock()
 	defer b.gmu.Unlock()
-	return elRoleFor(SessionMeta{Scout: b.scouts[id], GroupID: b.groups[id]})
+	return elRoleFor(SessionMeta{Scout: b.scouts[id], GroupID: b.groups[id], RunWorker: b.runWorkers[id]})
 }
 
 // catalogFor renders (and caches per role) the tool catalog of the el MCP

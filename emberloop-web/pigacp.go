@@ -30,9 +30,10 @@ type PigACPBackend struct {
 	// shimBin is the Daemon binary, run in pig-shim mode as the pi pi-acp starts.
 	shimBin string
 
-	smu    sync.Mutex
-	scouts map[string]bool
-	groups map[string]string
+	smu        sync.Mutex
+	scouts     map[string]bool
+	groups     map[string]string
+	runWorkers map[string]bool
 
 	// sdk serves the stateless one-off completions (session titles), which
 	// need no agent process.
@@ -65,7 +66,7 @@ func NewPigACPBackend(stateDir, daemonBin, daemonAddr string) (*PigACPBackend, e
 	}
 	cb := &ClaudeBackend{plain: true, mcpName: "el", mcpCommand: "el-mcp", adapterCommand: runner, sessions: map[string]*claudeState{}}
 	cb.daemonAddr = daemonAddr
-	b := &PigACPBackend{ClaudeBackend: cb, stateDir: stateDir, runner: runner, pigBin: pigBin, shimBin: daemonBin, scouts: map[string]bool{}, groups: map[string]string{}, sdk: NewPigBackend()}
+	b := &PigACPBackend{ClaudeBackend: cb, stateDir: stateDir, runner: runner, pigBin: pigBin, shimBin: daemonBin, scouts: map[string]bool{}, groups: map[string]string{}, runWorkers: map[string]bool{}, sdk: NewPigBackend()}
 	cb.newConnFor = b.connFor
 	return b, nil
 }
@@ -87,6 +88,7 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 	}
 	b.setScout(meta.ID, meta.Scout)
 	b.setGroup(meta.ID, meta.GroupID)
+	b.setRunWorker(meta.ID, meta.RunWorker)
 	if err := b.StartSession(meta); err != nil {
 		return err
 	}
@@ -103,6 +105,7 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 func (b *PigACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
 	b.setScout(meta.ID, meta.Scout)
 	b.setGroup(meta.ID, meta.GroupID)
+	b.setRunWorker(meta.ID, meta.RunWorker)
 	if err := b.ClaudeBackend.ResumeSession(meta, emit); err != nil {
 		return err
 	}
@@ -145,6 +148,21 @@ func (b *PigACPBackend) setGroup(id, group string) {
 	b.smu.Lock()
 	b.groups[id] = group
 	b.smu.Unlock()
+}
+
+func (b *PigACPBackend) setRunWorker(id string, v bool) {
+	b.smu.Lock()
+	if b.runWorkers == nil {
+		b.runWorkers = map[string]bool{}
+	}
+	b.runWorkers[id] = v
+	b.smu.Unlock()
+}
+
+func (b *PigACPBackend) isRunWorker(id string) bool {
+	b.smu.Lock()
+	defer b.smu.Unlock()
+	return b.runWorkers[id]
 }
 
 func (b *PigACPBackend) groupOf(id string) string {
@@ -364,6 +382,8 @@ func (b *PigACPBackend) mergedMCP(sessionID string, scout bool) ([]byte, error) 
 	role := "web"
 	if scout {
 		role = "scout"
+	} else if b.isRunWorker(sessionID) {
+		role = "run-worker"
 	} else if b.groupOf(sessionID) != "" {
 		role = "web-worker"
 	}

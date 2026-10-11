@@ -64,6 +64,9 @@ type SessionMeta struct {
 	ParentID  string    `json:"parentId,omitempty"`
 	GroupID   string    `json:"groupId,omitempty"`
 	Scout     bool      `json:"scout,omitempty"`
+	// RunWorker marks a Run ticket Worker: it runs the run-worker el role,
+	// which always serves submit.
+	RunWorker bool `json:"runWorker,omitempty"`
 	// Title is the short generated name the session list shows; empty
 	// keeps the harness and id label.
 	Title string `json:"title,omitempty"`

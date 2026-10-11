@@ -132,7 +132,7 @@ func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
 // literal, not RoleNames(), so the test can catch a role missing from either
 // side.
 func TestMissingRoleNamesEveryRole(t *testing.T) {
-	want := []string{"agent", "full", "implement", "plan", "review", "scout", "web", "web-worker", "work"}
+	want := []string{"agent", "full", "implement", "plan", "review", "run-worker", "scout", "web", "web-worker", "work"}
 	if got := RoleNames(); !reflect.DeepEqual(got, want) {
 		t.Errorf("RoleNames() = %v, want %v", got, want)
 	}
@@ -307,6 +307,8 @@ func TestWebRoleMatrixUnderDaemon(t *testing.T) {
 		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel"}},
 		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}, []string{"check", "grep", "git"}, []string{"spawn"}},
 		{"scout", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"grep", "git"}, []string{}},
+		// Run workers keep submit with the flag off: the Run route needs it.
+		{"run-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit"}},
 	}
 	// No test in this package runs parallel and no other test enables the
 	// flag, so the default-off read here needs no save/restore.
