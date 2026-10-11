@@ -1,6 +1,9 @@
 package web
 
-import "regexp"
+import (
+	"errors"
+	"regexp"
+)
 
 // Provider failures sort by their text. The pig SDK puts a provider HTTP
 // status in its error text: at the start, after a colon or an open paren, or
@@ -106,4 +109,25 @@ func classifyCompressError(err error) compressFailure {
 		return failTransient
 	}
 	return failOther
+}
+
+// sessionLimitFailureInTurn reports whether the latest Session turn ended
+// with a provider session-limit error.
+func sessionLimitFailureInTurn(events []Event) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind == "prompt" {
+			return false
+		}
+		if e.Kind == "error" {
+			return classifyFailure(errors.New(e.Text)) == failureSessionLimit
+		}
+	}
+	return false
+}
+
+// sessionLimitCapped reports a failed Session whose latest turn hit a provider
+// session limit. Callers must hold d.mu while the Session can change.
+func sessionLimitCapped(s *session) bool {
+	return s != nil && s.meta.Status == "failed" && (s.meta.Capped || sessionLimitFailureInTurn(s.events))
 }

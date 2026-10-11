@@ -739,6 +739,7 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 	if kind == "status" && status != "" {
 		prev := s.meta.Status
 		s.meta.Status = status
+		s.meta.Capped = status == "failed" && sessionLimitFailureInTurn(s.events)
 		if prev == "working" && (status == "idle" || status == "failed") {
 			d.pushTurnDone(s.meta, status, e.Seq)
 		}
@@ -1378,7 +1379,9 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			if s.meta.Owner == "" {
 				continue
 			}
-			metas = append(metas, s.meta)
+			meta := s.meta
+			meta.Capped = sessionLimitCapped(s)
+			metas = append(metas, meta)
 			lasts[s.meta.ID] = s.last
 		}
 		d.mu.Unlock()
@@ -1509,6 +1512,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		meta := s.meta
+		meta.Capped = sessionLimitCapped(s)
 		events := append([]Event(nil), s.events...)
 		live := s.live
 		resumable, note := d.resumeViewLocked(s)

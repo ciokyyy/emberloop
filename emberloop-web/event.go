@@ -99,8 +99,11 @@ type SessionMeta struct {
 	WorkDir string `json:"workDir"`
 	// ProjectID names the recorded Project the Session belongs to, also for
 	// Subagents and Workers whose WorkDir is a worktree.
-	ProjectID string    `json:"projectId,omitempty"`
-	Status    string    `json:"status"`
+	ProjectID string `json:"projectId,omitempty"`
+	Status    string `json:"status"`
+	// Capped marks a failed turn classified as a provider session limit. It
+	// is exposed to the Session list while Status remains failed internally.
+	Capped    bool      `json:"capped,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	ParentID  string    `json:"parentId,omitempty"`
 	GroupID   string    `json:"groupId,omitempty"`

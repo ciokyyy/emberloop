@@ -13,6 +13,7 @@
     idle: 'bg-zinc-400',
     working: 'bg-blue-500 animate-pulse',
     failed: 'bg-red-500',
+    capped: 'bg-amber-500',
     ended: 'bg-zinc-600',
     needs: 'bg-amber-500',
   };
@@ -32,7 +33,9 @@
     {#if s.kind === 'run'}<Badge variant="outline" class="ml-1 px-1.5 py-0 text-[10px]">Run</Badge>{/if}
     {#if s.scout}<Badge class="ml-1 px-1.5 py-0 text-[10px]">scout</Badge>{/if}
   </span>
-  {#if s.status === 'failed'}
+  {#if s.capped}
+    <span class="shrink-0 text-xs font-medium text-amber-400">capped</span>
+  {:else if s.status === 'failed'}
     <span class="shrink-0 text-xs font-medium text-red-400">failed</span>
   {:else if s.status === 'ended' || s.status === 'done' || s.status === 'paused'}
     <span class="shrink-0 text-xs text-muted-foreground">{s.status}</span>

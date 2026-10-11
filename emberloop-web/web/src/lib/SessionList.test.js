@@ -48,6 +48,15 @@ describe('SessionList rows', () => {
     expect(row.className).not.toContain('border-amber-500/30');
   });
 
+  it('shows the capped state on a limit-failed Session row', () => {
+    const { getByRole } = mount([{ ...loose, capped: true }]);
+    const row = getByRole('button', { name: /Quota bug/ });
+    expect(row.textContent).toContain('capped');
+    expect(row.textContent).not.toContain('failed');
+    expect(row.querySelector('span.bg-amber-500')).not.toBeNull();
+    expect(row.className).not.toContain('border-amber-500/30');
+  });
+
   it('gives a needs-you row the amber treatment', () => {
     const { getByRole } = mount([{ ...loose, status: 'idle', needsYou: true }]);
     expect(getByRole('button', { name: /Quota bug/ }).className).toContain('border-amber-500/30');

@@ -40,14 +40,14 @@ export function runRow(run = {}, projects = []) {
 
 const RUN_DOT = { running: 'working', paused: 'idle', failed: 'failed', done: 'ended' };
 
-// Status dot of one row: needs, working, failed, ended or idle.
+// Status dot of one row: capped, needs, working, failed, ended or idle.
 export function dotState(row = {}) {
+  if (row.capped) return 'capped';
   if (row.needsYou || row.status === 'needs-you') return 'needs';
   if (row.kind === 'run') return RUN_DOT[row.status] ?? 'idle';
   if (row.status === 'working' || row.status === 'failed' || row.status === 'ended') return row.status;
   return 'idle';
 }
-
 // Chat filter hit: a root row or one of its Subagents matches.
 function rootMatches(root, kids, projectName, q) {
   return [root, ...(kids.get(root.id) ?? [])].some((s) => matchSession(s, projectName, q));

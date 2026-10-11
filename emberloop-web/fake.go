@@ -58,6 +58,9 @@ type FakeBackend struct {
 	// HandoffTurnErr, when set, makes a Handoff prompt report an error
 	// Event before it ever works.
 	HandoffTurnErr string
+	// TurnFailure, when non-nil, scripts a failed turn by returning its error
+	// text. The fake logs the error and failed status without an assistant reply.
+	TurnFailure func(sessionID, prompt string) string
 
 	mu       sync.Mutex
 	stop     map[string]chan struct{}
@@ -98,6 +101,13 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 		}
 	}
 	appendEvent("status", "", "working")
+	if f.TurnFailure != nil {
+		if failure := f.TurnFailure(sessionID, text); failure != "" {
+			appendEvent("error", failure, "")
+			appendEvent("status", "", "failed")
+			return
+		}
+	}
 	delay := f.Delay
 	if delay <= 0 {
 		delay = 5 * time.Millisecond

@@ -93,7 +93,7 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   the same seam; `runs_test.go` covers spec discovery and
   ticket preview at the same seam; `runs_driver_test.go` runs whole Runs
   with a fake Backend and fake git (order, cap, box ticks, dirty and conflict
-  refusals, roles); `runs_specbranch_test.go` covers spec-branch creation,
+  refusals, roles, capped Worker reminders and idle escalation); `runs_specbranch_test.go` covers spec-branch creation,
   Ticket merges, checkpoint rebase, conflict reporting and abandon cleanup;
   `runs_worktree_test.go` covers worktree identity and the read-only spec
   mirror (the direct tick helper never writes the mirror);
@@ -107,7 +107,8 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   reload with nothing spawned, pause, resume without a second Worker, and a failed Run (driver error) resuming from saved state with its Worker and error cleared (the UI shows Resume on paused, failed and needs-you Runs; Restart Run starts from zero), and
   finished Runs staying listed; `RunsView.test.js` covers the live Ticket table
   and verdict columns, plus the spec branch distance, rebase action, abandon
-  confirmation and needs-you state; `quota_test.go` covers
+  confirmation and needs-you state; `SessionList.test.js` covers Session row
+  status, including capped; `quota_test.go` covers
   `GET /api/quota` and `POST /api/quota/refresh` with local HTTP stubs for
   the opencode and Antigravity endpoints (cards, not-configured, stale
   fallback, forced refresh, Claude re-read, unknown-key 400); `pig_test.go`
@@ -711,7 +712,10 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   Reviewer Sessions start through the shared live-Session cap like every other
   Session. The row carries `reviewerSessions`, `verdicts` (verdict, at, fresh)
   and `tip` with the last refusal. The Run view also streams `warnings` (overlap
-  Events). Each Run snapshots its role Chains; the Ticket's `chain` map shows
+  Events). A Session whose latest failed turn classifies as a session limit is
+  exposed as capped; submit-gate and Run stall-reminder prompts are suppressed,
+  while it remains eligible for the normal 10-minute no-activity Needs-you
+  alert. Each Run snapshots its role Chains; the Ticket's `chain` map shows
   each active entry as one-based position, total, Backend and model.
   `runs_chain.go` advances quota, credit, auth and session-limit failures only.
   A start failure advances without a Handoff because no Session exists; a turn

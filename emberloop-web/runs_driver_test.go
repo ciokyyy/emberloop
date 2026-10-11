@@ -1234,3 +1234,75 @@ func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
 		return ticketByID(r, "01-first").State == "needs-you"
 	}, "repeat blocked becomes needs-you after restart")
 }
+
+// A provider session-limit failure is visible on the Session, skips submit and
+// stall reminders, and still reaches the Run's normal idle needs-you alert.
+func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.TurnFailure = func(_ string, prompt string) string {
+		if strings.Contains(prompt, "Implement ticket 01-first") {
+			return "session limit reached for this account"
+		}
+		return ""
+	}
+	clock := newFakeClock()
+	d := NewDaemon(tempDir(t), fb)
+	d.clock = clock.get
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	deadline := time.Now().Add(15 * time.Second)
+	var sess sessionBody
+	for {
+		sess = getSession(t, srv.URL, worker)
+		if sess.Meta.Status == "failed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker did not expose the scripted capped failure: status=%q", sess.Meta.Status)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sess.Meta.Capped {
+		t.Fatalf("failed Session capped = false, want true; meta=%+v", sess.Meta)
+	}
+	foundCap := false
+	for _, e := range sess.Events {
+		if e.Kind == "error" && strings.Contains(strings.ToLower(e.Text), "session limit") {
+			foundCap = true
+			break
+		}
+	}
+	if !foundCap {
+		t.Fatalf("capped Session has no visible session-limit error: %+v", sess.Events)
+	}
+	if prompts := workerPromptTexts(t, srv.URL, worker); len(prompts) != 1 {
+		t.Fatalf("capped Worker received %d prompts before timeout, want only its task", len(prompts))
+	}
+
+	// A capped failure is not treated as busy: after ten idle minutes the
+	// driver still raises its normal needs-you alert instead of hanging silently.
+	clock.advance(11 * time.Minute)
+	deadline = time.Now().Add(15 * time.Second)
+	for {
+		got := actionTicketByID(getActionRun(t, srv.URL, run.ID), "01-first")
+		if got.State == "needs-you" && strings.Contains(got.NeedsYou, "no worker activity for 10 minutes") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("capped Worker did not reach idle needs-you: state=%q reason=%q", got.State, got.NeedsYou)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if prompts := workerPromptTexts(t, srv.URL, worker); len(prompts) != 1 {
+		t.Fatalf("capped Worker received %d prompts after idle timeout, want only its task: %q", len(prompts), prompts)
+	}
+}

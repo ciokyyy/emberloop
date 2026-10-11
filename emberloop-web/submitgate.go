@@ -122,7 +122,11 @@ func (d *Daemon) gateTurnStatus(id string) (status string, ok bool) {
 func (d *Daemon) enforceSubmitGate(id string, be Backend, mark int64, harness string) {
 	d.mu.Lock()
 	runWorker := d.isRunWorkerLocked(id)
+	capped := sessionLimitCapped(d.sessions[id])
 	d.mu.Unlock()
+	if capped {
+		return
+	}
 	if !el.WebSubmitEnabled && !runWorker {
 		return
 	}
