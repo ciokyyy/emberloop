@@ -4,12 +4,12 @@
 
 **Blocked by:** 19, 20
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A single mention never reaches the queue; the same subject key in two Sessions on different tasks does
-- [ ] Approve creates a new rule version; edit keeps both the proposal and the final text; reject keeps the item as a label
-- [ ] Same key, same author, later date supersedes; a different author appears as a disagreement item
-- [ ] Rule text over 300 chars is refused at write, not clipped later
-- [ ] Batch approval per Session works
-- [ ] API tests cover each path with a fake clock
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A single mention never reaches the queue; the same subject key in two Sessions on different tasks does
+- [x] Approve creates a new rule version; edit keeps both the proposal and the final text; reject keeps the item as a label
+- [x] Same key, same author, later date supersedes; a different author appears as a disagreement item
+- [x] Rule text over 300 chars is refused at write, not clipped later
+- [x] Batch approval per Session works
+- [x] API tests cover each path with a fake clock
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
