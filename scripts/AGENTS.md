@@ -18,10 +18,14 @@ driver probe (two trivial tickets through `implement --driver` on a real
   herdr, killed mid-run and resumed with no second worker, printing each
   ticket's state), and the claude-effort probe (two claude Sessions, effort
   low vs max, answer the same reasoning prompt through the web Daemon;
-  prints thinking totals for a human verdict on the SDK effort option), and
-  the runs-actions probe (a 2-ticket Run through the web Daemon `/api/runs`
-  against real agents, exercising the per-ticket steer, park, retry and
-  discard routes plus the ticket table the needs-you banner reads).
+  prints thinking totals for a human verdict on the SDK effort option).
+  Live probes against the web Daemon: the runs-actions probe (a 2-ticket Run
+  through `/api/runs` against real agents, exercising the per-ticket steer,
+  park, retry and discard routes plus the ticket table the needs-you banner
+  reads), the compress probes (one script each for pig SDK, pig-over-ACP and
+  claude: each plants a fact, compresses by Handoff restart, then asks for
+  the fact from the new handle), and the Jev probe (the real decision
+  endpoint through `TestLiveJevDecider`, behind `EL_LIVE_JEV=1`).
   Each script names its prerequisites in its header comment.
 
 ## Ownership
