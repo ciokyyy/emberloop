@@ -201,10 +201,13 @@ owns its `_test.go` and the behaviour below):
 - Policy: `roles.go` (no role refuses to start; `work`, `plan`, `full`,
   `review` and `scout` serve `execute`, `implement` does not; the web
   Daemon's `web` parent, `web-worker` child and `scout` roles take their
-  Daemon tools from `tools/webproxy.go`, never the parent's full set;
-  `WebSubmitEnabled` in `toolresolve.go` (off) keeps `submit` unoffered to
-  web children while the herdr-era submit and Run submits stay; the
-  `run-worker` role (a Run ticket Worker) always serves `submit` and `spawn`), `toolresolve.go`
+  Daemon tools from `tools/webproxy.go`, never the parent's full set; `web`
+  also takes `profile` (memory://profile read, patch proposals that wait for
+  human approval, only on an explicit User request; workers, scouts and
+  Reviewers never propose); `WebSubmitEnabled` in `toolresolve.go` (off)
+  keeps `submit` unoffered to web children while the herdr-era submit and Run
+  submits stay; the `run-worker` role (a Run ticket Worker) always serves
+  `submit` and `spawn`), `toolresolve.go`
   (one role resolution over settings for the main list and execute; the served
   `read` refuses an oversized file with `bash` for roles that serve it and
   `tools.grep` in `execute` or offset/limit otherwise), `readhint.go` (that

@@ -23,6 +23,7 @@ type Fake struct {
 	rules      []Rule
 	queue      []QueueItem
 	ledger     []LedgerRow
+	profiles   []ProfileVersion
 	snaps      []time.Time
 }
 
@@ -225,6 +226,90 @@ func (f *Fake) Queue(_ context.Context) ([]QueueItem, error) {
 	return append([]QueueItem(nil), f.queue...), nil
 }
 
+func (f *Fake) GetProfile(_ context.Context) (ProfileVersion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if n := len(f.profiles); n > 0 {
+		return copyProfile(f.profiles[n-1]), nil
+	}
+	return ProfileVersion{}, nil
+}
+
+func (f *Fake) ProfileHistory(_ context.Context) ([]ProfileVersion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]ProfileVersion, 0, len(f.profiles))
+	for _, v := range f.profiles {
+		out = append(out, copyProfile(v))
+	}
+	return out, nil
+}
+
+func (f *Fake) AppendProfileVersion(_ context.Context, patch ProfilePatch, approvedBy string) (ProfileVersion, error) {
+	if strings.TrimSpace(approvedBy) == "" {
+		return ProfileVersion{}, fmt.Errorf("%w: profile needs an approver", ErrInvalid)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var current []ProfileLine
+	version := 0
+	if n := len(f.profiles); n > 0 {
+		current = f.profiles[n-1].Lines
+		version = f.profiles[n-1].Version
+	}
+	next, err := ApplyProfilePatch(current, patch)
+	if err != nil {
+		return ProfileVersion{}, err
+	}
+	if n := profileLinesBytes(next); n > MaxProfileBytes {
+		return ProfileVersion{}, fmt.Errorf("%w: profile is %d bytes, max %d: condense it to fewer, shorter lines",
+			ErrInvalid, n, MaxProfileBytes)
+	}
+	out := ProfileVersion{
+		Version:    version + 1,
+		Lines:      next,
+		Patch:      profilePatchJSON(patch),
+		ApprovedBy: approvedBy,
+		CreatedAt:  f.now(),
+	}
+	f.profiles = append(f.profiles, copyProfile(out))
+	return out, nil
+}
+
+func (f *Fake) RestoreProfileVersion(_ context.Context, version int, approvedBy string) (ProfileVersion, error) {
+	if strings.TrimSpace(approvedBy) == "" {
+		return ProfileVersion{}, fmt.Errorf("%w: profile needs an approver", ErrInvalid)
+	}
+	if version < 1 {
+		return ProfileVersion{}, fmt.Errorf("%w: profile version %d", ErrInvalid, version)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.profiles) == 0 {
+		return ProfileVersion{}, fmt.Errorf("%w: profile has no versions", ErrNotFound)
+	}
+	var src *ProfileVersion
+	for i := range f.profiles {
+		if f.profiles[i].Version == version {
+			src = &f.profiles[i]
+			break
+		}
+	}
+	if src == nil {
+		return ProfileVersion{}, fmt.Errorf("%w: profile version %d", ErrNotFound, version)
+	}
+	latest := f.profiles[len(f.profiles)-1].Version
+	out := ProfileVersion{
+		Version:    latest + 1,
+		Lines:      append([]ProfileLine(nil), src.Lines...),
+		Patch:      fmt.Sprintf(`{"restore":%d}`, version),
+		ApprovedBy: approvedBy,
+		CreatedAt:  f.now(),
+	}
+	f.profiles = append(f.profiles, copyProfile(out))
+	return out, nil
+}
+
 func (f *Fake) RecordLedger(_ context.Context, row LedgerRow) (int64, error) {
 	if row.Stage == "" || !validLedgerStatus(row.Status) {
 		return 0, fmt.Errorf("%w: ledger stage %q status %q", ErrInvalid, row.Stage, row.Status)
@@ -250,8 +335,8 @@ func (f *Fake) Ledger(_ context.Context) ([]LedgerRow, error) {
 	return append([]LedgerRow(nil), f.ledger...), nil
 }
 
-// Purge removes the selected records, then scrubs their text from queue and
-// ledger rows. The Fake keeps no snapshot files, so it purges none.
+// Purge removes the selected records, then scrubs their text from queue,
+// ledger and Profile rows. The Fake keeps no snapshot files, so it purges none.
 func (f *Fake) Purge(_ context.Context, sel Selection) (PurgeResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -301,6 +386,21 @@ func (f *Fake) Purge(_ context.Context, sel Selection) (PurgeResult, error) {
 		l.Detail, changed = scrubPlain(l.Detail, texts)
 		res.Scrubbed += boolInt(changed)
 		ledger = append(ledger, l)
+	}
+	for i := range f.profiles {
+		changed := false
+		for j := range f.profiles[i].Lines {
+			next, c := scrubPlain(f.profiles[i].Lines[j].Text, texts)
+			if c {
+				f.profiles[i].Lines[j].Text = next
+				changed = true
+			}
+		}
+		if next, c := scrubJSONText(f.profiles[i].Patch, texts); c {
+			f.profiles[i].Patch = next
+			changed = true
+		}
+		res.Scrubbed += boolInt(changed)
 	}
 	f.obs, f.rules, f.queue, f.ledger = obs, rules, queue, ledger
 	return res, nil
@@ -369,6 +469,11 @@ func copyRule(r Rule) Rule {
 	r.Anchors = append([]string(nil), r.Anchors...)
 	r.SourceObservationIDs = append([]int64(nil), r.SourceObservationIDs...)
 	return r
+}
+
+func copyProfile(v ProfileVersion) ProfileVersion {
+	v.Lines = append([]ProfileLine(nil), v.Lines...)
+	return v
 }
 
 func setOf[T comparable](vals []T) map[T]bool {

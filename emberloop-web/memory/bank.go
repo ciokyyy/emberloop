@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -407,6 +408,133 @@ func scanQueueItem(s rowScanner) (QueueItem, error) {
 	q.DecidedAt = parseTimeText(decided)
 	q.CreatedAt = parseTimeText(created)
 	return q, err
+}
+
+const profileCols = `version, lines_json, patch_json, approved_by, created_at`
+
+// GetProfile returns the latest Profile version, or Version 0 with no lines
+// when the User never saved one.
+func (b *Bank) GetProfile(ctx context.Context) (ProfileVersion, error) {
+	rows, err := queryAll(ctx, b.rdb, scanProfileVersion, `SELECT `+profileCols+`
+		FROM profile_versions ORDER BY version DESC LIMIT 1`)
+	if err != nil {
+		return ProfileVersion{}, err
+	}
+	if len(rows) == 0 {
+		return ProfileVersion{}, nil
+	}
+	return rows[0], nil
+}
+
+// ProfileHistory returns every Profile version, oldest first.
+func (b *Bank) ProfileHistory(ctx context.Context) ([]ProfileVersion, error) {
+	return queryAll(ctx, b.rdb, scanProfileVersion, `SELECT `+profileCols+`
+		FROM profile_versions ORDER BY version`)
+}
+
+// AppendProfileVersion validates patch against the latest version, refuses an
+// over-2 KB render with a condense message, and stores the next version. A
+// retired line stays stored and hidden.
+func (b *Bank) AppendProfileVersion(ctx context.Context, patch ProfilePatch, approvedBy string) (ProfileVersion, error) {
+	if strings.TrimSpace(approvedBy) == "" {
+		return ProfileVersion{}, fmt.Errorf("%w: profile needs an approver", ErrInvalid)
+	}
+	var out ProfileVersion
+	err := b.write(ctx, func(db *sql.DB) error {
+		rows, err := queryAll(ctx, db, scanProfileVersion, `SELECT `+profileCols+`
+			FROM profile_versions ORDER BY version`)
+		if err != nil {
+			return err
+		}
+		var current []ProfileLine
+		version := 0
+		if n := len(rows); n > 0 {
+			current = rows[n-1].Lines
+			version = rows[n-1].Version
+		}
+		next, err := ApplyProfilePatch(current, patch)
+		if err != nil {
+			return err
+		}
+		if n := profileLinesBytes(next); n > MaxProfileBytes {
+			return fmt.Errorf("%w: profile is %d bytes, max %d: condense it to fewer, shorter lines",
+				ErrInvalid, n, MaxProfileBytes)
+		}
+		linesDoc, err := json.Marshal(nonNilProfileLines(next))
+		if err != nil {
+			return err
+		}
+		out = ProfileVersion{
+			Version:    version + 1,
+			Lines:      next,
+			Patch:      profilePatchJSON(patch),
+			ApprovedBy: approvedBy,
+			CreatedAt:  b.now(),
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO profile_versions
+			(version, lines_json, patch_json, approved_by, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			out.Version, string(linesDoc), out.Patch, out.ApprovedBy, timeText(out.CreatedAt))
+		return err
+	})
+	return out, err
+}
+
+func nonNilProfileLines(lines []ProfileLine) []ProfileLine {
+	if lines == nil {
+		return []ProfileLine{}
+	}
+	return lines
+}
+
+// RestoreProfileVersion copies an older version's lines as the next version,
+// so any version can be restored without deleting history.
+func (b *Bank) RestoreProfileVersion(ctx context.Context, version int, approvedBy string) (ProfileVersion, error) {
+	if strings.TrimSpace(approvedBy) == "" {
+		return ProfileVersion{}, fmt.Errorf("%w: profile needs an approver", ErrInvalid)
+	}
+	if version < 1 {
+		return ProfileVersion{}, fmt.Errorf("%w: profile version %d", ErrInvalid, version)
+	}
+	var out ProfileVersion
+	err := b.write(ctx, func(db *sql.DB) error {
+		rows, err := queryAll(ctx, db, scanProfileVersion, `SELECT `+profileCols+`
+			FROM profile_versions ORDER BY version`)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return fmt.Errorf("%w: profile has no versions", ErrNotFound)
+		}
+		var src *ProfileVersion
+		for i := range rows {
+			if rows[i].Version == version {
+				src = &rows[i]
+				break
+			}
+		}
+		if src == nil {
+			return fmt.Errorf("%w: profile version %d", ErrNotFound, version)
+		}
+		latest := rows[len(rows)-1].Version
+		linesDoc, err := json.Marshal(nonNilProfileLines(src.Lines))
+		if err != nil {
+			return err
+		}
+		out = ProfileVersion{
+			Version:    latest + 1,
+			Lines:      append([]ProfileLine(nil), src.Lines...),
+			Patch:      fmt.Sprintf(`{"restore":%d}`, version),
+			ApprovedBy: approvedBy,
+			CreatedAt:  b.now(),
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO profile_versions
+			(version, lines_json, patch_json, approved_by, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			out.Version, string(linesDoc), out.Patch, out.ApprovedBy, timeText(out.CreatedAt))
+		return err
+	})
+	return out, err
 }
 
 // RecordLedger appends one nightly stage row and returns its ID.

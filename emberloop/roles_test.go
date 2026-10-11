@@ -304,7 +304,7 @@ func TestWebRoleMatrixUnderDaemon(t *testing.T) {
 		main, execute []string
 		proxies       []string
 	}{
-		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel"}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile"}},
 		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}, []string{"check", "grep", "git"}, []string{"spawn"}},
 		{"scout", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"grep", "git"}, []string{}},
 		// Run workers keep submit with the flag off: the Run route needs it.
@@ -390,7 +390,7 @@ func TestWebRoleMatrixWithSubmitEnabled(t *testing.T) {
 		main, execute []string
 		proxies       []string
 	}{
-		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel"}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile"}},
 		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit"}},
 		{"scout", []string{"read", "find", "websearch", "ctx_search", "submit", "execute"}, []string{"grep", "git"}, []string{"submit"}},
 	}

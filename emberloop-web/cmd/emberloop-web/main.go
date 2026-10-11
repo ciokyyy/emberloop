@@ -102,6 +102,8 @@ func main() {
 		}
 		return outcome, nil
 	}
+	pig.ReadProfile = d.ReadProfileForSession
+	pig.ProposeProfile = d.ProposeProfileFromSession
 	pig.SudoGate = func(sessionID string) func(context.Context, string, string) (string, bool) {
 		return tools.HTTPSudoGate(daemonURL, sessionID, d.MachineToken())
 	}

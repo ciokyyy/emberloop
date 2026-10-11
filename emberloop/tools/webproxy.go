@@ -81,6 +81,19 @@ func WebProxyTool(name string) Tool {
 			"completed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"report":    map[string]any{"type": "string"},
 		}, "status"), run: webProxySubmit}
+	case "profile":
+		return webProxy{name: "profile", desc: "Read your standing Profile (memory://profile), or propose a patch to it. A patch is add, edit or retire operations by line ID and always waits for human approval in the settings view; it never applies directly. Call propose only after the User explicitly asks to change the Profile.", schema: webProxySchema(map[string]any{
+			"action": map[string]any{"type": "string", "enum": []string{"read", "propose"}},
+			"ops": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"op": map[string]any{"type": "string"}, "id": map[string]any{"type": "string"}, "text": map[string]any{"type": "string"}, "tag": map[string]any{"type": "string"}},
+					"required":   []string{"op"},
+				},
+			},
+			"reason": map[string]any{"type": "string"},
+		}, "action"), run: webProxyProfile}
 	}
 	return nil
 }
@@ -390,6 +403,75 @@ func webProxySubmit(ctx context.Context, daemonURL, sessionID string, args json.
 		return "", fmt.Errorf("submit: %s", out.Err)
 	}
 	return fmt.Sprintf("submitted %s (submit %d)", req.Status, out.Submits), nil
+}
+
+// webProxyProfile reads memory://profile or proposes a patch to it, through
+// the same Session-bound routes the UI uses. Read returns the rendered
+// Profile (filtered for Reviewers); propose always creates a queue item for
+// human approval, never a version, and only after an explicit User request.
+func webProxyProfile(ctx context.Context, daemonURL, sessionID string, args json.RawMessage) (string, error) {
+	var req struct {
+		Action string `json:"action"`
+		Ops    []struct {
+			Op   string `json:"op"`
+			ID   string `json:"id,omitempty"`
+			Text string `json:"text,omitempty"`
+			Tag  string `json:"tag,omitempty"`
+		} `json:"ops"`
+		Reason string `json:"reason,omitempty"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return "", fmt.Errorf("profile: bad arguments")
+	}
+	switch req.Action {
+	case "read":
+		resp, err := webProxyGet(ctx, daemonURL+"/api/sessions/"+sessionID+"/profile")
+		if err != nil {
+			return "", fmt.Errorf("profile: %s", err.Error())
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Rendered string `json:"rendered"`
+			Err      string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if resp.StatusCode != http.StatusOK {
+			if out.Err == "" {
+				out.Err = fmt.Sprintf("read refused: %d", resp.StatusCode)
+			}
+			return "", fmt.Errorf("profile: %s", out.Err)
+		}
+		if strings.TrimSpace(out.Rendered) == "" {
+			return "(no profile saved)", nil
+		}
+		return out.Rendered, nil
+	case "propose":
+		if len(req.Ops) == 0 {
+			return "", fmt.Errorf("profile: ops are required to propose")
+		}
+		if strings.TrimSpace(req.Reason) == "" {
+			return "", fmt.Errorf("profile: reason is required")
+		}
+		body, _ := json.Marshal(map[string]any{"ops": req.Ops, "reason": req.Reason})
+		resp, err := webProxyPost(ctx, daemonURL+"/api/sessions/"+sessionID+"/profile/propose", "application/json", body)
+		if err != nil {
+			return "", fmt.Errorf("profile: %s", err.Error())
+		}
+		defer resp.Body.Close()
+		var out struct {
+			ID  int64  `json:"id"`
+			Err string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		if resp.StatusCode != http.StatusCreated {
+			// The Daemon answers plain-text errors on this route; the JSON
+			// decode above leaves Err empty, so read the body text instead.
+			return "", fmt.Errorf("profile: refused: %d", resp.StatusCode)
+		}
+		return fmt.Sprintf("proposed profile patch %d for human approval", out.ID), nil
+	default:
+		return "", fmt.Errorf("profile: action must be read or propose")
+	}
 }
 
 // webProxySession is the small session metadata the Daemon's session routes

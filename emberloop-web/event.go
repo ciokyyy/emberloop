@@ -105,6 +105,10 @@ type SessionMeta struct {
 	// RunWorker marks a Run ticket Worker: it runs the run-worker el role,
 	// which always serves submit.
 	RunWorker bool `json:"runWorker,omitempty"`
+	// Reviewer marks a Run Reviewer Session with its type
+	// (reviewer-spec or reviewer-standards). Reviewers get the filtered
+	// Profile: workflow and style lines only, never barred lines.
+	Reviewer string `json:"reviewer,omitempty"`
 	// Title is the short generated name the session list shows; empty
 	// keeps the harness and id label.
 	Title string `json:"title,omitempty"`

@@ -75,7 +75,7 @@ var (
 )
 
 // Memory is one User's bank. Writes never delete: edits are new Rule
-// versions, and only Purge removes rows.
+// versions and new Profile versions, and only Purge removes rows.
 type Memory interface {
 	AddObservation(ctx context.Context, o Observation) (int64, error)
 	SearchObservations(ctx context.Context, text string, limit int) ([]Observation, error)
@@ -89,6 +89,19 @@ type Memory interface {
 	Enqueue(ctx context.Context, item QueueItem) (int64, error)
 	Decide(ctx context.Context, id int64, status, decidedBy string) error
 	Queue(ctx context.Context) ([]QueueItem, error)
+
+	// GetProfile returns the latest Profile version, or Version 0 with no
+	// lines when the User never saved one.
+	GetProfile(ctx context.Context) (ProfileVersion, error)
+	// ProfileHistory returns every Profile version, oldest first.
+	ProfileHistory(ctx context.Context) ([]ProfileVersion, error)
+	// AppendProfileVersion validates patch against the latest version,
+	// refuses an over-2 KB render with a condense message, and stores the
+	// next version. A retired line stays stored and hidden.
+	AppendProfileVersion(ctx context.Context, patch ProfilePatch, approvedBy string) (ProfileVersion, error)
+	// RestoreProfileVersion copies an older version's lines as the next
+	// version, so any version can be restored without deleting history.
+	RestoreProfileVersion(ctx context.Context, version int, approvedBy string) (ProfileVersion, error)
 
 	RecordLedger(ctx context.Context, row LedgerRow) (int64, error)
 	Ledger(ctx context.Context) ([]LedgerRow, error)

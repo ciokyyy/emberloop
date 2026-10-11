@@ -147,11 +147,30 @@ the driver ticks boxes and marks done, nothing else writes them.
   Create (`startSession`), resume (`resumeReleased`) and compress (`runHandoff`)
   all call it; the fake Backend records each start it gets. Backends hold no
   identity maps: they read the role from the record they are handed, through
-  `elRoleFor`. Bank bindings join the handle with the memory engine. The
-  injection hook `memoryInjections` returns nothing until memory exists. Its
-  texts go in front of the next turn's prompt (`takeInjection` in
-  `runTurnWith`), once per start, in order: Profile, recall, then the Handoff.
-  The Event log keeps the prompt alone.
+  `elRoleFor`. `Daemon.profileBlockFor` (profile.go) leads the block with the
+  owner's Profile (Reviewers the filtered one) ahead of the `memoryInjections`
+  hook (recall, ticket 24). Its texts go in front of the next turn's prompt
+  (`takeInjection` in `runTurnWith`), once per start, in order: Profile,
+  recall, then the Handoff. The Event log keeps the prompt alone.
+- Profile (`profile.go`, `memory/profile.go`): per-User lines with stable IDs
+  in `profile_versions`; ops add, edit, retire by line ID, every version kept,
+  retire hides. `GET/PUT /api/profile`, `GET /api/profile/versions`,
+  `POST /api/profile/restore`, `GET /api/profile/queue` and
+  `POST /api/profile/queue/{id}/decide` serve the settings view (approve with
+  an optional edit, reject keeps the label); each approval appends a version
+  and a `profile_updated` Event to every Session of the owner. `GET` and
+  `POST /api/sessions/{id}/profile[/propose]` serve the agent `profile` tool
+  (memory://profile read, patch proposals that wait for approval, only on an
+  explicit User request mentioning the Profile with a reason; only top-level
+  web Sessions propose; workers, scouts, Reviewers and Run workers are
+  refused). The pig `profile` ExtraTool (`pig.go`) and the el-mcp `profile`
+  proxy (`emberloop/tools/webproxy.go`, `web` role only) share that gate.
+  Tags are workflow, style or other; workflow and style go to Reviewers
+  (`SessionMeta.reviewer`, set on Run Reviewer start), never barred lines
+  (expertise or review-bar phrases stay `other`). Over-2 KB renders are
+  refused with a condense message. `profile_test.go` covers cap, versions,
+  retire, filter, queue and Events at the Daemon seam; `ProfileSettings.svelte`
+  with `ProfileSettings.test.js` covers the settings view.
 - `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
   compress model is unset or unauthed. Else `runHandoff` writes the body

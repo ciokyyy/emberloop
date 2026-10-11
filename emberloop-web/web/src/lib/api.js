@@ -148,6 +148,40 @@ export const putSettings = (body) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }).then(json);
+
+// Profile: per-User standing instructions. GET reads the latest version with
+// its rendered text; PUT appends a version from line-ID'd ops (add, edit,
+// retire); versions lists every version; restore copies one as a new
+// version; queue lists profile_patch proposals and decide approves (with an
+// optional edit) or rejects them. Every approval writes a profile_updated
+// Event to the owner's Sessions.
+export const getProfile = () => fetch(url('/api/profile')).then(json);
+
+export const putProfile = (ops) =>
+  fetch(url('/api/profile'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ops }),
+  }).then(json);
+
+export const getProfileVersions = () => fetch(url('/api/profile/versions')).then(json);
+
+export const restoreProfile = (version) =>
+  fetch(url('/api/profile/restore'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version }),
+  }).then(json);
+
+export const getProfileQueue = () => fetch(url('/api/profile/queue')).then(json);
+
+export const decideProfileQueue = (id, status, ops = null) =>
+  fetch(url(`/api/profile/queue/${id}/decide`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ops ? { status, ops } : { status }),
+  }).then(json);
+
 export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURIComponent(repo)}`)).then(json);
 
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);

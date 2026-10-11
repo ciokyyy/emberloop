@@ -17,6 +17,8 @@ import (
 	"github.com/MichaelKinsy/PiG/agent"
 	"github.com/MichaelKinsy/PiG/ai"
 	"github.com/MichaelKinsy/PiG/coding"
+
+	"example.com/emberloop-web/memory"
 )
 
 // PigBackend drives pig through the embedded Go SDK (pinned in go.mod).
@@ -51,6 +53,14 @@ type PigBackend struct {
 	// CancelChild stops one Subagent of the calling Session. The Daemon
 	// wires it to its CancelChild; nil keeps Sessions cancel-free.
 	CancelChild func(parentID, childID string, kill bool) (string, error)
+	// ReadProfile reads the Session owner's Profile (memory://profile).
+	// The Daemon wires it to its ReadProfileForSession; nil hides the read.
+	ReadProfile func(sessionID string) (string, error)
+	// ProposeProfile enqueues a Profile patch for human approval. The Daemon
+	// wires it to its ProposeProfileFromSession; nil hides the propose.
+	// It always creates a queue item, never a Profile version, and only on
+	// an explicit User request mentioning the Profile.
+	ProposeProfile func(sessionID string, patch memory.ProfilePatch, reason string) (int64, error)
 	// SudoGate builds the per-Session gate that routes sudo bash commands to
 	// user approval; nil runs them unasked.
 	SudoGate func(sessionID string) func(ctx context.Context, root, command string) (string, bool)
@@ -94,9 +104,11 @@ func NewPigBackend(extra ...agent.AgentTool) *PigBackend {
 // sessionTools is the stripped loadout for one Session: the configured
 // ExtraTools plus the Daemon tools its el role serves (elRoleFor), bound to
 // this Session's id, so the Daemon knows the parent of anything it spawns,
-// messages, peeks at or stops. Web gets spawn, steer, check and cancel;
-// web-worker and run-worker get spawn (run-worker also submit); scouts keep
-// the ExtraTools alone: nothing they call can write, and they have no children.
+// messages, peeks at or stops. Web gets spawn, steer, check, cancel and
+// profile; web-worker and run-worker get spawn (run-worker also submit);
+// scouts keep the ExtraTools alone: nothing they call can write, and they
+// have no children. Workers, scouts and Reviewers get recall only (ticket
+// 18); only top-level Sessions propose Profile patches.
 func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -128,6 +140,11 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 		}
 		if b.CancelChild != nil {
 			tools = append(tools, &cancelAgentTool{parent: meta.ID, cancel: b.CancelChild})
+		}
+		// Reviewers get the filtered Profile by injection only; they never
+		// propose patches.
+		if !isReviewerSession(meta) && (b.ReadProfile != nil || b.ProposeProfile != nil) {
+			tools = append(tools, &profileAgentTool{session: meta.ID, read: b.ReadProfile, propose: b.ProposeProfile})
 		}
 	}
 	return tools
@@ -355,6 +372,88 @@ func (t *cancelAgentTool) Execute(_ context.Context, _ string, params json.RawMe
 }
 func (t *cancelAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
 
+// profileAgentTool is the Daemon profile tool as a pig ExtraTool. One
+// instance serves one top-level Session: read returns memory://profile, and
+// propose enqueues a patch for human approval. It never writes a version
+// itself, and only runs after an explicit User request mentioning the
+// Profile; workers, scouts and Reviewers never see it.
+type profileAgentTool struct {
+	session string
+	read    func(sessionID string) (string, error)
+	propose func(sessionID string, patch memory.ProfilePatch, reason string) (int64, error)
+}
+
+func (t *profileAgentTool) Name() string  { return "profile" }
+func (t *profileAgentTool) Label() string { return "read or propose profile" }
+func (t *profileAgentTool) Schema() ai.ToolSchema {
+	return ai.ToolSchema{
+		Name:        t.Name(),
+		Description: "Read your standing Profile (memory://profile), or propose a patch to it. A patch is add, edit or retire operations by line ID and always waits for human approval in the settings view; it never applies directly. Call propose only after the User explicitly asks to change the Profile.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"read", "propose"}},
+				"ops": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"op":   map[string]any{"type": "string"},
+							"id":   map[string]any{"type": "string"},
+							"text": map[string]any{"type": "string"},
+							"tag":  map[string]any{"type": "string"},
+						},
+						"required": []string{"op"},
+					},
+				},
+				"reason": map[string]any{"type": "string"},
+			},
+			"required": []string{"action"},
+		},
+	}
+}
+func (t *profileAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
+	var req struct {
+		Action string              `json:"action"`
+		Ops    []memory.ProfileOp `json:"ops"`
+		Reason string             `json:"reason"`
+	}
+	if err := json.Unmarshal(params, &req); err != nil || (req.Action != "read" && req.Action != "propose") {
+		return agent.AgentToolResult{}, fmt.Errorf("profile: action must be read or propose")
+	}
+	if req.Action == "read" {
+		if t.read == nil {
+			return agent.AgentToolResult{}, fmt.Errorf("profile: read is not available")
+		}
+		text, err := t.read(t.session)
+		if err != nil {
+			return agent.AgentToolResult{}, err
+		}
+		if text == "" {
+			text = "(no profile saved)"
+		}
+		return agent.AgentToolResult{
+			Content: []ai.ToolResultMessageContent{ai.TextContent{Text: text}},
+		}, nil
+	}
+	if t.propose == nil {
+		return agent.AgentToolResult{}, fmt.Errorf("profile: propose is not available")
+	}
+	if len(req.Ops) == 0 {
+		return agent.AgentToolResult{}, fmt.Errorf("profile: ops are required to propose")
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		return agent.AgentToolResult{}, fmt.Errorf("profile: reason is required")
+	}
+	id, err := t.propose(t.session, memory.ProfilePatch{Ops: req.Ops}, req.Reason)
+	if err != nil {
+		return agent.AgentToolResult{}, err
+	}
+	return agent.AgentToolResult{
+		Content: []ai.ToolResultMessageContent{ai.TextContent{Text: fmt.Sprintf("proposed profile patch %d for human approval", id)}},
+	}, nil
+}
+func (t *profileAgentTool) ExecutionMode() agent.ToolExecutionMode { return agent.ToolModeSequential }
 func (t *spawnAgentTool) Execute(_ context.Context, _ string, params json.RawMessage, _ agent.ToolUpdateCallback) (agent.AgentToolResult, error) {
 	var req struct {
 		Agents  []SpawnAgent `json:"agents"`

@@ -9,6 +9,7 @@
   import Combobox from './ui/combobox.svelte';
   import Notifications from './Notifications.svelte';
   import InstallApp from './InstallApp.svelte';
+  import ProfileSettings from './ProfileSettings.svelte';
   import SoundSettings from './SoundSettings.svelte';
   import VoiceSettings from './VoiceSettings.svelte';
   let { onBack = () => {}, admin = false } = $props();
@@ -254,6 +255,7 @@
             </div>
           </div>
         </section>
+        <ProfileSettings />
         <Notifications />
         <InstallApp />
         <SoundSettings />

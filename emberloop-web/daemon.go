@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"example.com/emberloop-web/memory"
 )
 
 // Backend drives one harness behind the Daemon. The fake Backend replays
@@ -101,6 +103,11 @@ type Daemon struct {
 	// sudo holds the pending and settled sudo approval requests (sudo.go).
 	sudoOnce sync.Once
 	sudo     *sudoStore
+	// memEng is the per-User memory engine (profile.go). memMu guards lazy
+	// open; the engine guards its own banks. Separate from mu so resume and
+	// compress paths that hold mu can still read the Profile.
+	memMu  sync.Mutex
+	memEng *memory.Engine
 	// restartCh fires once after RequestRestart; the binary waits on it,
 	// drains and re-executes. restartReq guards repeats (restart.go).
 	restartCh  chan struct{}
@@ -255,6 +262,11 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/models", d.handleModels)
 	mux.HandleFunc("/api/settings", d.handleSettings)
 	mux.HandleFunc("/api/stt", d.handleSTT)
+	mux.HandleFunc("/api/profile", d.handleProfile)
+	mux.HandleFunc("/api/profile/versions", d.handleProfileVersions)
+	mux.HandleFunc("/api/profile/restore", d.handleProfileRestore)
+	mux.HandleFunc("/api/profile/queue", d.handleProfileQueue)
+	mux.HandleFunc("/api/profile/queue/", d.handleProfileQueueSub)
 	mux.HandleFunc("/api/sessions", d.handleSessions)
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	mux.HandleFunc("/api/specs", d.handleSpecs)
@@ -384,6 +396,12 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		meta.ProjectID = d.projectIDForPath(meta.WorkDir)
 	}
 	h := startHandle(meta, handleCreate)
+	// The Profile leads the injection block: owner Sessions, Subagents and
+	// scouts all carry it, Reviewers the filtered one. A missing engine or
+	// an empty Profile injects nothing and never blocks the start.
+	if pb := d.profileBlockFor(meta); len(pb) > 0 {
+		h.inject = append(pb, h.inject...)
+	}
 	dirs, err := d.ownerDirsFor(meta.Owner)
 	if err != nil {
 		return nil, &startError{code: http.StatusInternalServerError, msg: err.Error(), asJSON: true}
@@ -825,7 +843,12 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 		d.starting--
 		if cur, ok := d.sessions[id]; ok && !cur.live {
 			cur.live = true
-			cur.inject = startHandle(cur.meta, handleResume).inject
+			// Resume injects the Profile only (recall is create-time).
+			rh := startHandle(cur.meta, handleResume)
+			if pb := d.profileBlockFor(cur.meta); len(pb) > 0 {
+				rh.inject = append(pb, rh.inject...)
+			}
+			cur.inject = rh.inject
 			if tok := be.ResumeToken(id); tok != "" {
 				cur.meta.ResumeToken = tok
 			}
@@ -1445,6 +1468,10 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		d.handleSessionImageFile(w, r, id, strings.TrimPrefix(sub, "images/"))
 	case sub == "events" && r.Method == "GET":
 		d.serveEvents(w, r, id)
+	case sub == "profile" && r.Method == "GET":
+		d.handleSessionProfile(w, r, id)
+	case sub == "profile/propose" && r.Method == "POST":
+		d.handleSessionProfilePropose(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}

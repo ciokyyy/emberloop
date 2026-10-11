@@ -1270,6 +1270,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		CreatedAt: time.Now().UTC(),
 		ParentID:  runID,
 		Owner:     owner,
+		Reviewer:  reviewerType,
 	}
 	var be Backend
 	be, serr := d.startSession(meta)
