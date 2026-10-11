@@ -4,7 +4,7 @@
 
 **Blocked by:** find-graph-index (07)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Descriptions and prompts updated
 - [x] Measurement script prints call counts for the replayed patterns
