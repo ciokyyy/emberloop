@@ -168,13 +168,16 @@ the driver ticks boxes and marks done, nothing else writes them.
   all call it; the fake Backend records each start it gets. Backends hold no
   identity maps: they read the role from the record they are handed, through
   `elRoleFor`. `Daemon.profileBlockFor` (profile.go) leads the block with the
-  owner's Profile (Reviewers the filtered one) ahead of the `memoryInjection`
-  hook (recall, ticket 24), and records its version for the injection Event.
-  Its texts go in front of the next turn's prompt (`takeInjection` in
+  owner's Profile (Reviewers the filtered one) ahead of recall
+  (`recall_inject.go`), and records its version for the injection Event. Its
+  texts go in front of the next turn's prompt (`takeInjection` in
   `runTurnWith`), once per start, in order: Profile, recall, then the
   Handoff. The Event log keeps the prompt alone. Texts, Profile version and
   Rule refs travel as one `injection` value so the injection Event
-  (`injection.go`) always describes exactly what the model saw.
+  (`injection.go`) always describes exactly what the model saw. `session.injectOp`
+  marks which start set the bundle (create builds recall, resume carries the
+  Profile only, compress already carries recall); `memoryInjection` stays empty
+  in prod for tests to simulate texts.
 - Profile (`profile.go`, `memory/profile.go`): per-User lines with stable IDs
   in `profile_versions`; ops add, edit, retire by line ID, every version kept,
   retire hides; restore copies an old version as new (the version-safe revert).
@@ -226,6 +229,22 @@ the driver ticks boxes and marks done, nothing else writes them.
   payloads, limits (including concurrency), roles, cross-User banks, the command
   on every path with its invalid and remainder cases, and recall isolation at
   the Daemon seam; `Composer.test.js` covers the button.
+- Auto-recall injection (`recall_inject.go`): at create and compress the Daemon
+  builds Profile plus recall from the task prompt (the Handoff text for
+  compress) through `recallBlockFor`: bank `Recall` (20 candidates, `Redact`ed
+  query) plus `ApplyVerification` (dormant marked, parked and over-300 skipped),
+  Project notes via `RecallNotes`, fused by `FuseRecall` (k=60), an optional
+  `relevant` Decider (`recallDecider`, 1500 ms budget, FTS5 order on timeout or
+  error, `ForDecider` redaction), cut to 5 hits of at most 300 chars
+  (`truncateRunes` for notes) and fenced as untrusted notes with `FlagNote`
+  verify flags. `Query` gives identifiers, paths and rare terms; empty query
+  injects the Profile only. Create builds synchronously in `routeLiveOpt` and
+  `spawnFrom` (the spawn answers after recall) and compress in `runHandoff`;
+  `runTurnWith` keeps the fallback for Run Workers. Resume carries the Profile
+  only. Engine failure posts a `notice` Event and the turn still runs.
+  `recall_inject_test.go` covers order, fence, Events, empty query, caps,
+  flags, dormancy, notes merge, identifiers, Decider fallback, resume,
+  Reviewer filter, engine notice and compress.
 - `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK,
   pig-over-ACP and claude Backends; grok reuses the same swap):
   `POST .../compress` answers 409 with the reason from `compressNote` while the

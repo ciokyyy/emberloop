@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -204,8 +205,26 @@ func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAge
 		d.appendEvent(parentID, "subagent_spawned", string(raw), "")
 	}
 	// Launch each first prompt like an idle send: busy and active under
-	// the lock, the turn on its own goroutine.
+	// the lock, the turn on its own goroutine. Recall builds synchronously
+	// from the spawn prompt before each launch, so the spawn answers after
+	// recall and a status poller never sees idle during it.
 	for i, s := range okStarts {
+		if rb, refs, err := d.recallBlockFor(context.Background(), s.meta, agents[i].Prompt); err != nil {
+			d.appendNoticeEvent(s.meta.ID, "memory recall skipped: "+err.Error())
+		} else if len(rb) > 0 {
+			d.mu.Lock()
+			if cs, ok := d.sessions[s.meta.ID]; ok {
+				cs.inject.appendRecall(rb, refs)
+				cs.injectOp = handleResume
+			}
+			d.mu.Unlock()
+		} else {
+			d.mu.Lock()
+			if cs, ok := d.sessions[s.meta.ID]; ok {
+				cs.injectOp = handleResume
+			}
+			d.mu.Unlock()
+		}
 		d.mu.Lock()
 		if cs, ok := d.sessions[s.meta.ID]; ok {
 			cs.busy = true

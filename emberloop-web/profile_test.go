@@ -353,7 +353,10 @@ func TestProfileInjectedIntoSubagentsAndScouts(t *testing.T) {
 	if !strings.Contains(got[len(got)-1], profilePreamble) || !strings.Contains(got[len(got)-1], "```memory") {
 		t.Fatalf("parent prompt = %q, want preamble and fence", got[len(got)-1])
 	}
-	// Workers and scouts inherit the owner's Profile.
+	// Workers and scouts inherit the owner's Profile. Their first turns run
+	// on their own goroutines after the spawn answers, and recall adds a beat
+	// before the backend prompt, so poll for the prompts instead of assuming
+	// they landed during the status wait.
 	_ = d
 	child := spawnOne(t, base, parent, "worker job")
 	waitStatus(t, base, child, "idle", 10*time.Second)

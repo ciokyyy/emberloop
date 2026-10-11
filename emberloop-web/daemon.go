@@ -160,6 +160,10 @@ type session struct {
 	// inject holds the memory bundle the next turn carries ahead of its
 	// prompt (handle.go). A fresh handle sets it; the first turn takes it.
 	inject injection
+	// injectOp is the handle op that set inject: create builds fresh recall
+	// from the prompt, resume carries the Profile only, compress already
+	// carries fresh recall from the Handoff.
+	injectOp handleOp
 }
 
 // queuedMsg is one not-yet-delivered message. Mode is prompt, steer or
@@ -449,8 +453,8 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 			return nil, &startError{code: http.StatusBadRequest, msg: err.Error()}
 		}
 		d.mu.Lock()
-		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject}
-
+		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject, injectOp: handleCreate}
+	
 		d.persistMeta(meta)
 		d.starting--
 		d.mu.Unlock()
@@ -460,7 +464,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	// are connected before the first prompt can go out. The Session
 	// publishes live to hold its cap slot while it starts.
 	d.mu.Lock()
-	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject}
+	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject, injectOp: handleCreate}
 
 	d.persistMeta(meta)
 	cb := d.claude
@@ -855,6 +859,7 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 				rh.inject.prepend(pb, pv)
 			}
 			cur.inject = rh.inject
+			cur.injectOp = handleResume
 			if tok := be.ResumeToken(id); tok != "" {
 				cur.meta.ResumeToken = tok
 			}
@@ -1076,9 +1081,32 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		d.mu.Unlock()
 		return sendResult{queued: true, position: pos}, http.StatusAccepted
 	}
+	// Immediate first turns (create) build recall synchronously from the task
+	// prompt before the turn launches: the request returns after recall, so a
+	// status poller never sees idle during recall. Resume turns carry the
+	// Profile only; compress turns already carry recall from the Handoff.
+	// Queued messages (above) never trigger recall.
+	needRecall := s.injectOp == handleCreate
+	recallMeta := s.meta
 	s.busy = true
 	s.active++
+	if needRecall {
+		// Mark the op consumed so the turn skips its fallback recall; the
+		// block is merged below after the bank work.
+		s.injectOp = handleResume
+	}
 	d.mu.Unlock()
+	if needRecall {
+		if rb, refs, err := d.recallBlockFor(context.Background(), recallMeta, text); err != nil {
+			d.appendNoticeEvent(id, "memory recall skipped: "+err.Error())
+		} else if len(rb) > 0 {
+			d.mu.Lock()
+			if cur, ok := d.sessions[id]; ok {
+				cur.inject.appendRecall(rb, refs)
+			}
+			d.mu.Unlock()
+		}
+	}
 	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs, from)
 	d.maybeTitle(id, text)
 	if be != nil {
@@ -1154,7 +1182,24 @@ func (d *Daemon) runTurn(id string, be Backend, text string, images []Image) {
 func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image, handoff bool, tap func(kind, text, status string)) {
 	mark, harness, gated := d.gateBaseline(id)
 	gated = gated && !handoff
-	in := d.takeInjection(id)
+	in, op := d.takeInjection(id)
+	// Create turns build fresh recall from the task prompt: the Profile came
+	// with the handle, the Rules come now that the prompt is known. An empty
+	// prompt injects the Profile only. Resume turns carry the Profile only;
+	// compress turns already carry fresh recall from the Handoff.
+	if !handoff && op == handleCreate {
+		d.mu.Lock()
+		meta := SessionMeta{}
+		if s, ok := d.sessions[id]; ok {
+			meta = s.meta
+		}
+		d.mu.Unlock()
+		if rb, refs, err := d.recallBlockFor(context.Background(), meta, text); err != nil {
+			d.appendNoticeEvent(id, "memory recall skipped: "+err.Error())
+		} else if len(rb) > 0 {
+			in.appendRecall(rb, refs)
+		}
+	}
 	if !in.empty() {
 		d.appendInjectionEvent(id, in.profile, in.refs)
 		if block := in.block(); block != "" {
@@ -1785,7 +1830,7 @@ func (d *Daemon) load() {
 		if key == "" {
 			key = id
 		}
-		d.sessions[key] = &session{meta: meta, events: events, notify: make(chan struct{}), last: meta.CreatedAt}
+		d.sessions[key] = &session{meta: meta, events: events, notify: make(chan struct{}), last: meta.CreatedAt, injectOp: handleResume}
 		if len(events) > 0 {
 			d.sessions[key].last = events[len(events)-1].CreatedAt
 		}

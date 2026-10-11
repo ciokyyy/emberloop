@@ -210,6 +210,7 @@ func summaryDaemon(t *testing.T, replies ...string) (*Daemon, *scriptedSummarize
 	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
 	// The idle status lands just before the turn's busy flag clears; wait
 	// for the release so a compress right after never meets a working turn.
+	// The release also waits out recall, which runs before the Backend turn.
 	waitReleased(t, d, id)
 	return d, sum, srv.URL, id
 }

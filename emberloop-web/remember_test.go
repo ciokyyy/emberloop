@@ -177,6 +177,10 @@ func TestRememberRateLimitRefused(t *testing.T) {
 // Reviewers are refused, while every role keeps recall.
 func TestRememberRolesRefusedRecallAllowed(t *testing.T) {
 	d, base, parent, _ := rememberDaemon(t)
+	// The role check needs five live Sessions at once; the default cap is
+	// three, and recall adds a beat before each first turn releases, so lift
+	// the cap for the test.
+	d.maxRunning = 10
 	runPrompt(t, base, parent, "parent task uses tabs everywhere")
 	worker := spawnOne(t, base, parent, "worker job")
 	waitStatus(t, base, worker, "idle", 10*time.Second)

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -269,8 +270,16 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	emit := func(kind, text, status string) { d.appendEvent(id, kind, text, status) }
 	h := startHandle(meta, handleCompress)
 	// Compress behaves like create: Profile, fresh recall, then the Handoff.
+	// The recall query is the Handoff's task text, so the new handle starts
+	// with the Rules the continued work needs. A missing or failing engine
+	// posts a notice and the Handoff still runs.
 	if pb, pv := d.profileBlockFor(meta); len(pb) > 0 {
 		h.inject.prepend(pb, pv)
+	}
+	if rb, refs, err := d.recallBlockFor(context.Background(), meta, text); err != nil {
+		d.appendNoticeEvent(id, "memory recall skipped: "+err.Error())
+	} else if len(rb) > 0 {
+		h.inject.appendRecall(rb, refs)
 	}
 	var token string
 	var release func()
@@ -297,6 +306,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 		cur.meta.CompressBlock = ""
 		d.persistMeta(cur.meta)
 		cur.inject = h.inject
+		cur.injectOp = handleCompress
 	}
 	d.mu.Unlock()
 	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: model, Fallback: res.fallback, Retries: res.retries, TransientRetries: res.transient, StartRetries: startRetries, Error: res.err}.text(), "")
