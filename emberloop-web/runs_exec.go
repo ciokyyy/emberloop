@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -76,7 +77,9 @@ var requiredReviewerTypes = []string{reviewerStandardsType, reviewerSpecType}
 // commands it ran. Report keeps the rendered `file:line severity: problem`
 // lines for the refusal text; Findings keeps them structured for the rounds;
 // Ran keeps the `ran` commands with exit codes from the submit tool, so a
-// pass without evidence stays visible. A pass at an older tip is stale and
+// pass without evidence stays visible. PatchID is the `git patch-id` of the
+// diff against the base at At, so a rebase with an identical diff reuses the
+// verdict without a new Reviewer turn. A pass at an older tip is stale and
 // does not count.
 type storedReview struct {
 	Verdict  string          `json:"verdict"`
@@ -84,6 +87,7 @@ type storedReview struct {
 	Report   string          `json:"report,omitempty"`
 	Findings []ReviewFinding `json:"findings,omitempty"`
 	Ran      []ReviewRan     `json:"ran,omitempty"`
+	PatchID  string          `json:"patchId,omitempty"`
 }
 
 // savedRow is one Ticket's driver row as the Run file keeps it: the state
@@ -348,6 +352,64 @@ func runGitCommitDone(dir, rel, workerID string) (string, error) {
 		err = fmt.Errorf("git commit %s failed: %w: %s", rel, err, strings.TrimSpace(out))
 	}
 	return out, err
+}
+
+// reviewPatchIDFor returns the `git patch-id` of the diff of tip against its
+// base: the merge-base with the ticket's target branch, or the recorded base
+// when detached. Empty when it cannot be computed (missing tip, no base, an
+// empty diff or any git failure); callers then degrade to tip equality, so a
+// missing patch id never blocks or reuses on its own. It locks only to read
+// the run state; the git calls run unlocked.
+func (d *Daemon) reviewPatchIDFor(runID, ticketID, tip string) string {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	var repo, target, recorded string
+	if ok {
+		repo = rs.Repo
+		target = rs.Targets[ticketID]
+		recorded = rs.Bases[ticketID]
+	}
+	d.mu.Unlock()
+	if !ok || repo == "" || tip == "" {
+		return ""
+	}
+	base := recorded
+	if target != "" {
+		if mb, err := runGit(repo, "merge-base", target, tip); err == nil && mb != "" {
+			base = mb
+		} else if base == "" {
+			return ""
+		}
+	}
+	if base == "" || base == tip {
+		return ""
+	}
+	return gitPatchID(repo, base, tip)
+}
+
+// gitPatchID pipes `git diff base tip` into `git patch-id` and returns the
+// patch id. Empty on any failure or empty diff.
+func gitPatchID(repo, base, tip string) string {
+	diff := exec.Command("git", "diff", base, tip)
+	diff.Dir = repo
+	raw, err := diff.Output()
+	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	for _, args := range [][]string{{"patch-id", "--stable"}, {"patch-id"}} {
+		patch := exec.Command("git", args...)
+		patch.Dir = repo
+		patch.Stdin = bytes.NewReader(raw)
+		out, err := patch.Output()
+		if err != nil {
+			continue
+		}
+		if fields := strings.Fields(strings.TrimSpace(string(out))); len(fields) > 0 {
+			return fields[0]
+		}
+		return ""
+	}
+	return ""
 }
 
 // handleRuns serves the Run collection: list Runs, or start one.
@@ -948,11 +1010,12 @@ func removeReviewPendingTip(rs *runState, ticketID, reviewerType, tip string) {
 
 // storeReviewerVerdictLocked records one reviewer verdict at its tip: the
 // Reviews entry, the round that prompted the tip, and the owed-prompt queue
-// cleanup. It returns the re-prompt text when the verdict is already stale
-// at birth and the reviewer must judge the current tip, else "". Callers
-// hold d.mu. The verdict is always recorded, even stale: staleness only
-// decides whether it counts toward the gate.
-func storeReviewerVerdictLocked(rs *runState, ticketID, reviewerType string, sub ReviewerSubmit, cur string, now time.Time) string {
+// cleanup. patchID is the verdict tip's diff patch id against the base,
+// computed by the caller without the lock. It returns the re-prompt text when
+// the verdict is already stale at birth and the reviewer must judge the
+// current tip, else "". Callers hold d.mu. The verdict is always recorded,
+// even stale: staleness only decides whether it counts toward the gate.
+func storeReviewerVerdictLocked(rs *runState, ticketID, reviewerType string, sub ReviewerSubmit, cur, patchID string, now time.Time) string {
 	verdict := strings.ToLower(strings.TrimSpace(sub.Verdict))
 	tip := strings.TrimSpace(sub.Tip)
 	if rs.Reviews == nil {
@@ -968,6 +1031,7 @@ func storeReviewerVerdictLocked(rs *runState, ticketID, reviewerType string, sub
 		Report:   report,
 		Findings: append([]ReviewFinding(nil), sub.Findings...),
 		Ran:      append([]ReviewRan(nil), sub.Ran...),
+		PatchID:  patchID,
 	}
 	if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
 		idx := -1
@@ -1036,8 +1100,8 @@ func markReviewSeenLocked(rs *runState, ticketID, reviewerType string, lastPromp
 // two paths cannot drift: a new submit Event is appended only by the route,
 // whose tool call arrived over HTTP rather than the Event log. Callers hold
 // d.mu. It returns the stale-at-birth retell, "" when fresh.
-func recordReviewerToolVerdictLocked(d *Daemon, rs *runState, id, ticketID, reviewerType string, sub ReviewerSubmit, cur string, now time.Time, lastPrompt int64) string {
-	retell := storeReviewerVerdictLocked(rs, ticketID, reviewerType, sub, cur, now)
+func recordReviewerToolVerdictLocked(d *Daemon, rs *runState, id, ticketID, reviewerType string, sub ReviewerSubmit, cur, patchID string, now time.Time, lastPrompt int64) string {
+	retell := storeReviewerVerdictLocked(rs, ticketID, reviewerType, sub, cur, patchID, now)
 	markReviewSeenLocked(rs, ticketID, reviewerType, lastPrompt)
 	rec := d.submits[id]
 	if rec == nil {
@@ -1136,6 +1200,7 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 			return
 		}
 		cur, _ := runGit(repo, "rev-parse", branch)
+		patchID := d.reviewPatchIDFor(runID, ticketID, strings.TrimSpace(sub.Tip))
 		now := time.Now().UTC()
 		d.mu.Lock()
 		rs, ok := d.runs[runID]
@@ -1143,7 +1208,7 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 			d.mu.Unlock()
 			return
 		}
-		retell := recordReviewerToolVerdictLocked(d, rs, id, ticketID, typ, sub, cur, now, lastPrompt)
+		retell := recordReviewerToolVerdictLocked(d, rs, id, ticketID, typ, sub, cur, patchID, now, lastPrompt)
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 		d.mu.Unlock()
@@ -1232,7 +1297,20 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 		tip = cur
 	}
 	report := reviewReport(parsed.Findings)
-	rs.Reviews[ticketID][typ] = storedReview{Verdict: parsed.Verdict, At: tip, Report: report, Findings: append([]ReviewFinding(nil), parsed.Findings...)}
+	// The patch id anchors the short-circuit: a rebase with an identical
+	// diff reuses this verdict. The base reads from the locked run state;
+	// the git calls never touch d.mu, so holding it here only stalls.
+	patchID := ""
+	base := rs.Bases[ticketID]
+	if target := rs.Targets[ticketID]; target != "" {
+		if mb, merr := runGit(repo, "merge-base", target, tip); merr == nil && mb != "" {
+			base = mb
+		}
+	}
+	if base != "" && base != tip {
+		patchID = gitPatchID(repo, base, tip)
+	}
+	rs.Reviews[ticketID][typ] = storedReview{Verdict: parsed.Verdict, At: tip, Report: report, Findings: append([]ReviewFinding(nil), parsed.Findings...), PatchID: patchID}
 	// Fill the round that prompted this tip.
 	if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
 		idx := -1
@@ -1332,10 +1410,13 @@ func popReviewPending(rs *runState, ticketID, reviewerType string) string {
 
 // appendRoundLocked starts the ticket's next review round at tip, closing
 // the previous open round. Passes at the same tip carry as held entries
-// (heldFromRound) instead of a rerun; their types need no new prompt.
-// Callers hold d.mu. It returns the new round number and the types still
-// needing a prompt.
-func appendRoundLocked(rs *runState, ticketID, tip string, now time.Time) (int, map[string]bool) {
+// (heldFromRound) instead of a rerun; their types need no new prompt. reuse
+// names the types whose verdict the driver reuses without a Reviewer turn
+// (same tip, or a patch-identical rebase): they carry as held entries from
+// the previous round whatever their verdict, and need no new prompt even
+// when the previous round holds no entry for them. Callers hold d.mu. It
+// returns the new round number and the types still needing a prompt.
+func appendRoundLocked(rs *runState, ticketID, tip string, now time.Time, reuse map[string]bool) (int, map[string]bool) {
 	if rs.Rounds == nil {
 		rs.Rounds = map[string][]ticketRound{}
 	}
@@ -1357,11 +1438,29 @@ func appendRoundLocked(rs *runState, ticketID, tip string, now time.Time) (int, 
 				}
 			}
 		}
+		for typ := range reuse {
+			if _, ok := rd.Reviews[typ]; ok {
+				continue
+			}
+			if prevRv, ok := prev.Reviews[typ]; ok && prevRv.Verdict != "" {
+				held := prev.N
+				rd.Reviews[typ] = roundReview{Verdict: prevRv.Verdict, Findings: append([]ReviewFinding(nil), prevRv.Findings...), HeldFromRound: &held, At: tip}
+			}
+		}
 	}
 	for _, typ := range requiredReviewerTypes {
+		if reuse[typ] {
+			continue
+		}
 		if _, ok := rd.Reviews[typ]; !ok {
 			need[typ] = true
 		}
+	}
+	// A round no type needs a prompt for is complete at birth: every
+	// verdict is reused, so no judgement is in flight and the finish may
+	// tell a reused `changes` instead of waiting under review.
+	if len(need) == 0 {
+		rd.EndedAt = &now
 	}
 	// A new round is a new attempt: types needing a prompt get their one
 	// format re-prompt back.
@@ -1398,15 +1497,22 @@ func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
 
 // ensureReviewers spawns the Ticket's two persistent Reviewer Sessions once
 // its Worker submitted done, and re-prompts them when the Worker submits
-// done again, so they keep their context across Passes. Each prompt queues
-// its tip as owed; a verdict answers the oldest queued tip, so a Worker
-// commit between prompts never lets a T1 judgement read fresh at T2. It
-// spawns nothing before the first done submit. A refused live-Session cap
-// leaves the missing reviewers for the next pass, which retries, as does a
-// branch tip it cannot read. Reviewer starts never fail the Run: the driver
-// keeps polling and the next pass tries again. The submit route runs this
-// sync (bounded to two starts plus two steers) so prompts queue in submit
-// order and the driver's next finish sees the re-prompt already out.
+// done again, so they keep their context across Passes: a re-review is a new
+// message in the same Session, never a new Session. Each prompt queues its
+// tip as owed; a verdict answers the oldest queued tip, so a Worker commit
+// between prompts never lets a T1 judgement read fresh at T2. A done at the
+// already-judged tip, or at a new tip whose diff patch-id against the base
+// is unchanged (a rebase), reuses the verdicts with no Reviewer turn: a
+// patch-identical verdict is carried to the new tip so the gate reads fresh.
+// A Reviewer turn that ended without a recorded verdict at the current tip
+// counts as no verdict: the Ticket stays under review and never merges on
+// it. It spawns nothing before the first done submit. A refused
+// live-Session cap leaves the missing reviewers for the next pass, which
+// retries, as does a branch tip it cannot read. Reviewer starts never fail
+// the Run: the driver keeps polling and the next pass tries again. The
+// submit route runs this sync (bounded to two starts plus two steers) so
+// prompts queue in submit order and the driver's next finish sees the
+// re-prompt already out.
 func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
@@ -1451,6 +1557,9 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	if err != nil || tip == "" {
 		return
 	}
+	// The short-circuit patch id: a rebase that kept the diff identical
+	// reuses both verdicts with no Reviewer turn.
+	curPatch := d.reviewPatchIDFor(runID, ticketID, tip)
 	for _, typ := range missing {
 		if err := d.runStartReviewer(runID, ticketID, typ, tip); err != nil {
 			return
@@ -1467,6 +1576,29 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		return
 	}
 	rs.Reprompted[ticketID] = count
+	// Reuse the verdicts that already judged this code: the same tip, or a
+	// new tip with an unchanged diff patch-id. A patch-identical verdict is
+	// carried to the new tip so the gate reads fresh; the round still
+	// records the carry as held, and no prompt goes out for these types.
+	reuse := map[string]bool{}
+	for _, typ := range requiredReviewerTypes {
+		r, ok := rs.Reviews[ticketID][typ]
+		if !ok || r.Verdict == "" {
+			continue
+		}
+		switch {
+		case r.At == tip:
+			reuse[typ] = true
+		case r.PatchID != "" && curPatch != "" && r.PatchID == curPatch:
+			reuse[typ] = true
+		}
+	}
+	for typ := range reuse {
+		if r := rs.Reviews[ticketID][typ]; r.At != tip {
+			r.At = tip
+			rs.Reviews[ticketID][typ] = r
+		}
+	}
 	now := time.Now().UTC()
 	if rs.ReviewTips == nil {
 		rs.ReviewTips = map[string]map[string]string{}
@@ -1480,7 +1612,7 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	if rs.ReviewStarted[ticketID] == nil {
 		rs.ReviewStarted[ticketID] = map[string]time.Time{}
 	}
-	_, need := appendRoundLocked(rs, ticketID, tip, now)
+	_, need := appendRoundLocked(rs, ticketID, tip, now, reuse)
 	for _, typ := range requiredReviewerTypes {
 		if !need[typ] {
 			continue
@@ -2847,6 +2979,7 @@ func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id
 	}
 	cur, _ := runGit(repo, "rev-parse", branch)
 	stale := cur != "" && sub.Tip != cur
+	patchID := d.reviewPatchIDFor(runID, ticketID, strings.TrimSpace(sub.Tip))
 	now := time.Now().UTC()
 	d.mu.Lock()
 	rs, ok = d.runs[runID]
@@ -2855,7 +2988,7 @@ func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id
 		http.NotFound(w, r)
 		return
 	}
-	retell := recordReviewerToolVerdictLocked(d, rs, id, ticketID, typ, sub, cur, now, lastPrompt)
+	retell := recordReviewerToolVerdictLocked(d, rs, id, ticketID, typ, sub, cur, patchID, now, lastPrompt)
 	count := d.submits[id].Count
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)

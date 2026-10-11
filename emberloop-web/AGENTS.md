@@ -649,10 +649,15 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   request. A submitted done also spawns one persistent Reviewer Session per
   required type (`reviewer-spec`, `reviewer-standards`), once, as a Subagent
   of the Run in the Worker's worktree; later dones re-prompt the same
-  Sessions, so they keep context across Passes. Reviewer verdicts arrive
+  Sessions with a new message (never a new Session), so they keep context
+  across Passes, unless the tip or its diff `patch-id` against the base is
+  unchanged: then the verdicts are reused with no Reviewer turn (a
+  patch-identical verdict is carried to the new tip, and the round records
+  the carry as held; a same-tip done after `changes` never gets that far:
+  the submit gate refuses it as an empty resubmit). Reviewer verdicts arrive
   through the submit tool and record through one shared recorder
   (`recordReviewerToolVerdictLocked`: the submit route and the fake-seam turn
-  end alike); an invalid tool payload re-prompts once with the tool error,
+  end alike, each verdict at its tip with the diff patch-id); an invalid tool payload re-prompts once with the tool error,
   then marks the ticket needs-you. Each prompt queues its tip as owed and
   each verdict answers the oldest queued tip, so a mid-review Worker commit
   reads stale, never fresh; a verdict already stale at birth re-prompts its
@@ -661,7 +666,8 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   refusal lands on the row and reaches the Worker unchanged, retried after the
   next submit, while stale findings stay behind (at only, never the old
   report) and a Ticket with no verdict on the current tip stays under review
-  with no new Tell. The done submit runs the ensure sync (bounded to two
+  with no new Tell: a Reviewer turn that ended without a recorded verdict
+  counts as no verdict and never merges. The done submit runs the ensure sync (bounded to two
   starts plus two steers) so prompts queue in submit order. Reviewer Sessions
   start through the shared live-Session cap like every other Session. The row
   carries `reviewerSessions`, `verdicts` (verdict, at, fresh) and `tip` with

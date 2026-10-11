@@ -758,3 +758,325 @@ func TestSessionSubmitRoutesAndMessages(t *testing.T) {
 		t.Fatalf("worker submit without status = %d %q, want 400 with the status message", code, body)
 	}
 }
+
+// A patch-identical rebase reuses a `changes` verdict with no Reviewer turn:
+// the amended tip carries new SHAs but the same patch id, so the changes and
+// the pass move to the new tip, the refusal is told again, and the ticket
+// stays unmerged. (A second done at the very same tip never reaches the
+// reviewers: the worker submit gate refuses it as an empty resubmit.)
+func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.ReviewSubmit = func(sessionID, prompt string) (ReviewerSubmit, bool) {
+		tip := tipFromReviewPrompt(prompt)
+		if tip == "" {
+			return ReviewerSubmit{}, false
+		}
+		ran := []ReviewRan{{Command: "go vet ./...", ExitCode: 0}}
+		if strings.Contains(prompt, "reviewer-spec") {
+			return ReviewerSubmit{
+				Verdict: "changes", Tip: tip, Ran: ran,
+				Findings: []ReviewFinding{{File: "work.go", Line: 1, Severity: "major", Problem: "handle nil"}},
+			}, true
+		}
+		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: ran}, true
+	}
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	writeFile(t, worktree, "work.go", "package main\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "work")
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "handle nil")
+	}, "changes refusal told")
+	t1 := ticketByID(r, "01-first").Tip
+	if t1 == "" {
+		t.Fatalf("tip empty, want the worker branch tip")
+	}
+
+	// Amend the message: new SHAs, identical diff. The new tip keeps the
+	// done submit past the empty-resubmit gate, and the unchanged patch id
+	// reuses both verdicts with no Reviewer turn.
+	testGit(t, worktree, "commit", "--amend", "-m", "work rebased")
+	t2 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	if t2 == "" || t1 == t2 {
+		t.Fatalf("tips = %q and %q, want two different SHAs", t1, t2)
+	}
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		tk := extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first")
+		if len(tk.Rounds) >= 2 {
+			rd := tk.Rounds[1]
+			if rd.Tip == t2 && len(rd.Reviews) == 2 {
+				for _, typ := range []string{"reviewer-spec", "reviewer-standards"} {
+					rv, ok := rd.Reviews[typ]
+					if !ok || rv.HeldFromRound == nil || *rv.HeldFromRound != 1 || rv.At != t2 {
+						t.Fatalf("round 2 review %s = %+v, want verdict held from round 1 at %q", typ, rv, t2)
+					}
+				}
+				if got := rd.Reviews["reviewer-spec"].Verdict; got != "changes" {
+					t.Fatalf("round 2 spec verdict = %q, want the reused changes", got)
+				}
+				if got := rd.Reviews["reviewer-standards"].Verdict; got != "pass" {
+					t.Fatalf("round 2 standards verdict = %q, want the reused pass", got)
+				}
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no reused second round: %+v", extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first").Rounds)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// No second Reviewer turn went out: one gate prompt per reviewer, and
+	// the same persistent Sessions. The reused changes refusal still stands.
+	for _, sess := range revs {
+		if n := strings.Count(sessTranscript(getSession(t, srv.URL, sess)), "Review ticket"); n != 1 {
+			t.Fatalf("reviewer got %d gate prompts, want one (reused, not rerun)", n)
+		}
+	}
+	for typ, sess := range waitReviewers(t, srv.URL, run.ID, "01-first") {
+		if sess != revs[typ] {
+			t.Fatalf("reviewer %s session changed, want the persistent one", typ)
+		}
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "handle nil")
+	}, "reused changes refusal told again")
+	if tk := ticketByID(r, "01-first"); tk.State == "merged" {
+		t.Fatalf("ticket merged on reused changes, want it kept")
+	}
+}
+
+// A rebase that keeps the diff identical reuses both verdicts with no
+// Reviewer turn: the amended tip carries new SHAs but the same patch id, so
+// the passes move to the new tip and the ticket merges without re-review.
+func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.ReviewSubmit = func(sessionID, prompt string) (ReviewerSubmit, bool) {
+		tip := tipFromReviewPrompt(prompt)
+		if tip == "" {
+			return ReviewerSubmit{}, false
+		}
+		return ReviewerSubmit{
+			Verdict: "pass", Tip: tip,
+			Ran: []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
+		}, true
+	}
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	writeFile(t, worktree, "work.go", "package main\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "work v1")
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	// Block the merge with a dirty worktree before the verdicts land, so the
+	// passed tip stays to be rebased.
+	writeFile(t, worktree, "dirty.txt", "uncommitted\n")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.Verdicts["reviewer-spec"].Verdict == "pass" &&
+			tk.Verdicts["reviewer-standards"].Verdict == "pass" &&
+			tk.LastRefusal != ""
+	}, "both pass at the tip with the merge blocked")
+	t1 := ticketByID(r, "01-first").Tip
+	// Clean the tree and amend the message: new SHAs, identical diff.
+	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, worktree, "commit", "--amend", "-m", "work v1 rebased")
+	t2 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	if t1 == "" || t2 == "" || t1 == t2 {
+		t.Fatalf("tips = %q and %q, want two different SHAs", t1, t2)
+	}
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+
+	// The passes carry to the rebased tip with no new Reviewer turn, and the
+	// ticket merges on them.
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done after the patch-identical rebase")
+	tk := ticketByID(r, "01-first")
+	if tk.State != "merged" {
+		t.Fatalf("ticket state = %q, want merged on the reused passes", tk.State)
+	}
+	// The gate merged on the carried passes, so they read fresh at finish
+	// time; the merge's own rebase moves the branch after, so freshness is
+	// asserted on the round instead of the post-merge snapshot.
+	for _, v := range []reviewVerdictJSON{tk.Verdicts["reviewer-spec"], tk.Verdicts["reviewer-standards"]} {
+		if v.Verdict != "pass" || v.At != t2 {
+			t.Fatalf("verdict = %+v, want pass carried to %q", v, t2)
+		}
+	}
+	ext := extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first")
+	if len(ext.Rounds) < 2 {
+		t.Fatalf("rounds = %+v, want a second round carrying the reuse", ext.Rounds)
+	}
+	rd := ext.Rounds[1]
+	if rd.Tip != t2 {
+		t.Fatalf("round 2 tip = %q, want the rebased tip %q", rd.Tip, t2)
+	}
+	for _, typ := range []string{"reviewer-spec", "reviewer-standards"} {
+		rv, ok := rd.Reviews[typ]
+		if !ok || rv.Verdict != "pass" || rv.HeldFromRound == nil || *rv.HeldFromRound != 1 || rv.At != t2 {
+			t.Fatalf("round 2 review %s = %+v, want pass held from round 1 at %q", typ, rv, t2)
+		}
+	}
+	for _, sess := range revs {
+		if n := strings.Count(sessTranscript(getSession(t, srv.URL, sess)), "Review ticket"); n != 1 {
+			t.Fatalf("reviewer got %d gate prompts, want one (reused, not rerun)", n)
+		}
+	}
+	for typ, sess := range waitReviewers(t, srv.URL, run.ID, "01-first") {
+		if sess != revs[typ] {
+			t.Fatalf("reviewer %s session changed, want the persistent one", typ)
+		}
+	}
+}
+
+// A re-review with a changed diff is a new message in the same persistent
+// Reviewer Session: the Sessions stay identical and each reviewer gets a
+// second gate prompt judging the new tip.
+func TestReviewRereviewUsesSameSession(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	var mu sync.Mutex
+	specCalls := 0
+	fb.ReviewSubmit = func(sessionID, prompt string) (ReviewerSubmit, bool) {
+		tip := tipFromReviewPrompt(prompt)
+		if tip == "" {
+			return ReviewerSubmit{}, false
+		}
+		ran := []ReviewRan{{Command: "go vet ./...", ExitCode: 0}}
+		if strings.Contains(prompt, "reviewer-spec") {
+			mu.Lock()
+			specCalls++
+			n := specCalls
+			mu.Unlock()
+			if n == 1 {
+				return ReviewerSubmit{
+					Verdict: "changes", Tip: tip, Ran: ran,
+					Findings: []ReviewFinding{{File: "work.go", Line: 1, Severity: "major", Problem: "handle nil"}},
+				}, true
+			}
+		}
+		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: ran}, true
+	}
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	writeFile(t, worktree, "work.go", "package main\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "work v1")
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal != "" && strings.Contains(tk.LastRefusal, "handle nil")
+	}, "changes refusal told")
+
+	// Rework changes the diff, so the re-review must judge the new tip.
+	writeFile(t, worktree, "work.go", "package main\n\nfunc f() {}\n")
+	testGit(t, worktree, "add", "work.go")
+	testGit(t, worktree, "commit", "-m", "work v2")
+	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done after the re-review passes")
+
+	for typ, sess := range waitReviewers(t, srv.URL, run.ID, "01-first") {
+		if sess != revs[typ] {
+			t.Fatalf("reviewer %s session changed to %q, want the persistent %q", typ, sess, revs[typ])
+		}
+		if n := strings.Count(sessTranscript(getSession(t, srv.URL, sess)), "Review ticket"); n != 2 {
+			t.Fatalf("reviewer %s got %d gate prompts, want two in the same session", typ, n)
+		}
+	}
+}
+
+// A Reviewer turn that ended without a recorded verdict at the current tip
+// counts as no verdict: the silent seat records nothing, the ticket never
+// merges on it, and after the re-prompt fails too the ticket needs the user.
+func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.ReplyFunc = func(id, text string) (string, bool) {
+		if strings.Contains(text, "reviewer-spec") || strings.Contains(text, "RESPOND IN FORMAT") {
+			return "still reviewing, no verdict yet", true
+		}
+		return "", false
+	}
+	d := NewDaemon(tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	waitReviewers(t, srv.URL, run.ID, "01-first")
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		tk := extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first")
+		if tk.NeedsYou != "" {
+			if !strings.Contains(tk.NeedsYou, "reviewer-spec") {
+				t.Fatalf("needs-you = %q, want it to name the silent reviewer", tk.NeedsYou)
+			}
+			if got := tk.Verdicts["reviewer-spec"]; got.Verdict != "" {
+				t.Fatalf("spec verdict = %+v, want none after two verdict-less turns", got)
+			}
+			if tk.State == "merged" {
+				t.Fatalf("ticket merged with a missing verdict, want it blocked")
+			}
+			if got := tk.Verdicts["reviewer-standards"]; got.Verdict != "pass" {
+				t.Fatalf("standards verdict = %+v, want the judging seat to pass", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no needs-you for the silent reviewer: %+v", extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first"))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
