@@ -4,9 +4,9 @@
 
 **Blocked by:** reviewer-submit-tool (02)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Same-tip and patch-identical rebase reuse the verdict with no Reviewer turn
-- [ ] Re-review reuses the existing Reviewer Session
-- [ ] Missing verdict blocks merge until one exists
-- [ ] Run seam tests; `.emberloop/check` passes
+- [x] Same-tip and patch-identical rebase reuse the verdict with no Reviewer turn
+- [x] Re-review reuses the existing Reviewer Session
+- [x] Missing verdict blocks merge until one exists
+- [x] Run seam tests; `.emberloop/check` passes
