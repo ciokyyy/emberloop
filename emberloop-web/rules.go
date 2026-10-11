@@ -430,21 +430,7 @@ func (d *Daemon) decidePromotionThroughRulesQueue(w http.ResponseWriter, r *http
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		items, err := bank.Queue(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, it := range items {
-			if it.ID != id {
-				continue
-			}
-			if it.Kind != memory.QueuePromotion {
-				http.Error(w, fmt.Sprintf("%s: queue item %d is %q, not a promotion", memory.ErrInvalid, id, it.Kind), http.StatusBadRequest)
-				return
-			}
-		}
-		if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
+		if err := d.rejectPromotionQueueItem(r.Context(), bank, id, user.ID); err != nil {
 			if errors.Is(err, memory.ErrNotFound) {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return

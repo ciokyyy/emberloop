@@ -393,6 +393,27 @@ func (d *Daemon) approvePromotionQueueItem(ctx context.Context, owner, decidedBy
 	}, nil
 }
 
+// rejectPromotionQueueItem rejects one pending kind=promotion queue item. The
+// row stays as a Decider label and nothing is written. A missing ID is
+// ErrNotFound; a non-promotion ID is ErrInvalid, so the rule and profile
+// queues can never decide a promotion by accident.
+func (d *Daemon) rejectPromotionQueueItem(ctx context.Context, bank memory.Memory, id int64, decidedBy string) error {
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if it.ID != id {
+			continue
+		}
+		if it.Kind != memory.QueuePromotion {
+			return fmt.Errorf("%w: queue item %d is %q, not a promotion", memory.ErrInvalid, id, it.Kind)
+		}
+		return bank.Decide(ctx, id, memory.QueueRejected, decidedBy)
+	}
+	return fmt.Errorf("%w: queue item %d", memory.ErrNotFound, id)
+}
+
 // handlePromotionsQueueDecide serves POST /api/promotions/queue/{id}/decide
 // {"status":"approved"|"rejected",...}. Approval writes the worktree file and
 // marks the Rule promoted; rejection keeps the item as a label and writes
@@ -418,27 +439,7 @@ func (d *Daemon) handlePromotionsQueueDecide(w http.ResponseWriter, r *http.Requ
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		items, err := bank.Queue(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		found := false
-		for _, it := range items {
-			if it.ID != id {
-				continue
-			}
-			found = true
-			if it.Kind != memory.QueuePromotion {
-				http.Error(w, fmt.Sprintf("%s: queue item %d is %q, not a promotion", memory.ErrInvalid, id, it.Kind), http.StatusBadRequest)
-				return
-			}
-		}
-		if !found {
-			http.Error(w, fmt.Sprintf("%s: queue item %d", memory.ErrNotFound, id), http.StatusNotFound)
-			return
-		}
-		if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
+		if err := d.rejectPromotionQueueItem(r.Context(), bank, id, user.ID); err != nil {
 			if errors.Is(err, memory.ErrNotFound) {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
