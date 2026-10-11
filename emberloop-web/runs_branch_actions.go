@@ -132,14 +132,15 @@ func (d *Daemon) rebaseRun(w http.ResponseWriter, r *http.Request, id string) {
 	} else {
 		rs.SpecBase = master
 		if strings.HasPrefix(rs.Error, "rebase onto master conflicted") {
-			rs.Error = ""
+			rs.Error = "rebase onto master succeeded; resume the Run to continue"
 		}
 	}
 	d.persistRun(rs)
-	out := d.runJSONLocked(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
+	out := d.runJSON(rs)
 	writeJSON(w, http.StatusOK, map[string]any{"run": out})
+
 }
 
 // abandonRun ends the Run's agent Sessions and removes every recorded Ticket
@@ -262,9 +263,9 @@ func (d *Daemon) abandonRun(w http.ResponseWriter, r *http.Request, id string) {
 		rs.Error = "abandon cleanup incomplete: " + strings.Join(cleanupErrors, "; ")
 	}
 	d.persistRun(rs)
-	out := d.runJSONLocked(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
+	out := d.runJSON(rs)
 	if len(cleanupErrors) != 0 {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": out["error"], "run": out})
 		return

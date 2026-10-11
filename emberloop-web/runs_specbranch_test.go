@@ -493,6 +493,18 @@ func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
 	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")); got != branchTip {
 		t.Fatalf("spec branch tip = %s after conflict, want unchanged %s", got, branchTip)
 	}
+	testGit(t, specWorktree, "reset", "--hard", "main")
+	resolved, code := postRunAction(t, srv.URL, run.ID, "rebase")
+	if code != http.StatusOK {
+		t.Fatalf("resolved rebase status = %d, want 200", code)
+	}
+	if resolved.Status != runStatusNeedsYou || !strings.Contains(resolved.Error, "succeeded; resume the Run") || resolved.SpecBehind != 0 {
+		t.Fatalf("resolved rebase snapshot = status %q error %q behind %d; want needs-you, resume guidance and 0 behind", resolved.Status, resolved.Error, resolved.SpecBehind)
+	}
+	resumed, code := postRunAction(t, srv.URL, run.ID, "resume")
+	if code != http.StatusOK || resumed.Status != runStatusRunning || resumed.Error != "" {
+		t.Fatalf("resume after successful rebase = status %d, Run %q error %q", code, resumed.Status, resumed.Error)
+	}
 }
 
 // Abandon ends the Run's Sessions and removes its Ticket and spec worktrees

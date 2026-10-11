@@ -503,14 +503,19 @@ func (d *Daemon) handleRuns(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		d.mu.Lock()
-		runs := make([]map[string]any, 0, len(d.runs))
+		states := make([]*runState, 0, len(d.runs))
 		for _, rs := range d.runs {
-			if rs.Owner == "" {
-				continue
+			if rs.Owner != "" {
+				states = append(states, rs)
 			}
-			runs = append(runs, d.runJSONLocked(rs))
 		}
 		d.mu.Unlock()
+		runs := make([]map[string]any, 0, len(states))
+		for _, rs := range states {
+			if out := d.runJSON(rs); out != nil {
+				runs = append(runs, out)
+			}
+		}
 		sort.Slice(runs, func(i, j int) bool {
 			return runs[i]["id"].(string) < runs[j]["id"].(string)
 		})
@@ -540,13 +545,12 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 	case sub == "" && r.Method == "GET":
 		d.mu.Lock()
 		rs, ok := d.runs[id]
+		d.mu.Unlock()
 		if !ok {
-			d.mu.Unlock()
 			http.NotFound(w, r)
 			return
 		}
-		out := d.runJSONLocked(rs)
-		d.mu.Unlock()
+		out := d.runJSON(rs)
 		writeJSON(w, http.StatusOK, map[string]any{"run": out})
 	case sub == "events" && r.Method == "GET":
 		d.serveRunEvents(w, r, id)
@@ -658,7 +662,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 	max := d.MaxRunning()
 	d.mu.Lock()
 	for _, rs := range d.runs {
-		if rs.Spec == specRun.Spec && (rs.Status == runStatusRunning || rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou) {
+		if rs.Spec == specRun.Spec && rs.Status == runStatusRunning {
 			d.mu.Unlock()
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "a run is already active for this spec"})
 			return
@@ -737,11 +741,11 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 	world := d.webDriverWorld(rs, files, max)
 	d.runs[rs.ID] = rs
 	d.persistRun(rs)
-	out := d.runJSONLocked(rs)
 	d.mu.Unlock()
-
+	out := d.runJSON(rs)
 	go d.driveRun(rs.ID, world)
 	writeJSON(w, http.StatusCreated, map[string]any{"run": out})
+
 }
 
 // driveRun runs the core deterministic driver against the web-backed world
@@ -2616,7 +2620,7 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string, from promptSender) 
 // moves here: the final merge into master is a later ticket. Runs predating
 // the spec branch (no SpecBranch recorded) keep the old master merge.
 func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error) {
-	d.pauseGate(runID)
+	d.needsYouGate(runID)
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
@@ -2627,7 +2631,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		d.mu.Unlock()
 		return el.DriverFinish{}, fmt.Errorf("run %s was abandoned", runID)
 	}
-	if rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou {
+	if rs.Status == runStatusNeedsYou {
 		d.mu.Unlock()
 		return el.DriverFinish{}, nil
 	}
@@ -2656,7 +2660,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		d.mu.Unlock()
 		return el.DriverFinish{}, fmt.Errorf("run %s was abandoned", runID)
 	}
-	if rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou {
+	if rs.Status == runStatusNeedsYou {
 		d.mu.Unlock()
 		return el.DriverFinish{}, nil
 	}
@@ -3231,17 +3235,60 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-// runJSONLocked renders one Run with its live Ticket table: state, Worker
-// Session link, both Reviewer verdicts with tip freshness, and the last
-// refusal per Ticket. Callers hold d.mu.
-// runJSONLocked renders one Run with its live Ticket table: state,
-// Worker Session link, both Reviewer verdicts with tip freshness, and the
-// last refusal per Ticket, plus everything the ticket page needs without
-// polling: boxes/body/title re-read from the ticket file at snapshot time,
-// branch, tip, state entry time, needs-you reason, follow-ups, agents
-// (worker, both reviewers, worker-spawned scouts), the gate and the
-// append-only rounds. Callers hold d.mu.
-func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
+// runSpecBehind reads the current master tip and counts commits absent from
+// the spec branch. Call it only without d.mu held: git may block on disk.
+func runSpecBehind(repo, branch string) any {
+	if branch == "" {
+		return nil
+	}
+	master, err := masterTip(repo)
+	if err != nil {
+		return nil
+	}
+	count, err := runGit(repo, "rev-list", "--count", branch+".."+master)
+	if err != nil {
+		return nil
+	}
+	behind, err := strconv.Atoi(count)
+	if err != nil {
+		return nil
+	}
+	return behind
+}
+
+// runJSON calculates the master distance without holding d.mu, then
+// re-reads and renders the current Run state under the lock.
+func (d *Daemon) runJSON(rs *runState) map[string]any {
+	if rs == nil {
+		return nil
+	}
+	id := rs.ID
+	d.mu.Lock()
+	current, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		return nil
+	}
+	repo, branch := current.Repo, current.SpecBranch
+	d.mu.Unlock()
+
+	specBehind := runSpecBehind(repo, branch)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	current, ok = d.runs[id]
+	if !ok {
+		return nil
+	}
+	return d.runJSONLocked(current, specBehind)
+}
+
+// runJSONLocked renders one Run with its live Ticket table. Callers hold
+// d.mu; specBehind is precomputed by runJSON so the master and rev-list
+// queries never block Run updates.
+// The snapshot also includes the Worker Session link, reviewer verdicts,
+// refusal, ticket body/boxes, branch, tip, state time, needs-you reason,
+// follow-ups, agents, gate and append-only rounds.
+func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 	rows := map[string]el.DriverRow{}
 	if rs.Driver != nil {
 		for _, row := range rs.Driver.Snapshot() {
@@ -3329,16 +3376,6 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 	if warnings == nil {
 		warnings = []runWarning{}
 	}
-	var specBehind any
-	if rs.SpecBranch != "" {
-		if master, err := masterTip(rs.Repo); err == nil {
-			if count, err := runGit(rs.Repo, "rev-list", "--count", rs.SpecBranch+".."+master); err == nil {
-				if behind, err := strconv.Atoi(count); err == nil {
-					specBehind = behind
-				}
-			}
-		}
-	}
 	return map[string]any{
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"owner":   rs.Owner,
@@ -3394,11 +3431,33 @@ func (d *Daemon) broadcastRunLocked(rs *runState) {
 	close(notify)
 }
 
+// runEventSnapshot pairs one serialized Run with the notification channel
+// under the lock, while calculating the git-based distance outside it.
+func (d *Daemon) runEventSnapshot(id string) (string, chan struct{}, bool) {
+	d.mu.Lock()
+	rs, ok := d.runs[id]
+	if !ok {
+		d.mu.Unlock()
+		return "", nil, false
+	}
+	repo, branch := rs.Repo, rs.SpecBranch
+	d.mu.Unlock()
+
+	specBehind := runSpecBehind(repo, branch)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	rs, ok = d.runs[id]
+	if !ok {
+		return "", nil, false
+	}
+	return mustJSON(d.runJSONLocked(rs, specBehind)), rs.notify, true
+}
+
 // serveRunEvents streams the live Ticket table over SSE, resending the Run
 // whenever the driver publishes new rows.
 func (d *Daemon) serveRunEvents(w http.ResponseWriter, r *http.Request, id string) {
 	d.mu.Lock()
-	rs, ok := d.runs[id]
+	_, ok := d.runs[id]
 	d.mu.Unlock()
 	if !ok {
 		http.NotFound(w, r)
@@ -3413,15 +3472,7 @@ func (d *Daemon) serveRunEvents(w http.ResponseWriter, r *http.Request, id strin
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	for {
-		d.mu.Lock()
-		rs, ok = d.runs[id]
-		var body string
-		var ch chan struct{}
-		if ok {
-			body = mustJSON(d.runJSONLocked(rs))
-			ch = rs.notify
-		}
-		d.mu.Unlock()
+		body, ch, ok := d.runEventSnapshot(id)
 		if !ok {
 			return
 		}
@@ -4059,6 +4110,25 @@ func (d *Daemon) pauseGate(runID string) {
 	}
 }
 
+// needsYouGate blocks a ticket finish while a checkpoint conflict needs
+// User action without extending the existing pause behavior at this seam.
+func (d *Daemon) needsYouGate(runID string) {
+	for {
+		d.mu.Lock()
+		rs, ok := d.runs[runID]
+		if !ok || rs.Status != runStatusNeedsYou {
+			d.mu.Unlock()
+			return
+		}
+		ch := rs.unpause
+		d.mu.Unlock()
+		if ch == nil {
+			return
+		}
+		<-ch
+	}
+}
+
 // pauseRun freezes a running Run: its driver starts nothing new while
 // paused (the next start and the next poll both wait) and running Worker
 // Sessions stay live and untouched. Anything else is 409.
@@ -4077,9 +4147,9 @@ func (d *Daemon) pauseRun(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	rs.Status = runStatusPaused
 	d.persistRun(rs)
-	out := d.runJSONLocked(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
+	out := d.runJSON(rs)
 	writeJSON(w, http.StatusOK, map[string]any{"run": out})
 }
 
@@ -4154,9 +4224,9 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		world = d.webDriverWorld(rs, files, max)
 	}
 	d.persistRun(rs)
-	out := d.runJSONLocked(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
+	out := d.runJSON(rs)
 	if startDriver {
 		go d.driveRun(rs.ID, world)
 	}
@@ -4195,12 +4265,14 @@ func ticketActionLocked(rs *runState, ticketID, action string) (int, string) {
 	return 0, ""
 }
 
-// writeTicketRun answers a per-ticket action with the fresh snapshot;
-// callers hold d.mu.
+// writeTicketRun persists and publishes a ticket action, then releases d.mu
+// before building the response snapshot because that includes git data.
+// Callers hold d.mu on entry; this helper consumes the lock.
 func (d *Daemon) writeTicketRun(w http.ResponseWriter, rs *runState) {
 	d.persistRun(rs)
-	out := d.runJSONLocked(rs)
 	d.broadcastRunLocked(rs)
+	d.mu.Unlock()
+	out := d.runJSON(rs)
 	writeJSON(w, http.StatusOK, map[string]any{"run": out})
 }
 
@@ -4240,7 +4312,6 @@ func (d *Daemon) steerTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 		return
 	}
 	d.writeTicketRun(w, rs)
-	d.mu.Unlock()
 }
 
 // retryTicket starts one ticket over: it clears the needs-you banner and
@@ -4283,9 +4354,9 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 	}
 	rs.RetryGen[ticketID]++
 	d.persistRun(rs)
-	broadcast := d.runJSONLocked(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
+	broadcast := d.runJSON(rs)
 	// The retry itself landed above; only an optional steer can still
 	// miss, and the snapshot below still answers it.
 	steerErr := ""
@@ -4322,7 +4393,6 @@ func (d *Daemon) parkTicket(w http.ResponseWriter, r *http.Request, id, ticketID
 	}
 	rs.Parked[ticketID] = true
 	d.writeTicketRun(w, rs)
-	d.mu.Unlock()
 }
 
 // discardTicket discards one ticket: its worktree and branch go away and
@@ -4355,7 +4425,6 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 		delete(rs.Parked, ticketID)
 	}
 	d.writeTicketRun(w, rs)
-	d.mu.Unlock()
 	// Best effort like the start cleanup: the discard stands even when git
 	// has nothing left to remove.
 	if worktree != "" {
