@@ -216,7 +216,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 		cur.turnsSinceCompress = 0
 	}
 	d.mu.Unlock()
-	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: meta.Model, Fallback: "deterministic"}.text(), "")
+	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: "", Fallback: "deterministic"}.text(), "")
 
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {
@@ -226,8 +226,9 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 	be := d.backendForLocked(meta.Harness)
 	d.mu.Unlock()
 
-	// The old handle goes once the first turn on the new one works, or when
-	// that turn ends without working.
+	// The old handle goes once the first turn on the new one works. A turn
+	// that ends without working releases it too, unless it reported an error:
+	// then the old handle stays for the caller to keep.
 	var once sync.Once
 	releaseOld := func() {
 		once.Do(func() {
@@ -236,11 +237,17 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 			}
 		})
 	}
-	defer releaseOld()
+	failed := false
 	settled = true
-	d.runTurnWith(id, be, text, nil, func(kind, _, status string) {
-		if kind == "status" && status == "working" {
+	d.runTurnWith(id, be, text, nil, true, func(kind, _, status string) {
+		switch {
+		case kind == "status" && status == "working":
 			releaseOld()
+		case kind == "error":
+			failed = true
 		}
 	})
+	if !failed {
+		releaseOld()
+	}
 }

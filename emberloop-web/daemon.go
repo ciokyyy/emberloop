@@ -981,13 +981,16 @@ func modeLabel(mode string) string {
 // runTurn drives one backend turn, then drains the Daemon pending list in
 // turn order. Pig native queues drain inside the SDK Send, never here.
 func (d *Daemon) runTurn(id string, be Backend, text string, images []Image) {
-	d.runTurnWith(id, be, text, images, nil)
+	d.runTurnWith(id, be, text, images, false, nil)
 }
 
 // runTurnWith is runTurn with an optional tap that sees every Backend event
-// before it is appended.
-func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image, tap func(kind, text, status string)) {
+// before it is appended. A handoff turn is Daemon-made: it skips the submit
+// gate, auto-compress and the Reviewer verdict hook, since its reply is no
+// submit and no verdict.
+func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image, handoff bool, tap func(kind, text, status string)) {
 	mark, harness, gated := d.gateBaseline(id)
+	gated = gated && !handoff
 	promptBackend(be, id, text, images, func(kind, text, status string) {
 		if tap != nil {
 			tap(kind, text, status)
@@ -1002,11 +1005,15 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 		// and the child settles on its turn alone.
 		d.enforceSubmitGate(id, be, mark, harness)
 	}
-	d.maybeAutoCompress(id)
+	if !handoff {
+		d.maybeAutoCompress(id)
+	}
 	d.finishTurn(id)
 	// A Run Reviewer's settled turn carries its verdict: record it (a no-op
 	// for every other Session).
-	d.handleReviewerTurnEnd(id)
+	if !handoff {
+		d.handleReviewerTurnEnd(id)
+	}
 	// A settled Subagent may complete its Group: the last member to finish
 	// delivers one grouped result to the parent as a Steer.
 	d.maybeDeliverGroup(id)

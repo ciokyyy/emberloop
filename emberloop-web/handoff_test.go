@@ -85,7 +85,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 
 	// compressed Event: number, tokens before, model, fallback step.
 	c := eventsOfKind(evs, "compressed")[0]
-	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":"fake-model"`) ||
+	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":""`) ||
 		!strings.Contains(c.Text, `"fallback":"deterministic"`) || !strings.Contains(c.Text, `"tokensBefore":`) ||
 		strings.Contains(c.Text, `"tokensBefore":0`) {
 		t.Fatalf("compressed text = %s", c.Text)
@@ -162,5 +162,17 @@ func TestHandoffFailureKeepsOldHandle(t *testing.T) {
 	if n := be.ReleasedHandles(id); n != 0 {
 		t.Fatalf("released = %d, want 0", n)
 	}
-	_ = d
+	// The Session settles: busy and active clear after the failed swap.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		sess := d.sessions[id]
+		settled := !sess.busy && sess.active == 0
+		d.mu.Unlock()
+		if settled {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("busy/active not cleared after StartHandle error")
 }

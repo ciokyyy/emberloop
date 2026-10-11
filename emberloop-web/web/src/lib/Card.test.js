@@ -45,6 +45,15 @@ describe('Card renders every Event kind', () => {
     expect(card?.className).not.toMatch(/animate-rise/);
   });
 });
+describe('Card divider', () => {
+  it('shows the title and fields', () => {
+    const { container } = render(Card, { props: { block: block('divider', 'Context compressed', '#2 · deterministic') } });
+    const text = container.querySelector('[data-card="divider"]')?.textContent ?? '';
+    expect(text).toContain('Context compressed');
+    expect(text).toContain('#2 · deterministic');
+  });
+});
+
 describe('Card compaction', () => {
   const comp = (compaction, body = '') => ({ key: 1, card: 'compaction', title: 'x', body, collapsed: true, compaction, events: [] });
   it('running shows a progress label', () => {
