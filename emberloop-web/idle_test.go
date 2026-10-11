@@ -84,26 +84,31 @@ func TestSessionIdleBlockers(t *testing.T) {
 	}
 }
 
-// A Group holds its parent open while a member runs. Once the members settle,
-// the Group closes even if its result never delivered (a restart cut it), so a
-// stale Group cannot block idle.
+// A Group holds its parent open while a member runs, and a fresh Group until its
+// result is sent, so idle cannot pass between a member settling and delivery. A
+// Group stranded by a restart (not fresh, never sent) never blocks idle.
 func TestDaemonGroupHoldsParentOpen(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sessions["parent"] = &session{live: true}
 	d.sessions["child"] = &session{live: true, busy: true}
-	d.groups["g"] = &spawnGroup{ID: "g", Parent: "parent", Members: []string{"child"}}
-	if !d.openParentsLocked()["parent"] {
+	d.groups["g"] = &spawnGroup{ID: "g", Parent: "parent", Members: []string{"child"}, fresh: true}
+	if !d.groupOutstandingLocked("parent") {
 		t.Fatal("a running member must hold its parent's Group open")
 	}
 	if d.Idle(0) {
 		t.Fatal("a running member must keep the Daemon busy")
 	}
 	d.sessions["child"].busy = false
-	if d.openParentsLocked()["parent"] {
-		t.Fatal("settled members must close the Group, delivered or not")
+	if !d.groupOutstandingLocked("parent") {
+		t.Fatal("a fresh Group must hold its parent until the result is sent")
 	}
-	if !d.Idle(0) {
-		t.Fatal("a stale undelivered Group must not block idle")
+	d.groups["g"].Delivered = true
+	if d.groupOutstandingLocked("parent") {
+		t.Fatal("a sent Group must close")
+	}
+	d.groups["stale"] = &spawnGroup{ID: "stale", Parent: "parent", Members: []string{"child"}}
+	if d.groupOutstandingLocked("parent") || !d.Idle(0) {
+		t.Fatal("a Group stranded by a restart must not block idle")
 	}
 }
 

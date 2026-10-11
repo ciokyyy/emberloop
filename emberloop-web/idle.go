@@ -27,9 +27,8 @@ func (d *Daemon) Idle(quiet time.Duration) bool {
 		}
 	}
 	now := d.now()
-	open := d.openParentsLocked()
 	for id, s := range d.sessions {
-		if !s.Idle(now, quiet, open[id]) {
+		if !s.Idle(now, quiet, d.groupOutstandingLocked(id)) {
 			return false
 		}
 	}
@@ -37,10 +36,11 @@ func (d *Daemon) Idle(quiet time.Duration) bool {
 }
 
 // Idle is the per-Session half of the one definition: no turn running, starting
-// or queued, no resume or release in flight, no open Group led, and at least
-// quiet since the Session's last Event on the Daemon clock. A live Session that
-// waits for a prompt is idle: its history and resume token persist, and the next
-// prompt reloads it. Callers hold d.mu.
+// or queued, no resume or release in flight, no outstanding Group led (the rule
+// Compress waits on, groupOutstandingLocked), and at least quiet since the
+// Session's last Event on the Daemon clock. A live Session that waits for a
+// prompt is idle: its history and resume token persist, and the next prompt
+// reloads it. Callers hold d.mu.
 func (s *session) Idle(now time.Time, quiet time.Duration, open bool) bool {
 	if s.hasWork() || s.resuming || s.releasing || open {
 		return false
@@ -52,21 +52,4 @@ func (s *session) Idle(now time.Time, quiet time.Duration, open bool) bool {
 // queue. Callers hold d.mu.
 func (s *session) hasWork() bool {
 	return s.busy || s.active > 0 || len(s.pending) > 0
-}
-
-// openParentsLocked returns the Sessions that lead a Group with a member still
-// working. A Group closes once its members settle, even when its result never
-// delivered (a restart cut it), so a stale Group never blocks idle. Callers hold
-// d.mu.
-func (d *Daemon) openParentsLocked() map[string]bool {
-	open := map[string]bool{}
-	for _, g := range d.groups {
-		for _, m := range g.Members {
-			if ms, ok := d.sessions[m]; ok && ms.hasWork() {
-				open[g.Parent] = true
-				break
-			}
-		}
-	}
-	return open
 }

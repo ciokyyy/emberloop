@@ -135,8 +135,8 @@ the driver ticks boxes and marks done, nothing else writes them.
   itself with the same args, keeping pid and address.
 - `idle.go` holds the one idle definition. `session.Idle(now, quiet, open)` is
   per Session: no turn running, starting or queued, no resume or release in
-  flight, no open Group led (`openParentsLocked`: a member still has work), and
-  at least `quiet` since its last Event. `Daemon.Idle(quiet)` is Daemon-wide:
+  flight, no outstanding Group led (`groupOutstandingLocked`, the Compress wait
+  rule), and at least `quiet` since its last Event. `Daemon.Idle(quiet)` is Daemon-wide:
   also no Session starting and no Run running. Quiet time and the runs driver
   read `d.clock` (test seam, nil reads `time.Now`). Restart passes 0: it waits
   for work it would cut, not for quiet time. Tests: `idle_test.go`, `restart_test.go`.

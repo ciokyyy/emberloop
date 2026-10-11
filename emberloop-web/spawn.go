@@ -633,7 +633,7 @@ func (d *Daemon) groupOutstandingLocked(parentID string) bool {
 			return true
 		}
 		for _, m := range g.Members {
-			if ms, ok := d.sessions[m]; ok && (ms.busy || len(ms.pending) > 0 || ms.active > 0) {
+			if ms, ok := d.sessions[m]; ok && ms.hasWork() {
 				return true
 			}
 		}
