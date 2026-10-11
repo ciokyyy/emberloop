@@ -85,7 +85,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   `POST .../compress` builds a deterministic Handoff from the Event log (no
   LLM), starts a fresh handle (`StartHandle`), rotates the resume token,
   stores `handoff-N.md` in the Session directory, appends a `compressed`
-  Event (number, tokens before, model `deterministic`, fallback) and the Handoff prompt Event (`handoff:true`, `sender:"system"`), and
+  Event (number, tokens before, model `none`, fallback) and the Handoff prompt Event (`handoff:true`, `sender:"system"`), and
   runs the Handoff as the first turn through `runTurn` and releases the old handle once that turn works (or ends); compress instructions are ignored. Session
   ID, Event log and metadata stay. Tests: `handoff_test.go`.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile

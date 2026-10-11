@@ -26,7 +26,7 @@ type handoffBackend interface {
 type HandoffEvent struct {
 	Number       int    `json:"number"`
 	TokensBefore int    `json:"tokensBefore"`
-	Model        string `json:"model"` // "deterministic": no summarizer wrote the Handoff
+	Model        string `json:"model"` // "none": no summarizer model wrote the Handoff
 	Fallback     string `json:"fallback"`
 }
 
@@ -218,7 +218,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 		cur.turnsSinceCompress = 0
 	}
 	d.mu.Unlock()
-	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: "deterministic", Fallback: "deterministic"}.text(), "")
+	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: "none", Fallback: "deterministic"}.text(), "")
 
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {

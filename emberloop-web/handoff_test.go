@@ -83,9 +83,9 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 		t.Fatalf("user prompt flagged: %+v", hand[0])
 	}
 
-	// compressed Event: number, tokens before, model (deterministic: no summarizer), fallback step.
+	// compressed Event: number, tokens before, model (none: no summarizer), fallback step.
 	c := eventsOfKind(evs, "compressed")[0]
-	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":"deterministic"`) ||
+	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":"none"`) ||
 		!strings.Contains(c.Text, `"fallback":"deterministic"`) || !strings.Contains(c.Text, `"tokensBefore":`) ||
 		strings.Contains(c.Text, `"tokensBefore":0`) {
 		t.Fatalf("compressed text = %s", c.Text)

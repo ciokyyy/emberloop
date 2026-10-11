@@ -50,8 +50,9 @@ describe('cardForEvent maps every Event kind to a card', () => {
     expect(c.collapsed).toBe(true);
   });
   it('renders a compressed Event as a divider', () => {
-    const c = cardForEvent({ seq: 1, kind: 'compressed', text: '{"number":2,"tokensBefore":5000,"model":"m","fallback":"deterministic"}' });
+    const c = cardForEvent({ seq: 1, kind: 'compressed', text: '{"number":2,"tokensBefore":5000,"model":"none","fallback":"deterministic"}' });
     expect(c.card).toBe('divider');
+    expect(c.body).toBe('#2 · 5000 tokens before · none · deterministic');
     expect(c.body).toContain('#2');
     expect(c.body).toContain('5000 tokens before');
     expect(c.body).toContain('deterministic');
