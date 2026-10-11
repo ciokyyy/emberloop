@@ -169,6 +169,33 @@ func (b *Bank) AddObservation(ctx context.Context, o Observation) (int64, error)
 	return id, err
 }
 
+// BumpObservationEvidence increments one observation's evidence_count for a
+// duplicate miner hit and returns the updated row. Only the count changes,
+// so the FTS index (quote, split_text) is untouched.
+func (b *Bank) BumpObservationEvidence(ctx context.Context, id int64) (Observation, error) {
+	var out Observation
+	var created string
+	err := b.write(ctx, func(db *sql.DB) error {
+		res, err := db.ExecContext(ctx, `UPDATE observations SET evidence_count = evidence_count + 1 WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("%w: observation %d", ErrNotFound, id)
+		}
+		return db.QueryRowContext(ctx, `SELECT id, session_id, event_id, author, quote, kind,
+			subject_key, evidence_count, decider_json, observed_commit, created_at
+			FROM observations WHERE id = ?`, id).Scan(
+			&out.ID, &out.SessionID, &out.EventID, &out.Author, &out.Quote, &out.Kind,
+			&out.SubjectKey, &out.EvidenceCount, &out.DeciderJSON, &out.ObservedCommit, &created)
+	})
+	if err != nil {
+		return Observation{}, err
+	}
+	out.CreatedAt = parseTimeText(created)
+	return out, nil
+}
+
 const observationCols = `o.id, o.session_id, o.event_id, o.author, o.quote, o.kind,
 	o.subject_key, o.evidence_count, o.decider_json, o.observed_commit, o.created_at`
 

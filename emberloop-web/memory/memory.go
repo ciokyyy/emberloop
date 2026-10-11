@@ -78,8 +78,11 @@ var (
 // versions and new Profile versions, and only Purge removes rows.
 type Memory interface {
 	AddObservation(ctx context.Context, o Observation) (int64, error)
+	// BumpObservationEvidence increments one observation's evidence_count for
+	// a duplicate hit and returns the updated row. The miner calls it; nothing
+	// is ever deleted or merged.
+	BumpObservationEvidence(ctx context.Context, id int64) (Observation, error)
 	SearchObservations(ctx context.Context, text string, limit int) ([]Observation, error)
-
 	AddRule(ctx context.Context, r Rule) (Rule, error)
 	ReviseRule(ctx context.Context, next Rule) (Rule, error)
 	SetRuleStatus(ctx context.Context, ruleID, status string) error

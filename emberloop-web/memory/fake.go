@@ -47,6 +47,18 @@ func (f *Fake) AddObservation(_ context.Context, o Observation) (int64, error) {
 	f.obs = append(f.obs, o)
 	return o.ID, nil
 }
+func (f *Fake) BumpObservationEvidence(_ context.Context, id int64) (Observation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.obs {
+		if f.obs[i].ID != id {
+			continue
+		}
+		f.obs[i].EvidenceCount++
+		return f.obs[i], nil
+	}
+	return Observation{}, fmt.Errorf("%w: observation %d", ErrNotFound, id)
+}
 
 func (f *Fake) SearchObservations(_ context.Context, text string, limit int) ([]Observation, error) {
 	terms := Tokens(text)

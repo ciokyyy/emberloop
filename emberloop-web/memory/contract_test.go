@@ -419,6 +419,22 @@ func TestContract(t *testing.T) {
 					t.Errorf("ledger = %+v; want one row with counts {}", ledger)
 				}
 			})
+			t.Run("bump observation evidence", func(t *testing.T) {
+				clock := newTestClock()
+				m := fac.open(t, clock)
+				ctx := context.Background()
+				id, err := m.AddObservation(ctx, Observation{SessionID: "s", EventID: "e", Author: "u1", Quote: "bumpable quote", Kind: KindFact})
+				if err != nil {
+					t.Fatal(err)
+				}
+				updated, err := m.BumpObservationEvidence(ctx, id)
+				if err != nil || updated.ID != id || updated.EvidenceCount != 2 || updated.Quote != "bumpable quote" {
+					t.Fatalf("bump = %+v %v, want id %d with evidence 2", updated, err, id)
+				}
+				if _, err := m.BumpObservationEvidence(ctx, 999999); !errors.Is(err, ErrNotFound) {
+					t.Fatalf("bump missing err = %v, want ErrNotFound", err)
+				}
+			})
 		})
 	}
 }

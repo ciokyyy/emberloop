@@ -360,16 +360,26 @@ func TestProfileInjectedIntoSubagentsAndScouts(t *testing.T) {
 	scout := spawnScout(t, base, parent)
 	waitStatus(t, base, scout, "idle", 10*time.Second)
 	_ = be
+	// A fresh child can report idle before its first turn reaches the
+	// Backend, so poll the received prompts instead of reading them once.
 	foundWorker, foundScout := false, false
-	for _, text := range seen.all() {
-		// The spawn prompts themselves carry the injection ahead of the
-		// worker and scout prompts.
-		if strings.Contains(text, "worker job") && strings.Contains(text, "injected line for owner") {
-			foundWorker = true
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		foundWorker, foundScout = false, false
+		for _, text := range seen.all() {
+			// The spawn prompts themselves carry the injection ahead of the
+			// worker and scout prompts.
+			if strings.Contains(text, "worker job") && strings.Contains(text, "injected line for owner") {
+				foundWorker = true
+			}
+			if strings.Contains(text, "look around") && strings.Contains(text, "injected line for owner") {
+				foundScout = true
+			}
 		}
-		if strings.Contains(text, "look around") && strings.Contains(text, "injected line for owner") {
-			foundScout = true
+		if foundWorker && foundScout {
+			break
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if !foundWorker {
 		t.Fatalf("worker prompt never carried the Profile: %q", seen.all())
