@@ -26,6 +26,8 @@ driver probe (two trivial tickets through `implement --driver` on a real
   claude: each plants a fact, compresses by Handoff restart, then asks for
   the fact from the new handle), and the Jev probe (the real decision
   endpoint through `TestLiveJevDecider`, behind `EL_LIVE_JEV=1`).
+  Plus one offline measurement: `explore-replay.sh` replays web-v1 exploration
+  patterns and prints baseline vs guided call counts (no agents, no network).
   Each script names its prerequisites in its header comment.
 
 ## Ownership
@@ -35,8 +37,9 @@ another package is owned there.
 
 ## Local Contracts
 
-- Scripts run only by hand against live sessions, with temp directories for
-  state; they are never part of an automated check and never run inside
+- Scripts run only by hand; live probes need live sessions with temp
+  directories for state, while `explore-replay.sh` needs only bash (no agents,
+  no network). No script is part of an automated check and none runs inside
   ticket work.
 
 ## Work Guidance

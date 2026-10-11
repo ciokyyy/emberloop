@@ -6,7 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Descriptions and prompts updated
-- [ ] Measurement script prints call counts for the replayed patterns
-- [ ] Result recorded in this ticket's note
-- [ ] `.emberloop/check` passes
+- [x] Descriptions and prompts updated
+- [x] Measurement script prints call counts for the replayed patterns
+- [x] Result recorded in this ticket's note
+- [x] `.emberloop/check` passes
+
+Note: `scripts/explore-replay.sh` holds three web-v1 call-list fixtures (A locate-concept, B 5-marker sweep, C grep+read fan-out) and computes counts from the lists: 11->2, 5->1, 8->1; total 24->4 (saved 20, 83% fewer). Guidance is one shared const in worker/reviewer role prompts plus `find`/`execute`/`bash`/`grep` descriptions.

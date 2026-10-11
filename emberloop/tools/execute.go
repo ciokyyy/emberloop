@@ -169,7 +169,7 @@ type MCPServerLine struct {
 // short summary, tool count) and nothing more: never schemas.
 func ExecuteDescription(names, mainNames []string, servers []MCPServerLine) string {
 	var b strings.Builder
-	b.WriteString("Run a Python script (stdlib only) that calls el tools as functions, so one call replaces many and only what the script prints enters context.\n\n")
+	b.WriteString("Run a Python script (stdlib only) that calls el tools as functions, so one call replaces many and only what the script prints enters context.\n\nExplore with find for locating code and execute for multi-step exploration (loops over grep/read, filtering output) before repeated bash grep.\n\n")
 	if len(names) == 0 && len(servers) == 0 {
 		b.WriteString("No tools are behind execute for this role.\n")
 	} else if len(names) == 0 {

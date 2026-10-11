@@ -28,7 +28,7 @@ type grepTool struct {
 func (grepTool) Name() string   { return "grep" }
 func (grepTool) ReadOnly() bool { return true }
 func (grepTool) Description() string {
-	return "Exact-string and regex search over the workspace: ripgrep when installed, a Go fallback otherwise. Respects .gitignore, skips binary files, stays inside the working directory. Matches read `path:line:text`, context lines `path-line-text`, with a total match count."
+	return "Exact-string and regex search over the workspace: ripgrep when installed, a Go fallback otherwise. Respects .gitignore, skips binary files, stays inside the working directory. Matches read `path:line:text`, context lines `path-line-text`, with a total match count. For concept search prefer find; to batch many greps in one call use execute."
 }
 func (grepTool) Schema() map[string]any {
 	return obj(map[string]any{
