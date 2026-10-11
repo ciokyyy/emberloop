@@ -40,10 +40,10 @@ func queueDaemon(t *testing.T, delay time.Duration) (*Daemon, *promptRecord, str
 	be.Delay = delay
 	rec := &promptRecord{}
 	be.ReplyFunc = rec.reply
-	d := NewDaemon(t.TempDir(), be)
+	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(d.Handler())
 	t.Cleanup(srv.Close)
-	id := createSession(t, srv.URL, "fake", "fake-model", t.TempDir())
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	return d, rec, srv.URL, id
 }
 
@@ -144,10 +144,10 @@ func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
 func TestClaudeSteerDuringHandoffQueuesFollowup(t *testing.T) {
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	d := NewDaemon(t.TempDir(), NewFakeBackend()).WithClaudeBackend(be)
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(d.Handler())
 	defer srv.Close()
-	id := createSession(t, srv.URL, "claude", "sonnet", t.TempDir())
+	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
 	sendPrompt(t, srv.URL, id, "slow job")
 	waitStatus(t, srv.URL, id, "working", 5*time.Second)
 	// A Handoff claim sets swapping; the blocked stub turn stands in for it.
@@ -237,7 +237,7 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 // A Group stranded by a restart never delivers. Its persisted member must
 // not hold a compress of the parent.
 func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
-	stateDir := t.TempDir()
+	stateDir := tempDir(t)
 	stuck := make(chan struct{}) // never closed: the old Daemon's child turn stays open
 	old := NewFakeBackend()
 	old.ReplyFunc = func(_, text string) (string, bool) {
@@ -249,7 +249,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 	d1 := NewDaemon(stateDir, old)
 	srv1 := httptest.NewServer(d1.Handler())
 	defer srv1.Close()
-	parent := createSession(t, srv1.URL, "fake", "fake-model", t.TempDir())
+	parent := createSession(t, srv1.URL, "fake", "fake-model", tempDir(t))
 	sendPrompt(t, srv1.URL, parent, "plan the work")
 	waitStatus(t, srv1.URL, parent, "idle", 5*time.Second)
 	code, out := postSpawn(t, srv1.URL, parent, map[string]any{"agents": []map[string]any{{"prompt": "job A"}}})
