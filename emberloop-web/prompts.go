@@ -74,7 +74,14 @@ func rolePromptFor(meta SessionMeta) string {
 // plus the review routing note. It carries no memory/DOX text of its own:
 // the Worker's system prompt already carries the worker extra
 // (rolePromptFor), so repeating it here would inject it twice. It names no
-// remember instruction: Run workers get recall only.
-func workerTaskPrompt(ticketID, spec, ticketPath, branch string) string {
-	return fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes. %s", ticketID, spec, ticketPath, branch, workerReviewNote)
+// remember instruction: Run workers get recall only. When seeded is true the
+// worktree just gained a root AGENTS.md for the DOX chain, so the task tells
+// the Worker to commit it with its work: left untracked it would trip the
+// merge's dirty-worktree refusal on every finish.
+func workerTaskPrompt(ticketID, spec, ticketPath, branch string, seeded bool) string {
+	prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes. %s", ticketID, spec, ticketPath, branch, workerReviewNote)
+	if seeded {
+		prompt += "\n\nA root AGENTS.md was seeded in this worktree for the DOX chain; commit it with your work."
+	}
+	return prompt
 }

@@ -256,20 +256,23 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   `claudeSystemPromptFor`), grok (`meta` hook with extra) and pig
   (`ownerResourcesExtra`) inject it into the system prompt on every create,
   resume and Handoff, exactly once per role: Run tasks (`workerTaskPrompt`,
-  `reviewerPrompt`) carry no memory text of their own. `prompts_test.go` pins
-  the exact texts and asserts no `remember` in worker, scout, reviewer or
-  task prompts; `prompts_wiring_test.go` covers the per-harness injection and
-  the task non-duplication. Title and summarizer calls use the role-free shape.
+  `reviewerPrompt`) carry no memory text of their own, only the ticket job
+  plus (seeded worktrees) one line telling the Worker to commit the seeded
+  root. `prompts_test.go` pins the exact texts and asserts no `remember` in
+  worker, scout, reviewer or task prompts; `prompts_wiring_test.go` covers
+  the per-harness injection and the task non-duplication. Title and
+  summarizer calls use the role-free shape.
 - Projects (`projects.go`): `POST /api/projects` records a working directory;
   it writes no files. `ensureAgentsMD` (template `agentsMDTemplate`, existing
   files untouched) seeds a root `AGENTS.md` for Run-launched worktrees only:
   `runStartWorker` (runs_exec.go, via `ensureWorktreeDOX`) calls it on the
   fresh worktree before the Worker starts, so the Worker reads a DOX chain
   even when the repo root lacks one; the main checkout stays clean and the
-  Worker commits the seed with its work. Seeding through `el init` belongs to
+  task tells a seeded Worker to commit the seed (left untracked it would trip
+  the dirty-worktree refusal). Seeding through `el init` belongs to
   `.scratch/project-init/issues/02`, which owns that command. `dox_test.go`
-  covers the helper, the worktree seeding in a real git repo and the seeding
-  failure.
+  covers the helper, the worktree seeding and the seeding failure;
+  `dox_e2e_test.go` merges a seeded Worker end to end in a real rootless repo.
 - `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK,
   pig-over-ACP and claude Backends; grok reuses the same swap):
   `POST .../compress` answers 409 with the reason from `compressNote` while the

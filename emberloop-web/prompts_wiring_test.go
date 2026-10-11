@@ -52,16 +52,31 @@ func TestSessionMetaForCarriesRoleExtra(t *testing.T) {
 // workerTaskPrompt is the Run worker's first prompt: the ticket task with no
 // memory/DOX text of its own (the system prompt already carries the worker
 // extra, so repeating it would inject it twice) and no remember instruction.
+// A seeded worktree adds one commit line for the seeded root AGENTS.md, so an
+// untracked seed never trips the merge's dirty-worktree refusal.
 func TestWorkerTaskPromptCarriesDox(t *testing.T) {
-	p := workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x")
+	p := workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x", false)
 	if !strings.Contains(p, "implement/27-x") || !strings.Contains(p, "tickets/27-x.md") {
 		t.Errorf("worker task lacks branch or ticket: %q", p)
 	}
 	if strings.Contains(p, workerRolePrompt()) {
 		t.Errorf("worker task repeats the system-prompt extra: %q", p)
 	}
+	if strings.Contains(p, "commit it with your work") {
+		t.Errorf("unseeded task carries the seed line: %q", p)
+	}
 	if strings.Contains(strings.ToLower(p), "remember") {
 		t.Errorf("worker task names remember: %q", p)
+	}
+	seeded := workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x", true)
+	if !strings.Contains(seeded, "commit it with your work") {
+		t.Errorf("seeded task lacks the commit line: %q", seeded)
+	}
+	if strings.Contains(seeded, workerRolePrompt()) {
+		t.Errorf("seeded task repeats the system-prompt extra: %q", seeded)
+	}
+	if strings.Contains(strings.ToLower(seeded), "remember") {
+		t.Errorf("seeded task names remember: %q", seeded)
 	}
 }
 

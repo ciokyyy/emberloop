@@ -1430,11 +1430,13 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		// A Run-launched Worker reads its DOX chain from its own worktree
 		// root. Seed a root AGENTS.md there when the checkout has none, so
 		// the chain exists even when the repo root lacks one; the file rides
-		// the worktree (never the main checkout, which stays clean) and the
-		// Worker commits it with its work like any other project file. An
+		// the worktree (never the main checkout, which stays clean). The task
+		// tells a seeded Worker to commit it with its work: left untracked it
+		// would trip the merge's dirty-worktree refusal on every finish. An
 		// existing file is untouched and a failure stops this worker like any
 		// other start error.
-		if _, err := ensureWorktreeDOX(worktree); err != nil {
+		seeded, err := ensureWorktreeDOX(worktree)
+		if err != nil {
 			cleanup()
 			return fmt.Errorf("could not ensure AGENTS.md in %s: %w", worktree, err)
 		}
@@ -1508,7 +1510,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 
 		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
-		prompt := workerTaskPrompt(tk.ID, spec, tk.Path, branch)
+		prompt := workerTaskPrompt(tk.ID, spec, tk.Path, branch, seeded)
 		d.mu.Lock()
 		if s, ok := d.sessions[meta.ID]; ok {
 			s.busy = true

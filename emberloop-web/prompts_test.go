@@ -38,7 +38,8 @@ func TestRolePromptsRememberScope(t *testing.T) {
 		{"worker", workerRolePrompt(), false},
 		{"scout", scoutRolePrompt(), false},
 		{"reviewer", reviewerRolePrompt(), false},
-		{"worker task", workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x"), false},
+		{"worker task", workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x", false), false},
+		{"worker task seeded", workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x", true), false},
 		{"reviewer spec", reviewerPrompt("27-x", "spec", reviewerSpecType, "branch", "tip"), false},
 		{"reviewer standards", reviewerPrompt("27-x", "spec", reviewerStandardsType, "branch", "tip"), false},
 	} {
