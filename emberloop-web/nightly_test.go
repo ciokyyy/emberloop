@@ -5,12 +5,27 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"example.com/emberloop-web/memory"
 )
+
+// wantNightlyStageOrder is the canonical stage order RunNightly follows.
+// Snapshot aborts on failure; every later stage runs regardless.
+var wantNightlyStageOrder = []string{
+	nightlyStageSnapshot,
+	nightlyStageMine,
+	nightlyStageDistill,
+	nightlyStagePair,
+	nightlyStageProfile,
+	nightlyStageAnchors,
+	nightlyStageSummary,
+}
 
 // nightlyTestDaemon starts a Daemon with the fake clock and the nightly LLM
 // seams scripted. A nil reply keeps the seam unset.
@@ -82,10 +97,10 @@ func TestNightlyRunsOnlyWhenIdleAndLogsPerStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunNightly = %v, want success on an idle Daemon", err)
 	}
-	if len(res.Stages) != len(nightlyStages) {
-		t.Fatalf("stages = %d, want %d (%v)", len(res.Stages), len(nightlyStages), res.Stages)
+	if len(res.Stages) != len(wantNightlyStageOrder) {
+		t.Fatalf("stages = %d, want %d (%v)", len(res.Stages), len(wantNightlyStageOrder), res.Stages)
 	}
-	for i, want := range nightlyStages {
+	for i, want := range wantNightlyStageOrder {
 		if res.Stages[i].Stage != want {
 			t.Fatalf("stage %d = %q, want %q", i, res.Stages[i].Stage, want)
 		}
@@ -113,7 +128,7 @@ func TestNightlyRunsOnlyWhenIdleAndLogsPerStage(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range nightlyStages {
+	for _, want := range wantNightlyStageOrder {
 		if seen[want] != 1 {
 			t.Fatalf("ledger rows for stage %q = %d, want 1 (have %v)", want, seen[want], seen)
 		}
@@ -383,8 +398,8 @@ func TestNightlyWithFakeMemoryDeciderAndClock(t *testing.T) {
 	}
 }
 
-// TestNightlyOnDemandRoutes covers the Memory-page seams: POST runs the job,
-// GET serves the own-bank ledger, and both need a User.
+// TestNightlyOnDemandRoutes covers the Memory-page seams: the admin POST runs
+// the job, GET serves the own-bank ledger, and auth gates both.
 func TestNightlyOnDemandRoutes(t *testing.T) {
 	flush := "FLUSH_OK"
 	none := "none"
@@ -406,8 +421,8 @@ func TestNightlyOnDemandRoutes(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Stages) != len(nightlyStages) {
-		t.Fatalf("on-demand stages = %d, want %d", len(res.Stages), len(nightlyStages))
+	if len(res.Stages) != len(wantNightlyStageOrder) {
+		t.Fatalf("on-demand stages = %d, want %d", len(res.Stages), len(wantNightlyStageOrder))
 	}
 	led, err := http.Get(srv.URL + "/api/memory/ledger")
 	if err != nil {
@@ -438,6 +453,81 @@ func TestNightlyOnDemandRoutes(t *testing.T) {
 		t.Fatalf("unauth GET ledger = %d, want 401", r.StatusCode)
 	} else {
 		r.Body.Close()
+	}
+	// A non-admin User reads the ledger but may not trigger the job: it
+	// snapshots every bank and mines every Session.
+	bob := signedIn(t, d.Handler(), "bob")
+	bobReq, _ := http.NewRequest("POST", plain.URL+"/api/memory/nightly", nil)
+	bobReq.AddCookie(bob)
+	if r, err := http.DefaultClient.Do(bobReq); err != nil {
+		t.Fatal(err)
+	} else {
+		r.Body.Close()
+		if r.StatusCode != http.StatusForbidden {
+			t.Fatalf("plain-User POST nightly = %d, want 403", r.StatusCode)
+		}
+	}
+	// The machine token is no User on either route.
+	machine := httptest.NewServer(withBearer(d.Handler(), d.MachineToken()))
+	defer machine.Close()
+	if r, _ := http.Post(machine.URL+"/api/memory/nightly", "application/json", nil); r.StatusCode != http.StatusUnauthorized {
+		r.Body.Close()
+		t.Fatalf("machine POST nightly = %d, want 401", r.StatusCode)
+	} else {
+		r.Body.Close()
+	}
+}
+
+// TestNightlyHandlerSurvivesClientDisconnect pins the detached context: the
+// client cancels mid-run and the seven-stage job still completes.
+func TestNightlyHandlerSurvivesClientDisconnect(t *testing.T) {
+	none := "none"
+	d, clock := nightlyTestDaemon(t, nil, &none)
+	seedEndedSession(t, d, "cancel-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for cancel")})
+	nightlySettle(clock)
+	ctx, cancel := context.WithCancel(context.Background())
+	d.distillOneShot = func(model, system, user string) (string, error) {
+		cancel()
+		return "FLUSH_OK", nil
+	}
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	req, err := http.NewRequestWithContext(ctx, "POST", srv.URL+"/api/memory/nightly", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("cancelled POST nightly = %d, want the run to survive it", resp.StatusCode)
+		}
+	}
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server keeps running detached after the disconnect, so poll for
+	// the completed seven-stage run instead of asserting at once.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rows, err := bank.Ledger(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		byRun := make(map[string]int)
+		for _, r := range rows {
+			byRun[r.RunID]++
+		}
+		for _, n := range byRun {
+			if n == len(wantNightlyStageOrder) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no run wrote all %d stage rows after a client disconnect (have %v)", len(wantNightlyStageOrder), byRun)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -539,5 +629,216 @@ func TestNightlyDistillEmptyTextIsFailure(t *testing.T) {
 	}
 	if n, _ := res.Counts["failed"].(int); n != 1 {
 		t.Fatalf("failed = %v, want 1", res.Counts)
+	}
+}
+
+// TestNightlySnapshotRealFailureAborts covers the abort path without the
+// injected seam: a file blocking the snapshot directory fails VACUUM INTO,
+// aborts the run before any mine write, and stays visible on the ledger.
+func TestNightlySnapshotRealFailureAborts(t *testing.T) {
+	d, clock := nightlyTestDaemon(t, nil, nil)
+	seedEndedSession(t, d, "snapreal-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for snapreal")})
+	nightlySettle(clock)
+	if _, err := d.profileBankFor("alice"); err != nil {
+		t.Fatal(err)
+	}
+	snapDir := filepath.Join(d.memoryRoot(), "snapshots", "alice")
+	if err := os.MkdirAll(filepath.Dir(snapDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(snapDir, []byte("blocker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	queueBefore := nightlyQueueLen(t, d, "alice")
+	obsBefore := len(bankQuotes(t, d, "alice", "snapreal"))
+
+	res, err := d.RunNightly(context.Background())
+	if err == nil || !res.Aborted {
+		t.Fatalf("blocked-snapshot run = %+v %v, want an aborted error", res, err)
+	}
+	if len(res.Stages) != 1 || res.Stages[0].Stage != nightlyStageSnapshot {
+		t.Fatalf("aborted stages = %+v, want only the snapshot stage", res.Stages)
+	}
+	if res.Stages[0].Status != memory.LedgerFailed {
+		t.Fatalf("snapshot stage = %q, want FAILED", res.Stages[0].Status)
+	}
+	if obsAfter := len(bankQuotes(t, d, "alice", "snapreal")); obsAfter != obsBefore {
+		t.Fatalf("observations = %d, want %d: the abort precedes any mine write", obsAfter, obsBefore)
+	}
+	if got := nightlyQueueLen(t, d, "alice"); got != queueBefore {
+		t.Fatalf("queue items = %d, want %d after an aborted run", got, queueBefore)
+	}
+}
+
+// TestNightlyProfileRealFailures covers the production failure paths: a
+// non-JSON reply and a refused proposal both fail the stage without stopping
+// later stages.
+func TestNightlyProfileRealFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reply string
+	}{
+		{"non-JSON reply", "definitely not json"},
+		{"refused proposal", `{"ops":[{"op":"retire","id":"no-such-line"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			brief := "Prefer tabs for indentation."
+			reply := tc.reply
+			d, clock := nightlyTestDaemon(t, &brief, &reply)
+			seedEndedSession(t, d, "profail-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for profail")})
+			nightlySettle(clock)
+
+			res, err := d.RunNightly(context.Background())
+			if err != nil {
+				t.Fatalf("RunNightly = %v, want later stages to run past a profile failure", err)
+			}
+			byStage := make(map[string]NightlyStageResult)
+			for _, s := range res.Stages {
+				byStage[s.Stage] = s
+			}
+			if got := byStage[nightlyStageProfile].Status; got != memory.LedgerFailed {
+				t.Fatalf("profile stage = %q, want FAILED", got)
+			}
+			if _, ok := byStage[nightlyStageSummary]; !ok {
+				t.Fatalf("summary stage missing after a profile failure: %+v", res.Stages)
+			}
+		})
+	}
+}
+
+// TestNightlyDistillCallErrorFailsTheStage covers the failing-LLM path: the
+// one-off call errors and the stage records FAILED while later stages run.
+func TestNightlyDistillCallErrorFailsTheStage(t *testing.T) {
+	none := "none"
+	d, clock := nightlyTestDaemon(t, nil, &none)
+	d.distillOneShot = func(model, system, user string) (string, error) {
+		return "", errString("distill boom")
+	}
+	seedEndedSession(t, d, "distfail-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for distfail")})
+	nightlySettle(clock)
+
+	res, err := d.RunNightly(context.Background())
+	if err != nil {
+		t.Fatalf("RunNightly = %v, want later stages to run past a distill failure", err)
+	}
+	byStage := make(map[string]NightlyStageResult)
+	for _, s := range res.Stages {
+		byStage[s.Stage] = s
+	}
+	if got := byStage[nightlyStageDistill].Status; got != memory.LedgerFailed {
+		t.Fatalf("distill stage = %q, want FAILED", got)
+	}
+	if len(res.Stages) != len(wantNightlyStageOrder) {
+		t.Fatalf("stages = %d, want %d: later stages run past a distill failure", len(res.Stages), len(wantNightlyStageOrder))
+	}
+}
+
+// TestNightlyInjectedFailureTable runs every stage's failure seam: snapshot
+// aborts, every later stage records FAILED while the rest still run.
+func TestNightlyInjectedFailureTable(t *testing.T) {
+	for _, stage := range wantNightlyStageOrder {
+		t.Run(stage, func(t *testing.T) {
+			flush := "FLUSH_OK"
+			none := "none"
+			d, clock := nightlyTestDaemon(t, &flush, &none)
+			d.nightlyFailStage = stage
+			seedEndedSession(t, d, "table-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for table")})
+			nightlySettle(clock)
+
+			res, err := d.RunNightly(context.Background())
+			byStage := make(map[string]NightlyStageResult)
+			for _, s := range res.Stages {
+				byStage[s.Stage] = s
+			}
+			got, ok := byStage[stage]
+			if !ok || got.Status != memory.LedgerFailed {
+				t.Fatalf("stage %q = %+v, want FAILED", stage, got)
+			}
+			if stage == nightlyStageSnapshot {
+				if err == nil || !res.Aborted || len(res.Stages) != 1 {
+					t.Fatalf("snapshot failure = %+v %v, want an abort with one stage", res, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RunNightly = %v, want later stages to run past a %s failure", err, stage)
+			}
+			if len(res.Stages) != len(wantNightlyStageOrder) {
+				t.Fatalf("stages = %d, want %d past a %s failure", len(res.Stages), len(wantNightlyStageOrder), stage)
+			}
+		})
+	}
+}
+
+// TestNightlyMaybeRunMarksDayOnce pins the scheduler: one run per local day,
+// an aborted run still marks the day (no per-minute FAILED spam), and a busy
+// Daemon marks nothing.
+func TestNightlyMaybeRunMarksDayOnce(t *testing.T) {
+	flush := "FLUSH_OK"
+	none := "none"
+	d, clock := nightlyTestDaemon(t, &flush, &none)
+	seedEndedSession(t, d, "sched-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for sched")})
+	nightlySettle(clock)
+	at3 := time.Date(2026, 10, 12, 3, 5, 0, 0, time.Local)
+
+	if !d.nightlyMaybeRun(at3) {
+		t.Fatal("nightlyMaybeRun at 03:05 idle = false, want a run")
+	}
+	rows := nightlyLedgerLen(t, d, "alice")
+	if rows == 0 {
+		t.Fatal("no ledger rows after a scheduled run")
+	}
+	if d.nightlyMaybeRun(at3.Add(5 * time.Minute)) {
+		t.Fatal("second nightlyMaybeRun in the same hour ran again, want once per day")
+	}
+	if got := nightlyLedgerLen(t, d, "alice"); got != rows {
+		t.Fatalf("ledger rows = %d, want %d: no second run means no new rows", got, rows)
+	}
+
+	// An aborted run still marks the day.
+	d2, clock2 := nightlyTestDaemon(t, &flush, &none)
+	d2.nightlyFailStage = nightlyStageSnapshot
+	seedEndedSession(t, d2, "sched-abort-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for sched abort")})
+	nightlySettle(clock2)
+	if !d2.nightlyMaybeRun(at3) {
+		t.Fatal("aborted scheduled run reports false, want attempted=true")
+	}
+	rows2 := nightlyLedgerLen(t, d2, "alice")
+	if d2.nightlyMaybeRun(at3.Add(5 * time.Minute)) {
+		t.Fatal("aborted run retried in the same hour, want one attempt per day")
+	}
+	if got := nightlyLedgerLen(t, d2, "alice"); got != rows2 {
+		t.Fatalf("ledger rows = %d, want %d: an abort must not spam rows every minute", got, rows2)
+	}
+
+	// A busy Daemon attempts nothing and marks nothing.
+	d3, _ := nightlyTestDaemon(t, &flush, &none)
+	d3.sessions["busy"] = &session{live: true, busy: true, notify: make(chan struct{}), last: time.Now().UTC()}
+	if d3.nightlyMaybeRun(at3) {
+		t.Fatal("busy nightlyMaybeRun = true, want no attempt")
+	}
+	if d3.nightlyLastDay != "" {
+		t.Fatalf("busy run marked day %q, want unmarked", d3.nightlyLastDay)
+	}
+}
+
+// TestCapDistillInputKeepsEarlierInvalidBytes pins the trailing-only trim:
+// invalid bytes before the cut survive, a trailing partial rune trims.
+func TestCapDistillInputKeepsEarlierInvalidBytes(t *testing.T) {
+	s := strings.Repeat("a", 100) + "\xff" + strings.Repeat("b", nightlyDistillCap)
+	got := capDistillInput(s)
+	if len(got) != nightlyDistillCap {
+		t.Fatalf("capped length = %d, want %d", len(got), nightlyDistillCap)
+	}
+	if !strings.Contains(got, "\xff") {
+		t.Fatal("earlier invalid byte was trimmed: only a trailing partial rune may trim")
+	}
+	s2 := strings.Repeat("a", nightlyDistillCap-1) + "é" + strings.Repeat("b", 10)
+	got2 := capDistillInput(s2)
+	if len(got2) != nightlyDistillCap-1 || !utf8.ValidString(got2) {
+		t.Fatalf("partial-rune cut = %d bytes valid=%v, want %d valid bytes", len(got2), utf8.ValidString(got2), nightlyDistillCap-1)
+	}
+	if got3 := capDistillInput("short"); got3 != "short" {
+		t.Fatalf("short input = %q, want it unchanged", got3)
 	}
 }

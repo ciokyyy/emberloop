@@ -45,18 +45,6 @@ const (
 	nightlyStageSummary  = "nightly_summary"
 )
 
-// nightlyStages runs in this order. Snapshot aborts on failure; the rest run
-// even when an earlier one failed.
-var nightlyStages = []string{
-	nightlyStageSnapshot,
-	nightlyStageMine,
-	nightlyStageDistill,
-	nightlyStagePair,
-	nightlyStageProfile,
-	nightlyStageAnchors,
-	nightlyStageSummary,
-}
-
 // NightlyStageResult is one stage of one run.
 type NightlyStageResult struct {
 	Stage  string         `json:"stage"`
@@ -111,15 +99,19 @@ func (d *Daemon) nightlyOwners() []string {
 	return out
 }
 
-// capDistillInput cuts s to at most nightlyDistillCap bytes on a rune
-// boundary, so CJK text stays valid UTF-8. The caller redacts first, so the
-// cap applies to redacted text leaving the Daemon.
+// capDistillInput cuts s to at most nightlyDistillCap bytes, trimming only a
+// trailing partial rune so CJK text stays valid UTF-8. Earlier bytes pass
+// through untouched, even when they are not valid UTF-8. The caller redacts
+// first, so the cap applies to redacted text leaving the Daemon.
 func capDistillInput(s string) string {
 	if len(s) <= nightlyDistillCap {
 		return s
 	}
 	cut := s[:nightlyDistillCap]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
+	for len(cut) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(cut); r != utf8.RuneError || size > 1 {
+			break
+		}
 		cut = cut[:len(cut)-1]
 	}
 	return cut
@@ -141,32 +133,25 @@ func profileSystemPrompt() string {
 		"When no stable signal exists, reply with exactly none. No other text."
 }
 
-// distillCall runs one distill completion: the same bare pig one-shot the
-// compress summarizer uses, with no tools and no Session behind it. The user
-// text is redacted for distill before it is sent.
-func (d *Daemon) distillCall(model, system, user string) (string, error) {
+// nightlyLLMCall runs one cheap distill or profile-proposal completion: the
+// same bare pig one-shot the compress summarizer uses, with no tools and no
+// Session behind it. The user text is redacted for distill before it is sent.
+// seam scripts the call in tests (distillOneShot, profileOneShot); nil runs
+// the bare pig one-shot.
+func (d *Daemon) nightlyLLMCall(seam func(model, system, user string) (string, error), model, system, user string) (string, error) {
 	redacted := memory.ForDistill(user)
-	if d.distillOneShot != nil {
-		return d.distillOneShot(model, system, redacted)
+	if seam != nil {
+		return seam(model, system, redacted)
 	}
 	return pigOneShot("", model, system, redacted, nightlyDistillMaxTokens, nightlyDistillTimeout)
 }
 
-// profileCall runs one profile-proposal completion with the same seam. The
-// user text is redacted for distill before it is sent: it carries the same
-// redacted notes as a distill call.
-func (d *Daemon) profileCall(model, system, user string) (string, error) {
-	redacted := memory.ForDistill(user)
-	if d.profileOneShot != nil {
-		return d.profileOneShot(model, system, redacted)
-	}
-	return pigOneShot("", model, system, redacted, nightlyDistillMaxTokens, nightlyDistillTimeout)
-}
-
-// nightlyLedger writes one row per owner bank. A ledger failure never fails
-// the stage it follows: the stage status already names the outcome, and the
-// job must leave later stages running.
-func (d *Daemon) nightlyLedger(ctx context.Context, runID, stage, status string, counts map[string]any, detail string, owners []string) {
+// nightlyLedger writes one row per owner bank and reports how many banks it
+// could not open. A bank that cannot open gets no row here; stages count that
+// as failed so a silent skip never hides. A ledger write failure itself never
+// fails the stage it follows: the stage status already names the outcome, and
+// the job must leave later stages running.
+func (d *Daemon) nightlyLedger(ctx context.Context, runID, stage, status string, counts map[string]any, detail string, owners []string) (unopenable int) {
 	if counts == nil {
 		counts = map[string]any{}
 	}
@@ -174,6 +159,7 @@ func (d *Daemon) nightlyLedger(ctx context.Context, runID, stage, status string,
 	for _, owner := range owners {
 		bank, err := d.profileBankFor(owner)
 		if err != nil {
+			unopenable++
 			continue
 		}
 		_, _ = bank.RecordLedger(ctx, memory.LedgerRow{
@@ -181,26 +167,73 @@ func (d *Daemon) nightlyLedger(ctx context.Context, runID, stage, status string,
 			CountsJSON: string(raw), Detail: detail,
 		})
 	}
+	return unopenable
+}
+
+// nightlyRecordLedger writes one row to an open bank. Failures stay silent:
+// the stage status already names the outcome.
+func nightlyRecordLedger(ctx context.Context, bank memory.Memory, runID, stage, status string, counts map[string]any, detail string) {
+	if counts == nil {
+		counts = map[string]any{}
+	}
+	raw, _ := json.Marshal(counts)
+	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{
+		RunID: runID, Stage: stage, Status: status,
+		CountsJSON: string(raw), Detail: detail,
+	})
+}
+
+// nightlyOpenBanks opens every owner's bank for a stage. Banks that cannot
+// open are counted, never skipped silently: without a bank there is no
+// snapshot, no pairing and no ledger row, so the stage must show it.
+func (d *Daemon) nightlyOpenBanks(owners []string) (map[string]memory.Memory, int, string) {
+	open := make(map[string]memory.Memory, len(owners))
+	failed := 0
+	var firstErr string
+	for _, owner := range owners {
+		bank, err := d.profileBankFor(owner)
+		if err != nil {
+			failed++
+			if firstErr == "" {
+				firstErr = "bank for " + owner + ": " + err.Error()
+			}
+			continue
+		}
+		open[owner] = bank
+	}
+	return open, failed, firstErr
+}
+
+// nightlyInjectedFailure is the deterministic test seam for the abort path
+// (snapshot) and the continue paths (every later stage): when the test sets
+// nightlyFailStage, the stage records its FAILED ledger row and stops. Real
+// failure paths keep their own tests: a blocked snapshot directory, a
+// failing distill call, a non-JSON profile reply and a refused proposal.
+func (d *Daemon) nightlyInjectedFailure(ctx context.Context, runID, stage string, owners []string) *NightlyStageResult {
+	if d.nightlyFailStage != stage {
+		return nil
+	}
+	detail := "nightly: injected " + stage + " failure"
+	d.nightlyLedger(ctx, runID, stage, memory.LedgerFailed, map[string]any{"owners": len(owners)}, detail, owners)
+	return &NightlyStageResult{Stage: stage, Status: memory.LedgerFailed,
+		Counts: map[string]any{"owners": len(owners)}, Detail: detail}
 }
 
 // nightlySnapshot copies every bank with VACUUM INTO. Any bank failing aborts
 // the run before any mine write.
 func (d *Daemon) nightlySnapshot(ctx context.Context, runID string, owners []string) NightlyStageResult {
-	if d.nightlyFailStage == nightlyStageSnapshot {
-		d.nightlyLedger(ctx, runID, nightlyStageSnapshot, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected snapshot failure", owners)
-		return NightlyStageResult{Stage: nightlyStageSnapshot, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected snapshot failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageSnapshot, owners); fail != nil {
+		return *fail
 	}
 	if len(owners) == 0 {
 		return NightlyStageResult{Stage: nightlyStageSnapshot, Status: memory.LedgerNoData,
 			Counts: map[string]any{"owners": 0}, Detail: "no banks to snapshot"}
 	}
-	taken, kept, pruned, failed := 0, 0, 0, 0
-	var firstErr string
+	banks, failed, firstErr := d.nightlyOpenBanks(owners)
+	taken, kept, pruned := 0, 0, 0
 	for _, owner := range owners {
-		bank, err := d.profileBankFor(owner)
-		if err != nil {
+		bank, ok := banks[owner]
+		if !ok {
 			continue
 		}
 		res, err := bank.Snapshot(ctx)
@@ -226,11 +259,7 @@ func (d *Daemon) nightlySnapshot(ctx context.Context, runID string, owners []str
 			status = memory.LedgerNoData
 			detail = "snapshot skipped: newest under 6 hours"
 		}
-		raw, _ := json.Marshal(counts)
-		_, _ = bank.RecordLedger(ctx, memory.LedgerRow{
-			RunID: runID, Stage: nightlyStageSnapshot, Status: status,
-			CountsJSON: string(raw), Detail: detail,
-		})
+		nightlyRecordLedger(ctx, bank, runID, nightlyStageSnapshot, status, counts, detail)
 	}
 	status := memory.LedgerSuccess
 	detail := fmt.Sprintf("snapshotted %d banks: %d taken, %d failed", len(owners), taken, failed)
@@ -250,11 +279,8 @@ func (d *Daemon) nightlySnapshot(ctx context.Context, runID string, owners []str
 // stops the others; the errors join and the stage is FAILED but later stages
 // still run.
 func (d *Daemon) nightlyMine(ctx context.Context, runID string, owners []string) ([]MineResult, NightlyStageResult) {
-	if d.nightlyFailStage == nightlyStageMine {
-		d.nightlyLedger(ctx, runID, nightlyStageMine, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected mine failure", owners)
-		return nil, NightlyStageResult{Stage: nightlyStageMine, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected mine failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageMine, owners); fail != nil {
+		return nil, *fail
 	}
 	results, err := d.MineSettledSessions()
 	scanned, kept, stored, dups, dropped, promoted := 0, 0, 0, 0, 0, 0
@@ -266,12 +292,24 @@ func (d *Daemon) nightlyMine(ctx context.Context, runID string, owners []string)
 		dropped += r.Dropped
 		promoted += r.Promoted
 	}
+	failed := 0
+	var firstErr string
+	if err != nil {
+		failed++
+		firstErr = err.Error()
+	}
+	if _, openFailed, openErr := d.nightlyOpenBanks(owners); openFailed > 0 {
+		failed += openFailed
+		if firstErr == "" {
+			firstErr = openErr
+		}
+	}
 	status := memory.LedgerSuccess
 	detail := fmt.Sprintf("mined %d sessions: %d scanned, %d kept, %d stored, %d duplicates, %d promoted",
 		len(results), scanned, kept, stored, dups, promoted)
-	if err != nil {
+	if failed > 0 {
 		status = memory.LedgerFailed
-		detail = fmt.Sprintf("mine partial: %s; %s", err.Error(), detail)
+		detail = fmt.Sprintf("mine partial: %s; %s", firstErr, detail)
 	} else if stored == 0 && promoted == 0 {
 		status = memory.LedgerNoData
 		if len(results) == 0 {
@@ -281,7 +319,7 @@ func (d *Daemon) nightlyMine(ctx context.Context, runID string, owners []string)
 		}
 	}
 	counts := map[string]any{"sessions": len(results), "scanned": scanned, "kept": kept,
-		"stored": stored, "duplicates": dups, "dropped": dropped, "promoted": promoted}
+		"stored": stored, "duplicates": dups, "dropped": dropped, "promoted": promoted, "failed": failed}
 	d.nightlyLedger(ctx, runID, nightlyStageMine, status, counts, detail, owners)
 	return results, NightlyStageResult{Stage: nightlyStageMine, Status: status, Counts: counts, Detail: detail}
 }
@@ -315,11 +353,8 @@ func (d *Daemon) nightlySessionUserTexts(id string) string {
 func (d *Daemon) nightlyDistill(ctx context.Context, runID string, owners []string, mined []MineResult) (map[string]string, map[string]string, NightlyStageResult) {
 	briefs := make(map[string]string)
 	sessionOwner := make(map[string]string)
-	if d.nightlyFailStage == nightlyStageDistill {
-		d.nightlyLedger(ctx, runID, nightlyStageDistill, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected distill failure", owners)
-		return briefs, sessionOwner, NightlyStageResult{Stage: nightlyStageDistill, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected distill failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageDistill, owners); fail != nil {
+		return briefs, sessionOwner, *fail
 	}
 	var targets []string
 	for _, r := range mined {
@@ -367,7 +402,7 @@ func (d *Daemon) nightlyDistill(ctx context.Context, runID string, owners []stri
 			continue
 		}
 		input := capDistillInput(memory.ForDistill(raw))
-		reply, err := d.distillCall(model, distillSystemPrompt(), input)
+		reply, err := d.nightlyLLMCall(d.distillOneShot, model, distillSystemPrompt(), input)
 		if err != nil {
 			failed++
 			if firstErr == "" {
@@ -390,6 +425,12 @@ func (d *Daemon) nightlyDistill(ctx context.Context, runID string, owners []stri
 		briefs[id] = strings.TrimSpace(reply)
 	}
 	briefN := len(briefs)
+	if _, openFailed, openErr := d.nightlyOpenBanks(owners); openFailed > 0 {
+		failed += openFailed
+		if firstErr == "" {
+			firstErr = openErr
+		}
+	}
 	status := memory.LedgerSuccess
 	detail := fmt.Sprintf("distilled %d sessions: %d briefs, %d %s", len(targets), briefN, flushOK, nightlyFlushOK)
 	if failed > 0 {
@@ -412,11 +453,8 @@ func (d *Daemon) nightlyDistill(ctx context.Context, runID string, owners []stri
 // are left untouched. The stage writes queue annotations plus ledger rows: it
 // never deletes.
 func (d *Daemon) nightlyPair(ctx context.Context, runID string, owners []string) NightlyStageResult {
-	if d.nightlyFailStage == nightlyStagePair {
-		d.nightlyLedger(ctx, runID, nightlyStagePair, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected pair failure", owners)
-		return NightlyStageResult{Stage: nightlyStagePair, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected pair failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStagePair, owners); fail != nil {
+		return *fail
 	}
 	if len(owners) == 0 {
 		return NightlyStageResult{Stage: nightlyStagePair, Status: memory.LedgerNoData,
@@ -424,9 +462,14 @@ func (d *Daemon) nightlyPair(ctx context.Context, runID string, owners []string)
 	}
 	pending, already, annotated, unpaired, failed := 0, 0, 0, 0, 0
 	var firstErr string
+	banks, openFailed, openErr := d.nightlyOpenBanks(owners)
+	failed += openFailed
+	if firstErr == "" {
+		firstErr = openErr
+	}
 	for _, owner := range owners {
-		bank, err := d.profileBankFor(owner)
-		if err != nil {
+		bank, ok := banks[owner]
+		if !ok {
 			continue
 		}
 		items, err := bank.Queue(ctx)
@@ -435,8 +478,8 @@ func (d *Daemon) nightlyPair(ctx context.Context, runID string, owners []string)
 			if firstErr == "" {
 				firstErr = err.Error()
 			}
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStagePair,
-				Status: memory.LedgerFailed, CountsJSON: `{"annotated":0}`, Detail: "pair failed: " + err.Error()})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStagePair, memory.LedgerFailed,
+				map[string]any{"annotated": 0}, "pair failed: "+err.Error())
 			continue
 		}
 		var mine []memory.QueueItem
@@ -532,11 +575,8 @@ func (d *Daemon) nightlyPair(ctx context.Context, runID string, owners []string)
 // retire ops by line ID, JSON-only, none when no stable signal. Proposals go
 // to the queue; a human approval writes the version.
 func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []string, briefs map[string]string, sessionOwner map[string]string) NightlyStageResult {
-	if d.nightlyFailStage == nightlyStageProfile {
-		d.nightlyLedger(ctx, runID, nightlyStageProfile, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected profile failure", owners)
-		return NightlyStageResult{Stage: nightlyStageProfile, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected profile failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageProfile, owners); fail != nil {
+		return *fail
 	}
 	if len(owners) == 0 {
 		return NightlyStageResult{Stage: nightlyStageProfile, Status: memory.LedgerNoData,
@@ -562,17 +602,21 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 	needModel := model == "" && d.profileOneShot == nil
 	proposed, none, failed := 0, 0, 0
 	var firstErr string
+	banks, openFailed, openErr := d.nightlyOpenBanks(owners)
+	failed += openFailed
+	if firstErr == "" {
+		firstErr = openErr
+	}
 	for _, owner := range owners {
-		bank, err := d.profileBankFor(owner)
-		if err != nil {
+		bank, ok := banks[owner]
+		if !ok {
 			continue
 		}
 		notes := byOwner[owner]
 		if len(notes) == 0 || needModel {
 			none++
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerNoData, CountsJSON: `{"proposed":0}`,
-				Detail: "no stable signal for a profile patch"})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerNoData,
+				map[string]any{"proposed": 0}, "no stable signal for a profile patch")
 			continue
 		}
 		sort.Strings(notes)
@@ -582,8 +626,8 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 			if firstErr == "" {
 				firstErr = err.Error()
 			}
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerFailed, CountsJSON: `{"proposed":0}`, Detail: "profile failed: " + err.Error()})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerFailed,
+				map[string]any{"proposed": 0}, "profile failed: "+err.Error())
 			continue
 		}
 		rendered, _ := memory.RenderProfile(current)
@@ -593,21 +637,21 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 		b.WriteString("\n\nRecent durable notes:\n")
 		b.WriteString(strings.Join(notes, "\n\n"))
 		input := capDistillInput(memory.ForDistill(b.String()))
-		reply, err := d.profileCall(model, profileSystemPrompt(), input)
+		reply, err := d.nightlyLLMCall(d.profileOneShot, model, profileSystemPrompt(), input)
 		if err != nil {
 			failed++
 			if firstErr == "" {
 				firstErr = err.Error()
 			}
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerFailed, CountsJSON: `{"proposed":0}`, Detail: "profile failed: " + err.Error()})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerFailed,
+				map[string]any{"proposed": 0}, "profile failed: "+err.Error())
 			continue
 		}
 		trimmed := strings.TrimSpace(reply)
 		if strings.EqualFold(trimmed, "none") || trimmed == "" {
 			none++
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerNoData, CountsJSON: `{"proposed":0}`, Detail: "profile proposer returned none"})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerNoData,
+				map[string]any{"proposed": 0}, "profile proposer returned none")
 			continue
 		}
 		var patch memory.ProfilePatch
@@ -616,14 +660,14 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 			if firstErr == "" {
 				firstErr = "profile reply is not JSON: " + err.Error()
 			}
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerFailed, CountsJSON: `{"proposed":0}`, Detail: "profile proposer returned non-JSON"})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerFailed,
+				map[string]any{"proposed": 0}, "profile proposer returned non-JSON")
 			continue
 		}
 		if len(patch.Ops) == 0 {
 			none++
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerNoData, CountsJSON: `{"proposed":0}`, Detail: "profile proposer returned empty ops"})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerNoData,
+				map[string]any{"proposed": 0}, "profile proposer returned empty ops")
 			continue
 		}
 		if _, err := d.proposeProfilePatch(ctx, owner, patch, "nightly", "", owner); err != nil {
@@ -631,13 +675,13 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 			if firstErr == "" {
 				firstErr = err.Error()
 			}
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-				Status: memory.LedgerFailed, CountsJSON: `{"proposed":0}`, Detail: "profile proposal refused: " + err.Error()})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerFailed,
+				map[string]any{"proposed": 0}, "profile proposal refused: "+err.Error())
 			continue
 		}
 		proposed++
-		_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageProfile,
-			Status: memory.LedgerSuccess, CountsJSON: `{"proposed":1}`, Detail: "profile patch proposed from nightly briefs"})
+		nightlyRecordLedger(ctx, bank, runID, nightlyStageProfile, memory.LedgerSuccess,
+			map[string]any{"proposed": 1}, "profile patch proposed from nightly briefs")
 	}
 	status := memory.LedgerSuccess
 	detail := fmt.Sprintf("proposed %d profile patches (%d with no signal)", proposed, none)
@@ -713,11 +757,8 @@ func (d *Daemon) nightlyAnchorDirs(ctx context.Context) []string {
 // dormant. Preferences carry no anchors and are never checked. The dormant
 // count names Rules this run made dormant, not Rules already dormant.
 func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []string) NightlyStageResult {
-	if d.nightlyFailStage == nightlyStageAnchors {
-		d.nightlyLedger(ctx, runID, nightlyStageAnchors, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected anchors failure", owners)
-		return NightlyStageResult{Stage: nightlyStageAnchors, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected anchors failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageAnchors, owners); fail != nil {
+		return *fail
 	}
 	if len(owners) == 0 {
 		return NightlyStageResult{Stage: nightlyStageAnchors, Status: memory.LedgerNoData,
@@ -732,9 +773,14 @@ func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []stri
 	}
 	rules, dormant, failed := 0, 0, 0
 	var firstErr string
+	banks, openFailed, openErr := d.nightlyOpenBanks(owners)
+	failed += openFailed
+	if firstErr == "" {
+		firstErr = openErr
+	}
 	for _, owner := range owners {
-		bank, err := d.profileBankFor(owner)
-		if err != nil {
+		bank, ok := banks[owner]
+		if !ok {
 			continue
 		}
 		live, err := bank.LiveRules(ctx)
@@ -743,8 +789,8 @@ func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []stri
 			if firstErr == "" {
 				firstErr = err.Error()
 			}
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageAnchors,
-				Status: memory.LedgerFailed, CountsJSON: `{"rules":0}`, Detail: "anchors failed: " + err.Error()})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageAnchors, memory.LedgerFailed,
+				map[string]any{"rules": 0}, "anchors failed: "+err.Error())
 			continue
 		}
 		var anchored []memory.Rule
@@ -754,8 +800,8 @@ func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []stri
 			}
 		}
 		if len(anchored) == 0 {
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageAnchors,
-				Status: memory.LedgerNoData, CountsJSON: `{"rules":0}`, Detail: "no anchored rules to check"})
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageAnchors, memory.LedgerNoData,
+				map[string]any{"rules": 0}, "no anchored rules to check")
 			continue
 		}
 		wasDormant := nightlyDormantSet(ctx, bank, anchored)
@@ -770,10 +816,8 @@ func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []stri
 			if wasDormant[r.RuleID] {
 				continue
 			}
-			if vers, err := bank.RuleVersions(ctx, r.RuleID); err == nil && len(vers) > 0 {
-				if latest := vers[len(vers)-1]; latest.Status == memory.StatusDormant {
-					newDormant++
-				}
+			if nightlyRuleDormant(ctx, bank, r.RuleID) {
+				newDormant++
 			}
 		}
 		rules += len(anchored)
@@ -789,9 +833,7 @@ func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []stri
 			status = memory.LedgerFailed
 			detail = fmt.Sprintf("anchors partial: %s; %s", verr.Error(), detail)
 		}
-		raw, _ := json.Marshal(counts)
-		_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageAnchors,
-			Status: status, CountsJSON: string(raw), Detail: detail})
+		nightlyRecordLedger(ctx, bank, runID, nightlyStageAnchors, status, counts, detail)
 	}
 	status := memory.LedgerSuccess
 	detail := fmt.Sprintf("checked %d anchored rules: %d newly dormant", rules, dormant)
@@ -807,16 +849,25 @@ func (d *Daemon) nightlyAnchors(ctx context.Context, runID string, owners []stri
 		Detail: detail}
 }
 
+// nightlyRuleDormant reports whether the latest version of ruleID is dormant.
+// The anchor check uses it before and after verification so the ledger counts
+// only Rules this run made dormant, never ones already dormant.
+func nightlyRuleDormant(ctx context.Context, bank memory.Memory, ruleID string) bool {
+	vers, err := bank.RuleVersions(ctx, ruleID)
+	if err != nil || len(vers) == 0 {
+		return false
+	}
+	return vers[len(vers)-1].Status == memory.StatusDormant
+}
+
 // nightlyDormantSet reports the anchored Rules already dormant before this
 // run, so the ledger counts only transitions. LiveRules excludes dormant
 // Rules, so the set is normally empty; it exists so a rerun never recounts.
 func nightlyDormantSet(ctx context.Context, bank memory.Memory, anchored []memory.Rule) map[string]bool {
 	out := make(map[string]bool)
 	for _, r := range anchored {
-		if vers, err := bank.RuleVersions(ctx, r.RuleID); err == nil && len(vers) > 0 {
-			if latest := vers[len(vers)-1]; latest.Status == memory.StatusDormant {
-				out[r.RuleID] = true
-			}
+		if nightlyRuleDormant(ctx, bank, r.RuleID) {
+			out[r.RuleID] = true
 		}
 	}
 	return out
@@ -826,11 +877,8 @@ func nightlyDormantSet(ctx context.Context, bank memory.Memory, anchored []memor
 // approval latency and budget pressure, so the Memory page shows the last run
 // without recomputing it.
 func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []string, stages []NightlyStageResult) NightlyStageResult {
-	if d.nightlyFailStage == nightlyStageSummary {
-		d.nightlyLedger(ctx, runID, nightlyStageSummary, memory.LedgerFailed,
-			map[string]any{"owners": len(owners)}, "nightly: injected summary failure", owners)
-		return NightlyStageResult{Stage: nightlyStageSummary, Status: memory.LedgerFailed,
-			Counts: map[string]any{"owners": len(owners)}, Detail: "nightly: injected summary failure"}
+	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageSummary, owners); fail != nil {
+		return *fail
 	}
 	if len(owners) == 0 {
 		return NightlyStageResult{Stage: nightlyStageSummary, Status: memory.LedgerNoData,
@@ -842,15 +890,26 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 			failedStages++
 		}
 	}
+	failed := 0
+	var firstErr string
+	banks, openFailed, openErr := d.nightlyOpenBanks(owners)
+	failed += openFailed
+	if firstErr == "" {
+		firstErr = openErr
+	}
 	for _, owner := range owners {
-		bank, err := d.profileBankFor(owner)
-		if err != nil {
+		bank, ok := banks[owner]
+		if !ok {
 			continue
 		}
 		items, err := bank.Queue(ctx)
 		if err != nil {
-			_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageSummary,
-				Status: memory.LedgerFailed, CountsJSON: `{}`, Detail: "summary failed: " + err.Error()})
+			failed++
+			if firstErr == "" {
+				firstErr = err.Error()
+			}
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageSummary, memory.LedgerFailed,
+				map[string]any{}, "summary failed: "+err.Error())
 			continue
 		}
 		st := memory.DescribeQueue(items, d.now())
@@ -860,15 +919,19 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 			"total": st.Total, "budget": st.Budget, "overBudget": st.OverBudget,
 			"avgApprovalLatencyHours": st.AvgLatencyHrs, "oldestPendingAgeHours": st.OldestPendingAgeHrs,
 		}
-		raw, _ := json.Marshal(counts)
 		detail := fmt.Sprintf("nightly %s: %d stages, %d failed; queue %d pending / %d total (budget %d)",
 			runID, len(stages)+1, failedStages, st.Pending, st.Total, st.Budget)
-		_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: nightlyStageSummary,
-			Status: memory.LedgerSuccess, CountsJSON: string(raw), Detail: detail})
+		nightlyRecordLedger(ctx, bank, runID, nightlyStageSummary, memory.LedgerSuccess, counts, detail)
 	}
-	return NightlyStageResult{Stage: nightlyStageSummary, Status: memory.LedgerSuccess,
-		Counts: map[string]any{"owners": len(owners), "stages": len(stages) + 1, "failedStages": failedStages},
-		Detail: fmt.Sprintf("nightly %s: %d stages, %d failed", runID, len(stages)+1, failedStages)}
+	status := memory.LedgerSuccess
+	detail := fmt.Sprintf("nightly %s: %d stages, %d failed", runID, len(stages)+1, failedStages)
+	if failed > 0 {
+		status = memory.LedgerFailed
+		detail = fmt.Sprintf("summary partial: %s; %s", firstErr, detail)
+	}
+	return NightlyStageResult{Stage: nightlyStageSummary, Status: status,
+		Counts: map[string]any{"owners": len(owners), "stages": len(stages) + 1, "failedStages": failedStages, "failed": failed},
+		Detail: detail}
 }
 
 // RunNightly runs the seven stages in order. It runs only when the Daemon is
@@ -916,6 +979,29 @@ func nightlyDue(now time.Time, lastDay string) (bool, string) {
 	return true, day
 }
 
+// nightlyMaybeRun fires one scheduled run when due: the 03:00 local hour with
+// no auto-run yet today, and an idle Daemon. It marks the day for every
+// attempted run, including an aborted one, so a failing 03:00 run writes one
+// set of FAILED rows instead of retrying every minute. A busy Daemon marks
+// nothing: the run never starts, writes nothing, and retries next minute.
+func (d *Daemon) nightlyMaybeRun(now time.Time) bool {
+	d.nightlyMu.Lock()
+	last := d.nightlyLastDay
+	d.nightlyMu.Unlock()
+	due, day := nightlyDue(now, last)
+	if !due || !d.Idle(0) {
+		return false
+	}
+	res, _ := d.RunNightly(context.Background())
+	if res.Aborted && len(res.Stages) == 0 {
+		return false
+	}
+	d.nightlyMu.Lock()
+	d.nightlyLastDay = day
+	d.nightlyMu.Unlock()
+	return true
+}
+
 // StartNightlyLoop runs the 03:00 local job until ctx ends: once per local
 // day, when the Daemon is idle. On-demand runs from the Memory page do not
 // move the day marker, so the scheduled run still fires.
@@ -927,34 +1013,40 @@ func (d *Daemon) StartNightlyLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-tick.C:
-			d.nightlyMu.Lock()
-			last := d.nightlyLastDay
-			d.nightlyMu.Unlock()
-			due, day := nightlyDue(now, last)
-			if !due || !d.Idle(0) {
-				continue
-			}
-			if _, err := d.RunNightly(context.Background()); err == nil {
-				d.nightlyMu.Lock()
-				d.nightlyLastDay = day
-				d.nightlyMu.Unlock()
-			}
+			d.nightlyMaybeRun(now)
 		}
 	}
 }
 
-// handleNightly serves POST /api/memory/nightly: the on-demand run from the
-// Memory page. It runs only when idle: a busy Daemon answers 409 with no
-// ledger write.
+// nightlyAdminOf resolves the signed-in admin behind the on-demand nightly
+// run. The job snapshots every bank and mines every Session, so triggering it
+// is admin-only like the other host-global switches; ordinary Users and the
+// machine token are refused.
+func (d *Daemon) nightlyAdminOf(w http.ResponseWriter, r *http.Request) (User, bool) {
+	user, ok := d.memoryUserOf(w, r)
+	if !ok {
+		return User{}, false
+	}
+	if !user.Admin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return User{}, false
+	}
+	return user, true
+}
+
+// handleNightly serves POST /api/memory/nightly: the admin on-demand run from
+// the Memory page. It runs only when idle: a busy Daemon answers 409 with no
+// ledger write. The job runs detached from the request context, so a client
+// disconnect never cancels a run midway.
 func (d *Daemon) handleNightly(w http.ResponseWriter, r *http.Request) {
-	if _, ok := d.memoryUserOf(w, r); !ok {
+	if _, ok := d.nightlyAdminOf(w, r); !ok {
 		return
 	}
 	if r.Method != "POST" {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	res, err := d.RunNightly(r.Context())
+	res, err := d.RunNightly(context.WithoutCancel(r.Context()))
 	if err != nil && res.Aborted && len(res.Stages) == 0 {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
