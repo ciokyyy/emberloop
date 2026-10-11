@@ -203,7 +203,7 @@ func (d *Daemon) maybeAutoCompress(id string) {
 	set := readCompressSettings()
 	d.mu.Lock()
 	s.turnsSinceCompress++
-	skip := s.meta.Scout || s.meta.Status == "ended" || s.turnsSinceCompress < set.Cooldown
+	skip := s.meta.Scout || s.meta.Status == "ended" || s.meta.CompressBlock != "" || s.turnsSinceCompress < set.Cooldown
 	d.mu.Unlock()
 	if skip || !set.Auto {
 		return
@@ -270,6 +270,11 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	// the Group. runDeferredCompress resumes it at a turn end or a delivery.
 	d.mu.Lock()
 	if d.groupOutstandingLocked(id) {
+		if s.meta.CompressBlock != "" {
+			// A blocked Session waits on no Group: a Retry asks again once the Group reports.
+			d.mu.Unlock()
+			return http.StatusConflict, map[string]any{"error": "compress is blocked; retry once the Group reports"}
+		}
 		s.compressWait = true
 		s.compressInstr = instructions
 		d.mu.Unlock()
@@ -322,6 +327,13 @@ func (d *Daemon) runDeferredCompress(id string) {
 	}
 	if s.meta.Status == "ended" {
 		s.compressWait = false
+		d.mu.Unlock()
+		return
+	}
+	if s.meta.CompressBlock != "" {
+		// A blocked Session starts no deferred compress; a Retry asks again.
+		s.compressWait = false
+		s.compressInstr = ""
 		d.mu.Unlock()
 		return
 	}

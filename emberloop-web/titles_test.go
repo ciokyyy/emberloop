@@ -90,7 +90,20 @@ func TestClaudeSessionGetsTitle(t *testing.T) {
 	if opts["model"] != "haiku" {
 		t.Fatalf("title model = %v, want haiku", opts["model"])
 	}
-	// A second prompt never titles again.
+	// A second prompt never titles again. The Session's own prompt reaches its
+	// stub after the title call starts, so wait for it before the count.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		own.mu.Lock()
+		n := len(own.prompts)
+		own.mu.Unlock()
+		if n > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	own.mu.Lock()
+	defer own.mu.Unlock()
 	if len(own.prompts) != 1 {
 		t.Fatalf("own prompts = %q", own.prompts)
 	}

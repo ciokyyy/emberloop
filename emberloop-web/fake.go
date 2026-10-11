@@ -33,6 +33,8 @@ type FakeBackend struct {
 	StartErr error
 	// StartErrs, when set, fail the next StartHandle calls in order.
 	StartErrs []error
+	// ResumeNote, when set, makes ResumeOK refuse a released Session with it.
+	ResumeNote string
 	// HandoffTurnErr, when set, makes a Handoff prompt report an error
 	// Event before it ever works.
 	HandoffTurnErr string
@@ -191,5 +193,10 @@ func (f *FakeBackend) ReleasedHandles(sessionID string) int {
 	return f.released[sessionID]
 }
 
-// ResumeOK always holds: the fake resumes from the log alone.
-func (f *FakeBackend) ResumeOK(meta SessionMeta) (bool, string) { return true, "" }
+// ResumeOK holds unless ResumeNote is set: the fake resumes from the log alone.
+func (f *FakeBackend) ResumeOK(meta SessionMeta) (bool, string) {
+	if f.ResumeNote != "" {
+		return false, f.ResumeNote
+	}
+	return true, ""
+}

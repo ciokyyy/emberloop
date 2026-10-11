@@ -137,25 +137,34 @@ the driver ticks boxes and marks done, nothing else writes them.
   Steer that arrives while a Handoff swap runs (`swapping`) degrades to a
   Follow-up, so the Handoff leads. Tests: `handoff_test.go`,
   `handoff_queue_test.go`.
-- `compress_retry.go` sorts a compress failure by its text
-  (`classifyCompressError`): block (`402`, `401`, quota, credit, insufficient,
-  billing, auth, API key), transient (`429`, `5xx`, rate limit, overloaded, timed
-  out, connection, fetch failed, EOF, unavailable) or other. The pig SDK puts the
-  status or the error type in provider text and names network failures with
-  fixed phrases. `retryTransient` retries a transient failure after 2s, 8s and
-  30s (`compressBackoff`; the sleep seam is `Daemon.compressSleep`).
-  `retryingSummarizer` runs every summarizer call under that policy and counts
-  the retries. A one-off that hits its deadline (`pigOneShot`) is other: a
-  deadline never retries. A block sets `SessionMeta.CompressBlock` (persisted),
-  appends a `compress_blocked` Event (number, model, retry counts, error,
-  `action:"retry"`) and leaves the old handle and resume token alone. While the
-  block stands, `routeLiveOpt` queues every message in the Daemon pending list
-  and `finishTurn` neither drains nor releases. A Retry (`POST .../compress`)
-  that succeeds clears the block before the Handoff turn, so the held messages
-  follow the Handoff. `POST /api/sessions/{id}/compress/dismiss`
-  (`dismissCompress`) clears the block, claims the Session and drains the held
-  messages on the old handle; it answers 409 while the Session works or no block
-  is set. Tests: `compress_retry_test.go`.
+- `compress_retry.go` owns the compress failure policy:
+  - `classifyCompressError` sorts a failure by its text: block (401 or 402
+    status, payment required, no or insufficient credits, quota, billing limit,
+    unauthorized, authentication, API key), transient (429 or 5xx status, rate
+    limit, overloaded, timed out, connection error, fetch failed, unexpected
+    EOF, unavailable) or other. A status counts only where the SDK puts one: at
+    the start, after a colon or an open paren, or after HTTP or status.
+  - Block wins over transient. `retryTransient` retries a transient failure
+    after 2s, 8s and 30s (`compressBackoff`; sleep seam `Daemon.compressSleep`).
+    `retryingSummarizer` runs every summarizer call under that policy and counts
+    the retries.
+  - A one-off that hits its deadline (`oneShotDeadline`) is other: no retry.
+  - A block sets `SessionMeta.CompressBlock` (persisted), drops a compress that
+    waits on a Group, appends a `compress_blocked` Event (number, model, retry
+    counts, error, `action:"retry"`) and leaves the old handle and resume token
+    alone.
+  - While blocked: `routeLiveOpt` queues every message in the Daemon pending
+    list, `finishTurn` neither drains nor releases, `maybeAutoCompress` and
+    `runDeferredCompress` start nothing, and `requestCompress` answers 409 for a
+    compress that would wait on a Group. Only an explicit compress (Retry)
+    starts one.
+  - A Retry that succeeds clears the block before the Handoff turn, so held
+    messages follow the Handoff.
+  - `POST /api/sessions/{id}/compress/dismiss` (`dismissCompress`) resumes a
+    released Session, claims it, clears the block and drains the held messages
+    on the old handle. It answers 409 while the Session works or no block is
+    set, and 404 for an unknown Session.
+  - Tests: `compress_retry_test.go`.
 - `summarize.go` is the Handoff summarizer: a one-off pig completion
   (`pigOneShot`) behind the `handoffSummarizer` seam (`pigSummarizer` in
   production, a scripted fake in tests). No tools, no Session. The system prompt
@@ -173,20 +182,19 @@ the driver ticks boxes and marks done, nothing else writes them.
   deterministic Handoff (`deterministic`); a transient call error retries first,
   and a credit or auth error blocks (`compress_retry.go`). A Handoff call the
   window refuses folds the input again at half its size, up to 2 times.
-  `assembleHandoff`
-  appends the last prompt the Handoff carries, verbatim, and `el.ContinueLine`
-  when a tool call never finished (`openTask`). The prompt set is `handoffPrompt`,
-  shared by the summary tail and the deterministic Handoff (`buildHandoff`): every
-  prompt Event but a Handoff, whatever its sender (a Worker or Subagent task is a
-  system prompt). A prompt left empty by `dropMemoryBlocks` is skipped. Summarizer
-  input labels system prompts `SYSTEM:`.
-  `dropMemoryBlocks` removes fenced memory blocks
-  (an opening line starting with three backticks and `memory`, closed by a bare
-  three-backtick line) from all text except the user's, in the summarizer input
-  and output. Compress gate: `compress_model` (the spec's `compressModel`) must
-  name an authed pig model (`pigModelAuthed`, the new-Session picker's test).
-  In-place SDK compaction (`compactBackend`) is not gated and does not use the
-  summarizer. Tests: `summarize_test.go`, `summarize_fold_test.go`.
+  `assembleHandoff` appends the last prompt the Handoff carries, verbatim, and
+  `el.ContinueLine` when a tool call never finished (`openTask`). The prompt set
+  is `handoffPrompt`, shared by the summary tail and the deterministic Handoff
+  (`buildHandoff`): every prompt Event but a Handoff, whatever its sender (a
+  Worker or Subagent task is a system prompt). A prompt left empty by
+  `dropMemoryBlocks` is skipped. Summarizer input labels system prompts `SYSTEM:`.
+  `dropMemoryBlocks` removes fenced memory blocks (an opening line starting with
+  three backticks and `memory`, closed by a bare three-backtick line) from all
+  text except the user's, in the summarizer input and output. Compress gate:
+  `compress_model` (the spec's `compressModel`) must name an authed pig model
+  (`pigModelAuthed`, the new-Session picker's test). In-place SDK compaction
+  (`compactBackend`) is not gated and does not use the summarizer. Tests:
+  `summarize_test.go`, `summarize_fold_test.go`.
 - `summarize_fold.go` folds oversize Handoff input. Tool results are cut to
   head and tail at 2000 characters. Input over the budget is packed into runs;
   each run is summarized under a `PART i OF n:` label, and the run summaries

@@ -89,9 +89,9 @@ func pigOneShot(agentDir, model, system, user string, maxTokens int, timeout tim
 		return "", overflowOr(err, window)
 	}
 	msg, err := stream.ResultContext(ctx)
-	if ctx.Err() == context.DeadlineExceeded && (err != nil || msg.StopReason == ai.StopReasonError) {
-		// A deadline is not transient: retrying it would stall the Session for every try.
-		return "", fmt.Errorf("pig one-off stopped at the %s limit", timeout)
+	failed := err != nil || msg.StopReason == ai.StopReasonError
+	if derr := oneShotDeadline(ctx, timeout, failed); derr != nil {
+		return "", derr
 	}
 	if err != nil {
 		return "", overflowOr(err, window)

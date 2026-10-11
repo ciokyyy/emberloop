@@ -11,6 +11,7 @@
   import DraftBar from './lib/DraftBar.svelte';
   import GitPanel from './lib/GitPanel.svelte';
   import CompressDialog from './lib/CompressDialog.svelte';
+  import CompressBanner from './lib/CompressBanner.svelte';
   import Composer from './lib/Composer.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
   import RunsView from './lib/RunsView.svelte';
@@ -25,7 +26,7 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, dismissCompress, listProjects, addProject, renameProject, removeProject, getGit } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit } from './lib/api.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
   let { user = null, onSignOut = () => {} } = $props();
@@ -70,33 +71,9 @@
       compressBusy = false;
     }
   }
-  // A compress block holds this Session's messages until Retry succeeds or Dismiss runs.
-  let blockBusy = $state(false);
-  let blockError = $state('');
-  async function retryBlocked() {
-    const id = currentId;
-    blockBusy = true;
-    blockError = '';
-    try {
-      await compressSession(id);
-    } catch (err) {
-      blockError = err.message;
-    } finally {
-      blockBusy = false;
-    }
-  }
-  async function dismissBlock() {
-    const id = currentId;
-    blockBusy = true;
-    blockError = '';
-    try {
-      await dismissCompress(id);
-      if (currentId === id && meta) meta = { ...meta, compressBlock: '' };
-    } catch (err) {
-      blockError = err.message;
-    } finally {
-      blockBusy = false;
-    }
+  // A dismissed block clears on the Session its banner was shown for.
+  function clearCompressBlock(id) {
+    if (currentId === id && meta) meta = { ...meta, compressBlock: '' };
   }
   let git = $state(null);
   const PREF_KEY = 'eb.pref';
@@ -786,14 +763,10 @@
         <div bind:clientHeight={overlayH} class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-10 sm:px-4">
           <div class="pointer-events-auto mx-auto flex w-full max-w-3xl flex-col gap-2">
             {#if currentId && meta?.compressBlock}
-              <div class="animate-rise flex flex-wrap items-center gap-2 rounded-2xl border border-amber-500/40 bg-card px-4 py-2.5 text-sm" role="status" data-testid="compress-banner">
-                <span class="font-medium">compress needs pig credits</span>
-                <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">Messages wait until compress succeeds or this banner is dismissed.</span>
-                <Button size="sm" disabled={blockBusy} onclick={retryBlocked}>Retry</Button>
-                <Button variant="outline" size="sm" onclick={() => navigate('/settings')}>Change compress model</Button>
-                <Button variant="ghost" size="sm" disabled={blockBusy} onclick={dismissBlock}>Dismiss</Button>
-                {#if blockError}<p role="alert" class="w-full text-xs text-destructive">{blockError}</p>{/if}
-              </div>
+              {@const bannerFor = currentId}
+              {#key bannerFor}
+                <CompressBanner sessionId={bannerFor} onChangeModel={() => navigate('/settings')} onDismissed={() => clearCompressBlock(bannerFor)} />
+              {/key}
             {/if}
             {#if currentId && queue.length}
               <div class="animate-rise rounded-2xl border bg-card p-2" data-testid="queue-panel">

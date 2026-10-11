@@ -1,17 +1,19 @@
 package web
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"time"
 )
 
-// Compress failures sort by their text. The pig SDK puts the HTTP status or
-// the provider error type into provider failure text, and names network
-// failures with fixed phrases ("fetch failed", "Connection error.",
-// "Request timed out."). A credit or auth failure blocks the Session. A
-// transient failure retries under compressBackoff. Any other failure falls
-// through the fallback chain in summarize.go.
+// Compress failures sort by their text. The pig SDK puts a provider HTTP
+// status in its error text: at the start, after a colon or an open paren, or
+// after "HTTP" or "status". It names network failures with fixed phrases. A
+// credit or auth failure blocks the Session. A transient failure retries under
+// compressBackoff. Any other failure falls through the fallback chain in
+// summarize.go.
 
 // compressBackoff is the wait before each retry of a transient failure: three
 // retries, so at most four tries per call.
@@ -26,12 +28,20 @@ const (
 	failBlock
 )
 
-var (
-	// blockFailure matches credit and auth failures: 402, 401 and quota.
-	blockFailure = regexp.MustCompile(`(?i)\b(401|402)\b|payment required|insufficient|credit|quota|billing|unauthori[sz]ed|authenticat|api[ _-]?key`)
-	// transientFailure matches network, 5xx and rate-limit failures.
-	transientFailure = regexp.MustCompile(`(?i)\b(429|5\d\d)\b|rate[ _-]?limit|too many requests|overloaded|timed out|timeout|connection|fetch failed|terminated|network|\beof\b|no such host|temporar|unavailable|try again`)
-)
+// statusAt is where a provider HTTP status sits in SDK error text.
+const statusAt = `(?:^|[:(]\s*|\bHTTP\s*|\bstatus(?:\s+code)?\s*)`
+
+// blockFailure matches credit and auth failures. A status code needs a reason
+// or a boundary after it, so a bare number in prose never matches.
+var blockFailure = regexp.MustCompile(`(?i)` + statusAt + `(?:401|402)(?:\)|:|\s*$|\s+status\b|\s+(?:unauthorized|payment|invalid))` +
+	`|payment required|insufficient[ _-](?:credits?|balance|quota|funds)|(?:no|out of|low) credits?\b|credit balance` +
+	`|\bquota\b|billing[ _](?:hard[ _])?limit|billing (?:required|error)|unauthori[sz]ed|authentication|api[ _-]?key`)
+
+// transientFailure matches network, 5xx and rate-limit failures.
+var transientFailure = regexp.MustCompile(`(?i)` + statusAt + `(?:429|5\d\d)(?:\)|:|\s*$|\s+status\b|\s+(?:too many|overloaded|internal|service|bad gateway|gateway|unavailable|requests|error))` +
+	`|rate[ _-]?limit|too many requests|overloaded|timed out|i/o timeout|connection (?:error|reset|refused|closed)` +
+	`|fetch failed|unexpected eof|no such host|network (?:error|is unreachable)|(?:service|server) unavailable|status: unavailable` +
+	`|temporar(?:y|ily) (?:unavailable|failure|error|overloaded)|(?:^|: )terminated$`)
 
 // classifyCompressError sorts one failure by its text. Block wins over
 // transient: a 429 that names the quota is a credit failure.
@@ -61,6 +71,15 @@ func retryTransient(op func() error, wait func(time.Duration)) (int, error) {
 	}
 }
 
+// oneShotDeadline is the error of a one-off that failed at its deadline, or nil.
+// A deadline is not transient: retrying it would stall the Session for every try.
+func oneShotDeadline(ctx context.Context, timeout time.Duration, failed bool) error {
+	if !failed || ctx.Err() != context.DeadlineExceeded {
+		return nil
+	}
+	return fmt.Errorf("pig one-off stopped at the %s limit", timeout)
+}
+
 // backoffWait is the sleep seam for compress retries: the Daemon's seam when
 // set, else time.Sleep.
 func (d *Daemon) backoffWait() func(time.Duration) {
@@ -71,8 +90,9 @@ func (d *Daemon) backoffWait() func(time.Duration) {
 }
 
 // blockCompress stops a compress on a credit or auth failure. The old handle
-// and its resume token stay as they are. The Session holds its messages until
-// Retry succeeds or the block is dismissed.
+// and its resume token stay as they are. A compress that waits on a Group is
+// dropped: a Retry asks again. The Session holds its messages until Retry
+// succeeds or the block is dismissed.
 func (d *Daemon) blockCompress(id string, ev CompressBlockedEvent) {
 	ev.Action = "retry"
 	reason := ev.Error
@@ -82,6 +102,8 @@ func (d *Daemon) blockCompress(id string, ev CompressBlockedEvent) {
 	d.mu.Lock()
 	if cur, ok := d.sessions[id]; ok {
 		cur.meta.CompressBlock = reason
+		cur.compressWait = false
+		cur.compressInstr = ""
 		d.persistMeta(cur.meta)
 	}
 	d.mu.Unlock()
