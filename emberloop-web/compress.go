@@ -218,7 +218,11 @@ func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id strin
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	cb, s, ok := d.compactorFor(id)
+	var hb handoffBackend
 	if !ok {
+		hb, s = d.handoffFor(id)
+	}
+	if !ok && hb == nil {
 		d.mu.Lock()
 		_, exists := d.sessions[id]
 		d.mu.Unlock()
@@ -258,6 +262,14 @@ func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id strin
 	s.busy = true
 	s.active++
 	d.mu.Unlock()
+	if hb != nil {
+		go func() {
+			d.runHandoff(id, hb)
+			d.finishTurn(id)
+		}()
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+		return
+	}
 	go func() {
 		d.appendEvent(id, "status", "", "working")
 		d.runCompaction(id, cb, instructions)

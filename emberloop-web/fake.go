@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +25,18 @@ type FakeBackend struct {
 	// VERDICT replies through it; the seam stays fake Backend over HTTP.
 	ReplyFunc func(sessionID, text string) (string, bool)
 
-	mu   sync.Mutex
-	stop map[string]chan struct{}
+	// UsageSize, when positive, makes each turn emit a usage Event sized
+	// from the characters the current handle has seen, so tests can watch
+	// the context meter fall after a Handoff.
+	UsageSize int
+	// StartErr, when set, makes StartHandle fail.
+	StartErr error
+
+	mu       sync.Mutex
+	stop     map[string]chan struct{}
+	gen      map[string]int
+	seen     map[string]int
+	released map[string]int
 }
 
 func NewFakeBackend() *FakeBackend { return &FakeBackend{} }
@@ -67,6 +78,16 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 	select {
 	case <-time.After(delay):
 		appendEvent("assistant_chunk", reply, "")
+		if f.UsageSize > 0 {
+			f.mu.Lock()
+			if f.seen == nil {
+				f.seen = map[string]int{}
+			}
+			f.seen[sessionID] += len(text) + len(reply)
+			used := f.seen[sessionID] / 4
+			f.mu.Unlock()
+			appendEvent("usage", usageText(used, f.UsageSize), "")
+		}
 		appendEvent("status", "", "idle")
 	case <-ch:
 		appendEvent("status", "", "idle")
@@ -103,7 +124,7 @@ func (f *FakeBackend) CloseSession(sessionID string) {}
 func (f *FakeBackend) Models() []string { return []string{"fake-model"} }
 
 // ReleaseSession drops the fake handle; the token is a fixed marker.
-func (f *FakeBackend) ReleaseSession(sessionID string) string { return "fake-resume" }
+func (f *FakeBackend) ReleaseSession(sessionID string) string { return f.ResumeToken(sessionID) }
 
 // ResumeSession rebuilds the fake handle; the log is the whole state.
 func (f *FakeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, status string)) error {
@@ -111,7 +132,46 @@ func (f *FakeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, stat
 }
 
 // ResumeToken reports the fixed fake marker.
-func (f *FakeBackend) ResumeToken(sessionID string) string { return "fake-resume" }
+func (f *FakeBackend) ResumeToken(sessionID string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if g := f.gen[sessionID]; g > 0 {
+		return fmt.Sprintf("fake-resume-%d", g)
+	}
+	return "fake-resume"
+}
+
+// StartHandle starts a fresh fake handle beside the old one: it rotates the
+// resume token and clears the context the handle has seen. The returned
+// release drops the old handle and counts it.
+func (f *FakeBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
+	if f.StartErr != nil {
+		return "", nil, f.StartErr
+	}
+	f.mu.Lock()
+	if f.gen == nil {
+		f.gen = map[string]int{}
+	}
+	f.gen[meta.ID]++
+	delete(f.seen, meta.ID)
+	tok := fmt.Sprintf("fake-resume-%d", f.gen[meta.ID])
+	f.mu.Unlock()
+	return tok, func() {
+		f.mu.Lock()
+		if f.released == nil {
+			f.released = map[string]int{}
+		}
+		f.released[meta.ID]++
+		f.mu.Unlock()
+	}, nil
+}
+
+// ReleasedHandles counts old handles released by a Handoff swap.
+func (f *FakeBackend) ReleasedHandles(sessionID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.released[sessionID]
+}
 
 // ResumeOK always holds: the fake resumes from the log alone.
 func (f *FakeBackend) ResumeOK(meta SessionMeta) (bool, string) { return true, "" }

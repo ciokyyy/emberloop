@@ -20,6 +20,11 @@ type Event struct {
 	Text      string `json:"text,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Mode      string `json:"mode,omitempty"`
+	// Handoff flags the prompt Event that carries a compress Handoff; the UI
+	// renders it as a collapsed block, not a user message.
+	Handoff bool `json:"handoff,omitempty"`
+	// Sender is "system" for Daemon-made prompts such as a Handoff.
+	Sender string `json:"sender,omitempty"`
 	// Images counts the attachments of a prompt; the bytes stay out of the log.
 	Images int `json:"images,omitempty"`
 	// ImageIDs names the Session-stored images attached to a prompt: the

@@ -204,13 +204,17 @@ func TestCompressGuards(t *testing.T) {
 		t.Fatalf("unknown = %d, want 404", code)
 	}
 
+	// A Backend without in-place compaction swaps by Handoff.
 	plain := NewDaemon(t.TempDir(), NewFakeBackend())
 	srv2 := httptest.NewServer(plain.Handler())
 	defer srv2.Close()
 	pid := createSession(t, srv2.URL, "fake", "fake-model", t.TempDir())
-	if code, body := compressReq(t, srv2.URL, pid, ""); code != http.StatusBadRequest || !strings.Contains(body["error"].(string), "not available") {
-		t.Fatalf("unsupported backend = %d %v, want 400", code, body)
+	if code, body := compressReq(t, srv2.URL, pid, ""); code != http.StatusAccepted {
+		t.Fatalf("handoff compress = %d %v, want 202", code, body)
 	}
+	waitEventKind(t, srv2.URL, pid, "compressed")
+	waitStatus(t, srv2.URL, pid, "idle", 5*time.Second)
+	time.Sleep(100 * time.Millisecond)
 }
 
 // Messages sent during a compaction queue and deliver after it.

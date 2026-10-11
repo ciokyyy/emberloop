@@ -571,6 +571,12 @@ func (d *Daemon) appendModeEventLocked(id, kind, text, status, mode string) Even
 }
 
 func (d *Daemon) appendEventLocked(id, kind, text, status, mode string, images int, imageIDs []string) Event {
+	return d.appendEventExtraLocked(id, kind, text, status, mode, images, imageIDs, nil)
+}
+
+// appendEventExtraLocked stores one Event; extra sets optional fields (Handoff,
+// Sender) before the Event is logged. Callers hold d.mu.
+func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, images int, imageIDs []string, extra func(*Event)) Event {
 	s, ok := d.sessions[id]
 	if !ok {
 		return Event{}
@@ -591,6 +597,9 @@ func (d *Daemon) appendEventLocked(id, kind, text, status, mode string, images i
 		Images:    images,
 		ImageIDs:  imageIDs,
 		CreatedAt: time.Now().UTC(),
+	}
+	if extra != nil {
+		extra(&e)
 	}
 	s.events = append(s.events, e)
 	s.last = time.Now()
@@ -1193,7 +1202,10 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		events := append([]Event(nil), s.events...)
 		live := s.live
 		resumable, note := d.resumeViewLocked(s)
-		_, compressible := d.backendForLocked(meta.Harness).(compactBackend)
+		be := d.backendForLocked(meta.Harness)
+		_, isCompact := be.(compactBackend)
+		_, isHandoff := be.(handoffBackend)
+		compressible := isCompact || isHandoff
 		d.mu.Unlock()
 		// Full log for old clients; ?tail= and ?before= page by turn.
 		tail, hasBefore, before, turns, at := parseSnapshotQuery(r.URL.Query())

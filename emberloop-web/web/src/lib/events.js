@@ -126,6 +126,7 @@ export function cardForEvent(e) {
   const text = e.text ?? '';
   switch (e.kind) {
     case 'prompt': {
+      if (e.handoff) return { card: 'report', title: 'Handoff', body: text, collapsed: true };
       const sr = parseSudoResult(text);
       if (sr) return { card: 'sudoresult', title: 'Sudo result', body: sr.output, collapsed: true, sudo: sr };
       const r = parseReport(text);

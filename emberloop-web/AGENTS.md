@@ -79,8 +79,15 @@ the driver ticks boxes and marks done, nothing else writes them.
   and owns a unix socket (`EL_PIG_STEER_SOCK`) that injects native `steer`,
   `follow_up` and `clear_queue` rpc commands and reports the queue, so
   `PigACPBackend` is a `steerBackend`. Compression is off for ACP pig: the
-  Backend is not a `compactBackend`, the Session GET reports
-  `compressible:false` and the UI hides the Compress button.
+  Backend is neither a `compactBackend` nor a `handoffBackend`, the Session
+  GET reports `compressible:false` and the UI hides the Compress button.
+- `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
+  `POST .../compress` builds a deterministic Handoff from the Event log (no
+  LLM), starts a fresh handle (`StartHandle`), rotates the resume token,
+  stores `handoff-N.md` in the Session directory, appends a `compressed`
+  Event and the Handoff prompt Event (`handoff:true`, `sender:"system"`), and
+  releases the old handle once the first turn on the new handle works. Session
+  ID, Event log and metadata stay. Tests: `handoff_test.go`.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
   <file> stdio` on the user's Grok subscription login, through the plain
   `ClaudeBackend` ACP path (`metaHook`, `promptWrap`, `waitMCP`, `mcpEnv`).
