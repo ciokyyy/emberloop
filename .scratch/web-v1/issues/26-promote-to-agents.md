@@ -4,10 +4,10 @@
 
 **Blocked by:** 22, 25
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Promoting a Rule produces a proposed diff against the nearest `AGENTS.md` shown for approval
-- [ ] Approval writes the file in the Session's worktree and leaves it uncommitted
-- [ ] The promoted Rule is marked as promoted and keeps its provenance
-- [ ] Tests use a temp git repo
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Promoting a Rule produces a proposed diff against the nearest `AGENTS.md` shown for approval
+- [x] Approval writes the file in the Session's worktree and leaves it uncommitted
+- [x] The promoted Rule is marked as promoted and keeps its provenance
+- [x] Tests use a temp git repo
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
