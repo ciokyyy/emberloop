@@ -121,3 +121,27 @@ describe('Quota navigation', () => {
     expect(calls.filter((u) => u.includes('/api/quota')).length).toBe(1);
   });
 });
+
+describe('Account footer', () => {
+  afterEach(() => cleanup());
+
+  it('shows the signed-in User and signs out through the callback', async () => {
+    history.replaceState(null, '', '/');
+    localStorage.clear();
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => ({
+        ok: true,
+        json: async () => (String(u).includes('/api/specs') ? { specs: [] } : []),
+      })),
+    );
+    const onSignOut = vi.fn();
+    const { container } = render(App, { props: { user: { id: 'u1', username: 'alice', admin: true }, onSignOut } });
+    const account = await within(container).findByTestId('account');
+    expect(account.textContent).toContain('alice');
+    expect(account.textContent).toContain('Admin');
+    await fireEvent.click(within(container).getByLabelText('Sign out'));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+});

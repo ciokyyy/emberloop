@@ -62,3 +62,11 @@ export function watch(topic, fn) {
     if (!watchers.get(topic)?.size) watchers.delete(topic);
   };
 }
+
+// stopLive closes the stream and drops every watcher. App calls it on unmount,
+// which sign-out triggers, so the next sign-in starts from a clean channel.
+export function stopLive() {
+  source?.close();
+  source = null;
+  watchers.clear();
+}

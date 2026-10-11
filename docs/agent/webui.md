@@ -32,7 +32,7 @@ If you run inside a Session of this Daemon, the restart drops your own agent pro
 
 ## Accounts and API auth
 
-- Every `/api` route, SSE stream included, answers 401 without a login cookie (`el_session`) or the machine token as `Authorization: Bearer`. Only `/api/auth/signup|login|logout` and `/api/auth/me` answer without one.
+- Every `/api` route, SSE stream included, answers 401 without a login cookie (`el_session`) or the machine token as `Authorization: Bearer`. Only `/api/auth/signup|login|logout`, `/api/auth/me` and `/api/auth/state` answer without one; `state` gives only `{empty, signup_enabled}` for the sign-in screen.
 - The first signup becomes the admin. Sign up the admin yourself right after a fresh start, before anyone else reaches the Daemon.
 - The admin switches `signup_enabled` in Settings; off refuses signup.
 - Reset a password: `el-web user set-password <name>` (prod; add `-state-dir ~/.local/share/pig-dev` for dev). It reads the new password from a terminal with echo off, or one line from a pipe. It signs that User out everywhere; a running Daemon sees the change at once.

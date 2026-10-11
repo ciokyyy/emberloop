@@ -226,3 +226,31 @@ describe('SettingsPage compress model', () => {
     expect(within(container).queryByText('Auto-compress needs a compress model.')).toBeNull();
   });
 });
+
+describe('SettingsPage accounts', () => {
+  it('shows the sign-up switch to the admin and saves it', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, signup_enabled: true }, seen });
+    const { container } = render(SettingsPage, { props: { admin: true } });
+    const toggle = await within(container).findByRole('switch', { name: 'Allow sign-up' });
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    await fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.signup_enabled).toBe(false);
+  });
+
+  it('hides the switch from other Users and never sends the key', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, signup_enabled: false }, seen });
+    const { container } = render(SettingsPage);
+    const workers = await within(container).findByLabelText('Maximum workers');
+    expect(within(container).queryByRole('switch', { name: 'Allow sign-up' })).toBeNull();
+    await fireEvent.input(workers, { target: { value: '4' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect('signup_enabled' in seen.body).toBe(false);
+  });
+});

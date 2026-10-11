@@ -24,7 +24,7 @@ the driver ticks boxes and marks done, nothing else writes them.
 - Terms follow root `GLOSSARY.md`.
 - Users and auth (`users.go`, `auth.go`): accounts live in `<stateDir>/enderbloom/users/users.json`
   (argon2id hashes; login tokens stored as SHA-256 with a 30-day expiry; `users.lock` serializes
-  writers across processes). `/api/auth/signup|login|logout` and `/api/auth/me` answer without a
+  writers across processes). `/api/auth/signup|login|logout`, `/api/auth/me` and `/api/auth/state` answer without a
   cookie. Every other `/api` path, SSE included, answers 401 unless it carries the `el_session`
   cookie or `Authorization: Bearer` with the machine token. The machine token is new per start,
   written to `<stateDir>/enderbloom/daemon.token` (0600). The Daemon's agents get it as
@@ -32,6 +32,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   in-process). It is not a User: `me` answers 401. The first signup is the admin. `signup_enabled`
   (settings, default on) is written by the admin only; off refuses signup. `SetUserPassword` resets
   a password and signs that User out; `cmd/emberloop-web` exposes it as `user set-password`.
+- `GET /api/auth/state` gives the sign-in screen `{empty, signup_enabled}` and nothing else: no names, no counts. While signed out the sign-in UI (`web/src/Root.svelte`) is the whole app. An empty Daemon creates the admin account; otherwise it signs in, with a create-account link when signup is open. Signed in, the sidebar footer shows the User and Sign out, and the Accounts settings switch is admin only. A 401 from any other `/api` route returns to sign-in.
 - Real Backends prove out in live probes, never the main check.
 - Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
   goroutines write after a test returns and fail `t.TempDir()` cleanup with
@@ -64,7 +65,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   fallback, forced refresh, Claude re-read, unknown-key 400); `pig_test.go`
   does the same with the pig Backend on the SDK test-faux provider, and
   `pig_live_test.go` (env-gated) with a real pig.
-- `auth_test.go` covers signup, login, logout, `me`, the 401 gate on every `/api` route,
+- `auth_test.go` covers signup, login, logout, `me`, `state`, the 401 gate on every `/api` route,
   the machine token, `signup_enabled` and `SetUserPassword` at the same seam;
   `cmd/emberloop-web/user_test.go` covers the `user set-password` command.
 - `quota.go` serves the Quota tab data off el's shared usage cache:
@@ -350,3 +351,5 @@ real Chromium against a throwaway Daemon (`serve.sh`: fake backend, fresh state
 dir, fixture repos in `/tmp/el-e2e`). No model, no API key. Run it with
 `npm run test:e2e` from `web/` (it builds the UI first). It sits on top of the
 Vitest component tests and `go test`; it is not part of the main check.
+
+The sign-in suite starts from the empty state of `serve.sh`. `tests/auth.setup.e2e.ts` signs up the admin and saves the `admin` session; a test that needs a User declares `{ session: 'admin' }`. `support/auth.ts` holds the throwaway admin and the sign-in helpers.

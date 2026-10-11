@@ -46,7 +46,7 @@ child it belongs to, and every entry must resolve to a file.
   workflow; indexes tools, MCP server, agent types, state database, and test data
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
-- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users and cookie login)
+- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login and the sign-in screen)
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
 - `.scratch/archive/archived-herdr-report/AGENTS.md` — the archived herdr report extension (not built, not tested)
 - `.scratch/archive/archived-herdr-emberloop/AGENTS.md` — the archived herdr compress plugin (not built, not tested)

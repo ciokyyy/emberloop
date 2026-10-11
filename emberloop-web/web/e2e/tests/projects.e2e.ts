@@ -1,12 +1,13 @@
 import { test } from '@e2e-dev/web';
 import { expect } from 'e2e';
+import { adminCookie } from '../support/auth.ts';
 
 const REPO = '/tmp/el-e2e/repo';
 
 async function api(app: { baseUrl: string | undefined }, path: string, body?: unknown) {
   const res = await fetch(`${app.baseUrl}${path}`, {
     method: body ? 'POST' : 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Cookie: await adminCookie(app.baseUrl) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return res.json();
@@ -19,7 +20,7 @@ async function openWithFake({ app, browser }: any) {
   await app.open('/');
 }
 
-test('add a project from the sidebar and keep it after reload', async ({ app, screen, browser }) => {
+test('add a project from the sidebar and keep it after reload', { session: 'admin' }, async ({ app, screen, browser }) => {
   await openWithFake({ app, browser });
   await screen.getByRole('button', 'Add project').click();
   await screen.getByLabel('Folder').fill('/tmp/el-e2e/add-me');
@@ -32,7 +33,7 @@ test('add a project from the sidebar and keep it after reload', async ({ app, sc
   await expect(screen.getByRole('region', 'add-me')).toBeVisible();
 });
 
-test('a chat started in a project lists under it and uses its folder', async ({ app, screen, browser }) => {
+test('a chat started in a project lists under it and uses its folder', { session: 'admin' }, async ({ app, screen, browser }) => {
   const project = await api(app, '/api/projects', { path: REPO });
   await openWithFake({ app, browser });
 
@@ -48,7 +49,7 @@ test('a chat started in a project lists under it and uses its folder', async ({ 
   await expect(screen.getByRole('region', project.name).getByRole('navigation', 'Sessions')).toBeVisible();
 });
 
-test('the git panel shows the branch, changes and a diff', async ({ app, screen, browser }) => {
+test('the git panel shows the branch, changes and a diff', { session: 'admin' }, async ({ app, screen, browser }) => {
   const project = await api(app, '/api/projects', { path: REPO });
   await openWithFake({ app, browser });
   await screen.getByRole('button', `New chat in ${project.name}`).click();
@@ -62,7 +63,7 @@ test('the git panel shows the branch, changes and a diff', async ({ app, screen,
   await expect(screen.getByText('+new')).toBeVisible();
 });
 
-test('the top New chat button starts a draft in a project', async ({ app, screen, browser }) => {
+test('the top New chat button starts a draft in a project', { session: 'admin' }, async ({ app, screen, browser }) => {
   const project = await api(app, '/api/projects', { path: REPO });
   await openWithFake({ app, browser });
   await screen.getByRole('button', 'New chat', { exact: true }).click();

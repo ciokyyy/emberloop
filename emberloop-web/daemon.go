@@ -255,6 +255,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/auth/login", d.handleLogin)
 	mux.HandleFunc("/api/auth/logout", d.handleLogout)
 	mux.HandleFunc("/api/auth/me", d.handleMe)
+	mux.HandleFunc("/api/auth/state", d.handleAuthState)
 	return guardHosts(d.requireRequester(mux), d.allowHosts, d.allowTailnet)
 }
 

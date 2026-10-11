@@ -358,3 +358,34 @@ func authedHandler(t testing.TB, d *Daemon) http.Handler {
 		h.ServeHTTP(w, r)
 	})
 }
+
+// The sign-in screen reads /api/auth/state with no cookie. It reports only
+// whether the Daemon is empty and whether signup is open.
+func TestAuthStateIsPublicAndRevealsOnlyEmptyAndSignup(t *testing.T) {
+	h := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
+	state := func() string {
+		t.Helper()
+		rec := authDo(t, h, http.MethodGet, "/api/auth/state", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /api/auth/state without cookie = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	if got := state(); !strings.Contains(got, `"empty":true`) || !strings.Contains(got, `"signup_enabled":true`) {
+		t.Fatalf("empty Daemon state = %s, want empty and signup_enabled true", got)
+	}
+	cookie := signedIn(t, h, testUser)
+	if got := state(); !strings.Contains(got, `"empty":false`) || strings.Contains(got, testUser) {
+		t.Fatalf("state with a User = %s, want empty false and no username", got)
+	}
+	t.Cleanup(func() { authDo(t, h, http.MethodPut, "/api/settings", `{"signup_enabled":true}`, cookie) })
+	if rec := authDo(t, h, http.MethodPut, "/api/settings", `{"signup_enabled":false}`, cookie); rec.Code != http.StatusOK {
+		t.Fatalf("admin turns signup off = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := state(); !strings.Contains(got, `"signup_enabled":false`) {
+		t.Fatalf("state after the switch is off = %s", got)
+	}
+	if rec := authDo(t, h, http.MethodPost, "/api/auth/state", "{}"); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /api/auth/state = %d, want 405", rec.Code)
+	}
+}

@@ -19,12 +19,14 @@ const sessionCookie = "el_session"
 const machineTokenFile = "daemon.token"
 
 // publicAPIRoutes answer without a cookie. The auth routes check the cookie
-// themselves; /api/auth/me answers 401 without one.
+// themselves; /api/auth/me answers 401 without one. /api/auth/state reveals
+// only whether any account exists and whether signup is open.
 var publicAPIRoutes = map[string]bool{
 	"/api/auth/signup": true,
 	"/api/auth/login":  true,
 	"/api/auth/logout": true,
 	"/api/auth/me":     true,
+	"/api/auth/state":  true,
 }
 
 // requester is who sends a request: a signed-in User, or a machine caller
@@ -163,6 +165,24 @@ func (d *Daemon) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, who.user)
+}
+
+// handleAuthState tells the sign-in screen whether the Daemon has no account
+// yet and whether signup is open. It reveals nothing else: no names, no counts.
+func (d *Daemon) handleAuthState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	f, err := d.users.read()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"empty":          len(f.Users) == 0,
+		"signup_enabled": signupEnabledSetting(),
+	})
 }
 
 func setSessionCookie(w http.ResponseWriter, r *http.Request, raw string, expires time.Time) {

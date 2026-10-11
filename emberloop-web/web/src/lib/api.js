@@ -8,8 +8,13 @@ export function apiBase() {
 
 const url = (path) => apiBase() + path;
 
+// Fired on window when a Daemon route outside the auth routes answers 401: the
+// session has ended, so the app returns to the sign-in screen (Root.svelte).
+export const UNAUTHORIZED = 'el:unauthorized';
+
 async function json(res) {
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event(UNAUTHORIZED));
     const err = new Error(`request failed: ${res.status}`);
     err.status = res.status;
     throw err;
@@ -296,3 +301,34 @@ export const refreshQuota = (key = '') =>
 // The Daemon's build identity for the version badge. version.js wraps this
 // with its never-throws fetch.
 export const getVersion = () => fetch(url('/api/version')).then(json);
+
+// Auth routes answer without a cookie. Failures carry the status and the
+// Daemon's plain-text reason, which the sign-in screen shows.
+async function authFailure(res) {
+  const err = new Error((await res.text()).trim() || `request failed: ${res.status}`);
+  err.status = res.status;
+  return err;
+}
+
+const authJSON = async (res) => {
+  if (!res.ok) throw await authFailure(res);
+  return res.json();
+};
+
+const postCredentials = (path, username, password) =>
+  fetch(url(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  }).then(authJSON);
+
+// { empty, signup_enabled }: which mode the sign-in screen shows.
+export const getAuthState = () => fetch(url('/api/auth/state')).then(authJSON);
+// The signed-in User. Rejects with status 401 when signed out.
+export const getMe = () => fetch(url('/api/auth/me')).then(authJSON);
+export const login = (username, password) => postCredentials('/api/auth/login', username, password);
+export const signup = (username, password) => postCredentials('/api/auth/signup', username, password);
+export const logout = () =>
+  fetch(url('/api/auth/logout'), { method: 'POST' }).then(async (res) => {
+    if (!res.ok) throw await authFailure(res);
+  });

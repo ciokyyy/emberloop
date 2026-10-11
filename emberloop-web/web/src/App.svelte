@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { Plus, SquarePen, Menu, MessageSquare, Settings, Layers, Gauge, FolderPlus, GitBranch, Search } from '@lucide/svelte';
+  import { Plus, SquarePen, Menu, MessageSquare, Settings, Layers, Gauge, FolderPlus, GitBranch, Search, LogOut } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Input from './lib/ui/input.svelte';
   import Badge from './lib/ui/badge.svelte';
@@ -22,10 +22,13 @@
   import { modelLabel } from './lib/harnesses.js';
   import { groupTranscript, latestUsage, withImageNote } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
-  import { watch } from './lib/live.js';
+  import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
   import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit } from './lib/api.js';
+
+  // The signed-in User and the sign-out action, both supplied by Root.svelte.
+  let { user = null, onSignOut = () => {} } = $props();
 
   // Interface sounds. Created on mount so the first-gesture unlock listens
   // from the start; every cue after that is one playEvent call. Message
@@ -564,6 +567,8 @@
   // never auto-opens here.
   watch('sessions', () => refresh());
   loadProjects();
+  // Sign-out unmounts App: close the live stream and drop its watchers.
+  onDestroy(stopLive);
 
   // Back/forward follows the URL without pushing a new entry.
   const onPop = () => applyRoute(window.location.pathname + window.location.search);
@@ -645,6 +650,19 @@
   {/if}
 {/snippet}
 
+{#snippet accountFooter()}
+  {#if user}
+    <div class="animate-rise flex items-center gap-2 border-t pt-3" data-testid="account">
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
+      <div class="min-w-0 flex-1 leading-tight">
+        <p class="truncate text-sm font-medium">{user.username}</p>
+        {#if user.admin}<p class="text-xs text-muted-foreground">Admin</p>{/if}
+      </div>
+      <Button variant="ghost" size="icon-sm" onclick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut /></Button>
+    </div>
+  {/if}
+{/snippet}
+
 <div class="flex h-dvh">
   <Rail view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : 'chat'} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : '/settings')} />
   <aside data-testid="sidebar" inert={sideCollapsed || view === 'quota'} aria-hidden={sideCollapsed || view === 'quota'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'quota' ? 'w-0 border-transparent' : 'w-64'}">
@@ -652,6 +670,7 @@
       {#key view}
         {@render rail2(false)}
       {/key}
+      {@render accountFooter()}
     </div>
   </aside>
   <div class="flex min-w-0 flex-1 flex-col">
@@ -659,7 +678,7 @@
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
-      <SettingsPage onBack={() => navigate('/')} />
+      <SettingsPage onBack={() => navigate('/')} admin={!!user?.admin} />
     {:else if view === 'quota'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
@@ -777,6 +796,7 @@
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/runs')}><Layers />Runs</Button>
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/quota')}><Gauge />Quota</Button>
   <Button variant="ghost" class="justify-start" onclick={() => navigate('/settings')}><Settings />Settings</Button>
+  {@render accountFooter()}
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />
 <AddProjectDialog open={addOpen} busy={adding} error={addError} onClose={() => (addOpen = false)} onAdd={add} />

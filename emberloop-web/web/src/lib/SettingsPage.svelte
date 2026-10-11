@@ -11,7 +11,7 @@
   import InstallApp from './InstallApp.svelte';
   import SoundSettings from './SoundSettings.svelte';
   import VoiceSettings from './VoiceSettings.svelte';
-  let { onBack = () => {} } = $props();
+  let { onBack = () => {}, admin = false } = $props();
 
   const GROUPS = [
     {
@@ -44,6 +44,7 @@
   let sessionTitles = $state('on');
   let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '', model: 'none' });
   let compressNote = $state('');
+  let signupOpen = $state('on');
   let titlesLocked = $state(false);
   let locked = $state(false);
   let saved = $state('');
@@ -53,7 +54,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress });
+  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -81,6 +82,7 @@
       const t = body.roles?.['pig-title'];
       pigTitle = t?.harness === 'pig' && t?.model ? t.model : 'none';
       sessionTitles = body.session_titles === false ? 'off' : 'on';
+      signupOpen = body.signup_enabled === false ? 'off' : 'on';
       titlesLocked = !!body.session_titles_from_env;
       const c = body.compress ?? {};
       compress = {
@@ -130,6 +132,7 @@
         compress_instructions: compress.instructions,
         compress_model: compress.model === 'none' ? '' : compress.model,
       };
+      if (admin) payload.signup_enabled = signupOpen === 'on';
       const savedBody = await putSettings(payload);
       maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
       locked = !!savedBody.max_workers_from_env;
@@ -151,6 +154,7 @@
     pigTitle = prev.pigTitle;
     sessionTitles = prev.sessionTitles;
     compress = prev.compress;
+    signupOpen = prev.signupOpen;
   }
 </script>
 
@@ -278,6 +282,23 @@
             </div>
           </div>
         </section>
+        {#if admin}
+        <section class="animate-rise flex flex-col gap-2" data-testid="accounts-settings">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Accounts</h2>
+            <p class="text-xs text-muted-foreground">Sign-up lets new people create accounts on the sign-in screen.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Allow sign-up</div>
+                <div class="text-xs text-muted-foreground">Off refuses new accounts. Existing accounts keep signing in.</div>
+              </div>
+              <Switch aria-label="Allow sign-up" checked={signupOpen === 'on'} onCheckedChange={(v) => (signupOpen = v ? 'on' : 'off')} />
+            </div>
+          </div>
+        </section>
+        {/if}
         {#each GROUPS as g (g.title)}
           <section class="animate-rise flex flex-col gap-2">
             <div class="px-1">
