@@ -842,3 +842,25 @@ func TestCapDistillInputKeepsEarlierInvalidBytes(t *testing.T) {
 		t.Fatalf("short input = %q, want it unchanged", got3)
 	}
 }
+
+// TestRedactServedDiagnostics pins the serve-time guard on the on-demand run.
+func TestRedactServedDiagnostics(t *testing.T) {
+	res := NightlyResult{
+		RunID: "r1",
+		Stages: []NightlyStageResult{
+			{Stage: nightlyStageMine, Status: memory.LedgerFailed, Detail: "mine partial: key AKIAIOSFODNN7EXAMPLE here"},
+			{Stage: nightlyStageSummary, Status: memory.LedgerSuccess, Detail: "nightly r1: 7 stages, 0 failed"},
+		},
+		Error: "plain error",
+	}
+	got := redactServedDiagnostics(res)
+	if strings.Contains(got.Stages[0].Detail, "AKIAIOSFODNN7EXAMPLE") || !strings.Contains(got.Stages[0].Detail, "[redacted:aws-access-key]") {
+		t.Fatalf("served detail = %q, want the secret redacted", got.Stages[0].Detail)
+	}
+	if got.Stages[1].Detail != "nightly r1: 7 stages, 0 failed" || got.Error != "plain error" {
+		t.Fatalf("clean diagnostics changed: %+v", got)
+	}
+	if res.Stages[0].Detail == got.Stages[0].Detail {
+		t.Fatal("redaction mutated the stored result instead of the served copy")
+	}
+}

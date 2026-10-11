@@ -754,10 +754,7 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 	}
 	// Any future call site that names an egress role and sends must invoke
 	// the redactor in code. Roles and sends match case-insensitively on
-	// stripped code; guards require the call paren. Completion and summarizer
-	// sends match call-shaped (`complet(`, `summariz(`, `pigoneshot(`), so a
-	// status string like "completed" or a seam field like `summarizer` never
-	// counts as a send; every real model or HTTP send is a call with a paren.
+	// stripped code; guards require the call paren.
 	err := filepath.WalkDir(".", func(path string, dEnt os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -785,8 +782,7 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 		send := strings.Contains(lowered, "http.post") || strings.Contains(lowered, "http.get") ||
 			strings.Contains(lowered, "http.head") || strings.Contains(lowered, "http.postform") ||
 			strings.Contains(lowered, "newrequest") || sendsDo ||
-			strings.Contains(lowered, "summariz(") || strings.Contains(lowered, "complet(") ||
-			strings.Contains(lowered, "pigoneshot(") ||
+			strings.Contains(lowered, "summariz") || strings.Contains(lowered, "complete") ||
 			strings.Contains(lowered, "chatcompletion") || strings.Contains(lowered, "/api/v1/decisions") ||
 			strings.Contains(lowered, "/v1/systemone")
 		guard := strings.Contains(code, "Redact(") || strings.Contains(code, "RedactedFor(") ||

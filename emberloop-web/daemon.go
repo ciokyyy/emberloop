@@ -1760,6 +1760,23 @@ func isLoopbackHost(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// redactServedDiagnostics redacts secret-shaped strings from diagnostics
+// served over HTTP. The on-demand nightly run aggregates error text from git,
+// bank and model subsystems into its response; redacting at serve time keeps
+// stored ledger rows verbatim (purge can still scrub them) while nothing
+// secret-shaped leaves over the wire. Details without secrets pass through
+// unchanged.
+func redactServedDiagnostics(res NightlyResult) NightlyResult {
+	stages := make([]NightlyStageResult, len(res.Stages))
+	copy(stages, res.Stages)
+	res.Stages = stages
+	for i := range res.Stages {
+		res.Stages[i].Detail = memory.Redact(res.Stages[i].Detail)
+	}
+	res.Error = memory.Redact(res.Error)
+	return res
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

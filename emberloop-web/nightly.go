@@ -1051,5 +1051,5 @@ func (d *Daemon) handleNightly(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, redactServedDiagnostics(res))
 }
