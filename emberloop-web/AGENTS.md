@@ -367,17 +367,8 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   Steer that arrives while a Handoff swap runs (`swapping`) degrades to a
   Follow-up, so the Handoff leads. Tests: `handoff_test.go`,
   `handoff_queue_test.go`, `pig_handoff_test.go`, `claude_handoff_test.go` (claude swap, token rotation, restart resume, injections, failure), `grok_handoff_test.go` (effort, login sync, failure).
-- `compress_retry.go` owns the compress failure policy:
-  - `classifyCompressError` sorts a failure by its text: block (401 or 402
-    status, payment required, no or insufficient credits, quota, billing limit,
-    unauthorized, authentication, API key), transient (429 or 5xx status, rate
-    limit, overloaded, timed out, connection error, fetch failed, unexpected
-    EOF, unavailable) or other. A status counts only where the SDK puts one: at
-    the start, after a colon or an open paren, or after HTTP or status.
-  - Block wins over transient. `retryTransient` retries a transient failure
-    after 2s, 8s and 30s (`compressBackoff`; sleep seam `Daemon.compressSleep`).
-    `retryingSummarizer` runs every summarizer call under that policy and counts
-    the retries.
+- `failures.go` owns the shared provider-failure classifier: `classifyFailure` sorts a failure by its text into quota, credit, auth, session-limit or other. A status counts only where the SDK puts one: at the start, after a colon or an open paren, or after HTTP or status. `classifyCompressError` maps that onto the compress policy: an advancing class (all but other) blocks, a transient failure (429 or 5xx status, rate limit, overloaded, timed out, connection error, fetch failed, unexpected EOF, unavailable) retries, and any other failure falls through. Advancing wins over transient. `chains.go` owns the Run fallback chains (`chainFor` resolves a role's chain, `chainAdvances` is the advance predicate, `validateChains` checks PUT bodies).
+- `compress_retry.go` owns the compress retry and block mechanics: `retryTransient` retries a transient failure after 2s, 8s and 30s (`compressBackoff`; sleep seam `Daemon.compressSleep`). `retryingSummarizer` runs every summarizer call under that policy and counts the retries.
   - A one-off that hits its deadline (`oneShotDeadline`) is other: no retry.
   - A block sets `SessionMeta.CompressBlock` (persisted), drops a compress that
     waits on a Group, appends a `compress_blocked` Event (number, model, retry
@@ -394,7 +385,7 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
     released Session, claims it, clears the block and drains the held messages
     on the old handle. It answers 409 while the Session works or no block is
     set, and 404 for an unknown Session.
-  - Tests: `compress_retry_test.go`.
+  - Tests: `compress_retry_test.go`, `failures_test.go`, `chains_test.go`.
 - `compress.go` owns the compress settings and the auto trigger: `auto_compress`, `compress_threshold_percent` (default 80), `compress_cooldown` (default 5 turns), `compress_instructions` and `compress_model` in the settings file, read fresh on every turn. `runTurnWith` calls `maybeAutoCompress` after the turn settles (Handoff turns never auto); it starts a Handoff through the shared `requestCompress` path when the newest usage Event sits at or past the threshold percent. It fires only at a tool boundary (`openTask` false) or when the one `session.Idle` definition holds (quiet 0, so a settled turn needs no quiet wait), never mid-token; a turn, queued input or resume/release in flight skips to the next turn end, and an outstanding Group defers through the same `compressWait`/`runDeferredCompress` wait as manual. Cooldown counts non-Handoff prompts since the last `compressed` Event (`promptsSinceCompress`/`cooldownPassed`); the first compress is never cooled. Blocked, scout and ended Sessions never auto; an unset or unauthed model shows the existing `compressNote`/Settings warning and runs nothing. Tests: `auto_compress_test.go` (threshold, turn-end and tool-boundary timing, cooldown, unset model, blocked).
 - `summarize.go` is the Handoff summarizer: a one-off pig completion
   (`pigOneShot`) behind the `handoffSummarizer` seam (`pigSummarizer` in
@@ -411,7 +402,7 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   `el.HandoffSections()` (`repair`); then the last non-empty reply is wrapped
   under the headings (`lenient`); no text, or an other call error, gives the
   deterministic Handoff (`deterministic`); a transient call error retries first,
-  and a credit or auth error blocks (`compress_retry.go`). A Handoff call the
+  and a quota, credit, auth or session-limit error blocks (`failures.go`). A Handoff call the
   window refuses folds the input again at half its size, up to 2 times.
   `assembleHandoff` appends the last prompt the Handoff carries, verbatim, and
   `el.ContinueLine` when a tool call never finished (`openTask`). The prompt set
@@ -518,7 +509,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   Sessions that cannot resume stay readable with a why
   (`resumable`/`resumeNote` on session GET, read-only banner in the UI);
   a new send there is 409. The settings endpoint (`settings.go`) reads and
-  writes `max_workers` next to roles, reporting `max_workers_from_env` when
+  writes `max_workers` next to roles and per-role `chains` (up to three
+  `{backend, model}` fallbacks per run role; `harness` reads as `backend`),
+  reporting `max_workers_from_env` when
   `EL_MAX_WORKERS` wins; a write takes effect on the live cap with
   no restart, and Run Sessions share the one cap with chat Sessions. The
   settings page edits the field and locks it with a note under the override.

@@ -84,15 +84,16 @@ func envMaxWorkers() (int, bool) {
 	return w, true
 }
 
-// settingsView is the GET and PUT shape: roles and per-role Run skills next
-// to the live cap and whether the environment overrides the file, so the UI
-// can lock the field.
+// settingsView is the GET and PUT shape: roles, per-role Run skills and
+// per-role chains next to the live cap and whether the environment overrides
+// the file, so the UI can lock the field.
 func settingsView() map[string]any {
 	_, fromEnv := envMaxWorkers()
 	decider := readDeciderSettings()
 	return map[string]any{
 		"roles":                   readRoles(),
 		"run_skills":              readRunSkillsRaw(),
+		"chains":                  readChains(),
 		"max_workers":             maxRunningFromSettings(),
 		"max_workers_from_env":    fromEnv,
 		"session_titles":          sessionTitlesSetting(),
@@ -113,14 +114,15 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		defer d.live.publish("settings")
 		var body struct {
-			Roles         map[string]roleSetting `json:"roles"`
-			RunSkills     json.RawMessage        `json:"run_skills"`
-			MaxWorkers    *int                   `json:"max_workers"`
-			SessionTitles *bool                  `json:"session_titles"`
-			SignupEnabled *bool                  `json:"signup_enabled"`
-			Compress      *compressPatch         `json:"compress"`
-			Decider       *deciderPatch          `json:"decider"`
-			Jev           *jevPatch              `json:"jev"`
+			Roles         map[string]roleSetting  `json:"roles"`
+			RunSkills     json.RawMessage         `json:"run_skills"`
+			Chains        map[string][]chainEntry `json:"chains"`
+			MaxWorkers    *int                    `json:"max_workers"`
+			SessionTitles *bool                   `json:"session_titles"`
+			SignupEnabled *bool                   `json:"signup_enabled"`
+			Compress      *compressPatch          `json:"compress"`
+			Decider       *deciderPatch           `json:"decider"`
+			Jev           *jevPatch               `json:"jev"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -173,6 +175,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if msg := validateChains(body.Chains); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
 		for name, rs := range body.Roles {
 			// An empty role clears it (pig Sessions then stay unnamed).
 			if rs.Harness == "" && rs.Model == "" {
@@ -211,6 +217,18 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			raw, _ := json.Marshal(merged)
 			all["roles"] = raw
+		}
+		if body.Chains != nil {
+			merged := readChains()
+			for name, entries := range body.Chains {
+				if len(entries) == 0 {
+					delete(merged, name)
+					continue
+				}
+				merged[name] = entries
+			}
+			raw, _ := json.Marshal(merged)
+			all["chains"] = raw
 		}
 		if body.MaxWorkers != nil {
 			raw, _ := json.Marshal(*body.MaxWorkers)

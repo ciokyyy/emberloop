@@ -4,57 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
 	"time"
 )
 
-// Compress failures sort by their text. The pig SDK puts a provider HTTP
-// status in its error text: at the start, after a colon or an open paren, or
-// after "HTTP" or "status". It names network failures with fixed phrases. A
-// credit or auth failure blocks the Session. A transient failure retries under
-// compressBackoff. Any other failure falls through the fallback chain in
-// summarize.go.
+// Compress retries and blocks build on the shared failure classifier in
+// failures.go: a chain-advancing failure (quota, credit, auth, session
+// limit) blocks the Session, a transient failure retries under
+// compressBackoff, and any other failure falls through the fallback chain
+// in summarize.go.
 
 // compressBackoff is the wait before each retry of a transient failure: three
 // retries, so at most four tries per call.
 var compressBackoff = []time.Duration{2 * time.Second, 8 * time.Second, 30 * time.Second}
-
-// compressFailure is the class of one failed compress call.
-type compressFailure int
-
-const (
-	failOther compressFailure = iota
-	failTransient
-	failBlock
-)
-
-// statusAt is where a provider HTTP status sits in SDK error text.
-const statusAt = `(?:^|[:(]\s*|\bHTTP\s*|\bstatus(?:\s+code)?\s*)`
-
-// blockFailure matches credit and auth failures. A status code needs a reason
-// or a boundary after it, so a bare number in prose never matches.
-var blockFailure = regexp.MustCompile(`(?i)` + statusAt + `(?:401|402)(?:\)|:|\s*$|\s+status\b|\s+(?:unauthorized|payment|invalid))` +
-	`|payment required|insufficient[ _-](?:credits?|balance|quota|funds)|(?:no|out of|low) credits?\b|credit balance` +
-	`|\bquota\b|billing[ _](?:hard[ _])?limit|billing (?:required|error)|unauthori[sz]ed|authentication|api[ _-]?key`)
-
-// transientFailure matches network, 5xx and rate-limit failures.
-var transientFailure = regexp.MustCompile(`(?i)` + statusAt + `(?:429|5\d\d)(?:\)|:|\s*$|\s+status\b|\s+(?:too many|overloaded|internal|service|bad gateway|gateway|unavailable|requests|error))` +
-	`|rate[ _-]?limit|too many requests|overloaded|timed out|i/o timeout|connection (?:error|reset|refused|closed)` +
-	`|fetch failed|unexpected eof|no such host|network (?:error|is unreachable)|(?:service|server) unavailable|status: unavailable` +
-	`|temporar(?:y|ily) (?:unavailable|failure|error|overloaded)|(?:^|: )terminated$`)
-
-// classifyCompressError sorts one failure by its text. Block wins over
-// transient: a 429 that names the quota is a credit failure.
-func classifyCompressError(err error) compressFailure {
-	msg := err.Error()
-	switch {
-	case blockFailure.MatchString(msg):
-		return failBlock
-	case transientFailure.MatchString(msg):
-		return failTransient
-	}
-	return failOther
-}
 
 // retryTransient runs op. A transient failure waits compressBackoff[n] and
 // runs op again, up to len(compressBackoff) retries. It returns the retry
