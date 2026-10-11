@@ -66,6 +66,7 @@ func buildHandoff(events []Event) string {
 	files := map[string]bool{}
 	var fileOrder []string
 	var toolErrs []string
+	errIdx := map[string]int{} // tool id -> index in toolErrs, -1 once resolved
 	last := ""
 	inReply := false
 	for _, e := range events {
@@ -101,6 +102,12 @@ func buildHandoff(events []Event) string {
 			}
 			if tc.Status == "failed" {
 				toolErrs = append(toolErrs, tc.Name+": "+capText(tc.Output, 300))
+				if tc.ID != "" {
+					errIdx[tc.ID] = len(toolErrs) - 1
+				}
+			} else if i, ok := errIdx[tc.ID]; ok && tc.ID != "" && i >= 0 {
+				toolErrs[i] = ""
+				errIdx[tc.ID] = -1
 			}
 		}
 	}
@@ -131,11 +138,16 @@ func buildHandoff(events []Event) string {
 	if last != "" {
 		b.WriteString("\n## Last assistant message\n" + capText(last, handoffFieldCap) + "\n")
 	}
-	if len(toolErrs) > 0 {
-		b.WriteString("\n## Failed tool calls\n")
-		for _, e := range toolErrs {
-			b.WriteString("- " + e + "\n")
+	header := false
+	for _, e := range toolErrs {
+		if e == "" {
+			continue
 		}
+		if !header {
+			b.WriteString("\n## Failed tool calls\n")
+			header = true
+		}
+		b.WriteString("- " + e + "\n")
 	}
 	return b.String()
 }

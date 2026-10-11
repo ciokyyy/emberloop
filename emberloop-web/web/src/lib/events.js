@@ -160,6 +160,12 @@ export function cardForEvent(e) {
       const c = parseCompaction(text);
       return { card: 'compaction', title: 'Context compressed', body: c.summary ?? '', collapsed: true, compaction: { ...c, state: c.aborted || c.error ? 'failed' : 'done' } };
     }
+    case 'compressed': {
+      let c = {};
+      try { c = JSON.parse(text); } catch { /* keep the divider */ }
+      const bits = [`#${c.number ?? '?'}`, c.tokensBefore ? `${c.tokensBefore} tokens before` : '', c.model, c.fallback].filter(Boolean);
+      return { card: 'compaction', title: 'Context compressed', body: bits.join(' · '), collapsed: true, compaction: { state: 'done' } };
+    }
     case 'sudo_request': {
       const r = parseSudoRequest(text);
       return { card: 'sudo', title: 'Sudo request', body: r.command ?? '', collapsed: false, sudo: { ...r, state: r.state || 'pending' } };
