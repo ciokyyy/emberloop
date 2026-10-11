@@ -4,9 +4,9 @@
 
 **Blocked by:** spec-branch-core (09)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Status and boxes written after merge only
-- [ ] Spec status written after master merge only
-- [ ] Red base gives Needs-you with failing tests; result cached per tip
-- [ ] Run seam tests; `.emberloop/check` passes
+- [x] Status and boxes written after merge only
+- [x] Spec status written after master merge only
+- [x] Red base gives Needs-you with failing tests; result cached per tip
+- [x] Run seam tests; `.emberloop/check` passes
