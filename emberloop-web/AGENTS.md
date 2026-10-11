@@ -100,12 +100,33 @@ the driver ticks boxes and marks done, nothing else writes them.
   Backend is neither a `compactBackend` nor a `handoffBackend`, the Session
   GET reports `compressible:false` and the UI hides the Compress button.
 - `handoff.go` is Handoff compress for a `handoffBackend` (the fake Backend):
-  `POST .../compress` builds a deterministic Handoff from the Event log (no
-  LLM), starts a fresh handle (`StartHandle`), rotates the resume token,
-  stores `handoff-N.md` in the Session directory, appends a `compressed`
-  Event (number, tokens before, model `none` when no summarizer ran (the divider hides `none`), fallback) and the Handoff prompt Event (`handoff:true`, `sender:"system"`), and
-  runs the Handoff as the first turn through `runTurn` and releases the old handle once that turn works (or ends); compress instructions are ignored. Session
-  ID, Event log and metadata stay. A compress waits while a Group of the Session is outstanding (`groupOutstandingLocked`: a Group spawned in this process with results not all sent, or a member with a turn running or queued): it answers 202 `{"waiting":"group"}` and `runDeferredCompress` runs it at the next turn end or Group delivery. A claude Steer that arrives while a Handoff swap runs (`swapping`) degrades to a Follow-up, so the Handoff leads. Tests: `handoff_test.go`, `handoff_queue_test.go`.
+  `POST .../compress` answers 409 with the reason from `compressNote` while the
+  compress model is unset or unauthed. Else `runHandoff` writes the body
+  (`writeHandoff`, `summarize.go`), starts a fresh handle (`StartHandle`),
+  rotates the resume token, stores `handoff-N.md` in the Session directory,
+  appends a `compressed` Event (number, tokens before, model, fallback step,
+  retries, error when the summarizer call failed) and the Handoff prompt Event
+  (`handoff:true`, `sender:"system"`). It runs the Handoff as the first turn
+  through `runTurn` and releases the old handle once that turn works (or ends).
+  Session ID, Event log and metadata stay. A compress waits while a Group of the Session is outstanding (`groupOutstandingLocked`: a Group spawned in this process with results not all sent, or a member with a turn running or queued): it answers 202 `{"waiting":"group"}` and `runDeferredCompress` runs it at the next turn end or Group delivery. A claude Steer that arrives while a Handoff swap runs (`swapping`) degrades to a Follow-up, so the Handoff leads. Tests: `handoff_test.go`, `handoff_queue_test.go`.
+- `summarize.go` is the Handoff summarizer: a one-off pig completion
+  (`pigOneShot`) behind the `handoffSummarizer` seam (`pigSummarizer` in
+  production, a scripted fake in tests). No tools, no Session. The system prompt
+  is `el.CompressPrompt` plus `compress_instructions`; the user message is
+  `summaryTranscript` (prompts, assistant text, tool calls at last state, errors).
+  Chain (`writeHandoff`): a reply passing `el.CheckHandoff` is used (`summary`);
+  empty or wrong-format replies get up to 2 repair retries that restate
+  `el.HandoffSections()` (`repair`); then the last non-empty reply is wrapped
+  under the headings (`lenient`); no text, or a call error, gives the
+  deterministic Handoff (`deterministic`). `assembleHandoff` appends the last
+  user prompt verbatim and `el.ContinueLine` when a tool call never finished
+  (`openTask`). `dropMemoryBlocks` removes fenced memory blocks (an opening line
+  starting with three backticks and `memory`, closed by a bare three-backtick
+  line) from all text except the user's, in the summarizer input and output.
+  Compress gate: `compress_model` (the spec's `compressModel`) must name an
+  authed pig model (`pigModelAuthed`, the new-Session picker's test). In-place
+  SDK compaction (`compactBackend`) is not gated and does not use the summarizer.
+  Tests: `summarize_test.go`.
 - `grokacp.go` is the grok Backend: `grok agent --no-leader --agent-profile
   <file> stdio` on the user's Grok subscription login, through the plain
   `ClaudeBackend` ACP path (`metaHook`, `promptWrap`, `waitMCP`, `mcpEnv`).
@@ -153,7 +174,7 @@ the driver ticks boxes and marks done, nothing else writes them.
 - `titles.go` names root Sessions for the list: the first prompt starts one
   background, one-off title call (`Title` on a Backend: claude a throwaway
   ACP session with a string `systemPrompt`, no MCP, no tools; pig a bare
-  `Provider.Stream` completion), stored as `title` in `meta.json`.
+  `Provider.Stream` completion via `pigOneShot`), stored as `title` in `meta.json`.
   Claude Sessions title with haiku while `session_titles` (default on) allows it;
   pig Sessions title with the pig model of the `pig-title` role (harness
   must be pig) and stay untitled without one. Scouts and Subagents are

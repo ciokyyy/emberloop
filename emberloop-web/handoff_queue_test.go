@@ -35,12 +35,14 @@ func (p *promptRecord) texts() []string {
 // the Session ID.
 func queueDaemon(t *testing.T, delay time.Duration) (*Daemon, *promptRecord, string, string) {
 	t.Helper()
-	useSettings(t, "")
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = delay
 	rec := &promptRecord{}
 	be.ReplyFunc = rec.reply
 	d := NewDaemon(tempDir(t), be)
+	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -238,6 +240,8 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 // not hold a compress of the parent.
 func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 	stateDir := tempDir(t)
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	stuck := make(chan struct{}) // never closed: the old Daemon's child turn stays open
 	old := NewFakeBackend()
 	old.ReplyFunc = func(_, text string) (string, bool) {
@@ -274,6 +278,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 
 	// Restart: the reloaded Daemon sees the Group and its member mid-turn on disk.
 	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	if code, body := compressReq(t, srv2.URL, parent, ""); code != http.StatusAccepted || body["waiting"] != nil {

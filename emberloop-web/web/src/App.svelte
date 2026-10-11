@@ -47,9 +47,10 @@
   let compressOpen = $state(false);
   let compressBusy = $state(false);
   let compressError = $state('');
-  // Only a Backend that compacts in place compresses (the SDK pig Backend);
-  // the Daemon reports it per Session. Claude and pig over ACP have no hook.
+  // A Backend that can compress sets compressible: in place (SDK pig) or by Handoff.
+  // compressNote gives the reason Compress is off, when it is off.
   let compressible = $state(false);
+  let compressNote = $state('');
   const canCompress = $derived(compressible && !meta?.scout && resumable);
   const compressing = $derived(
     events.findLast((e) => e.kind === 'compaction_started' || e.kind === 'compaction')?.kind === 'compaction_started',
@@ -380,6 +381,7 @@
       events = body.events ?? [];
       resumable = body.resumable ?? true;
       compressible = body.compressible ?? false;
+      compressNote = body.compressNote ?? '';
       resumeNote = body.resumeNote ?? '';
       hasMore = body.hasMore ?? false;
       firstSeq = body.firstSeq ?? 0;
@@ -751,7 +753,7 @@
               <Composer status="idle" busy={sending} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
               <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
-              <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} />
+              <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
             {/if}
           </div>
         </div>

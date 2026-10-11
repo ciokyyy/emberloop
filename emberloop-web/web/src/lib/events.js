@@ -163,7 +163,8 @@ export function cardForEvent(e) {
     case 'compressed': {
       let c = {};
       try { c = JSON.parse(text); } catch { /* keep the divider */ }
-      const bits = [`#${c.number ?? '?'}`, c.tokensBefore ? `${c.tokensBefore} tokens before` : '', c.model !== 'none' ? c.model : '' /* wire sentinel, see AGENTS.md */, c.fallback].filter(Boolean);
+      const retries = c.retries === 1 ? '1 retry' : c.retries ? `${c.retries} retries` : '';
+      const bits = [`#${c.number ?? '?'}`, c.tokensBefore ? `${c.tokensBefore} tokens before` : '', c.model !== 'none' ? c.model : '' /* wire sentinel, see AGENTS.md */, c.fallback, retries, c.error ? `error: ${c.error}` : ''].filter(Boolean);
       return { card: 'divider', title: 'Context compressed', body: bits.join(' · '), collapsed: false };
     }
     case 'sudo_request': {

@@ -31,8 +31,9 @@ owns its `_test.go` and the behaviour below):
   disable switch, concurrent sweep of worker panes and recorded top-level panes, supervisor loop with failure
   backoff and visible failure: summary and restart errors recorded in agent state and tools log, strip shows `compress failed: <reason>`,
   10m cooldown parks pane, later success clears state, always-continue handoff),
-  `compress_prompt.go` (the pinned summarizer prompt and handoff sanity
-  check), `compress_render.go` (transcript rendered as text in full),
+  `compress_prompt.go` (the pinned summarizer prompt, its section list
+  `HandoffSections` that emberloop-web uses, and the handoff sanity check),
+  `compress_render.go` (transcript rendered as text in full),
   `commands.go`, `skills.go`, `install.go` (the live-agent gate, top-level
   exempt, the herdr plugin link and the keybinding line, ending with the deps
   step), `deps.go` (the `el deps` installer), `docs.go` (install copies

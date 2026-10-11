@@ -1,15 +1,12 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/MichaelKinsy/PiG/ai"
 )
 
 // titleSystemPrompt is the whole system prompt of a title call. For claude it
@@ -204,38 +201,7 @@ func (b *PigBackend) Title(model, prompt string) (string, error) {
 	b.mu.Lock()
 	agentDir := b.AgentDir
 	b.mu.Unlock()
-	svcs, m, err := buildPigServices(agentDir, nil, SessionMeta{Model: model, WorkDir: os.TempDir()})
-	if err != nil {
-		return "", err
-	}
-	defer svcs.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), titleCallTimeout)
-	defer cancel()
-	tc := ai.NormalizeContext(ai.Context{
-		SystemPrompt: titleSystemPrompt,
-		Messages:     []ai.Message{ai.UserMessage{Content: ai.UserText(prompt), Timestamp: time.Now().UnixMilli()}},
-	})
-	stream, err := m.Provider.Stream(ctx, tc, ai.StreamOptions{MaxTokens: titleMaxTokens, Thinking: ai.ThinkingOff})
-	if err != nil {
-		return "", err
-	}
-	msg, err := stream.ResultContext(ctx)
-	if err != nil {
-		return "", err
-	}
-	if msg.StopReason == ai.StopReasonError || msg.StopReason == ai.StopReasonAborted {
-		return "", fmt.Errorf("pig title: %s", msg.ErrorMessage)
-	}
-	var sb strings.Builder
-	for _, block := range msg.Content {
-		switch t := block.(type) {
-		case ai.TextContent:
-			sb.WriteString(t.Text)
-		case *ai.TextContent:
-			sb.WriteString(t.Text)
-		}
-	}
-	return sb.String(), nil
+	return pigOneShot(agentDir, model, titleSystemPrompt, prompt, titleMaxTokens, titleCallTimeout)
 }
 
 // titlesEnvOff reports EL_SESSION_TITLES=0: the one switch that also

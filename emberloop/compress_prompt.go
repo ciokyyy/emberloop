@@ -51,6 +51,10 @@ func CheckHandoff(handoff string) error {
 	return nil
 }
 
+// HandoffSections returns the section headings a handoff carries, in the
+// pinned order. The result is a copy: callers cannot change the list.
+func HandoffSections() []string { return append([]string(nil), handoffSections...) }
+
 // ContinueLine is the final handoff line after an interrupted step: the new
 // session resumes without waiting for the user.
 const ContinueLine = "Continue the interrupted step above where you left off."

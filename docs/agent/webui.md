@@ -91,12 +91,13 @@ The prod unit runs `el-web -addr 127.0.0.1:7940 -tailnet -allow-host cachy-cioky
 
 ## Context compression
 
-Pig Sessions compress in place with the SDK compaction: older history becomes a summary, recent turns stay, the Session id stays. Claude Sessions have no compaction hook.
+Compress makes a Session's context smaller. The SDK pig Backend compacts in place: older history becomes a summary, the Session id stays. Backends that swap handles (the fake Backend) write a Handoff from the Event log: a one-off pig call writes it, a fresh harness handle takes it as first prompt, the Session id stays. Claude and pig over ACP have no compress hook.
 
-- Manual: the Compress button under the chat, or `POST /api/sessions/<id>/compress` with `{"instructions": "..."}`. It answers 409 while the Session works. During a spawn Group of the Session it answers 202 `{"waiting":"group"}` and compresses once the Group reports.
-- Auto: after a turn, when context is at or above `compress_threshold_percent` (default 80) and at least `compress_cooldown` turns (default 5) passed since the last compression. `auto_compress` (default true) turns it off.
-- Settings page section "Context compression" writes `auto_compress`, `compress_threshold_percent`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
-- The transcript shows a "Context compressed" card with token counts and the summary; the meter under the chat refreshes.
+- Manual: the Compress button under the chat, or `POST /api/sessions/<id>/compress` with `{"instructions": "..."}`. It answers 409 while the Session works, and with the reason while the compress model is unset or has no pig auth. During a spawn Group of the Session it answers 202 `{"waiting":"group"}` and compresses once the Group reports.
+- Compress model: Settings page, "Context compression", "Compress model" picks `compress_model` from the authed pig models only. Until it is set, Compress stays disabled and shows why.
+- Auto: after a turn, when context is at or above `compress_threshold_percent` (default 80) and at least `compress_cooldown` turns (default 5) passed since the last compression. `auto_compress` (default true) turns it off. In-place Backends only.
+- Settings page section "Context compression" writes `compress_model`, `auto_compress`, `compress_threshold_percent`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
+- The transcript shows a "Context compressed" card with token counts and the summary for in-place compression, or a divider with the Handoff number, model, fallback step and retries. The meter under the chat refreshes.
 
 ## Push notifications
 

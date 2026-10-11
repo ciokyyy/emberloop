@@ -2,8 +2,8 @@
 <script>
   import { Shrink } from '@lucide/svelte';
   import Button from './ui/button.svelte';
-  // onCompress is set only for Sessions that can compress (pig). busy disables it.
-  let { model = '', usage = null, onCompress = null, busy = false, compressing = false } = $props();
+  // onCompress is set for Sessions that can compress. busy disables it. compressNote, when set, disables it too and gives the reason.
+  let { model = '', usage = null, onCompress = null, busy = false, compressing = false, compressNote = '' } = $props();
   const R = 7;
   const C = 2 * Math.PI * R;
   const pct = $derived(usage ? Math.min(100, Math.round((usage.used / usage.size) * 100)) : 0);
@@ -14,9 +14,10 @@
 <div class="flex items-center justify-between gap-3 px-3 text-xs text-muted-foreground" data-testid="context-meter">
   <span class="truncate">{model}</span>
   {#if onCompress}
-    <Button variant="ghost" size="sm" class="ml-auto h-6 gap-1 px-2 text-xs" disabled={busy || compressing} onclick={onCompress} title={busy ? 'Compress when the Session is idle' : 'Summarize older history to free context'}>
+    <Button variant="ghost" size="sm" class="ml-auto h-6 gap-1 px-2 text-xs" disabled={busy || compressing || !!compressNote} onclick={onCompress} title={compressNote || (busy ? 'Compress when the Session is idle' : 'Summarize older history to free context')}>
       <Shrink class="size-3.5" />{compressing ? 'Compressing…' : 'Compress'}
     </Button>
+    {#if compressNote}<span class="truncate text-amber-300">{compressNote}</span>{/if}
   {/if}
   {#if usage}
     <span class="flex items-center gap-1.5 {tone}" title="{usage.used} of {usage.size} tokens">

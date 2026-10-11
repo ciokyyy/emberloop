@@ -23,6 +23,7 @@ type compressSettings struct {
 	ThresholdPercent int    `json:"compress_threshold_percent"`
 	Cooldown         int    `json:"compress_cooldown"`
 	Instructions     string `json:"compress_instructions"`
+	Model            string `json:"compress_model"`
 }
 
 const (
@@ -61,6 +62,12 @@ func readCompressSettings() compressSettings {
 		var str string
 		if json.Unmarshal(raw, &str) == nil {
 			s.Instructions = strings.TrimSpace(str)
+		}
+	}
+	if raw, ok := all["compress_model"]; ok {
+		var str string
+		if json.Unmarshal(raw, &str) == nil {
+			s.Model = strings.TrimSpace(str)
 		}
 	}
 	return s
@@ -212,7 +219,8 @@ func (d *Daemon) maybeAutoCompress(id string) {
 
 // handleCompress is POST /api/sessions/{id}/compress: compress now, or once
 // the Session's Group is no longer outstanding. It answers 202 once the
-// compaction runs or waits; the transcript carries the result.
+// compaction runs or waits; the transcript carries the result. A Handoff
+// Backend answers 409 with the reason while no authed compress model is set.
 func (d *Daemon) handleCompress(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		Instructions string `json:"instructions"`
@@ -249,8 +257,14 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	if scout || ended {
 		return http.StatusForbidden, map[string]any{"error": "this Session cannot be compressed"}
 	}
+	set := readCompressSettings()
+	if hb != nil {
+		if note := compressNote(set.Model); note != "" {
+			return http.StatusConflict, map[string]any{"error": note}
+		}
+	}
 	if instructions == "" {
-		instructions = readCompressSettings().Instructions
+		instructions = set.Instructions
 	}
 	// The Handoff must carry the Group's result, so the compress waits for
 	// the Group. runDeferredCompress resumes it at a turn end or a delivery.
@@ -282,7 +296,7 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	s.compressInstr = ""
 	d.mu.Unlock()
 	if hb != nil {
-		go d.runHandoff(id, hb)
+		go d.runHandoff(id, hb, set.Model, instructions)
 		return http.StatusAccepted, map[string]any{"ok": true}
 	}
 	go func() {
@@ -338,6 +352,7 @@ type compressPatch struct {
 	ThresholdPercent *int    `json:"compress_threshold_percent"`
 	Cooldown         *int    `json:"compress_cooldown"`
 	Instructions     *string `json:"compress_instructions"`
+	Model            *string `json:"compress_model"`
 }
 
 func (p *compressPatch) validate() string {
@@ -352,6 +367,9 @@ func (p *compressPatch) validate() string {
 	}
 	if p.Instructions != nil && len(*p.Instructions) > 2000 {
 		return "compress_instructions is limited to 2000 characters"
+	}
+	if p.Model != nil && strings.TrimSpace(*p.Model) != "" && !pigModelAuthed(strings.TrimSpace(*p.Model)) {
+		return "compress_model must be an authed pig model"
 	}
 	return ""
 }
@@ -376,5 +394,8 @@ func (p *compressPatch) apply(all map[string]json.RawMessage) {
 	}
 	if p.Instructions != nil {
 		set("compress_instructions", strings.TrimSpace(*p.Instructions))
+	}
+	if p.Model != nil {
+		set("compress_model", strings.TrimSpace(*p.Model))
 	}
 }

@@ -63,6 +63,8 @@ type Daemon struct {
 	// local machine clients send (see auth.go).
 	users        *userStore
 	machineToken string
+	// summarizer writes Handoffs for Compress (summarize.go); tests replace it.
+	summarizer handoffSummarizer
 	// projects are the recorded working directories; projMu guards them.
 	projMu   sync.Mutex
 	projects []Project
@@ -193,6 +195,7 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		fmt.Fprintln(os.Stderr, "el-web: machine token:", err)
 	}
 	d.machineToken = tok
+	d.summarizer = pigSummarizer{}
 	d.load()
 	d.loadGroups()
 	d.loadRuns()
@@ -1254,6 +1257,10 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		_, isHandoff := be.(handoffBackend)
 		compressible := isCompact || isHandoff
 		d.mu.Unlock()
+		var compressBlocked string
+		if isHandoff {
+			compressBlocked = compressNote(readCompressSettings().Model)
+		}
 		// Full log for old clients; ?tail= and ?before= page by turn.
 		tail, hasBefore, before, turns, at := parseSnapshotQuery(r.URL.Query())
 		start, end := 0, len(events)
@@ -1268,6 +1275,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			"hasMore": hasMore, "firstSeq": firstSeq,
 			"live": live, "resumable": resumable, "resumeNote": note,
 			"compressible": compressible,
+			"compressNote": compressBlocked,
 		})
 	case sub == "prompt" && r.Method == "POST":
 		var req struct {

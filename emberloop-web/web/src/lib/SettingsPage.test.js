@@ -161,6 +161,7 @@ describe('SettingsPage context compression', () => {
       compress_threshold_percent: 70,
       compress_cooldown: 3,
       compress_instructions: 'keep paths',
+      compress_model: '',
     });
   });
 
@@ -177,5 +178,51 @@ describe('SettingsPage context compression', () => {
     const { container } = render(SettingsPage);
     expect((await within(container).findByLabelText('Threshold %')).disabled).toBe(true);
     expect(within(container).getByLabelText('Turns').disabled).toBe(true);
+  });
+});
+
+describe('SettingsPage compress model', () => {
+  it('shows the saved compress model and sends it back', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, compress: { compress_model: 'auto' } }, seen });
+    const { container } = render(SettingsPage);
+    const model = await within(container).findByLabelText('Compress model');
+    expect(model.textContent).toMatch(/auto/i);
+    await fireEvent.input(within(container).getByLabelText('Summary focus'), { target: { value: 'keep paths' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.compress.compress_model).toBe('auto');
+  });
+
+  it('sends an empty model when none is picked', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, compress: { auto_compress: true } }, seen });
+    const { container } = render(SettingsPage);
+    await within(container).findByLabelText('Compress model');
+    await fireEvent.input(within(container).getByLabelText('Summary focus'), { target: { value: 'keep paths' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.compress.compress_model).toBe('');
+  });
+
+  it('shows why Compress is off until a compress model is set', async () => {
+    stubSettings({ settings: { ...base, compress_note: 'no compress model: pick one in Settings' } });
+    const { container } = render(SettingsPage);
+    expect(await within(container).findByText('no compress model: pick one in Settings')).toBeTruthy();
+  });
+
+  it('warns that auto-compress needs a compress model', async () => {
+    stubSettings({ settings: { ...base, compress: { auto_compress: true }, compress_note: 'no compress model: pick one in Settings' } });
+    const { container } = render(SettingsPage);
+    expect(await within(container).findByText('Auto-compress needs a compress model.')).toBeTruthy();
+  });
+
+  it('no warning while auto-compress is off', async () => {
+    stubSettings({ settings: { ...base, compress: { auto_compress: false }, compress_note: 'no compress model: pick one in Settings' } });
+    const { container } = render(SettingsPage);
+    await within(container).findByLabelText('Compress model');
+    expect(within(container).queryByText('Auto-compress needs a compress model.')).toBeNull();
   });
 });

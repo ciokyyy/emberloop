@@ -10,10 +10,11 @@ import (
 	"sync/atomic"
 )
 
-// Handoff compress: the Daemon builds one Handoff document from the Event log
-// without a model, starts a fresh harness handle for the same Session, sends
-// the Handoff as its first prompt, and releases the old handle once that
-// turn starts cleanly. The Session ID, Event log and metadata stay.
+// Handoff compress: the Daemon writes one Handoff document from the Event log
+// (the summarizer, with a deterministic fallback; see summarize.go), starts a
+// fresh harness handle for the same Session, sends the Handoff as its first
+// prompt, and releases the old handle once that turn starts cleanly. The
+// Session ID, Event log and metadata stay.
 
 // handoffBackend is the seam a Backend implements to swap its handle.
 type handoffBackend interface {
@@ -26,8 +27,10 @@ type handoffBackend interface {
 type HandoffEvent struct {
 	Number       int    `json:"number"`
 	TokensBefore int    `json:"tokensBefore"`
-	Model        string `json:"model"` // "none": no summarizer model wrote the Handoff
+	Model        string `json:"model"` // compress model that wrote the Handoff
 	Fallback     string `json:"fallback"`
+	Retries      int    `json:"retries"`
+	Error        string `json:"error,omitempty"`
 }
 
 func (h HandoffEvent) text() string {
@@ -51,6 +54,9 @@ const (
 	handoffPromptsKept = 3
 	handoffFieldCap    = 4000
 )
+
+// handoffHeader opens every Handoff text.
+const handoffHeader = "# Handoff\n\nThis Session continues from an earlier context. Read this, then carry on.\n"
 
 func capText(s string, n int) string {
 	s = strings.TrimSpace(s)
@@ -113,7 +119,7 @@ func buildHandoff(events []Event) string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("# Handoff\n\nThis Session continues from an earlier context. Read this, then carry on.\n")
+	b.WriteString(handoffHeader)
 	if len(prompts) > 0 {
 		b.WriteString("\n## Task\n" + capText(prompts[0], handoffFieldCap) + "\n")
 		start := len(prompts) - handoffPromptsKept
@@ -137,7 +143,7 @@ func buildHandoff(events []Event) string {
 		}
 	}
 	if last != "" {
-		b.WriteString("\n## Last assistant message\n" + capText(last, handoffFieldCap) + "\n")
+		b.WriteString("\n## Last assistant message\n" + capText(dropMemoryBlocks(last), handoffFieldCap) + "\n")
 	}
 	header := false
 	for _, e := range toolErrs {
@@ -173,8 +179,8 @@ func lastUsedTokens(events []Event) int {
 // turn on the new handle through the shared turn path. That turn skips the
 // submit gate, auto-compress and the Reviewer verdict hook; Group delivery
 // and finishTurn still run. The caller marked the Session busy; runHandoff
-// settles it. Instructions do not apply: the Handoff has no summarizer.
-func (d *Daemon) runHandoff(id string, hb handoffBackend) {
+// settles it. The summarizer writes the body; writeHandoff picks the fallback step.
+func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions string) {
 	settled := false
 	defer func() {
 		if !settled {
@@ -201,8 +207,10 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 			number++
 		}
 	}
-	text := buildHandoff(events)
 	before := lastUsedTokens(events)
+	d.appendEvent(id, "status", "", "working")
+	res := writeHandoff(d.summarizer, model, instructions, events)
+	text := res.text
 
 	emit := func(kind, text, status string) { d.appendEvent(id, kind, text, status) }
 	token, release, err := hb.StartHandle(meta, emit)
@@ -220,7 +228,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend) {
 		cur.turnsSinceCompress = 0
 	}
 	d.mu.Unlock()
-	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: "none", Fallback: "deterministic"}.text(), "")
+	d.appendEvent(id, "compressed", HandoffEvent{Number: number, TokensBefore: before, Model: model, Fallback: res.fallback, Retries: res.retries, Error: res.err}.text(), "")
 
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {

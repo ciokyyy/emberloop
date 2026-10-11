@@ -11,7 +11,8 @@ import (
 
 func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 	t.Helper()
-	useSettings(t, "")
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.UsageSize = 100000
 	be.ReplyFunc = func(_, text string) (string, bool) {
@@ -21,6 +22,7 @@ func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 		return strings.Repeat("x", 8000), true
 	}
 	d := NewDaemon(tempDir(t), be)
+	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -76,17 +78,17 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	if !last.Handoff || last.Sender != "system" || last.Mode != "" {
 		t.Fatalf("handoff prompt flags = %+v", last)
 	}
-	if !strings.Contains(last.Text, "build the thing") || !strings.Contains(last.Text, "## Last assistant message") {
+	if !strings.Contains(last.Text, "## Next steps\nrun the tests") || !strings.Contains(last.Text, "\n## Last user prompt (verbatim)\nand again\n") {
 		t.Fatalf("handoff text = %q", last.Text)
 	}
 	if hand[0].Handoff || hand[0].Sender != "" {
 		t.Fatalf("user prompt flagged: %+v", hand[0])
 	}
 
-	// compressed Event: number, tokens before, model (none: no summarizer), fallback step.
+	// compressed Event: number, tokens before, model, fallback step, retries.
 	c := eventsOfKind(evs, "compressed")[0]
-	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":"none"`) ||
-		!strings.Contains(c.Text, `"fallback":"deterministic"`) || !strings.Contains(c.Text, `"tokensBefore":`) ||
+	if !strings.Contains(c.Text, `"number":1`) || !strings.Contains(c.Text, `"model":"test-faux/faux-1"`) ||
+		!strings.Contains(c.Text, `"fallback":"summary"`) || !strings.Contains(c.Text, `"tokensBefore":`) ||
 		strings.Contains(c.Text, `"tokensBefore":0`) {
 		t.Fatalf("compressed text = %s", c.Text)
 	}

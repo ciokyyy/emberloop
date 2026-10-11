@@ -23,3 +23,15 @@ describe('ContextMeter compress button', () => {
     expect(btn.disabled).toBe(true);
   });
 });
+
+describe('ContextMeter compress reason', () => {
+  it('disables Compress and shows the reason it cannot run', () => {
+    const onCompress = vi.fn();
+    const reason = 'no compress model: pick one in Settings';
+    const { container } = render(ContextMeter, { props: { model: 'm', usage: null, onCompress, compressNote: reason } });
+    const btn = within(container).getByText('Compress').closest('button');
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe(reason);
+    expect(within(container).getByText(reason)).toBeTruthy();
+  });
+});

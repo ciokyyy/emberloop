@@ -205,7 +205,10 @@ func TestCompressGuards(t *testing.T) {
 	}
 
 	// A Backend without in-place compaction swaps by Handoff.
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	plain := NewDaemon(tempDir(t), NewFakeBackend())
+	plain.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv2 := httptest.NewServer(authedHandler(t, plain))
 	defer srv2.Close()
 	pid := createSession(t, srv2.URL, "fake", "fake-model", tempDir(t))

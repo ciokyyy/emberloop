@@ -59,6 +59,12 @@ describe('cardForEvent maps every Event kind to a card', () => {
     expect(c.body).toContain('5000 tokens before');
     expect(c.body).toContain('deterministic');
   });
+  it('names retries and the summarizer error in the divider', () => {
+    const c = cardForEvent({ seq: 4, kind: 'compressed', text: '{"number":4,"tokensBefore":900,"model":"gpt","fallback":"deterministic","retries":2,"error":"credit exhausted"}' });
+    expect(c.body).toBe('#4 · 900 tokens before · gpt · deterministic · 2 retries · error: credit exhausted');
+    const r = cardForEvent({ seq: 5, kind: 'compressed', text: '{"number":5,"model":"gpt","fallback":"repair","retries":1}' });
+    expect(r.body).toBe('#5 · gpt · repair · 1 retry');
+  });
   it('labels plain prompts as You', () => {
     expect(cardForEvent(ev(1, 'prompt', 'hi')).title).toBe('You');
   });

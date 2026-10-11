@@ -42,7 +42,8 @@
   let maxWorkers = $state('3');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
-  let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '' });
+  let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '', model: 'none' });
+  let compressNote = $state('');
   let titlesLocked = $state(false);
   let locked = $state(false);
   let saved = $state('');
@@ -87,7 +88,9 @@
         threshold: String(c.compress_threshold_percent ?? 80),
         cooldown: String(c.compress_cooldown ?? 5),
         instructions: c.compress_instructions ?? '',
+        model: c.compress_model || 'none',
       };
+      compressNote = body.compress_note ?? '';
       saved = snapshot();
     } catch (e) {
       error = e.message;
@@ -106,6 +109,8 @@
 
   const pigTitleItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', pigTitle === 'none' ? '' : pigTitle)];
 
+  const compressModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', compress.model === 'none' ? '' : compress.model)];
+
   async function save() {
     saving = true;
     error = '';
@@ -123,10 +128,12 @@
         compress_threshold_percent: Number(compress.threshold),
         compress_cooldown: Number(compress.cooldown),
         compress_instructions: compress.instructions,
+        compress_model: compress.model === 'none' ? '' : compress.model,
       };
       const savedBody = await putSettings(payload);
       maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
       locked = !!savedBody.max_workers_from_env;
+      compressNote = savedBody.compress_note ?? '';
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -193,13 +200,22 @@
         <section class="animate-rise flex flex-col gap-2" data-testid="compress-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Context compression</h2>
-            <p class="text-xs text-muted-foreground">Pig Sessions summarize older history in place when the context window fills. Use the Compress button under the chat to do it by hand.</p>
+            <p class="text-xs text-muted-foreground">Compress writes the Handoff for a Session with the compress model: one pig call, no tools. Use the Compress button under the chat to run it by hand.</p>
           </div>
           <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Compress model</div>
+                <div class="text-xs text-muted-foreground">Writes the Handoff. Only authed pig models are listed.</div>
+                {#if compressNote}<div class="text-xs text-amber-300">{compressNote}</div>{/if}
+              </div>
+              <Combobox class="h-10" aria-label="Compress model" bind:value={compress.model} items={compressModelItems()} placeholder="Select a model" />
+            </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">
                 <div class="text-sm font-medium">Auto-compress</div>
                 <div class="text-xs text-muted-foreground">Runs after a turn when the context passes the threshold.</div>
+                {#if compress.auto === 'on' && compressNote}<div class="text-xs text-amber-300">Auto-compress needs a compress model.</div>{/if}
               </div>
               <Switch aria-label="Auto-compress" checked={compress.auto === 'on'} onCheckedChange={(v) => (compress.auto = v ? 'on' : 'off')} />
             </div>

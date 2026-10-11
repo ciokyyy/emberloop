@@ -407,13 +407,7 @@ func (b *PigBackend) Models() []string {
 // picker never offers a model the harness cannot run. The test-faux provider
 // counts as available only with PIG_TEST_FAUX=1, mirroring creation.
 func PigAvailableModels(agentDir string) []string {
-	if agentDir == "" {
-		agentDir = coding.DefaultAgentDir()
-	}
-	var creds ai.CredentialStore = emptyCredentialStore{}
-	if store, err := ai.NewAuthStorage(filepath.Join(agentDir, "auth.json")); err == nil {
-		creds = store
-	}
+	creds := pigCredentials(agentDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	authed := make(map[string]bool, len(ai.ListProviders()))
@@ -428,6 +422,18 @@ func PigAvailableModels(agentDir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// pigCredentials reads the auth store under agentDir, or an empty store when
+// it cannot be read. An empty agentDir is the user's pig agent dir.
+func pigCredentials(agentDir string) ai.CredentialStore {
+	if agentDir == "" {
+		agentDir = coding.DefaultAgentDir()
+	}
+	if store, err := ai.NewAuthStorage(filepath.Join(agentDir, "auth.json")); err == nil {
+		return store
+	}
+	return emptyCredentialStore{}
 }
 
 // pigProviderAuthed reports whether the SDK can run the provider now. A nil

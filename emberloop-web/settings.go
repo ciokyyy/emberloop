@@ -96,6 +96,7 @@ func settingsView() map[string]any {
 		"session_titles_from_env": titlesFromEnv(),
 		"compress":                readCompressSettings(),
 		"signup_enabled":          signupEnabledSetting(),
+		"compress_note":           compressNote(readCompressSettings().Model),
 	}
 }
 
