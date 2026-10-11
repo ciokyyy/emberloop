@@ -456,7 +456,6 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 			if len(topFiles) > 20 {
 				topFiles = topFiles[:20]
 			}
-		} else {
 		}
 	}
 
@@ -500,8 +499,10 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 
 	// One file lists once: a path the graph and the cascade both name fuses
 	// into a single hit carrying the merged ranges and the winner's source.
-	hits = mergeHitsByPath(hits, query, keywords)
-	sortFindHits(hits, query, keywords)
+	// Terms extract once for the merge and the sort below.
+	terms := extractTerms(query, keywords)
+	hits = mergeHitsByPath(hits, terms)
+	sortFindHits(hits, terms)
 
 	// A stage-1 error with no hits anywhere stays an error: a failing graph
 	// must not turn "no search terms" into an empty success.
@@ -515,13 +516,12 @@ func (c *CascadeSearcher) Search(ctx context.Context, query string, keywords []s
 // file the graph and the cascade both name lists once. Ranges merge through
 // MergePassageRanges and cap at three, as cascade hits do; the score is the
 // highest either source gave. The source and symbol come from the winner: an
-// exact symbol-name graph hit beats a passage guess, else the higher score
-// wins, else the first hit (the cascade's) stands.
-func mergeHitsByPath(hits []SearchHit, query string, keywords []string) []SearchHit {
+// exact symbol-name hit beats a passage guess, else the higher score wins,
+// else the first hit (the cascade's) stands.
+func mergeHitsByPath(hits []SearchHit, terms []string) []SearchHit {
 	if len(hits) <= 1 {
 		return hits
 	}
-	terms := extractTerms(query, keywords)
 	byPath := make(map[string]int, len(hits))
 	out := make([]SearchHit, 0, len(hits))
 	for _, h := range hits {
@@ -541,12 +541,10 @@ func mergeHitsByPath(hits []SearchHit, query string, keywords []string) []Search
 		if h.Score > max {
 			max = h.Score
 		}
-		switch {
-		case hExact && !dExact:
-			dst.Source, dst.Symbol = h.Source, h.Symbol
-		case !dExact && !hExact && h.Score > dst.Score:
-			dst.Source, dst.Symbol = h.Source, h.Symbol
-		case dExact && hExact && h.Score > dst.Score:
+		// The winner lends its source and symbol: an exact symbol-name hit
+		// beats a passage guess at any score, else the higher score wins
+		// and a tie keeps the first hit (the cascade's).
+		if (hExact && !dExact) || (hExact == dExact && h.Score > dst.Score) {
 			dst.Source, dst.Symbol = h.Source, h.Symbol
 		}
 		dst.Ranges = merged
@@ -567,9 +565,9 @@ func (c *CascadeSearcher) cascadeSource() string {
 
 // sortFindHits orders merged hits with the existing score fusion, except
 // graph hits that name an exact symbol sort first: a symbol the index knows
-// by name outranks a scored passage guess.
-func sortFindHits(hits []SearchHit, query string, keywords []string) {
-	terms := extractTerms(query, keywords)
+// by name outranks a scored passage guess. Terms come extracted once per
+// search by the caller.
+func sortFindHits(hits []SearchHit, terms []string) {
 	sort.SliceStable(hits, func(i, j int) bool {
 		ei, ej := isExactSymbolHit(hits[i], terms), isExactSymbolHit(hits[j], terms)
 		if ei != ej {

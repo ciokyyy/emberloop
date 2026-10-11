@@ -23,10 +23,9 @@ func defaultGraphSourceForRoot(workDir string) GraphSource {
 	if !ok {
 		return nil
 	}
-	return func(ctx context.Context, query string, keywords []string, root string) ([]SearchHit, error) {
-		// Keywords shape the cascade's lexical scan; the index ranks from
-		// the query alone, so they are intentionally unread here.
-		_ = keywords
+	// Keywords shape the cascade's lexical scan; the index ranks from the
+	// query alone, so this source leaves them unread.
+	return func(ctx context.Context, query string, _ []string, root string) ([]SearchHit, error) {
 		reg := NewRegistry(map[string]MCPServerSetting{GraphServerName: cfg})
 		defer reg.Close()
 		call := func(c context.Context, tool string, args json.RawMessage) (string, error) {
@@ -75,6 +74,11 @@ func graphQueryReady(ctx context.Context, call GraphStatusCall, project string) 
 // separators ending in a code extension, with an optional :line suffix.
 var graphFileRe = regexp.MustCompile(`[A-Za-z0-9_.\-][A-Za-z0-9_.\-/\\]*\.[A-Za-z0-9]{1,5}(?::\d+)?`)
 
+// graphDefaultScore is the score of a graph hit the index sent without one:
+// above the 0.20 passage cutoff, below a verified cascade score, so exact
+// symbol-name matches still sort first on their symbol, not their number.
+const graphDefaultScore = 0.75
+
 // parseGraphResults converts a search_graph answer into tagged hits. It
 // accepts the structured JSON shapes the binary has used (results/hits/files
 // arrays of file/symbol/line/snippet/score objects, case-insensitively) and
@@ -121,7 +125,7 @@ func parseGraphJSON(text, searchRoot, workDir string) []SearchHit {
 		}
 		score := o.score
 		if !o.hasScore || score <= 0 {
-			score = 0.75
+			score = graphDefaultScore
 		}
 		start, end := 1, 1
 		if o.hasLine && o.line > 0 {
@@ -312,9 +316,9 @@ func parseGraphTextPaths(text, searchRoot, workDir string) []SearchHit {
 		seen[path] = true
 		hits = append(hits, SearchHit{
 			Path:   path,
-			Score:  0.75,
+			Score:  graphDefaultScore,
 			Source: SourceGraph,
-			Ranges: []PassageRange{{StartLine: 1, EndLine: 1, Score: 0.75, Snippet: m}},
+			Ranges: []PassageRange{{StartLine: 1, EndLine: 1, Score: graphDefaultScore, Snippet: m}},
 		})
 		if len(hits) >= 20 {
 			break
