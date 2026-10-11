@@ -6,7 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Prompt text lives in one place per role and is covered by a snapshot test
-- [ ] A prompt test shows no `remember` instruction for Workers and Reviewers
-- [ ] Project init (see `.scratch/project-init`) creates a root `AGENTS.md` if the Project lacks one
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+**Note:** the root `AGENTS.md` seeding on project init moved to `.scratch/project-init/issues/02-project-settings-and-el-init.md` (`el init` must exist first). Run-launched projects are covered by worktree seeding in `runStartWorker`.
+
+- [x] Prompt text lives in one place per role and is covered by a snapshot test
+- [x] A prompt test shows no `remember` instruction for Workers and Reviewers
+- [x] Project init seeding moved to `project-init/02` (see Note); Run-launched projects seed in `runStartWorker`
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes

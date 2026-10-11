@@ -10,5 +10,6 @@
 - [ ] `el init` refuses a missing or non-directory `--specs` and a `--tickets` that is not a plain folder name
 - [ ] `el init` keeps `orchestrator_paths` and every other existing key
 - [ ] A change to the file shows on the next read with no restart
+- [ ] `el init` creates a root `AGENTS.md` if the project lacks one and never overwrites an existing one
 - [ ] The `el` usage header lists `el init`
 - [ ] Tests use a temp project directory and check the written bytes
