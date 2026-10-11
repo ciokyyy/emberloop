@@ -4,12 +4,12 @@
 
 **Blocked by:** 06, 15, 16
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Agent `remember` creates a queue item in the caller's User bank with reason and quote; never a Rule
-- [ ] More than the per-Session limit is refused with an error
-- [ ] `/remember` on the first line of a typed message creates a Rule; the same words inside a pasted block or tool output create nothing
-- [ ] Scouts and Run Sessions have no `remember` before or after a compress
-- [ ] `recall` never returns another User's observations or Rules
-- [ ] API tests cover roles, scopes, limits and the command
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Agent `remember` creates a queue item in the caller's User bank with reason and quote; never a Rule
+- [x] More than the per-Session limit is refused with an error
+- [x] `/remember` on the first line of a typed message creates a Rule; the same words inside a pasted block or tool output create nothing
+- [x] Scouts and Run Sessions have no `remember` before or after a compress
+- [x] `recall` never returns another User's observations or Rules
+- [x] API tests cover roles, scopes, limits and the command
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
