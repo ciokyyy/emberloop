@@ -21,6 +21,9 @@ type stubConn struct {
 	newMeta       map[string]any
 	newMCP        []acpMCPServer
 	newCWD        string
+	newMetas      []map[string]any
+	newMCPs       [][]acpMCPServer
+	newCWDs       []string
 	loadMeta      map[string]any
 	loadMCP       []acpMCPServer
 	loadCWD       string
@@ -57,6 +60,9 @@ func (s *stubConn) NewSession(cwd string, mcp []acpMCPServer, meta map[string]an
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.newCWD, s.newMCP, s.newMeta = cwd, mcp, meta
+	s.newCWDs = append(s.newCWDs, cwd)
+	s.newMCPs = append(s.newMCPs, mcp)
+	s.newMetas = append(s.newMetas, meta)
 	if s.newErr != nil {
 		return "", s.newErr
 	}

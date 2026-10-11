@@ -490,21 +490,30 @@ func parseGrokModels(out string) []string {
 	return models
 }
 
-// CreateSession validates the model and effort, then starts the stripped
-// agent and applies the effort. A failure leaves no Session behind.
-func (b *GrokACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+// validateGrokSession refuses an unknown model or effort before the agent
+// starts. Create and Handoff swap share it.
+func (b *GrokACPBackend) validateGrokSession(model, effort string) error {
 	known := false
 	for _, m := range b.Models() {
-		if m == meta.Model {
+		if m == model {
 			known = true
 			break
 		}
 	}
 	if !known {
-		return fmt.Errorf("grok: unknown model %q", meta.Model)
+		return fmt.Errorf("grok: unknown model %q", model)
 	}
-	if !validGrokEffort(meta.Effort) {
-		return fmt.Errorf("grok: unknown effort %q (want low, medium, high, xhigh or max)", meta.Effort)
+	if !validGrokEffort(effort) {
+		return fmt.Errorf("grok: unknown effort %q (want low, medium, high, xhigh or max)", effort)
+	}
+	return nil
+}
+
+// CreateSession validates the model and effort, then starts the stripped
+// agent and applies the effort. A failure leaves no Session behind.
+func (b *GrokACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
+	if err := b.validateGrokSession(meta.Model, meta.Effort); err != nil {
+		return err
 	}
 	if err := b.StartSession(meta); err != nil {
 		return err
@@ -540,27 +549,62 @@ func (b *GrokACPBackend) applyGrokEffort(id, effort string) error {
 	if effort == "" {
 		return nil
 	}
-	if effort == "max" {
-		effort = "xhigh"
-	}
 	b.mu.Lock()
 	st, ok := b.sessions[id]
 	b.mu.Unlock()
 	if !ok {
 		return nil
 	}
-	cs, ok := st.conn.(grokConfigSetter)
+	return setGrokEffort(st.conn, st.acpID, effort)
+}
+
+// setGrokEffort sets the reasoning effort on one ACP session. Create, resume
+// and Handoff swap share it.
+func setGrokEffort(conn acpConn, acpID, effort string) error {
+	if effort == "" {
+		return nil
+	}
+	if effort == "max" {
+		effort = "xhigh"
+	}
+	cs, ok := conn.(grokConfigSetter)
 	if !ok {
 		return nil
 	}
-	if err := cs.SetConfigOption(st.acpID, "reasoning_effort", effort); err != nil {
+	if err := cs.SetConfigOption(acpID, "reasoning_effort", effort); err != nil {
 		return fmt.Errorf("grok set effort %q: %w", effort, err)
 	}
 	return nil
 }
 
-// CloseSession, DropSession and ReleaseSession end the agent process, then
-// save a refreshed login back to the user's auth.json.
+// StartHandle swaps in a fresh agent for a Handoff compress and re-applies
+// the Session's reasoning effort, as CreateSession does. The old agent's
+// login syncs before the new start copies auth.json over the temp dir, and
+// again when the old handle releases, so a rotated refresh token survives
+// the swap. A failure keeps the old handle.
+func (b *GrokACPBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
+	_ = emit
+	if err := b.validateGrokSession(meta.Model, meta.Effort); err != nil {
+		return "", nil, err
+	}
+	b.syncAuth(meta.ID)
+	conn, acpID, err := b.newHandoffConn(meta)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := setGrokEffort(conn, acpID, meta.Effort); err != nil {
+		_ = conn.Close()
+		return "", nil, err
+	}
+	tok, release := b.swapHandoffHandle(meta, conn, acpID)
+	return tok, func() {
+		release()
+		b.syncAuth(meta.ID)
+	}, nil
+}
+
+// CloseSession, DropSession, ReleaseSession and the Handoff release end the
+// agent process, then save a refreshed login back to the user's auth.json.
 func (b *GrokACPBackend) CloseSession(sessionID string) { b.DropSession(sessionID) }
 
 func (b *GrokACPBackend) DropSession(id string) {

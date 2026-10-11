@@ -305,6 +305,18 @@ func (b *ClaudeBackend) strippingMetaFor(model, workDir, agentDir string) map[st
 	}
 }
 
+// validateClaudeSession refuses an unknown model or effort before the adapter
+// starts. Create and Handoff swap share it.
+func validateClaudeSession(model, effort string) error {
+	if !validClaudeModel(model) {
+		return fmt.Errorf("unknown claude model (want opus, sonnet or haiku)")
+	}
+	if !validClaudeEffort(effort) {
+		return fmt.Errorf("unknown claude effort (want low, medium, high, xhigh or max)")
+	}
+	return nil
+}
+
 // claudeEfforts are the reasoning effort levels a claude Session accepts.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
@@ -469,11 +481,8 @@ func (b *ClaudeBackend) Models() []string { return ClaudeModels() }
 // CreateSession validates the model then starts the stripped ACP session.
 // The Daemon maps validation failures to 400 and start failures to 500.
 func (b *ClaudeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
-	if !validClaudeModel(meta.Model) {
-		return fmt.Errorf("unknown claude model (want opus, sonnet or haiku)")
-	}
-	if !validClaudeEffort(meta.Effort) {
-		return fmt.Errorf("unknown claude effort (want low, medium, high, xhigh or max)")
+	if err := validateClaudeSession(meta.Model, meta.Effort); err != nil {
+		return err
 	}
 	return b.StartSession(meta)
 }
@@ -553,6 +562,78 @@ func (b *ClaudeBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 		return fmt.Errorf("claude: no saved session to resume")
 	}
 	return b.loadSessionEffort(meta.ID, meta.ResumeToken, meta.Model, meta.Effort, meta.WorkDir, elRoleFor(meta), meta.Dirs)
+}
+
+// newHandoffConn starts a fresh adapter and ACP session beside the live one
+// for a Handoff swap. The role comes from startHandle, so the new session
+// gets the same tool set the record derives; the model, effort and
+// voice-reminder hook ride the same session meta a create sends. It returns
+// only after session/new answers, so the MCP tools are connected before the
+// Handoff prompt can go out. Nothing in the backend map moves: the caller
+// swaps it in after any post-start step, so a failure leaves the old handle
+// untouched.
+func (b *ClaudeBackend) newHandoffConn(meta SessionMeta) (acpConn, string, error) {
+	role := startHandle(meta, handleCompress).role
+	mcp, err := b.mcpServersFor(meta.ID, role)
+	if err != nil {
+		return nil, "", err
+	}
+	newConn := b.connFactory(meta.ID, role, meta.Dirs)
+	conn, err := newConn()
+	if err != nil {
+		return nil, "", fmt.Errorf("start claude adapter: %w", err)
+	}
+	b.applyTimeouts(conn)
+	if err := conn.Initialize(); err != nil {
+		_ = conn.Close()
+		return nil, "", fmt.Errorf("acp initialize: %w", err)
+	}
+	acpID, err := conn.NewSession(meta.WorkDir, mcp, b.sessionMeta(meta.ID, meta.Model, meta.Effort, meta.WorkDir, role, meta.Dirs))
+	if err != nil {
+		_ = conn.Close()
+		return nil, "", fmt.Errorf("acp session/new: %w", err)
+	}
+	if err := b.afterStart(conn, acpID, meta.Model); err != nil {
+		_ = conn.Close()
+		return nil, "", err
+	}
+	return conn, acpID, nil
+}
+
+// swapHandoffHandle publishes a Handoff session built by newHandoffConn: the
+// map entry moves to the new handle and signals ready, so a prompt waiting on
+// it wakes. It returns the new resume token with a release that drops the old
+// handle; the Daemon calls release once the first turn on the new handle
+// starts cleanly.
+func (b *ClaudeBackend) swapHandoffHandle(meta SessionMeta, conn acpConn, acpID string) (string, func()) {
+	b.mu.Lock()
+	old, ok := b.sessions[meta.ID]
+	st := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{})}
+	b.sessions[meta.ID] = st
+	st.signalReady()
+	b.mu.Unlock()
+	if !ok {
+		return acpID, func() {}
+	}
+	oldConn := old.conn
+	return acpID, func() { _ = oldConn.Close() }
+}
+
+// StartHandle swaps in a fresh ACP session for a Handoff compress, so the
+// Session reports compressible and compresses by Handoff restart. Model,
+// effort and the voice-reminder hook survive through the shared session meta;
+// the resume token is the new ACP session id. A failure keeps the old handle.
+func (b *ClaudeBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
+	_ = emit
+	if err := validateClaudeSession(meta.Model, meta.Effort); err != nil {
+		return "", nil, err
+	}
+	conn, acpID, err := b.newHandoffConn(meta)
+	if err != nil {
+		return "", nil, err
+	}
+	tok, release := b.swapHandoffHandle(meta, conn, acpID)
+	return tok, release, nil
 }
 
 // acpSteerer is the optional steering seam of an acpConn: the adapter

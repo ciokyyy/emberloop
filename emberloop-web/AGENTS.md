@@ -188,8 +188,8 @@ the driver ticks boxes and marks done, nothing else writes them.
   retire, filter, queue, gate recency and Events at the Daemon seam;
   `ProfileSettings.svelte` with `ProfileSettings.test.js` covers the settings
   view.
-- `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK and
-  pig-over-ACP Backends):
+- `handoff.go` is Handoff compress for a `handoffBackend` (fake, pig SDK,
+  pig-over-ACP and claude Backends; grok reuses the same swap):
   `POST .../compress` answers 409 with the reason from `compressNote` while the
   compress model is unset or unauthed. Else `runHandoff` writes the body
   (`writeHandoff`, `summarize.go`) through a `retryingSummarizer`
@@ -208,7 +208,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   `runDeferredCompress` runs it at the next turn end or Group delivery. A claude
   Steer that arrives while a Handoff swap runs (`swapping`) degrades to a
   Follow-up, so the Handoff leads. Tests: `handoff_test.go`,
-  `handoff_queue_test.go`, `pig_handoff_test.go`.
+  `handoff_queue_test.go`, `pig_handoff_test.go`, `claude_handoff_test.go` (claude swap, token rotation, restart resume, injections, failure), `grok_handoff_test.go` (effort, login sync, failure).
 - `compress_retry.go` owns the compress failure policy:
   - `classifyCompressError` sorts a failure by its text: block (401 or 402
     status, payment required, no or insufficient credits, quota, billing limit,
@@ -298,9 +298,10 @@ the driver ticks boxes and marks done, nothing else writes them.
   each prompt (ACP has no hook). Start and load wait for the agent's
   `_x.ai/mcp_initialized` notification. Steer is not native: the Daemon
   turns a busy Steer into a Follow-up. Effort is the `reasoning_effort`
-  config option (`max` maps to `xhigh`). Grok Sessions get no titles and
-  no compression. `grokacp_live_test.go` (`EL_LIVE_GROK=1`) drives a real
-  agent.
+  config option (`max` maps to `xhigh`). Grok Sessions get no titles; compress is
+  a Handoff swap like claude with the reasoning effort re-applied. The old agent's login
+  syncs before the new start and on the old handle's release, so a rotated refresh token
+  survives. `grokacp_live_test.go` (`EL_LIVE_GROK=1`) drives a real agent.
 - `restart.go` (`Shutdown`) and `cmd/emberloop-web/restart.go` restart the
   Daemon in place: every `-restart-check` (default 1m, 0 off) it compares its
   binary on disk with the one it started from and, after the change held for
@@ -318,6 +319,7 @@ the driver ticks boxes and marks done, nothing else writes them.
   preset and the caveman ultra register (system prompt plus a per-turn
   `UserPromptSubmit` reminder hook via inline `settings`), `_session/steering`, allow-once auto-approve) with stub-transport
   tests in `claude_*_test.go` and a `-tags live` probe for the real adapter.
+  Compress is a Handoff restart (`StartHandle`: a fresh ACP session beside the old one, role tools from `startHandle`, model, effort and hook preserved, token rotates; a failure keeps the old handle).
   The adapter process runs under the owner's `CLAUDE_CONFIG_DIR` (`claudeEnv`).
   Project context (`contextfiles.go`, table-tested in `contextfiles_test.go`)
   injects the Session WorkDir's AGENTS.md/CLAUDE.md chain (outermost-first,

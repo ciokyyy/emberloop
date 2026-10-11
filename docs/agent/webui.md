@@ -92,7 +92,7 @@ The prod unit runs `el-web -addr 127.0.0.1:7940 -tailnet -allow-host cachy-cioky
 
 ## Context compression
 
-Compress makes a Session's context smaller by Handoff restart on every Backend: a one-off pig call writes a Handoff from the Event log, a fresh harness handle takes it as first prompt, the Session id stays. The fake, pig SDK and pig-over-ACP Backends all swap this way.
+Compress makes a Session's context smaller by Handoff restart on every Backend: a one-off pig call writes a Handoff from the Event log, a fresh harness handle takes it as first prompt, the Session id stays. The fake, pig SDK, pig-over-ACP, claude and grok Backends all swap this way.
 
 - Manual: the Compress button under the chat, or `POST /api/sessions/<id>/compress` with `{"instructions": "..."}`. It answers 409 while the Session works, and with the reason while the compress model is unset or has no pig auth. During a spawn Group of the Session it answers 202 `{"waiting":"group"}` and compresses once the Group reports.
 - Compress model: Settings page, "Context compression", "Compress model" picks `compress_model` from the authed pig models only. Until it is set, Compress stays disabled and shows why.
