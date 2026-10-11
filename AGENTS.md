@@ -47,6 +47,7 @@ child it belongs to, and every entry must resolve to a file.
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login, the sign-in screen and owners)
+- `emberloop-web/memory/AGENTS.md` — the memory engine package (per-User SQLite banks, FTS5 recall, append-only Rules, purge, snapshots)
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
 - `.scratch/archive/archived-herdr-report/AGENTS.md` — the archived herdr report extension (not built, not tested)
 - `.scratch/archive/archived-herdr-emberloop/AGENTS.md` — the archived herdr compress plugin (not built, not tested)

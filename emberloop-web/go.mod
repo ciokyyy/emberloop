@@ -9,6 +9,7 @@ require (
 	github.com/gofrs/flock v0.13.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/term v0.45.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
@@ -69,7 +70,6 @@ require (
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.59.0 // indirect
 )
 
 replace example.com/emberloop => ../emberloop

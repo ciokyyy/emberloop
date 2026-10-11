@@ -111,3 +111,19 @@ _Avoid_: Stuck, paused, frozen
 **Idle**:
 A Session is idle when no turn runs or starts, no input is queued, no Group it leads is outstanding (a member is working, or a fresh Group's results are unsent), and its last Event is older than the quiet time. The Daemon is idle when every Session is idle, none is starting and no Run runs.
 _Avoid_: Ready, free
+
+**Bank**:
+One User's memory file: a SQLite database holding that User's observations, Rules, queue, Profile versions and ledger. The Daemon owns every bank.
+_Avoid_: Store, memory file, database
+
+**Observation**:
+A grounded candidate: a verbatim quote from a User's prompt, with its Event ID. Searchable through recall, never injected.
+_Avoid_: Hint, log entry
+
+**Rule**:
+An approved note of at most 300 characters that recall finds and that can be injected into a Session. An edit adds a version; the old version becomes superseded.
+_Avoid_: Note, memory item, lesson
+
+**Purge**:
+The one human action that deletes memory rows. It removes the chosen records and clears their text from the queue, the ledger and the snapshots.
+_Avoid_: Delete, forget, wipe
