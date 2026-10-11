@@ -289,7 +289,7 @@ func sessionTitle(meta SessionMeta) string {
 
 // pushTurnDone sends a notification when a root chat turn settles.
 func (d *Daemon) pushTurnDone(meta SessionMeta, status string, seq int64) {
-	if meta.Scout || meta.ParentID != "" {
+	if meta.Scout || meta.ParentID != "" || meta.Owner == "" {
 		return
 	}
 	body := "Turn finished."
@@ -308,6 +308,9 @@ func (d *Daemon) pushTurnDone(meta SessionMeta, status string, seq int64) {
 // pushSudo sends a notification when an agent asks to run sudo: the turn
 // cannot continue without the user, on any session depth.
 func (d *Daemon) pushSudo(meta SessionMeta, reqID, command string) {
+	if meta.Owner == "" {
+		return
+	}
 	payload := pushPayload(pushMessage{
 		Title: sessionTitle(meta), Body: "Sudo approval needed: " + truncatePush(command, 120),
 		Tag: reqID, SessionID: meta.ID,

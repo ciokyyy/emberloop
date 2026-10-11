@@ -91,7 +91,8 @@ type savedRow struct {
 // queue (oldest unanswered tip first), and Reviews ticket ids to reviewer
 // type to verdict; Submits lives on the Daemon so the submit route finds it
 // without a run. Rows keeps the last published driver row per Ticket in
-// the Run file, so the table survives a Daemon restart.
+// the Run file, so the table survives a Daemon restart. Owner names the User
+// who started the Run; its Worker and Reviewer Sessions inherit it.
 type runState struct {
 	ID            string                             `json:"id"`
 	Spec          string                             `json:"spec"`
@@ -102,6 +103,7 @@ type runState struct {
 	Effort        string                             `json:"effort,omitempty"`
 	CreatedAt     time.Time                          `json:"createdAt"`
 	Error         string                             `json:"error,omitempty"`
+	Owner         string                             `json:"owner,omitempty"`
 	Tickets       []staticTicket                     `json:"tickets"`
 	Sessions      map[string]string                  `json:"sessions"`
 	Branches      map[string]string                  `json:"branches"`
@@ -323,6 +325,9 @@ func (d *Daemon) handleRuns(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		runs := make([]map[string]any, 0, len(d.runs))
 		for _, rs := range d.runs {
+			if rs.Owner == "" {
+				continue
+			}
 			runs = append(runs, d.runJSONLocked(rs))
 		}
 		d.mu.Unlock()
@@ -345,6 +350,11 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 	sub := ""
 	if len(parts) == 2 {
 		sub = parts[1]
+	}
+	// A Run with no Owner is hidden: every route answers 404 for it.
+	if d.hiddenRun(id) {
+		http.NotFound(w, r)
+		return
 	}
 	switch {
 	case sub == "" && r.Method == "GET":
@@ -391,6 +401,10 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 // createRun resolves the spec, refuses a second active Run on it, records
 // the Run and starts its driver loop in the background.
 func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
+	creator, ok := d.creatorOf(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Spec    string `json:"spec"`
 		Repo    string `json:"repo"`
@@ -474,6 +488,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Model:          model,
 		Effort:         effort,
 		CreatedAt:      time.Now().UTC(),
+		Owner:          creator.ID,
 		Sessions:       map[string]string{},
 		Branches:       map[string]string{},
 		Worktrees:      map[string]string{},
@@ -618,7 +633,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			return d.runReviews(rs.ID, ticketID)
 		},
 		Tell: func(ticketID, text string) error {
-			return d.runTellWorker(rs.ID, ticketID, text)
+			return d.runTellWorker(rs.ID, ticketID, text, systemSender)
 		},
 		Working: func(ticketID string) bool {
 			d.mu.Lock()
@@ -1237,6 +1252,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	}
 	branch, worktree := rs.Branches[ticketID], rs.Worktrees[ticketID]
 	spec := rs.Spec
+	owner := rs.Owner
 	harness, model := rs.Harness, rs.Model
 	if rh, rm := roleReviewerConfig(reviewerType); rh != "" {
 		harness, model = rh, rm
@@ -1253,6 +1269,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		Status:    "idle",
 		CreatedAt: time.Now().UTC(),
 		ParentID:  runID,
+		Owner:     owner,
 	}
 	var be Backend
 	be, serr := d.startSession(meta)
@@ -1328,7 +1345,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		s.active++
 	}
 	d.mu.Unlock()
-	d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
+	d.appendPromptEvent(meta.ID, prompt, "", 0, nil, systemSender)
 	go d.runTurn(meta.ID, be, prompt, nil)
 	return nil
 }
@@ -1348,6 +1365,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		return fmt.Errorf("unknown run %q", runID)
 	}
 	repo, harness, model, effort := rs.Repo, rs.Harness, rs.Model, rs.Effort
+	owner := rs.Owner
 	workerID := el.WorkerID(tk.Path)
 	branch := "implement/" + workerID
 	worktree := filepath.Join(repo, ".el-worktrees", workerID)
@@ -1383,6 +1401,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
 			ParentID:  runID,
+			Owner:     owner,
 			RunWorker: true,
 		}
 		var be Backend
@@ -1443,15 +1462,16 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			s.active++
 		}
 		d.mu.Unlock()
-		d.appendModeEvent(meta.ID, "prompt", prompt, "", "")
+		d.appendPromptEvent(meta.ID, prompt, "", 0, nil, systemSender)
 		go d.runTurn(meta.ID, be, prompt, nil)
 		return nil
 	}
 }
 
 // runTellWorker steers the Ticket's Worker Session with the driver's text:
-// a refused merge goes back to the Worker unchanged.
-func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
+// a refused merge goes back to the Worker unchanged. from types the prompt:
+// the driver sends system text; a User's steer from the Runs view sends user text.
+func (d *Daemon) runTellWorker(runID, ticketID, text string, from promptSender) error {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
@@ -1466,7 +1486,7 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string) error {
 	if code, msg := d.resumeReleased(sessionID); code != 0 {
 		return fmt.Errorf("could not reach worker for %s: %s", ticketID, msg)
 	}
-	if _, code := d.routeLive(sessionID, "steer", text); code != http.StatusAccepted {
+	if _, code := d.routeLiveOpt(sessionID, "steer", text, nil, nil, true, from); code != http.StatusAccepted {
 		return fmt.Errorf("could not reach worker for %s", ticketID)
 	}
 	// The tell carries the refusal the row shows: write the pass now, so
@@ -1817,6 +1837,7 @@ func (d *Daemon) runJSONLocked(rs *runState) map[string]any {
 	}
 	return map[string]any{
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
+		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "tickets": tickets,
 	}
@@ -2383,7 +2404,7 @@ func (d *Daemon) steerTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 		return
 	}
 	d.mu.Unlock()
-	if err := d.runTellWorker(id, ticketID, req.Text); err != nil {
+	if err := d.runTellWorker(id, ticketID, req.Text, d.senderOf(r)); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}
@@ -2442,7 +2463,7 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 	// miss, and the snapshot below still answers it.
 	steerErr := ""
 	if strings.TrimSpace(req.Text) != "" {
-		if err := d.runTellWorker(id, ticketID, req.Text); err != nil {
+		if err := d.runTellWorker(id, ticketID, req.Text, d.senderOf(r)); err != nil {
 			steerErr = err.Error()
 		}
 	}

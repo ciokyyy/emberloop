@@ -33,6 +33,23 @@ the driver ticks boxes and marks done, nothing else writes them.
   (settings, default on) is written by the admin only; off refuses signup. `SetUserPassword` resets
   a password and signs that User out; `cmd/emberloop-web` exposes it as `user set-password`.
 - `GET /api/auth/state` gives the sign-in screen `{empty, signup_enabled}` and nothing else: no names, no counts. While signed out the sign-in UI (`web/src/Root.svelte`) is the whole app. An empty Daemon creates the admin account; otherwise it signs in, with a create-account link when signup is open. Signed in, the sidebar footer shows the User and Sign out, and the Accounts settings switch is admin only. A 401 from any other `/api` route returns to sign-in.
+- Owners and senders (`owner.go`, `event.go`): a Session and a Run carry
+  `owner`, the creating User's ID. The create routes (`POST /api/sessions`,
+  `POST /api/runs`) need a User: the machine token answers 403. Subagents,
+  Workers and Reviewers take their parent's or Run's owner, never the
+  requester's. Sessions and Runs with no owner (data from before owners) are
+  hidden: lists skip them, every route answers 404, and pushes stay silent.
+  No migration. Any User may prompt, steer, interrupt, cancel and end any
+  Session. A create with no `projectId` and no `workDir` opens in
+  `<stateDir>/enderbloom/users/<name>/home`, made on first use; an explicit
+  `workDir` still wins. Every prompt Event carries `sender`: `user` with the
+  User's ID in `user` when a signed-in User sent it (prompt, steer and
+  follow-up routes, Run ticket steer and retry, spawn requests), else
+  `system` (machine token callers, the Daemon, grouped results, sudo results,
+  the Handoff, gate reminders, Run driver prompts). Queued messages merge only
+  within one sender, so no prompt Event joins two Users' texts.
+  `owner_test.go` covers owners, inheritance, hiding, sender typing and the
+  home directory at the same seam.
 - Real Backends prove out in live probes, never the main check.
 - Tests never call `t.TempDir()`: use `tempDir(t)` (`tempdir_test.go`). Daemon
   goroutines write after a test returns and fail `t.TempDir()` cleanup with
@@ -242,7 +259,7 @@ the driver ticks boxes and marks done, nothing else writes them.
 - `read` returns images: `pigtools.go` turns the shared tool's images into `ai.ImageContent` (a model without image input gets pig's placeholder); claude gets MCP image blocks from el-mcp.
 - `push.go` is Web Push (stdlib, RFC 8291 + VAPID): `GET /api/push/key`, `POST|DELETE /api/push/subscribe`; the VAPID key and subscriptions persist in `enderbloom/push/`. A root chat turn going working to idle or failed notifies every subscription; gone ones (404, 410) drop. Browsers allow push only in a secure context, so a plain http tailnet IP cannot subscribe: use `tailscale serve` (https) with `-allow-host`. `web/public/sw.js` shows the notification.
 - Event log is `enderbloom/sessions/{id}/` under the state directory:
-  `meta.json` (now carrying the resume token plus `parentId`, `groupId`,
+  `meta.json` (now carrying `owner`, the resume token plus `parentId`, `groupId`,
   `scout`) plus append-only `events.jsonl`; Groups persist as
   `enderbloom/groups/{id}.json`; the Daemon reloads all three on start.
 - Subagents are `POST /api/sessions/{id}/spawn` with

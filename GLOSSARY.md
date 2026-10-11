@@ -13,7 +13,7 @@ A signed-in account on the Daemon, with a username, a password and an admin flag
 _Avoid_: Account, member, login
 
 **Machine token**:
-The Daemon's bearer token for local machine clients: agent callbacks and the `el` CLI. It is not a User, so it cannot write admin-only settings.
+The Daemon's bearer token for local machine clients: agent callbacks and the `el` CLI. It is not a User, so it cannot write admin-only settings or create Sessions and Runs.
 _Avoid_: API key, service token
 
 **Session**:
@@ -55,6 +55,14 @@ _Avoid_: Update, message
 **Event log**:
 The append-only file of a Session's Events. The UI renders a Session by replaying it.
 _Avoid_: Transcript file, history
+
+**Owner**:
+The User who created a Session or Run. Subagents, Workers and Reviewers inherit it. Data with no owner is hidden.
+_Avoid_: Creator, author, tenant
+
+**Sender**:
+Who typed a prompt Event: a signed-in User (`user`, with the User's ID) or the Daemon and agents (`system`).
+_Avoid_: Author, from
 
 **Run**:
 One execution of the deterministic pipeline over one spec: it drives every Ticket of that spec to merged, parked or discarded.

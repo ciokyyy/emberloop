@@ -84,7 +84,7 @@ func buildHandoff(events []Event) string {
 		}
 		switch e.Kind {
 		case "prompt":
-			if !e.Handoff && e.Sender != "system" {
+			if !e.Handoff && e.Sender == senderUser {
 				prompts = append(prompts, e.Text)
 			}
 		case "assistant_chunk":
@@ -234,7 +234,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	d.mu.Lock()
 	d.appendEventExtraLocked(id, "prompt", text, "", "", 0, nil, func(e *Event) {
 		e.Handoff = true
-		e.Sender = "system"
+		systemSender.stamp(e)
 	})
 	be := d.backendForLocked(meta.Harness)
 	d.mu.Unlock()

@@ -150,6 +150,8 @@ type queuedMsg struct {
 	degraded bool
 	// held marks a claude Steer waiting for the next tool call to finish.
 	held bool
+	// from types the message: the User who sent it, or the system.
+	from promptSender
 }
 
 // steerBackend is the harness native queue seam. Pig implements it; the
@@ -516,12 +518,13 @@ func (d *Daemon) finishTurn(id string) {
 					s.pending[i].degraded = true
 				}
 			}
-			next := mergePending(s.pending)
-			s.pending = nil
+			n := leadRun(s.pending)
+			next := mergePending(s.pending[:n])
+			s.pending = s.pending[n:]
 			s.active++
 			be := d.backendForLocked(s.meta.Harness)
 			d.mu.Unlock()
-			d.appendPromptEvent(id, next.text, modeLabel(next.mode), len(next.images), next.imageIDs)
+			d.appendPromptEvent(id, next.text, modeLabel(next.mode), len(next.images), next.imageIDs, next.from)
 			if be == nil {
 				continue
 			}
@@ -583,18 +586,18 @@ func (d *Daemon) appendModeEvent(id, kind, text, status, mode string) Event {
 	return d.appendModeEventLocked(id, kind, text, status, mode)
 }
 
-// appendPromptEvent stores one prompt Event; images counts the inline
-// attachments and imageIDs names the Session-stored ones (the bytes go to
-// the Backend, never into the log).
-func (d *Daemon) appendPromptEvent(id, text, mode string, images int, imageIDs []string) Event {
+// appendPromptEvent stores one prompt Event typed by from. images counts the
+// inline attachments and imageIDs names the Session-stored ones (the bytes go
+// to the Backend, never into the log).
+func (d *Daemon) appendPromptEvent(id, text, mode string, images int, imageIDs []string, from promptSender) Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.appendEventLocked(id, "prompt", text, "", mode, images, imageIDs)
+	return d.appendPromptEventLocked(id, text, mode, images, imageIDs, from)
 }
 
 // appendPromptEventLocked is appendPromptEvent; callers hold d.mu.
-func (d *Daemon) appendPromptEventLocked(id, text, mode string, images int, imageIDs []string) Event {
-	return d.appendEventLocked(id, "prompt", text, "", mode, images, imageIDs)
+func (d *Daemon) appendPromptEventLocked(id, text, mode string, images int, imageIDs []string, from promptSender) Event {
+	return d.appendEventExtraLocked(id, "prompt", text, "", mode, images, imageIDs, from.stamp)
 }
 
 // appendModeEventLocked stores one Event; callers hold d.mu.
@@ -632,6 +635,10 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 	}
 	if extra != nil {
 		extra(&e)
+	}
+	// Every prompt Event carries a sender; an untyped one is the system's.
+	if kind == "prompt" && e.Sender == "" {
+		systemSender.stamp(&e)
 	}
 	s.events = append(s.events, e)
 	s.last = d.now()
@@ -688,10 +695,10 @@ func (d *Daemon) injectHeldSteers(id string, held []queuedMsg) {
 	for _, m := range held {
 		btext, bimages := d.backendMessage(id, m.text, m.images, m.imageIDs)
 		if be != nil && be.SteerLive(id, btext, bimages) {
-			d.appendModeEvent(id, "prompt", m.text, "", "steer")
+			d.appendPromptEvent(id, m.text, "steer", 0, nil, m.from)
 			continue
 		}
-		d.routeLiveOpt(id, "followup", m.text, m.images, m.imageIDs, false)
+		d.routeLiveOpt(id, "followup", m.text, m.images, m.imageIDs, false, m.from)
 	}
 }
 
@@ -842,7 +849,7 @@ func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, t
 		imageIDs = append(imageIDs, d.storeInlineImages(id, images)...)
 		images = nil
 	}
-	res, code := d.routeLiveImages(id, mode, text, images, imageIDs)
+	res, code := d.routeLiveImages(id, mode, text, images, imageIDs, d.senderOf(r))
 	if code != http.StatusAccepted {
 		if code == http.StatusNotFound {
 			http.NotFound(w, r)
@@ -868,18 +875,20 @@ func (d *Daemon) sendMessage(w http.ResponseWriter, r *http.Request, id, mode, t
 // the turn. Launched turns count in active so finishTurn never releases
 // their process early.
 func (d *Daemon) routeLive(id, mode, text string) (sendResult, int) {
-	return d.routeLiveImages(id, mode, text, nil, nil)
+	return d.routeLiveOpt(id, mode, text, nil, nil, true, systemSender)
 }
 
-// routeLiveImages is routeLive with image attachments: inline bytes plus the
-// Session-stored ids resolved to bytes and file paths for the Backend.
-func (d *Daemon) routeLiveImages(id, mode, text string, images []Image, imageIDs []string) (sendResult, int) {
-	return d.routeLiveOpt(id, mode, text, images, imageIDs, true)
+// routeLiveImages is routeLive with image attachments and the sender of the
+// message: inline bytes plus the Session-stored ids resolved to bytes and file
+// paths for the Backend.
+func (d *Daemon) routeLiveImages(id, mode, text string, images []Image, imageIDs []string, from promptSender) (sendResult, int) {
+	return d.routeLiveOpt(id, mode, text, images, imageIDs, true, from)
 }
 
 // routeLiveOpt is routeLive; inject lets a mid-turn claude Steer try the
-// adapter's _session/steering before it degrades to a Follow-up.
-func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []string, inject bool) (sendResult, int) {
+// adapter's _session/steering before it degrades to a Follow-up. from types
+// the prompt Event.
+func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []string, inject bool, from promptSender) (sendResult, int) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
 	if !ok {
@@ -917,7 +926,7 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		// If the turn ends first, finishTurn delivers it as a Follow-up.
 		// During a Handoff a claude Steer degrades too: the Handoff turn must lead.
 		if _, ok := be.(*ClaudeBackend); ok && inject && !s.swapping {
-			s.pending = append(s.pending, queuedMsg{mode: "steer", text: text, images: images, imageIDs: imageIDs, held: true})
+			s.pending = append(s.pending, queuedMsg{mode: "steer", text: text, images: images, imageIDs: imageIDs, held: true, from: from})
 			pos := len(s.pending)
 			d.mu.Unlock()
 			return sendResult{queued: true, position: pos}, http.StatusAccepted
@@ -945,13 +954,13 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 			default:
 				qb.FollowUp(id, text)
 			}
-			e := d.appendPromptEventLocked(id, text, mode, len(images), imageIDs)
+			e := d.appendPromptEventLocked(id, text, mode, len(images), imageIDs, from)
 			d.mu.Unlock()
 			return sendResult{seq: e.Seq, queued: true}, http.StatusAccepted
 		}
 	}
 	if s.busy {
-		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded})
+		s.pending = append(s.pending, queuedMsg{mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded, from: from})
 		pos := len(s.pending)
 		d.mu.Unlock()
 		return sendResult{queued: true, position: pos}, http.StatusAccepted
@@ -959,7 +968,7 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 	s.busy = true
 	s.active++
 	d.mu.Unlock()
-	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs)
+	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs, from)
 	d.maybeTitle(id, text)
 	if be != nil {
 		go d.runTurn(id, be, btext, bimages)
@@ -986,7 +995,7 @@ func mergePending(q []queuedMsg) queuedMsg {
 	if len(q) == 1 {
 		return q[0]
 	}
-	out := queuedMsg{mode: q[0].mode}
+	out := queuedMsg{mode: q[0].mode, from: q[0].from}
 	parts := make([]string, 0, len(q))
 	for _, m := range q {
 		if m.text != "" {
@@ -1000,6 +1009,16 @@ func mergePending(q []queuedMsg) queuedMsg {
 	}
 	out.text = strings.Join(parts, "\n\n")
 	return out
+}
+
+// leadRun counts the queued messages at the head of q that share one sender.
+// A delivered prompt Event never mixes Users, nor a User with the system.
+func leadRun(q []queuedMsg) int {
+	n := 0
+	for n < len(q) && q[n].from == q[0].from {
+		n++
+	}
+	return n
 }
 
 // modeLabel maps a route mode to the prompt Event mode. Plain prompts keep
@@ -1141,6 +1160,9 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		metas := make([]SessionMeta, 0, len(d.sessions))
 		lasts := map[string]time.Time{}
 		for _, s := range d.sessions {
+			if s.meta.Owner == "" {
+				continue
+			}
 			metas = append(metas, s.meta)
 			lasts[s.meta.ID] = s.last
 		}
@@ -1153,6 +1175,10 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		})
 		writeJSON(w, http.StatusOK, metas)
 	case "POST":
+		creator, ok := d.creatorOf(w, r)
+		if !ok {
+			return
+		}
 		var req struct {
 			Harness   string `json:"harness"`
 			Model     string `json:"model"`
@@ -1172,8 +1198,8 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			}
 			req.WorkDir = p.Path
 		}
-		if req.Harness == "" || req.Model == "" || req.WorkDir == "" {
-			http.Error(w, "harness, model and workDir (or projectId) are required", http.StatusBadRequest)
+		if req.Harness == "" || req.Model == "" {
+			http.Error(w, "harness and model are required", http.StatusBadRequest)
 			return
 		}
 		if req.Harness == "grok" && !d.hasBackend("grok") {
@@ -1182,6 +1208,18 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Harness == "claude" && !validClaudeModel(req.Model) {
 			http.Error(w, "unknown claude model (want opus, sonnet or haiku)", http.StatusBadRequest)
+			return
+		}
+		if req.WorkDir == "" && req.ProjectID == "" {
+			// No Project and no folder: the Session opens in the User's home.
+			req.WorkDir = d.users.homeDir(creator.Username)
+			if err := os.MkdirAll(req.WorkDir, 0o755); err != nil {
+				http.Error(w, "could not create the home directory: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		if req.WorkDir == "" {
+			http.Error(w, "workDir or projectId with a path is required", http.StatusBadRequest)
 			return
 		}
 		req.WorkDir = absWorkDir(req.WorkDir)
@@ -1194,6 +1232,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			ProjectID: req.ProjectID,
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
+			Owner:     creator.ID,
 		}
 		be, serr := d.startSession(meta)
 		if serr != nil {
@@ -1231,6 +1270,11 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 	sub := ""
 	if len(parts) == 2 {
 		sub = parts[1]
+	}
+	// A Session with no Owner is hidden: every route answers 404 for it.
+	if d.hiddenSession(id) {
+		http.NotFound(w, r)
+		return
 	}
 	// A Run Reviewer answers only the Daemon's gate prompts: user messages
 	// would corrupt the verdict reply it records.

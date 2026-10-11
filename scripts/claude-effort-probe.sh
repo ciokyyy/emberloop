@@ -50,24 +50,28 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
+# Sessions belong to a signed-in User: the first signup of this fresh state dir is the admin.
+jar="$tmp/jar"
+curl -sf -c "$jar" -H 'Content-Type: application/json' -d '{"username":"probe","password":"probe-password"}' "$base/api/auth/signup" >/dev/null
+
 create() { # effort -> session id
-  curl -H "Authorization: Bearer $token" -s -X POST "$base/api/sessions" -H 'Content-Type: application/json' \
+  curl -b "$jar" -s -X POST "$base/api/sessions" -H 'Content-Type: application/json' \
     -d "$(python3 -c 'import json,sys; print(json.dumps({"harness":"claude","model":sys.argv[1],"effort":sys.argv[2],"workDir":sys.argv[3]}))' "$MODEL" "$1" "$tmp/work")"
 }
 run_one() { # effort -> stats line
   local effort="$1" id start end status
   id="$(create "$effort" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
   echo "session $effort: $id" >&2
-  curl -H "Authorization: Bearer $token" -s -X POST "$base/api/sessions/$id/prompt" -H 'Content-Type: application/json' \
+  curl -b "$jar" -s -X POST "$base/api/sessions/$id/prompt" -H 'Content-Type: application/json' \
     -d "$(python3 -c 'import json,sys; print(json.dumps({"text":sys.argv[1]}))' "$PROMPT")" >/dev/null
   start="$(date +%s)"
   while :; do
-    status="$(curl -H "Authorization: Bearer $token" -s "$base/api/sessions/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"]["status"])')"
+    status="$(curl -b "$jar" -s "$base/api/sessions/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"]["status"])')"
     [ "$status" = idle ] || [ "$status" = failed ] && break
     sleep 5
   done
   end="$(date +%s)"
-  curl -H "Authorization: Bearer $token" -s "$base/api/sessions/$id" | EFFORT="$effort" WALL="$((end - start))" STATUS="$status" python3 -c '
+  curl -b "$jar" -s "$base/api/sessions/$id" | EFFORT="$effort" WALL="$((end - start))" STATUS="$status" python3 -c '
 import json, os, sys
 body = json.load(sys.stdin)
 think = sum(len(e.get("text", "")) for e in body["events"] if e.get("kind") == "thinking_chunk")

@@ -75,14 +75,14 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 		t.Fatalf("history lost: %+v", hand)
 	}
 	last := hand[len(hand)-1]
-	if !last.Handoff || last.Sender != "system" || last.Mode != "" {
+	if !last.Handoff || last.Sender != "system" || last.User != "" || last.Mode != "" {
 		t.Fatalf("handoff prompt flags = %+v", last)
 	}
 	if !strings.Contains(last.Text, "## Next steps\nrun the tests") || !strings.Contains(last.Text, "\n## Last user prompt (verbatim)\nand again\n") {
 		t.Fatalf("handoff text = %q", last.Text)
 	}
-	if hand[0].Handoff || hand[0].Sender != "" {
-		t.Fatalf("user prompt flagged: %+v", hand[0])
+	if hand[0].Handoff || hand[0].Sender != "user" || hand[0].User != metaBefore.Owner {
+		t.Fatalf("user prompt flagged or not owned by sender: %+v", hand[0])
 	}
 
 	// compressed Event: number, tokens before, model, fallback step, retries.
@@ -93,10 +93,13 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 		t.Fatalf("compressed text = %s", c.Text)
 	}
 
-	// Token rotated; Session ID, owner-like metadata unchanged.
+	// Token rotated; Session ID and Owner unchanged.
 	d.mu.Lock()
 	metaAfter := d.sessions[id].meta
 	d.mu.Unlock()
+	if metaBefore.Owner == "" || metaAfter.Owner != metaBefore.Owner {
+		t.Fatalf("owner across swap: %q -> %q", metaBefore.Owner, metaAfter.Owner)
+	}
 	if metaAfter.ResumeToken == metaBefore.ResumeToken || metaAfter.ResumeToken == "" {
 		t.Fatalf("token %q -> %q, want rotated", metaBefore.ResumeToken, metaAfter.ResumeToken)
 	}

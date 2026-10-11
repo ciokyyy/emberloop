@@ -23,8 +23,11 @@ type Event struct {
 	// Handoff flags the prompt Event that carries a compress Handoff; the UI
 	// renders it as a collapsed block, not a user message.
 	Handoff bool `json:"handoff,omitempty"`
-	// Sender is "system" for Daemon-made prompts such as a Handoff.
+	// Sender types a prompt Event: "user" for a message a signed-in User
+	// sent, "system" for one the Daemon or an agent made. Empty on other kinds.
 	Sender string `json:"sender,omitempty"`
+	// User is the ID of the User who sent a "user" prompt; empty otherwise.
+	User string `json:"user,omitempty"`
 	// Images counts the attachments of a prompt; the bytes stay out of the log.
 	Images int `json:"images,omitempty"`
 	// ImageIDs names the Session-stored images attached to a prompt: the
@@ -33,6 +36,36 @@ type Event struct {
 	// time. Inline attachments stay counted in Images; the two ride together.
 	ImageIDs  []string  `json:"imageIds,omitempty"`
 	CreatedAt time.Time `json:"at"`
+}
+
+// Sender values of a prompt Event. A User's own message is "user", with the
+// User ID in User; every message the Daemon or an agent makes is "system".
+const (
+	senderUser   = "user"
+	senderSystem = "system"
+)
+
+// promptSender types one prompt Event. The zero value is the system sender.
+type promptSender struct {
+	kind string // senderUser or senderSystem
+	user string // the User ID, set only for senderUser
+}
+
+// systemSender types a prompt the Daemon or an agent made.
+var systemSender = promptSender{kind: senderSystem}
+
+// userSender types a prompt the signed-in User u sent.
+func userSender(u User) promptSender {
+	return promptSender{kind: senderUser, user: u.ID}
+}
+
+// stamp writes the sender onto a prompt Event.
+func (p promptSender) stamp(e *Event) {
+	if p.kind != senderUser {
+		e.Sender, e.User = senderSystem, ""
+		return
+	}
+	e.Sender, e.User = senderUser, p.user
 }
 
 // QueuedMessage is one not-yet-delivered Steer or Follow-up (or a plain
@@ -78,6 +111,9 @@ type SessionMeta struct {
 	// ResumeToken is the harness handle needed to resume: the claude ACP
 	// session id, the pig Session id, or an opaque marker for fake.
 	ResumeToken string `json:"resumeToken,omitempty"`
+	// Owner is the ID of the User who created the Session. Subagents, Workers
+	// and Reviewers inherit it. A Session with no Owner is hidden everywhere.
+	Owner string `json:"owner,omitempty"`
 }
 
 // ToolCall is the one tool-call shape every Backend normalizes to. It rides

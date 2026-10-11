@@ -294,7 +294,6 @@ func TestValidationAndNotFound(t *testing.T) {
 	for _, body := range []string{
 		`{}`,
 		`{"harness":"fake"}`,
-		`{"harness":"fake","model":"m"}`,
 		`not json`,
 	} {
 		resp, err := http.Post(srv.URL+"/api/sessions", "application/json", strings.NewReader(body))

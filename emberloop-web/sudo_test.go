@@ -89,6 +89,9 @@ func TestSudoRequestApproveDeliversTOON(t *testing.T) {
 		t.Fatalf("second decision = %d, want 409", code)
 	}
 	res := waitEvent(t, d, id, func(e Event) bool { return e.Kind == "prompt" && strings.HasPrefix(e.Text, "sudo_result:") })
+	if res.Sender != "system" || res.User != "" {
+		t.Fatalf("sudo result sender = %q user = %q, want system", res.Sender, res.User)
+	}
 	for _, want := range []string{"  request: " + rid, "  status: ", "  exit: ", `  command: "sudo echo hello-from-root"`, "  output: "} {
 		if !strings.Contains(res.Text, want) {
 			t.Errorf("result missing %q in\n%s", want, res.Text)

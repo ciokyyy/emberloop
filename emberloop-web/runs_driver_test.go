@@ -761,7 +761,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 	}
 	raw, _ := json.Marshal(map[string]any{
 		"id": "run-paused", "spec": "/repo/.scratch/demo/spec.md", "repo": "/repo",
-		"status": "running", "harness": "fake", "model": "m", "tickets": []any{},
+		"status": "running", "harness": "fake", "model": "m", "tickets": []any{}, "owner": "owner-1",
 	})
 	if err := os.WriteFile(filepath.Join(dir, "run-paused.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
@@ -901,9 +901,9 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 	state := tempDir(t)
 	d := NewDaemon(state, NewFakeBackend())
 	d.mu.Lock()
-	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-sub"] = &runState{
-		ID: "r-sub", Spec: "spec", Repo: tempDir(t), Status: "running",
+		ID: "r-sub", Spec: "spec", Owner: "owner-1", Repo: tempDir(t), Status: "running",
 		notify:   make(chan struct{}),
 		Tickets:  []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
 		Sessions: map[string]string{"01-first": "w1"},
@@ -934,9 +934,9 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.mu.Lock()
-	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-cnt"] = &runState{
-		ID: "r-cnt", Spec: "spec", Repo: tempDir(t), Status: "running",
+		ID: "r-cnt", Spec: "spec", Owner: "owner-1", Repo: tempDir(t), Status: "running",
 		notify:     make(chan struct{}),
 		Tickets:    []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
 		Sessions:   map[string]string{"01-first": "w1"},

@@ -384,3 +384,9 @@ func decoyHash() string {
 	})
 	return decoy.hash
 }
+
+// homeDir is the working directory of a User's Sessions that have no Project:
+// <dir>/<name>/home. The caller creates it on first use.
+func (s *userStore) homeDir(name string) string {
+	return filepath.Join(s.dir, name, "home")
+}

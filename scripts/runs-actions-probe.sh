@@ -90,17 +90,21 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
+# Sessions and Runs belong to a signed-in User: the first signup of this fresh state dir is the admin.
+jar="$tmp/jar"
+curl -sf -c "$jar" -H 'Content-Type: application/json' -d '{"username":"probe","password":"probe-password"}' "$base/api/auth/signup" >/dev/null
+
 spec="$repo/.scratch/probe/spec.md"
 echo "starting run: harness=$HARNESS model=$MODEL" >&2
-run="$(curl -H "Authorization: Bearer $token" -s -X POST "$base/api/runs" -H 'Content-Type: application/json' \
+run="$(curl -b "$jar" -s -X POST "$base/api/runs" -H 'Content-Type: application/json' \
   -d "$(python3 -c 'import json,sys; print(json.dumps({"spec":sys.argv[1],"repo":sys.argv[2],"harness":sys.argv[3],"model":sys.argv[4]}))' "$spec" "$repo" "$HARNESS" "$MODEL")")"
 runid="$(echo "$run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["run"]["id"])')"
 echo "run=$runid" >&2
 
 echo "--- GET /api/runs (picker endpoint)" >&2
-curl -H "Authorization: Bearer $token" -s "$base/api/runs" | python3 -c 'import json,sys; print("\n".join(f"{r[\"id\"]} {r[\"status\"]} {r[\"spec\"]}" for r in json.load(sys.stdin)["runs"]))'
+curl -b "$jar" -s "$base/api/runs" | python3 -c 'import json,sys; print("\n".join(f"{r[\"id\"]} {r[\"status\"]} {r[\"spec\"]}" for r in json.load(sys.stdin)["runs"]))'
 
-getrun() { curl -H "Authorization: Bearer $token" -s "$base/api/runs/$runid"; }
+getrun() { curl -b "$jar" -s "$base/api/runs/$runid"; }
 echo "waiting for ticket 01 worker (up to 180s)..." >&2
 worker=""
 for _ in $(seq 1 60); do
@@ -112,21 +116,21 @@ done
 echo "worker=$worker" >&2
 
 echo "--- steer ticket 01 through its route" >&2
-curl -H "Authorization: Bearer $token" -s -X POST "$base/api/runs/$runid/tickets/01-first/steer" -H 'Content-Type: application/json' \
+curl -b "$jar" -s -X POST "$base/api/runs/$runid/tickets/01-first/steer" -H 'Content-Type: application/json' \
   -d '{"text":"PROBE-STEER: keep going, and end one assistant message with PROBE-STEER-ACK."}' \
   | python3 -c 'import json,sys; print("steer:", json.load(sys.stdin)["run"]["id"])'
 echo "waiting for the steer text in the worker transcript (up to 120s)..." >&2
 for _ in $(seq 1 40); do
-  curl -H "Authorization: Bearer $token" -s "$base/api/sessions/$worker" | grep -q PROBE-STEER && break
+  curl -b "$jar" -s "$base/api/sessions/$worker" | grep -q PROBE-STEER && break
   sleep 3
 done
-curl -H "Authorization: Bearer $token" -s "$base/api/sessions/$worker" | grep -q PROBE-STEER && echo "steer landed in worker transcript" || { echo "STEER MISSING from transcript" >&2; exit 1; }
+curl -b "$jar" -s "$base/api/sessions/$worker" | grep -q PROBE-STEER && echo "steer landed in worker transcript" || { echo "STEER MISSING from transcript" >&2; exit 1; }
 
 echo "--- park ticket 02, then retry (unpark)" >&2
-curl -H "Authorization: Bearer $token" -s -X POST "$base/api/runs/$runid/tickets/02-second/park" \
+curl -b "$jar" -s -X POST "$base/api/runs/$runid/tickets/02-second/park" \
   | python3 -c 'import json,sys; print("park:", {t["id"]:t["state"] for t in json.load(sys.stdin)["run"]["tickets"]})'
 getrun | python3 -c 'import json,sys; ts={t["id"]:t for t in json.load(sys.stdin)["run"]["tickets"]}; assert ts["02-second"]["state"]=="parked", ts; print("02-second reads parked")'
-curl -H "Authorization: Bearer $token" -s -X POST "$base/api/runs/$runid/tickets/02-second/retry" -H 'Content-Type: application/json' -d '{"text":""}' \
+curl -b "$jar" -s -X POST "$base/api/runs/$runid/tickets/02-second/retry" -H 'Content-Type: application/json' -d '{"text":""}' \
   | python3 -c 'import json,sys; print("retry:", {t["id"]:t["state"] for t in json.load(sys.stdin)["run"]["tickets"]})'
 
 echo "--- ticket table" >&2

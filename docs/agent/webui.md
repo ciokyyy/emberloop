@@ -36,7 +36,8 @@ If you run inside a Session of this Daemon, the restart drops your own agent pro
 - The first signup becomes the admin. Sign up the admin yourself right after a fresh start, before anyone else reaches the Daemon.
 - The admin switches `signup_enabled` in Settings; off refuses signup.
 - Reset a password: `el-web user set-password <name>` (prod; add `-state-dir ~/.local/share/pig-dev` for dev). It reads the new password from a terminal with echo off, or one line from a pipe. It signs that User out everywhere; a running Daemon sees the change at once.
-- Machine token: `<state-dir>/enderbloom/daemon.token`, new on every start, owner-only. `el restart` and the probes read it. The Daemon's own agents get it as `EL_WEB_TOKEN`.
+- Machine token: `<state-dir>/enderbloom/daemon.token`, new on every start, owner-only. `el restart` reads it. It is no User: it cannot create Sessions or Runs. The Daemon's own agents get it as `EL_WEB_TOKEN`.
+- Sessions and Runs record the User who created them. Sessions and Runs with no owner are hidden; nothing migrates them.
 
 ## Service control
 

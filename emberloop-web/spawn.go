@@ -76,14 +76,19 @@ func agentDisplayName(name, prompt string) string {
 	return strings.Join(words, " ")
 }
 
-// Spawn creates one Subagent Session per requested agent under parentID.
-// Each child inherits the parent's harness, model and working directory,
-// records its parent, Group and display name, and runs its prompt at once.
-// Deliver selects the parent notices: "group" (the default) sends one
-// grouped result when the last member settles; "each" sends one notice per
-// child as it settles. It returns the HTTP status to answer with when
-// non-zero.
+// Spawn is spawnFrom for the agent path: the child prompts are system prompts.
 func (d *Daemon) Spawn(parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, int, string) {
+	return d.spawnFrom(systemSender, parentID, agents, deliver)
+}
+
+// spawnFrom creates one Subagent Session per requested agent under parentID.
+// Each child inherits the parent's harness, model, working directory and owner,
+// records its parent, Group and display name, and runs its prompt at once. from
+// types those first prompts. Deliver selects the parent notices: "group" (the
+// default) sends one grouped result when the last member settles; "each" sends
+// one notice per child as it settles. It returns the HTTP status to answer with
+// when non-zero.
+func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAgent, deliver string) (string, []SessionMeta, int, string) {
 	d.mu.Lock()
 	parent, ok := d.sessions[parentID]
 	if !ok {
@@ -129,6 +134,7 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent, deliver string) (st
 		return "", nil, http.StatusTooManyRequests, capMessage(running, max)
 	}
 	harness, model, workDir := parent.meta.Harness, parent.meta.Model, parent.meta.WorkDir
+	owner := parent.meta.Owner
 	d.mu.Unlock()
 
 	gid := newID()
@@ -153,6 +159,7 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent, deliver string) (st
 			ProjectID: parent.meta.ProjectID,
 			Status:    "idle",
 			CreatedAt: time.Now().UTC(),
+			Owner:     owner,
 			ParentID:  parentID,
 			GroupID:   gid,
 			Scout:     a.Type == "scout",
@@ -205,7 +212,7 @@ func (d *Daemon) Spawn(parentID string, agents []SpawnAgent, deliver string) (st
 			cs.active++
 		}
 		d.mu.Unlock()
-		d.appendModeEvent(s.meta.ID, "prompt", agents[i].Prompt, "", "")
+		d.appendPromptEvent(s.meta.ID, agents[i].Prompt, "", 0, nil, from)
 		go d.runTurn(s.meta.ID, s.be, agents[i].Prompt, nil)
 	}
 	d.mu.Lock()
@@ -237,7 +244,7 @@ func (d *Daemon) handleSpawn(w http.ResponseWriter, r *http.Request, id string) 
 		http.Error(w, "agents is required", http.StatusBadRequest)
 		return
 	}
-	gid, kids, code, msg := d.Spawn(id, req.Agents, req.Deliver)
+	gid, kids, code, msg := d.spawnFrom(d.senderOf(r), id, req.Agents, req.Deliver)
 	if code != 0 {
 		if code == http.StatusNotFound {
 			http.NotFound(w, r)

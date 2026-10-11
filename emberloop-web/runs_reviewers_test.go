@@ -263,9 +263,9 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	d.mu.Lock()
-	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle"}, live: true, notify: make(chan struct{})}
+	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-cap"] = &runState{
-		ID: "r-cap", Spec: "spec", Repo: repo, Status: "running",
+		ID: "r-cap", Spec: "spec", Owner: "owner-1", Repo: repo, Status: "running",
 		Harness: "fake", Model: "fake-model",
 		notify:   make(chan struct{}),
 		Tickets:  []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
@@ -317,7 +317,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
-		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"},
+		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"},
 		live: true, notify: make(chan struct{}),
 		events: []Event{
 			{Seq: 1, SessionID: "rev-spec", Kind: "prompt", Text: prompt},
@@ -325,7 +325,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 		},
 	}
 	d.runs["r-tip"] = &runState{
-		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
+		ID: "r-tip", Spec: "spec", Owner: "owner-1", Repo: repo, Status: "running",
 		Harness: "fake", Model: "fake-model",
 		notify:        make(chan struct{}),
 		unpause:       make(chan struct{}),
@@ -371,7 +371,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
-		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"},
+		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"},
 		live: true, notify: make(chan struct{}),
 		events: []Event{
 			{Seq: 1, SessionID: "rev-spec", Kind: "prompt", Text: prompt},
@@ -379,7 +379,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 		},
 	}
 	d.runs["r-tip"] = &runState{
-		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
+		ID: "r-tip", Spec: "spec", Owner: "owner-1", Repo: repo, Status: "running",
 		Harness: "fake", Model: "fake-model",
 		notify:        make(chan struct{}),
 		unpause:       make(chan struct{}),
@@ -439,7 +439,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, t2)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
-		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle"},
+		meta: SessionMeta{ID: "rev-spec", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"},
 		live: true, notify: make(chan struct{}),
 		events: []Event{
 			{Seq: 1, SessionID: "rev-spec", Kind: "prompt", Text: prompt},
@@ -447,7 +447,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 		},
 	}
 	d.runs["r-tip"] = &runState{
-		ID: "r-tip", Spec: "spec", Repo: repo, Status: "running",
+		ID: "r-tip", Spec: "spec", Owner: "owner-1", Repo: repo, Status: "running",
 		Harness: "fake", Model: "fake-model",
 		notify:        make(chan struct{}),
 		unpause:       make(chan struct{}),

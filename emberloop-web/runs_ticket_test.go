@@ -360,7 +360,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	legacyDir := tempDir(t)
 	legacy := map[string]any{
 		"id": "run-legacy", "spec": spec, "repo": repo, "status": "paused",
-		"harness": "fake", "model": "m", "tickets": []any{},
+		"harness": "fake", "model": "m", "tickets": []any{}, "owner": "owner-1",
 	}
 	lraw, _ := json.Marshal(legacy)
 	if err := os.MkdirAll(filepath.Join(legacyDir, "enderbloom", "runs"), 0o755); err != nil {

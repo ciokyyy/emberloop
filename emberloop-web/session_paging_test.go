@@ -144,7 +144,7 @@ func TestCompactFoldEquivalent(t *testing.T) {
 func seedDirectSession(d *Daemon, id string, events []Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	s := &session{meta: SessionMeta{ID: id, Harness: "fake", Model: "m", Status: "idle"}, notify: make(chan struct{})}
+	s := &session{meta: SessionMeta{ID: id, Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, notify: make(chan struct{})}
 	for i, e := range events {
 		e.Seq = int64(i + 1)
 		e.SessionID = id

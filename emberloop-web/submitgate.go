@@ -171,7 +171,7 @@ func (d *Daemon) enforceSubmitGate(id string, be Backend, mark int64, harness st
 
 // remindChild logs one gate reminder as the turn's next prompt and runs it.
 func (d *Daemon) remindChild(id string, be Backend, reminder string) {
-	d.appendPromptEvent(id, reminder, "", 0, nil)
+	d.appendPromptEvent(id, reminder, "", 0, nil, systemSender)
 	promptBackend(be, id, reminder, nil, func(kind, text, status string) {
 		d.appendEvent(id, kind, text, status)
 	})
