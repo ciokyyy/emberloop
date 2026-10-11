@@ -4,7 +4,7 @@
 
 **Blocked by:** 18
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Note:** the root `AGENTS.md` seeding on project init moved to `.scratch/project-init/issues/02-project-settings-and-el-init.md` (`el init` must exist first). Run-launched projects are covered by worktree seeding in `runStartWorker`.
 
