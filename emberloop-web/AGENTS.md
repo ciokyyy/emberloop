@@ -618,11 +618,17 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   live-Session cap, in its own worktree and branch as a Subagent of the Run
   (ParentID the Run). The fresh worktree is seeded a root `AGENTS.md` first
   (`ensureAgentsMD` via `ensureWorktreeDOX`, projects.go) when its checkout
-  lacks one; the Worker's first prompt is `workerTaskPrompt` and each
-  Reviewer's is `reviewerPrompt` (prompts.go: task text only, the system
-  prompt carries the role extra, no `remember` in any of them; the reviewer
-  prompt describes the submit tool, the `VERDICT:` text stays only as a
-  fallback for a Backend without the tool). A submitted
+  lacks one; the Worker's first prompt is `buildWorkerFirstPrompt`
+  (`workerTaskPrompt` plus the Ticket file, the spec, the root AGENTS.md chain
+  and the worker skills) and each Reviewer's is `buildReviewerFirstPrompt`
+  (`reviewerTaskPrefix` plus the Ticket, the spec, the changed-paths chain and
+  the role's skills; `reviewerPrompt` is the prefix plus its brief and serves
+  re-reviews) (prompts.go: task text only; the reviewer prompt describes the
+  submit tool, the `VERDICT:` text stays only as a fallback for a Backend
+  without the tool). Per-role skills live in settings `run_skills` (the briefs
+  first, optional sections trimmed; `runs_inject_test.go` pins the content per
+  role). The system prompt carries the role extra, no `remember` in any of
+  them. A submitted
   done (`POST /api/sessions/{id}/submit`) merges by rebase plus
   fast-forward-only through the shared core checks; a non-done submit waits
   for done instead of merging; a dirty worktree or

@@ -815,6 +815,18 @@ const workerReviewNote = "Do not spawn reviewers: after you submit done, the Dae
 // webStallNudge is the fixed nudge for a Worker that went idle with no submit.
 const webStallNudge = "Nudge: you have not submitted. Finish the ticket and submit done with the completed checkboxes; the reviewers start after your submit."
 
+// reviewerTaskPrefix is the Reviewer task without its skill brief: the gate
+// prompt the re-review path reuses. First prompts use it plus the injected
+// Ticket, spec, AGENTS.md chain and the role's skills (runs_inject.go), so
+// the brief travels once as the first skill entry.
+func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string {
+	axis := "correctness and this repo's standards"
+	if reviewerType == reviewerSpecType {
+		axis = "fit to the ticket and the spec"
+	}
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker.", ticketID, spec, reviewerType, axis, branch, tip)
+}
+
 // reviewerPrompt asks one reviewer type to judge the Ticket's worker branch
 // at the given tip and report through the submit tool. Reviewers judge only:
 // they never edit the worktree. The verdict is a submit tool call, not free
@@ -830,15 +842,11 @@ const webStallNudge = "Nudge: you have not submitted. Finish the ticket and subm
 // (rolePromptFor), so repeating it here would inject it twice. It names no
 // remember instruction.
 func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
-	axis := "correctness and this repo's standards"
-	if reviewerType == reviewerSpecType {
-		axis = "fit to the ticket and the spec"
-	}
 	brief := standardsBrief
 	if reviewerType == reviewerSpecType {
 		brief = specBrief
 	}
-	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker.\n\n%s", ticketID, spec, reviewerType, axis, branch, tip, brief)
+	return reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip) + "\n\n" + brief
 }
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
@@ -1509,6 +1517,12 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	}
 	branch, worktree := rs.Branches[ticketID], rs.Worktrees[ticketID]
 	spec := rs.Spec
+	repo := rs.Repo
+	ticketFile := ticketPath(rs, ticketID)
+	base := ""
+	if rs.Bases != nil {
+		base = rs.Bases[ticketID]
+	}
 	owner := rs.Owner
 	harness, model := rs.Harness, rs.Model
 	if rh, rm := roleReviewerConfig(reviewerType); rh != "" {
@@ -1596,7 +1610,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	d.mu.Unlock()
 	d.persistResumeToken(be, meta.ID)
 	d.appendEvent(meta.ID, "status", "", "idle")
-	prompt := reviewerPrompt(ticketID, spec, reviewerType, branch, tip)
+	prompt := buildReviewerFirstPrompt(ticketID, spec, ticketFile, reviewerType, branch, tip, worktree, repo, base)
 	d.mu.Lock()
 	if s, ok := d.sessions[meta.ID]; ok {
 		s.busy = true
@@ -1742,7 +1756,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 
 		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
-		prompt := workerTaskPrompt(tk.ID, spec, tk.Path, branch, seeded)
+		prompt := buildWorkerFirstPrompt(tk.ID, spec, tk.Path, branch, seeded, worktree)
 		d.mu.Lock()
 		if s, ok := d.sessions[meta.ID]; ok {
 			s.busy = true

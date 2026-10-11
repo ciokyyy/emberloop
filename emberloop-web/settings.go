@@ -84,13 +84,15 @@ func envMaxWorkers() (int, bool) {
 	return w, true
 }
 
-// settingsView is the GET and PUT shape: roles next to the live cap and
-// whether the environment overrides the file, so the UI can lock the field.
+// settingsView is the GET and PUT shape: roles and per-role Run skills next
+// to the live cap and whether the environment overrides the file, so the UI
+// can lock the field.
 func settingsView() map[string]any {
 	_, fromEnv := envMaxWorkers()
 	decider := readDeciderSettings()
 	return map[string]any{
 		"roles":                   readRoles(),
+		"run_skills":              readRunSkillsRaw(),
 		"max_workers":             maxRunningFromSettings(),
 		"max_workers_from_env":    fromEnv,
 		"session_titles":          sessionTitlesSetting(),
@@ -112,6 +114,8 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		defer d.live.publish("settings")
 		var body struct {
 			Roles         map[string]roleSetting `json:"roles"`
+			RunSkills     map[string][]string    `json:"run_skills"`
+			RunSkillsSet  bool                   `json:"-"`
 			MaxWorkers    *int                   `json:"max_workers"`
 			SessionTitles *bool                  `json:"session_titles"`
 			SignupEnabled *bool                  `json:"signup_enabled"`
@@ -119,10 +123,44 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Decider       *deciderPatch          `json:"decider"`
 			Jev           *jevPatch              `json:"jev"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		// Detect an explicit run_skills key (including null/empty) so a
+		// write can clear a role without touching other settings.
+		var rawBody map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&rawBody); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
+		if rawSkills, ok := rawBody["run_skills"]; ok {
+			body.RunSkillsSet = true
+			if string(rawSkills) != "null" {
+				if err := json.Unmarshal(rawSkills, &body.RunSkills); err != nil {
+					http.Error(w, "run_skills must be an object of string arrays", http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		// Decode the rest through the typed shape.
+		rawRest, _ := json.Marshal(rawBody)
+		var typed struct {
+			Roles         map[string]roleSetting `json:"roles"`
+			MaxWorkers    *int                   `json:"max_workers"`
+			SessionTitles *bool                  `json:"session_titles"`
+			SignupEnabled *bool                  `json:"signup_enabled"`
+			Compress      *compressPatch         `json:"compress"`
+			Decider       *deciderPatch          `json:"decider"`
+			Jev           *jevPatch              `json:"jev"`
+		}
+		if err := json.Unmarshal(rawRest, &typed); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		body.Roles = typed.Roles
+		body.MaxWorkers = typed.MaxWorkers
+		body.SessionTitles = typed.SessionTitles
+		body.SignupEnabled = typed.SignupEnabled
+		body.Compress = typed.Compress
+		body.Decider = typed.Decider
+		body.Jev = typed.Jev
 		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
 				http.Error(w, "only the admin can change signup, decider and jev settings", http.StatusForbidden)
@@ -144,6 +182,12 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.MaxWorkers != nil && *body.MaxWorkers <= 0 {
 			http.Error(w, "max_workers must be a whole number above zero", http.StatusBadRequest)
 			return
+		}
+		if body.RunSkillsSet {
+			if msg := validateRunSkills(body.RunSkills); msg != "" {
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
 		}
 		for name, rs := range body.Roles {
 			// An empty role clears it (pig Sessions then stay unnamed).
@@ -195,6 +239,29 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.SignupEnabled != nil {
 			raw, _ := json.Marshal(*body.SignupEnabled)
 			all["signup_enabled"] = raw
+		}
+		if body.RunSkillsSet {
+			merged := readRunSkillsRaw()
+			for role, list := range body.RunSkills {
+				kept := make([]string, 0, len(list))
+				for _, s := range list {
+					if strings.TrimSpace(s) == "" {
+						continue
+					}
+					kept = append(kept, s)
+				}
+				if len(kept) == 0 {
+					delete(merged, role)
+					continue
+				}
+				merged[role] = kept
+			}
+			// An explicit empty object clears all custom skills.
+			if len(body.RunSkills) == 0 {
+				merged = map[string][]string{}
+			}
+			raw, _ := json.Marshal(merged)
+			all["run_skills"] = raw
 		}
 		body.Compress.apply(all)
 		body.Decider.apply(all)
