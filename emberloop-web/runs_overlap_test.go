@@ -204,7 +204,6 @@ func TestSpecOverlapDisjointNoWarning(t *testing.T) {
 	}
 }
 
-//
 // A finished Run is not live: when one spec is already done, the other
 // merging the same file warns on neither Run.
 func TestSpecOverlapDoneRunExcluded(t *testing.T) {
