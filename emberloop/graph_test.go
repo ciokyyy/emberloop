@@ -470,8 +470,16 @@ func TestGraphReindexOncePerSpawnCall(t *testing.T) {
 	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
 		t.Fatalf("reviewer spawn: %v", err)
 	}
-	if got := rec.withTool("index_repository"); len(got) != 1 {
-		t.Fatalf("one spawn call indexed %d times, want once", len(got))
+	// Count this tree only: a worker test's background index goroutine can
+	// outlive its test and land on this test's stub.
+	var got []graphCallRec
+	for _, c := range rec.withTool("index_repository") {
+		if c.worktree == graphAbs(tree) {
+			got = append(got, c)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("one spawn call indexed %d times, want once: %v", len(got), rec.withTool("index_repository"))
 	}
 }
 

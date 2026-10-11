@@ -689,10 +689,12 @@ func TestMixedSpawnReturnsScoutsAndStartsTheWorker(t *testing.T) {
 	if !strings.Contains(out, "end your turn") {
 		t.Errorf("a mixed spawn must say to end the turn and wait for the notice, got:\n%s", out)
 	}
-	for _, c := range rec.calls {
-		if strings.Contains(strings.Join(c, " "), "agent prompt wP ") {
-			t.Errorf("with the worker still out the group must not deliver yet, got %v", rec.calls)
-			break
+	// The worker has its own group and the scouts share one: the scouts' notice
+	// may go, but nothing may report the worker, whose group is still open.
+	waitForDeliveries(10 * time.Second)
+	for _, p := range promptedCalls(rec, "wP") {
+		if strings.Contains(p, "20-x") || strings.Contains(p, "of 3 agents") {
+			t.Errorf("with the worker still out no notice may carry it, got %q", p)
 		}
 	}
 }

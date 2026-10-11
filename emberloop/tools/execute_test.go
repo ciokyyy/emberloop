@@ -244,6 +244,9 @@ func TestExecuteTimeoutKillsTheProcess(t *testing.T) {
 func TestExecuteRemovesItsTempDir(t *testing.T) {
 	requirePython(t)
 	t.Setenv("EL_STATE_DIR", t.TempDir())
+	// Private TMPDIR: other tests and packages create el-execute-* dirs in the
+	// shared one while this test counts them.
+	t.Setenv("TMPDIR", t.TempDir())
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "el-execute-*"))
 	if err != nil {
 		t.Fatal(err)

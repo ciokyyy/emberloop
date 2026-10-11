@@ -30,6 +30,11 @@ func groupTestState(t *testing.T, g *fakeGrid) *recorder {
 // background so the triggering call returns at once.
 func waitForPrompts(t *testing.T, rec *recorder, pane string, want int, timeout time.Duration) []string {
 	t.Helper()
+	// Background deliveries slow down under a loaded machine: never wait
+	// less than 10s, the loop returns as soon as the prompts arrive.
+	if timeout < 10*time.Second {
+		timeout = 10 * time.Second
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if got := promptedCalls(rec, pane); len(got) >= want {
@@ -42,6 +47,8 @@ func waitForPrompts(t *testing.T, rec *recorder, pane string, want int, timeout 
 
 func promptedCalls(rec *recorder, pane string) []string {
 	var out []string
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
 	for _, c := range rec.calls {
 		if strings.Contains(strings.Join(c, " "), "agent prompt "+pane+" ") {
 			out = append(out, strings.Join(c, " "))

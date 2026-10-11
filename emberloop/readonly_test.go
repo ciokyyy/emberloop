@@ -13,12 +13,15 @@ import (
 
 // recorder is an Exec that captures calls and answers from a script.
 type recorder struct {
+	mu    sync.Mutex
 	calls [][]string
 	reply func(cmd string, args []string) Result
 }
 
 func (r *recorder) run(cmd string, args []string, _ ExecOpts) (Result, error) {
+	r.mu.Lock()
 	r.calls = append(r.calls, append([]string{cmd}, args...))
+	r.mu.Unlock()
 	return r.reply(cmd, args), nil
 }
 
