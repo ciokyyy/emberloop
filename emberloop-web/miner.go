@@ -92,14 +92,25 @@ type minerDeciderDoc struct {
 // the scan without advancing the cursor, so the bytes mine again; permanently
 // invalid records are skipped.
 func (d *Daemon) MineSession(id string) (MineResult, error) {
+	return d.mineSession(id, false)
+}
+
+// mineSession is MineSession with the settle gate optional: live skips it,
+// so the turn-end scan (mine_live.go) reads a Session that just finished a
+// turn. Scans of one Session serialize on its flight lock, so the cursor
+// never races between a turn-end scan and the nightly catch-up.
+func (d *Daemon) mineSession(id string, live bool) (MineResult, error) {
 	res := MineResult{SessionID: id}
+	fl := d.mineFlightFor(id)
+	fl.scan.Lock()
+	defer fl.scan.Unlock()
 	d.mu.Lock()
 	s, ok := d.sessions[id]
 	var settled bool
 	var memCopy []Event
 	var workDir string
 	if ok {
-		settled = s.meta.Status == "ended" || s.Idle(d.now(), MinerSettleWindow, d.groupOutstandingLocked(id))
+		settled = live || s.meta.Status == "ended" || s.Idle(d.now(), MinerSettleWindow, d.groupOutstandingLocked(id))
 		memCopy = append([]Event(nil), s.events...)
 		workDir = s.meta.WorkDir
 	} else {

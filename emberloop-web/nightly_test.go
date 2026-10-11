@@ -21,6 +21,7 @@ var wantNightlyStageOrder = []string{
 	nightlyStageSnapshot,
 	nightlyStageMine,
 	nightlyStageDistill,
+	nightlyStageConsolidate,
 	nightlyStagePair,
 	nightlyStageProfile,
 	nightlyStageAnchors,
@@ -36,6 +37,7 @@ func nightlyTestDaemon(t *testing.T, distillReply *string, profileReply *string)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
+	d.consolidateOneShot = func(model, system, user string) (string, error) { return "none", nil }
 	if distillReply != nil {
 		reply := *distillReply
 		d.distillOneShot = func(model, system, user string) (string, error) {

@@ -130,11 +130,19 @@ type Daemon struct {
 	// cheap-LLM calls in tests; nil runs the bare pig one-shot. nightlyFailStage
 	// forces one stage to fail (the test seam for abort and continue paths).
 	// nightlyMu serializes runs; nightlyLastDay is the last auto-run local day.
-	nightlyMu        sync.Mutex
-	distillOneShot   func(model, system, user string) (string, error)
-	profileOneShot   func(model, system, user string) (string, error)
-	nightlyFailStage string
-	nightlyLastDay   string
+	nightlyMu          sync.Mutex
+	distillOneShot     func(model, system, user string) (string, error)
+	profileOneShot     func(model, system, user string) (string, error)
+	consolidateOneShot func(model, system, user string) (string, error)
+	nightlyFailStage   string
+	nightlyLastDay     string
+	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
+	// holds one in-flight/again flag per Session, mineWG lets tests and
+	// Shutdown wait for running scans.
+	liveMine  bool
+	mineMu    sync.Mutex
+	mineState map[string]*mineFlight
+	mineWG    sync.WaitGroup
 }
 
 type session struct {
@@ -1272,6 +1280,7 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 	// threshold, and the cooldown already guards the next one.
 	if !handoff {
 		d.maybeAutoCompress(id)
+		d.maybeMineLive(id)
 	}
 }
 

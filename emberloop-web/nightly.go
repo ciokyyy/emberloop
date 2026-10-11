@@ -36,13 +36,14 @@ const (
 
 // Nightly stage names, one ledger row per stage per run per bank.
 const (
-	nightlyStageSnapshot = "nightly_snapshot"
-	nightlyStageMine     = "nightly_mine"
-	nightlyStageDistill  = "nightly_distill"
-	nightlyStagePair     = "nightly_pair"
-	nightlyStageProfile  = "nightly_profile"
-	nightlyStageAnchors  = "nightly_anchors"
-	nightlyStageSummary  = "nightly_summary"
+	nightlyStageSnapshot    = "nightly_snapshot"
+	nightlyStageMine        = "nightly_mine"
+	nightlyStageDistill     = "nightly_distill"
+	nightlyStageConsolidate = "nightly_consolidate"
+	nightlyStagePair        = "nightly_pair"
+	nightlyStageProfile     = "nightly_profile"
+	nightlyStageAnchors     = "nightly_anchors"
+	nightlyStageSummary     = "nightly_summary"
 )
 
 // NightlyStageResult is one stage of one run.
@@ -960,6 +961,7 @@ func (d *Daemon) RunNightly(ctx context.Context) (NightlyResult, error) {
 	res.Stages = append(res.Stages, mine)
 	briefs, sessionOwner, distill := d.nightlyDistill(ctx, runID, owners, mined)
 	res.Stages = append(res.Stages, distill)
+	res.Stages = append(res.Stages, d.nightlyConsolidate(ctx, runID, owners))
 	res.Stages = append(res.Stages, d.nightlyPair(ctx, runID, owners))
 	res.Stages = append(res.Stages, d.nightlyProfile(ctx, runID, owners, briefs, sessionOwner))
 	res.Stages = append(res.Stages, d.nightlyAnchors(ctx, runID, owners))

@@ -10,6 +10,7 @@ import (
 // Session, so a restart leaves no adapter behind. History and resume tokens
 // are already on disk; the next Daemon loads the Sessions as released.
 func (d *Daemon) Shutdown() {
+	d.waitMining()
 	type live struct {
 		id string
 		be Backend

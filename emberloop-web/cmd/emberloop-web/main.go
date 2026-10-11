@@ -144,6 +144,7 @@ func main() {
 	go watchForUpdate(d, exe, *restartCheck)
 	go watchForRestartRequest(d, exe, *restartDrain)
 	go signalRestart(d)
+	d.EnableLiveMining()
 	go d.StartNightlyLoop(context.Background())
 	d.ResumeAfterRestart()
 	if *tailnet {
