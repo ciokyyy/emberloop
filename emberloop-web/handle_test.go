@@ -335,6 +335,7 @@ func TestParentLinksSurviveCompress(t *testing.T) {
 	d, _, _, base, parent := handleDaemon(t, nil)
 	child := spawnOne(t, base, parent, "slow job")
 	waitStatus(t, base, child, "idle", 10*time.Second)
+	waitGroupedDelivery(t, base, parent, child)
 	waitParentIdle(t, base, parent)
 	compressAndSettle(t, base, parent, 1)
 

@@ -88,6 +88,25 @@ func waitParentIdle(t *testing.T, base, parent string) {
 	waitStatus(t, base, parent, "idle", 20*time.Second)
 }
 
+// waitGroupedDelivery waits for a spawn Group's grouped result to reach the
+// parent as a steer prompt naming the child. Delivery lands after the last
+// child settles, so a bare parent-idle wait can slip in before it and the
+// next compress hits a working session (409): wait for the delivery itself.
+func waitGroupedDelivery(t *testing.T, base, parent, child string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		_, events := sessionMeta(t, base, parent)
+		for _, e := range events {
+			if e.Kind == "prompt" && e.Mode == "steer" && strings.Contains(e.Text, child[:8]) {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no grouped delivery for child %s in parent transcript", child[:8])
+}
+
 // Slice 1: a Steer on an idle fake Session runs a turn labelled steer.
 func TestSteerOnIdleRunsLabeledTurn(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
