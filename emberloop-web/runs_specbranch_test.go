@@ -505,6 +505,11 @@ func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
 	if code != http.StatusOK || resumed.Status != runStatusRunning || resumed.Error != "" {
 		t.Fatalf("resume after successful rebase = status %d, Run %q error %q", code, resumed.Status, resumed.Error)
 	}
+	testGit(t, repo, "worktree", "remove", "--force", specWorktree)
+	abandoned, code := postRunAction(t, srv.URL, run.ID, "abandon")
+	if code != http.StatusOK || abandoned.Status != runStatusAbandoned {
+		t.Fatalf("cleanup abandon = status %d, Run %q", code, abandoned.Status)
+	}
 }
 
 // Abandon ends the Run's Sessions and removes its Ticket and spec worktrees
