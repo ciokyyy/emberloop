@@ -24,15 +24,17 @@ boxes and marking Tickets done.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
-  `runs_reviewers_test.go`, `runs_persist_test.go`, `runs_chain_test.go`,
-  `runs_pause_switch_test.go`, `runs_specbranch_test.go`,
-  `runs_worktree_test.go`, `runs_toolactive_test.go` (in-flight tool calls
-  date worker activity up to a cap), `runs_starttree_test.go` (stale branch
-  and worktree reuse or Needs-you), `runs_final_test.go`,
-  `runs_markdone_basered_test.go`, `runs_overlap_test.go` and
-  `runs_stopsubmit_test.go` cover Run seams. Stop-after-submit ends a Run
-  Worker or Reviewer turn on its accepted terminal submit
-  (`runs_stopsubmit.go`, opt out per Run with `noStopAfterSubmit`).
+  `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
+  check, selective re-review, scope warning), `runs_persist_test.go`,
+  `runs_chain_test.go`, `runs_pause_switch_test.go`,
+  `runs_specbranch_test.go`, `runs_worktree_test.go`,
+  `runs_toolactive_test.go` (in-flight tool calls date worker activity up to
+  a cap), `runs_starttree_test.go` (stale branch and worktree reuse or
+  Needs-you), `runs_final_test.go`, `runs_markdone_basered_test.go`,
+  `runs_overlap_test.go` and `runs_stopsubmit_test.go` cover Run seams.
+  Stop-after-submit ends a Run Worker or Reviewer turn on its accepted
+  terminal submit (`runs_stopsubmit.go`, opt out per Run with
+  `noStopAfterSubmit`).
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go` and `grok_handoff_test.go`.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are

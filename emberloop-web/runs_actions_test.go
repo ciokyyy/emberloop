@@ -292,6 +292,7 @@ func TestTicketActionsOnFinishedRunConflict(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	waitRunTickets(t, srv.URL, run.ID, map[string]string{"01-first": "merged"})
 	for _, action := range []string{"steer", "retry", "park", "discard"} {
@@ -410,9 +411,9 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 	}
 }
 
-// The same refusal three times in a row marks the ticket needs-you: a dirty
-// worktree refuses every finish identically, the worker submits done three
-// times, and each refusal is told back before the next submit. A dirty
+// The same refusal three times in a row marks the ticket needs-you: a rebase
+// conflict refuses every finish identically, the worker submits done three
+// times, and each refusal is told back before the next submit. A conflict
 // refusal repeats verbatim (unlike a changes verdict, which the submit gate
 // refuses as an empty resubmit), so it still exercises the driver's streak.
 func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
@@ -428,13 +429,23 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
-	writeFile(t, filepath.Join(repo, ".el-worktrees", "01-first"), "dirty.txt", "dirty\n")
+	// A committed worker change plus a conflicting spec-branch move makes
+	// the finish rebase conflict deterministically on every pass. (A dirty
+	// worktree never reaches the finish: the submit gate refuses it first.)
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	commitTicketFile(t, worktree, "conflict.txt", "worker\n", "worker change")
+	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
+	testGit(t, repo, "worktree", "add", specWT, "spec/demo")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", specWT) })
+	writeFile(t, specWT, "conflict.txt", "spec\n")
+	testGit(t, specWT, "add", "conflict.txt")
+	testGit(t, specWT, "commit", "-m", "spec moves")
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 		// Each submit's refusal reaches the worker before the next
 		// submit, so the streak counts consecutive identical refusals.
-		waitPromptContaining(t, srv.URL, worker, "uncommitted changes", n, "refusal tell")
+		waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -451,8 +462,9 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 
 // Retry after the refusal alert clears the banner and the ticket works
 // again: the retry generation resets the driver's streak and backoff, so a
-// clean worktree from here merges. A dirty refusal repeats verbatim (unlike
-// a changes verdict, which the submit gate refuses as an empty resubmit).
+// resolved branch from here merges. A conflict refusal repeats verbatim
+// (unlike a changes verdict, which the submit gate refuses as an empty
+// resubmit).
 func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -467,11 +479,17 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
-	writeFile(t, worktree, "dirty.txt", "dirty\n")
+	commitTicketFile(t, worktree, "conflict.txt", "worker\n", "worker change")
+	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
+	testGit(t, repo, "worktree", "add", specWT, "spec/demo")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", specWT) })
+	writeFile(t, specWT, "conflict.txt", "spec\n")
+	testGit(t, specWT, "add", "conflict.txt")
+	testGit(t, specWT, "commit", "-m", "spec moves")
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
-		waitPromptContaining(t, srv.URL, worker, "uncommitted changes", n, "refusal tell")
+		waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
 	}
 	waitActionState(t, srv.URL, run.ID, "01-first", "needs-you", "refusal needs-you")
 
@@ -485,10 +503,10 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	// The retry's steer reached the worker.
 	waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")
 
-	// A clean worktree from here merges.
-	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
-		t.Fatal(err)
-	}
+	// A branch reset onto the moved spec, plus a new commit, merges: the
+	// rebase lands and the reviewers judge the new tip.
+	testGit(t, worktree, "reset", "--hard", "spec/demo")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	waitRunTickets(t, srv.URL, run.ID, map[string]string{"01-first": "merged"})
 }

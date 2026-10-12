@@ -414,6 +414,7 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "initial Worker")
 	initial := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, initial, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -500,6 +501,7 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 	}, "initial Worker")
 	initial := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, initial, func(s sessionBody) bool { return s.Meta.Status == "idle" }, "initial Worker idle")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, initial, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -599,6 +601,7 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 		}
 		return nil
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -652,6 +655,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "Worker")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
 	deadline := time.Now().Add(15 * time.Second)
@@ -798,6 +802,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 			r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 				return ticketByID(r, "01-first").WorkerSession != ""
 			}, "Worker")
+			commitTicketWork(t, repo, "01-first")
 			submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 			r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 				tk := ticketByID(r, "01-first")

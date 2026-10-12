@@ -38,6 +38,7 @@ func TestMarkDoneOrderingWaitsForSpecBranchMerge(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	waitReviewers(t, srv.URL, run.ID, "01-first")
 
@@ -101,6 +102,7 @@ func TestStatuslessTicketBoxesTickAfterMerge(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "statusless ticket worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	_ = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -190,6 +192,7 @@ func TestBaseRedRechecksNewTipWithoutGatingStartedWorker(t *testing.T) {
 	testGit(t, redWorktree, "add", "red-base.txt")
 	testGit(t, redWorktree, "commit", "-m", "advance spec branch to a red tip")
 
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {

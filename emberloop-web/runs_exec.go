@@ -91,6 +91,10 @@ type storedReview struct {
 	Findings []ReviewFinding `json:"findings,omitempty"`
 	Ran      []ReviewRan     `json:"ran,omitempty"`
 	PatchID  string          `json:"patchId,omitempty"`
+	// Note carries how the verdict reached its tip without a rerun: a
+	// selective carry reads "carried from <short-T1>". Empty on fresh
+	// verdicts and same-tip or patch-id reuses.
+	Note string `json:"note,omitempty"`
 }
 
 // runWarning is one overlap warning Event on a Run: at each Ticket merge
@@ -165,6 +169,12 @@ type runState struct {
 	// BaseCheckCache stores each spec-branch tip's repo-check result. A tip is
 	// checked once per Run, and the cache survives a Daemon restart.
 	BaseCheckCache map[string]baseCheckResult `json:"baseCheckCache,omitempty"`
+	// TipCheckCache stores each Ticket tip's repo-check result for the
+	// pre-review tip gate, one check per tip per Run, surviving a restart.
+	TipCheckCache map[string]baseCheckResult `json:"tipCheckCache,omitempty"`
+	// TipRedTold records, per ticket, the tip already returned to the Worker
+	// as red, so the driver tells once per tip instead of every pass.
+	TipRedTold map[string]string `json:"tipRedTold,omitempty"`
 	// Warnings holds the overlap warnings published at Ticket merges: one
 	// entry per live spec branch this Run's changed files intersect with.
 	// It survives a restart in the Run file and streams with the Run table.
@@ -1345,7 +1355,7 @@ func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
 	}
-	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined.", ticketID, spec, reviewerType, axis, branch, tip)
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined. "+reviewerScopeRule, ticketID, spec, reviewerType, axis, branch, tip)
 }
 
 // declinedFindingsPrompt adds prior Worker declines to each later review. The
@@ -1380,16 +1390,10 @@ func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 	return reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip, nil)
 }
 
+// reviewerPromptWithDeclined adds prior Worker declines; the extras variant
+// also carries the driver-check evidence, scope warning and round-4+ note.
 func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string, declined []declinedReviewFinding) string {
-	brief := standardsBrief
-	if reviewerType == reviewerSpecType {
-		brief = specBrief
-	}
-	prefix := reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip)
-	if feedback := declinedFindingsPrompt(declined); feedback != "" {
-		prefix += "\n\n" + feedback
-	}
-	return prefix + "\n\n" + brief
+	return reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip, declined, "", "", "")
 }
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
@@ -1968,10 +1972,16 @@ func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
 // done again, so they keep their context across Passes: a re-review is a new
 // message in the same Session, never a new Session. Each prompt queues its
 // tip as owed; a verdict answers the oldest queued tip, so a Worker commit
-// between prompts never lets a T1 judgement read fresh at T2. A done at the
+// between prompts never lets a T1 judgement read fresh at T2. Before any
+// Reviewer starts, the tip gate runs the repo check on the tip: a red tip
+// returns to the Worker with the failing output and spends no Reviewer turn,
+// while a green tip is passed to Reviewer prompts as evidence. A done at the
 // already-judged tip, or at a new tip whose diff patch-id against the base
 // is unchanged (a rebase), reuses the verdicts with no Reviewer turn: a
 // patch-identical verdict is carried to the new tip so the gate reads fresh.
+// A seat that passed at T1 while the other said changes is selectively
+// carried to T2 without a rerun when the T1..T2 diff is safe (no cited
+// files, few changed lines, same scope); otherwise it is re-prompted.
 // A Reviewer turn that ended without a recorded verdict at the current tip
 // counts as no verdict: the Ticket stays under review and never merges on
 // it. It spawns nothing before the first done submit. A refused
@@ -2033,6 +2043,11 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	if err != nil || tip == "" {
 		return
 	}
+	// The tip gate: a red repo check returns the tip to the Worker with the
+	// failing output and spends no Reviewer turn.
+	if d.checkTipBeforeReview(runID, ticketID, tip) {
+		return
+	}
 	// The short-circuit patch id: a rebase that kept the diff identical
 	// reuses both verdicts with no Reviewer turn.
 	curPatch := d.reviewPatchIDFor(runID, ticketID, tip)
@@ -2041,6 +2056,10 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 			return
 		}
 	}
+	// Selective re-review: a seat that passed at T1 while the other said
+	// changes keeps its pass at T2 without a rerun when the T1..T2 diff is
+	// safe (no cited files, few changed lines, same scope). Runs unlocked.
+	carry := d.selectiveCarryFor(runID, ticketID, tip)
 	d.mu.Lock()
 	rs, ok = d.runs[runID]
 	if !ok {
@@ -2069,9 +2088,26 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 			reuse[typ] = true
 		}
 	}
+	// A selectively carried pass joins the reuse set with its T1 noted, so
+	// the gate reads it fresh at the new tip and the round holds it without
+	// a prompt. The final merge still needs both seats fresh or carried.
+	carryNote := map[string]string{}
+	for typ, t1 := range carry {
+		if reuse[typ] {
+			continue
+		}
+		if r, ok := rs.Reviews[ticketID][typ]; ok && r.Verdict == "pass" && r.At != tip {
+			reuse[typ] = true
+			carryNote[typ] = t1
+		}
+	}
 	for typ := range reuse {
 		if r := rs.Reviews[ticketID][typ]; r.At != tip {
 			r.At = tip
+			r.Note = ""
+			if t1, ok := carryNote[typ]; ok {
+				r.Note = "carried from " + t1
+			}
 			rs.Reviews[ticketID][typ] = r
 		}
 	}
@@ -2089,6 +2125,16 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		rs.ReviewStarted[ticketID] = map[string]time.Time{}
 	}
 	_, need := appendRoundLocked(rs, ticketID, tip, now, reuse)
+	if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
+		last := &rounds[len(rounds)-1]
+		for typ, t1 := range carryNote {
+			if rv, ok := last.Reviews[typ]; ok {
+				rv.Note = "carried from " + t1
+				last.Reviews[typ] = rv
+			}
+		}
+		rs.Rounds[ticketID] = rounds
+	}
 	for _, typ := range requiredReviewerTypes {
 		if !need[typ] {
 			continue
@@ -2101,12 +2147,16 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	d.broadcastRunLocked(rs)
 	declined := declinedFindingsForRounds(rs.Rounds[ticketID])
 	d.mu.Unlock()
+	// Re-review prompts carry the green driver-check evidence (so reviewers
+	// need not rerun the full suite), the scope warning and the round-4+
+	// note. All three are non-blocking additions to the gate prompt.
+	evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip)
 	for _, typ := range requiredReviewerTypes {
 		if !need[typ] {
 			continue
 		}
 		if sess := existing[typ]; sess != "" {
-			_ = d.runTellSession(sess, reviewerPromptWithDeclined(ticketID, spec, typ, branch, tip, declined))
+			_ = d.runTellSession(sess, reviewerPromptWithExtras(ticketID, spec, typ, branch, tip, declined, evidence, scope, late))
 		}
 	}
 }
@@ -2260,6 +2310,16 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	d.persistResumeToken(be, meta.ID)
 	d.appendEvent(meta.ID, "status", "", "idle")
 	prompt := buildReviewerFirstPromptWithDeclined(ticketID, spec, ticketFile, reviewerType, branch, tip, worktree, repo, base, declined)
+	// First prompts carry the same non-blocking extras as re-reviews: green
+	// driver-check evidence (cached only), the scope warning and the
+	// round-4+ note.
+	if evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip); evidence != "" || scope != "" || late != "" {
+		for _, extra := range []string{evidence, scope, late} {
+			if extra != "" {
+				prompt += "\n\n" + extra
+			}
+		}
+	}
 	d.mu.Lock()
 	if s, ok := d.sessions[meta.ID]; ok {
 		s.busy = true
@@ -4018,6 +4078,25 @@ func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, 
 		d.appendEvent(id, "submit", "done", "")
 		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 		return
+	}
+	// A done submit needs committed work: the worktree must be clean and the
+	// Ticket branch must hold a commit ahead of its base. Like the refusals
+	// above this is a tool error (409) telling the Worker to commit. It runs
+	// after the merged-ticket early return, so a post-merge done stays an
+	// idempotent accept.
+	{
+		tip := ""
+		if branch := rs.Branches[workerTicket]; branch != "" {
+			if sha, err := runGit(rs.Repo, "rev-parse", branch); err == nil {
+				tip = sha
+			}
+		}
+		base := ticketBranchBase(rs.Repo, rs.Targets[workerTicket], rs.Bases[workerTicket], tip)
+		if why := refuseUncommittedWork(rs.Repo, rs.Branches[workerTicket], base, rs.Worktrees[workerTicket], tip); why != "" {
+			d.mu.Unlock()
+			writeJSON(w, http.StatusConflict, map[string]any{"error": why})
+			return
+		}
 	}
 	count := d.storeSubmitLocked(id, workerTicket, rs, "done", completed, report, summary)
 	if rs.Followups == nil {

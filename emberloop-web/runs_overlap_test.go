@@ -231,6 +231,7 @@ func TestSpecOverlapDoneRunExcluded(t *testing.T) {
 		return ticketByID(r, "01-first").State == "merged" &&
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "demo first merged and second started")
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, ticketByID(rA, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv.URL, runA.ID, "02-second")
 	waitRunCond(t, srv.URL, runA.ID, func(r runJSON) bool {

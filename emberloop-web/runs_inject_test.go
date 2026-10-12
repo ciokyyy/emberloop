@@ -352,6 +352,7 @@ func TestRunFirstPromptsCarryInjectionAtSeam(t *testing.T) {
 		t.Fatalf("worker transcript carries the untrimmed optional section:\n%.2000s", wt)
 	}
 
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	for typ, sess := range revs {

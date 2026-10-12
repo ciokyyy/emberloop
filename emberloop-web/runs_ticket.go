@@ -47,8 +47,11 @@ type roundReview struct {
 	Verdict       string          `json:"verdict"`
 	Findings      []ReviewFinding `json:"findings,omitempty"`
 	HeldFromRound *int            `json:"heldFromRound,omitempty"`
-	At            string          `json:"at"`
-	DurationMs    int64           `json:"durationMs,omitempty"`
+	// Note carries how the verdict reached the round's tip without a rerun:
+	// a selective carry reads "carried from <short-T1>".
+	Note       string `json:"note,omitempty"`
+	At         string `json:"at"`
+	DurationMs int64  `json:"durationMs,omitempty"`
 }
 
 // ReviewDisposition is one Worker's decision about a finding sent by the

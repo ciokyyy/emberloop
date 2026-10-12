@@ -113,6 +113,7 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
@@ -128,14 +129,13 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 	}
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
-		return tk.Verdicts["reviewer-spec"].Verdict == "pass" && tk.State != "merged"
-	}, "spec pass shown without merging")
+		// Fresh needs the driver's row tip to catch up with the branch tip,
+		// which lands on a later pass than the verdict itself.
+		return tk.Verdicts["reviewer-spec"].Verdict == "pass" && tk.Verdicts["reviewer-spec"].Fresh && tk.State != "merged"
+	}, "spec pass fresh without merging")
 	tk := ticketByID(r, "01-first")
 	if tk.Tip == "" {
 		t.Fatalf("tip empty, want the worker branch tip")
-	}
-	if !tk.Verdicts["reviewer-spec"].Fresh {
-		t.Fatalf("spec verdict = %+v, want fresh at the tip", tk.Verdicts["reviewer-spec"])
 	}
 	if tk.LastRefusal != "" {
 		t.Fatalf("lastRefusal = %q, want empty while a pass is still missing", tk.LastRefusal)
@@ -180,6 +180,7 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
@@ -274,6 +275,7 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", nil)
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	if got := getSession(t, srv.URL, revs["reviewer-spec"]).Meta.Model; got != "spec-model" {
@@ -586,6 +588,7 @@ func TestReviewerSubmitToolScriptMergesWithMinors(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	waitReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -613,10 +616,13 @@ func TestReviewerSubmitPassEmptyRanRefused(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	r = getRun(t, srv.URL, run.ID)
-	tip := ticketByID(r, "01-first").Tip
+	// The branch tip straight from git: the driver's row tip can lag it, and
+	// a verdict submitted at a lagged tip would record stale.
+	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
 	if tip == "" {
 		t.Fatalf("tip empty, want the worker branch tip")
 	}
@@ -651,10 +657,13 @@ func TestReviewerSubmitChangesMinorsOnlyRefused(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	r = getRun(t, srv.URL, run.ID)
-	tip := ticketByID(r, "01-first").Tip
+	// The branch tip straight from git: the driver's row tip can lag it, and
+	// a verdict submitted at a lagged tip would record stale.
+	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
 	if tip == "" {
 		t.Fatalf("tip empty, want the worker branch tip")
 	}
@@ -692,10 +701,13 @@ func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	r = getRun(t, srv.URL, run.ID)
-	tip := ticketByID(r, "01-first").Tip
+	// The branch tip straight from git: the driver's row tip can lag it, and
+	// the stale check compares against the live branch tip.
+	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
 	if tip == "" {
 		t.Fatalf("tip empty, want the worker branch tip")
 	}
@@ -747,10 +759,13 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	r = getRun(t, srv.URL, run.ID)
-	tip := ticketByID(r, "01-first").Tip
+	// The branch tip straight from git: the driver's row tip can lag it, and
+	// a verdict submitted at a lagged tip would record stale.
+	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
 	if tip == "" {
 		t.Fatalf("tip empty, want the worker branch tip")
 	}
@@ -1142,6 +1157,7 @@ func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	waitReviewers(t, srv.URL, run.ID, "01-first")
 

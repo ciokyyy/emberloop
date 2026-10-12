@@ -125,6 +125,7 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "01-first started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -137,12 +138,14 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 	if !isAncestor(t, repo, firstSHA, "implement/02-second") {
 		t.Fatalf("spec tip %q is not an ancestor of implement/02-second, want the ticket forked from the first merge", firstSHA)
 	}
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "02-second").State == "merged" &&
 			ticketByID(r, "03-third").WorkerSession != ""
 	}, "02-second merged and 03-third started")
+	commitTicketWork(t, repo, "03-third")
 	submitSession(t, srv.URL, ticketByID(r, "03-third").WorkerSession, "done", []string{"gamma"})
 	passReviewers(t, srv.URL, run.ID, "03-third")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -187,6 +190,7 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 	if moved == master {
 		t.Fatalf("main = %q, want it moved past %q", moved, master)
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -257,12 +261,14 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 	if _, code := postRunAction(t, srv2.URL, run.ID, "resume"); code != 200 {
 		t.Fatalf("resume status = %d, want 200", code)
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv2.URL, first, "done", []string{"alpha"})
 	passReviewers(t, srv2.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").State == "merged" &&
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "01-first merged and 02-second started after resume")
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv2.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv2.URL, run.ID, "02-second")
 	_ = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
@@ -598,6 +604,7 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 		t.Fatal("master did not move in the fixture")
 	}
 
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == "done" }, "green final merge")
@@ -655,6 +662,7 @@ func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusNeedsYou }, "red final check needs-you")
@@ -717,6 +725,7 @@ func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
 	if movedMaster == initialMaster {
 		t.Fatal("master did not move in the fixture")
 	}
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusNeedsYou }, "final rebase conflict needs-you")

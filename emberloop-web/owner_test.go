@@ -290,6 +290,7 @@ func TestRunOwnerReachesWorkerAndReviewers(t *testing.T) {
 		t.Fatalf("run owner = %v, want %q", got, adminID)
 	}
 	worker := waitChildren(t, srv.URL, run.ID, 1)[0]
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker.ID, "done", []string{"alpha"})
 	kids := waitChildren(t, srv.URL, run.ID, 3)
 	for _, kid := range kids {
