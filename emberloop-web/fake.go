@@ -59,15 +59,32 @@ type FakeBackend struct {
 	// Event before it ever works.
 	HandoffTurnErr string
 
-	mu       sync.Mutex
-	stop     map[string]chan struct{}
-	gen      map[string]int
-	seen     map[string]int
-	released map[string]int
-	starts   map[string][]handleStart
+	mu         sync.Mutex
+	stop       map[string]chan struct{}
+	gen        map[string]int
+	seen       map[string]int
+	released   map[string]int
+	starts     map[string][]handleStart
+	interrupts map[string]int
 }
 
 func NewFakeBackend() *FakeBackend { return &FakeBackend{} }
+
+// getDelay reads the scripted turn Delay under the lock, so tests can retune
+// it between turns without racing a starting turn.
+func (f *FakeBackend) getDelay() time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Delay
+}
+
+// SetDelay retunes the scripted turn Delay. Turns already running keep the
+// Delay they started with.
+func (f *FakeBackend) SetDelay(delay time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Delay = delay
+}
 
 func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, text, status string)) {
 	ch := make(chan struct{})
@@ -98,7 +115,7 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 		}
 	}
 	appendEvent("status", "", "working")
-	delay := f.Delay
+	delay := f.getDelay()
 	if delay <= 0 {
 		delay = 5 * time.Millisecond
 	}
@@ -171,7 +188,19 @@ func (f *FakeBackend) Interrupt(sessionID string) bool {
 	}
 	delete(f.stop, sessionID)
 	close(ch)
+	if f.interrupts == nil {
+		f.interrupts = map[string]int{}
+	}
+	f.interrupts[sessionID]++
 	return true
+}
+
+// InterruptCount reports how many times Interrupt stopped one Session's
+// turn. Tests assert a submit stops its turn exactly once.
+func (f *FakeBackend) InterruptCount(sessionID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.interrupts[sessionID]
 }
 
 func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
