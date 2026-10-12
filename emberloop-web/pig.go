@@ -701,6 +701,17 @@ func PigModels() []string {
 	return pigModelsCache
 }
 
+// UsageWindow reports the pig catalog window for model, falling back to the
+// summarizer's default window for models the catalog does not list (the test
+// faux provider). It feeds the Daemon's usage seed; live turns report the
+// SDK window itself.
+func (b *PigBackend) UsageWindow(model string) int {
+	if w := catalogWindow(model); w > 0 {
+		return w
+	}
+	return defaultSummaryWindow
+}
+
 func (b *PigBackend) Models() []string {
 	b.mu.Lock()
 	dir := b.AgentDir
@@ -957,9 +968,16 @@ func (b *PigBackend) subscribe(id string, sess *coding.Session, rt *coding.Runti
 		if _, ok := e.(agent.TurnEndEvent); ok {
 			// Report usage as each model turn ends, not only when the whole
 			// prompt ends: a long or failed worker turn would otherwise show
-			// "no usage yet" for its whole life.
-			if u := sess.ContextUsage(); u != nil && u.ContextWindow > 0 && u.Tokens != nil {
-				emit("usage", usageText(*u.Tokens, u.ContextWindow), "")
+			// "no usage yet" for its whole life. The window alone sizes a
+			// reading: right after a compaction Tokens is nil while the
+			// window is known, so emit used 0 rather than dropping the
+			// meter.
+			if u := sess.ContextUsage(); u != nil && u.ContextWindow > 0 {
+				used := 0
+				if u.Tokens != nil {
+					used = *u.Tokens
+				}
+				emit("usage", usageText(used, u.ContextWindow), "")
 			}
 		}
 	})

@@ -9,7 +9,9 @@ button here would stop being a tiny diagnostic line. -->
   import { untrack } from 'svelte';
   import { fetchVersion, isStale, uiHash, versionText, copyText } from './version.js';
 
-  let { panelOpen = false, connected = true } = $props();
+  // inline: static muted line for the phone drawer footer (the fixed corner
+  // stamp stays hidden on phones where the composer owns the bottom edge).
+  let { panelOpen = false, connected = true, inline = false } = $props();
 
   const own = uiHash();
   let commit = $state('');
@@ -52,7 +54,21 @@ button here would stop being a tiny diagnostic line. -->
   }
 </script>
 
-{#if commit}
+{#if commit && inline}
+<div class="flex shrink-0 items-center justify-center gap-2 pt-1 text-[11px] leading-none text-muted-foreground" data-testid="version-inline">
+  <button class="min-h-8 cursor-pointer px-1 transition-colors hover:text-foreground" onclick={copy}>{copied ? 'copied' : label}</button>
+  {#if stale}
+    <button class="min-h-8 cursor-pointer px-1 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground" onclick={() => window.location.reload()}>update available — reload</button>
+  {/if}
+</div>
+{:else if commit}
+{#if stale}
+  <button
+    class="fixed top-[max(0.5rem,env(safe-area-inset-top))] left-1/2 z-40 min-h-11 -translate-x-1/2 animate-rise cursor-pointer rounded-full border bg-popover px-4 text-xs font-medium shadow-lg sm:hidden"
+    data-testid="update-pill"
+    onclick={() => window.location.reload()}
+  >Update available — reload</button>
+{/if}
 <div
   class="fixed bottom-1 z-10 hidden text-[10px] leading-none text-muted-foreground sm:block {panelOpen
     ? 'right-[25.5rem]'

@@ -382,6 +382,7 @@ func (d *Daemon) MachineToken() string { return d.machineToken }
 func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	b.tokenFile = claudeTokenPath(d.stateDir)
 	d.claude = b
 	d.backends["claude"] = b
 	return d
@@ -533,6 +534,10 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		d.persistMeta(meta)
 		d.starting--
 		d.mu.Unlock()
+		// Seed the context meter now that the handle exists: the first turn's
+		// end may be far away (or stalled), and the meter reads empty until a
+		// usage Event lands.
+		d.seedUsage(meta.ID)
 		return be, nil
 	}
 	// Claude creation blocks until session/new answers, so MCP tools
@@ -555,6 +560,9 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		d.removeSession(meta.ID)
 		return nil, &startError{code: http.StatusInternalServerError, msg: err.Error()}
 	}
+	// Seed the meter from the known claude window: the adapter's first
+	// usage_update may never come, and the meter reads empty until one does.
+	d.seedUsage(meta.ID)
 	return cb, nil
 }
 
@@ -1200,6 +1208,10 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		d.mu.Unlock()
 	}
 	e := d.appendPromptEvent(id, text, modeLabel(mode), len(images), imageIDs, from)
+	// Seed the meter at dispatch: a resumed or older Session may hold no
+	// usage Event yet, and the estimate now includes this prompt. A Session
+	// with a reading keeps it; the seed never overwrites.
+	d.seedUsage(id)
 	d.maybeTitle(id, text)
 	if be != nil {
 		go d.runTurn(id, be, btext, bimages)

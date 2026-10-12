@@ -2,6 +2,7 @@
   always shows the current tool; the stage below swaps its output as tools
   start, and the history drawer keeps every previous tool newest-first. -->
 <script>
+  import { untrack } from 'svelte';
   import {
     LoaderCircle,
     CircleCheck,
@@ -39,6 +40,7 @@
     outputKind,
     toolIcon,
     prefersReducedMotion,
+    memoSegs,
   } from './toolstrip.js';
 
   let { block } = $props();
@@ -58,7 +60,12 @@
   // Previous tools newest-first. A settled strip lists every run; a live one
   // keeps the current run on the stage.
   const historyList = $derived((settled ? [...runs] : runs.slice(0, -1)).reverse());
-
+  // Live and still on its current run: output streams in per delta. While
+  // live, lines render without their entrance animation (it would never
+  // complete at stream rate) and only the tail window renders; settled and
+  // history rows keep every line with the mount animation.
+  const streamLive = $derived(!settled && !settledDone);
+  const TAIL_LINES = 200;
   let histOpen = $state(false);
   let expanded = $state({});
   const toggleHist = () => (histOpen = !histOpen);
@@ -99,17 +106,29 @@
   // content is never hidden behind a zero height.
   let scrollEl = $state(null);
   let stageH = $state(0);
+  let stageT = 0;
+  let stageKey = null;
   $effect(() => {
     const out = current?.output;
     const key = current?.key;
+    const live = streamLive;
     void out;
     void key;
     if (reduced || !scrollEl) {
       stageH = 0;
       return;
     }
+    // Height writes per delta re-layout the page per flush: while live, move
+    // it only when the tool switched, the content moved enough, or enough
+    // time passed; settled runs always snap.
     const h = Math.min(scrollEl.scrollHeight || 0, STRIP_MAX_HEIGHT);
-    stageH = h > 0 ? h : 0;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const switched = key !== stageKey;
+    stageKey = key;
+    if (!live || switched || h === 0 || Math.abs(h - untrack(() => stageH)) > 48 || now - stageT > 300) {
+      stageH = h > 0 ? h : 0;
+      stageT = now;
+    }
   });
   const wrapStyle = $derived(
     `${reduced ? 'transition: none;' : 'transition: height .5s cubic-bezier(.22,1,.36,1);'}${stageH > 0 ? `height: ${stageH}px;` : ''}`,
@@ -140,8 +159,11 @@
     <Markdown text={run.output} class="text-sm text-muted-foreground" />
   {:else}
   {@const kind = outputKind(run?.name)}
-  {@const lines = splitOutputLines(run?.output || meaningfulInput(run?.input))}
-  {@const empty = lines.length === 1 && lines[0] === ''}
+  {@const full = splitOutputLines(run?.output || meaningfulInput(run?.input))}
+  {@const empty = full.length === 1 && full[0] === ''}
+  {@const isLive = streamLive && run?.key === current?.key}
+  {@const start = isLive && full.length > TAIL_LINES ? full.length - TAIL_LINES : 0}
+  {@const lines = start ? full.slice(start) : full}
   {#if empty}
     {#if run}
       {@const live = run.key === current?.key && !settled && !isDone(run.status)}
@@ -152,35 +174,40 @@
         <div class="ts-line font-mono text-xs leading-5 text-muted-foreground">No output.</div>
       {/if}
     {/if}
-  {:else if looksJson(lines) && !run?.output}
-    {#each lines as line, i (i)}
-      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(highlightJson(line), line)}</div>
+  {:else if looksJson(full) && !run?.output}
+    {#each lines as line, i (i + start)}
+      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(memoSegs('json', line, highlightJson), line)}</div>
     {/each}
   {:else if kind === 'diff'}
-    {#each lines as line, i (i)}
+    {#if start > 0}<div class="ts-tail font-mono text-xs leading-5 text-muted-foreground">+{start} earlier lines</div>{/if}
+    {#each lines as line, i (i + start)}
       {@const dk = diffLineKind(line)}
       <div class="ts-line rounded font-mono text-xs leading-5 whitespace-pre-wrap {dk === 'add' ? 'diff-add' : dk === 'del' ? 'diff-del' : dk === 'hunk' ? 'diff-hunk' : ''}">
-        {@render tokens(highlightDiff(line), line)}
+        {@render tokens(memoSegs('diff', line, highlightDiff), line)}
       </div>
     {/each}
   {:else if kind === 'stream'}
     {#if toolTarget(run)}
-      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap"><span class="tk-ok">$</span> {@render tokens(highlightShell(toolTarget(run)), toolTarget(run))}</div>
+      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap"><span class="tk-ok">$</span> {@render tokens(memoSegs('shell', toolTarget(run), highlightShell), toolTarget(run))}</div>
     {/if}
-    {#each lines as line, i (i)}
-      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(highlightOutput(line), line)}</div>
+    {#if start > 0}<div class="ts-tail font-mono text-xs leading-5 text-muted-foreground">+{start} earlier lines</div>{/if}
+    {#each lines as line, i (i + start)}
+      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(memoSegs('out', line, highlightOutput), line)}</div>
     {/each}
   {:else if kind === 'file' && toolIcon(run?.name) === 'grep'}
-    {#each lines as line, i (i)}
-      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(highlightGrepLine(line), line)}</div>
+    {#if start > 0}<div class="ts-tail font-mono text-xs leading-5 text-muted-foreground">+{start} earlier lines</div>{/if}
+    {#each lines as line, i (i + start)}
+      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(memoSegs('grep', line, highlightGrepLine), line)}</div>
     {/each}
   {:else if kind === 'file'}
-    {#each lines as line, i (i)}
-      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(highlightFileLine(line), line)}</div>
+    {#if start > 0}<div class="ts-tail font-mono text-xs leading-5 text-muted-foreground">+{start} earlier lines</div>{/if}
+    {#each lines as line, i (i + start)}
+      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(memoSegs('file', line, highlightFileLine), line)}</div>
     {/each}
   {:else}
-    {#each lines as line, i (i)}
-      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(highlightOutput(line), line)}</div>
+    {#if start > 0}<div class="ts-tail font-mono text-xs leading-5 text-muted-foreground">+{start} earlier lines</div>{/if}
+    {#each lines as line, i (i + start)}
+      <div class="ts-line font-mono text-xs leading-5 whitespace-pre-wrap">{@render tokens(memoSegs('out', line, highlightOutput), line)}</div>
     {/each}
   {/if}
   {/if}
@@ -231,7 +258,7 @@
     <div class="border-t bg-background/40 px-3.5 py-2.5 text-sm text-muted-foreground" data-testid="toolstrip-summary">{summary}</div>
   {:else if current}
     <!-- the swapping stage -->
-    <div class="ts-stage" style={wrapStyle}>
+    <div class="ts-stage" style={wrapStyle} data-live={streamLive ? 'true' : undefined}>
       <div
         bind:this={scrollEl}
         class="ts-scroll border-t bg-background/40 p-3.5"
@@ -330,6 +357,13 @@
   }
   .ts-line {
     animation: ts-line-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  /* While live, per-line entrances would restart every delta and never
+     complete: lines appear at once, and the tool-switch swap keeps the
+     mount-only stage animation. */
+  .ts-stage[data-live='true'] .ts-line,
+  .ts-stage[data-live='true'] .ts-tail {
+    animation: none;
   }
   @keyframes ts-line-in {
     from {

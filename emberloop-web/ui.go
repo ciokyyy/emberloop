@@ -44,11 +44,12 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// isSPARoute reports the client-side paths the browser router owns: the
-// session, runs and settings pages. Every other missing path 404s, so a
-// mistyped static asset never renders the app shell.
+// isSPARoute reports the client-side paths the browser router owns (see
+// web/src/lib/router.js): the session, runs, settings, quota and memory
+// pages. Every other missing path 404s, so a mistyped static asset never
+// renders the app shell.
 func isSPARoute(p string) bool {
-	if p == "/runs" || p == "/settings" {
+	if p == "/runs" || p == "/settings" || p == "/quota" || p == "/memory" {
 		return true
 	}
 	if p == "/s" || p == "/s/" {

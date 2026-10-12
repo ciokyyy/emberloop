@@ -11,7 +11,7 @@
   const tone = $derived(pct >= 90 ? 'text-destructive' : pct >= 70 ? 'text-amber-300' : 'text-foreground');
 </script>
 
-<div class="flex items-center justify-between gap-3 px-3 text-xs text-muted-foreground" data-testid="context-meter">
+<div class="flex items-center justify-between gap-3 whitespace-nowrap px-3 text-xs text-muted-foreground" data-testid="context-meter">
   <span class="truncate">{model}</span>
   {#if onCompress}
     <Button variant="ghost" size="sm" class="ml-auto h-6 gap-1 px-2 text-xs" disabled={busy || compressing || !!compressNote} onclick={onCompress} title={compressNote || (busy ? 'Compress when the Session is idle' : 'Summarize older history to free context')}>
@@ -20,7 +20,7 @@
     {#if compressNote}<span class="truncate text-amber-300">{compressNote}</span>{/if}
   {/if}
   {#if usage}
-    <span class="flex items-center gap-1.5 {tone}" title="{usage.used} of {usage.size} tokens">
+    <span class="flex shrink-0 items-center gap-1.5 {tone}" title="{usage.used} of {usage.size} tokens">
       <svg viewBox="0 0 20 20" class="size-4 -rotate-90" aria-hidden="true">
         <circle cx="10" cy="10" r={R} fill="none" stroke="currentColor" stroke-opacity="0.2" stroke-width="2.5" />
         <circle
@@ -29,7 +29,7 @@
           style="transition: stroke-dashoffset 0.6s cubic-bezier(0.22, 1, 0.36, 1)"
         />
       </svg>
-      {fmt(usage.used)} / {fmt(usage.size)} · {pct}%
+      {fmt(usage.used)}<span class="hidden sm:inline"> / {fmt(usage.size)}</span> · {pct}%
     </span>
   {:else}
     <span>Context: no usage yet</span>

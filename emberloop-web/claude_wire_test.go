@@ -266,3 +266,39 @@ func TestACPPromptTimeoutIsIdleBound(t *testing.T) {
 	}
 	_ = conn.Close()
 }
+
+// usageUpdate builds one ACP usage_update carrying the context reading.
+func usageUpdate(used, size float64) map[string]any {
+	return map[string]any{"sessionUpdate": "usage_update", "used": used, "size": size}
+}
+
+// usage_update shapes: a full reading emits a usage Event; a missing or
+// non-positive size emits nothing, whatever else the update carries.
+func TestMapACPUpdateUsageShapes(t *testing.T) {
+	t.Parallel()
+	emitOf := func(update map[string]any) []string {
+		var kinds []string
+		emit := func(kind, text, status string) {
+			kinds = append(kinds, kind+":"+text)
+		}
+		mapACPUpdate(update, emit, newToolTracker())
+		return kinds
+	}
+	got := emitOf(usageUpdate(850000, 1000000))
+	if len(got) != 1 || !strings.Contains(got[0], `"used":850000`) || !strings.Contains(got[0], `"size":1000000`) {
+		t.Fatalf("full reading emits = %v, want one usage Event", got)
+	}
+	for name, update := range map[string]map[string]any{
+		"missing size":  {"sessionUpdate": "usage_update", "used": 1.0},
+		"zero size":     usageUpdate(850000, 0),
+		"negative size": usageUpdate(850000, -100),
+	} {
+		if got := emitOf(update); len(got) != 0 {
+			t.Errorf("%s emits = %v, want nothing", name, got)
+		}
+	}
+	// A reading without a used count still sizes the meter at zero.
+	if got := emitOf(map[string]any{"sessionUpdate": "usage_update", "size": 100.0}); len(got) != 1 || !strings.HasPrefix(got[0], "usage:") {
+		t.Fatalf("sized-only reading emits = %v, want one usage Event", got)
+	}
+}

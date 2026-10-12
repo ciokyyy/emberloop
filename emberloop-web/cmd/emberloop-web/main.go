@@ -28,6 +28,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "user" {
 		os.Exit(runUserCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "claude-token" {
+		os.Exit(runClaudeTokenCommand(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "eval" {
 		os.Exit(runEvalCommand(os.Args[2:], os.Stdout, os.Stderr))
 	}

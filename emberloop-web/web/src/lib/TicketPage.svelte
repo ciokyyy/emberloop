@@ -547,7 +547,7 @@
             <span class="mx-1" aria-hidden="true">·</span>
             <Markdown text={briefShown} />
             {#if briefLines.length > 6}
-              <Button variant="ghost" size="sm" class="mt-1 h-auto p-0 text-xs" onclick={() => (briefOpen = !briefOpen)}>
+              <Button variant="ghost" size="sm" class="mt-1 h-auto p-0 text-xs max-md:min-h-11 max-md:px-2" onclick={() => (briefOpen = !briefOpen)}>
                 {briefOpen ? 'Show less' : `Show ${briefLines.length - 6} more lines`}
               </Button>
             {/if}

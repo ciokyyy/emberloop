@@ -79,3 +79,18 @@ export function prefersReducedMotion() {
     return false;
   }
 }
+// Per-line highlight memo: streaming re-renders every output line per delta,
+// but only the tail lines are new. The same tag+line returns the same segment
+// array, so Svelte keeps the existing spans instead of replacing them. The
+// tag names the renderer explicitly (minification-safe); the cache is bounded
+// and shared across strips.
+const segCache = new Map();
+export function memoSegs(tag, line, compute) {
+  const key = `${tag}\n${line}`;
+  const hit = segCache.get(key);
+  if (hit) return hit;
+  const segs = compute(line);
+  if (segCache.size > 4000) segCache.clear();
+  segCache.set(key, segs);
+  return segs;
+}

@@ -30,12 +30,42 @@
   let contentEl = $state(null);
   let stuck = $state(true);
 
+  // Measuring every streaming delta re-layouts the whole list per flush: a
+  // recent height is reused unless it moved enough or enough time passed.
+  // Zero-size (tests) always measures, exactly like the default.
+  const MEASURE_MS = 200;
+  const MEASURE_PX = 32;
+  const measuredAt = new Map();
+  function throttledMeasure(el, entry, inst) {
+    let size = 0;
+    const box = entry?.borderBoxSize?.[0];
+    if (box) size = Math.round(box.blockSize);
+    else {
+      try {
+        size = Math.round(el.getBoundingClientRect()?.height ?? 0);
+      } catch {
+        size = 0;
+      }
+      if (!size) size = el.offsetHeight || 0;
+    }
+    if (!size) return size;
+    const index = inst.indexFromElement(el);
+    const key = inst.options.getItemKey(index);
+    const prev = measuredAt.get(key);
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    if (prev && now - prev.t < MEASURE_MS && Math.abs(size - prev.size) < MEASURE_PX) return prev.size;
+    measuredAt.set(key, { size, t: now });
+    if (measuredAt.size > 500) measuredAt.delete(measuredAt.keys().next().value);
+    return size;
+  }
+
   const virtualizer = createVirtualizer({
     count: blocks.length,
     getScrollElement: () => scrollEl,
     estimateSize: () => ESTIMATE,
     overscan: OVERSCAN,
     getItemKey: (i) => blocks[i]?.key ?? i,
+    measureElement: throttledMeasure,
   });
 
   // Rebind count, keys and scroll element after mount and on every list change.
@@ -50,6 +80,7 @@
           overscan: OVERSCAN,
           getScrollElement: () => el,
           getItemKey: (i) => blocks[i]?.key ?? i,
+          measureElement: throttledMeasure,
         });
       } catch {
         // Unmounted scroll element (or jsdom): the next run rebinds.
@@ -282,7 +313,7 @@
   }
 </script>
 
-<div bind:this={scrollEl} onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="flex flex-1 flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
+<div bind:this={scrollEl} onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
   <div bind:this={contentEl} class="mx-auto flex w-full max-w-3xl flex-col gap-4">
     {#if hasMore}
       <div bind:this={sentinel} class="flex justify-center py-1" data-testid="load-earlier">
@@ -301,7 +332,7 @@
         {#each virtualRows.rows as row (row.key)}
           {@const b = blocks[row.index]}
           {#if b}
-            <div data-index={row.index} data-block-key={b.key} use:measure class="absolute top-0 left-0 w-full" style="transform: translateY({row.start}px);">
+            <div data-index={row.index} data-block-key={b.key} use:measure class="absolute top-0 left-0 w-full" style="transform: translateY({row.start}px); content-visibility: auto; contain-intrinsic-size: auto 320px;">
               <div class="pb-4">
                 <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} />
               </div>
@@ -311,7 +342,7 @@
       </div>
     {:else}
       {#each blocks as b (b.key)}
-        <div data-block-key={b.key}>
+        <div data-block-key={b.key} style="content-visibility: auto; contain-intrinsic-size: auto 320px;">
           <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} />
         </div>
       {:else}

@@ -56,7 +56,7 @@
   let maxWorkers = $state('3');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
-  let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '', model: 'none' });
+  let compress = $state({ auto: 'on', threshold: '80', tokens: '300000', cooldown: '5', instructions: '', model: 'none' });
   let compressNote = $state('');
   let decider = $state({ mode: 'heuristic', model: 'none', low: '0.35', high: '0.7' });
   let jev = $state({ baseURL: '', apiKey: '', model: 'jev-latest' });
@@ -134,6 +134,7 @@
       compress = {
         auto: c.auto_compress === false ? 'off' : 'on',
         threshold: String(c.compress_threshold_percent ?? 80),
+        tokens: String(c.compress_threshold_tokens ?? 300000),
         cooldown: String(c.compress_cooldown ?? 5),
         instructions: c.compress_instructions ?? '',
         model: c.compress_model || 'none',
@@ -244,6 +245,7 @@
       payload.compress = {
         auto_compress: compress.auto === 'on',
         compress_threshold_percent: Number(compress.threshold),
+        compress_threshold_tokens: Number(compress.tokens),
         compress_cooldown: Number(compress.cooldown),
         compress_instructions: compress.instructions,
         compress_model: compress.model === 'none' ? '' : compress.model,
@@ -366,14 +368,14 @@
                   <div class="grid items-center gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_minmax(0,16rem)_auto]" data-testid={`chain-entry-${role.id}-${index + 1}`}>
                     <span class="text-xs font-medium text-muted-foreground">Entry {index + 1}</span>
                     <Combobox
-                      class="h-10"
+                      class="md:h-10"
                       aria-label={`${role.label} Chain entry ${index + 1} Backend`}
                       value={entry.backend}
                       items={harnessItems}
                       onValueChange={(value) => pickChainBackend(role.id, index, value)}
                     />
                     <Combobox
-                      class="h-10"
+                      class="md:h-10"
                       aria-label={`${role.label} Chain entry ${index + 1} model`}
                       bind:value={entry.model}
                       items={itemsFor(entry.backend, entry.model)}
@@ -402,7 +404,7 @@
                 <div class="text-xs text-muted-foreground">Writes the Handoff. Only authed pig models are listed.</div>
                 {#if compressNote}<div class="text-xs text-amber-300">{compressNote}</div>{/if}
               </div>
-              <Combobox class="h-10" aria-label="Compress model" bind:value={compress.model} items={compressModelItems()} placeholder="Select a model" />
+              <Combobox class="md:h-10" aria-label="Compress model" bind:value={compress.model} items={compressModelItems()} placeholder="Select a model" />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">
@@ -418,6 +420,13 @@
                 <div class="text-xs text-muted-foreground">Percent of the model's context window, 10 to 99.</div>
               </div>
               <FloatingInput id="compress-threshold" label="Threshold %" type="number" min="10" max="99" step="1" bind:value={compress.threshold} disabled={compress.auto === 'off'} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Threshold tokens</div>
+                <div class="text-xs text-muted-foreground">Absolute token count that also triggers auto-compress; 0 means off. The percent gate never fires on 1M-window models, so keep this near 300000 for those.</div>
+              </div>
+              <FloatingInput id="compress-threshold-tokens" label="Threshold tokens" type="number" min="0" step="1000" inputClass="text-base sm:text-sm" bind:value={compress.tokens} disabled={compress.auto === 'off'} />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">
@@ -455,7 +464,7 @@
                 <div class="text-sm font-medium">Decider mode</div>
                 <div class="text-xs text-muted-foreground">Heuristic is local. LLM and ensemble ask the memory model. Jev asks the decision endpoint.</div>
               </div>
-              <Combobox class="h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
+              <Combobox class="md:h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
@@ -463,7 +472,7 @@
                 <div class="text-xs text-muted-foreground">Confirms candidates. Only authed pig models are listed.</div>
                 {#if deciderNote}<div class="text-xs text-amber-300">{deciderNote}</div>{/if}
               </div>
-              <Combobox class="h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
+              <Combobox class="md:h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
@@ -532,7 +541,7 @@
                 <div class="text-sm font-medium">Pig naming model</div>
                 <div class="text-xs text-muted-foreground">Pig Sessions stay unnamed until you pick a model.</div>
               </div>
-              <Combobox class="h-10" aria-label="Pig naming model" bind:value={pigTitle} items={pigTitleItems()} placeholder="Select a model" />
+              <Combobox class="md:h-10" aria-label="Pig naming model" bind:value={pigTitle} items={pigTitleItems()} placeholder="Select a model" />
             </div>
           </div>
         </section>
@@ -567,20 +576,20 @@
                     <div class="text-xs text-muted-foreground">{r.hint}</div>
                   </div>
                   <Combobox
-                    class="h-10"
+                    class="md:h-10"
                     aria-label={`${r.label} harness`}
                     value={roles[r.id].harness}
                     items={harnessItems}
                     onValueChange={(v) => pickHarness(r.id, v)}
                   />
                   <Combobox
-                    class="h-10"
+                    class="md:h-10"
                     aria-label={`${r.label} model`}
                     bind:value={roles[r.id].model}
                     items={itemsFor(roles[r.id].harness, roles[r.id].model)}
                     placeholder="Select a model"
                   />
-                  <Combobox class="h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
+                  <Combobox class="md:h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
                 </div>
               {/each}
             </div>

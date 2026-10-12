@@ -71,7 +71,9 @@ func TestClaudeLifecycleOverAPI(t *testing.T) {
 	}
 
 	sendPrompt(t, srv.URL, id, "second")
-	events := readSSE(t, srv.URL, id, 5, 4, 5*time.Second)
+	// Six, not four: the start seed plus the first turn's fallback reading
+	// push the resumed reply two events later.
+	events := readSSE(t, srv.URL, id, 5, 6, 5*time.Second)
 	found := false
 	for _, e := range events {
 		if e.Kind == "assistant_chunk" && e.Text == "hello" {

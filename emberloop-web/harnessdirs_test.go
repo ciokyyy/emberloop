@@ -215,7 +215,7 @@ func TestSeedClaudeDirLinksOnlyTheLogin(t *testing.T) {
 	writeTestFile(t, filepath.Join(host, "projects", "p", "memory", "MEMORY.md"), "auto memory")
 	dir := filepath.Join(tempDir(t), "claude")
 	for i := 0; i < 2; i++ {
-		if err := seedClaudeDir(dir, host); err != nil {
+		if err := seedClaudeDir(dir, host, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -231,7 +231,7 @@ func TestSeedClaudeDirLinksOnlyTheLogin(t *testing.T) {
 
 	// A host with no login links nothing and fails nothing.
 	bare := filepath.Join(tempDir(t), "claude")
-	if err := seedClaudeDir(bare, tempDir(t)); err != nil {
+	if err := seedClaudeDir(bare, tempDir(t), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(bare, claudeAuthFile)); !os.IsNotExist(err) {
@@ -320,5 +320,251 @@ func TestClaudeAdapterConnUsesOwnerConfigDir(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("adapter env lost the CLAUDE.md disabling set")
+	}
+}
+
+// Shared claude login: the Daemon resolves one setup token env-over-file and
+// the adapter gets it last-wins. These tests use fake token strings only.
+
+// withCleanTokenEnv unsets both token env vars, restoring them afterwards.
+// Callers stay serial: they touch process env.
+func withCleanTokenEnv(t *testing.T) {
+	t.Helper()
+	saved := map[string]string{}
+	for _, name := range claudeOAuthTokenEnvs {
+		if v, ok := os.LookupEnv(name); ok {
+			saved[name] = v
+		}
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, name := range claudeOAuthTokenEnvs {
+			_ = os.Unsetenv(name)
+		}
+		for name, v := range saved {
+			_ = os.Setenv(name, v)
+		}
+	})
+}
+
+// TestClaudeTokenEnvLastWins: with a token the adapter env ends with
+// CLAUDE_CODE_OAUTH_TOKEN after the owner's CLAUDE_CONFIG_DIR, keeping the
+// disabling set. EL_CLAUDE_OAUTH_TOKEN outranks CLAUDE_CODE_OAUTH_TOKEN, and
+// a Daemon-resolved token outranks both.
+func TestClaudeTokenEnvLastWins(t *testing.T) {
+	withCleanTokenEnv(t)
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-file-env-token")
+	t.Setenv("EL_CLAUDE_OAUTH_TOKEN", "fake-el-token")
+	env := claudeEnv(ownerDirs{claude: "/owner/claude"})
+	if last := env[len(env)-1]; last != "CLAUDE_CODE_OAUTH_TOKEN=fake-el-token" {
+		t.Fatalf("last adapter env entry = %q, want the EL_ token last-wins", last)
+	}
+	if prev := env[len(env)-2]; prev != "CLAUDE_CONFIG_DIR=/owner/claude" {
+		t.Fatalf("entry before the token = %q, want the owner's CLAUDE_CONFIG_DIR", prev)
+	}
+	// A Daemon-resolved token (env-over-file from ownerDirsFor) wins over the
+	// process env: ownerDirsFor already applied the same precedence.
+	env = claudeEnv(ownerDirs{claude: "/owner/claude", claudeToken: "fake-carried-token"})
+	if last := env[len(env)-1]; last != "CLAUDE_CODE_OAUTH_TOKEN=fake-carried-token" {
+		t.Fatalf("last adapter env entry = %q, want the carried token last-wins", last)
+	}
+	// Without any token there is no token entry at all.
+	withCleanTokenEnv(t)
+	for _, kv := range claudeEnv(ownerDirs{claude: "/owner/claude"}) {
+		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") {
+			t.Fatalf("adapter env carries a token with none configured: %q", kv)
+		}
+	}
+}
+
+// TestLoadClaudeOAuthTokenFileModes: the token file loads trimmed, env beats
+// the file, a missing file loads empty, and a group/world-readable file is
+// refused. A Set write lands owner-only.
+func TestLoadClaudeOAuthTokenFileModes(t *testing.T) {
+	withCleanTokenEnv(t)
+	stateDir := tempDir(t)
+	if got := loadClaudeOAuthToken(stateDir); got != "" {
+		t.Fatalf("token with no env or file = %q, want empty", got)
+	}
+	if err := SetClaudeOAuthToken(stateDir, "  fake-setup-token \n"); err != nil {
+		t.Fatal(err)
+	}
+	path := ClaudeOAuthTokenPath(stateDir)
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("token file mode = %v, %v; want 0600", fi.Mode(), err)
+	}
+	if got := loadClaudeOAuthToken(stateDir); got != "fake-setup-token" {
+		t.Fatalf("loaded token = %q, want trimmed", got)
+	}
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-env-token")
+	if got := loadClaudeOAuthToken(stateDir); got != "fake-env-token" {
+		t.Fatalf("loaded token = %q, want env over file", got)
+	}
+	withCleanTokenEnv(t)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadClaudeOAuthToken(stateDir); got != "" {
+		t.Fatalf("loaded token from a 0644 file = %q, want refusal", got)
+	}
+	if err := SetClaudeOAuthToken(stateDir, "   "); err == nil {
+		t.Fatal("empty token stored without an error")
+	}
+}
+
+// TestOwnerDirsEnvNeverCarriesToken: the recorded per-start env holds dirs
+// only, so the token value never reaches records, logs or API output.
+func TestOwnerDirsEnvNeverCarriesToken(t *testing.T) {
+	t.Parallel()
+	env := ownerDirs{claude: "/owner/claude", pig: "/owner/pig", claudeToken: "fake-token-value"}.env()
+	if len(env) != 2 {
+		t.Fatalf("owner env = %v, want exactly the two dir entries", env)
+	}
+	for _, kv := range env {
+		if strings.Contains(kv, "fake-token-value") {
+			t.Fatalf("owner env leaks the token: %q", kv)
+		}
+	}
+}
+
+// TestSeedClaudeDirWithTokenRemovesStaleCopies: in token mode nothing links
+// and a stale symlink or regular-file credential copy goes away, while every
+// other entry in the User dir is untouched.
+func TestSeedClaudeDirWithTokenRemovesStaleCopies(t *testing.T) {
+	t.Parallel()
+	host := tempDir(t)
+	writeTestFile(t, filepath.Join(host, claudeAuthFile), `{"host":true}`)
+	dir := filepath.Join(tempDir(t), "claude")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(dir, claudeAuthFile), `{"stale":true}`)
+	writeTestFile(t, filepath.Join(dir, "settings.json"), "{}")
+	writeTestFile(t, filepath.Join(dir, "CLAUDE.md"), "owner notes")
+	if err := seedClaudeDir(dir, host, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, claudeAuthFile)); !os.IsNotExist(err) {
+		t.Fatalf("stale regular copy survives token mode: %v", err)
+	}
+	for _, name := range []string{"settings.json", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("owner %s lost in token mode: %v", name, err)
+		}
+	}
+	// A stale symlink goes the same way, and reseeding stays empty.
+	if err := os.Symlink(filepath.Join(host, claudeAuthFile), filepath.Join(dir, claudeAuthFile)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := seedClaudeDir(dir, host, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, claudeAuthFile)); !os.IsNotExist(err) {
+		t.Fatalf("stale link survives token mode: %v", err)
+	}
+}
+
+// TestSeedClaudeDirFallbackRepairsStaleCopy: without a token an owner regular
+// file that differs from the host and is older than the host re-links, while
+// a newer or identical copy is left alone.
+func TestSeedClaudeDirFallbackRepairsStaleCopy(t *testing.T) {
+	t.Parallel()
+	host := tempDir(t)
+	writeTestFile(t, filepath.Join(host, claudeAuthFile), `{"v":2}`)
+	old := time.Now().Add(-time.Hour)
+	fresh := time.Now()
+
+	stale := filepath.Join(tempDir(t), "claude")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(stale, claudeAuthFile), `{"v":1}`)
+	if err := os.Chtimes(filepath.Join(host, claudeAuthFile), fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(stale, claudeAuthFile), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedClaudeDir(stale, host, false); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(filepath.Join(stale, claudeAuthFile)); err != nil || target != filepath.Join(host, claudeAuthFile) {
+		t.Fatalf("stale copy = %q, %v; want a re-link to the host login", target, err)
+	}
+
+	newer := filepath.Join(tempDir(t), "claude")
+	if err := os.MkdirAll(newer, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(newer, claudeAuthFile), `{"v":3}`)
+	if err := os.Chtimes(filepath.Join(newer, claudeAuthFile), fresh.Add(time.Hour), fresh.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedClaudeDir(newer, host, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Readlink(filepath.Join(newer, claudeAuthFile)); err == nil {
+		t.Fatal("newer owner copy was re-linked; it may hold a fresher refresh")
+	}
+	raw, err := os.ReadFile(filepath.Join(newer, claudeAuthFile))
+	if err != nil || string(raw) != `{"v":3}` {
+		t.Fatalf("newer owner copy changed to %q, %v", raw, err)
+	}
+
+	same := filepath.Join(tempDir(t), "claude")
+	if err := os.MkdirAll(same, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(same, claudeAuthFile), `{"v":2}`)
+	if err := seedClaudeDir(same, host, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Readlink(filepath.Join(same, claudeAuthFile)); err == nil {
+		t.Fatal("identical owner copy was re-linked for no divergence")
+	}
+}
+
+// TestOwnerDirsTokenModeEndToEnd: with a token file the Daemon resolves the
+// token per start, links no credential, and clears a copy the CLI wrote —
+// while the adapter env carries the token last and the recorded env does not.
+func TestOwnerDirsTokenModeEndToEnd(t *testing.T) {
+	withCleanTokenEnv(t)
+	stateDir := tempDir(t)
+	if err := SetClaudeOAuthToken(stateDir, "fake-e2e-token"); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(stateDir, NewFakeBackend())
+	hostDirsForTest(t, d)
+	dirs, err := d.ownerDirsFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirs.claudeToken != "fake-e2e-token" {
+		t.Fatal("owner dirs did not resolve the token file")
+	}
+	if _, err := os.Lstat(filepath.Join(dirs.claude, claudeAuthFile)); !os.IsNotExist(err) {
+		t.Fatalf("credential linked in token mode: %v", err)
+	}
+	// The CLI replaces links with private files on write: the next start
+	// clears the copy so it cannot shadow the token.
+	writeTestFile(t, filepath.Join(dirs.claude, claudeAuthFile), `{"cli":true}`)
+	if _, err := d.ownerDirsFor("alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dirs.claude, claudeAuthFile)); !os.IsNotExist(err) {
+		t.Fatalf("CLI-written copy survives token mode: %v", err)
+	}
+	env := claudeEnv(dirs)
+	if last := env[len(env)-1]; last != "CLAUDE_CODE_OAUTH_TOKEN=fake-e2e-token" {
+		t.Fatalf("last adapter env entry = %q, want the shared token", last)
+	}
+	for _, kv := range dirs.env() {
+		if strings.Contains(kv, "fake-e2e-token") {
+			t.Fatalf("recorded owner env leaks the token: %q", kv)
+		}
 	}
 }

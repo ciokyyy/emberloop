@@ -39,6 +39,31 @@ If you run inside a Session of this Daemon, the restart drops your own agent pro
 - Machine token: `<state-dir>/enderbloom/daemon.token`, new on every start, owner-only. `el restart` reads it. It is no User: it cannot create Sessions or Runs. The Daemon's own agents get it as `EL_WEB_TOKEN`.
 - Sessions and Runs record the User who created them. Sessions and Runs with no owner are hidden; nothing migrates them.
 
+## Shared Claude login
+
+All Users share one Claude login through a static setup token, so parallel
+claude adapters never race each other's OAuth refresh (the failure looked
+like `Failed to refresh OAuth token: another Claude Code process is
+refreshing it`). Per-User `CLAUDE_CONFIG_DIR` isolation of transcripts and
+settings is unchanged; only the login is shared.
+
+- One-time setup (owner): run `claude setup-token` and store the token with
+  `el-web claude-token set` (prod; add `-state-dir ~/.local/share/pig-dev`
+  for dev). It reads the token once with echo off, or one line from a pipe,
+  and writes `<state-dir>/enderbloom/claude-oauth-token` owner-only (0600).
+  Alternatively set `EL_CLAUDE_OAUTH_TOKEN` (or `CLAUDE_CODE_OAUTH_TOKEN`) on
+  the Daemon; env beats the file. Then restart the Daemon (`el restart`).
+- Yearly rotation: the setup token lasts one year. Before it expires, run
+  `claude setup-token` again, store the new token the same way, and restart.
+- What it cannot do: a token login has no Remote Control and no claude.ai
+  connectors. Anything needing those still needs an interactive `/login`.
+- Without a token the Daemon falls back to linking the host
+  `~/.claude/.credentials.json` into each User dir, and repairs one
+  divergence per start: an owner copy that differs from the host and is older
+  than the host re-links (a newer copy is left alone — it may hold a fresher
+  refresh). A refresh race still fails the turn, but the transcript names the
+  fix and the prompt retries once after ~2s.
+
 ## Service control
 
 - Status: `systemctl --user status emberloop-web`
@@ -96,9 +121,9 @@ Compress makes a Session's context smaller by Handoff restart on every Backend: 
 
 - Manual: the Compress button under the chat, or `POST /api/sessions/<id>/compress` with `{"instructions": "..."}`. It answers 409 while the Session works, and with the reason while the compress model is unset or has no pig auth. During a spawn Group of the Session it answers 202 `{"waiting":"group"}` and compresses once the Group reports.
 - Compress model: Settings page, "Context compression", "Compress model" picks `compress_model` from the authed pig models only. Until it is set, Compress stays disabled and shows why.
-- Auto: after every settled turn (never a Handoff turn), a Session at or past `compress_threshold_percent` compresses by Handoff through the same swap. It fires only at a tool boundary, never mid-turn; a working Session skips to the next turn end and an outstanding Group defers until it reports. `compress_cooldown` counts turns (non-Handoff prompts) since the last compress; the first compress is never cooled. With no compress model auto runs nothing and the Session `compressNote`/Settings warning names the reason; a blocked Session never auto-compresses until Retry or dismiss.
-- Settings page section "Context compression" writes `compress_model`, `auto_compress`, `compress_threshold_percent`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
-- The transcript shows a divider with the Handoff number, model, fallback step and retries. Oversize input adds one step Event per fold or fallback, with its reason, before the divider. The meter under the chat refreshes from the next usage Event.
+- Auto: after every settled turn (never a Handoff turn), a Session at or past `compress_threshold_percent` or the absolute `compress_threshold_tokens` cap (default 300000, 0 means off) compresses by Handoff through the same swap. The percent gate alone never fires on 1M-window claude Sessions (80% is 800k tokens, far past anything seen); the token cap is what makes auto-compress work there, while smaller pig windows keep tripping the percent gate first. It fires only at a tool boundary, never mid-turn; a working Session skips to the next turn end and an outstanding Group defers until it reports. `compress_cooldown` counts turns (non-Handoff prompts) since the last compress; the first compress is never cooled. With no compress model auto runs nothing and the Session `compressNote`/Settings warning names the reason; a blocked Session never auto-compresses until Retry or dismiss.
+- Settings page section "Context compression" writes `compress_model`, `auto_compress`, `compress_threshold_percent`, `compress_threshold_tokens`, `compress_cooldown` and `compress_instructions` to `~/.emberloop/settings.json`. Changes apply to the next turn.
+- The transcript shows a divider with the Handoff number, model, fallback step and retries. Oversize input adds one step Event per fold or fallback, with its reason, before the divider. The meter under the chat seeds an estimated usage Event at Session start and at prompt dispatch (Backend window: pig SDK, catalog or known adapter size; used from log chars at four per token), so it shows immediately instead of waiting for the first turn end; pig emits a zero-used reading when only the window is known (e.g. right after compaction), and the ACP Backends (claude, pig-acp, grok) emit a fallback reading from their known window when the adapter sends no usage_update. The meter always renders, read-only on scout, ended and unresumable Sessions; only Compress and the composer stay gated.
 - Retries: a summarizer call or a new-handle start that fails with a network, 5xx or rate-limit error retries after 2s, 8s and 30s. A summarizer failure that outlasts them falls back to the deterministic Handoff; a start failure that outlasts them ends the compress with an error. The divider shows the retry counts.
 - Blocked: a credit or auth failure (402, 401, quota) does not retry. The Session blocks: the banner "compress needs pig credits" offers Retry (runs the whole compress again), Change compress model (opens Settings) and Dismiss. The transcript keeps a `compress_blocked` card with the same Retry button. The old handle stays. New messages queue and wait until Retry succeeds or the banner is dismissed. A compress waiting on a Group is dropped by the block; a Retry while a Group still runs answers 409.
 - Dismiss: `POST /api/sessions/<id>/compress/dismiss` clears the block without a compress; the held messages then run on the old handle. It answers 409 while the Session works or no block is set.

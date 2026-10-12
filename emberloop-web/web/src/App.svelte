@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { Plus, SquarePen, Menu, MessageSquare, Settings, Layers, Gauge, Brain, FolderPlus, GitBranch, Search, LogOut } from '@lucide/svelte';
+  import { Plus, SquarePen, Menu, FolderPlus, GitBranch, Search, LogOut, X } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Input from './lib/ui/input.svelte';
   import Badge from './lib/ui/badge.svelte';
@@ -21,8 +21,10 @@
   import VersionBadge from './lib/VersionBadge.svelte';
   import Rail from './lib/Rail.svelte';
   import RunsSidebar from './lib/RunsSidebar.svelte';
+  import DrawerNav from './lib/DrawerNav.svelte';
+  import { areas } from './lib/areas.js';
   import { modelLabel } from './lib/harnesses.js';
-  import { groupTranscript, latestUsage, withImageNote, compressBlockReason } from './lib/events.js';
+  import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
@@ -107,6 +109,23 @@
     h?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   let menuOpen = $state(false);
+  // The phone drawer owns one transient history entry while open, so system
+  // Back closes it instead of leaving the app. A navigation from the drawer
+  // reuses that entry (replaceState); a plain close (scrim, Escape, X) pops it.
+  let drawerEntry = false;
+  let ignorePop = false;
+  $effect(() => {
+    if (menuOpen && !drawerEntry) {
+      history.pushState({ drawer: true }, '', window.location.href);
+      drawerEntry = true;
+    } else if (!menuOpen && drawerEntry) {
+      drawerEntry = false;
+      if (history.state?.drawer) {
+        ignorePop = true;
+        history.back();
+      }
+    }
+  });
   // Rail 2 (the contextual sidebar) collapses to the icon rail on desktop
   // and persists across reloads; on phones it is an off-canvas drawer.
   const SIDEBAR_KEY = 'eb.sidebar-collapsed';
@@ -167,8 +186,14 @@
     }, 2500);
   }
   const sessionsById = $derived(Object.fromEntries(sessions.map((s) => [s.id, s])));
+  // Grouping memoizes the settled prefix: a chunk burst only replaces the
+  // tail block, so settled cards keep their object identity (no re-render,
+  // no re-measure, no restarted entrance animation). The caches live outside
+  // the deriveds on purpose: regroups stay driven by events/sessions/status.
+  let transcriptCache = createTranscriptCache();
+  let usageCache = createUsageCache();
   const blocks = $derived([
-    ...groupTranscript(events, sessionsById, { working: meta?.status === 'working' }).map((b) =>
+    ...groupTranscriptCached(events, sessionsById, { working: meta?.status === 'working' }, transcriptCache).map((b) =>
       b.card === 'user' && swappedTexts.some((t) => b.body === t || String(b.body ?? '').startsWith(`${t}\n`))
         ? { ...b, noAnim: true }
         : b,
@@ -183,7 +208,7 @@
       events: [],
     })),
   ]);
-  const usage = $derived(latestUsage(events));
+  const usage = $derived(latestUsageCached(events, usageCache));
   const status = $derived(meta?.status ?? 'idle');
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
   let overlayH = $state(176);
@@ -205,8 +230,13 @@
   function navigate(path, { replace = false } = {}) {
     // Any navigation closes the phone drawer (backdrop taps close it
     // through the dialog itself).
+    const fromDrawer = drawerEntry && history.state?.drawer;
     menuOpen = false;
-    if (replace) history.replaceState(null, '', path);
+    if (fromDrawer) {
+      // The drawer's own entry becomes the destination: no dead Back step.
+      drawerEntry = false;
+      history.replaceState(null, '', path);
+    } else if (replace) history.replaceState(null, '', path);
     else if (window.location.pathname + window.location.search !== path) history.pushState(null, '', path);
     return applyRoute(path);
   }
@@ -453,24 +483,43 @@
     }
   }
 
-  // Events arrive per delta; applying each one re-groups the whole
-  // transcript. Collect them and apply once per frame.
+  // Events arrive per delta; regrouping per delta is O(L^2) over a burst, so
+  // chunks coalesce into one flush per window while structural events flush
+  // at once and never wait on a burst.
+  const FLUSH_MS = 80;
   let batch = [];
-  let batchFrame = 0;
+  let flushTimer = 0;
+  let lastFlush = 0;
   function flushBatch() {
-    batchFrame = 0;
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = 0;
+    }
     if (!batch.length) return;
+    lastFlush = performance.now();
     const fresh = batch;
     batch = [];
     events = [...events, ...fresh];
   }
+  function scheduleChunk() {
+    if (flushTimer) return;
+    const wait = FLUSH_MS - (performance.now() - lastFlush);
+    if (wait <= 0) {
+      if (typeof requestAnimationFrame === 'undefined') flushBatch();
+      else requestAnimationFrame(flushBatch);
+    } else {
+      flushTimer = setTimeout(flushBatch, wait);
+    }
+  }
+  const isChunkEvent = (e) => e.kind === 'assistant_chunk' || e.kind === 'thinking_chunk' || e.kind === 'tool_call_updated';
 
   function subscribe(id) {
     source = openStream(id, lastSeq, (e) => {
       if (e.seq <= lastSeq) return;
       lastSeq = e.seq;
       batch.push(e);
-      if (!batchFrame) batchFrame = requestAnimationFrame(flushBatch);
+      if (isChunkEvent(e)) scheduleChunk();
+      else flushBatch();
       if (e.kind === 'prompt') {
         const before = pendingSends;
         const after = dropEchoed(before, e);
@@ -605,12 +654,33 @@
   });
 
   // Back/forward follows the URL without pushing a new entry.
-  const onPop = () => applyRoute(window.location.pathname + window.location.search);
+  const onPop = (e) => {
+    if (ignorePop) {
+      ignorePop = false;
+      return;
+    }
+    // Back with the drawer open only closes it.
+    if (menuOpen) {
+      drawerEntry = false;
+      menuOpen = false;
+      return;
+    }
+    // Forward onto a stale drawer entry: stay on the page.
+    if (e?.state?.drawer) return;
+    applyRoute(window.location.pathname + window.location.search);
+  };
   window.addEventListener('popstate', onPop);
   onDestroy(() => window.removeEventListener('popstate', onPop));
   // Ctrl/⌘+B toggles rail 2: the drawer on phones, the collapse on desktop.
   // Typing keeps the key (bold in editors, and the composer must not lose it).
+  // Escape closes the Git panel like every other overlay, with focus back on
+  // its toggle.
   const onKeys = (e) => {
+    if (e.key === 'Escape' && gitOpen) {
+      gitOpen = false;
+      document.getElementById('git-toggle')?.focus();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -665,10 +735,12 @@
         {/each}
       </nav>
     {:else}
+      {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
         <h1 class="text-sm font-semibold tracking-tight">Emberloop</h1>
         <Button variant="ghost" size="icon-sm" onclick={newChat} aria-label="New Session"><SquarePen /></Button>
       </div>
+      {/if}
       <Button variant="secondary" class="justify-start" onclick={newChat}><Plus />New chat</Button>
       <div class="relative">
         <Search class="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -748,7 +820,7 @@
         {/if}
         <Button variant="ghost" size="sm" class="md:hidden" onclick={newChat}><Plus />New</Button>
         {#if activeProject}
-          <Button variant="outline" size="sm" onclick={() => (gitOpen = !gitOpen)} aria-pressed={gitOpen}>
+          <Button variant="outline" size="sm" id="git-toggle" onclick={() => (gitOpen = !gitOpen)} aria-pressed={gitOpen}>
             <GitBranch /><span class="max-w-24 truncate max-sm:hidden">{git?.isRepo ? git.branch : 'Git'}</span>{#if git?.isRepo && git.files.length}<Badge class="px-1.5 py-0 text-[10px]">{git.files.length}</Badge>{/if}
           </Button>
         {/if}
@@ -814,12 +886,19 @@
                 </ul>
               </div>
             {/if}
+            {#if !sessionMissing}
             {#if drafting}
               <DraftBar bind:harness={draftHarness} bind:model={draftModel} bind:effort={draftEffort} />
               <Composer status="idle" busy={sending} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
               <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
+            {/if}
+            {#if currentId && !drafting}
+              <!-- The meter always renders, read-only on scout, ended and
+                   unresumable Sessions: only the Compress button and the
+                   composer stay gated by canCompress. -->
               <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
+            {/if}
             {/if}
           </div>
         </div>
@@ -836,15 +915,27 @@
 </div>
 
 <Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota' : view === 'memory' ? 'Memory' : 'Sessions'}>
-  {#key view}
-    {@render rail2(true)}
-  {/key}
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/')}><MessageSquare />Chat</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/runs')}><Layers />Runs</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/memory')}><Brain />Memory</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/quota')}><Gauge />Quota</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/settings')}><Settings />Settings</Button>
-  {@render accountFooter()}
+  <div class="flex shrink-0 items-center gap-2" data-testid="drawer-head">
+    {#if user}
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
+      <div class="min-w-0 flex-1 leading-tight" data-testid="account">
+        <p class="truncate text-sm font-medium">{user.username}</p>
+        {#if user.admin}<p class="text-xs text-muted-foreground">Admin</p>{/if}
+      </div>
+      <Button variant="ghost" size="icon-sm" onclick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut /></Button>
+    {:else}
+      <span class="flex-1"></span>
+    {/if}
+    <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = false)} aria-label="Close menu"><X /></Button>
+  </div>
+  <!-- One scroll region for the contextual lists: nothing nests a second scroller. -->
+  <div class="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1" data-testid="drawer-scroll">
+    {#key view}
+      {@render rail2(true)}
+    {/key}
+  </div>
+  <DrawerNav view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : view === 'memory' ? 'memory' : 'chat'} onSelect={(id) => navigate(areas.find((a) => a.id === id)?.path ?? '/')} />
+  <VersionBadge inline />
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />
 <AddProjectDialog open={addOpen} busy={adding} error={addError} onClose={() => (addOpen = false)} onAdd={add} />

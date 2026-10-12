@@ -16,7 +16,7 @@
     aria-label={label}
     bind:value
     class={cn(
-      'peer flex h-14 w-full rounded-xl border border-input bg-transparent px-3.5 pt-5 pb-1.5 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-transparent focus:placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:opacity-50',
+      'peer flex h-14 w-full rounded-xl border border-input bg-transparent px-3.5 pt-5 pb-1.5 text-base shadow-xs md:text-sm outline-none transition-[color,box-shadow] placeholder:text-transparent focus:placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:opacity-50',
       inputClass,
     )}
     placeholder={rest.placeholder ?? ' '}

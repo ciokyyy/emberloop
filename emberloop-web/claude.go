@@ -192,6 +192,10 @@ type ClaudeBackend struct {
 	// daemonToken is the Daemon machine token. The el MCP server sends it as
 	// EL_WEB_TOKEN so its callbacks pass the /api gate (see auth.go).
 	daemonToken string
+	// tokenFile names the shared claude setup-token file for login-race
+	// advice text; the Daemon sets it in WithClaudeBackend. Empty keeps the
+	// generic location. It is only ever a path, never the token value.
+	tokenFile string
 	// allowedTools overrides the default MCP allow-list; the live probe
 	// points it at the echo server's tool.
 	allowedTools []string
@@ -227,15 +231,43 @@ type ClaudeBackend struct {
 	// notification before the Session counts as ready (grok connects its MCP
 	// servers after session/new answers).
 	waitMCP bool
+	// windowFor, when set, sizes fallback usage readings for one model
+	// (pig-acp: the pig catalog window; grok: its known window). Unset
+	// means the claude window. A plain struct field (not a method) because
+	// OnPromptImages runs on the embedded *ClaudeBackend, where an outer
+	// override method would never dispatch.
+	windowFor func(model string) int
 
 	mu       sync.Mutex
 	sessions map[string]*claudeState
+}
+
+// claudeWindow is the context window claude adapters report: usage_update
+// carries size 1,000,000.
+const claudeWindow = 1000000
+
+// grokWindow is the context window assumed for grok models when the adapter
+// sends no usage_update of its own.
+const grokWindow = 256000
+
+// UsageWindow reports the context window for model: the Backend override
+// when set, else the claude window. It feeds the Daemon's usage seed.
+func (b *ClaudeBackend) UsageWindow(model string) int {
+	if b.windowFor != nil {
+		return b.windowFor(model)
+	}
+	return claudeWindow
 }
 
 type claudeState struct {
 	acpID string
 	conn  acpConn
 	ready chan struct{}
+	// model sizes fallback usage readings when the adapter sends none.
+	model string
+	// lastUsed is the highest used count an adapter usage_update reported:
+	// the fallback never regresses the meter below it.
+	lastUsed int64
 	// readyOnce makes the MCP-ready signal exactly-once: success,
 	// failure-drop and concurrent DropSession all signal it, whichever
 	// runs first, so a waiting prompt always wakes.
@@ -377,7 +409,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		return fmt.Errorf("start claude adapter: %w", err)
 	}
 	b.applyTimeouts(conn)
-	st := &claudeState{conn: conn, ready: make(chan struct{})}
+	st := &claudeState{conn: conn, ready: make(chan struct{}), model: meta.Model}
 	b.mu.Lock()
 	b.sessions[meta.ID] = st
 	b.mu.Unlock()
@@ -421,7 +453,7 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 		return fmt.Errorf("restart claude adapter: %w", err)
 	}
 	b.applyTimeouts(conn)
-	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{})}
+	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{}), model: model}
 	b.mu.Lock()
 	b.sessions[daemonID] = st
 	b.mu.Unlock()
@@ -599,7 +631,7 @@ func (b *ClaudeBackend) loadSessionWithMeta(meta SessionMeta, acpID string) erro
 		return fmt.Errorf("restart claude adapter: %w", err)
 	}
 	b.applyTimeouts(conn)
-	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{})}
+	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{}), model: meta.Model}
 	b.mu.Lock()
 	b.sessions[meta.ID] = st
 	b.mu.Unlock()
@@ -667,7 +699,10 @@ func (b *ClaudeBackend) newHandoffConn(meta SessionMeta) (acpConn, string, error
 func (b *ClaudeBackend) swapHandoffHandle(meta SessionMeta, conn acpConn, acpID string) (string, func()) {
 	b.mu.Lock()
 	old, ok := b.sessions[meta.ID]
-	st := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{})}
+	st := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{}), model: meta.Model}
+	if ok && old.lastUsed > 0 {
+		st.lastUsed = old.lastUsed
+	}
 	b.sessions[meta.ID] = st
 	st.signalReady()
 	b.mu.Unlock()
@@ -786,30 +821,119 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 	// turn ends (unverified in repo: no spike run log records MIDTURN-RESP),
 	// so no Daemon guard serializes them.
 	appendEvent("status", "", "working")
+	// usageTap watches the turn for an adapter usage_update: some adapters
+	// (grok always, older claude builds at times) send none, which would
+	// leave the meter and the auto-compress gates blind. The tap records a
+	// sighting, banks the highest used count (so the fallback never
+	// regresses the meter), and sizes model text for the estimate.
+	uw := &usageWatcher{chars: len(text)}
+	b.mu.Lock()
+	uw.model, uw.floor = st.model, st.lastUsed
+	b.mu.Unlock()
+	tap := func(kind, text, status string) {
+		uw.note(kind, text)
+		if kind == "usage" {
+			if used, _, ok := parseUsageEvent(text); ok && used > 0 {
+				b.mu.Lock()
+				if cur, ok := b.sessions[sessionID]; ok && used > cur.lastUsed {
+					cur.lastUsed = used
+				}
+				b.mu.Unlock()
+			}
+		}
+		appendEvent(kind, text, status)
+	}
 	tracker := newToolTracker()
 	cbs := acpCallbacks{
 		OnUpdate: func(update map[string]any) {
-			mapACPUpdate(update, appendEvent, tracker)
+			mapACPUpdate(update, tap, tracker)
 		},
 		OnPermission: func(toolName, optionID string) {
-			appendEvent("permission", toolName+" auto-approved as "+optionID, "auto-approved")
+			tap("permission", toolName+" auto-approved as "+optionID, "auto-approved")
 		},
 	}
-	var perr error
-	if len(images) == 0 {
-		_, perr = conn.Prompt(acpID, text, cbs)
-	} else if ip, ok := conn.(acpImagePrompter); ok {
-		_, perr = ip.PromptImages(acpID, text, images, cbs)
-	} else {
-		perr = errors.New("claude adapter cannot take images")
+	promptOnce := func() error {
+		var perr error
+		if len(images) == 0 {
+			_, perr = conn.Prompt(acpID, text, cbs)
+		} else if ip, ok := conn.(acpImagePrompter); ok {
+			_, perr = ip.PromptImages(acpID, text, images, cbs)
+		} else {
+			perr = errors.New("claude adapter cannot take images")
+		}
+		return perr
 	}
-	tracker.closeOpen(appendEvent)
+	perr := promptOnce()
+	if isClaudeLoginRaceErr(perr) {
+		// The refresh lock is documented as transient: one retry after a
+		// pause. With a shared token this error should not occur at all;
+		// the retry is harmless there and the advice still applies.
+		time.Sleep(claudeLoginRetry)
+		perr = promptOnce()
+	}
+	tracker.closeOpen(tap)
+	// Without an adapter reading, estimate one from the known window so the
+	// meter moves on every ACP Backend (claude, pig-acp, grok) even mid
+	// first turn. The estimate never regresses the banked high.
+	if fb, ok := uw.fallback(b.UsageWindow(uw.model)); ok {
+		tap("usage", fb, "")
+	}
 	if perr != nil {
-		appendEvent("error", perr.Error(), "")
+		msg := perr.Error()
+		if isClaudeLoginRaceErr(perr) {
+			msg += "\n" + claudeLoginRaceAdvice(b.tokenFile)
+		}
+		appendEvent("error", msg, "")
 		appendEvent("status", "", "failed")
 		return
 	}
 	appendEvent("status", "", "idle")
+}
+
+// usageWatcher notes one ACP turn's usage sightings and model text, then
+// derives the fallback reading when the adapter sent none.
+type usageWatcher struct {
+	model string
+	floor int64
+	chars int
+	saw   bool
+}
+
+// note records one tapped Event: a usage sighting, or model text that sizes
+// the fallback estimate.
+func (w *usageWatcher) note(kind, text string) {
+	switch kind {
+	case "usage":
+		w.saw = true
+	case "assistant_chunk", "thinking_chunk":
+		w.chars += len(text)
+	}
+}
+
+// fallback renders the estimated usage reading: used is the banked high or
+// the turn's characters at four per token, whichever is higher, against the
+// known window. False when the adapter sent a reading or no window is known.
+func (w *usageWatcher) fallback(window int) (string, bool) {
+	if w.saw || window <= 0 {
+		return "", false
+	}
+	used := w.floor
+	if est := int64(w.chars / 4); est > used {
+		used = est
+	}
+	return usageText(int(used), window), true
+}
+
+// parseUsageEvent reads a usage Event's used and size counts.
+func parseUsageEvent(text string) (int64, int64, bool) {
+	var u struct {
+		Used int64 `json:"used"`
+		Size int64 `json:"size"`
+	}
+	if json.Unmarshal([]byte(text), &u) != nil || u.Size <= 0 {
+		return 0, 0, false
+	}
+	return u.Used, u.Size, true
 }
 
 // SetDaemonAddr binds the single el MCP server to the loopback Daemon it
@@ -1144,12 +1268,21 @@ func spawnACPConn(command []string) (acpConn, error) {
 }
 
 // claudeEnv is the claude adapter's environment for one owner: the host env,
-// the disabling set and the owner's CLAUDE_CONFIG_DIR. The last entry wins,
-// so it overrides a host CLAUDE_CONFIG_DIR. An empty owner dir keeps the host's.
+// the disabling set, the owner's CLAUDE_CONFIG_DIR and, when configured, the
+// shared setup token last-wins. The token comes from the owner's dirs (the
+// Daemon resolves it env-over-file on every start) or, for paths that never
+// went through ownerDirsFor, from the Daemon process env. The last entry
+// wins, so both override a host CLAUDE_CONFIG_DIR or token. An empty owner
+// dir keeps the host's. The grok and pig-acp paths need none of this: they
+// start non-claude adapters (grok agent, pi-acp) that never read
+// CLAUDE_CODE_OAUTH_TOKEN. Title calls use this too, through ownerDirsFor.
 func claudeEnv(dirs ownerDirs) []string {
 	env := append(os.Environ(), claudeAdapterEnv()...)
 	if dirs.claude != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+dirs.claude)
+	}
+	if tok := claudeTokenForEnv(dirs.claudeToken); tok != "" {
+		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+tok)
 	}
 	return env
 }

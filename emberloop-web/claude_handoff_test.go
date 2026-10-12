@@ -13,8 +13,12 @@ import (
 )
 
 func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string) (*Daemon, *ClaudeBackend, *stubConn, *httptest.Server, string, string) {
+	return claudeHandoffDaemonWithSettings(t, hook, `{"compress_model":"test-faux/faux-1"}`)
+}
+
+func claudeHandoffDaemonWithSettings(t *testing.T, hook func(SessionMeta, handleOp) []string, settingsJSON string) (*Daemon, *ClaudeBackend, *stubConn, *httptest.Server, string, string) {
 	t.Helper()
-	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, settingsJSON)
 	if hook != nil {
 		prev := memoryInjection
 		memoryInjection = func(meta SessionMeta, op handleOp) injection {
@@ -358,5 +362,54 @@ func TestClaudeStartHandleDerivesRoleFromRecord(t *testing.T) {
 			}
 			mustStripped(t, stub.newMetas[0], "sonnet")
 		})
+	}
+}
+
+// A claude usage_update at 85% of the 1M window auto-compresses by Handoff:
+// the percent gate finally has a reading to work with.
+func TestClaudeAutoCompressFiresOnUsageUpdate(t *testing.T) {
+	// Cooldown 5: the first compress is never cooled, but the Handoff turn's
+	// own replayed usage_update must not start a second one.
+	_, _, stub, _, base, id := claudeHandoffDaemonWithSettings(t, nil, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":80,"compress_cooldown":5}`)
+	stub.mu.Lock()
+	stub.updates = []map[string]any{chunk("ok"), usageUpdate(850000, 1000000)}
+	stub.mu.Unlock()
+	sendPrompt(t, base, id, "build the thing")
+	evs := waitIdleAfter(t, base, id, 1)
+	if n := len(eventsOfKind(evs, "compressed")); n != 1 {
+		t.Fatalf("compressed = %d, want 1 after the 850k/1M usage_update", n)
+	}
+	if used, size, ok := usageOf(evs); !ok || size != 1000000 || used < 850000 {
+		t.Fatalf("usage = %d/%d ok=%v, want the 850k/1M reading", used, size, ok)
+	}
+}
+
+// Below the percent gate, the absolute token gate still auto-compresses a
+// claude Session: 150k of 1M is 15%, past a 100k token cap.
+func TestClaudeAutoCompressFiresOnTokenThreshold(t *testing.T) {
+	_, _, stub, _, base, id := claudeHandoffDaemonWithSettings(t, nil, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":80,"compress_cooldown":5,"compress_threshold_tokens":100000}`)
+	stub.mu.Lock()
+	stub.updates = []map[string]any{chunk("ok"), usageUpdate(150000, 1000000)}
+	stub.mu.Unlock()
+	sendPrompt(t, base, id, "build the thing")
+	evs := waitIdleAfter(t, base, id, 1)
+	if n := len(eventsOfKind(evs, "compressed")); n != 1 {
+		t.Fatalf("compressed = %d, want 1 past the 100k token cap", n)
+	}
+}
+
+// Without any adapter usage_update, the ACP fallback still seeds a sized
+// reading from the known window, so the meter never reads empty.
+func TestClaudeFallbackUsageWithoutAdapterUpdate(t *testing.T) {
+	_, _, stub, _, base, id := claudeHandoffDaemonWithSettings(t, nil, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
+	stub.mu.Lock()
+	stub.updates = []map[string]any{chunk("ok")}
+	stub.mu.Unlock()
+	sendPrompt(t, base, id, "build the thing")
+	waitChunks(t, base, id, "ok", 1)
+	evs := transcriptOf(t, base, id)
+	used, size, ok := usageOf(evs)
+	if !ok || size != claudeWindow {
+		t.Fatalf("usage = %d/%d ok=%v, want a fallback reading sized %d", used, size, ok, claudeWindow)
 	}
 }

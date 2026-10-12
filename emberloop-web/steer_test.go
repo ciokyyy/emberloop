@@ -578,7 +578,9 @@ func TestClaudeSteerInjectsWhenAdapterSupportsIt(t *testing.T) {
 		t.Fatalf("injected steer left a queue: %+v", q)
 	}
 	close(stub.blockPrompt)
-	events := readSSE(t, srv.URL, id, 0, 5, 10*time.Second)
+	// Six, not five: the Session seeds a context reading at start, so the
+	// injected steer prompt sits one event later.
+	events := readSSE(t, srv.URL, id, 0, 6, 10*time.Second)
 	for _, e := range events {
 		if e.Kind == "prompt" && strings.Contains(e.Text, "go left") {
 			if e.Mode != "steer" || strings.Contains(e.Text, "degraded") {

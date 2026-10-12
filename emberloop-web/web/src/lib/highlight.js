@@ -76,7 +76,8 @@ export function highlightJson(line) {
   while ((m = re.exec(line))) {
     push(out, line.slice(last, m.index));
     if (m[1] !== undefined) {
-      push(out, m[1], m[2] ? 'tk-key' : 'tk-str');
+      // Go HTML-escapes & < > inside JSON strings; show the characters.
+      push(out, m[1].replace(/\\u(0026|003c|003e)/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), m[2] ? 'tk-key' : 'tk-str');
       push(out, m[2] ?? '');
     } else if (m[3] !== undefined) push(out, m[3], 'tk-num');
     else push(out, m[4], 'tk-lit');
@@ -137,8 +138,38 @@ export function highlightAnsi(line) {
   return out;
 }
 
+// decodeJsonEscapes undoes one layer of JSON string escaping on tool output
+// that arrives still encoded (Go HTML-escapes & < > as \u0026/\u003c/\u003e,
+// so a literal \uXXXX run means the payload was never decoded: real tool
+// output never contains that sequence). A fully quoted "..." line parses as
+// JSON; an unquoted fragment only decodes when it carries \uXXXX, so real
+// backslashes (Windows paths, \d regexes, printf formats) pass through
+// untouched. Anything that fails to parse returns unchanged.
+export function decodeJsonEscapes(s) {
+  const t = String(s ?? '');
+  if (!t.includes('\\')) return t;
+  const trimmed = t.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const v = JSON.parse(trimmed);
+      if (typeof v === 'string') return v;
+    } catch {
+      // Not a JSON string: fall through to the fragment path.
+    }
+  }
+  if (!/\\u[0-9a-fA-F]{4}/.test(t)) return t;
+  try {
+    const v = JSON.parse(`"${t}"`);
+    if (typeof v === 'string') return v;
+  } catch {
+    // Invalid escapes (a real \d regex, a trailing \) stay as-is.
+  }
+  return t;
+}
+
 // highlightShell colors a command line: program name, flags, strings, paths.
 export function highlightShell(line) {
+  line = decodeJsonEscapes(line);
   let first = true;
   return scan(line, [
     [/#.*/y, 'tk-comment'],
@@ -160,6 +191,7 @@ export function highlightShell(line) {
 
 // highlightOutput colors plain command output: status words, paths, numbers.
 export function highlightOutput(line) {
+  line = decodeJsonEscapes(line);
   if (hasAnsi(line)) return highlightAnsi(line);
   const trimmed = line.trim();
   if (/^(error|fatal|panic|fail|--- fail|\s*✗|\s*×)\b/i.test(trimmed) || /\b(error|failed|exception|panic)\b[:!]/i.test(trimmed)) {

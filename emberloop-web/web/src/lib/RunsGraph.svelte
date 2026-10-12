@@ -34,7 +34,7 @@
       return;
     }
     const availH = Math.max(1, vh - FIT_TOP - FIT_PAD);
-    const scale = Math.min(1, Math.max(0.4, Math.min((vw - FIT_PAD * 2) / graph.width, availH / graph.height)));
+    const scale = Math.min(1, Math.max(0.2, Math.min((vw - FIT_PAD * 2) / graph.width, availH / graph.height)));
     const x = (vw - graph.width * scale) / 2;
     const y = FIT_TOP + Math.max(0, (availH - graph.height * scale) / 2);
     pz.zoom(scale, { animate, force: true });
@@ -60,7 +60,7 @@
     const instance = Panzoom(el, {
       origin: '0 0',
       maxScale: 2.5,
-      minScale: 0.4,
+      minScale: 0.2,
       step: 0.2,
       cursor: 'grab',
       animate: true,
@@ -153,7 +153,7 @@
 <div
   bind:this={viewport}
   data-testid="runs-graph"
-  class="dots relative w-full min-w-0 shrink-0 cursor-grab overflow-hidden rounded-2xl border active:cursor-grabbing"
+  class="dots relative max-h-[70dvh] w-full min-w-0 shrink-0 cursor-grab overflow-hidden rounded-2xl border active:cursor-grabbing"
   style="height:{Math.max(360, Math.min(graph.height + 120, 680))}px;"
   onkeydown={onKey}
   tabindex="0"
