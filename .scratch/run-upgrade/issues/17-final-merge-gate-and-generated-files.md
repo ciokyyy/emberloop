@@ -4,9 +4,9 @@
 
 **Blocked by:** spec-branch-core (09)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Master moves only after a green check on the merge result
-- [ ] Conflict and red check keep master and show Needs-you with files
-- [ ] Generated files built only here, never per Ticket
-- [ ] Run seam tests; `.emberloop/check` passes
+- [x] Master moves only after a green check on the merge result
+- [x] Conflict and red check keep master and show Needs-you with files
+- [x] Generated files built only here, never per Ticket
+- [x] Run seam tests; `.emberloop/check` passes
