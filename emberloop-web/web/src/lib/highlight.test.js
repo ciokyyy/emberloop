@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { highlightCode, highlightJson, highlightDiff, diffLineKind, highlightShell, highlightOutput, highlightGrepLine, highlightFileLine, highlightAnsi, looksJson } from './highlight.js';
+import { highlightCode, highlightJson, highlightDiff, diffLineKind, highlightShell, highlightOutput, highlightGrepLine, highlightFileLine, highlightAnsi, looksJson, decodeJsonEscapes } from './highlight.js';
 
 const text = (segs) => segs.map((s) => s.text).join('');
 const cls = (segs, t) => segs.find((s) => s.text === t)?.cls;
@@ -51,5 +51,22 @@ describe('highlight', () => {
   it('detects json blocks', () => {
     expect(looksJson(['{', '"a": 1', '}'])).toBe(true);
     expect(looksJson(['hello'])).toBe(false);
+  });
+  it('decodes JSON-escaped tool output before tokenizing', () => {
+    expect(decodeJsonEscapes('git commit \\u0026\\u0026 ls')).toBe('git commit && ls');
+    expect(decodeJsonEscapes('2\\u003e\\u00261')).toBe('2>&1');
+    expect(decodeJsonEscapes('"a\\nb"')).toBe('a\nb');
+    expect(decodeJsonEscapes('say \\"hi\\" \\u0026 done')).toBe('say "hi" & done');
+    const shell = highlightShell('git commit \\u0026\\u0026 ls');
+    expect(text(shell)).toBe('git commit && ls');
+    expect(cls(shell, '&&')).toBe('tk-op');
+    const out = highlightOutput('2\\u003e\\u00261');
+    expect(text(out)).toBe('2>&1');
+  });
+  it('leaves real backslashes alone', () => {
+    expect(decodeJsonEscapes('C:\\new\\test')).toBe('C:\\new\\test');
+    expect(decodeJsonEscapes('grep \\d+ file')).toBe('grep \\d+ file');
+    expect(decodeJsonEscapes('printf %s\\n')).toBe('printf %s\\n');
+    expect(text(highlightOutput('C:\\new\\test'))).toBe('C:\\new\\test');
   });
 });
