@@ -4,9 +4,9 @@
 
 **Blocked by:** fallback-chain-run (14)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pause and resume for one Ticket and for the Run
-- [ ] Backend and model change allowed only while paused
-- [ ] Resume keeps branch and carries a Handoff; nothing restarts automatically
-- [ ] Run seam tests; `.emberloop/check` passes
+- [x] Pause and resume for one Ticket and for the Run
+- [x] Backend and model change allowed only while paused
+- [x] Resume keeps branch and carries a Handoff; nothing restarts automatically
+- [x] Run seam tests; `.emberloop/check` passes
