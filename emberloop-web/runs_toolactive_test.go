@@ -41,8 +41,9 @@ func waitTicketCond(t *testing.T, base, runID, ticketID string, cond func(action
 // with the call open raise no needs-you, and closing the call re-arms the
 // alert on the next pass.
 func TestIdleAlertWaitsForInflightToolCall(t *testing.T) {
+	// Serial: the fake-clock idle wait times out under parallel git load.
 	repo, spec := initRunRepo(t, singleIdleTicket())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -83,8 +84,9 @@ func TestIdleAlertWaitsForInflightToolCall(t *testing.T) {
 // The in-flight grace ends at the cap: a tool call open for over thirty
 // minutes no longer counts as activity and the idle alert fires.
 func TestInflightToolCapExpires(t *testing.T) {
+	// Serial: the fake-clock idle wait times out under parallel git load.
 	repo, spec := initRunRepo(t, singleIdleTicket())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -109,6 +111,7 @@ func TestInflightToolCapExpires(t *testing.T) {
 // call open, one close among several calls leaves the ticket active, and
 // foreign text never tracks.
 func TestSessionToolActiveLocked(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	s := &session{}
 	if sessionToolActiveLocked(s, now) {

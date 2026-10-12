@@ -148,7 +148,9 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 // The spec reviewer reports a blocker; the standards reviewer passes with a
 // minor so the Worker receives both blocking and non-blocking findings.
 func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
-	t.Parallel()
+	// Serial with a slow driver: this reviewer rework sequence races a fast
+	// driver the way pause/switch tests do, and under parallel load its
+	// refusal wait times out.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1071,7 +1073,8 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 // Reviewer Session. It carries the prior declined finding and reason, while
 // reminding the Reviewer not to re-raise it unless its cited lines changed.
 func TestReviewRereviewUsesSameSession(t *testing.T) {
-	t.Parallel()
+	// Serial with a slow driver: this reviewer rereview sequence races a fast
+	// driver the way pause/switch tests do.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

@@ -98,12 +98,13 @@ func startNoStopRun(t *testing.T, base, spec, repo string) runJSON {
 // fires exactly once, the verdict is recorded, and no reminder, Chain or
 // retry follows. A next prompt to the same Session still runs.
 func TestStopAfterSubmitEndsWorkerTurn(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -160,12 +161,13 @@ func TestStopAfterSubmitEndsWorkerTurn(t *testing.T) {
 // with the verdict recorded and no re-prompt: the tip is fresh, so no retell
 // follows, and the reviewer stays usable for the next prompt.
 func TestStopAfterSubmitReviewerPass(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -222,12 +224,13 @@ func TestStopAfterSubmitReviewerPass(t *testing.T) {
 // later accepted submit still stops it exactly once. Covers the Worker gate
 // refusal and the Reviewer tool-error refusal in one run.
 func TestStopAfterSubmitRefusedKeepsWorking(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -287,12 +290,13 @@ func TestStopAfterSubmitRefusedKeepsWorking(t *testing.T) {
 // A Run started with noStopAfterSubmit keeps the old behavior: the accepted
 // submit records and the turn runs to its natural end with no interrupt.
 func TestStopAfterSubmitDisabled(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -337,9 +341,10 @@ func TestStopAfterSubmitDisabled(t *testing.T) {
 // A submit on a Session that is no Run Worker's or Reviewer's never stops
 // its turn, even though the submit itself is accepted and recorded.
 func TestStopAfterSubmitIgnoresNonRunSession(t *testing.T) {
+	t.Parallel()
 	fb := NewFakeBackend()
 	fb.SetDelay(10 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -365,9 +370,10 @@ func TestStopAfterSubmitIgnoresNonRunSession(t *testing.T) {
 // the turn, and a non-terminal submit must never arm it. The pig harness
 // here runs on the fake Backend so the tool updates are scripted by hand.
 func TestStopAfterSubmitArmsUntilToolDone(t *testing.T) {
+	t.Parallel()
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	d.RegisterBackend("pig", fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -425,9 +431,10 @@ func TestStopAfterSubmitArmsUntilToolDone(t *testing.T) {
 // A non-terminal Worker submit never arms the stop, even when a submit tool
 // update lands later in the same turn.
 func TestStopAfterSubmitIgnoresNonTerminal(t *testing.T) {
+	t.Parallel()
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	d.RegisterBackend("pig", fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -490,6 +497,7 @@ func remapStopRun(t *testing.T, d *Daemon, runID string, workers map[string]stri
 // its turn: the agent keeps working and the turn-end re-prompt still runs,
 // ending needs-you after the second refusal.
 func TestStopAfterSubmitFakeReviewerEventRefused(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -504,7 +512,7 @@ func TestStopAfterSubmitFakeReviewerEventRefused(t *testing.T) {
 		// Pass without ran: refused by the tool rules.
 		return ReviewerSubmit{Verdict: "pass", Tip: cur}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -527,6 +535,7 @@ func TestStopAfterSubmitFakeReviewerEventRefused(t *testing.T) {
 // A scripted reviewer submit Event carrying an accepted payload stops its
 // own turn at once, and the turn end still records the verdict.
 func TestStopAfterSubmitFakeReviewerEventAccepted(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -545,7 +554,7 @@ func TestStopAfterSubmitFakeReviewerEventAccepted(t *testing.T) {
 			Ran: []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
 		}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

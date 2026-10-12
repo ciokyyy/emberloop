@@ -527,19 +527,39 @@ func (d *Daemon) reviewPatchIDFor(runID, ticketID, tip string) string {
 }
 
 // gitPatchID pipes `git diff base tip` into `git patch-id` and returns the
-// patch id. Empty on any failure or empty diff.
+// patch id. Empty on any failure or empty diff. Git subprocesses can fail
+// transiently under parallel-test load (fork pressure, index reads), so the
+// diff and patch-id steps retry briefly before giving up; callers already
+// degrade to tip equality on empty, so a persistent failure only costs a
+// re-review, never a wrong reuse.
 func gitPatchID(repo, base, tip string) string {
-	diff := exec.Command("git", "diff", base, tip)
-	diff.Dir = repo
-	raw, err := diff.Output()
-	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+	var raw []byte
+	for attempt := 0; attempt < 3; attempt++ {
+		diff := exec.Command("git", "diff", base, tip)
+		diff.Dir = repo
+		out, err := diff.Output()
+		if err == nil {
+			raw = out
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return ""
 	}
 	for _, args := range [][]string{{"patch-id", "--stable"}, {"patch-id"}} {
-		patch := exec.Command("git", args...)
-		patch.Dir = repo
-		patch.Stdin = bytes.NewReader(raw)
-		out, err := patch.Output()
+		var out []byte
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			patch := exec.Command("git", args...)
+			patch.Dir = repo
+			patch.Stdin = bytes.NewReader(raw)
+			out, err = patch.Output()
+			if err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		if err != nil {
 			continue
 		}
@@ -2136,6 +2156,11 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		rs.ReviewStarted[ticketID] = map[string]time.Time{}
 	}
 	_, need := appendRoundLocked(rs, ticketID, tip, now, reuse)
+	// A verdict can land before its round exists: runStartReviewer prompts
+	// before ensureReviewers opens the round, so under load a fast turn
+	// records its verdict while the other seat still starts. Backfill those
+	// early verdicts at this tip into the new round so Reviews and Rounds
+	// never diverge; stale tips stay out because only At==tip backfills.
 	if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
 		last := &rounds[len(rounds)-1]
 		for typ, t1 := range carryNote {
@@ -2144,6 +2169,25 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 				last.Reviews[typ] = rv
 			}
 		}
+		for _, typ := range requiredReviewerTypes {
+			if _, ok := last.Reviews[typ]; ok {
+				continue
+			}
+			if r, ok := rs.Reviews[ticketID][typ]; ok && r.Verdict != "" && r.At == tip {
+				var dur int64
+				if st := rs.ReviewStarted[ticketID][typ]; !st.IsZero() {
+					dur = now.Sub(st).Milliseconds()
+					if dur < 0 {
+						dur = 0
+					}
+				}
+				if last.Reviews == nil {
+					last.Reviews = map[string]roundReview{}
+				}
+				last.Reviews[typ] = roundReview{Verdict: r.Verdict, Findings: append([]ReviewFinding(nil), r.Findings...), At: tip, DurationMs: dur}
+			}
+		}
+		closeRoundIfCompleteLocked(rs, ticketID, now)
 		rs.Rounds[ticketID] = rounds
 	}
 	for _, typ := range requiredReviewerTypes {

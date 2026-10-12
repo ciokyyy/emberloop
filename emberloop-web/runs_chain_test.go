@@ -1006,13 +1006,15 @@ func newRunTestServer(t *testing.T, d *Daemon) *httptest.Server {
 // classes, the Worker stays on its first entry, and no fallback Session
 // starts.
 func TestDeadWorkerTurnFailsWithoutChainAdvance(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fb := NewFakeBackend()
 	fb.ReplyFunc = func(string, string) (string, bool) { return "", true }
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 

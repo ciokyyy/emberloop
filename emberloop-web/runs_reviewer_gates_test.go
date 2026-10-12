@@ -67,10 +67,11 @@ func countPromptTells(t *testing.T, base, sessionID, substr string) int {
 // error telling the Worker to commit; committing first is accepted and the
 // Reviewers spawn.
 func TestWorkerDoneRefusedWithNoCommitsAhead(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -96,10 +97,11 @@ func TestWorkerDoneRefusedWithNoCommitsAhead(t *testing.T) {
 // A done submit with uncommitted changes in the worktree is refused with a
 // tool error telling the Worker to commit; committing first is accepted.
 func TestWorkerDoneRefusedWithUncommittedChanges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -130,6 +132,7 @@ func TestWorkerDoneRefusedWithUncommittedChanges(t *testing.T) {
 // spends no Reviewer turn; the tell goes out once per tip, the check runs
 // once per tip, and a fixed new tip reviews and merges normally.
 func TestTipCheckRedReturnsToWorkerWithoutReviewerTurn(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -138,7 +141,7 @@ func TestTipCheckRedReturnsToWorkerWithoutReviewerTurn(t *testing.T) {
 	calls := map[string]int{}
 	var red atomic.Bool
 	red.Store(true)
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	d.tipCheck = func(_, _ /* branch */, tip string) (bool, []string) {
 		mu.Lock()
 		calls[tip]++
@@ -227,12 +230,13 @@ func TestTipCheckRedReturnsToWorkerWithoutReviewerTurn(t *testing.T) {
 // A green tip check is cached per tip: both Reviewer prompts on one tip
 // share one check, and the prompts carry it as evidence.
 func TestTipCheckGreenCachedPerTip(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	var calls atomic.Int32
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	d.tipCheck = func(_, _, _ string) (bool, []string) {
 		calls.Add(1)
 		return true, nil
@@ -511,6 +515,7 @@ func TestSelectiveCarryRerunsPassedSeatOnLargeDiff(t *testing.T) {
 // stated scope without blocking, and the Worker first prompt carries the
 // scope rule.
 func TestScopeWarningInReviewerPrompt(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\nWork in work.go only.\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -525,7 +530,7 @@ func TestScopeWarningInReviewerPrompt(t *testing.T) {
 			Ran: []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
 		}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -560,6 +565,7 @@ func TestScopeWarningInReviewerPrompt(t *testing.T) {
 // keeps a file in scope; anything else warns. Unknown bodies or diffs warn
 // on nothing.
 func TestFileInTicketScope(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		body  string
@@ -590,6 +596,7 @@ func TestFileInTicketScope(t *testing.T) {
 // The round-4+ rule is prompt-only: no note before round 4, and from round 4
 // on the prompt says restated majors do not block while blockers still do.
 func TestLateRoundReviewNote(t *testing.T) {
+	t.Parallel()
 	if got := lateRoundReviewNote(nil); got != "" {
 		t.Fatalf("no rounds note = %q, want empty", got)
 	}
@@ -607,6 +614,7 @@ func TestLateRoundReviewNote(t *testing.T) {
 
 // The selective re-review line threshold is a small documented constant.
 func TestSelectiveRereviewLineThresholdValue(t *testing.T) {
+	t.Parallel()
 	if selectiveRereviewLineThreshold != 40 {
 		t.Fatalf("selectiveRereviewLineThreshold = %d, want 40", selectiveRereviewLineThreshold)
 	}

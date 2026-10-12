@@ -33,7 +33,8 @@ func equalStrings(a, b []string) bool {
 // Group with an undelivered result, the running Run, the starting slot and
 // the live turn-end scan. Settling each clears it.
 func TestRestartStateNamesBlockers(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.sessions["busy"] = &session{live: true, busy: true, last: time.Now()}
 	d.sessions["kid"] = &session{live: true, last: time.Now()}
 	d.groups["g1"] = &spawnGroup{ID: "g1", Parent: "busy", Members: []string{"kid"}, Deliver: "group", fresh: true}
@@ -100,7 +101,8 @@ func TestRestartStateNamesBlockers(t *testing.T) {
 // Shutdown never waits out a hung turn-end scan: it logs the bound and
 // closes the Sessions, so the restart reaches Exec past the drain.
 func TestShutdownBoundsHungMining(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.mineWait = 20 * time.Millisecond
 	d.mineWG.Add(1) // a scan that never finishes
 	defer d.mineWG.Done()
@@ -131,7 +133,8 @@ func TestShutdownBoundsHungMining(t *testing.T) {
 // A repeat older than the drain plus a minute re-arms a stuck request and
 // reports true again; a repeat inside the window stays a no-op.
 func TestRequestRestartRearmsStuckRequest(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	now := time.Now()
 	d.clock = func() time.Time { return now }
 
@@ -159,7 +162,8 @@ func TestRequestRestartRearmsStuckRequest(t *testing.T) {
 // GET /api/restart reports the pending request and its blockers; POST keeps
 // answering 202 with new and the same state.
 func TestHandleRestartReportsState(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	get := func(path string) (int, RestartState) {
@@ -219,7 +223,8 @@ func TestHandleRestartReportsState(t *testing.T) {
 // Every restart step lands timestamped in the state dir's restart.log, so an
 // Exec failure stays visible after stdout went to a dead socket.
 func TestLogRestartWritesRestartLog(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.LogRestart("hello %s", "world")
 	d.LogRestart("second line")
 	raw, err := os.ReadFile(filepath.Join(d.stateDir, "enderbloom", restartLogName))
@@ -235,7 +240,8 @@ func TestLogRestartWritesRestartLog(t *testing.T) {
 // A re-arm consumed after a failed exec's cancel re-pauses the resumed Runs
 // without queueing another drain cycle behind itself.
 func TestReassertRestartRepausesWithoutSignaling(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.runs["r1"] = &runState{ID: "r1", Status: runStatusRunning, notify: make(chan struct{})}
 	if !d.RequestRestart() {
 		t.Fatal("RequestRestart returned false")

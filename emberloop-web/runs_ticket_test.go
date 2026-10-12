@@ -320,8 +320,34 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done")
-	er := getExtRun(t, srv.URL, run.ID)
-	tk := extTicketByID(er, "01-first")
+	// The run-done row can land before the ticket round closes under parallel
+	// load, so wait for the real precondition (one complete round) rather
+	// than asserting the rounds the moment the run flips to done.
+	deadline := time.Now().Add(15 * time.Second)
+	var er extRun
+	var tk extTicket
+	for {
+		er = getExtRun(t, srv.URL, run.ID)
+		tk = extTicketByID(er, "01-first")
+		if len(tk.Rounds) == 1 {
+			rd := tk.Rounds[0]
+			complete := rd.StartedAt.IsZero() == false && rd.EndedAt != nil && !rd.EndedAt.IsZero()
+			for _, typ := range []string{"reviewer-spec", "reviewer-standards"} {
+				rv, ok := rd.Reviews[typ]
+				if !ok || rv.Verdict != "pass" || rv.At != rd.Tip {
+					complete = false
+					break
+				}
+			}
+			if complete {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rounds never completed after run done: %+v", tk.Rounds)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if len(tk.Rounds) != 1 {
 		t.Fatalf("rounds = %+v, want one round", tk.Rounds)
 	}

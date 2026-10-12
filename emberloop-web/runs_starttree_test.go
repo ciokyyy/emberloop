@@ -30,10 +30,11 @@ func gitOK(dir string, args ...string) bool {
 // Luna runs 5b92408e and 9734f809 with "a branch named ... already exists")
 // is dropped and the ticket starts normally.
 func TestStartReusesMergedStaleBranch(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, singleIdleTicket())
 	testGit(t, repo, "branch", "implement/01-first")
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -53,6 +54,7 @@ func TestStartReusesMergedStaleBranch(t *testing.T) {
 // A stale directory at the worktree path that git never registered is
 // cleaned and the ticket starts normally.
 func TestStartCleansUnregisteredWorktreePath(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, singleIdleTicket())
 	stale := filepath.Join(repo, ".el-worktrees", "01-first")
 	if err := os.MkdirAll(stale, 0o755); err != nil {
@@ -68,7 +70,7 @@ func TestStartCleansUnregisteredWorktreePath(t *testing.T) {
 		}
 	}
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -89,6 +91,7 @@ func TestStartCleansUnregisteredWorktreePath(t *testing.T) {
 // deleted: the ticket goes Needs-you with the remedy while the Run and its
 // other tickets keep going.
 func TestStartBlockedOnUnmergedBranchNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, twoIdleTickets())
 	testGit(t, repo, "branch", "implement/01-first")
 	testGit(t, repo, "checkout", "implement/01-first")
@@ -97,7 +100,7 @@ func TestStartBlockedOnUnmergedBranchNeedsYou(t *testing.T) {
 	testGit(t, repo, "commit", "-m", "stale unmerged work")
 	testGit(t, repo, "checkout", "main")
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -126,11 +129,12 @@ func TestStartBlockedOnUnmergedBranchNeedsYou(t *testing.T) {
 // A registered worktree holding uncommitted changes may be a live worker's
 // desk: the start refuses it as Needs-you instead of force-removing it.
 func TestStartBlockedOnDirtyWorktreeNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, singleIdleTicket())
 	testGit(t, repo, "worktree", "add", "-b", "implement/01-first", filepath.Join(repo, ".el-worktrees", "01-first"), "HEAD")
 	writeFile(t, filepath.Join(repo, ".el-worktrees", "01-first"), "dirty.txt", "uncommitted\n")
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
