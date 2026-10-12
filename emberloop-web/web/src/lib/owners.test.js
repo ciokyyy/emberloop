@@ -53,13 +53,14 @@ describe('Run rows', () => {
 });
 
 describe('dotState', () => {
-  it('shows capped before failed and preserves Run and needs-you states', () => {
+  it('reads needs-you first, then capped and the Session or Run status', () => {
     expect(dotState({ status: 'failed' })).toBe('failed');
     expect(dotState({ status: 'failed', capped: true })).toBe('capped');
+    expect(dotState({ status: 'failed', capped: true, needsYou: true })).toBe('needs');
+    expect(dotState({ status: 'needs-you', capped: true })).toBe('needs');
     expect(dotState({ status: 'working' })).toBe('working');
     expect(dotState({ status: 'ended' })).toBe('ended');
     expect(dotState({ status: 'idle' })).toBe('idle');
-    expect(dotState({ status: 'idle', needsYou: true })).toBe('needs');
     expect(dotState({ kind: 'run', status: 'running' })).toBe('working');
     expect(dotState({ kind: 'run', status: 'done' })).toBe('ended');
     expect(dotState({ kind: 'run', status: 'paused' })).toBe('idle');

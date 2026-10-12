@@ -126,8 +126,8 @@ func sessionLimitFailureInTurn(events []Event) bool {
 	return false
 }
 
-// sessionLimitCapped reports a failed Session whose latest turn hit a provider
-// session limit. Callers must hold d.mu while the Session can change.
+// sessionLimitCapped reports whether the failed Session's persisted state
+// classifies its latest turn as a provider session-limit failure.
 func sessionLimitCapped(s *session) bool {
-	return s != nil && s.meta.Status == "failed" && (s.meta.Capped || sessionLimitFailureInTurn(s.events))
+	return s != nil && s.meta.Status == "failed" && s.meta.Capped
 }

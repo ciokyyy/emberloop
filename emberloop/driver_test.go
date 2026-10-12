@@ -1407,8 +1407,8 @@ func TestDriverTwoIdenticalRefusalsDoNotRaiseNeedsYou(t *testing.T) {
 	}
 }
 
-// Ten minutes with no worker activity marks the ticket "needs you" and sends
-// one notification on the fake clock. The slow worker still merges after it
+// Ten minutes with no worker activity still marks a ticket "needs you" even
+// when its caller suppresses stall nudges. The worker later merges after it
 // recovers, so the alert never stops the ticket.
 func TestDriverIdleWorkerRaisesNeedsYouAndStillMerges(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
@@ -1436,6 +1436,17 @@ func TestDriverIdleWorkerRaisesNeedsYouAndStillMerges(t *testing.T) {
 	world.Finish = func(id string) (DriverFinish, error) {
 		return DriverFinish{Merged: true, SHA: "sha-" + id}, nil
 	}
+	var told []string
+	world.Tell = func(id, text string) error {
+		told = append(told, text)
+		return nil
+	}
+	world.Submits = func(id string) int { return 0 }
+	nudgeChecks := 0
+	world.StallNudgeAllowed = func(id string) bool {
+		nudgeChecks++
+		return id != "01-slow"
+	}
 	var notified []string
 	world.Notify = func(id, message string) error {
 		notified = append(notified, id+": "+message)
@@ -1450,6 +1461,15 @@ func TestDriverIdleWorkerRaisesNeedsYouAndStillMerges(t *testing.T) {
 	}
 	if !strings.Contains(notified[0], "01-slow") || !strings.Contains(notified[0], "10 minutes") {
 		t.Errorf("notification = %q, want the idle ticket and the 10 minutes", notified[0])
+	}
+	if nudgeChecks == 0 {
+		t.Error("stall nudge policy was never consulted")
+	}
+	if len(told) != 0 {
+		t.Errorf("Tell calls = %v, want no stall reminders", told)
+	}
+	if len(res.Stalls) != 0 {
+		t.Errorf("Stalls = %v, want no stall record", res.Stalls)
 	}
 	if len(res.Merged) != 2 {
 		t.Errorf("merged = %v, want both tickets: the slow one recovers", res.Merged)

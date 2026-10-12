@@ -75,6 +75,7 @@ owns its `_test.go` and the behaviour below):
   the user's `Discard` op (live: the same finish with merge=false) is never
   called by the driver, and the plain report lists merges with sha, unmerged
   tickets with their last refusal, and worker follow-ups verbatim.
+  A `StallNudgeAllowed` veto suppresses only the fixed nudge, not the 10-minute idle alert.
   Checkbox progress rides the worker `submit` `completed` list of checkbox line
   texts: during a driver run the driver is the only ticket-file writer, ticks
   each fresh box once through the per-file lock, leaves the edit uncommitted,

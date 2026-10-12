@@ -76,7 +76,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/people.svelte.js` — the account list from `GET /api/users` (`people`, `refreshPeople`, `personFor`); a failed refresh keeps the last good list
 - `src/lib/UserAvatar.svelte` — a User's initial on its owner color, with a green dot while the User is online
 - `src/lib/ProjectList.svelte` — one User group's Project sections: collapsible headers (persisted `eb.projects-collapsed`, keyed by User and Project), hover rename and remove, `+` starts a draft chat there; a chat filter force-opens every section
-- `src/lib/SessionList.svelte` — Session rows of one Project section: root rows (Runs and root Sessions) with Subagents and Run Workers nested under a parent chevron (default collapsed once the Group is all done); Run rows carry the `Run` tag; needs-you rows get the amber treatment, and capped Sessions show a capped status.
+- `src/lib/SessionList.svelte` — Session rows of one Project section: root rows (Runs and root Sessions) with Subagents and Run Workers nested under a parent chevron (default collapsed once the Group is all done); Run rows carry the `Run` tag; needs-you rows take precedence in the status dot and get the amber treatment, while capped Sessions show a capped status.
 - `src/lib/sidebar.js` — Session tree, row label, chat match and the persisted collapse prefs
 - `src/lib/Composer.svelte` — floating composer with mode badge and a Stop button (`onStop`, `POST /interrupt`) while working, inline image tray plus the Session gallery (click an image to reference it by stable id; sends `imageIds` with the prompt), quiet voice tick on record start/stop (message sends stay silent)
 - `src/lib/NewSessionDialog.svelte` — harness / model / working directory

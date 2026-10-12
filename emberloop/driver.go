@@ -92,6 +92,9 @@ type DriverWorld struct {
 	// stall nudge waits until it stops. Nil means no busy signal, and idleness
 	// reads only commits, verdicts and submits.
 	Working func(ticketID string) bool
+	// StallNudgeAllowed can suppress the fixed stall reminder per ticket.
+	// Nil allows it; false does not suppress the 10-minute idle alert.
+	StallNudgeAllowed func(ticketID string) bool
 	// Parked reports the user's park action, taken with p in the pane. A
 	// parked ticket keeps its worktree and branch, so the driver never starts
 	// or finishes it; only the tickets that depend on it wait. Read every
@@ -684,7 +687,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 					}
 					due := nudges[tk.ID] == 0 && idle >= driverStallIdle ||
 						nudges[tk.ID] > 0 && idle >= driverStallIdle && now.Sub(lastNudge[tk.ID]) >= driverNudgeEvery
-					if due {
+					if due && (world.StallNudgeAllowed == nil || world.StallNudgeAllowed(tk.ID)) {
 						if spawnErr[tk.ID] == "" && world.Transcript != nil {
 							spawnErr[tk.ID] = driverSpawnError(world.Transcript(tk.ID))
 						}

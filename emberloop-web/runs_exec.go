@@ -883,15 +883,12 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			return d.runReviews(rs.ID, ticketID)
 		},
 		Tell: func(ticketID, text string) error {
-			if text == webStallNudge {
-				d.mu.Lock()
-				capped := sessionLimitCapped(d.sessions[rs.Sessions[ticketID]])
-				d.mu.Unlock()
-				if capped {
-					return nil
-				}
-			}
 			return d.runTellWorker(rs.ID, ticketID, text, systemSender)
+		},
+		StallNudgeAllowed: func(ticketID string) bool {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			return !sessionLimitCapped(d.sessions[rs.Sessions[ticketID]])
 		},
 		Working: func(ticketID string) bool {
 			d.mu.Lock()

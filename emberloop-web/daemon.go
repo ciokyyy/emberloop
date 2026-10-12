@@ -1379,9 +1379,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			if s.meta.Owner == "" {
 				continue
 			}
-			meta := s.meta
-			meta.Capped = sessionLimitCapped(s)
-			metas = append(metas, meta)
+			metas = append(metas, s.meta)
 			lasts[s.meta.ID] = s.last
 		}
 		d.mu.Unlock()
@@ -1512,7 +1510,6 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		meta := s.meta
-		meta.Capped = sessionLimitCapped(s)
 		events := append([]Event(nil), s.events...)
 		live := s.live
 		resumable, note := d.resumeViewLocked(s)
