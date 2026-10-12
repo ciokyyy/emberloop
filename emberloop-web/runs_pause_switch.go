@@ -452,7 +452,7 @@ func (d *Daemon) resumePausedRunRoles(runID, onlyTicket string) error {
 func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 	d.mu.Lock()
 	rs := d.runs[runID]
-	if rs == nil || rs.Status != runStatusRunning || !rs.PausedRoles[ticketID][role] {
+	if rs == nil || (rs.Status != runStatusRunning && !(rs.Status == runStatusPaused && rs.IdlePaused)) || !rs.PausedRoles[ticketID][role] {
 		d.mu.Unlock()
 		return nil
 	}
@@ -521,7 +521,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 
 	d.mu.Lock()
 	rs = d.runs[runID]
-	if rs == nil || rs.Status != runStatusRunning || !rs.PausedRoles[ticketID][role] {
+	if rs == nil || (rs.Status != runStatusRunning && !(rs.Status == runStatusPaused && rs.IdlePaused)) || !rs.PausedRoles[ticketID][role] {
 		d.mu.Unlock()
 		be.CloseSession(meta.ID)
 		d.removeSession(meta.ID)
