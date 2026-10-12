@@ -218,15 +218,19 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	first := ticketByID(r, "01-first").WorkerSession
 	before := countSessions(t, srv.URL)
 
-	// Every driver pass reaches the file: the row for the started Ticket is
-	// already there before any restart.
+	// Every driver pass reaches the file: the running row for the started
+	// Ticket is already there before any restart. Existence alone is not
+	// enough: the worker-start persist writes chain positions before the
+	// driver's first pass publishes, so the row can briefly read empty or
+	// queued while the Worker is already running.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if rows := runFileRows(t, stateDir, run.ID); rows["01-first"] != nil {
+		rows := runFileRows(t, stateDir, run.ID)
+		if st, ok := rows["01-first"]["state"].(string); ok && st != "" && st != "queued" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("run file has no row for 01-first")
+			t.Fatalf("run file has no running row for 01-first: %v", rows["01-first"])
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

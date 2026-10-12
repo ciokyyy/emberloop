@@ -38,7 +38,10 @@ func (d *Daemon) RestartCh() <-chan struct{} { return d.restartCh }
 // RequestRestart asks for a graceful restart. Every running Run pauses and
 // is marked ResumeOnRestart, so its driver starts nothing new while Worker
 // turns finish, and the next Daemon resumes it on its own. Repeats are
-// no-ops. It reports whether this call set the request.
+// no-ops. It reports whether this call set the request. The last published
+// driver rows reach the file first: the worker-start persist writes chain
+// positions before the driver's next pass publishes, so without this the
+// reloaded Run would show an empty or queued row for a running Worker.
 func (d *Daemon) RequestRestart() bool {
 	d.mu.Lock()
 	if d.restartReq {
@@ -52,6 +55,7 @@ func (d *Daemon) RequestRestart() bool {
 		}
 		rs.Status = runStatusPaused
 		rs.ResumeOnRestart = true
+		d.snapshotRowsLocked(rs)
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 	}
