@@ -57,6 +57,23 @@ func workerRunChain(rs *runState, ticketID string) []chainEntry {
 	return entries
 }
 
+// runRoleChain applies a per-Ticket override to the active slot of any Run
+// role; Worker and Reviewer overrides use separate maps.
+func runRoleChain(rs *runState, ticketID, role string) []chainEntry {
+	if role == "worker" {
+		return workerRunChain(rs, ticketID)
+	}
+	entries := runChain(rs, role)
+	if len(entries) == 0 {
+		return entries
+	}
+	if override, ok := rs.ReviewerOverrides[ticketID][role]; ok {
+		position := clampChainPosition(chainPosition(rs, ticketID, role), len(entries))
+		entries[position] = override
+	}
+	return entries
+}
+
 func clampChainPosition(position, length int) int {
 	if length == 0 || position < 0 {
 		return 0
@@ -100,10 +117,7 @@ func setChainPosition(rs *runState, ticketID, role string, position int) {
 func ticketChainEntries(rs *runState, ticketID string) map[string]ticketChainEntry {
 	out := map[string]ticketChainEntry{}
 	for _, role := range runRoles {
-		entries := runChain(rs, role)
-		if role == "worker" {
-			entries = workerRunChain(rs, ticketID)
-		}
+		entries := runRoleChain(rs, ticketID, role)
 		if len(entries) == 0 {
 			continue
 		}
@@ -179,11 +193,7 @@ func (d *Daemon) handleRunChainFailure(id string) bool {
 		rs.ChainPendingSubmit[ticketID] = true
 		d.persistRun(rs)
 	}
-	chainForRole := runChain(rs, role)
-	if role == "worker" {
-		chainForRole = workerRunChain(rs, ticketID)
-	}
-	chain := append([]chainEntry(nil), chainForRole...)
+	chain := append([]chainEntry(nil), runRoleChain(rs, ticketID, role)...)
 	position := clampChainPosition(chainPosition(rs, ticketID, role), len(chain))
 	d.mu.Unlock()
 
@@ -289,6 +299,12 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 				delete(rs.Reprompted, ticketID)
 			}
 		} else {
+			if rs.ReviewerOverrides[ticketID] != nil {
+				delete(rs.ReviewerOverrides[ticketID], role)
+				if len(rs.ReviewerOverrides[ticketID]) == 0 {
+					delete(rs.ReviewerOverrides, ticketID)
+				}
+			}
 			if rs.Reviewers[ticketID] == nil {
 				rs.Reviewers[ticketID] = map[string]string{}
 			}

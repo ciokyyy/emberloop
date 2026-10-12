@@ -209,8 +209,11 @@ type runState struct {
 	// PausedRoles records the Run Sessions that a manual Resume must replace
 	// with a new Session and Handoff. Keys are Ticket IDs and Run role names.
 	PausedRoles map[string]map[string]bool `json:"pausedRoles,omitempty"`
+	// ReviewerOverrides replaces the active Reviewer Chain entry for one
+	// Ticket after a Run-level Switch; later fallback entries stay intact.
+	ReviewerOverrides map[string]map[string]chainEntry `json:"reviewerOverrides,omitempty"`
 	// WorkerOverrides replaces the active Worker Chain entry for one Ticket
-	// after a Switch, without changing the fallback entries or other Tickets.
+	// after a Ticket or Run Switch, without changing fallback entries.
 	WorkerOverrides map[string]chainEntry `json:"workerOverrides,omitempty"`
 	// Discarded holds the user's discard per ticket from POST
 	// /api/runs/{id}/tickets/{tid}/discard: the ticket's worktree and
@@ -744,8 +747,8 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Driver:             el.NewDriverRun(nil),
 		Parked:             map[string]bool{},
 		TicketPaused:       map[string]bool{},
-		PausedRoles:        map[string]map[string]bool{},
 		WorkerOverrides:    map[string]chainEntry{},
+		ReviewerOverrides:  map[string]map[string]chainEntry{},
 		Discarded:          map[string]bool{},
 		RetryGen:           map[string]int{},
 		RecallOff:          map[string]bool{},
@@ -2112,7 +2115,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		base = rs.Bases[ticketID]
 	}
 	owner := rs.Owner
-	chain := append([]chainEntry(nil), runChain(rs, reviewerType)...)
+	chain := append([]chainEntry(nil), runRoleChain(rs, ticketID, reviewerType)...)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}
@@ -4455,6 +4458,18 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		d.mu.Unlock()
 		return nil, http.StatusConflict, err.Error()
 	}
+	d.mu.Lock()
+	if current := d.runs[id]; current != nil {
+		for ticketID := range current.TicketPaused {
+			if len(current.PausedRoles[ticketID]) == 0 {
+				delete(current.TicketPaused, ticketID)
+			}
+		}
+		d.persistRun(current)
+		d.broadcastRunLocked(current)
+		rs = current
+	}
+	d.mu.Unlock()
 	out := d.runJSON(rs)
 	if startDriver {
 		go d.driveRun(rs.ID, world)

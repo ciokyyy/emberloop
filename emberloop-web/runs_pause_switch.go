@@ -400,6 +400,9 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 		return nil
 	}
 	oldID := rs.Sessions[ticketID]
+	if role != "worker" {
+		oldID = rs.Reviewers[ticketID][role]
+	}
 	oldSession := d.sessions[oldID]
 	var oldMeta SessionMeta
 	var oldEvents []Event
@@ -410,10 +413,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 	branch, worktree, repo := rs.Branches[ticketID], rs.Worktrees[ticketID], rs.Repo
 	spec, ticketFile, base := rs.Spec, ticketPath(rs, ticketID), rs.Bases[ticketID]
 	owner, noRecall := rs.Owner, rs.RecallOff[ticketID]
-	chain := runChain(rs, role)
-	if role == "worker" {
-		chain = workerRunChain(rs, ticketID)
-	}
+	chain := runRoleChain(rs, ticketID, role)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}
@@ -653,6 +653,27 @@ func (d *Daemon) switchRunBackend(w http.ResponseWriter, r *http.Request, runID 
 			selected.Effort = rs.Effort
 		}
 		rs.WorkerOverrides[ticket.ID] = selected
+	}
+	if rs.ReviewerOverrides == nil {
+		rs.ReviewerOverrides = map[string]map[string]chainEntry{}
+	}
+	for _, ticket := range rs.Tickets {
+		if rs.Merged[ticket.ID] != "" || rs.Discarded[ticket.ID] {
+			continue
+		}
+		for _, role := range []string{reviewerSpecType, reviewerStandardsType} {
+			chain := runRoleChain(rs, ticket.ID, role)
+			if len(chain) == 0 {
+				continue
+			}
+			position := clampChainPosition(chainPosition(rs, ticket.ID, role), len(chain))
+			selected := entry
+			selected.Effort = chain[position].Effort
+			if rs.ReviewerOverrides[ticket.ID] == nil {
+				rs.ReviewerOverrides[ticket.ID] = map[string]chainEntry{}
+			}
+			rs.ReviewerOverrides[ticket.ID][role] = selected
+		}
 	}
 	rs.Harness, rs.Model = entry.Backend, entry.Model
 	d.persistRun(rs)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,10 @@ func TestTicketPauseSwitchResumeKeepsBranchAndWIP(t *testing.T) {
 	if next.WorkerSession == "" || next.WorkerSession == worker {
 		t.Fatalf("resumed Worker = %q, want a new Session replacing %q", next.WorkerSession, worker)
 	}
+	workerSession := getSession(t, srv.URL, next.WorkerSession)
+	if workerSession.Meta.Harness != "fake" || workerSession.Meta.Model != "switched-model" {
+		t.Fatalf("resumed Worker config = %s/%s, want fake/switched-model", workerSession.Meta.Harness, workerSession.Meta.Model)
+	}
 	if next.Branch != branch {
 		t.Fatalf("resumed branch = %q, want same branch %q", next.Branch, branch)
 	}
@@ -133,6 +138,9 @@ func TestRunPauseSwitchResumeReplacesWorkersManually(t *testing.T) {
 	if got := getRun(t, srv.URL, run.ID).Model; got != "run-switched" {
 		t.Fatalf("Run model = %q, want run-switched", got)
 	}
+	if got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").Chain["worker"].Model; got != "run-switched" {
+		t.Fatalf("active Worker model = %q, want run-switched", got)
+	}
 	if code, _, _ := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/switch", map[string]string{"backend": "fake", "model": "late"}); code != http.StatusOK {
 		t.Fatalf("repeated paused Run Switch = %d, want 200", code)
 	}
@@ -168,5 +176,71 @@ func TestRunSwitchRequiresPause(t *testing.T) {
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	if code, _, _ := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/switch", map[string]string{"backend": "fake", "model": "new-model"}); code != http.StatusConflict {
 		t.Fatalf("unpaused Run Switch = %d, want 409", code)
+	}
+}
+
+func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "Worker started before Reviewer setup")
+	ticket := ticketByID(r, "01-first")
+	tip, err := runGit(repo, "rev-parse", ticket.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.runStartReviewer(run.ID, "01-first", reviewerSpecType, strings.TrimSpace(tip)); err != nil {
+		t.Fatalf("start Reviewer: %v", err)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").ReviewerSessions[reviewerSpecType] != ""
+	}, "Reviewer started before Run pause")
+	oldWorker := ticketByID(r, "01-first").WorkerSession
+	oldReviewer := ticketByID(r, "01-first").ReviewerSessions[reviewerSpecType]
+
+	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
+		t.Fatalf("Run pause = %d, want 200", code)
+	}
+	if code, _, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/switch", map[string]string{"backend": "fake", "model": "run-switched"}); code != http.StatusOK {
+		t.Fatalf("Run Switch = %d (%s), want 200", code, errText)
+	}
+	paused := getRun(t, srv.URL, run.ID)
+	for _, role := range []string{"worker", reviewerSpecType, reviewerStandardsType} {
+		if got := ticketByID(paused, "01-first").Chain[role].Model; got != "run-switched" {
+			t.Fatalf("paused %s model = %q, want run-switched", role, got)
+		}
+	}
+
+	resumed, code := postRunAction(t, srv.URL, run.ID, "resume")
+	if code != http.StatusOK {
+		t.Fatalf("Run Resume = %d, want 200", code)
+	}
+	resumedTicket := ticketByID(resumed, "01-first")
+	if resumedTicket.State == runStatusPaused {
+		t.Fatal("Run Resume returned before clearing its Ticket pause marker")
+	}
+	if resumedTicket.WorkerSession == oldWorker || resumedTicket.WorkerSession == "" {
+		t.Fatalf("resumed Worker = %q, want replacement for %q", resumedTicket.WorkerSession, oldWorker)
+	}
+	if got := getSession(t, srv.URL, resumedTicket.WorkerSession).Meta.Model; got != "run-switched" {
+		t.Fatalf("resumed Worker model = %q, want run-switched", got)
+	}
+	newReviewer := resumedTicket.ReviewerSessions[reviewerSpecType]
+	if newReviewer == "" || newReviewer == oldReviewer {
+		t.Fatalf("resumed Reviewer = %q, want replacement for %q", newReviewer, oldReviewer)
+	}
+	reviewerSession := waitSessionCond(t, srv.URL, newReviewer, func(s sessionBody) bool {
+		_, _, ok := firstHandoffAndTask(s.Events)
+		return ok
+	}, "Run-switched Reviewer Handoff and task")
+	if reviewerSession.Meta.Harness != "fake" || reviewerSession.Meta.Model != "run-switched" {
+		t.Fatalf("resumed Reviewer config = %s/%s, want fake/run-switched", reviewerSession.Meta.Harness, reviewerSession.Meta.Model)
 	}
 }

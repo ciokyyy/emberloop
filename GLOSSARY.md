@@ -44,9 +44,17 @@ _Avoid_: Interrupt, nudge
 A prompt delivered to a Session after its current turn ends.
 _Avoid_: Queue message, next prompt
 
+**Switch**:
+A User's change of Backend and model for a paused Ticket or Run. It replaces the active Chain entry; only a manual Resume starts a new Session with a Handoff on the same branch.
+_Avoid_: Restart, fallback
+
 **Check**:
 A read-only peek by a parent at its own Subagents: one status line each, or one child plus its recent events. Never a poll: the grouped result still arrives on its own.
 _Avoid_: Poll, status query
+
+**Chain**:
+One Run role's ordered Backend/model entries. A quota, credit, auth or session-limit failure advances to the next entry; the active position is shown on each Ticket.
+_Avoid_: Fallback list
 
 **Cancel**:
 Stopping a parent's own Subagent mid-turn without touching the parent turn; kill also ends the child Session. A stop, not a message, so scouts can be stopped.

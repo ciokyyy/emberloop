@@ -739,12 +739,23 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   (state, tip, last refusal, times) after every driver pass (plus `warnings` and
   `finalMergeFiles`).
   Reload spawns nothing: running Runs become paused and needs-you Runs stay needs-you.
-  `POST /api/runs/{id}/pause` freezes the driver (no new Workers or Reviewers,
-  live Sessions untouched); `POST /api/runs/{id}/resume` continues it, including final-gate recovery. Started
-  Tickets keep their Worker Sessions and merged ones seed from their shas, so
-  Resume never starts a second Worker. `POST /api/runs/{id}/abandon` ends Run-owned
-  Sessions and removes its Ticket worktrees/branches and spec branch; the Run
-  remains listed as abandoned.
+  `POST /api/runs/{id}/pause` freezes the driver, settles and ends Run-owned
+  Worker, Reviewer and descendant Sessions, and marks their roles paused. Before
+  ending, it commits dirty Worker worktrees as `WIP: paused Run {runID} Ticket
+  {ticketID}`; clean worktrees get no empty commit. `POST /api/runs/{id}/resume`
+  manually replaces roles paused by the Run with new Sessions, a Handoff and the
+  normal injected task on each existing Ticket branch. No role resumes
+  automatically. `POST /api/runs/{id}/tickets/{ticketID}/pause|resume|switch`
+  pauses or resumes one Ticket while the Run continues; a Ticket Switch changes
+  its active Worker and Reviewer Chain entries. `POST /api/runs/{id}/switch`
+  changes those entries for every unmerged Ticket. Switch requires the Ticket or
+  Run to be paused and never starts a Session; only Resume does. A Ticket paused
+  separately stays paused through Run Pause and Resume until its own Ticket
+  Resume. `runs_pause_switch_test.go` covers pause scope, Ticket and Run
+  Worker/Reviewer switches, WIP commits, same-branch Handoffs, and manual
+  replacement. `POST /api/runs/{id}/abandon` ends Run-owned Sessions and removes
+  its Ticket worktrees/branches and spec branch; the Run remains listed as
+  abandoned.
   The Run view shows the branch and distance from master, Rebase and confirmed
   Abandon actions, final-gate files, plus Pause/Resume and Worker links.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
