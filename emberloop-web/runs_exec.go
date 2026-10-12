@@ -200,11 +200,18 @@ type runState struct {
 	// Followups holds the worker's follow-ups per ticket: the text its last
 	// submit named after Follow-ups:.
 	Followups map[string]string `json:"followups,omitempty"`
-	// Parked holds the user's park per ticket from POST
-	// /api/runs/{id}/tickets/{tid}/park: the driver never starts or
-	// finishes a parked ticket and only its dependents wait. A retry
-	// clears it.
+	// Parked holds the user's park action: the driver never starts or finishes
+	// a parked Ticket, but its Worker Session remains available for retry.
 	Parked map[string]bool `json:"parked,omitempty"`
+	// TicketPaused holds per-Ticket manual pauses. Unlike Parked, a paused
+	// Ticket's Worker Session has been ended and is replaced only on Resume.
+	TicketPaused map[string]bool `json:"ticketPaused,omitempty"`
+	// PausedRoles records the Run Sessions that a manual Resume must replace
+	// with a new Session and Handoff. Keys are Ticket IDs and Run role names.
+	PausedRoles map[string]map[string]bool `json:"pausedRoles,omitempty"`
+	// WorkerOverrides replaces the active Worker Chain entry for one Ticket
+	// after a Switch, without changing the fallback entries or other Tickets.
+	WorkerOverrides map[string]chainEntry `json:"workerOverrides,omitempty"`
 	// Discarded holds the user's discard per ticket from POST
 	// /api/runs/{id}/tickets/{tid}/discard: the ticket's worktree and
 	// branch are removed and the driver never touches it again.
@@ -562,6 +569,8 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 		d.pauseRun(w, r, id)
 	case sub == "resume" && r.Method == "POST":
 		d.resumeRun(w, r, id)
+	case sub == "switch" && r.Method == "POST":
+		d.switchRunBackend(w, r, id)
 	case sub == "rebase" && r.Method == "POST":
 		d.rebaseRun(w, r, id)
 	case sub == "abandon" && r.Method == "POST":
@@ -574,6 +583,12 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch parts[1] {
+		case "pause":
+			d.pauseTicket(w, r, id, parts[0])
+		case "resume":
+			d.resumeTicket(w, r, id, parts[0])
+		case "switch":
+			d.switchTicketBackend(w, r, id, parts[0])
 		case "steer":
 			d.steerTicket(w, r, id, parts[0])
 		case "retry":
@@ -728,6 +743,9 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		SpecRun:            specRun,
 		Driver:             el.NewDriverRun(nil),
 		Parked:             map[string]bool{},
+		TicketPaused:       map[string]bool{},
+		PausedRoles:        map[string]map[string]bool{},
+		WorkerOverrides:    map[string]chainEntry{},
 		Discarded:          map[string]bool{},
 		RetryGen:           map[string]int{},
 		RecallOff:          map[string]bool{},
@@ -784,6 +802,8 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 		for _, m := range res.Merged {
 			rs.Merged[m.ID] = m.SHA
 		}
+	}
+	if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou && rs.Status != runStatusPaused {
 		if err != nil {
 			rs.Status = runStatusFailed
 			rs.Error = err.Error()
@@ -819,7 +839,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		// a red or unverifiable base blocks the start and publishes Needs-you.
 		Parked: func(ticketID string) bool {
 			d.mu.Lock()
-			userParked := rs.Parked[ticketID]
+			userParked := rs.Parked[ticketID] || rs.TicketPaused[ticketID]
 			started := rs.Sessions[ticketID] != ""
 			discarded := rs.Discarded[ticketID]
 			repo, specBranch, runID := rs.Repo, rs.SpecBranch, rs.ID
@@ -1537,6 +1557,10 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 		d.mu.Unlock()
 		return
 	}
+	if rs.Status == runStatusPaused || rs.TicketPaused[ticketID] {
+		d.mu.Unlock()
+		return
+	}
 	sess, ok := d.sessions[id]
 	if !ok {
 		d.mu.Unlock()
@@ -1924,6 +1948,10 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	}
 	// A paused Run spawns no Reviewers: the driver is frozen and the
 	// Resume's driver re-runs this for every done submit it finds.
+	if rs.TicketPaused[ticketID] {
+		d.mu.Unlock()
+		return
+	}
 	if rs.Status == runStatusPaused {
 		d.mu.Unlock()
 		return
@@ -2064,6 +2092,10 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	if !ok {
 		d.mu.Unlock()
 		return fmt.Errorf("unknown run %q", runID)
+	}
+	if rs.TicketPaused[ticketID] {
+		d.mu.Unlock()
+		return fmt.Errorf("ticket %s is paused", ticketID)
 	}
 	// A paused Run spawns no Reviewers: fail fast so the driver's next
 	// pass retries after the Resume.
@@ -2483,7 +2515,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("run %s was abandoned", runID)
 	}
-	chain := append([]chainEntry(nil), runChain(rs, "worker")...)
+	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID)...)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}
@@ -2646,6 +2678,15 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			cleanup()
 			return fmt.Errorf("run %s was abandoned", runID)
 		}
+		if rs.TicketPaused[tk.ID] {
+			d.mu.Unlock()
+			if be != nil {
+				be.CloseSession(meta.ID)
+			}
+			d.removeSession(meta.ID)
+			cleanup()
+			return nil
+		}
 		if rs.Status == runStatusPaused || rs.Status == runStatusNeedsYou {
 			// Pause won the race after the gate: drop this attempt so no
 			// Worker exists for a paused Run, then wait for the Resume
@@ -2704,6 +2745,10 @@ func (d *Daemon) runTellWorker(runID, ticketID, text string, from promptSender) 
 		d.mu.Unlock()
 		return fmt.Errorf("unknown run %q", runID)
 	}
+	if rs.Status == runStatusPaused || rs.TicketPaused[ticketID] {
+		d.mu.Unlock()
+		return nil
+	}
 	sessionID := rs.Sessions[ticketID]
 	d.mu.Unlock()
 	if sessionID == "" {
@@ -2740,6 +2785,10 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	if !ok {
 		d.mu.Unlock()
 		return el.DriverFinish{}, fmt.Errorf("unknown run %q", runID)
+	}
+	if rs.Status == runStatusPaused || rs.TicketPaused[ticketID] {
+		d.mu.Unlock()
+		return el.DriverFinish{}, nil
 	}
 	if rs.Status == runStatusAbandoned {
 		d.mu.Unlock()
@@ -2897,6 +2946,13 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	// may have merged after this worker started. The main checkout never
 	// moves, so two specs run at once. Runs predating the spec branch keep
 	// the old master merge below.
+	d.mu.Lock()
+	current := d.runs[runID]
+	paused := current == nil || current.Status == runStatusPaused || current.TicketPaused[ticketID]
+	d.mu.Unlock()
+	if paused {
+		return el.DriverFinish{}, nil
+	}
 	if specBranch != "" {
 		sha, kept, err := d.mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, ticketID, workerID)
 		if err != nil {
@@ -3442,11 +3498,12 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			// expose its Needs-you reason unless the User explicitly parked it.
 			state = "needs-you"
 		}
-		// A user park or discard shows at once, ahead of the driver's
-		// next pass publishing the same row.
+		// User actions override the last driver row immediately.
 		if state != "merged" {
 			if rs.Discarded[t.ID] {
 				state = "discarded"
+			} else if rs.TicketPaused[t.ID] {
+				state = runStatusPaused
 			} else if rs.Parked[t.ID] {
 				state = "parked"
 			}
@@ -4152,6 +4209,15 @@ func (d *Daemon) loadRuns() {
 		if rs.Followups == nil {
 			rs.Followups = map[string]string{}
 		}
+		if rs.TicketPaused == nil {
+			rs.TicketPaused = map[string]bool{}
+		}
+		if rs.PausedRoles == nil {
+			rs.PausedRoles = map[string]map[string]bool{}
+		}
+		if rs.WorkerOverrides == nil {
+			rs.WorkerOverrides = map[string]chainEntry{}
+		}
 		if rs.Parked == nil {
 			rs.Parked = map[string]bool{}
 		}
@@ -4280,28 +4346,9 @@ func (d *Daemon) needsYouGate(runID string) {
 	}
 }
 
-// pauseRun freezes a running Run: its driver starts nothing new while
-// paused (the next start and the next poll both wait) and running Worker
-// Sessions stay live and untouched. Anything else is 409.
+// pauseRun delegates the manual pause to the Session checkpoint path.
 func (d *Daemon) pauseRun(w http.ResponseWriter, r *http.Request, id string) {
-	d.mu.Lock()
-	rs, ok := d.runs[id]
-	if !ok {
-		d.mu.Unlock()
-		http.NotFound(w, r)
-		return
-	}
-	if rs.Status != runStatusRunning {
-		d.mu.Unlock()
-		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is not running"})
-		return
-	}
-	rs.Status = runStatusPaused
-	d.persistRun(rs)
-	d.broadcastRunLocked(rs)
-	d.mu.Unlock()
-	out := d.runJSON(rs)
-	writeJSON(w, http.StatusOK, map[string]any{"run": out})
+	d.pauseRunSessions(w, r, id)
 }
 
 // resumeRun continues a paused, failed or needs-you Run without starting a
@@ -4373,6 +4420,7 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		return nil, http.StatusConflict, "run is not paused, failed or needs-you"
 	}
 	rs.SpecRun = specRun
+	preparePausedRunChainFailuresLocked(d, rs)
 	rs.Status = runStatusRunning
 	rs.ResumeOnRestart = false
 	// A failed Run or final-gate Needs-you resumes from saved state: merged
@@ -4393,6 +4441,20 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
 	d.reconcileRunChainFailures(id)
+	if err := d.resumePausedRunRoles(id, ""); err != nil {
+		d.mu.Lock()
+		if rs := d.runs[id]; rs != nil {
+			rs.Status = runStatusPaused
+			rs.unpause = make(chan struct{})
+			if startDriver {
+				rs.driving = false
+			}
+			d.persistRun(rs)
+			d.broadcastRunLocked(rs)
+		}
+		d.mu.Unlock()
+		return nil, http.StatusConflict, err.Error()
+	}
 	out := d.runJSON(rs)
 	if startDriver {
 		go d.driveRun(rs.ID, world)
@@ -4430,6 +4492,9 @@ func ticketActionLocked(rs *runState, ticketID, action string) (int, string) {
 	}
 	if rs.Status == runStatusPaused && action == "retry" {
 		return http.StatusConflict, "run is paused: resume it first, a retry does nothing while paused"
+	}
+	if rs.TicketPaused[ticketID] && (action == "steer" || action == "retry") {
+		return http.StatusConflict, "ticket is paused"
 	}
 	if rs.Discarded[ticketID] && action != "discard" {
 		return http.StatusConflict, "ticket is discarded"

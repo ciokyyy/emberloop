@@ -862,8 +862,8 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	}, "initial Worker")
 	worker := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool { return s.Meta.Status == "idle" }, "initial Worker idle")
-	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != 200 {
-		t.Fatalf("pause status = %d, want 200", code)
+	if !d.RequestRestart() {
+		t.Fatal("RequestRestart returned false")
 	}
 	// Persist a failed Session while paused, without the post-turn handler,
 	// so Resume exercises reconciliation after reload.

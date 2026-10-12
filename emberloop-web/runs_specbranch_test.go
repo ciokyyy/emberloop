@@ -237,10 +237,10 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("run file = %+v, want spec/demo at %q", saved, master)
 	}
 
-	// Pausing freezes the old driver the way a real restart kills it; the
-	// reloaded Daemon below is the only driver afterwards.
-	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != 200 {
-		t.Fatalf("pause status = %d, want 200", code)
+	// Graceful restart freezes the Run while preserving the Worker Session;
+	// the reloaded Daemon below is the only driver afterwards.
+	if !d.RequestRestart() {
+		t.Fatal("RequestRestart returned false")
 	}
 	srv.Close()
 

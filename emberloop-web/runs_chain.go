@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -39,6 +40,21 @@ func runChain(rs *runState, role string) []chainEntry {
 		return nil
 	}
 	return []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
+}
+
+// workerRunChain applies a paused Ticket's manual Switch to its active Chain
+// slot. The remaining fallback entries stay intact; callers clear the
+// override when a quota failure advances to the next slot.
+func workerRunChain(rs *runState, ticketID string) []chainEntry {
+	entries := runChain(rs, "worker")
+	if len(entries) == 0 {
+		return nil
+	}
+	position := clampChainPosition(chainPosition(rs, ticketID, "worker"), len(entries))
+	if override, ok := rs.WorkerOverrides[ticketID]; ok {
+		entries[position] = override
+	}
+	return entries
 }
 
 func clampChainPosition(position, length int) int {
@@ -85,6 +101,9 @@ func ticketChainEntries(rs *runState, ticketID string) map[string]ticketChainEnt
 	out := map[string]ticketChainEntry{}
 	for _, role := range runRoles {
 		entries := runChain(rs, role)
+		if role == "worker" {
+			entries = workerRunChain(rs, ticketID)
+		}
 		if len(entries) == 0 {
 			continue
 		}
@@ -119,8 +138,7 @@ func lastTurnFailure(events []Event) string {
 
 // handleRunChainFailure advances a failed Run Worker or Reviewer to its next
 // configured entry. The old Session and Event log are deliberately retained.
-// It returns true when the failure belongs to an advancing Chain class, so a
-// Reviewer failure is not mistaken for an invalid verdict.
+// It returns true when the failure belongs to an advancing Chain class.
 func (d *Daemon) handleRunChainFailure(id string) bool {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
@@ -153,7 +171,7 @@ func (d *Daemon) handleRunChainFailure(id string) bool {
 		return true
 	}
 	rs.chainHandling[id] = true
-	paused := rs.Status == runStatusPaused
+	paused := rs.Status == runStatusPaused || rs.TicketPaused[ticketID]
 	if !paused && role == "worker" {
 		if rs.ChainPendingSubmit == nil {
 			rs.ChainPendingSubmit = map[string]bool{}
@@ -161,7 +179,11 @@ func (d *Daemon) handleRunChainFailure(id string) bool {
 		rs.ChainPendingSubmit[ticketID] = true
 		d.persistRun(rs)
 	}
-	chain := append([]chainEntry(nil), runChain(rs, role)...)
+	chainForRole := runChain(rs, role)
+	if role == "worker" {
+		chainForRole = workerRunChain(rs, ticketID)
+	}
+	chain := append([]chainEntry(nil), chainForRole...)
 	position := clampChainPosition(chainPosition(rs, ticketID, role), len(chain))
 	d.mu.Unlock()
 
@@ -191,11 +213,13 @@ func (d *Daemon) clearChainHandling(runID, sessionID string) {
 // startRunChainFallback creates the next Session on the existing Ticket
 // worktree. A failed create only advances again when its own error is one of
 // the four Chain classes; other start failures make the Ticket Needs-you.
+// startRunChainFallback creates the next Session on the existing Ticket
+// worktree. A failed create only advances again for a classified Chain error.
 func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail string, chain []chainEntry, position int) {
 	d.mu.Lock()
 	rs := d.runs[runID]
 	old, oldOK := d.sessions[failedID]
-	if rs == nil || !oldOK || rs.Status != runStatusRunning || !d.runRoleSessionLocked(rs, ticketID, role, failedID) {
+	if rs == nil || !oldOK || rs.Status != runStatusRunning || rs.TicketPaused[ticketID] || !d.runRoleSessionLocked(rs, ticketID, role, failedID) {
 		d.mu.Unlock()
 		return
 	}
@@ -219,7 +243,7 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 	for next := position + 1; next < len(chain); next++ {
 		d.mu.Lock()
 		rs = d.runs[runID]
-		if rs == nil || rs.Status != runStatusRunning || !d.runRoleSessionLocked(rs, ticketID, role, failedID) {
+		if rs == nil || rs.Status != runStatusRunning || rs.TicketPaused[ticketID] || !d.runRoleSessionLocked(rs, ticketID, role, failedID) {
 			d.mu.Unlock()
 			return
 		}
@@ -229,12 +253,9 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 		meta := oldMeta
 		meta.ID = newID()
 		meta.Harness, meta.Model, meta.Effort = entry.Backend, entry.Model, entry.Effort
-		meta.WorkDir = worktree
-		meta.Status = "idle"
+		meta.WorkDir, meta.Status = worktree, "idle"
 		meta.CreatedAt = time.Now().UTC()
-		meta.ResumeToken = ""
-		meta.CompressBlock = ""
-		meta.Dirs = ownerDirs{}
+		meta.ResumeToken, meta.CompressBlock, meta.Dirs = "", "", ownerDirs{}
 		be, serr := d.startSession(meta)
 		if serr != nil {
 			detail = serr.msg
@@ -249,7 +270,7 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 
 		d.mu.Lock()
 		rs = d.runs[runID]
-		if rs == nil || rs.Status != runStatusRunning || !d.runRoleSessionLocked(rs, ticketID, role, failedID) {
+		if rs == nil || rs.Status != runStatusRunning || rs.TicketPaused[ticketID] || !d.runRoleSessionLocked(rs, ticketID, role, failedID) {
 			d.mu.Unlock()
 			if be != nil {
 				be.CloseSession(meta.ID)
@@ -259,6 +280,7 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 		}
 		setChainPosition(rs, ticketID, role, next)
 		if role == "worker" {
+			delete(rs.WorkerOverrides, ticketID)
 			rs.Sessions[ticketID] = meta.ID
 			if rs.SubmitRecs != nil {
 				delete(rs.SubmitRecs, ticketID)
@@ -339,6 +361,8 @@ func (d *Daemon) runFallbackTaskPrompt(runID, ticketID, role, branch, worktree, 
 
 // launchRunChainHandoff puts the failed Session's Handoff first, then sends
 // the normal role task with create-time injection on the new Session.
+// launchRunChainHandoff puts a Handoff first, then sends the normal role task
+// with create-time injection on the replacement Session.
 func (d *Daemon) launchRunChainHandoff(runID, ticketID, role, sessionID string, be Backend, handoff, task string) {
 	go func() {
 		d.pauseGate(runID)
@@ -350,8 +374,6 @@ func (d *Daemon) launchRunChainHandoff(runID, ticketID, role, sessionID string, 
 			d.cleanupUnclaimedRunChainSession(runID, ticketID, role, sessionID, be)
 			return
 		}
-		// The Handoff is a context-only turn. Defer this new Session's normal
-		// create injection until the rebuilt role task follows it.
 		s.inject = injection{}
 		s.injectOp = handleResume
 		s.busy = true
@@ -375,8 +397,6 @@ func (d *Daemon) launchRunChainHandoff(runID, ticketID, role, sessionID string, 
 		meta := s.meta
 		d.mu.Unlock()
 
-		// Handoff turns release their handle. Resume first, then restore the
-		// create-time injection so resumeReleased cannot downgrade it to Profile-only.
 		if code, msg := d.resumeReleased(sessionID); code != 0 {
 			d.markRunChainNeedsYou(runID, ticketID, role, "could not resume fallback Session: "+msg, false)
 			return
@@ -393,11 +413,20 @@ func (d *Daemon) launchRunChainHandoff(runID, ticketID, role, sessionID string, 
 			d.cleanupUnclaimedRunChainSession(runID, ticketID, role, sessionID, be)
 			return
 		}
-		s.inject = h.inject
-		s.injectOp = handleCreate
+		s.inject, s.injectOp = h.inject, handleCreate
 		d.mu.Unlock()
-		if _, code := d.routeLive(sessionID, "steer", task); code != 202 {
+		if _, code := d.routeLive(sessionID, "steer", task); code != http.StatusAccepted {
 			d.markRunChainNeedsYou(runID, ticketID, role, fmt.Sprintf("could not send fallback task (HTTP %d)", code), false)
+			return
+		}
+		if role == "worker" {
+			d.mu.Lock()
+			if rs := d.runs[runID]; rs != nil && rs.Sessions[ticketID] == sessionID && !rs.PausedRoles[ticketID]["worker"] {
+				delete(rs.TicketPaused, ticketID)
+				d.persistRun(rs)
+				d.broadcastRunLocked(rs)
+			}
+			d.mu.Unlock()
 		}
 	}()
 }

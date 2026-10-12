@@ -104,10 +104,9 @@ func runFileRows(t *testing.T, stateDir, id string) map[string]map[string]any {
 	return saved.Rows
 }
 
-// A paused Run starts nothing new and leaves its Workers alone: after the
-// pause a submitted done still waits, the next Ticket stays queued, and the
-// Worker Session is the same one. Resume continues to done with no second
-// Worker for any Ticket, and the finished Run stays listed and readable.
+// A manual Run pause ends active Sessions after checkpointing their work.
+// Resume is explicit and replaces each started Worker with a Handoff Session
+// on the same branch; unstarted Tickets remain queued until the Run continues.
 func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	repo, spec := initRunRepo(t, chainTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -128,8 +127,8 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 		t.Fatalf("status = %q, want paused", got)
 	}
 
-	// The Worker submits while paused: nothing merges and nothing new
-	// starts until the Resume.
+	// The old Session is ended by Pause. A late submit on that history cannot
+	// merge or start reviewers, and the dependent Ticket stays queued.
 	submitSession(t, srv.URL, first, "done", []string{"alpha"})
 	assertHolds(t, 1500*time.Millisecond, "01-first merged while paused", func() bool {
 		return ticketByID(getRun(t, srv.URL, run.ID), "01-first").State != "merged"
@@ -138,7 +137,10 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 		return ticketByID(getRun(t, srv.URL, run.ID), "02-second").WorkerSession == ""
 	})
 	if got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").WorkerSession; got != first {
-		t.Fatalf("01-first worker = %q, want the same %q", got, first)
+		t.Fatalf("paused 01-first worker = %q, want the ended Session %q", got, first)
+	}
+	if ended := getSession(t, srv.URL, first).Meta.Status; ended != "ended" {
+		t.Fatalf("paused worker status = %q, want ended", ended)
 	}
 
 	resumed, code := postRunAction(t, srv.URL, run.ID, "resume")
@@ -148,9 +150,11 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	if resumed.Status != "running" {
 		t.Fatalf("resumed status = %q, want running", resumed.Status)
 	}
-	if got := ticketByID(resumed, "01-first").WorkerSession; got != first {
-		t.Fatalf("resumed 01-first worker = %q, want the same %q (no second Worker)", got, first)
+	if got := ticketByID(resumed, "01-first").WorkerSession; got == first || got == "" {
+		t.Fatalf("resumed 01-first worker = %q, want a new Session replacing %q", got, first)
 	}
+	nextWorker := ticketByID(resumed, "01-first").WorkerSession
+	submitSession(t, srv.URL, nextWorker, "done", []string{"alpha"})
 
 	// The done submit from the pause now drives: reviewers, merge, and the
 	// next Ticket starts exactly once.
@@ -227,10 +231,10 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Pausing first freezes the old driver, the way a real restart kills
-	// it: the reloaded Daemon below is the only driver afterwards.
-	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
-		t.Fatalf("pause status = %d, want 200", code)
+	// RequestRestart is the graceful-restart path: it freezes the driver but
+	// preserves live Worker Sessions so a reload resumes them without replacement.
+	if !d.RequestRestart() {
+		t.Fatal("RequestRestart returned false")
 	}
 	srv.Close()
 
@@ -476,7 +480,7 @@ func TestFailedRunResumesWithSameWorker(t *testing.T) {
 	if errText != "" {
 		t.Fatalf("error after resume = %q, want cleared", errText)
 	}
-	if got := ticketByID(resumed, "01-first").WorkerSession; got != first {
-		t.Fatalf("resumed worker = %q, want the same %q", got, first)
+	if got := ticketByID(resumed, "01-first").WorkerSession; got == first || got == "" {
+		t.Fatalf("resumed worker = %q, want a replacement for %q", got, first)
 	}
 }
