@@ -429,3 +429,200 @@ export function latestUsage(events) {
   }
   return null;
 }
+// Incremental transcript cache. A fast model appends hundreds of chunk deltas
+// to the same tail block; rebuilding every block per flush is O(L^2) total
+// (one JSON.parse per event per flush included), and fresh block identities
+// make every card re-render, re-measure and restart its entrance animation.
+// The cache keeps the settled prefix with the same object identities, so
+// settled cards never update, and only replaces the growing tail block. Any
+// prepend (load earlier), Session switch or working-flag flip falls back to
+// one full regroup and re-primes the cache.
+export function createTranscriptCache() {
+  return { len: 0, lastRef: null, sessions: null, working: undefined, blocks: [] };
+}
+
+export function groupTranscriptCached(events, sessionsById = {}, opts = {}, cache = null) {
+  const c = cache ?? createTranscriptCache();
+  const working = opts.working;
+  if (
+    working !== false &&
+    c.blocks.length > 0 &&
+    c.len > 0 &&
+    c.len <= events.length &&
+    c.sessions === sessionsById &&
+    c.working === working &&
+    events[c.len - 1] === c.lastRef
+  ) {
+    const merged = appendToTail(c.blocks, events.slice(c.len));
+    if (merged) {
+      const tagged = withLiveTag(merged, working);
+      c.blocks = tagged;
+      c.len = events.length;
+      c.lastRef = events[events.length - 1] ?? null;
+      return tagged;
+    }
+  }
+  const blocks = groupTranscript(events, sessionsById, opts);
+  const tagged = withLiveTag(blocks, working);
+  c.blocks = tagged;
+  c.len = events.length;
+  c.lastRef = events[events.length - 1] ?? null;
+  c.sessions = sessionsById;
+  c.working = working;
+  return tagged;
+}
+
+// withLiveTag marks only the tail block live while the turn is working, so a
+// live card (thinking, tool strip) can drop its height animation without a
+// settled card ever keeping a stale flag: the previous tail is always
+// replaced, and a full regroup builds fresh objects.
+function withLiveTag(blocks, working) {
+  if (!blocks.length) return blocks;
+  const live = working === true;
+  const tail = blocks[blocks.length - 1];
+  if (!!tail.live === live) return blocks;
+  const next = blocks.slice();
+  next[next.length - 1] = { ...tail, live };
+  return next;
+}
+
+// appendToTail merges fresh streamable events into the tail block, reusing
+// every settled prefix identity. It mirrors the tail-merging rules of
+// groupTranscript for chunk and tool-update kinds only; anything that would
+// open a new block (or any structural kind) returns null and the caller
+// falls back to a full regroup.
+function appendToTail(blocks, fresh) {
+  if (!fresh.length) return blocks;
+  const last = blocks[blocks.length - 1];
+  let tail = last;
+  for (const e of fresh) {
+    const kind = e.kind;
+    if (kind === 'assistant_chunk') {
+      if (tail.card !== 'assistant') return null;
+      tail = { ...tail, body: tail.body + (e.text ?? ''), events: [...tail.events, e] };
+      continue;
+    }
+    if (kind === 'thinking_chunk') {
+      const body = e.text ?? '';
+      if (tail.card === 'thinking') {
+        tail = { ...tail, body: tail.body + body, events: [...tail.events, e] };
+        continue;
+      }
+      if (tail.card === 'toolstrip') {
+        const runs = tail.runs.slice();
+        const lr = runs[runs.length - 1];
+        if (lr?.thinking) {
+          runs[runs.length - 1] = { ...lr, output: lr.output + body, events: [...lr.events, e] };
+        } else {
+          if (!body.trim()) continue;
+          runs.push({ key: e.seq, name: 'thinking', thinking: true, input: '', output: body, status: 'completed', events: [e] });
+        }
+        tail = { ...tail, runs, events: [...tail.events, e] };
+        continue;
+      }
+      if (!body.trim()) continue;
+      return null;
+    }
+    if (kind === 'tool_call_started' || kind === 'tool_call_updated' || kind === 'tool_call_finished') {
+      const c = cardForEvent(e);
+      if (c.card !== 'tool' || STRIP_EXCLUDED.has(String(c.title ?? '').toLowerCase())) return null;
+      if (tail.card !== 'toolstrip') return null;
+      const status = c.status || e.status || '';
+      const run = { key: e.seq, name: c.title, server: c.server, input: c.input, output: c.output, status, toolId: c.toolId, events: [e] };
+      const runs = tail.runs.slice();
+      let merged = false;
+      if (run.toolId) {
+        const idx = runs.findIndex((r) => r.toolId && r.toolId === run.toolId);
+        if (idx !== -1) {
+          const hit = runs[idx];
+          runs[idx] = {
+            ...hit,
+            title: run.name || hit.title,
+            server: run.server || hit.server,
+            input: run.input || hit.input,
+            output: run.output || hit.output,
+            status: run.status || hit.status,
+            events: [...hit.events, e],
+          };
+          merged = true;
+        }
+      }
+      if (!merged && kind !== 'tool_call_started') {
+        const open = runs[runs.length - 1];
+        if (open && open.name === run.name && stripRunStatus(open.status) === 'running') {
+          runs[runs.length - 1] = {
+            ...open,
+            server: run.server || open.server,
+            input: run.input || open.input,
+            output: run.output || open.output,
+            status: run.status || open.status,
+            events: [...open.events, e],
+          };
+          merged = true;
+        }
+      }
+      if (!merged) runs.push(run);
+      tail = {
+        ...tail,
+        title: merged ? tail.title : run.name || tail.title,
+        runs,
+        events: [...tail.events, e],
+        status: stripRunStatus(runs[runs.length - 1]?.status),
+      };
+      tail = extendElapsed(tail);
+      continue;
+    }
+    return null;
+  }
+  return tail === last ? blocks : [...blocks.slice(0, -1), tail];
+}
+
+// extendElapsed refreshes a tail strip's elapsedMs from its cached time
+// bounds plus the just-merged event, instead of re-scanning every event of
+// the burst per flush. _t is an internal bound cache, never rendered.
+function extendElapsed(tail) {
+  const prev = tail._t;
+  const evs = tail.events;
+  let min = prev?.min ?? Infinity;
+  let max = prev?.max ?? -Infinity;
+  const from = prev ? prev.n : 0;
+  for (let i = from; i < evs.length; i++) {
+    const t = Date.parse(evs[i].at);
+    if (!Number.isNaN(t)) {
+      if (t < min) min = t;
+      if (t > max) max = t;
+    }
+  }
+  const elapsedMs = min === Infinity ? 0 : Math.max(0, max - min);
+  return { ...tail, elapsedMs, _t: { min, max, n: evs.length } };
+}
+
+// latestUsageCached scans only the tail since the last call: usage events
+// are rare, so a per-flush reverse scan over the whole transcript is pure
+// waste during chunk bursts.
+export function createUsageCache() {
+  return { len: 0, lastRef: null, value: null };
+}
+
+export function latestUsageCached(events, cache = null) {
+  const c = cache ?? createUsageCache();
+  if (c.len > 0 && c.len <= events.length && events[c.len - 1] === c.lastRef) {
+    for (let i = c.len; i < events.length; i++) {
+      const e = events[i];
+      if (e.kind !== 'usage') continue;
+      try {
+        const u = JSON.parse(e.text);
+        if (u && u.size > 0) c.value = { used: Number(u.used) || 0, size: Number(u.size) };
+      } catch {
+        // Malformed usage Event: keep the last good value.
+      }
+    }
+    c.len = events.length;
+    c.lastRef = events[events.length - 1] ?? null;
+    return c.value;
+  }
+  c.value = latestUsage(events);
+  c.len = events.length;
+  c.lastRef = events[events.length - 1] ?? null;
+  return c.value;
+}

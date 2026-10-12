@@ -22,7 +22,7 @@
   import Rail from './lib/Rail.svelte';
   import RunsSidebar from './lib/RunsSidebar.svelte';
   import { modelLabel } from './lib/harnesses.js';
-  import { groupTranscript, latestUsage, withImageNote, compressBlockReason } from './lib/events.js';
+  import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
@@ -167,8 +167,14 @@
     }, 2500);
   }
   const sessionsById = $derived(Object.fromEntries(sessions.map((s) => [s.id, s])));
+  // Grouping memoizes the settled prefix: a chunk burst only replaces the
+  // tail block, so settled cards keep their object identity (no re-render,
+  // no re-measure, no restarted entrance animation). The caches live outside
+  // the deriveds on purpose: regroups stay driven by events/sessions/status.
+  let transcriptCache = createTranscriptCache();
+  let usageCache = createUsageCache();
   const blocks = $derived([
-    ...groupTranscript(events, sessionsById, { working: meta?.status === 'working' }).map((b) =>
+    ...groupTranscriptCached(events, sessionsById, { working: meta?.status === 'working' }, transcriptCache).map((b) =>
       b.card === 'user' && swappedTexts.some((t) => b.body === t || String(b.body ?? '').startsWith(`${t}\n`))
         ? { ...b, noAnim: true }
         : b,
@@ -183,7 +189,7 @@
       events: [],
     })),
   ]);
-  const usage = $derived(latestUsage(events));
+  const usage = $derived(latestUsageCached(events, usageCache));
   const status = $derived(meta?.status ?? 'idle');
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
   let overlayH = $state(176);
@@ -453,24 +459,43 @@
     }
   }
 
-  // Events arrive per delta; applying each one re-groups the whole
-  // transcript. Collect them and apply once per frame.
+  // Events arrive per delta; regrouping per delta is O(L^2) over a burst, so
+  // chunks coalesce into one flush per window while structural events flush
+  // at once and never wait on a burst.
+  const FLUSH_MS = 80;
   let batch = [];
-  let batchFrame = 0;
+  let flushTimer = 0;
+  let lastFlush = 0;
   function flushBatch() {
-    batchFrame = 0;
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = 0;
+    }
     if (!batch.length) return;
+    lastFlush = performance.now();
     const fresh = batch;
     batch = [];
     events = [...events, ...fresh];
   }
+  function scheduleChunk() {
+    if (flushTimer) return;
+    const wait = FLUSH_MS - (performance.now() - lastFlush);
+    if (wait <= 0) {
+      if (typeof requestAnimationFrame === 'undefined') flushBatch();
+      else requestAnimationFrame(flushBatch);
+    } else {
+      flushTimer = setTimeout(flushBatch, wait);
+    }
+  }
+  const isChunkEvent = (e) => e.kind === 'assistant_chunk' || e.kind === 'thinking_chunk' || e.kind === 'tool_call_updated';
 
   function subscribe(id) {
     source = openStream(id, lastSeq, (e) => {
       if (e.seq <= lastSeq) return;
       lastSeq = e.seq;
       batch.push(e);
-      if (!batchFrame) batchFrame = requestAnimationFrame(flushBatch);
+      if (isChunkEvent(e)) scheduleChunk();
+      else flushBatch();
       if (e.kind === 'prompt') {
         const before = pendingSends;
         const after = dropEchoed(before, e);

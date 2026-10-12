@@ -142,3 +142,17 @@ describe('Card toolstrip wiring', () => {
     expect(container.querySelector('[data-card="toolstrip"]')).not.toBeNull();
   });
 });
+
+describe('ToolStrip live gating', () => {
+  it('marks the live stage so per-line entrances stay off while streaming', () => {
+    const { container } = render(ToolStrip, { props: { block: liveBlock() } });
+    expect(container.querySelector('[data-testid="toolstrip-stage"]')?.parentElement?.getAttribute('data-live')).toBe('true');
+  });
+  it('windows a long live output to the tail with an earlier-lines note', () => {
+    const output = Array.from({ length: 250 }, (_, i) => `line${i}`).join('\n');
+    const block = stripOf([toolEv(1, 'tool_call_started', { id: 't1', name: 'bash', input: '', output, status: 'running' })]);
+    const { container } = render(ToolStrip, { props: { block } });
+    expect(container.querySelectorAll('[data-testid="toolstrip-stage"] .ts-line')).toHaveLength(200);
+    expect(container.querySelector('[data-testid="toolstrip-stage"]')?.textContent).toContain('+50 earlier lines');
+  });
+});
