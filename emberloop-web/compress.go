@@ -141,7 +141,7 @@ func autoCompressDue(events []Event, set compressSettings) bool {
 // busy (the submit-gate arm, the finishTurn drain): runDeferredCompress runs
 // the wait once the Session settles and re-verifies it is still due.
 func (d *Daemon) armAutoCompress(id string) bool {
-	set := readCompressSettings()
+	set := d.compressSettingsOf()
 	if !set.Auto {
 		return false
 	}
@@ -424,7 +424,7 @@ func (d *Daemon) runDeferredCompress(id string) {
 	if s.compressAuto {
 		events := append([]Event(nil), s.events...)
 		d.mu.Unlock()
-		if !autoCompressDue(events, readCompressSettings()) {
+		if !autoCompressDue(events, d.compressSettingsOf()) {
 			d.mu.Lock()
 			if cur, ok := d.sessions[id]; ok && cur.compressAuto {
 				cur.compressWait = false

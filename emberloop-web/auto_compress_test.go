@@ -287,10 +287,11 @@ func TestAutoCompressDueTable(t *testing.T) {
 // over the window compresses even with five turns to wait.
 func TestAutoCompressBypassesCooldownPastWindow(t *testing.T) {
 	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":80,"compress_cooldown":5}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":80,"compress_cooldown":5}`)
 	be := NewFakeBackend()
 	be.UsageSize = 40
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -314,10 +315,11 @@ func TestAutoCompressBypassesCooldownPastWindow(t *testing.T) {
 // spending a Handoff, and the live path still compresses once due again.
 func TestDeferredAutoWaitRechecksMeter(t *testing.T) {
 	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.Delay = 5 * time.Second
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

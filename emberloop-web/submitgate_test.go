@@ -428,11 +428,12 @@ func waitDeadFailed(t *testing.T, base, id string) (SessionMeta, []Event) {
 func TestDeadTurnNearWindowCompressesBeforeGate(t *testing.T) {
 	withSubmitGate(t)
 	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.UsageSize = 10
 	be.ReplyFunc = func(_, _ string) (string, bool) { return "", true }
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

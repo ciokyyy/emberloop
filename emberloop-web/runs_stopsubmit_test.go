@@ -110,6 +110,7 @@ func TestStopAfterSubmitEndsWorkerTurn(t *testing.T) {
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	worker := waitWorkerSession(t, srv.URL, run.ID, "01-first")
 	waitStatus(t, srv.URL, worker, "working", 15*time.Second)
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	// Without the stop the turn would sleep the whole 30s Delay.
 	waitStatus(t, srv.URL, worker, "idle", 15*time.Second)
@@ -171,6 +172,7 @@ func TestStopAfterSubmitReviewerPass(t *testing.T) {
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	worker := waitWorkerSession(t, srv.URL, run.ID, "01-first")
 	waitStatus(t, srv.URL, worker, "working", 15*time.Second)
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	waitStatus(t, srv.URL, worker, "idle", 15*time.Second)
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
@@ -247,6 +249,7 @@ func TestStopAfterSubmitRefusedKeepsWorking(t *testing.T) {
 	if st := getSession(t, srv.URL, worker).Meta.Status; st != "working" {
 		t.Fatalf("status after refusal = %q, want working", st)
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	waitStatus(t, srv.URL, worker, "idle", 15*time.Second)
 	if n := fb.InterruptCount(worker); n != 1 {
@@ -296,6 +299,7 @@ func TestStopAfterSubmitDisabled(t *testing.T) {
 	run := startNoStopRun(t, srv.URL, spec, repo)
 	worker := waitWorkerSession(t, srv.URL, run.ID, "01-first")
 	waitStatus(t, srv.URL, worker, "working", 15*time.Second)
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	time.Sleep(1500 * time.Millisecond)
 	if n := fb.InterruptCount(worker); n != 0 {
