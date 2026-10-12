@@ -85,7 +85,7 @@ func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
 	_, rec, base, id := queueDaemon(t, 300*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitPrompt(t, base, id, "# Handoff", 5*time.Second)
@@ -120,7 +120,7 @@ func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
 	d, rec, base, id := queueDaemon(t, 300*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitPrompt(t, base, id, "# Handoff", 5*time.Second)
@@ -192,7 +192,7 @@ func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
 			}); code != http.StatusCreated {
 				t.Fatalf("spawn = %d %v", code, out)
 			}
-			if code, body := compressReq(t, base, parent, ""); code != http.StatusAccepted || body["waiting"] != "group" {
+			if code, body := compressReqIdle(t, base, parent, ""); code != http.StatusAccepted || body["waiting"] != "group" {
 				t.Fatalf("compress while the Group runs = %d %v, want 202 waiting", code, body)
 			}
 			if n := len(eventsOfKind(transcriptOf(t, base, parent), "compressed")); n != 0 {
@@ -216,7 +216,7 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 	_, rec, base, parent := queueDaemon(t, 20*time.Millisecond)
 	sendPrompt(t, base, parent, "plan the work")
 	waitStatus(t, base, parent, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, parent, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, parent, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitSettled(t, base, parent, func(evs []Event) bool {
@@ -291,7 +291,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 	d2.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
-	if code, body := compressReq(t, srv2.URL, parent, ""); code != http.StatusAccepted || body["waiting"] != nil {
+	if code, body := compressReqIdle(t, srv2.URL, parent, ""); code != http.StatusAccepted || body["waiting"] != nil {
 		t.Fatalf("compress after restart = %d %v, want 202 with no wait", code, body)
 	}
 	waitSettled(t, srv2.URL, parent, func(evs []Event) bool {
@@ -312,7 +312,7 @@ func TestCompressNowSettlesHeldCompress(t *testing.T) {
 	d.sessions[id].compressWait = true
 	d.sessions[id].compressInstr = "keep the plan"
 	d.mu.Unlock()
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitSettled(t, base, id, func(evs []Event) bool {

@@ -133,7 +133,7 @@ func TestResumeAndHandoffStartsCarryOwnerEnv(t *testing.T) {
 		waitStatus(t, base, id, "working", 5*time.Second)
 		waitStatus(t, base, id, "idle", 5*time.Second)
 	}
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitIdleAfter(t, base, id, 1)

@@ -126,7 +126,7 @@ func TestClaudeHandoffSwapCompressesAndResumes(t *testing.T) {
 	metaBefore := d.sessions[id].meta
 	d.mu.Unlock()
 
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -208,7 +208,7 @@ func TestClaudeHandoffTokenSurvivesRestart(t *testing.T) {
 	d, _, stub, srv, base, id := claudeHandoffDaemon(t, nil)
 	sendPrompt(t, base, id, "build the thing")
 	waitChunks(t, base, id, "ok", 1)
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitIdleAfter(t, base, id, 1)
@@ -257,7 +257,7 @@ func TestClaudeHandoffInjectsProfileRecallThenHandoff(t *testing.T) {
 	_, _, stub, _, base, id := claudeHandoffDaemon(t, hook)
 	sendPrompt(t, base, id, "build the thing")
 	waitChunks(t, base, id, "ok", 1)
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -291,7 +291,7 @@ func TestClaudeHandoffFailureKeepsOldHandle(t *testing.T) {
 	stub.mu.Lock()
 	stub.newErr = errNoAdapter
 	stub.mu.Unlock()
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitEventKind(t, base, id, "error")

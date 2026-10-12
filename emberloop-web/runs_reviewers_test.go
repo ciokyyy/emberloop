@@ -97,9 +97,7 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 	fb := NewFakeBackend()
 	fb.ReplyFunc = func(id, text string) (string, bool) {
 		if strings.Contains(text, "reviewer-standards") {
-			// Hold the gate open while the assertions below run: they
-			// land in well under a second, so 2s keeps wide margin.
-			time.Sleep(2 * time.Second)
+			time.Sleep(4 * time.Second)
 			return "VERDICT: pass", true
 		}
 		if strings.Contains(text, "Review ticket") || strings.Contains(text, "RESPOND IN FORMAT") {

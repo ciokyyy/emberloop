@@ -81,7 +81,7 @@ func TestPigSDKCompressesByHandoff(t *testing.T) {
 	}
 	beforeToken := metaBefore.ResumeToken
 
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v, want 202", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, id, 1)
@@ -171,7 +171,7 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 		t.Fatal("no resume token before compress")
 	}
 
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v, want 202", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, id, 1)

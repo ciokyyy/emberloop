@@ -425,7 +425,7 @@ func TestInvariant_RecallOnlyRolesHaveNoRemember(t *testing.T) {
 	compressAndSettle(t, base, worker, 1)
 	compressAndSettle(t, base, runWorker.ID, 1)
 	compressAndSettle(t, base, reviewer.ID, 1)
-	if code, body := compressReq(t, base, scout, ""); code != http.StatusForbidden {
+	if code, body := compressReqIdle(t, base, scout, ""); code != http.StatusForbidden {
 		t.Fatalf("scout compress = %d %v, want 403", code, body)
 	}
 	for name, sid := range recallOnly {

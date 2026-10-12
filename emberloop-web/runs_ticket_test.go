@@ -685,11 +685,10 @@ func TestRunNeedsYouReasonSameRefusal(t *testing.T) {
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
 	// Space the submits so the driver finishes between them: rapid submits
-	// collapse into one finish and one streak entry. The test driver polls
-	// every 100ms, so 600ms always covers several passes.
+	// collapse into one finish and one streak entry.
 	for i := 0; i < 3; i++ {
 		submitSession(t, srv.URL, worker, "blocked", nil)
-		time.Sleep(600 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 	}
 	deadline := time.Now().Add(20 * time.Second)
 	for {

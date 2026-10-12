@@ -121,7 +121,7 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
-	code, body := compressReq(t, srv.URL, id, "")
+	code, body := compressReqIdle(t, srv.URL, id, "")
 	if code != http.StatusConflict || !strings.Contains(errorText(body), "no compress model") {
 		t.Fatalf("unset model compress = %d %v, want 409 with reason", code, body)
 	}
@@ -130,7 +130,7 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 	}
 
 	d.SetSettingsPath(useSettings(t, `{"compress_model":"`+unauthedPigModel(t)+`"}`))
-	code, body = compressReq(t, srv.URL, id, "")
+	code, body = compressReqIdle(t, srv.URL, id, "")
 	if code != http.StatusConflict || !strings.Contains(errorText(body), "not an authed pig model") {
 		t.Fatalf("unauthed model compress = %d %v, want 409 with reason", code, body)
 	}
@@ -139,7 +139,7 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 	if note := sessionField(t, srv.URL, id, "compressNote"); note != "" {
 		t.Fatalf("compressNote = %q with an authed model, want empty", note)
 	}
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("authed model compress = %d %v, want 202", code, body)
 	}
 	waitIdleAfter(t, srv.URL, id, 1)
@@ -232,7 +232,7 @@ func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sendPrompt(t, base, id, "and then the docs")
 	waitStatus(t, base, id, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, id, "keep ticket ids"); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, "keep ticket ids"); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -264,7 +264,7 @@ func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
 func TestHandoffEmptySummaryRepairsTwiceThenDeterministic(t *testing.T) {
 	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "", "", "")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -293,7 +293,7 @@ func TestHandoffEmptySummaryRepairsTwiceThenDeterministic(t *testing.T) {
 func TestHandoffWrongFormatRepairedBySectionsRestated(t *testing.T) {
 	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "## Task\nalmost there, no other sections\n", goodSummary)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -319,7 +319,7 @@ func TestHandoffWrongFormatRepairedBySectionsRestated(t *testing.T) {
 func TestHandoffUnusableReplyWrappedUnderSections(t *testing.T) {
 	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "plain prose about the parser work")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -347,7 +347,7 @@ func TestHandoffUnusableReplyWrappedUnderSections(t *testing.T) {
 func TestHandoffPartialReplyKeepsItsSections(t *testing.T) {
 	t.Parallel()
 	_, _, base, id := summaryDaemon(t, "## Task\nfix the parser\n\n## Progress\nedited parser.go\n")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	text := handoffText(waitIdleAfter(t, base, id, 1))
@@ -367,7 +367,7 @@ func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
 	t.Run("open call", func(t *testing.T) {
 		d, sum, base, id := summaryDaemon(t, goodSummary)
 		d.appendEvent(id, "tool_call_started", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"go test ./..."}`, Status: "running"}.Text(), "")
-		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+		if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 			t.Fatalf("compress = %d %v", code, body)
 		}
 		text := handoffText(waitIdleAfter(t, base, id, 1))
@@ -382,7 +382,7 @@ func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
 		d, _, base, id := summaryDaemon(t, goodSummary)
 		d.appendEvent(id, "tool_call_started", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"go test ./..."}`, Status: "running"}.Text(), "")
 		d.appendEvent(id, "tool_call_updated", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"go test ./..."}`, Output: "ok", Status: "completed"}.Text(), "")
-		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+		if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 			t.Fatalf("compress = %d %v", code, body)
 		}
 		if text := handoffText(waitIdleAfter(t, base, id, 1)); strings.Contains(text, continueLine) {
@@ -403,7 +403,7 @@ func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
 		e.Sender = "system"
 	})
 	d.mu.Unlock()
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	text := handoffText(waitIdleAfter(t, base, id, 1))
@@ -426,7 +426,7 @@ func TestHandoffSummarizerErrorFallsBackAtOnce(t *testing.T) {
 	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.err = errString("bad request: malformed input")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)

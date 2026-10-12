@@ -100,7 +100,7 @@ func waitReleased(t *testing.T, d *Daemon, id string) {
 // compressAndSettle compresses the Session and waits for its n-th compressed Event.
 func compressAndSettle(t *testing.T, base, id string, n int) {
 	t.Helper()
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress %s = %d %v", id, code, body)
 	}
 	waitIdleAfter(t, base, id, n)

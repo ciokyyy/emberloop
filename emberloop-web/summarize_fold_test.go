@@ -59,7 +59,7 @@ func TestSummarizerOverWindowFoldsIntoChunks(t *testing.T) {
 	sum.window = 30000
 	sum.partReply = foldReply
 	addPrompts(d, id, 6, 5000)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -95,7 +95,7 @@ func TestSummarizerRefusedChunkHalvesToFloor(t *testing.T) {
 	sum.maxInput = 9000
 	sum.partReply = foldReply
 	addPrompts(d, id, 6, 5000)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -120,7 +120,7 @@ func TestSummarizerFloorCutsToolResultsToHead(t *testing.T) {
 	sum.partReply = foldReply
 	out := "HEADMARK" + strings.Repeat("q", 600) + "LATEMARK" + strings.Repeat("r", 20000)
 	d.appendEvent(id, "tool_call_updated", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"cat big"}`, Output: out, Status: "completed"}.Text(), "")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -154,7 +154,7 @@ func TestSummarizerStillOversizeFallsBackDeterministic(t *testing.T) {
 	sum.maxInput = 300
 	sum.partReply = foldReply
 	addPrompts(d, id, 3, 4000)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -176,7 +176,7 @@ func TestSummarizerFallbackStepsRecordReason(t *testing.T) {
 	t.Parallel()
 	t.Run("missed sections", func(t *testing.T) {
 		_, _, base, id := summaryDaemon(t, "plain prose about the parser work")
-		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+		if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 			t.Fatalf("compress = %d %v", code, body)
 		}
 		evs := waitIdleAfter(t, base, id, 1)
@@ -192,7 +192,7 @@ func TestSummarizerFallbackStepsRecordReason(t *testing.T) {
 	})
 	t.Run("empty", func(t *testing.T) {
 		_, _, base, id := summaryDaemon(t, "", "", "")
-		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+		if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 			t.Fatalf("compress = %d %v", code, body)
 		}
 		evs := waitIdleAfter(t, base, id, 1)
@@ -244,7 +244,7 @@ func TestSummarizerEmptyChunkSummaryFallsBackDeterministic(t *testing.T) {
 	sum.window = 30000
 	sum.partReply = " "
 	addPrompts(d, id, 6, 5000)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)

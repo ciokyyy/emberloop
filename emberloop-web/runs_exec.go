@@ -260,9 +260,8 @@ type runState struct {
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
-// on this cadence instead of the CLI's slower poll. Tests shrink it in
-// TestMain so Run tests poll fast; production keeps the default.
-var runPollInterval = 500 * time.Millisecond
+// on this cadence instead of the CLI's slower poll.
+const runPollInterval = 500 * time.Millisecond
 
 // roleWorkerConfig reads the Run worker harness, model and effort from the
 // settings roles: the implementer slot of the settings page first, then the

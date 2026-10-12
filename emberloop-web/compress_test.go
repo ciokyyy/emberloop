@@ -49,6 +49,25 @@ func compressReq(t *testing.T, base, id, instructions string) (int, map[string]a
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
 }
+// compressReqIdle compresses once the Session's turn fully settles. The idle
+// status lands just before the turn's busy flag clears, so a bare compressReq
+// right after it can meet a working turn under load and answer 409. This
+// retries that one working answer briefly, then returns the final code and
+// body exactly like compressReq. Tests asserting a 409 keep compressReq.
+func compressReqIdle(t *testing.T, base, id, instructions string) (int, map[string]any) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		code, body := compressReq(t, base, id, instructions)
+		if code != http.StatusConflict {
+			return code, body
+		}
+		if err, _ := body["error"].(string); !strings.Contains(err, "working") || time.Now().After(deadline) {
+			return code, body
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func transcriptOf(t *testing.T, base, id string) []Event {
 	t.Helper()
@@ -105,11 +124,11 @@ func TestCompressGuards(t *testing.T) {
 	}
 	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
 
-	if code, _ := compressReq(t, srv.URL, "nope", ""); code != http.StatusNotFound {
+	if code, _ := compressReqIdle(t, srv.URL, "nope", ""); code != http.StatusNotFound {
 		t.Fatalf("unknown = %d, want 404", code)
 	}
 
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("handoff compress = %d %v, want 202", code, body)
 	}
 	waitEventKind(t, srv.URL, id, "compressed")

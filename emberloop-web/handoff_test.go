@@ -66,7 +66,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	metaBefore := d.sessions[id].meta
 	d.mu.Unlock()
 
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -131,7 +131,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	}
 
 	// Second compress numbers 2.
-	compressReq(t, base, id, "")
+	compressReqIdle(t, base, id, "")
 	evs = waitIdleAfter(t, base, id, 2)
 	if !strings.Contains(eventsOfKind(evs, "compressed")[1].Text, `"number":2`) {
 		t.Fatalf("second compressed = %s", eventsOfKind(evs, "compressed")[1].Text)
@@ -158,7 +158,7 @@ func TestHandoffFailureKeepsOldHandle(t *testing.T) {
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	be.StartErr = os.ErrPermission
-	compressReq(t, base, id, "")
+	compressReqIdle(t, base, id, "")
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && len(eventsOfKind(transcriptOf(t, base, id), "error")) == 0 {
 		time.Sleep(10 * time.Millisecond)
@@ -191,7 +191,7 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	be.HandoffTurnErr = "boom"
-	compressReq(t, base, id, "")
+	compressReqIdle(t, base, id, "")
 	waitEventKind(t, base, id, "error")
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -232,7 +232,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	wantSender(t, task, "system", "")
 	waitIdleAfter(t, srv.URL, worker.ID, 0)
 
-	if code, body := compressReq(t, srv.URL, worker.ID, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, worker.ID, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, worker.ID, 1)
@@ -268,7 +268,7 @@ func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
 	wantSender(t, task, "system", "")
 	waitIdleAfter(t, srv.URL, child, 0)
 
-	if code, body := compressReq(t, srv.URL, child, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, child, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, child, 1)
