@@ -4,10 +4,10 @@
 
 **Blocked by:** prompt-injection (04), failure-classifier-and-chain-settings (05)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Advance on each of the four classes and not on others
-- [ ] New Session on same branch, Handoff then injection
-- [ ] Chain position stored on the Ticket row and survives restart
-- [ ] Exhaustion becomes Needs-you
-- [ ] Run seam tests with scripted failures; `.emberloop/check` passes
+- [x] Advance on each of the four classes and not on others
+- [x] New Session on same branch, Handoff then injection
+- [x] Chain position stored on the Ticket row and survives restart
+- [x] Exhaustion becomes Needs-you
+- [x] Run seam tests with scripted failures; `.emberloop/check` passes
