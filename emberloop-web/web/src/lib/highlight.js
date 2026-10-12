@@ -76,7 +76,8 @@ export function highlightJson(line) {
   while ((m = re.exec(line))) {
     push(out, line.slice(last, m.index));
     if (m[1] !== undefined) {
-      push(out, m[1], m[2] ? 'tk-key' : 'tk-str');
+      // Go HTML-escapes & < > inside JSON strings; show the characters.
+      push(out, m[1].replace(/\\u(0026|003c|003e)/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), m[2] ? 'tk-key' : 'tk-str');
       push(out, m[2] ?? '');
     } else if (m[3] !== undefined) push(out, m[3], 'tk-num');
     else push(out, m[4], 'tk-lit');

@@ -69,4 +69,9 @@ describe('highlight', () => {
     expect(decodeJsonEscapes('printf %s\\n')).toBe('printf %s\\n');
     expect(text(highlightOutput('C:\\new\\test'))).toBe('C:\\new\\test');
   });
+
+  it('shows Go HTML-escaped characters inside JSON string tokens', () => {
+    const segs = highlightJson('{"command": "ls \\u0026\\u0026 echo 2\\u003e\\u00261"}');
+    expect(segs.map((x) => x.text).join('')).toBe('{"command": "ls && echo 2>&1"}');
+  });
 });

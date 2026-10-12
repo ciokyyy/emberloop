@@ -4,7 +4,7 @@
   import WorkingIndicator from './WorkingIndicator.svelte';
   import { availableModes, resolveComposerMode } from './composer.js';
   import Button from './ui/button.svelte';
-  import { Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
+  import { BookmarkPlus, Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
   import { sttSupport, startRecording, transcribe, STT_MAX_BYTES } from './stt.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { readVoicePrefs, onVoicePrefs } from './voicePrefs.js';
@@ -380,7 +380,7 @@
   {:else if voice === 'transcribing'}
     <div class="px-3 pt-2 text-xs text-muted-foreground" data-testid="voice-status">Transcribing…</div>
   {/if}
-  <div class="flex flex-wrap items-end gap-2 p-1 sm:flex-nowrap">
+  <div class="flex flex-wrap items-end gap-1 p-1 sm:flex-nowrap sm:gap-2">
     <div class="relative min-w-0 basis-full sm:basis-0 sm:flex-1">
       <textarea
         bind:this={box}
@@ -434,7 +434,7 @@
         <Square />
       </Button>
     {/if}
-    <Button type="button" variant="ghost" size="sm" aria-label="remember as rule" title="Remember as a Rule (sends /remember)" onclick={remember}>Remember</Button>
+    <Button type="button" variant="ghost" size="sm" aria-label="remember as rule" title="Remember as a Rule (sends /remember)" onclick={remember}><BookmarkPlus class="sm:hidden" /><span class="max-sm:sr-only">Remember</span></Button>
     <Button type="submit" size="default" class="ml-auto sm:ml-0" disabled={!canSend} title={canSend ? 'Send' : busy ? 'Sending the previous message…' : 'Type a message or attach an image'}>Send</Button>
   </div>
   {#if sendError}
