@@ -109,6 +109,26 @@ describe('Sidebar collapse', () => {
     const { container } = render(App, { props: { user: me } });
     await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('created by cioky'));
   });
+  it('hides the composer and context meter on session-not-found', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/doesnotexist123');
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/api/sessions/doesnotexist123'))
+          return { ok: false, status: 404, json: async () => ({}) };
+        if (String(u).includes('/api/sessions')) return sessionsBody;
+        if (String(u).includes('/api/projects')) return projectsBody;
+        if (String(u).includes('/api/users')) return usersBody;
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App, { props: { user: me } });
+    expect(await within(container).findByTestId('session-missing')).toBeTruthy();
+    expect(within(container).queryByLabelText('composer')).toBeNull();
+    expect(within(container).queryByTestId('context-meter')).toBeNull();
+  });
 });
 
 describe('Quota navigation', () => {

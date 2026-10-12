@@ -814,12 +814,14 @@
                 </ul>
               </div>
             {/if}
+            {#if !sessionMissing}
             {#if drafting}
               <DraftBar bind:harness={draftHarness} bind:model={draftModel} bind:effort={draftEffort} />
               <Composer status="idle" busy={sending} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
               <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
               <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
+            {/if}
             {/if}
           </div>
         </div>
