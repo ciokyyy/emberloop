@@ -382,6 +382,7 @@ func (d *Daemon) MachineToken() string { return d.machineToken }
 func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	b.tokenFile = claudeTokenPath(d.stateDir)
 	d.claude = b
 	d.backends["claude"] = b
 	return d

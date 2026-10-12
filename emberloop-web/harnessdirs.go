@@ -14,9 +14,16 @@ import (
 // loads user-level memory or instructions on its own reads only these dirs,
 // so one User's instructions never reach another User's Session.
 type ownerDirs struct {
-	// claude is the claude adapter's CLAUDE_CONFIG_DIR. It holds the host
-	// login link and the CLI's own state; instructions and memory stay out.
+	// claude is the claude adapter's CLAUDE_CONFIG_DIR. It holds the CLI's
+	// own state; instructions and memory stay out. In fallback mode it also
+	// holds the host login link; with a shared token there is no login file.
 	claude string
+	// claudeToken is the shared setup-token login (claudetoken.go), resolved
+	// env-over-file on every start. claudeEnv injects it into the adapter's
+	// environment. env() deliberately omits it: the fake Backend records
+	// env() per start, and the token value never belongs in records, logs or
+	// API output. Dirs itself is never persisted (SessionMeta.Dirs is json:"-").
+	claudeToken string
 	// pig is the owner's pig agent dir. Pig Sessions run on a per-Session
 	// copy of it (pigacp.go); the SDK backend reads it directly.
 	pig string
@@ -24,6 +31,7 @@ type ownerDirs struct {
 
 // env is the owner's dirs as NAME=value pairs, one per dir that is set. The
 // fake Backend records it per start, so tests assert what each owner gets.
+// It never carries the shared claude token (see claudeToken).
 func (d ownerDirs) env() []string {
 	var env []string
 	if d.claude != "" {
@@ -62,16 +70,20 @@ func claudeHostDir() string {
 
 // ownerDirsFor returns the owner's harness dirs, creating and seeding them
 // under <stateDir>/enderbloom/users/<userId>/config. Every harness start calls
-// it, so a host login or settings change reaches the next start.
+// it, so a host login or settings change reaches the next start. It also
+// resolves the shared claude token once per start; with a token the adapter
+// authenticates over the environment and per-User credential copies are
+// removed instead of linked (seedClaudeDir).
 func (d *Daemon) ownerDirsFor(owner string) (ownerDirs, error) {
 	if owner == "" || owner == "." || owner == ".." || strings.ContainsAny(owner, `/\`) {
 		return ownerDirs{}, fmt.Errorf("session owner %q is not a user ID", owner)
 	}
 	root := filepath.Join(d.stateDir, "enderbloom", "users", owner, "config")
 	dirs := ownerDirs{claude: filepath.Join(root, "claude"), pig: filepath.Join(root, "pig")}
+	dirs.claudeToken = loadClaudeOAuthToken(d.stateDir)
 	d.dirsMu.Lock()
 	defer d.dirsMu.Unlock()
-	if err := seedClaudeDir(dirs.claude, d.hostClaudeDir); err != nil {
+	if err := seedClaudeDir(dirs.claude, d.hostClaudeDir, dirs.claudeToken != ""); err != nil {
 		return ownerDirs{}, fmt.Errorf("claude config dir: %w", err)
 	}
 	if err := seedPigDir(dirs.pig, d.hostPigDir); err != nil {
@@ -80,24 +92,66 @@ func (d *Daemon) ownerDirsFor(owner string) (ownerDirs, error) {
 	return dirs, nil
 }
 
-// seedClaudeDir makes the owner's CLAUDE_CONFIG_DIR and links the host login
-// into it. Nothing else links in: the CLI reads CLAUDE.md, projects and
-// settings from this dir only. With CLAUDE_CONFIG_DIR set, the CLI keeps
-// .claude.json in this dir too and creates it on first use.
-func seedClaudeDir(dir, host string) error {
+// seedClaudeDir makes the owner's CLAUDE_CONFIG_DIR. With a shared token
+// (hasToken) it links nothing and removes a stale .credentials.json copy —
+// symlink or regular file only, nothing else — so no diverging login can
+// shadow the token (the CLI replaces a symlink with a private file on its
+// first credential write). Without a token it links the host login in, as
+// before, and repairs one divergence: an owner regular file that differs
+// from the host and is older than the host is replaced with the link, so a
+// stale refresh copy reconverges on the host login. The tradeoff is
+// deliberate: divergent copies already race each other (single-use rotating
+// refresh), and the host login is the newest deliberate `claude login`. An
+// owner copy newer than the host is left alone — it may hold a fresher
+// refresh the host has not seen — as are symlinks and identical copies.
+// Nothing else links in: the CLI reads CLAUDE.md, projects and settings
+// from this dir only. With CLAUDE_CONFIG_DIR set, the CLI keeps .claude.json
+// in this dir too and creates it on first use.
+func seedClaudeDir(dir, host string, hasToken bool) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	link := filepath.Join(dir, claudeAuthFile)
+	if hasToken {
+		if fi, err := os.Lstat(link); err == nil && !fi.IsDir() {
+			_ = os.Remove(link)
+		}
+		return nil
 	}
 	if host == "" {
 		return nil
 	}
 	src := filepath.Join(host, claudeAuthFile)
-	if _, err := os.Stat(src); err != nil {
+	hostBytes, err := os.ReadFile(src)
+	if err != nil {
 		return nil // host not logged in: the owner's CLI is not either
 	}
-	link := filepath.Join(dir, claudeAuthFile)
-	if _, err := os.Lstat(link); err == nil {
-		return nil // an owner copy wins once the CLI has written one
+	fi, err := os.Lstat(link)
+	if err != nil {
+		if err := os.Symlink(src, link); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		return nil
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return nil // the host link stands
+	}
+	if fi.IsDir() {
+		return nil // never touch non-file entries
+	}
+	ownerBytes, err := os.ReadFile(link)
+	if err != nil || string(ownerBytes) == string(hostBytes) {
+		return nil // unreadable or identical: nothing divergent to repair
+	}
+	hostFi, err := os.Stat(src)
+	if err != nil {
+		return nil
+	}
+	if !fi.ModTime().Before(hostFi.ModTime()) {
+		return nil // owner copy is newer: it may hold a fresher refresh
+	}
+	if err := os.Remove(link); err != nil {
+		return err
 	}
 	if err := os.Symlink(src, link); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
