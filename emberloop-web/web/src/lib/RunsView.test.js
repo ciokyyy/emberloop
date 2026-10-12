@@ -574,7 +574,11 @@ describe('RunsView preview and live run', () => {
 
   it('pauses, switches and resumes one Ticket from the live table', async () => {
     let ticketState = 'running';
-    let workerEntry = { position: 1, total: 2, backend: 'pig', model: 'auto' };
+    let chainEntries = {
+      worker: { position: 1, total: 2, backend: 'pig', model: 'auto' },
+      'reviewer-spec': { position: 1, total: 1, backend: 'pig', model: 'auto' },
+      'reviewer-standards': { position: 1, total: 1, backend: 'pig', model: 'auto' },
+    };
     const calls = [];
     const live = () => ({
       id: 'run-1',
@@ -582,7 +586,7 @@ describe('RunsView preview and live run', () => {
       status: 'running',
       harness: 'pig',
       model: 'auto',
-      tickets: [{ id: '01-first', num: 1, title: 'First', state: ticketState, workerSession: 'sess-1', chain: { worker: workerEntry } }],
+      tickets: [{ id: '01-first', num: 1, title: 'First', state: ticketState, workerSession: 'sess-1', chain: chainEntries }],
     });
     seedPreview();
     stubRuns(async (url, opts) => {
@@ -594,7 +598,7 @@ describe('RunsView preview and live run', () => {
       }
       if (path.endsWith('/tickets/01-first/switch')) {
         const choice = JSON.parse(opts.body);
-        workerEntry = { ...workerEntry, backend: choice.backend, model: choice.model };
+        chainEntries = Object.fromEntries(Object.entries(chainEntries).map(([role, entry]) => [role, { ...entry, backend: choice.backend, model: choice.model }]));
         return { ok: true, json: async () => ({ run: live() }) };
       }
       if (path.endsWith('/tickets/01-first/resume')) {
@@ -626,6 +630,7 @@ describe('RunsView preview and live run', () => {
 
     await fireEvent.click(within(actions).getByRole('button', { name: 'Pause First' }));
     expect(await within(actions).findByTestId('run-switch-picker')).toBeTruthy();
+    expect(within(actions).getByText(/Applies to this Ticket's Worker and both Reviewer Chains/)).toBeTruthy();
     await fireEvent.click(within(actions).getByLabelText('First Backend'));
     await fireEvent.click(await screen.findByRole('option', { name: 'Claude' }));
     await fireEvent.click(within(actions).getByLabelText('First model'));
@@ -634,6 +639,8 @@ describe('RunsView preview and live run', () => {
     await waitFor(() => expect(within(actions).getByRole('button', { name: 'Switch First' })).toBeTruthy());
     expect(calls.some(({ path, opts }) => path.endsWith('/tickets/01-first/switch') && JSON.parse(opts.body).backend === 'claude' && JSON.parse(opts.body).model === 'sonnet')).toBe(true);
     expect(within(table).getByText('Worker 1/2 · claude/sonnet')).toBeTruthy();
+    expect(within(table).getByText('Spec review 1/1 · claude/sonnet')).toBeTruthy();
+    expect(within(table).getByText('Standards 1/1 · claude/sonnet')).toBeTruthy();
 
     await fireEvent.click(within(actions).getByRole('button', { name: 'Resume First' }));
     expect(calls.some(({ path }) => path.endsWith('/tickets/01-first/resume'))).toBe(true);

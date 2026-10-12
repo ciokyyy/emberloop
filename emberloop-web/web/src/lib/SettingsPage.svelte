@@ -43,10 +43,16 @@
   ];
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
   const effortItems = ['low', 'medium', 'high', 'max'].map((e) => ({ value: e, label: e[0].toUpperCase() + e.slice(1) }));
+  const chainValues = (entries = []) => entries.map(({ backend, model, effort }) => ({ backend, model, ...(effort ? { effort } : {}) }));
+  const cloneChains = (source) => Object.fromEntries(CHAIN_ROLES.map(({ id }) => [id, chainValues(source[id])]));
+  const sameChain = (left, right) => JSON.stringify(chainValues(left)) === JSON.stringify(chainValues(right));
   // The pig naming model is optional: "None" clears the role, so pig Sessions stay unnamed.
 
   let roles = $state({});
   let chains = $state({});
+  let inheritedChains = $state({});
+  let chainBaseline = {};
+  let chainAliases = {};
   let maxWorkers = $state('3');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
@@ -66,6 +72,10 @@
   let justSaved = $state(false);
   let error = $state('');
 
+  function fallbackChain(role) {
+    const fallback = role.settingRoles.map((name) => roles[name]).find((setting) => setting?.model);
+    return fallback?.model ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }] : [];
+  }
   const snapshot = () => JSON.stringify({ roles, chains, maxWorkers, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
@@ -91,20 +101,28 @@
       roles = next;
       const storedChains = body.chains ?? {};
       const nextChains = {};
+      const nextInheritedChains = {};
+      const nextChainAliases = {};
       for (const role of CHAIN_ROLES) {
-        const entries = storedChains[role.id] ?? role.settingRoles.map((name) => storedChains[name]).find(Array.isArray);
+        const explicitName = role.settingRoles.find((name) => Array.isArray(storedChains[name]) && storedChains[name].length > 0);
         const fallback = role.settingRoles.map((name) => next[name]).find((setting) => setting?.model);
-        nextChains[role.id] = Array.isArray(entries)
-          ? entries.map((entry) => ({
-              backend: entry.backend ?? entry.harness ?? '',
-              model: entry.model ?? '',
-              ...(entry.effort ? { effort: entry.effort } : {}),
-            }))
+        const entries = explicitName
+          ? storedChains[explicitName]
           : fallback?.model
             ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }]
             : [];
+        nextChains[role.id] = entries.map((entry) => ({
+          backend: entry.backend ?? entry.harness ?? '',
+          model: entry.model ?? '',
+          ...(entry.effort ? { effort: entry.effort } : {}),
+        }));
+        nextInheritedChains[role.id] = !explicitName;
+        nextChainAliases[role.id] = role.settingRoles.filter((name) => name !== role.id && Array.isArray(storedChains[name]));
       }
       chains = nextChains;
+      inheritedChains = nextInheritedChains;
+      chainBaseline = cloneChains(nextChains);
+      chainAliases = nextChainAliases;
       maxWorkers = body.max_workers != null ? String(body.max_workers) : '3';
       locked = !!body.max_workers_from_env;
       const t = body.roles?.['pig-title'];
@@ -191,11 +209,17 @@
     return CHAIN_ROLES.every(({ id }) => (chains[id] ?? []).length <= 3 && (chains[id] ?? []).every((entry) => entry.backend && entry.model));
   }
 
+  // An untouched role-setting fallback is presentation only. Send a Chain
+  // update only when its entries differ, and clear legacy aliases only when
+  // that role's Chain is explicitly edited.
   function chainsForSave() {
-    return Object.fromEntries(CHAIN_ROLES.flatMap(({ id, settingRoles }) => [
-      [id, (chains[id] ?? []).map(({ backend, model, effort }) => ({ backend, model, ...(effort ? { effort } : {}) }))],
-      ...settingRoles.filter((name) => name !== id).map((name) => [name, []]),
-    ]));
+    const payload = {};
+    for (const { id } of CHAIN_ROLES) {
+      if (sameChain(chains[id], chainBaseline[id])) continue;
+      payload[id] = chainValues(chains[id]);
+      for (const alias of chainAliases[id] ?? []) payload[alias] = [];
+    }
+    return payload;
   }
 
   async function save() {
@@ -211,8 +235,10 @@
       const pigTitleRole = pigTitle === 'none' ? { harness: '', model: '' } : { harness: 'pig', model: pigTitle };
       // A role with no model was never configured: leave it out instead of failing the whole save.
       const configured = Object.fromEntries(Object.entries(roles).filter(([, r]) => r.model));
+      const chainPayload = chainsForSave();
+      const editedChainRoles = new Set(CHAIN_ROLES.filter(({ id }) => Object.prototype.hasOwnProperty.call(chainPayload, id)).map(({ id }) => id));
       const payload = { roles: { ...configured, 'pig-title': pigTitleRole } };
-      payload.chains = chainsForSave();
+      if (Object.keys(chainPayload).length) payload.chains = chainPayload;
       if (!locked) payload.max_workers = Number(maxWorkers);
       if (!titlesLocked) payload.session_titles = sessionTitles === 'on';
       payload.compress = {
@@ -241,6 +267,15 @@
       deciderNote = savedBody.decider_note ?? '';
       jev = { baseURL: savedBody.jev?.base_url ?? jev.baseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
       jevKeySet = !!savedBody.jev?.api_key_set;
+      for (const role of CHAIN_ROLES) {
+        if (editedChainRoles.has(role.id)) {
+          inheritedChains[role.id] = false;
+          chainAliases[role.id] = [];
+        } else if (inheritedChains[role.id]) {
+          chains[role.id] = fallbackChain(role);
+        }
+      }
+      chainBaseline = cloneChains(chains);
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -319,7 +354,9 @@
                 <div class="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <h3 class="text-sm font-medium">{role.label}</h3>
-                    {#if !chains[role.id]?.length}
+                    {#if inheritedChains[role.id] && chains[role.id]?.length}
+                      <p class="text-xs text-muted-foreground">Inherited from the role setting; it is saved as a Chain only when you edit it.</p>
+                    {:else if !chains[role.id]?.length}
                       <p class="text-xs text-muted-foreground">No explicit Chain; the regular role setting or Run defaults are used.</p>
                     {/if}
                   </div>

@@ -402,11 +402,6 @@ describe('SettingsPage Run Chains', () => {
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect(seen.body.chains).toEqual({
       worker: [{ backend: 'claude', model: 'opus' }, { backend: 'grok', model: 'grok-4.7' }],
-      implementer: [],
-      'reviewer-spec': [{ backend: 'claude', model: 'sonnet' }],
-      'spec-review': [],
-      'reviewer-standards': [{ backend: 'grok', model: 'grok-4.7' }],
-      'code-review': [],
     });
   });
 
@@ -426,5 +421,65 @@ describe('SettingsPage Run Chains', () => {
     expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/auto/i);
     expect(within(chains).getByLabelText('Spec reviewer Chain entry 1 model').textContent).toMatch(/sonnet/i);
     expect(within(chains).getByLabelText('Standards reviewer Chain entry 1 model').textContent).toMatch(/grok-4.7/i);
+    expect(within(chains).getAllByText(/Inherited from the role setting/)).toHaveLength(3);
+  });
+
+  it.each([
+    ['worker', 'Worker'],
+    ['implementer', 'Implementer'],
+  ])('does not pin an inherited Chain when the %s role model changes', async (role, label) => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        roles: { [role]: { harness: 'claude', model: 'sonnet', effort: 'high' } },
+      },
+      seen,
+    });
+    const { container } = render(SettingsPage);
+    const chains = await within(container).findByTestId('run-chains-settings');
+    expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/sonnet/i);
+
+    await fireEvent.click(within(container).getByLabelText(`${label} model`));
+    await fireEvent.click(await screen.findByRole('option', { name: /opus/i }));
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.roles[role]).toMatchObject({ harness: 'claude', model: 'opus' });
+    expect(seen.body.chains).toBeUndefined();
+    expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/opus/i);
+  });
+
+  it('preserves legacy Chain aliases during unrelated settings saves', async () => {
+    const seen = {};
+    stubSettings({
+      settings: { ...base, chains: { implementer: [{ backend: 'claude', model: 'sonnet' }] } },
+      seen,
+    });
+    const { container } = render(SettingsPage);
+    await within(container).findByTestId('run-chains-settings');
+    await fireEvent.input(await within(container).findByLabelText('Maximum workers'), { target: { value: '4' } });
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.chains).toBeUndefined();
+  });
+
+  it('clears a legacy alias only when its Chain is edited', async () => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        chains: {
+          implementer: [{ backend: 'claude', model: 'sonnet' }],
+          'spec-review': [{ backend: 'claude', model: 'sonnet' }],
+        },
+      },
+      seen,
+    });
+    const { container } = render(SettingsPage);
+    const chains = await within(container).findByTestId('run-chains-settings');
+    await fireEvent.click(within(chains).getByLabelText('Remove Worker Chain entry 1'));
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.chains).toEqual({ worker: [], implementer: [] });
   });
 });

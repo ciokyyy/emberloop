@@ -374,7 +374,7 @@
           <h4 class="text-sm font-medium">Switch paused Run</h4>
           <p class="text-xs text-muted-foreground">Choose a Backend and model for every unmerged Ticket, then resume when ready.</p>
         </div>
-        <RunSwitchPicker label="Run" initialBackend={run.harness} initialModel={run.model} onSwitch={switchRunSelection} disabled={acting} />
+        <RunSwitchPicker label="Run" description="Applies to every unmerged Ticket's Worker and both Reviewer Chains." initialBackend={run.harness} initialModel={run.model} onSwitch={switchRunSelection} disabled={acting} />
       </section>
     {/if}
     {#if run.error}
@@ -546,6 +546,7 @@
                     {#if t.state === 'paused' && !['done', 'failed', 'abandoned'].includes(run.status)}
                       <RunSwitchPicker
                         label={t.title || `Ticket ${t.id}`}
+                        description="Applies to this Ticket's Worker and both Reviewer Chains."
                         initialBackend={t.chain?.worker?.backend ?? run.harness}
                         initialModel={t.chain?.worker?.model ?? run.model}
                         onSwitch={(selection) => switchTicketItem(t, selection)}

@@ -7,6 +7,7 @@
 
   let {
     label = 'Run',
+    description = '',
     initialBackend = 'pig',
     initialModel = '',
     onSwitch = null,
@@ -65,24 +66,27 @@
   }
 </script>
 
-<div class="flex min-w-[18rem] flex-wrap items-center gap-1.5" role="group" aria-label={`${label} Backend and model`} data-testid="run-switch-picker">
-  <Combobox
-    class="h-9 min-w-28 flex-1"
-    aria-label={`${label} Backend`}
-    value={backend}
-    items={backendItems}
-    disabled={disabled || switching}
-    onValueChange={pickBackend}
-  />
-  <Combobox
-    class="h-9 min-w-36 flex-1"
-    aria-label={`${label} model`}
-    bind:value={model}
-    items={modelOptions}
-    disabled={disabled || switching}
-    placeholder="Select model"
-  />
-  <Button size="sm" variant="outline" disabled={disabled || switching || !backend || !model} onclick={switchBackend}>
-    {switching ? 'Switching…' : `Switch ${label}`}
-  </Button>
+<div class="flex min-w-[18rem] flex-col gap-1.5" role="group" aria-label={`${label} Backend and model`} data-testid="run-switch-picker">
+  {#if description}<p class="text-xs text-muted-foreground">{description}</p>{/if}
+  <div class="flex flex-wrap items-center gap-1.5">
+    <Combobox
+      class="h-9 min-w-28 flex-1"
+      aria-label={`${label} Backend`}
+      value={backend}
+      items={backendItems}
+      disabled={disabled || switching}
+      onValueChange={pickBackend}
+    />
+    <Combobox
+      class="h-9 min-w-36 flex-1"
+      aria-label={`${label} model`}
+      bind:value={model}
+      items={modelOptions}
+      disabled={disabled || switching}
+      placeholder="Select model"
+    />
+    <Button size="sm" variant="outline" disabled={disabled || switching || !backend || !model} onclick={switchBackend}>
+      {switching ? 'Switching…' : `Switch ${label}`}
+    </Button>
+  </div>
 </div>
