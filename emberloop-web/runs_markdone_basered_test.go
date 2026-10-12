@@ -66,17 +66,19 @@ func TestMarkDoneOrderingWaitsForSpecBranchMerge(t *testing.T) {
 	if got := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/issues/01-first.md")); !strings.Contains(got, "**Status:** done") || !strings.Contains(got, "- [x] alpha") {
 		t.Fatalf("merged ticket = %q, want done with alpha ticked", got)
 	}
-	if got, err := os.ReadFile(mainTicket); err != nil || string(got) != string(mainBefore) {
-		t.Fatalf("main ticket after merge = %q, %v; want unchanged until master merge", got, err)
+	// The Run is done only after the gated final merge, so master now carries
+	// the spec branch and its done-marked Ticket.
+	if got, err := os.ReadFile(mainTicket); err != nil || string(got) == string(mainBefore) || !strings.Contains(string(got), "**Status:** done") || !strings.Contains(string(got), "- [x] alpha") {
+		t.Fatalf("main ticket after final merge = %q, %v; want the done ticket with alpha ticked", got, err)
 	}
 	if got := strings.TrimSpace(testGit(t, repo, "status", "--porcelain")); got != "" {
 		t.Fatalf("main checkout status = %q, want clean", got)
 	}
-	if got := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")); got != masterBefore {
-		t.Fatalf("main tip after ticket merge = %q, want %q", got, masterBefore)
+	if got, want := strings.TrimSpace(testGit(t, repo, "rev-parse", "main")), strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo")); got == masterBefore || got != want {
+		t.Fatalf("main tip after final merge = %q, want the spec tip %q (not %q)", got, want, masterBefore)
 	}
 	if got := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/spec.md")); !strings.Contains(got, "**Status:** open") {
-		t.Fatalf("spec status after ticket merge = %q, want unchanged until master merge", got)
+		t.Fatalf("spec status after final merge = %q, want open (no spec status write)", got)
 	}
 }
 
@@ -105,8 +107,8 @@ func TestStatuslessTicketBoxesTickAfterMerge(t *testing.T) {
 		return r.Status == "done"
 	}, "statusless ticket merged")
 
-	if got, err := os.ReadFile(mainTicket); err != nil || string(got) != string(mainBefore) {
-		t.Fatalf("main ticket = %q, %v; want the original unticked file", got, err)
+	if got, err := os.ReadFile(mainTicket); err != nil || string(got) == string(mainBefore) || !strings.Contains(string(got), "- [x] beta") {
+		t.Fatalf("main ticket = %q, %v; want the ticked file after the final merge", got, err)
 	}
 	specTicket := strings.TrimSpace(testGit(t, repo, "show", "spec/demo:.scratch/demo/issues/01-first.md"))
 	if !strings.Contains(specTicket, "- [x] alpha") || !strings.Contains(specTicket, "- [x] beta") {
@@ -132,7 +134,7 @@ func TestBaseRedNeedsYouAndCachesPerTip(t *testing.T) {
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return r.Status == "done" && ticketByID(r, "01-first").State == "needs-you" && ticketByID(r, "02-second").State == "needs-you"
+		return r.Status == "needs-you" && ticketByID(r, "01-first").State == "needs-you" && ticketByID(r, "02-second").State == "needs-you"
 	}, "both tickets blocked by the red base")
 	for _, id := range []string{"01-first", "02-second"} {
 		if got := ticketByID(r, id); got.WorkerSession != "" {
@@ -191,7 +193,7 @@ func TestBaseRedRechecksNewTipWithoutGatingStartedWorker(t *testing.T) {
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return r.Status == "done" && ticketByID(r, "01-first").State == "merged" && ticketByID(r, "02-second").State == "needs-you"
+		return r.Status == "needs-you" && ticketByID(r, "01-first").State == "merged" && ticketByID(r, "02-second").State == "needs-you"
 	}, "first ticket merged and second blocked on the new red tip")
 	if got := ticketByID(r, "01-first").WorkerSession; got == "" {
 		t.Fatal("first ticket lost its Worker Session")
