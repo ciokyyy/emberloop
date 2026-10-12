@@ -192,6 +192,10 @@ type ClaudeBackend struct {
 	// daemonToken is the Daemon machine token. The el MCP server sends it as
 	// EL_WEB_TOKEN so its callbacks pass the /api gate (see auth.go).
 	daemonToken string
+	// tokenFile names the shared claude setup-token file for login-race
+	// advice text; the Daemon sets it in WithClaudeBackend. Empty keeps the
+	// generic location. It is only ever a path, never the token value.
+	tokenFile string
 	// allowedTools overrides the default MCP allow-list; the live probe
 	// points it at the echo server's tool.
 	allowedTools []string
@@ -795,17 +799,32 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 			appendEvent("permission", toolName+" auto-approved as "+optionID, "auto-approved")
 		},
 	}
-	var perr error
-	if len(images) == 0 {
-		_, perr = conn.Prompt(acpID, text, cbs)
-	} else if ip, ok := conn.(acpImagePrompter); ok {
-		_, perr = ip.PromptImages(acpID, text, images, cbs)
-	} else {
-		perr = errors.New("claude adapter cannot take images")
+	promptOnce := func() error {
+		var perr error
+		if len(images) == 0 {
+			_, perr = conn.Prompt(acpID, text, cbs)
+		} else if ip, ok := conn.(acpImagePrompter); ok {
+			_, perr = ip.PromptImages(acpID, text, images, cbs)
+		} else {
+			perr = errors.New("claude adapter cannot take images")
+		}
+		return perr
+	}
+	perr := promptOnce()
+	if isClaudeLoginRaceErr(perr) {
+		// The refresh lock is documented as transient: one retry after a
+		// pause. With a shared token this error should not occur at all;
+		// the retry is harmless there and the advice still applies.
+		time.Sleep(claudeLoginRetry)
+		perr = promptOnce()
 	}
 	tracker.closeOpen(appendEvent)
 	if perr != nil {
-		appendEvent("error", perr.Error(), "")
+		msg := perr.Error()
+		if isClaudeLoginRaceErr(perr) {
+			msg += "\n" + claudeLoginRaceAdvice(b.tokenFile)
+		}
+		appendEvent("error", msg, "")
 		appendEvent("status", "", "failed")
 		return
 	}
@@ -1144,12 +1163,21 @@ func spawnACPConn(command []string) (acpConn, error) {
 }
 
 // claudeEnv is the claude adapter's environment for one owner: the host env,
-// the disabling set and the owner's CLAUDE_CONFIG_DIR. The last entry wins,
-// so it overrides a host CLAUDE_CONFIG_DIR. An empty owner dir keeps the host's.
+// the disabling set, the owner's CLAUDE_CONFIG_DIR and, when configured, the
+// shared setup token last-wins. The token comes from the owner's dirs (the
+// Daemon resolves it env-over-file on every start) or, for paths that never
+// went through ownerDirsFor, from the Daemon process env. The last entry
+// wins, so both override a host CLAUDE_CONFIG_DIR or token. An empty owner
+// dir keeps the host's. The grok and pig-acp paths need none of this: they
+// start non-claude adapters (grok agent, pi-acp) that never read
+// CLAUDE_CODE_OAUTH_TOKEN. Title calls use this too, through ownerDirsFor.
 func claudeEnv(dirs ownerDirs) []string {
 	env := append(os.Environ(), claudeAdapterEnv()...)
 	if dirs.claude != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+dirs.claude)
+	}
+	if tok := claudeTokenForEnv(dirs.claudeToken); tok != "" {
+		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+tok)
 	}
 	return env
 }

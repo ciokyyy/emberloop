@@ -39,6 +39,31 @@ If you run inside a Session of this Daemon, the restart drops your own agent pro
 - Machine token: `<state-dir>/enderbloom/daemon.token`, new on every start, owner-only. `el restart` reads it. It is no User: it cannot create Sessions or Runs. The Daemon's own agents get it as `EL_WEB_TOKEN`.
 - Sessions and Runs record the User who created them. Sessions and Runs with no owner are hidden; nothing migrates them.
 
+## Shared Claude login
+
+All Users share one Claude login through a static setup token, so parallel
+claude adapters never race each other's OAuth refresh (the failure looked
+like `Failed to refresh OAuth token: another Claude Code process is
+refreshing it`). Per-User `CLAUDE_CONFIG_DIR` isolation of transcripts and
+settings is unchanged; only the login is shared.
+
+- One-time setup (owner): run `claude setup-token` and store the token with
+  `el-web claude-token set` (prod; add `-state-dir ~/.local/share/pig-dev`
+  for dev). It reads the token once with echo off, or one line from a pipe,
+  and writes `<state-dir>/enderbloom/claude-oauth-token` owner-only (0600).
+  Alternatively set `EL_CLAUDE_OAUTH_TOKEN` (or `CLAUDE_CODE_OAUTH_TOKEN`) on
+  the Daemon; env beats the file. Then restart the Daemon (`el restart`).
+- Yearly rotation: the setup token lasts one year. Before it expires, run
+  `claude setup-token` again, store the new token the same way, and restart.
+- What it cannot do: a token login has no Remote Control and no claude.ai
+  connectors. Anything needing those still needs an interactive `/login`.
+- Without a token the Daemon falls back to linking the host
+  `~/.claude/.credentials.json` into each User dir, and repairs one
+  divergence per start: an owner copy that differs from the host and is older
+  than the host re-links (a newer copy is left alone — it may hold a fresher
+  refresh). A refresh race still fails the turn, but the transcript names the
+  fix and the prompt retries once after ~2s.
+
 ## Service control
 
 - Status: `systemctl --user status emberloop-web`

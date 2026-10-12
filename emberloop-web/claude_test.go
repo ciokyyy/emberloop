@@ -17,22 +17,25 @@ import (
 // stubConn is the fake ACP adapter: canned updates, captured params, no
 // subprocess. The seam under test is the ClaudeBackend, never internals.
 type stubConn struct {
-	mu            sync.Mutex
-	newMeta       map[string]any
-	newMCP        []acpMCPServer
-	newCWD        string
-	newMetas      []map[string]any
-	newMCPs       [][]acpMCPServer
-	newCWDs       []string
-	loadMeta      map[string]any
-	loadMCP       []acpMCPServer
-	loadCWD       string
-	loadID        string
-	prompts       []string
-	updates       []map[string]any
-	permissions   []stubPermission
-	stopReason    string
-	promptErr     error
+	mu          sync.Mutex
+	newMeta     map[string]any
+	newMCP      []acpMCPServer
+	newCWD      string
+	newMetas    []map[string]any
+	newMCPs     [][]acpMCPServer
+	newCWDs     []string
+	loadMeta    map[string]any
+	loadMCP     []acpMCPServer
+	loadCWD     string
+	loadID      string
+	prompts     []string
+	updates     []map[string]any
+	permissions []stubPermission
+	stopReason  string
+	promptErr   error
+	// promptErrs, when non-empty, serves one error per Prompt call head-first
+	// (nil entries succeed), so retry tests script a failure then a success.
+	promptErrs    []error
 	newErr        error
 	blockNew      chan struct{}
 	promptStarted chan struct{}
@@ -83,6 +86,10 @@ func (s *stubConn) Prompt(acpID, text string, cb acpCallbacks) (string, error) {
 	perms := append([]stubPermission{}, s.permissions...)
 	stop := s.stopReason
 	err := s.promptErr
+	if len(s.promptErrs) > 0 {
+		err = s.promptErrs[0]
+		s.promptErrs = s.promptErrs[1:]
+	}
 	gate := s.blockPrompt
 	s.mu.Unlock()
 	if gate != nil {
@@ -523,5 +530,87 @@ func TestClaudeSystemPromptFollowsSubmitFlag(t *testing.T) {
 	on := claudeSystemPrompt()
 	if !strings.Contains(on, "has submitted.") || !strings.Contains(on, "yields right after submit") {
 		t.Fatalf("flag-on prompt must keep the shared submit wording: %q", on)
+	}
+}
+
+// The OAuth refresh race maps to one retry plus an actionable session line.
+// Serial: it shortens the package-wide retry pause.
+func TestClaudeLoginRaceRetriesOnceThenAdvises(t *testing.T) {
+	oldRetry := claudeLoginRetry
+	claudeLoginRetry = time.Millisecond
+	t.Cleanup(func() { claudeLoginRetry = oldRetry })
+	race := fmt.Errorf("acp: Internal error: Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh")
+
+	// A transient race succeeds on retry with no error Event.
+	stub := &stubConn{promptErrs: []error{race, nil}}
+	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
+	be.tokenFile = "/tmp/fake-state/enderbloom/claude-oauth-token"
+	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "haiku", WorkDir: tempDir(t)}
+	if err := be.StartSession(meta); err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	be.OnPrompt("d1", "hi", func(kind, text, status string) { kinds = append(kinds, kind) })
+	stub.mu.Lock()
+	prompts := len(stub.prompts)
+	stub.mu.Unlock()
+	if prompts != 2 {
+		t.Fatalf("prompts after a transient race = %d, want 2 (one retry)", prompts)
+	}
+	for _, k := range kinds {
+		if k == "error" {
+			t.Fatalf("error Event after a recovered race: %v", kinds)
+		}
+	}
+
+	// A persistent race fails with the setup-token advice naming the file,
+	// and no token value anywhere in the transcript.
+	stub2 := &stubConn{promptErrs: []error{race, race}}
+	be2 := newStubClaudeBackend(func() (acpConn, error) { return stub2, nil })
+	be2.tokenFile = "/tmp/fake-state/enderbloom/claude-oauth-token"
+	meta2 := SessionMeta{ID: "d2", Harness: "claude", Model: "haiku", WorkDir: tempDir(t)}
+	if err := be2.StartSession(meta2); err != nil {
+		t.Fatal(err)
+	}
+	var errs, statuses []string
+	be2.OnPrompt("d2", "hi", func(kind, text, status string) {
+		if kind == "error" {
+			errs = append(errs, text)
+		}
+		if kind == "status" {
+			statuses = append(statuses, status)
+		}
+	})
+	if len(errs) != 1 || !strings.Contains(errs[0], "Claude login race") || !strings.Contains(errs[0], "claude setup-token") {
+		t.Fatalf("race error Events = %v, want one actionable line", errs)
+	}
+	if !strings.Contains(errs[0], "/tmp/fake-state/enderbloom/claude-oauth-token") {
+		t.Fatalf("race advice = %q, want the token file path", errs[0])
+	}
+	if len(statuses) == 0 || statuses[len(statuses)-1] != "failed" {
+		t.Fatalf("statuses = %v, want a terminal failed", statuses)
+	}
+
+	// Any other prompt error neither retries nor advises.
+	stub3 := &stubConn{promptErr: fmt.Errorf("acp: session/prompt: adapter closed")}
+	be3 := newStubClaudeBackend(func() (acpConn, error) { return stub3, nil })
+	meta3 := SessionMeta{ID: "d3", Harness: "claude", Model: "haiku", WorkDir: tempDir(t)}
+	if err := be3.StartSession(meta3); err != nil {
+		t.Fatal(err)
+	}
+	errs = nil
+	be3.OnPrompt("d3", "hi", func(kind, text, status string) {
+		if kind == "error" {
+			errs = append(errs, text)
+		}
+	})
+	stub3.mu.Lock()
+	plain := len(stub3.prompts)
+	stub3.mu.Unlock()
+	if plain != 1 {
+		t.Fatalf("prompts after a plain failure = %d, want 1 (no retry)", plain)
+	}
+	if len(errs) != 1 || strings.Contains(errs[0], "Claude login race") {
+		t.Fatalf("plain error Events = %v, want the raw error only", errs)
 	}
 }
