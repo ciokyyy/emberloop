@@ -51,13 +51,8 @@ TICKET
 cat >"$repo/.scratch/reviewer-probe/spec.md" <<'SPEC'
 # Reviewer submit live probe
 
-The Ticket's repository root is the Worker's current branch worktree, not the
-original fixture checkout under /tmp. The required `probe.txt` is present at
-the current branch root; do not judge against the unmodified fixture checkout.
-This probe tests the Reviewer's typed `submit` tool: after inspecting the change,
-you MUST call `submit` with verdict `pass`, the current full tip SHA, no findings,
-and the command you ran with its exit code. Do not answer with a free-text verdict.
-Run `git status --porcelain && git rev-parse HEAD` before submitting.
+The ticket asks for one exact file. This fixture exercises the Run Reviewers'
+typed submit tool; the probe supplies the committed Worker result.
 SPEC
 probe_git_commit "$repo" 'reviewer submit probe fixture'
 
@@ -107,6 +102,7 @@ for role,sid in (t.get("reviewerSessions") or {}).items():
   found=0
   while IFS='=' read -r role sid; do
     [ -n "${sid:-}" ] || continue
+    # Unpaged Session GET returns the complete Event log; do not request a tail window.
     session="$(probe_api_get "/api/sessions/$sid")"
     typed="$(printf '%s' "$session" | python3 -c '
 import json,sys
@@ -126,12 +122,9 @@ if chosen: print(json.dumps(chosen))
       verdict="$(printf '%s' "$typed" | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')"
       fresh="$(printf '%s' "$result" | ROLE="$role" TIP="$tip" VERDICT="$verdict" python3 -c '
 import json,os,sys
-r=json.load(sys.stdin); t=r["ticket"]
+t=json.load(sys.stdin)["ticket"]
 v=(t.get("verdicts") or {}).get(os.environ["ROLE"],{})
-same=v.get("at")==os.environ["TIP"] and v.get("verdict")==os.environ["VERDICT"]
-current=bool(v.get("fresh"))
-merged=t.get("state")=="merged" and r.get("status")=="done"
-print("yes" if same and (current or merged) else "no")')"
+print("yes" if v.get("fresh") and v.get("at")==os.environ["TIP"] and v.get("verdict")==os.environ["VERDICT"] else "no")')"
       if [ "$fresh" = yes ]; then
         printf '%s' "$typed" | ROLE="$role" python3 -c 'import json,os,sys; p=json.load(sys.stdin); print("PASS - real reviewer submit recorded: role=%s verdict=%s tip=%s ran=%d"%(os.environ["ROLE"],p["verdict"],p["tip"],len(p.get("ran",[]))))'
         found=1
