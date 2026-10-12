@@ -61,6 +61,7 @@ func newTestSub(t *testing.T, endpoint string) (pushSub, *ecdh.PrivateKey, []byt
 }
 
 func TestPushEncryptRoundTrip(t *testing.T) {
+	t.Parallel()
 	sub, ua, auth := newTestSub(t, "https://push.example/x")
 	body, err := encryptPush(sub, []byte(`{"title":"hi"}`))
 	if err != nil {
@@ -72,6 +73,7 @@ func TestPushEncryptRoundTrip(t *testing.T) {
 }
 
 func TestPushNotifySendsVapidAndDropsGone(t *testing.T) {
+	t.Parallel()
 	var gotAuth, gotEnc string
 	var gotBody []byte
 	gone := false
@@ -113,6 +115,7 @@ func TestPushNotifySendsVapidAndDropsGone(t *testing.T) {
 }
 
 func TestPushAPI(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

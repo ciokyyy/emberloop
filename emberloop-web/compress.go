@@ -32,11 +32,17 @@ const (
 // readCompressSettings reads the settings file on every call, so a change
 // applies to the next turn without a restart.
 func readCompressSettings() compressSettings {
-	s := compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
 	all, err := readSettingsMap()
 	if err != nil {
-		return s
+		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
 	}
+	return parseCompressSettings(all)
+}
+
+// parseCompressSettings decodes the compress knobs: shared by the host
+// reader and the Daemon-scoped test seam so the two never diverge.
+func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
+	s := compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
 	if raw, ok := all["auto_compress"]; ok {
 		var b bool
 		if json.Unmarshal(raw, &b) == nil {
@@ -68,6 +74,16 @@ func readCompressSettings() compressSettings {
 		}
 	}
 	return s
+}
+
+// compressSettingsOf reads this Daemon's compress knobs: the override file
+// when set, else the host file.
+func (d *Daemon) compressSettingsOf() compressSettings {
+	all, err := d.settingsMap()
+	if err != nil {
+		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
+	}
+	return parseCompressSettings(all)
 }
 
 // ContextUsage reports the projected context tokens and the model window.
@@ -195,7 +211,7 @@ func (d *Daemon) compressBeforeGate(id string) bool {
 // one: the Session GET compressNote and the Settings warning already name the
 // missing model.
 func (d *Daemon) maybeAutoCompress(id string) {
-	set := readCompressSettings()
+	set := d.compressSettingsOf()
 	if !set.Auto {
 		return
 	}
@@ -328,7 +344,7 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	if scout || ended {
 		return http.StatusForbidden, map[string]any{"error": "this Session cannot be compressed"}
 	}
-	set := readCompressSettings()
+	set := d.compressSettingsOf()
 	if note := compressNote(set.Model); note != "" {
 		return http.StatusConflict, map[string]any{"error": note}
 	}

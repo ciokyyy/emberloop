@@ -55,12 +55,12 @@ func compressibleOf(t *testing.T, base, id string) bool {
 // is gone. Thinking level and model survive the new handle, the resume token
 // rotates, and a Daemon restart then resumes the new handle.
 func TestPigSDKCompressesByHandoff(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
 	stateDir := tempDir(t)
 	agentDir := tempDir(t)
 	pb := newPigTestBackendAt(t, agentDir)
 	d := NewDaemon(stateDir, NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.RegisterBackend("pig", pb)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -81,7 +81,7 @@ func TestPigSDKCompressesByHandoff(t *testing.T) {
 	}
 	beforeToken := metaBefore.ResumeToken
 
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v, want 202", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, id, 1)
@@ -119,6 +119,7 @@ func TestPigSDKCompressesByHandoff(t *testing.T) {
 	srv.Close()
 	pb2 := newPigTestBackendAt(t, agentDir)
 	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	d2.RegisterBackend("pig", pb2)
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
@@ -142,8 +143,8 @@ func TestPigSDKCompressesByHandoff(t *testing.T) {
 // compressible. Thinking level and model survive the new handle, the resume
 // token rotates, and a Daemon restart then resumes the new handle.
 func TestPigACPCompressesByHandoff(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
 	stateDir := tempDir(t)
 	model := oneCatalogModel(t)
 
@@ -151,6 +152,7 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 	stub.updates = []map[string]any{chunk("real answer")}
 	be := newThoughtStubBackend(stub)
 	d := NewDaemon(stateDir, NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.RegisterBackend("pig", be)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -169,7 +171,7 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 		t.Fatal("no resume token before compress")
 	}
 
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v, want 202", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, id, 1)
@@ -208,6 +210,7 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 	stub2 := &thoughtStubConn{stubConn: stubConn{updates: []map[string]any{chunk("real answer")}}}
 	be2 := newThoughtStubBackend(stub2)
 	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	d2.RegisterBackend("pig", be2)
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
@@ -237,6 +240,7 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 // shares one: the new shim cannot steal the Listen and the old shim's exit
 // cannot unlink the new shim's live socket.
 func TestPigACPSocksRotateAcrossHandoff(t *testing.T) {
+	t.Parallel()
 	model := oneCatalogModel(t)
 	stub := &thoughtStubConn{}
 	be := newThoughtStubBackend(stub)
@@ -271,6 +275,7 @@ func TestPigACPSocksRotateAcrossHandoff(t *testing.T) {
 // Queued native messages move to the new pig-over-ACP handle as follow-ups:
 // a held steer degrades so the Handoff leads.
 func TestPigACPCarryDegradesSteerToFollowup(t *testing.T) {
+	t.Parallel()
 	oldSock := filepath.Join(tempDir(t), "old.sock")
 	newSock := filepath.Join(tempDir(t), "new.sock")
 	serveQueue := func(sock string, q pigQueue, received *[]string) func() {
@@ -363,11 +368,12 @@ func (f *failingSteerBackend) ClearQueued(sessionID string) int                {
 // A pig steer that misses the native queue waits in the Daemon pending list
 // and is not lost.
 func TestPigSteerMissFallsBackToPending(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := &failingSteerBackend{FakeBackend: NewFakeBackend()}
-	be.Delay = time.Second
+	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.RegisterBackend("pig", be)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -393,11 +399,12 @@ func TestPigSteerMissFallsBackToPending(t *testing.T) {
 // degraded follow-up, so the Handoff leads and nothing is lost on the dying
 // handle.
 func TestPigSteerDuringHandoffQueuesFollowup(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
-	be.Delay = time.Second
+	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.RegisterBackend("pig", be)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

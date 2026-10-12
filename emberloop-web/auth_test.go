@@ -77,6 +77,7 @@ func signedIn(t testing.TB, h http.Handler, user string) *http.Cookie {
 
 // Slice A: the first signup is the admin, later signups are plain Users.
 func TestFirstSignupIsAdminLaterSignupsAreUsers(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 
@@ -113,6 +114,7 @@ func TestFirstSignupIsAdminLaterSignupsAreUsers(t *testing.T) {
 
 // Slice A: a User keeps the same ID after the Daemon restarts.
 func TestUserIDIsStableAcrossRestart(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	first := authDo(t, NewDaemon(dir, NewFakeBackend()).Handler(), http.MethodPost, "/api/auth/signup", credsJSON(testUser, testPassword))
 	if first.Code != http.StatusCreated {
@@ -133,6 +135,7 @@ func TestUserIDIsStableAcrossRestart(t *testing.T) {
 // Slice B: login sets an HttpOnly SameSite=Lax cookie; logout clears it and
 // the server stops accepting the old cookie.
 func TestLoginSetsCookieAndLogoutClearsIt(t *testing.T) {
+	t.Parallel()
 	h := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	if rec := authDo(t, h, http.MethodPost, "/api/auth/signup", credsJSON(testUser, testPassword)); rec.Code != http.StatusCreated {
 		t.Fatalf("signup = %d, want 201", rec.Code)
@@ -170,6 +173,7 @@ func TestLoginSetsCookieAndLogoutClearsIt(t *testing.T) {
 
 // Slice B: a wrong password and an unknown name get the same answer.
 func TestWrongPasswordAndUnknownUserAnswerAlike(t *testing.T) {
+	t.Parallel()
 	h := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	authDo(t, h, http.MethodPost, "/api/auth/signup", credsJSON(testUser, testPassword))
 
@@ -186,6 +190,7 @@ func TestWrongPasswordAndUnknownUserAnswerAlike(t *testing.T) {
 // Slice C: every /api route and SSE stream answers 401 without a cookie; the
 // static shell stays public.
 func TestAPIRoutesNeedCookieStaticShellIsPublic(t *testing.T) {
+	t.Parallel()
 	h := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	gets := []string{
 		"/api/live", "/api/push/key", "/api/models?harness=claude", "/api/settings",
@@ -220,6 +225,7 @@ func TestAPIRoutesNeedCookieStaticShellIsPublic(t *testing.T) {
 // Slice D: the machine token passes the gate as a machine caller, never as a
 // User; a wrong bearer does not pass.
 func TestMachineTokenPassesGateButIsNoUser(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	tok := d.MachineToken()
@@ -248,6 +254,7 @@ func TestMachineTokenPassesGateButIsNoUser(t *testing.T) {
 // Slice D: local tools read the machine token from enderbloom/daemon.token,
 // readable by the owner only.
 func TestMachineTokenFileIsOwnerOnly(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	path := filepath.Join(dir, "enderbloom", "daemon.token")
@@ -314,6 +321,7 @@ func TestSignupEnabledIsAdminOnlyAndOffRefusesSignup(t *testing.T) {
 // Slice F: SetUserPassword resets the password, signs the User out and the
 // running Daemon sees the change without a restart.
 func TestSetUserPasswordResetsLoginAndSignsOut(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	h := NewDaemon(dir, NewFakeBackend()).Handler()
 	old := signedIn(t, h, testUser)
@@ -334,6 +342,7 @@ func TestSetUserPasswordResetsLoginAndSignsOut(t *testing.T) {
 
 // Slice F: an unknown name and a short password are refused.
 func TestSetUserPasswordRefusesUnknownUserAndShortPassword(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	h := NewDaemon(dir, NewFakeBackend()).Handler()
 	signedIn(t, h, testUser)
@@ -370,6 +379,7 @@ func authedHandler(t testing.TB, d *Daemon) http.Handler {
 // The sign-in screen reads /api/auth/state with no cookie. It reports only
 // whether the Daemon is empty and whether signup is open.
 func TestAuthStateIsPublicAndRevealsOnlyEmptyAndSignup(t *testing.T) {
+	t.Parallel()
 	h := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	state := func() string {
 		t.Helper()

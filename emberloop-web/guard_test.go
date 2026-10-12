@@ -9,6 +9,7 @@ import (
 // The guard accepts loopback, plus hostnames on the allow list (a local
 // reverse proxy forwards its public name), and nothing else.
 func TestGuardAllowedHosts(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetAllowedHosts([]string{"Box.tail1234.ts.net."})
 	h := authedHandler(t, d)
@@ -47,6 +48,7 @@ func TestGuardAllowedHosts(t *testing.T) {
 
 // Tailnet mode accepts Tailscale addresses (100.64.0.0/10) and nothing else new.
 func TestGuardTailnetAddresses(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.AllowTailnet(true)
 	h := authedHandler(t, d)

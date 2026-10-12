@@ -19,9 +19,9 @@ func urlQueryEscape(s string) string { return url.QueryEscape(s) }
 // wired, returning the Daemon and its authed base URL.
 func memoryPageDaemon(t *testing.T) (*Daemon, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -32,9 +32,9 @@ func memoryPageDaemon(t *testing.T) (*Daemon, string) {
 // private-notes invariant, returning both bases and owners.
 func memoryTwoUsers(t *testing.T) (*Daemon, string, string, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -135,6 +135,7 @@ func postPurge(t *testing.T, base string, body any) (int, string) {
 // A User sees only their own bank; admins get no extra read access to other
 // Users' notes.
 func TestMemoryPagePrivateByDefault(t *testing.T) {
+	t.Parallel()
 	d, asAdmin, asBob, adminID, bobID := memoryTwoUsers(t)
 	ctx := context.Background()
 	if _, err := ownerBank(t, d, adminID).AddRule(ctx, memory.Rule{
@@ -211,6 +212,7 @@ func TestMemoryPagePrivateByDefault(t *testing.T) {
 // Queue shows each proposal with quotes and source Sessions; approve, edit,
 // reject and batch approve work from the page routes.
 func TestMemoryPageQueueDecideAndBatch(t *testing.T) {
+	t.Parallel()
 	_, base := memoryPageDaemon(t)
 	id := createSession(t, base, "fake", "fake-model", tempDir(t))
 	runPrompt(t, base, id, "the team uses tabs for indentation here")
@@ -291,6 +293,7 @@ func TestMemoryPageQueueDecideAndBatch(t *testing.T) {
 
 // Profile versions are listed; any version can be restored as a new version.
 func TestMemoryPageProfileVersionsRestore(t *testing.T) {
+	t.Parallel()
 	_, base := memoryPageDaemon(t)
 	put := func(ops []memory.ProfileOp) {
 		t.Helper()
@@ -330,6 +333,7 @@ func TestMemoryPageProfileVersionsRestore(t *testing.T) {
 
 // Purge needs a typed confirmation and reports what it removed.
 func TestMemoryPagePurgeNeedsConfirmAndReports(t *testing.T) {
+	t.Parallel()
 	d, base := memoryPageDaemon(t)
 	ctx := context.Background()
 	owner := userOf(t, d.Handler(), signedIn(t, d.Handler(), "purgeuser")).ID
@@ -384,6 +388,7 @@ func TestMemoryPagePurgeNeedsConfirmAndReports(t *testing.T) {
 // Stats report queue size, approval latency, the last nightly run and the
 // ledger; the status chip is unavailable when the engine fails.
 func TestMemoryPageStatusAndLedger(t *testing.T) {
+	t.Parallel()
 	d, base := memoryPageDaemon(t)
 	id := createSession(t, base, "fake", "fake-model", tempDir(t))
 	runPrompt(t, base, id, "the team uses tabs for indentation here")

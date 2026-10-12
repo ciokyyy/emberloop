@@ -8,6 +8,7 @@ import (
 // Table tests for the reviewer reply format: one own-line VERDICT plus
 // `file:line severity: problem` findings.
 func TestParseReviewTable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		text     string
@@ -91,6 +92,7 @@ func TestParseReviewTable(t *testing.T) {
 }
 
 func TestReviewerPromptCarriesItsAxisBrief(t *testing.T) {
+	t.Parallel()
 	spec := reviewerPrompt("01-a", "spec.md", reviewerSpecType, "b", "abc")
 	if !strings.Contains(spec, "Spec axis.") || strings.Contains(spec, "Smell baseline") {
 		t.Errorf("spec reviewer prompt has the wrong brief: %q", spec)
@@ -113,6 +115,7 @@ func TestReviewerPromptCarriesItsAxisBrief(t *testing.T) {
 }
 
 func TestWebWorkerIsNeverToldToSpawnReviewers(t *testing.T) {
+	t.Parallel()
 	if strings.Contains(webStallNudge, "Spawn your reviewers") {
 		t.Errorf("stall nudge tells a Run worker to spawn reviewers: %q", webStallNudge)
 	}
@@ -126,6 +129,7 @@ func TestWebWorkerIsNeverToldToSpawnReviewers(t *testing.T) {
 // blocker|major|minor. A stale tip is not a validation error: it records and
 // does not count.
 func TestValidateReviewerSubmitTable(t *testing.T) {
+	t.Parallel()
 	ran := []ReviewRan{{Command: "go vet ./...", ExitCode: 0}}
 	tests := []struct {
 		name    string

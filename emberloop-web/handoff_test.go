@@ -12,8 +12,7 @@ import (
 
 func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.UsageSize = 100000
 	be.ReplyFunc = func(_, text string) (string, bool) {
@@ -22,7 +21,8 @@ func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 		}
 		return strings.Repeat("x", 8000), true
 	}
-	d := NewDaemon(tempDir(t), be)
+	d := runTestDaemon(t, tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -55,6 +55,7 @@ func waitIdleAfter(t *testing.T, base, id string, n int) []Event {
 }
 
 func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	for _, p := range []string{"build the thing", "and more", "and again"} {
 		sendPrompt(t, base, id, p)
@@ -65,7 +66,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	metaBefore := d.sessions[id].meta
 	d.mu.Unlock()
 
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -130,7 +131,7 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	}
 
 	// Second compress numbers 2.
-	compressReq(t, base, id, "")
+	compressReqIdle(t, base, id, "")
 	evs = waitIdleAfter(t, base, id, 2)
 	if !strings.Contains(eventsOfKind(evs, "compressed")[1].Text, `"number":2`) {
 		t.Fatalf("second compressed = %s", eventsOfKind(evs, "compressed")[1].Text)
@@ -152,11 +153,12 @@ func indexOfSeq(evs []Event, seq int64) int {
 }
 
 func TestHandoffFailureKeepsOldHandle(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	be.StartErr = os.ErrPermission
-	compressReq(t, base, id, "")
+	compressReqIdle(t, base, id, "")
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && len(eventsOfKind(transcriptOf(t, base, id), "error")) == 0 {
 		time.Sleep(10 * time.Millisecond)
@@ -184,11 +186,12 @@ func TestHandoffFailureKeepsOldHandle(t *testing.T) {
 }
 
 func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	be.HandoffTurnErr = "boom"
-	compressReq(t, base, id, "")
+	compressReqIdle(t, base, id, "")
 	waitEventKind(t, base, id, "error")
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -211,10 +214,11 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 // deterministic Handoff still names it as the Task, so a compressed Worker
 // keeps the work it was asked to do.
 func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
 	h := d.Handler()
@@ -228,7 +232,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	wantSender(t, task, "system", "")
 	waitIdleAfter(t, srv.URL, worker.ID, 0)
 
-	if code, body := compressReq(t, srv.URL, worker.ID, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, worker.ID, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, worker.ID, 1)
@@ -245,9 +249,10 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 // A Subagent's spawn prompt is a system prompt too; its Handoff keeps it as
 // the Task for the same reason.
 func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
 	h := d.Handler()
@@ -263,7 +268,7 @@ func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
 	wantSender(t, task, "system", "")
 	waitIdleAfter(t, srv.URL, child, 0)
 
-	if code, body := compressReq(t, srv.URL, child, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, child, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, srv.URL, child, 1)

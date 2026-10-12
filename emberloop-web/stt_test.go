@@ -12,6 +12,7 @@ import (
 )
 
 func TestSTTProxiesAudioToOpenRouter(t *testing.T) {
+	t.Parallel()
 	var gotAuth string
 	var got struct {
 		Model      string `json:"model"`
@@ -51,6 +52,7 @@ func TestSTTProxiesAudioToOpenRouter(t *testing.T) {
 }
 
 func TestSTTWithoutKeyIs503AndGetReportsDisabled(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "" }
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -69,6 +71,7 @@ func TestSTTWithoutKeyIs503AndGetReportsDisabled(t *testing.T) {
 }
 
 func TestSTTRejectsUnknownAudioType(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sttKeyFn = func(context.Context) string { return "sk-test" }
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -80,6 +83,7 @@ func TestSTTRejectsUnknownAudioType(t *testing.T) {
 }
 
 func TestSTTUpstreamErrorIs502WithMessage(t *testing.T) {
+	t.Parallel()
 	or := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(402)
 		_, _ = w.Write([]byte(`{"error":{"message":"no credits"}}`))
@@ -124,6 +128,7 @@ func TestSTTModelEnvOverride(t *testing.T) {
 }
 
 func TestSTTFormatPassCleansPerSegment(t *testing.T) {
+	t.Parallel()
 	or := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"text":" um hello world "}`))
 	}))
@@ -177,6 +182,7 @@ func TestSTTFormatPassCleansPerSegment(t *testing.T) {
 }
 
 func TestSTTWithoutFormatSkipsChat(t *testing.T) {
+	t.Parallel()
 	or := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"text":" um hello "}`))
 	}))
@@ -208,6 +214,7 @@ func TestSTTWithoutFormatSkipsChat(t *testing.T) {
 }
 
 func TestSTTFormatFailsOpenOnChatError(t *testing.T) {
+	t.Parallel()
 	or := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"text":" raw text "}`))
 	}))

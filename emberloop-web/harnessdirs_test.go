@@ -71,6 +71,7 @@ func envEqual(a, b []string) bool {
 // TestOwnerStartsGetOwnDirsAtDaemonSeam: each User's Session starts with that
 // User's dirs only. A file in B's claude config dir is absent from A's.
 func TestOwnerStartsGetOwnDirsAtDaemonSeam(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	be := NewFakeBackend()
 	d := NewDaemon(stateDir, be)
@@ -123,6 +124,7 @@ func TestOwnerStartsGetOwnDirsAtDaemonSeam(t *testing.T) {
 // TestResumeAndHandoffStartsCarryOwnerEnv: a resume after restart and a
 // Handoff both start with the owner's dirs, not the host's.
 func TestResumeAndHandoffStartsCarryOwnerEnv(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	hostDirsForTest(t, d)
 	owner := metaOf(t, base, id).Owner
@@ -131,7 +133,7 @@ func TestResumeAndHandoffStartsCarryOwnerEnv(t *testing.T) {
 		waitStatus(t, base, id, "working", 5*time.Second)
 		waitStatus(t, base, id, "idle", 5*time.Second)
 	}
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitIdleAfter(t, base, id, 1)
@@ -166,6 +168,7 @@ func TestResumeAndHandoffStartsCarryOwnerEnv(t *testing.T) {
 // TestSpawnedChildStartsWithParentOwnerEnv: a child started by another User
 // takes the parent's owner, so its dirs are the parent owner's.
 func TestSpawnedChildStartsWithParentOwnerEnv(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	be := NewFakeBackend()
 	d := NewDaemon(stateDir, be)
@@ -191,6 +194,7 @@ func TestSpawnedChildStartsWithParentOwnerEnv(t *testing.T) {
 // TestOwnerDirsRefusePathLikeOwners: an owner names a directory under users/,
 // so an empty or path-like owner is refused before any dir is made.
 func TestOwnerDirsRefusePathLikeOwners(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	for _, owner := range []string{"", ".", "..", "a/b", `a\b`} {
 		if _, err := d.ownerDirsFor(owner); err == nil {
@@ -203,6 +207,7 @@ func TestOwnerDirsRefusePathLikeOwners(t *testing.T) {
 // host login as a link and no host memory, settings or projects. A second
 // seed changes nothing.
 func TestSeedClaudeDirLinksOnlyTheLogin(t *testing.T) {
+	t.Parallel()
 	host := tempDir(t)
 	writeTestFile(t, filepath.Join(host, claudeAuthFile), `{"test":true}`)
 	writeTestFile(t, filepath.Join(host, "CLAUDE.md"), "host claude memory")
@@ -238,6 +243,7 @@ func TestSeedClaudeDirLinksOnlyTheLogin(t *testing.T) {
 // session store and extensions. Instruction files, skills and prompts stay
 // out, and settings drop the skills and prompts path lists.
 func TestSeedPigDirLinksSharedStateOnly(t *testing.T) {
+	t.Parallel()
 	host := tempDir(t)
 	writeTestFile(t, filepath.Join(host, "auth.json"), `{}`)
 	writeTestFile(t, filepath.Join(host, "AGENTS.md"), "host instructions")
@@ -286,6 +292,7 @@ func TestSeedPigDirLinksSharedStateOnly(t *testing.T) {
 // TestClaudeAdapterConnUsesOwnerConfigDir: the claude adapter's process gets
 // the owner's dirs, and its env ends with the owner's CLAUDE_CONFIG_DIR.
 func TestClaudeAdapterConnUsesOwnerConfigDir(t *testing.T) {
+	t.Parallel()
 	b := newStubClaudeBackend(nil)
 	b.newConn = nil
 	var got ownerDirs

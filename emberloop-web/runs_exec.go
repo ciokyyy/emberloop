@@ -291,7 +291,18 @@ const runPollInterval = 500 * time.Millisecond
 // older worker slot. Empty when neither is set, so the caller falls back to
 // the Session default.
 func roleWorkerConfig() (harness, model, effort string) {
-	roles := readRoles()
+	return lookupWorkerRole(readRoles())
+}
+
+// daemonRoleWorkerConfig reads this Daemon's Run worker harness, model and
+// effort from its settings roles.
+func (d *Daemon) daemonRoleWorkerConfig() (harness, model, effort string) {
+	return lookupWorkerRole(d.settingsRoles())
+}
+
+// lookupWorkerRole resolves the worker slot from a decoded roles map: shared
+// by the host reader and the Daemon-scoped test seam.
+func lookupWorkerRole(roles map[string]roleSetting) (harness, model, effort string) {
 	for _, name := range []string{"implementer", "worker"} {
 		r, ok := roles[name]
 		if !ok || r.Harness == "" || r.Model == "" {
@@ -696,7 +707,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spec is not inside the repo", http.StatusBadRequest)
 		return
 	}
-	harness, model, effort := roleWorkerConfig()
+	harness, model, effort := d.daemonRoleWorkerConfig()
 	if harness == "" {
 		harness = req.Harness
 	}
@@ -770,7 +781,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		NeedsYouReason:     map[string]string{},
 		Followups:          map[string]string{},
 		Rows:               map[string]savedRow{},
-		Chains:             configuredRunChains(harness, model, effort),
+		Chains:             d.daemonConfiguredRunChains(harness, model, effort),
 		ChainExhausted:     map[string]bool{},
 		ChainPendingSubmit: map[string]bool{},
 		StartBlocked:       map[string]string{},
@@ -1050,8 +1061,8 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		Sleep: func(wait time.Duration) {
 			d.snapshotAndPersist(rs.ID)
 			d.pauseGate(rs.ID)
-			if wait > runPollInterval {
-				wait = runPollInterval
+			if cap := d.pollIntervalOrDefault(); wait > cap {
+				wait = cap
 			}
 			time.Sleep(wait)
 		},
@@ -2752,7 +2763,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				}
 				// Freeze the cap wait while paused instead of burning retries.
 				d.pauseGate(runID)
-				time.Sleep(runPollInterval)
+				time.Sleep(d.pollIntervalOrDefault())
 			}
 			if startExhausted {
 				cleanup()

@@ -43,11 +43,17 @@ type deciderSettings struct {
 // readDeciderSettings reads the settings file on every call, so a change
 // applies to the next mine without a restart.
 func readDeciderSettings() deciderSettings {
-	s := deciderSettings{Mode: deciderHeuristic, Low: memory.DefaultConfirmLow, High: memory.DefaultConfirmHigh}
 	all, err := readSettingsMap()
 	if err != nil {
-		return s
+		return deciderSettings{Mode: deciderHeuristic, Low: memory.DefaultConfirmLow, High: memory.DefaultConfirmHigh}
 	}
+	return parseDeciderSettings(all)
+}
+
+// parseDeciderSettings decodes the decider knobs: shared by the host reader
+// and the Daemon-scoped test seam so the two never diverge.
+func parseDeciderSettings(all map[string]json.RawMessage) deciderSettings {
+	s := deciderSettings{Mode: deciderHeuristic, Low: memory.DefaultConfirmLow, High: memory.DefaultConfirmHigh}
 	if raw, ok := all["decider_mode"]; ok {
 		var str string
 		if json.Unmarshal(raw, &str) == nil {
@@ -78,6 +84,16 @@ func readDeciderSettings() deciderSettings {
 		s.Low, s.High = memory.DefaultConfirmLow, memory.DefaultConfirmHigh
 	}
 	return s
+}
+
+// deciderSettingsOf reads this Daemon's decider knobs: the override file
+// when set, else the host file.
+func (d *Daemon) deciderSettingsOf() deciderSettings {
+	all, err := d.settingsMap()
+	if err != nil {
+		return deciderSettings{Mode: deciderHeuristic, Low: memory.DefaultConfirmLow, High: memory.DefaultConfirmHigh}
+	}
+	return parseDeciderSettings(all)
 }
 
 // deciderNote names why the confirming Decider cannot run as configured, or
@@ -140,11 +156,17 @@ type jevSettings struct {
 // readJevSettings reads the settings file on every call, so a change applies
 // to the next mine without a restart.
 func readJevSettings() jevSettings {
-	s := jevSettings{Model: memory.DefaultJevModel}
 	all, err := readSettingsMap()
 	if err != nil {
-		return s
+		return jevSettings{Model: memory.DefaultJevModel}
 	}
+	return parseJevSettings(all)
+}
+
+// parseJevSettings decodes the jev knobs: shared by the host reader and the
+// Daemon-scoped test seam so the two never diverge.
+func parseJevSettings(all map[string]json.RawMessage) jevSettings {
+	s := jevSettings{Model: memory.DefaultJevModel}
 	if raw, ok := all["jev_base_url"]; ok {
 		var str string
 		if json.Unmarshal(raw, &str) == nil {
@@ -167,11 +189,21 @@ func readJevSettings() jevSettings {
 	return s
 }
 
+// jevSettingsOf reads this Daemon's jev knobs: the override file when set,
+// else the host file.
+func (d *Daemon) jevSettingsOf() jevSettings {
+	all, err := d.settingsMap()
+	if err != nil {
+		return jevSettings{Model: memory.DefaultJevModel}
+	}
+	return parseJevSettings(all)
+}
+
 // jevMineDecider is the confirming Jev Decider, or nil while the endpoint is
 // off (no base URL). The caller falls back to the heuristic when it is nil.
 // The key stays optional so a local Laya server without one still works.
 func (d *Daemon) jevMineDecider() memory.Decider {
-	set := readJevSettings()
+	set := d.jevSettingsOf()
 	if set.BaseURL == "" {
 		return nil
 	}
@@ -310,7 +342,7 @@ func (d *Daemon) mineConfirmers() (second memory.Decider, ensemble bool) {
 	if d.decider != nil {
 		return d.decider, false
 	}
-	set := readDeciderSettings()
+	set := d.deciderSettingsOf()
 	switch set.Mode {
 	case deciderJev:
 		return d.jevMineDecider(), false
@@ -369,7 +401,7 @@ func (d *Daemon) minerSubjectKey(statement, contextText string) (string, string)
 // queue-eligible on it. Only the heuristic mode offers eligibility from the
 // heuristic score. It never errors: callers store or drop on the verdict.
 func (d *Daemon) decideMine(text, contextText string, hit memory.HeuristicResult) mineDecision {
-	set := readDeciderSettings()
+	set := d.deciderSettingsOf()
 	ctx := context.Background()
 	state := memory.DeciderState{Statement: text, Context: contextText}
 	out := mineDecision{

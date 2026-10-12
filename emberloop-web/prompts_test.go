@@ -8,6 +8,7 @@ import (
 // The role texts are pinned: a wording change must update this snapshot on
 // purpose, so prompt drift fails loudly instead of silently.
 func TestRolePromptsSnapshot(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		got  string
@@ -29,6 +30,7 @@ func TestRolePromptsSnapshot(t *testing.T) {
 // name the memory-write tool. The web prompt does name it, so the check is
 // meaningful in both directions.
 func TestRolePromptsRememberScope(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		text string
@@ -53,6 +55,7 @@ func TestRolePromptsRememberScope(t *testing.T) {
 // rolePromptFor dispatches on the Session record: Reviewer sessions are
 // detected first while their el role is run-worker for the submit tool.
 func TestRolePromptForDispatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		meta SessionMeta
@@ -74,6 +77,7 @@ func TestRolePromptForDispatch(t *testing.T) {
 
 // Every role prompt carries the DOX and untrusted rules.
 func TestRolePromptsCarryDoxAndUntrusted(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		text string
@@ -98,6 +102,7 @@ func TestRolePromptsCarryDoxAndUntrusted(t *testing.T) {
 // Explore guidance (ticket 08): Worker and Reviewer prompts carry the shared
 // const verbatim, so the wording cannot drift from the pinned snapshots.
 func TestRolePromptsCarryExploreGuidance(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		text string

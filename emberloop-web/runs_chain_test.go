@@ -57,6 +57,7 @@ func firstHandoffAndTask(events []Event) (handoff, task Event, ok bool) {
 
 // A Chain-position write must not publish a placeholder driver-row state.
 func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
+	t.Parallel()
 	rs := &runState{}
 	setChainPosition(rs, "01-first", "worker", 1)
 	row := rs.Rows["01-first"]
@@ -66,6 +67,7 @@ func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
 }
 
 func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	runsDir := filepath.Join(stateDir, "enderbloom", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -85,7 +87,7 @@ func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runsDir, "legacy-run.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	d.mu.Lock()
 	loaded := d.runs["legacy-run"]
 	row := loaded.Rows["01-first"]
@@ -100,7 +102,8 @@ func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 }
 
 func TestRunChainFailureClampsPersistedPosition(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.runs["r-chain"] = &runState{
 		ID: "r-chain", Status: runStatusRunning,
 		Tickets:   []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
@@ -155,7 +158,7 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				return injection{}
 			}
 			t.Cleanup(func() { memoryInjection = previousInjection })
-			useSettings(t, workerTestChainSettings)
+			settingsPath := useSettings(t, workerTestChainSettings)
 			fake := NewFakeBackend()
 			var failOnce sync.Once
 			var failureMu sync.Mutex
@@ -178,7 +181,8 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				defer failureMu.Unlock()
 				return failedID
 			}
-			d := NewDaemon(tempDir(t), fake)
+			d := runTestDaemon(t, tempDir(t), fake)
+			d.SetSettingsPath(settingsPath)
 			srv := newRunTestServer(t, d)
 			defer srv.Close()
 
@@ -275,13 +279,15 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 }
 
 func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.CreateErrs = []error{errors.New("quota exceeded")}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -308,10 +314,11 @@ func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
 }
 
 func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.ResumeNote = "fallback resume unavailable"
 	var failOnce sync.Once
@@ -323,7 +330,8 @@ func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -350,10 +358,11 @@ func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
 }
 
 func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	var failOnce sync.Once
 	fake.TurnFailure = func(_, prompt string) (string, bool) {
@@ -367,7 +376,8 @@ func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
 		})
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -390,10 +400,11 @@ func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
 }
 
 func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.Delay = 150 * time.Millisecond
 	var failOnce sync.Once
@@ -405,7 +416,8 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -476,10 +488,11 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 }
 
 func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.Delay = 250 * time.Millisecond
 	var failOnce sync.Once
@@ -491,7 +504,8 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -552,15 +566,17 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 }
 
 func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.TurnFailure = func(_, prompt string) (string, bool) {
 		return "quota exceeded", strings.Contains(prompt, "Implement ticket 01-first")
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -581,12 +597,14 @@ func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
 }
 
 func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -626,10 +644,11 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 }
 
 func TestRunReviewerFallbackChain(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
 	var mu sync.Mutex
 	failedID := ""
@@ -646,7 +665,8 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 		failed, failedID = true, id
 		return "HTTP 401 unauthorized", true
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -706,11 +726,12 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 }
 
 func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -760,6 +781,7 @@ func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
 }
 
 func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		error    string
@@ -776,7 +798,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 			repo, spec := initRunRepo(t, map[string]string{
 				"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 			})
-			useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+			settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 			fake := NewFakeBackend()
 			var failOnce sync.Once
 			var mu sync.Mutex
@@ -794,7 +816,8 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 				})
 				return tc.error, fired
 			}
-			d := NewDaemon(tempDir(t), fake)
+			d := runTestDaemon(t, tempDir(t), fake)
+			d.SetSettingsPath(settingsPath)
 			srv := newRunTestServer(t, d)
 			defer srv.Close()
 
@@ -853,12 +876,14 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 }
 
 func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -878,7 +903,8 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	d.appendEvent(worker, "status", "", "failed")
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	srv2 := newRunTestServer(t, d2)
 	defer srv2.Close()
 	if _, code := postRunAction(t, srv2.URL, run.ID, "resume"); code != 200 {
@@ -903,10 +929,11 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 }
 
 func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	stateDir := tempDir(t)
 	fake := NewFakeBackend()
 	var failOnce sync.Once
@@ -918,7 +945,8 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(stateDir, fake)
+	d := runTestDaemon(t, stateDir, fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -936,7 +964,8 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	srv2 := newRunTestServer(t, d2)
 	defer srv2.Close()
 	loaded := getRun(t, srv2.URL, run.ID)

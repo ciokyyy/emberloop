@@ -11,6 +11,7 @@ import (
 )
 
 func TestCleanTitle(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"Retry with backoff":                          "Retry with backoff",
 		"Here is a title:\n\n**Add retry to client**": "Here is a title",
@@ -32,9 +33,12 @@ func TestCleanTitle(t *testing.T) {
 	}
 }
 
+// waitTitle polls for a title. Absence assertions wait out the whole window;
+// titles resolve in milliseconds off the turn end, so a second proves the
+// negative with wide margin.
 func waitTitle(t *testing.T, base, id string, want bool) string {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(time.Second)
 	for {
 		title := getSession(t, base, id).Meta.Title
 		if (title != "") == want || time.Now().After(deadline) {

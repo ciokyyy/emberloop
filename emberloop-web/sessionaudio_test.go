@@ -12,6 +12,7 @@ import (
 // A voice recording uploads through the images route, keeps its duration and
 // peaks, serves back, and never reaches the model as a file path or pixels.
 func TestAudioUploadKeepsPeaksAndStaysOutOfModelInput(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -52,6 +53,7 @@ func TestAudioUploadKeepsPeaksAndStaysOutOfModelInput(t *testing.T) {
 }
 
 func TestUploadRejectsOtherMediaTypes(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

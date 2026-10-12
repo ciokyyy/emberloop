@@ -16,6 +16,7 @@ import (
 
 // trimRunSkill drops optional HTML blocks and (optional) markdown sections.
 func TestTrimRunSkillDropsOptional(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -198,7 +199,7 @@ func TestRunSkillsAreAdminOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "alice")
 	bob := signedIn(t, h, "bob")
@@ -273,12 +274,7 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 // The reviewer chain follows the changed files; the worker chain is the root
 // chain when no diff exists yet.
 func TestAgentsChainFollowsChangedPaths(t *testing.T) {
-	t.Setenv("GIT_AUTHOR_NAME", "web-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "web-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
+	t.Parallel()
 	repo := tempDir(t)
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, "AGENTS.md", "# AGENTS.md — root\n")
@@ -329,7 +325,7 @@ func TestRunFirstPromptsCarryInjectionAtSeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

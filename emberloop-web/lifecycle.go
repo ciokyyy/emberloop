@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // defaultMaxRunning caps concurrent running Sessions when no setting exists.
@@ -54,6 +55,21 @@ func (d *Daemon) SetMaxRunning(n int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.maxRunning = n
+}
+// SetPollInterval caps this Daemon's Run driver sleep, for tests. Call it
+// before serving: the write happens before the server's goroutines start,
+// so no lock is needed. Zero keeps the production default.
+func (d *Daemon) SetPollInterval(v time.Duration) {
+	d.pollInterval = v
+}
+
+// pollIntervalOrDefault reports the driver sleep cap in force: the test
+// override, or the production default.
+func (d *Daemon) pollIntervalOrDefault() time.Duration {
+	if d != nil && d.pollInterval > 0 {
+		return d.pollInterval
+	}
+	return runPollInterval
 }
 
 // MaxRunning is the concurrency cap in force: the override, or the global

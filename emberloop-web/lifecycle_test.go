@@ -100,6 +100,7 @@ func (b *probeBackend) counts() (creates, closes, releases, resumes int) {
 
 // Starting a Session over the cap is refused with a clear message.
 func TestSessionCapRefusedOverMax(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), newProbeBackend())
 	d.SetMaxRunning(1)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -159,6 +160,7 @@ func TestMaxRunningReadsGlobalSetting(t *testing.T) {
 // An idle Session releases its agent process; the next prompt resumes it and
 // still answers.
 func TestIdleSessionReleasedAndResumed(t *testing.T) {
+	t.Parallel()
 	be := newProbeBackend()
 	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -192,6 +194,7 @@ func TestIdleSessionReleasedAndResumed(t *testing.T) {
 
 // After a Daemon restart a resumable Session accepts a new prompt.
 func TestRestartResumesSession(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	be := newProbeBackend()
 	d := NewDaemon(dir, be)
@@ -224,6 +227,7 @@ func TestRestartResumesSession(t *testing.T) {
 // A non-resumable Session keeps readable history, says why, and refuses a
 // new prompt.
 func TestNonResumableSessionReadOnly(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	be := newProbeBackend()
 	d := NewDaemon(dir, be)

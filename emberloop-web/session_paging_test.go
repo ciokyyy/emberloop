@@ -26,6 +26,7 @@ func mkEvents(nTurns int) []Event {
 }
 
 func TestTailStartCutsAtPromptBoundaries(t *testing.T) {
+	t.Parallel()
 	events := mkEvents(5) // prompts at idx 0,3,6,9,12
 	cases := []struct {
 		turns int
@@ -49,6 +50,7 @@ func TestTailStartCutsAtPromptBoundaries(t *testing.T) {
 }
 
 func TestTailStartWithoutPrompts(t *testing.T) {
+	t.Parallel()
 	events := []Event{{Seq: 1, Kind: "status"}, {Seq: 2, Kind: "assistant_chunk"}}
 	if got := tailStart(events, 1); got != 0 {
 		t.Fatalf("tailStart without prompts = %d, want 0", got)
@@ -56,6 +58,7 @@ func TestTailStartWithoutPrompts(t *testing.T) {
 }
 
 func TestBeforeWindowPagesEarlierTurns(t *testing.T) {
+	t.Parallel()
 	events := mkEvents(5) // 15 events, seqs 1..15
 	// Page the two turns before seq 10 (turn 4 starts at seq 10).
 	if start, end := beforeWindow(events, 10, 2); start != 3 || end != 9 {
@@ -72,6 +75,7 @@ func TestBeforeWindowPagesEarlierTurns(t *testing.T) {
 }
 
 func TestAtStartWidensToTargetTurn(t *testing.T) {
+	t.Parallel()
 	events := mkEvents(5)
 	tail := tailStart(events, 1) // 12
 	if got := atStart(events, tail, 4); got != 3 {
@@ -95,6 +99,7 @@ func toolText(id, input, output string) string {
 }
 
 func TestCompactToolUpdatesKeepsLastPerID(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Seq: 1, Kind: "prompt", Text: "hi"},
 		{Seq: 2, Kind: "tool_call_started", Text: toolText("a", "echo", "")},
@@ -119,6 +124,7 @@ func TestCompactToolUpdatesKeepsLastPerID(t *testing.T) {
 // per-tool fold (last non-empty field wins, as the transcript merges) is
 // identical before and after.
 func TestCompactFoldEquivalent(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Seq: 1, Kind: "prompt", Text: "go"},
 		{Seq: 2, Kind: "tool_call_started", Text: toolText("a", "ec", "")},
@@ -175,6 +181,7 @@ func getSnapshot(t *testing.T, base, id, query string) (events []Event, hasMore 
 }
 
 func TestSessionTailBeforePagingOverHTTP(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedDirectSession(d, "s1", mkEvents(4)) // prompts at seqs 1,4,7,10
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -223,6 +230,7 @@ func TestSessionTailBeforePagingOverHTTP(t *testing.T) {
 }
 
 func TestSessionSnapshotCompactsOverHTTP(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedDirectSession(d, "s1", []Event{
 		{Kind: "prompt", Text: "hi"},
@@ -270,6 +278,7 @@ func readAll(t *testing.T, resp *http.Response) string {
 }
 
 func TestSPAFallback(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -299,6 +308,7 @@ func TestSPAFallback(t *testing.T) {
 }
 
 func TestIsSPARoute(t *testing.T) {
+	t.Parallel()
 	for _, p := range []string{"/s/x", "/s/abc/", "/runs", "/runs/", "/runs/r1", "/runs/r1/t2", "/settings"} {
 		if !isSPARoute(p) {
 			t.Errorf("isSPARoute(%q) = false, want true", p)

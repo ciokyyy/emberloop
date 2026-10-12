@@ -39,6 +39,7 @@ func appendEventLine(t *testing.T, d *Daemon, id string, e Event) {
 }
 
 func TestLiveMiningOffByDefault(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	activeSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	d.maybeMineLive("s1")
@@ -49,6 +50,7 @@ func TestLiveMiningOffByDefault(t *testing.T) {
 }
 
 func TestLiveMiningMinesUnsettledSessionAtTurnEnd(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.EnableLiveMining()
 	activeSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
@@ -65,6 +67,7 @@ func TestLiveMiningMinesUnsettledSessionAtTurnEnd(t *testing.T) {
 }
 
 func TestLiveMiningReadsOnlyTheDelta(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.EnableLiveMining()
 	activeSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
@@ -88,6 +91,7 @@ func TestLiveMiningReadsOnlyTheDelta(t *testing.T) {
 }
 
 func TestLiveMiningCoalescesTriggersAndNightlyShareCursor(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.EnableLiveMining()
 	activeSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
@@ -115,6 +119,7 @@ func TestLiveMiningCoalescesTriggersAndNightlyShareCursor(t *testing.T) {
 // A real turn through the API mines its own correction at turn end, with no
 // settle wait and no nightly run.
 func TestLiveMiningFiresAtRealTurnEnd(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.EnableLiveMining()
 	srv := httptest.NewServer(authedHandler(t, d))

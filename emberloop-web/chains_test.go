@@ -175,26 +175,26 @@ func TestChainSettingsHarnessAlias(t *testing.T) {
 // chainFor prefers the stored chain under the role or its alias, and falls
 // back to the single "roles" entry as a chain of one.
 func TestChainForPrefersChainsThenRoles(t *testing.T) {
-	useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto", "effort": "high"}}}`)
+	t.Setenv("EL_SETTINGS", useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto", "effort": "high"}}}`))
 
 	got := chainFor("worker")
 	if len(got) != 1 || got[0].Backend != "pig" || got[0].Model != "auto" || got[0].Effort != "high" {
 		t.Fatalf("chainFor without chains = %+v, want the single roles entry", got)
 	}
 
-	useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto"}}, "chains": {"implementer": [{"backend": "grok", "model": "grok-4.7"}]}}`)
+	t.Setenv("EL_SETTINGS", useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto"}}, "chains": {"implementer": [{"backend": "grok", "model": "grok-4.7"}]}}`))
 	got = chainFor("worker")
 	if len(got) != 1 || got[0].Backend != "grok" {
 		t.Fatalf("chainFor with alias chains = %+v, want the implementer entry", got)
 	}
 
-	useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto"}}, "chains": {"worker": [{"backend": "claude", "model": "opus"}, {"backend": "pig", "model": "auto"}]}}`)
+	t.Setenv("EL_SETTINGS", useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto"}}, "chains": {"worker": [{"backend": "claude", "model": "opus"}, {"backend": "pig", "model": "auto"}]}}`))
 	got = chainFor("worker")
 	if len(got) != 2 || got[0].Backend != "claude" || got[1].Backend != "pig" {
 		t.Fatalf("chainFor with chains = %+v, want the stored worker chain", got)
 	}
 
-	useSettings(t, `{}`)
+	t.Setenv("EL_SETTINGS", useSettings(t, `{}`))
 	if got := chainFor("worker"); len(got) != 0 {
 		t.Fatalf("chainFor unconfigured = %+v, want none", got)
 	}
@@ -206,6 +206,7 @@ func TestChainForPrefersChainsThenRoles(t *testing.T) {
 // chainAdvances is the ticket-14 predicate on the shared classifier: each
 // advancing class moves the chain, anything else does not.
 func TestChainAdvancesOnFourClasses(t *testing.T) {
+	t.Parallel()
 	advance := []string{
 		"429 quota exceeded for this key",
 		"insufficient_quota",

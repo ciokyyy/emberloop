@@ -135,6 +135,14 @@ type Daemon struct {
 	// clock is the Daemon clock seam: idle quiet time and the runs driver read
 	// it; nil reads time.Now (idle.go).
 	clock func() time.Time
+	// settingsPath points this Daemon at a settings file for tests; empty
+	// reads the host settings file. Set it before serving: tests give each
+	// parallel Daemon its own file instead of sharing EL_SETTINGS.
+	settingsPath string
+	// pollInterval caps this Daemon's Run driver sleep; zero keeps the
+	// production default. Tests set it before serving so multi-pass Run
+	// tests poll fast. Zero means runPollInterval.
+	pollInterval time.Duration
 	// Run final-merge hooks replace the generated-file build and repo check in seam tests.
 	runFinalBuild func(string) (string, error)
 	runRepoCheck  func(string) (string, error)
@@ -1568,7 +1576,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		d.mu.Unlock()
 		var compressBlocked string
 		if isHandoff {
-			compressBlocked = compressNote(readCompressSettings().Model)
+			compressBlocked = compressNote(d.compressSettingsOf().Model)
 		}
 		// Full log for old clients; ?tail= and ?before= page by turn.
 		tail, hasBefore, before, turns, at := parseSnapshotQuery(r.URL.Query())

@@ -12,15 +12,29 @@ import (
 	"time"
 )
 
-func useSettings(t *testing.T, json string) {
+// useSettings writes a settings file for the test and returns its path. The
+// caller points each Daemon at it with SetSettingsPath before serving:
+// settings never touch process env, so settings tests stay parallel-safe.
+// TestMain's global EL_SETTINGS still covers tests that read host defaults.
+func useSettings(t *testing.T, json string) string {
 	t.Helper()
 	p := filepath.Join(tempDir(t), "settings.json")
-	t.Setenv("EL_SETTINGS", p)
 	if json != "" {
 		if err := os.WriteFile(p, []byte(json), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	return p
+}
+
+// daemonWithSettings points a fresh Daemon at json settings: one line for
+// the common useSettings-then-NewDaemon shape.
+func daemonWithSettings(t *testing.T, json string, backend Backend) (*Daemon, string) {
+	t.Helper()
+	p := useSettings(t, json)
+	d := NewDaemon(tempDir(t), backend)
+	d.SetSettingsPath(p)
+	return d, p
 }
 
 func compressReq(t *testing.T, base, id, instructions string) (int, map[string]any) {
@@ -34,6 +48,25 @@ func compressReq(t *testing.T, base, id, instructions string) (int, map[string]a
 	var out map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
+}
+// compressReqIdle compresses once the Session's turn fully settles. The idle
+// status lands just before the turn's busy flag clears, so a bare compressReq
+// right after it can meet a working turn under load and answer 409. This
+// retries that one working answer briefly, then returns the final code and
+// body exactly like compressReq. Tests asserting a 409 keep compressReq.
+func compressReqIdle(t *testing.T, base, id, instructions string) (int, map[string]any) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		code, body := compressReq(t, base, id, instructions)
+		if code != http.StatusConflict {
+			return code, body
+		}
+		if err, _ := body["error"].(string); !strings.Contains(err, "working") || time.Now().After(deadline) {
+			return code, body
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func transcriptOf(t *testing.T, base, id string) []Event {
@@ -73,11 +106,12 @@ func (e errString) Error() string { return string(e) }
 // Compress refuses while a turn runs, for unknown Sessions, and for scouts.
 // A Handoff Backend swaps by Handoff.
 func TestCompressGuards(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -90,11 +124,11 @@ func TestCompressGuards(t *testing.T) {
 	}
 	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
 
-	if code, _ := compressReq(t, srv.URL, "nope", ""); code != http.StatusNotFound {
+	if code, _ := compressReqIdle(t, srv.URL, "nope", ""); code != http.StatusNotFound {
 		t.Fatalf("unknown = %d, want 404", code)
 	}
 
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("handoff compress = %d %v, want 202", code, body)
 	}
 	waitEventKind(t, srv.URL, id, "compressed")
@@ -104,7 +138,7 @@ func TestCompressGuards(t *testing.T) {
 
 // Settings round-trip through GET and PUT, with defaults and validation.
 func TestCompressSettings(t *testing.T) {
-	useSettings(t, "")
+	t.Setenv("EL_SETTINGS", useSettings(t, ""))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

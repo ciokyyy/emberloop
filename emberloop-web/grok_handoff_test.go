@@ -56,6 +56,7 @@ func writeAuth(t *testing.T, path, data string) {
 // keeps a rotated login: the old agent's refresh syncs before the new start
 // copies auth.json, and again when the old handle releases.
 func TestGrokStartHandleSwapsEffortAndLogin(t *testing.T) {
+	t.Parallel()
 	emit := func(kind, text, status string) {}
 	stateDir := tempDir(t)
 	srcHome := tempDir(t)
@@ -102,6 +103,7 @@ func TestGrokStartHandleSwapsEffortAndLogin(t *testing.T) {
 // A failed grok swap keeps the old handle, and an unknown model or effort
 // fails before anything starts.
 func TestGrokStartHandleFailureKeepsOldHandle(t *testing.T) {
+	t.Parallel()
 	emit := func(kind, text, status string) {}
 	stub := &grokEffortStub{}
 	be := newGrokHandoffBackend(stub, tempDir(t), tempDir(t))

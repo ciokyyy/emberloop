@@ -28,7 +28,7 @@ func waitReviewers(t *testing.T, base, runID, ticketID string) map[string]string
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for reviewers of %s", ticketID)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -90,6 +90,7 @@ func ticketByID(r runJSON, id string) runTicketJSON {
 // Reviewers reply VERDICT in their turn: the spec reviewer passes at once
 // while the standards reviewer works, so the gate holds on one pass.
 func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -104,7 +105,7 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -147,6 +148,7 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 // The spec reviewer reports a blocker; the standards reviewer passes with a
 // minor so the Worker receives both blocking and non-blocking findings.
 func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -171,6 +173,8 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		}
 		return "VERDICT: pass", true
 	}
+	// Slow driver: this reviewer rework sequence races a fast driver the
+	// way pause/switch tests do.
 	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -254,6 +258,7 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 
 // Reviewer sessions use their settings roles, falling back to the Run config.
 func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -266,8 +271,8 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -289,6 +294,7 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 // A Reviewer Session starts through the shared live-Session cap: a full cap
 // refuses it, and freeing the cap lets the retry in.
 func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -296,7 +302,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	d.mu.Lock()
 	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
@@ -338,6 +344,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 // never fresh. The reply arrives as the turn's final assistant message;
 // the Daemon stamps the oldest owed prompt.
 func TestReviewVerdictStampsPromptedTip(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -349,7 +356,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -392,6 +399,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 // current tip: the stale verdict still lands at its prompted tip, but the
 // reviewer is asked to judge the tip that moved under review.
 func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -403,7 +411,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -451,7 +459,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("reviewer transcript misses the re-prompt at %q", cur)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -459,6 +467,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 // tip of the prompt it answers, not the latest prompted tip: with T1
 // prompted, then T2 prompted, the first reply still lands at T1 stale.
 func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -471,7 +480,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, t2)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -562,6 +571,7 @@ func submitWorkerWithDispositions(t *testing.T, base, sessionID string, disposit
 // and merges: the tool path needs no VERDICT text. A pass may carry minors
 // without blocking.
 func TestReviewerSubmitToolScriptMergesWithMinors(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -580,7 +590,7 @@ func TestReviewerSubmitToolScriptMergesWithMinors(t *testing.T) {
 			},
 		}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -603,12 +613,13 @@ func TestReviewerSubmitToolScriptMergesWithMinors(t *testing.T) {
 // A `pass` with empty `ran` is refused with a tool error and records no
 // verdict: the ticket stays under review without a pass.
 func TestReviewerSubmitPassEmptyRanRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -644,12 +655,13 @@ func TestReviewerSubmitPassEmptyRanRefused(t *testing.T) {
 // A `changes` with only minors is refused with a tool error and records no
 // verdict: nits never block through the tool.
 func TestReviewerSubmitChangesMinorsOnlyRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -688,12 +700,13 @@ func TestReviewerSubmitChangesMinorsOnlyRefused(t *testing.T) {
 // count: the verdict lands at its tip, reads not fresh, and the ticket does
 // not merge on it.
 func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -745,12 +758,13 @@ func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
 // A `pass` with minors through the tool does not block: both reviewers pass
 // with minors and `ran`, and the ticket merges.
 func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
 	fb.ReplyFunc = func(string, string) (string, bool) { return "", true }
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -814,7 +828,8 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 // unknown Session answers 404 even with an invalid reviewer payload. Bad
 // JSON and a worker submit without a status keep their own messages.
 func TestSessionSubmitRoutesAndMessages(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -851,6 +866,7 @@ func TestSessionSubmitRoutesAndMessages(t *testing.T) {
 // stays unmerged. (A second done at the very same tip never reaches the
 // reviewers: the worker submit gate refuses it as an empty resubmit.)
 func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -869,7 +885,7 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 		}
 		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: ran}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -930,7 +946,7 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no reused second round: %+v", extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first").Rounds)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	// No second Reviewer turn went out: one gate prompt per reviewer, and
 	// the same persistent Sessions. The reused changes refusal still stands.
@@ -957,6 +973,7 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 // Reviewer turn: the amended tip carries new SHAs but the same patch id, so
 // the passes move to the new tip and the ticket merges without re-review.
 func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -971,7 +988,7 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 			Ran: []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
 		}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1054,6 +1071,7 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 // Reviewer Session. It carries the prior declined finding and reason, while
 // reminding the Reviewer not to re-raise it unless its cited lines changed.
 func TestReviewRereviewUsesSameSession(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1080,6 +1098,8 @@ func TestReviewRereviewUsesSameSession(t *testing.T) {
 		}
 		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: ran}, true
 	}
+	// Slow driver: this reviewer rereview sequence races a fast driver the
+	// way pause/switch tests do.
 	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -1139,6 +1159,7 @@ func TestReviewRereviewUsesSameSession(t *testing.T) {
 // counts as no verdict: the silent seat records nothing, the ticket never
 // merges on it, and after the re-prompt fails too the ticket needs the user.
 func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1149,7 +1170,7 @@ func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1182,6 +1203,6 @@ func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no needs-you for the silent reviewer: %+v", extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first"))
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }

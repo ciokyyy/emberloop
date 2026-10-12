@@ -35,6 +35,7 @@ func apiJSON(t *testing.T, method, url string, body any) (int, []byte) {
 // Projects persist across Daemon restarts, dedupe by path and start Sessions
 // whose cwd is the Project path; worktree Sessions resolve to their Project.
 func TestProjectsPersistAndStartSessions(t *testing.T) {
+	t.Parallel()
 	state := tempDir(t)
 	repo := tempDir(t)
 	d := NewDaemon(state, NewFakeBackend())
@@ -79,6 +80,7 @@ func TestProjectsPersistAndStartSessions(t *testing.T) {
 
 // The git view reports branch, changes and log, and diffs one path.
 func TestProjectGitView(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}

@@ -29,6 +29,7 @@ func postSpawn(t *testing.T, base, parent string, body any) (int, map[string]any
 // Slice 1: a spawn call creates one Subagent Session per requested agent,
 // each recording its parent and Group.
 func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -85,6 +86,7 @@ func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
 // Slice 1: the session list links Subagents to their parent, so the tree
 // nests them underneath it.
 func TestSpawnedSessionsNestUnderParent(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -131,6 +133,7 @@ func TestSpawnedSessionsNestUnderParent(t *testing.T) {
 // Slice 2: when the last Group member finishes, the parent receives exactly
 // one grouped result as a Steer.
 func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 100 * time.Millisecond // Let every child start before the first fake turn settles.
 	d := NewDaemon(tempDir(t), fake)
@@ -187,6 +190,7 @@ func TestGroupDeliversOneSteerWhenLastFinishes(t *testing.T) {
 
 // Slice 3: a scout Subagent is read-only: user sends are refused.
 func TestScoutSubagentCannotWrite(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -248,6 +252,7 @@ func countKind(events []Event, kind string) int {
 
 // The parent transcript names every spawn and the one grouped finish.
 func TestSpawnEmitsParentNotifications(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -281,6 +286,7 @@ func TestSpawnEmitsParentNotifications(t *testing.T) {
 
 // Over the cap the whole spawn call is refused with no half Group.
 func TestSpawnOverCapRefusesWithoutHalfGroup(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -321,6 +327,7 @@ func (b *flakyBackend) CreateSession(meta SessionMeta, emit func(kind, text, sta
 // A child that fails to start rolls the whole Group back: no half Group,
 // no stranded child.
 func TestSpawnFailureRollsBackGroup(t *testing.T) {
+	t.Parallel()
 	be := &flakyBackend{FakeBackend: NewFakeBackend()}
 	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -346,6 +353,7 @@ func TestSpawnFailureRollsBackGroup(t *testing.T) {
 
 // A restart after delivery never resends the grouped result.
 func TestRestartAfterDeliveryNeverResends(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -393,6 +401,7 @@ func TestRestartAfterDeliveryNeverResends(t *testing.T) {
 // An ended parent keeps its finish marker but gets no grouped Steer, and
 // the Group still completes exactly once.
 func TestEndedParentKeepsMarkerWithoutSteer(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)

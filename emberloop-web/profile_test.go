@@ -17,12 +17,12 @@ import (
 // like handleDaemon but exposing the profile API base URL.
 func profileDaemon(t *testing.T) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	// Wire the pig profile paths the way the binary does, so tool gating
 	// tests read the real loadout.
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
@@ -128,6 +128,7 @@ func readSessionProfile(t *testing.T, base, sessionID string) (int, profileView)
 }
 
 func TestProfileRendersFromLatestVersion(t *testing.T) {
+	t.Parallel()
 	_, _, _, base, _ := profileDaemon(t)
 	if code, view := getProfile(t, base); code != http.StatusOK || view.Version != 0 || view.Rendered != "" {
 		t.Fatalf("empty profile = %d %+v, want 200 v0 empty", code, view)
@@ -156,6 +157,7 @@ func TestProfileRendersFromLatestVersion(t *testing.T) {
 }
 
 func TestProfileOverCapRefusedWithCondense(t *testing.T) {
+	t.Parallel()
 	_, _, _, base, _ := profileDaemon(t)
 	big := strings.Repeat("x", memory.MaxProfileBytes+1)
 	ops := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: big, Tag: memory.ProfileOther}}
@@ -183,6 +185,7 @@ func TestProfileOverCapRefusedWithCondense(t *testing.T) {
 }
 
 func TestProfileProposeNeedsExplicitRequestAndWaitsInQueue(t *testing.T) {
+	t.Parallel()
 	_, _, _, base, id := profileDaemon(t)
 	ops := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "prefer tabs", Tag: memory.ProfileWorkflow}}
 	// No user message mentions the Profile yet: the agent path refuses.
@@ -208,6 +211,7 @@ func TestProfileProposeNeedsExplicitRequestAndWaitsInQueue(t *testing.T) {
 }
 
 func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
+	t.Parallel()
 	d, _, _, base, id := profileDaemon(t)
 	runPrompt(t, base, id, "please update my profile")
 	ops := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "first line", Tag: memory.ProfileWorkflow}}
@@ -289,6 +293,7 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 }
 
 func TestProfileReviewerFilterAndBarredTag(t *testing.T) {
+	t.Parallel()
 	d, _, _, base, id := profileDaemon(t)
 	ops := []memory.ProfileOp{
 		{Op: memory.ProfileAdd, Text: "run go vet before submit", Tag: memory.ProfileWorkflow},
@@ -337,6 +342,7 @@ func TestProfileReviewerFilterAndBarredTag(t *testing.T) {
 }
 
 func TestProfileInjectedIntoSubagentsAndScouts(t *testing.T) {
+	t.Parallel()
 	d, be, seen, base, _ := profileDaemon(t)
 	ops := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "injected line for owner", Tag: memory.ProfileWorkflow}}
 	if code, _ := putProfile(t, base, ops); code != http.StatusOK {
@@ -393,6 +399,7 @@ func TestProfileInjectedIntoSubagentsAndScouts(t *testing.T) {
 }
 
 func TestProfileRetireAndRestore(t *testing.T) {
+	t.Parallel()
 	_, _, _, base, _ := profileDaemon(t)
 	ops := []memory.ProfileOp{
 		{Op: memory.ProfileAdd, Text: "keep A", Tag: memory.ProfileWorkflow},
@@ -434,6 +441,7 @@ func TestProfileRetireAndRestore(t *testing.T) {
 }
 
 func TestPigProfileToolGating(t *testing.T) {
+	t.Parallel()
 	pb := NewPigBackend()
 	pb.ReadProfile = func(string) (string, error) { return "profile", nil }
 	pb.ProposeProfile = func(string, memory.ProfilePatch, string) (int64, error) { return 1, nil }
@@ -468,6 +476,7 @@ func TestPigProfileToolGating(t *testing.T) {
 }
 
 func TestIsReviewerSessionShapes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		meta SessionMeta
@@ -488,6 +497,7 @@ func TestIsReviewerSessionShapes(t *testing.T) {
 }
 
 func TestProfileGateNeedsLatestUserMessage(t *testing.T) {
+	t.Parallel()
 	_, _, _, base, id := profileDaemon(t)
 	ops := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "prefer tabs", Tag: memory.ProfileWorkflow}}
 	runPrompt(t, base, id, "please update my profile to prefer tabs")

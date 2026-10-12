@@ -26,6 +26,7 @@ func fakeBankFactory() func() memory.Memory {
 }
 
 func TestReplayEvaluateCannedLogs(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 	sessions := []ReplaySession{
 		{ID: "s1", CreatedAt: base, Events: []Event{
@@ -63,6 +64,7 @@ func TestReplayEvaluateCannedLogs(t *testing.T) {
 }
 
 func TestReplayCompareGapOnSameCases(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 	covering := "remember: always return wrapped errors"
 	distractors := []string{
@@ -112,6 +114,7 @@ func TestReplayCompareGapOnSameCases(t *testing.T) {
 }
 
 func TestAssignRecallOff(t *testing.T) {
+	t.Parallel()
 	if AssignRecallOff(0, 0) || AssignRecallOff(5, 0) || AssignRecallOff(0, -1) {
 		t.Fatalf("non-positive N must never assign")
 	}
@@ -125,7 +128,8 @@ func TestAssignRecallOff(t *testing.T) {
 }
 
 func TestNoRecallSkipsRecallBlock(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	meta := SessionMeta{Owner: "u1", NoRecall: true}
 	rb, refs, err := d.recallBlockFor(context.Background(), meta, "remember: always wrap errors")
 	if err != nil {
@@ -137,8 +141,9 @@ func TestNoRecallSkipsRecallBlock(t *testing.T) {
 }
 
 func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -204,6 +209,7 @@ func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
 func tempDirOf(d *Daemon) string { return d.stateDir }
 
 func TestLoadReplaySessionsFiltersProject(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	writeReplaySession(t, stateDir, "s1", "proj-a", time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC), []string{
 		`{"kind":"prompt","sender":"user","user":"u1","text":"remember: always wrap errors"}`,
@@ -266,6 +272,7 @@ func writeReplaySession(t *testing.T, stateDir, id, project string, at time.Time
 }
 
 func TestDeciderEvalOnCannedLabels(t *testing.T) {
+	t.Parallel()
 	raw := []byte("{\"id\":\"a\",\"text\":\"remember: always wrap errors\",\"durable\":true}\n" +
 		"{\"id\":\"b\",\"text\":\"What time is lunch?\",\"durable\":false}\n" +
 		"{\"id\":\"c\",\"text\":\"remember: never wrap errors\",\"durable\":true}\n")
@@ -305,6 +312,7 @@ func TestDeciderEvalOnCannedLabels(t *testing.T) {
 }
 
 func TestRecallOffForTicketFollowsTicketOrder(t *testing.T) {
+	t.Parallel()
 	tickets := []staticTicket{{ID: "01-first"}, {ID: "02-second"}, {ID: "03-third"}}
 	// Every 2nd ticket in ticket order: 02 only, whatever order Workers start.
 	if RecallOffForTicket(tickets, "01-first", 2) || !RecallOffForTicket(tickets, "02-second", 2) || RecallOffForTicket(tickets, "03-third", 2) {
@@ -319,6 +327,7 @@ func TestRecallOffForTicketFollowsTicketOrder(t *testing.T) {
 }
 
 func TestQueueLabelsForUserReadsDecidedRows(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	eng, err := memory.Open(filepath.Join(stateDir, "enderbloom", "memory"), memory.Options{})
 	if err != nil {
@@ -369,6 +378,7 @@ func TestQueueLabelsForUserReadsDecidedRows(t *testing.T) {
 }
 
 func TestSampleLabelCandidatesOversamplesHits(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 	sessions := []ReplaySession{
 		{ID: "s1", CreatedAt: base, Events: []Event{
@@ -404,6 +414,7 @@ func TestSampleLabelCandidatesOversamplesHits(t *testing.T) {
 }
 
 func TestFormatDeciderReportMarksUnscoredNA(t *testing.T) {
+	t.Parallel()
 	labels := []memory.DeciderLabel{
 		{ID: "a", Text: "remember: always wrap errors", Durable: true},
 		{ID: "b", Text: "What time is lunch?", Durable: false},

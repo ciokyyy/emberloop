@@ -220,6 +220,7 @@ func checkTimingPhase(t *testing.T, p *timingPhase) {
 // prompt in the same process with a tool call, then prompt after
 // session/load (the Daemon's idle-resume path). Short replies.
 func TestLiveStreamTiming(t *testing.T) {
+	t.Parallel()
 	env := setupTiming(t)
 	cwd := tempDir(t)
 	tmp := tempDir(t)
@@ -266,6 +267,7 @@ func TestLiveStreamTiming(t *testing.T) {
 // for E/F, a ~40K-token pasted context mimicking the 50-80K-token resumed
 // sessions that burst in production.
 func TestLiveStreamTimingBig(t *testing.T) {
+	t.Parallel()
 	env := setupTiming(t)
 	cwd := tempDir(t)
 	tmp := tempDir(t)
@@ -321,6 +323,7 @@ func TestLiveStreamTimingBig(t *testing.T) {
 // reasoning effort (medium). Each phase is a fresh session/new with a
 // burst-scale reply, so session age and resume play no role.
 func TestLiveStreamTimingModel(t *testing.T) {
+	t.Parallel()
 	env := setupTiming(t)
 	cwd := tempDir(t)
 	tmp := tempDir(t)

@@ -69,6 +69,7 @@ func bankQuotes(t *testing.T, d *Daemon, user, query string) []memory.Observatio
 }
 
 func TestMineSessionSkipsNonUserEvents(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	evs := []Event{
 		{Kind: "tool_call_started", Text: `{"name":"write","input":"x"}`, Seq: 1},
@@ -96,6 +97,7 @@ func TestMineSessionSkipsNonUserEvents(t *testing.T) {
 }
 
 func TestMineSessionGoldenFilters(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	cases := []struct {
 		name   string
@@ -122,6 +124,7 @@ func TestMineSessionGoldenFilters(t *testing.T) {
 }
 
 func TestMineSessionRoutesToSenderBank(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	evs := []Event{
 		userPrompt(1, "alice", "No, use tabs here"),
@@ -145,6 +148,7 @@ func TestMineSessionRoutesToSenderBank(t *testing.T) {
 }
 
 func TestMineSessionContradictsNotMerged(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	a := "No, always return wrapped errors in this repo"
 	b := "No, never return wrapped errors in this repo"
@@ -189,6 +193,7 @@ func TestMineSessionContradictsNotMerged(t *testing.T) {
 }
 
 func TestMineSessionContextComesFromBefore(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	evs := []Event{
 		{Kind: "tool_call_started", Text: `{"name":"first-tool","input":"a"}`, Seq: 1},
@@ -218,6 +223,7 @@ func TestMineSessionContextComesFromBefore(t *testing.T) {
 }
 
 func TestMineSessionRedactsBeforeStorage(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	text := "remember: the password is hunter2-2026, always use tabs"
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", text)})
@@ -242,6 +248,7 @@ func TestMineSessionRedactsBeforeStorage(t *testing.T) {
 }
 
 func TestMineSessionStoresCorrectedContext(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	evs := []Event{
 		{Kind: "tool_call_started", Text: `{"name":"write","input":"main.go"}`, Seq: 1},
@@ -267,6 +274,7 @@ func TestMineSessionStoresCorrectedContext(t *testing.T) {
 }
 
 func TestMineSessionCursorResetAndTornLine(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	id := "s1"
 	e1 := userPrompt(1, "alice", "No, use tabs here")
@@ -339,6 +347,7 @@ func TestMineSessionCursorResetAndTornLine(t *testing.T) {
 }
 
 func TestMineSessionOnlyWhenSettled(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	evs := []Event{userPrompt(1, "alice", "No, use tabs here")}
 	for i := range evs {
@@ -383,6 +392,7 @@ func TestMineSessionOnlyWhenSettled(t *testing.T) {
 }
 
 func TestMineSessionBankErrorHoldsCursor(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	// Break the author's bank: the store fails transiently, so the scan
@@ -410,6 +420,7 @@ func TestMineSessionBankErrorHoldsCursor(t *testing.T) {
 // second Session enqueues one proposal with both quotes, with no manual
 // promote call. A single Session's key enqueues nothing.
 func TestMineSessionPromotesRecurringSubject(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	a := "No, always return wrapped errors in this repo"
 	b := "No, never return wrapped errors from handlers"
@@ -485,6 +496,7 @@ func TestMineSessionPromotesRecurringSubject(t *testing.T) {
 // The subject key comes from the confirming Decider when it proposes one:
 // the scripted test seam names the key the miner stores.
 func TestMineSessionSubjectKeyFromDecider(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.decider = &memory.ScriptedDecider{Durable: 0.9, Kind: memory.KindPreference, SubjectKey: "Scripted.Subject.Key"}
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
@@ -504,6 +516,7 @@ func TestMineSessionSubjectKeyFromDecider(t *testing.T) {
 // quote, so a secret in the topic tokens lands redacted in the observation,
 // the decider_json and any promoted queue payload.
 func TestMineSessionRedactsSubjectKey(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	a := "No, always store it where the admin password is hunter2-2026 in the vault"
 	b := "No, never store it where the admin password is hunter2-2026 in the config"

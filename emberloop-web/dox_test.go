@@ -14,6 +14,7 @@ import (
 // ensureAgentsMD creates a root AGENTS.md only when the directory holds none,
 // and never touches an existing file.
 func TestEnsureAgentsMD(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	created, err := ensureAgentsMD(dir)
 	if err != nil || !created {
@@ -56,10 +57,11 @@ func TestEnsureAgentsMD(t *testing.T) {
 // seed inside its own worktree, while the main checkout stays clean. The
 // fixture commits a root, so drop it first to exercise the seed path.
 func TestRunWorkerWorktreeSeedsAgentsMD(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	testGit(t, repo, "rm", "-q", "AGENTS.md")
 	testGit(t, repo, "commit", "-qm", "drop root")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -87,8 +89,9 @@ func TestRunWorkerWorktreeSeedsAgentsMD(t *testing.T) {
 // A seeding failure stops the worker like any other start error and leaves
 // no worktree or branch behind.
 func TestRunStartWorkerEnsureError(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	prev := ensureWorktreeDOX
 	ensureWorktreeDOX = func(string) (bool, error) { return false, errors.New("no space") }
 	t.Cleanup(func() { ensureWorktreeDOX = prev })

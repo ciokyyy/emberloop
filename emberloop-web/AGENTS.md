@@ -53,6 +53,17 @@ boxes and marking Tickets done.
   `EL_LIVE_JEV=1` with `JEV_API_KEY` (or `JEV_BASE_URL` for a local server;
   `JEV_MODEL` overrides the default) runs `TestLiveJevDecider`.
 
+## Test speed
+
+- Tests use `t.Parallel()` unless they touch process env or shared globals
+  (settings PUT/file tests, titles, quota, wire adapters, the submit gate
+  suite, injection hooks). `useSettings` returns a path each Daemon takes
+  with `SetSettingsPath`; `initRunRepo` copies a per-ticket-set template
+  instead of init/add/commit; git and faux env live in `TestMain`.
+- Run tests start Daemons with `runTestDaemon` (100ms driver polls);
+  pause/switch/resume sequences keep `NewDaemon` (500ms): they race a fast
+  driver into concluded runs.
+
 ## Child DOX Index
 
 - `emberloop-web/spike/README.md` — the Backend spike probes

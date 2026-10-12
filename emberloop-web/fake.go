@@ -18,8 +18,12 @@ func containsReviewPrompt(text string) bool {
 // Delay holds a turn open: queue tests set it so a Steer or Follow-up can
 // arrive while the Session still works. Turns are interruptible, so cancel
 // tests can stop a working Session the way the interrupt route does.
+// DelayFunc, when non-nil, picks the hold per prompt text (still
+// interruptible): tests hold one slow turn open while the rest settle fast.
 type FakeBackend struct {
 	Delay time.Duration
+	// DelayFunc overrides Delay per prompt; nil keeps Delay.
+	DelayFunc func(text string) time.Duration
 	// ReplyFunc, when non-nil, scripts the assistant reply per prompt:
 	// returning (text, true) uses text as the whole reply, ("", false)
 	// keeps the default "fake reply to: ...". Run tests script reviewer
@@ -116,6 +120,9 @@ func (f *FakeBackend) OnPrompt(sessionID, text string, appendEvent func(kind, te
 	}
 	appendEvent("status", "", "working")
 	delay := f.getDelay()
+	if f.DelayFunc != nil {
+		delay = f.DelayFunc(text)
+	}
 	if delay <= 0 {
 		delay = 5 * time.Millisecond
 	}

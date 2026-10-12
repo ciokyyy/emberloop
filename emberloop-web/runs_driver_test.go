@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,14 +44,29 @@ func testGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+// runTestDaemon starts a Daemon for Run tests: the driver polls every
+// 100ms instead of the production 500ms, so multi-pass Runs settle fast.
+// Tests with pause/switch/resume sequences that race a fast driver keep
+// NewDaemon (see runs_pause_switch_test.go).
+func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
+	t.Helper()
+	d := NewDaemon(stateDir, backend)
+	d.SetPollInterval(100 * time.Millisecond)
+	return d
+}
+
 func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "web-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "web-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
+	// Fast path: copy the cached template for this ticket set (no git
+	// spawn). The template holds byte-identical files and history to the
+	// init/add/commit below; git identity and config isolation come from
+	// TestMain's process env, never per-test Setenv, so this stays
+	// parallel-safe.
+	if dir, ok := runRepoTemplate(t, tickets); ok {
+		repo = tempDir(t)
+		copyDir(t, repo, dir)
+		return repo, filepath.Join(repo, ".scratch", "demo", "spec.md")
+	}
 	repo = tempDir(t)
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
@@ -63,6 +80,108 @@ func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	testGit(t, repo, "add", "-A")
 	testGit(t, repo, "commit", "-m", "spec")
 	return repo, filepath.Join(repo, ".scratch", "demo", "spec.md")
+}
+
+// runRepoTemplates caches one committed template repo per ticket set for the
+// process: the first test needing a set pays init/add/commit once, the rest
+// copy it. Template dirs are registered for TestMain removal after the run.
+var (
+	runTemplateMu sync.Mutex
+	runTemplates  = map[string]string{}
+)
+
+// runRepoTemplate returns the cached template for tickets, building it on
+// first use. False means the build failed; the caller falls back to a fresh
+// init. The build runs outside the cache lock: t.Fatal exits the goroutine,
+// which must never happen while holding it, and a rare double build of one
+// key is harmless (both are identical; the loser is still removed).
+func runRepoTemplate(t *testing.T, tickets map[string]string) (string, bool) {
+	t.Helper()
+	names := make([]string, 0, len(tickets))
+	for name := range tickets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var key strings.Builder
+	for _, name := range names {
+		key.WriteString(name)
+		key.WriteString("\x00")
+		key.WriteString(tickets[name])
+		key.WriteString("\x00")
+	}
+	runTemplateMu.Lock()
+	dir, ok := runTemplates[key.String()]
+	runTemplateMu.Unlock()
+	if ok {
+		return dir, true
+	}
+	build, err := os.MkdirTemp("", "el-web-runrepo-")
+	if err != nil {
+		return "", false
+	}
+	registerSharedTemp(build)
+	testGit(t, build, "init", "-b", "main", ".")
+	writeFile(t, build, ".scratch/demo/spec.md", "# Demo spec\n")
+	for _, name := range names {
+		writeFile(t, build, ".scratch/demo/issues/"+name, tickets[name])
+	}
+	writeFile(t, build, "AGENTS.md", "# AGENTS.md — demo\n\n## Child DOX Index\n\n(none)\n")
+	testGit(t, build, "add", "-A")
+	testGit(t, build, "commit", "-m", "spec")
+	runTemplateMu.Lock()
+	runTemplates[key.String()] = build
+	runTemplateMu.Unlock()
+	return build, true
+}
+
+// copyDir copies the template tree src into dst (which must exist): files
+// keep their modes, symlinks are recreated. It never spawns git.
+func copyDir(t *testing.T, dst, src string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, info.Mode())
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_ = os.Remove(target)
+			return os.Symlink(link, target)
+		default:
+			in, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer in.Close()
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(out, in)
+			cerr := out.Close()
+			if err != nil {
+				return err
+			}
+			return cerr
+		}
+	})
+	if err != nil {
+		t.Fatalf("copy template: %v", err)
+	}
 }
 
 func demoTickets() map[string]string {
@@ -180,15 +299,16 @@ func waitRunTickets(t *testing.T, base, id string, want map[string]string) runJS
 			}
 			t.Fatalf("tickets = %v, want %v", got, want)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
 // Slice 1: Start creates a Run and returns it; a second Start on the same
 // spec while active is refused.
 func TestStartRunCreatesRunAndRefusesSecond(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -257,7 +377,7 @@ func waitRunCond(t *testing.T, base, id string, cond func(runJSON) bool, what st
 			}
 			t.Fatalf("timed out waiting for %s: %v (run %s error %q files %v)", what, states, r.Status, r.Error, r.FinalMergeFiles)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -272,8 +392,9 @@ func chainTickets() map[string]string {
 // Slice 2: Tickets start in number order once their blockers merged, and a
 // Worker that submits done merges.
 func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -341,11 +462,12 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 
 // Slice 3: independent Tickets still start one at a time under a cap of one.
 func TestRunRespectsLiveSessionCap(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -400,10 +522,11 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 // A completed list is report-only until the Ticket merges into the spec
 // branch. The final green gate then fast-forwards that checked branch to master.
 func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -456,10 +579,11 @@ func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
 // The finish keeps its own dirty check for the submit-to-finish race; the
 // submit gate is what Workers normally hit.
 func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -522,10 +646,11 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 // The conflict is against the spec branch, the merge target: a main move
 // alone never blocks a ticket.
 func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -584,6 +709,7 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 // Slice 6: roles choose harness, model and effort; a missing role falls
 // back to the Session default from the Start request.
 func TestRunRolesChooseWorkerConfig(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -596,8 +722,8 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -610,6 +736,7 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 // The settings page's implementer slot is the Run worker role and beats the
 // older worker slot.
 func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -623,8 +750,8 @@ func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -635,11 +762,13 @@ func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
 }
 
 func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "missing.json"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	missing := filepath.Join(tempDir(t), "missing.json")
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(missing)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -652,10 +781,11 @@ func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
 // Review fixes: a Worker that submits blocked is not merged; its refusal
 // waits for done, and the next done submit merges.
 func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -705,6 +835,7 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 // fast-forwards master in a temporary clean worktree, leaving the detached
 // checkout untouched.
 func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -712,7 +843,7 @@ func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	testGit(t, repo, "checkout", "--detach")
 	initialHEAD := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -753,6 +884,7 @@ func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
 // base rebase is a no-op and the fast-forward fails, the current HEAD
 // rebase lands it.
 func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -769,7 +901,7 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 	testGit(t, repo, "add", "main.txt")
 	testGit(t, repo, "commit", "-m", "main moves")
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	ticketPath := filepath.Join(repo, ".scratch", "demo", "issues", "01-first.md")
 	d.runs["r-detached"] = &runState{
 		ID: "r-detached", Spec: "spec", Repo: repo, Status: "running",
@@ -799,9 +931,10 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 // Review fixes: Start refuses a spec outside the picked repo, so ticket
 // paths never escape it.
 func TestStartRunRejectsSpecOutsideRepo(t *testing.T) {
+	t.Parallel()
 	_, spec := initRunRepo(t, demoTickets())
 	other := tempDir(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -819,6 +952,7 @@ func TestStartRunRejectsSpecOutsideRepo(t *testing.T) {
 // Review fixes: a Run saved as running reloads as paused, spending nothing
 // after a Daemon restart.
 func TestLoadRunsRestoresPaused(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	dir := filepath.Join(stateDir, "enderbloom", "runs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -831,7 +965,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "run-paused.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -857,8 +991,9 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 // Review fixes: the events stream serves the live Ticket table at once with
 // wait=0.
 func TestServeRunEventsStreamsTable(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -900,6 +1035,7 @@ func TestServeRunEventsStreamsTable(t *testing.T) {
 // submit while the worker waits for the verdict. Once the round closes
 // with fresh changes, finish refuses with them.
 func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -913,7 +1049,7 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 	tip := strings.TrimSpace(testGit(t, worktree, "rev-parse", "HEAD"))
 	old := base
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	rs := &runState{
 		ID: "r-open", Spec: "spec", Repo: repo, Status: "running",
 		notify:    make(chan struct{}),
@@ -963,8 +1099,9 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 // carries it, so the count stays above Reprompted and the next done submit
 // re-prompts the reviewers instead of being read as already handled.
 func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
+	t.Parallel()
 	state := tempDir(t)
-	d := NewDaemon(state, NewFakeBackend())
+	d := runTestDaemon(t, state, NewFakeBackend())
 	d.mu.Lock()
 	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-sub"] = &runState{
@@ -985,7 +1122,7 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(state, NewFakeBackend())
+	d2 := runTestDaemon(t, state, NewFakeBackend())
 	d2.mu.Lock()
 	rec := d2.submits["w1"]
 	d2.mu.Unlock()
@@ -997,7 +1134,8 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 // A submit count reset to 1 while Reprompted is 2 is lifted past it, so the
 // reviewers are re-prompted for the new tip.
 func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.mu.Lock()
 	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-cnt"] = &runState{
@@ -1048,6 +1186,7 @@ func submitGateRaw(t *testing.T, base, id, status string, completed []string, re
 // A done submit with no new commit since the last changes verdict is refused
 // with a reason; a new commit lets the next done through.
 func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1069,7 +1208,7 @@ func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
 		}
 		return "VERDICT: pass", true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1105,10 +1244,11 @@ func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
 // A done submit whose text says the work is not done is refused; finished
 // text, Follow-ups notes and reports about handling bad input go through.
 func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1150,10 +1290,11 @@ func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
 // A second blocked submit with the same question becomes needs-you; a
 // different question does not.
 func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1209,11 +1350,12 @@ func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
 // A retry clears the blocked question, and the blocked track survives a
 // Daemon restart through the persisted Run file.
 func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
+	t.Parallel()
 	state := tempDir(t)
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(state, NewFakeBackend())
+	d := runTestDaemon(t, state, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1247,7 +1389,7 @@ func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
 		t.Fatalf("pause status = %d, want 200", code)
 	}
 	srv.Close()
-	d2 := NewDaemon(state, NewFakeBackend())
+	d2 := runTestDaemon(t, state, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	d2.mu.Lock()
@@ -1277,6 +1419,7 @@ func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
 // A provider session-limit failure is visible on the Session, skips submit and
 // stall reminders, and still reaches the Run's normal idle needs-you alert.
 func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1288,7 +1431,7 @@ func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
 		return "", false
 	}
 	clock := newFakeClock()
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -1339,7 +1482,7 @@ func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("capped Worker did not reach idle needs-you: state=%q reason=%q", got.State, got.NeedsYou)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	if prompts := workerPromptTexts(t, srv.URL, worker); len(prompts) != 1 {
 		t.Fatalf("capped Worker received %d prompts after idle timeout, want only its task: %q", len(prompts), prompts)

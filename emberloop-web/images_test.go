@@ -43,6 +43,7 @@ func postImgJSON(t *testing.T, url string, body any) *http.Response {
 }
 
 func TestPromptWithImagesReachesBackendAndCountsInEvent(t *testing.T) {
+	t.Parallel()
 	be := &imageFake{}
 	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -82,6 +83,7 @@ func TestPromptWithImagesReachesBackendAndCountsInEvent(t *testing.T) {
 }
 
 func TestPromptImagesOnlyIsAccepted(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), &imageFake{})
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -95,6 +97,7 @@ func TestPromptImagesOnlyIsAccepted(t *testing.T) {
 }
 
 func TestPromptRejectsBadImages(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), &imageFake{})
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -137,6 +140,7 @@ func (b *imageLessBackend) ResumeOK(meta SessionMeta) (bool, string) {
 }
 
 func TestBackendWithoutImageSupportFailsTheTurnLoudly(t *testing.T) {
+	t.Parallel()
 	var kinds []string
 	promptBackend(&imageLessBackend{fake: NewFakeBackend()}, "s", "hi", []Image{{Mime: "image/png", Data: tinyPNG}}, func(kind, text, status string) {
 		kinds = append(kinds, kind)
@@ -147,6 +151,7 @@ func TestBackendWithoutImageSupportFailsTheTurnLoudly(t *testing.T) {
 }
 
 func TestMergePendingKeepsImages(t *testing.T) {
+	t.Parallel()
 	a := Image{Mime: "image/png", Data: "a"}
 	b := Image{Mime: "image/png", Data: "b"}
 	got := mergePending([]queuedMsg{{text: "one", images: []Image{a}}, {text: "", images: []Image{b}}})
@@ -156,6 +161,7 @@ func TestMergePendingKeepsImages(t *testing.T) {
 }
 
 func TestUserBlocksOrdersTextThenImages(t *testing.T) {
+	t.Parallel()
 	blocks := userBlocks("see", []Image{{Mime: "IMAGE/PNG", Data: "zz"}})
 	if len(blocks) != 2 {
 		t.Fatalf("blocks = %d", len(blocks))

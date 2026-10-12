@@ -12,6 +12,7 @@ import (
 // A spawn name lands on the child meta, the list, and the parent's
 // spawned payload; an empty name falls back to four prompt words.
 func TestSpawnNamesAndFallback(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -69,6 +70,7 @@ func TestSpawnNamesAndFallback(t *testing.T) {
 
 // agentDisplayName trims an explicit name and falls back to four words.
 func TestAgentDisplayName(t *testing.T) {
+	t.Parallel()
 	if got := agentDisplayName("  Alpha ", "job A"); got != "Alpha" {
 		t.Fatalf("explicit name = %q", got)
 	}
@@ -82,6 +84,7 @@ func TestAgentDisplayName(t *testing.T) {
 
 // An unknown deliver mode is refused with no half Group.
 func TestSpawnUnknownDeliverRefused(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -101,6 +104,7 @@ func TestSpawnUnknownDeliverRefused(t *testing.T) {
 
 // Each delivery sends one notice per child as it settles.
 func TestDeliverEachSendsOneNoticePerChild(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

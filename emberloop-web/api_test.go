@@ -18,6 +18,7 @@ import (
 // Slice 1: create a Session, send a prompt, read Events over SSE in order
 // with sequence numbers.
 func TestCreatePromptStreamsOrderedEvents(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -139,6 +140,7 @@ func readSSE(t *testing.T, base, id string, since int64, want int, timeout time.
 // Slice 2: reconnecting with a last-seen sequence number delivers only the
 // missed Events.
 func TestReconnectSinceDeliversOnlyMissed(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -168,6 +170,7 @@ func TestReconnectSinceDeliversOnlyMissed(t *testing.T) {
 
 // Slice 3: reloading replays the whole log and shows the same transcript.
 func TestReloadReplaysWholeLog(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -201,6 +204,7 @@ func TestReloadReplaysWholeLog(t *testing.T) {
 
 // Slice 4: a request with a foreign Origin or Host is rejected.
 func TestForeignOriginOrHostRejected(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -230,6 +234,7 @@ func TestForeignOriginOrHostRejected(t *testing.T) {
 
 // Slice 5: restarting the Daemon keeps the Session readable as history.
 func TestRestartKeepsHistory(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -262,6 +267,7 @@ func TestRestartKeepsHistory(t *testing.T) {
 
 // Slice 6: starting the Daemon serves the embedded UI on loopback only.
 func TestServesEmbeddedUI(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -287,6 +293,7 @@ func TestServesEmbeddedUI(t *testing.T) {
 // Review gaps: validation, not-found, ordering, malformed log lines,
 // Last-Event-ID header and finite replay.
 func TestValidationAndNotFound(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -338,6 +345,7 @@ func TestValidationAndNotFound(t *testing.T) {
 }
 
 func TestListNewestActivityFirst(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -377,6 +385,7 @@ func TestListNewestActivityFirst(t *testing.T) {
 }
 
 func TestMalformedLogLineSkippedOnReload(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -416,6 +425,7 @@ func TestMalformedLogLineSkippedOnReload(t *testing.T) {
 }
 
 func TestLastEventIDHeaderAndFiniteReplay(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -451,6 +461,7 @@ func TestLastEventIDHeaderAndFiniteReplay(t *testing.T) {
 }
 
 func TestConcurrentPromptsStayOrdered(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	d := NewDaemon(dir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))

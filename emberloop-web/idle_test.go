@@ -23,6 +23,7 @@ func waitIdle(t *testing.T, d *Daemon, quiet time.Duration) {
 // Idle needs a settled turn and quiet time on the Daemon clock. The fake clock
 // moves only when the test advances it, so the quiet bound is exact.
 func TestIdleFollowsTurnAndFakeClock(t *testing.T) {
+	t.Parallel()
 	fb := NewFakeBackend()
 	fb.Delay = time.Hour // holds the turn open until Interrupt
 	d := NewDaemon(tempDir(t), fb)
@@ -55,6 +56,7 @@ func TestIdleFollowsTurnAndFakeClock(t *testing.T) {
 // each blocker is tested alone against a fixed time: one settled state per row,
 // quiet bound last.
 func TestSessionIdleBlockers(t *testing.T) {
+	t.Parallel()
 	last := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
 	const quiet = 10 * time.Minute
 	later := last.Add(time.Hour)
@@ -88,6 +90,7 @@ func TestSessionIdleBlockers(t *testing.T) {
 // result is sent, so idle cannot pass between a member settling and delivery. A
 // Group stranded by a restart (not fresh, never sent) never blocks idle.
 func TestDaemonGroupHoldsParentOpen(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sessions["parent"] = &session{live: true}
 	d.sessions["child"] = &session{live: true, busy: true}
@@ -115,6 +118,7 @@ func TestDaemonGroupHoldsParentOpen(t *testing.T) {
 // A waiting Follow-up is work the Daemon still owes, so it holds the Daemon
 // busy even when no turn is in flight.
 func TestDaemonIdleHoldsQueuedInput(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.sessions["queued"] = &session{live: true, pending: []queuedMsg{{mode: "followup", text: "next"}}}
 	if d.Idle(0) {

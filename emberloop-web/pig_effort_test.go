@@ -11,6 +11,7 @@ import (
 // The pig effort levels are the pig --thinking levels, with empty keeping
 // the model default.
 func TestValidPigEffort(t *testing.T) {
+	t.Parallel()
 	for _, e := range append([]string{""}, pigEfforts...) {
 		if !validPigEffort(e) {
 			t.Errorf("validPigEffort(%q) = false, want true", e)
@@ -25,6 +26,7 @@ func TestValidPigEffort(t *testing.T) {
 
 // An unknown pig effort rejects the create like an unknown model does.
 func TestPigUnknownEffortRejected(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -42,6 +44,7 @@ func TestPigUnknownEffortRejected(t *testing.T) {
 
 // A known pig effort is accepted and kept on the Session.
 func TestPigEffortAcceptedAndKept(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -71,6 +74,7 @@ func TestPigEffortAcceptedAndKept(t *testing.T) {
 // Effort validation runs before any SDK stack is built: a bad effort fails
 // fast, and a good effort with a bad model still fails on the model.
 func TestPigCreateSessionValidatesEffortFirst(t *testing.T) {
+	t.Parallel()
 	pb := NewPigBackend()
 	emit := func(kind, text, status string) {}
 	if err := pb.CreateSession(SessionMeta{ID: "effort-bad", Model: pigFauxModel, WorkDir: tempDir(t), Effort: "ultra"}, emit); err == nil {

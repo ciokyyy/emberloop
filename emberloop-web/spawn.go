@@ -148,7 +148,7 @@ func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAge
 		if a.Type == "scout" {
 			role = "scout"
 		}
-		if rh, rm := roleFor(role); rh != "" {
+		if rh, rm := d.daemonRoleFor(role); rh != "" {
 			h, m = rh, rm
 		}
 		metas[i] = SessionMeta{

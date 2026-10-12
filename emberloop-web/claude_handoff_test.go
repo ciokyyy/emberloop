@@ -14,8 +14,7 @@ import (
 
 func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string) (*Daemon, *ClaudeBackend, *stubConn, *httptest.Server, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
 		prev := memoryInjection
 		memoryInjection = func(meta SessionMeta, op handleOp) injection {
@@ -33,6 +32,7 @@ func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string
 	stub := &stubConn{updates: []map[string]any{chunk("ok")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -126,7 +126,7 @@ func TestClaudeHandoffSwapCompressesAndResumes(t *testing.T) {
 	metaBefore := d.sessions[id].meta
 	d.mu.Unlock()
 
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -208,7 +208,7 @@ func TestClaudeHandoffTokenSurvivesRestart(t *testing.T) {
 	d, _, stub, srv, base, id := claudeHandoffDaemon(t, nil)
 	sendPrompt(t, base, id, "build the thing")
 	waitChunks(t, base, id, "ok", 1)
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitIdleAfter(t, base, id, 1)
@@ -257,7 +257,7 @@ func TestClaudeHandoffInjectsProfileRecallThenHandoff(t *testing.T) {
 	_, _, stub, _, base, id := claudeHandoffDaemon(t, hook)
 	sendPrompt(t, base, id, "build the thing")
 	waitChunks(t, base, id, "ok", 1)
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -291,7 +291,7 @@ func TestClaudeHandoffFailureKeepsOldHandle(t *testing.T) {
 	stub.mu.Lock()
 	stub.newErr = errNoAdapter
 	stub.mu.Unlock()
-	if code, body := compressReq(t, base, id, ""); code != 202 {
+	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitEventKind(t, base, id, "error")
@@ -328,6 +328,7 @@ func TestClaudeHandoffFailureKeepsOldHandle(t *testing.T) {
 // StartHandle derives the el role from the record, so the new ACP session
 // gets the same tool set on every role.
 func TestClaudeStartHandleDerivesRoleFromRecord(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		meta SessionMeta

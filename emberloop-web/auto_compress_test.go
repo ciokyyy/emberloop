@@ -14,11 +14,11 @@ import (
 // context meter fills; threshold and cooldown set the auto knobs.
 func autoDaemon(t *testing.T, usageSize, threshold, cooldown int) (*Daemon, *FakeBackend, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":`+strconv.Itoa(threshold)+`,"compress_cooldown":`+strconv.Itoa(cooldown)+`}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":`+strconv.Itoa(threshold)+`,"compress_cooldown":`+strconv.Itoa(cooldown)+`}`)
 	be := NewFakeBackend()
 	be.UsageSize = usageSize
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -34,6 +34,7 @@ func compressedCount(t *testing.T, base, id string) int {
 // With auto on, a Session at or past the threshold compresses by Handoff;
 // below it nothing runs.
 func TestAutoCompressFiresAtThreshold(t *testing.T) {
+	t.Parallel()
 	_, _, base, id := autoDaemon(t, 40, 10, 0)
 	sendPrompt(t, base, id, "hello")
 	evs := waitIdleAfter(t, base, id, 1)
@@ -47,11 +48,11 @@ func TestAutoCompressFiresAtThreshold(t *testing.T) {
 	}
 
 	// Below the threshold nothing runs.
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":99,"compress_cooldown":0}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":99,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.UsageSize = 1000000
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -67,12 +68,13 @@ func TestAutoCompressFiresAtThreshold(t *testing.T) {
 // Auto fires only after the turn ends, never mid-token: while the Session
 // works nothing compresses, even past the threshold.
 func TestAutoCompressWaitsForTurnEnd(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
-	be.Delay = 800 * time.Millisecond
+	be.Delay = 400 * time.Millisecond
 	be.UsageSize = 40
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -94,10 +96,11 @@ func TestAutoCompressWaitsForTurnEnd(t *testing.T) {
 // the threshold: a direct auto check mid-turn starts nothing, and the turn
 // end still compresses.
 func TestAutoCompressSkipsWhileBusy(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := autoDaemon(t, 40, 10, 0)
 	sendPrompt(t, base, id, "one")
 	waitIdleAfter(t, base, id, 1)
-	be.Delay = 800 * time.Millisecond
+	be.Delay = 400 * time.Millisecond
 	sendPrompt(t, base, id, "two")
 	waitStatus(t, base, id, "working", 5*time.Second)
 	d.appendEvent(id, "usage", usageText(90, 100), "")
@@ -116,6 +119,7 @@ func TestAutoCompressSkipsWhileBusy(t *testing.T) {
 // tool started and never finished, no Handoff runs. Once the tool finishes,
 // the next turn end compresses.
 func TestAutoCompressWaitsForToolBoundary(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := autoDaemon(t, 40, 10, 0)
 	sendPrompt(t, base, id, "first")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -140,12 +144,13 @@ func TestAutoCompressWaitsForToolBoundary(t *testing.T) {
 // meter is sized so the Handoff itself stays below the window: past the
 // window the cooldown is bypassed (see TestAutoCompressBypassesCooldownPastWindow).
 func TestAutoCompressCooldown(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":2}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":2}`)
 	be := NewFakeBackend()
 	be.UsageSize = 4000
 	be.ReplyFunc = func(_, _ string) (string, bool) { return strings.Repeat("w", 2000), true }
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -171,10 +176,12 @@ func TestAutoCompressCooldown(t *testing.T) {
 // With the compress model unset, auto shows its warning and does not run:
 // the Session GET names the reason and the log holds no Handoff.
 func TestAutoCompressUnsetModelWarns(t *testing.T) {
-	useSettings(t, `{"auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.UsageSize = 40
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -193,11 +200,12 @@ func TestAutoCompressUnsetModelWarns(t *testing.T) {
 // A blocked Session does not auto-compress again until Retry or dismiss:
 // the first auto blocks on credits, the second auto starts nothing new.
 func TestAutoCompressBlockedStaysBlocked(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.UsageSize = 40
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &stepSummarizer{steps: []summaryStep{{err: errString("402 Payment Required")}}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
