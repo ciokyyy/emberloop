@@ -273,10 +273,11 @@ func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
 	}
 }
 
-func TestRunResumePreservesTicketPauseUntilTicketResume(t *testing.T) {
+func TestRunResumePreservesStartedAndUnstartedTicketPauses(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
+		"03-third.md":  "# 03: Third\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] gamma\n",
 	})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -284,14 +285,15 @@ func TestRunResumePreservesTicketPauseUntilTicketResume(t *testing.T) {
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return ticketByID(r, "01-first").WorkerSession != "" && ticketByID(r, "02-second").WorkerSession != ""
-	}, "both Workers started before scoped pause")
+		return ticketByID(r, "01-first").WorkerSession != "" &&
+			ticketByID(r, "02-second").WorkerSession != "" &&
+			ticketByID(r, "03-third").WorkerSession == ""
+	}, "two Workers started and blocked Ticket remains unstarted")
 	first, second := ticketByID(r, "01-first"), ticketByID(r, "02-second")
-	if code, _, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/02-second/pause", map[string]any{}); code != http.StatusOK {
-		t.Fatalf("Ticket pause = %d (%s), want 200", code, errText)
-	}
-	if got := getSession(t, srv.URL, second.WorkerSession).Meta.Status; got != "ended" {
-		t.Fatalf("Ticket-paused Worker status = %q, want ended", got)
+	for _, id := range []string{"02-second", "03-third"} {
+		if code, _, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/"+id+"/pause", map[string]any{}); code != http.StatusOK {
+			t.Fatalf("pause Ticket %s = %d (%s), want 200", id, code, errText)
+		}
 	}
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
 		t.Fatalf("Run pause = %d, want 200", code)
@@ -303,30 +305,43 @@ func TestRunResumePreservesTicketPauseUntilTicketResume(t *testing.T) {
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != first.WorkerSession
 	}, "Run-paused Worker replacement")
-	secondAfterRunResume := ticketByID(r, "02-second")
-	if secondAfterRunResume.WorkerSession != second.WorkerSession {
-		t.Fatalf("Run Resume replaced individually paused Worker: got %q, want %q", secondAfterRunResume.WorkerSession, second.WorkerSession)
+	if got := ticketByID(r, "02-second").WorkerSession; got != second.WorkerSession {
+		t.Fatalf("Run Resume replaced individually paused Worker: got %q, want %q", got, second.WorkerSession)
 	}
-	if secondAfterRunResume.State != runStatusPaused {
-		t.Fatalf("individually paused Ticket state = %q, want paused", secondAfterRunResume.State)
+	if got := ticketByID(r, "02-second").State; got != runStatusPaused {
+		t.Fatalf("individually paused Ticket state = %q, want paused", got)
+	}
+	third := ticketByID(r, "03-third")
+	if third.WorkerSession != "" || third.State != runStatusPaused {
+		t.Fatalf("unstarted individually paused Ticket after Run Resume = session %q, state %q; want no Session and paused", third.WorkerSession, third.State)
+	}
+	if got := ticketByID(resumed, "03-third").State; got != runStatusPaused {
+		t.Fatalf("Run Resume response unstarted Ticket state = %q, want paused", got)
 	}
 	if got := ticketByID(resumed, "02-second").WorkerSession; got != second.WorkerSession {
 		t.Fatalf("Run Resume response Worker = %q, want still-paused Session %q", got, second.WorkerSession)
 	}
-
-	code, ticketResumed, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/02-second/resume", map[string]any{})
+	code, secondResumed, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/02-second/resume", map[string]any{})
 	if code != http.StatusOK {
-		t.Fatalf("Ticket Resume = %d (%s), want 200", code, errText)
+		t.Fatalf("started Ticket Resume = %d (%s), want 200", code, errText)
 	}
-	newSecond := ticketByID(ticketResumed, "02-second")
+	newSecond := ticketByID(secondResumed, "02-second")
 	if newSecond.WorkerSession == second.WorkerSession || newSecond.WorkerSession == "" {
-		t.Fatalf("Ticket Resume Worker = %q, want replacement for %q", newSecond.WorkerSession, second.WorkerSession)
+		t.Fatalf("started Ticket Resume Worker = %q, want replacement for %q", newSecond.WorkerSession, second.WorkerSession)
 	}
 	if newSecond.Branch != second.Branch {
-		t.Fatalf("Ticket Resume branch = %q, want %q", newSecond.Branch, second.Branch)
+		t.Fatalf("started Ticket Resume branch = %q, want %q", newSecond.Branch, second.Branch)
 	}
 	waitSessionCond(t, srv.URL, newSecond.WorkerSession, func(s sessionBody) bool {
 		_, _, ok := firstHandoffAndTask(s.Events)
 		return ok
 	}, "Ticket Resume after Run Resume")
+
+	code, ticketResumed, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/03-third/resume", map[string]any{})
+	if code != http.StatusOK {
+		t.Fatalf("unstarted Ticket Resume = %d (%s), want 200", code, errText)
+	}
+	if got := ticketByID(ticketResumed, "03-third").State; got == runStatusPaused {
+		t.Fatalf("explicit Ticket Resume kept unstarted Ticket paused: state %q", got)
+	}
 }
