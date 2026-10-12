@@ -36,38 +36,14 @@ func TestGitIsRegisteredReadOnlyWithSchema(t *testing.T) {
 	}
 }
 
-// gitRepo builds a temporary repository with two commits, a tag, and an
-// unstaged change, so every allowed subcommand has something to report.
+// gitRepo copies the shared two-commit template and adds the unstaged
+// change, so every allowed subcommand has something to report.
 func gitRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	dir := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "-q")
-	run("config", "user.email", "t@t.t")
-	run("config", "user.name", "t")
-	run("config", "commit.gpgsign", "false")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "a.txt")
-	run("commit", "-qm", "first")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello\nchanged\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run("add", "a.txt")
-	run("commit", "-qm", "second")
-	run("tag", "v1.0")
+	dir := copyGitHistory(t)
 	// An unstaged change for diff/status to report.
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello\nworking\n"), 0o644); err != nil {
 		t.Fatal(err)

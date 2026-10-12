@@ -40,14 +40,17 @@ func TestRunRestartRefusesOldDaemon(t *testing.T) {
 }
 
 func TestRestartWaitSeesDaemonReturn(t *testing.T) {
+	oldPoll := restartPollInterval
+	restartPollInterval = 20 * time.Millisecond
+	t.Cleanup(func() { restartPollInterval = oldPoll })
 	start := time.Now()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/restart" {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
-		// Down for a moment, then back.
-		if time.Since(start) < 1500*time.Millisecond && time.Since(start) > 600*time.Millisecond {
+		// Down for a moment, then back (shrunk 10x: same shape, 150ms not 1500ms).
+		if time.Since(start) < 150*time.Millisecond && time.Since(start) > 60*time.Millisecond {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}

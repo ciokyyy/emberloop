@@ -86,14 +86,7 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	gitTestEnv(t)
-	repo := t.TempDir()
-	gitRun(t, repo, "init", "-b", "main", ".")
-	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, repo, "add", "a.txt")
-	gitRun(t, repo, "commit", "-m", "base")
-	return repo
+	return templatedAtxtRepo(t)
 }
 
 // The shared merge rebases the branch onto the target and fast-forwards it.

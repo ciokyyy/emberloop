@@ -375,14 +375,7 @@ func reviewRepo(t *testing.T) (repo, tree string) {
 	// Hermetic settings: a missing temp file and no read-only override, so
 	// the reviewers resolve the built-in pig default unless a test says more.
 	resolverSettings(t, "")
-	repo = t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	writeFile(t, filepath.Join(repo, "a.go"), "package a\n")
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
-	base := gitOut(t, repo, "rev-parse", "HEAD")
+	repo, base := templatedReviewRepo(t)
 	tree = filepath.Join(repo, ".emberloop-worktrees", "07-x")
 	gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/07-x", tree, "main")
 	writeFile(t, filepath.Join(tree, "a.go"), "package a\n\nfunc A() {}\n")

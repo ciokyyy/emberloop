@@ -377,6 +377,10 @@ func awaitDaemonURL(stdout io.Reader) (string, error) {
 	}
 }
 
+// waitHealthyPollInterval spaces the /api/health polls inside waitHealthy. A
+// var so tests can shrink it; production keeps the 200ms pace.
+var waitHealthyPollInterval = 200 * time.Millisecond
+
 // waitHealthy polls a health endpoint until it answers ok or the timeout
 // passes. A wait that only fails is a false alarm about a slow disk away
 // from stranding prod, so every error reads as what it saw last.
@@ -407,7 +411,7 @@ func waitHealthy(url, token string, timeout time.Duration) error {
 				return nil
 			}
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(waitHealthyPollInterval)
 	}
 	return fmt.Errorf("/api/health never answered ok: %s", last)
 }

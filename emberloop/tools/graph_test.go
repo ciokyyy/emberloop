@@ -245,6 +245,9 @@ func TestGraphGateWaitsOnIndexStatus(t *testing.T) {
 // A gate whose index never reports ready still answers within its bound.
 func TestGraphGateProceedsWhenIndexNeverReady(t *testing.T) {
 	graphHermeticEnv(t)
+	oldPoll := graphGatePoll
+	graphGatePoll = 20 * time.Millisecond
+	t.Cleanup(func() { graphGatePoll = oldPoll })
 	graphFakeEnv(t, mcpfake.Config{
 		Tools: []mcpfake.ToolDef{{Name: "search_graph"}, {Name: "index_status"}},
 		Calls: map[string]mcpfake.Result{
@@ -263,7 +266,7 @@ func TestGraphGateProceedsWhenIndexNeverReady(t *testing.T) {
 	call := func(ctx context.Context, tool string, args json.RawMessage) (string, error) {
 		return reg.Call(ctx, GraphServerName, tool, args)
 	}
-	gated := GateGraphTools(listed[GraphServerName], call, tree, time.Second)
+	gated := GateGraphTools(listed[GraphServerName], call, tree, 250*time.Millisecond)
 	text, err := gated[0].Execute(context.Background(), tree, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -277,6 +280,9 @@ func TestGraphGateProceedsWhenIndexNeverReady(t *testing.T) {
 // resolves the project through list_projects matched by root path.
 func TestGraphGateResolvesRenamedProject(t *testing.T) {
 	graphHermeticEnv(t)
+	oldPoll := graphGatePoll
+	graphGatePoll = 20 * time.Millisecond
+	t.Cleanup(func() { graphGatePoll = oldPoll })
 	tree := t.TempDir()
 	projects := `{"projects":[{"name":"real-proj","root_path":` + strconv.Quote(tree) + `}]}`
 	graphFakeEnv(t, mcpfake.Config{
@@ -302,7 +308,7 @@ func TestGraphGateResolvesRenamedProject(t *testing.T) {
 		mu.Unlock()
 		return reg.Call(ctx, GraphServerName, tool, args)
 	}
-	gated := GateGraphTools(listed[GraphServerName], call, tree, time.Second)
+	gated := GateGraphTools(listed[GraphServerName], call, tree, 250*time.Millisecond)
 	text, err := gated[0].Execute(context.Background(), tree, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)

@@ -250,15 +250,7 @@ func TestSpawnFinishOnAWorktree(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 
 	ticket := filepath.Join(repo, "07-example.md")
 	if err := os.WriteFile(ticket, []byte("# Example\n\nBlocked by: \n"), 0o644); err != nil {
@@ -339,15 +331,7 @@ func TestSpawnFinishOnAWorktree(t *testing.T) {
 func TestSpawnAfterFinishReusesTheKeptBranch(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	ticket := filepath.Join(repo, "29-thing.md")
 	if err := os.WriteFile(ticket, []byte("# Thing\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -503,15 +487,7 @@ func flag(args []string, name string) (string, bool) {
 func TestSpawnAcceptsABranchName(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	want := gitOut(t, repo, "rev-parse", "main")
 
 	// Real git, stubbed herdr: the SHA is git's, no tab is opened.
@@ -534,15 +510,7 @@ func TestSpawnAcceptsABranchName(t *testing.T) {
 // resolved: "main" is not a SHA, and finish still has to work with it.
 func TestFinishRebasesOntoARefBase(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 
 	worktree := filepath.Join(repo, ".emberloop-worktrees", "19-thing")
 	gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/19-thing", worktree, "main")
@@ -596,15 +564,7 @@ func TestFinishRebasesOntoARefBase(t *testing.T) {
 // the commit both were spawned from, or its fast-forward fails as "diverging".
 func TestFinishRebasesOntoTheTargetsCurrentTip(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	base := gitOut(t, repo, "rev-parse", "main")
 
 	store := map[string]Worker{}
@@ -652,15 +612,7 @@ func TestFinishRebasesOntoTheTargetsCurrentTip(t *testing.T) {
 // switched to another branch is refused rather than merged into by accident.
 func TestFinishRefusesWhenTheRepoIsOnAnotherBranch(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	worktree := filepath.Join(repo, ".emberloop-worktrees", "32-c")
 	gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/32-c", worktree, "main")
 	gitOut(t, repo, "switch", "-q", "-c", "elsewhere")
