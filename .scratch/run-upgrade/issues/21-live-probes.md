@@ -9,3 +9,10 @@
 - [ ] One probe script per behavior under `scripts/`, documented in `scripts/AGENTS.md`
 - [ ] Each probe run once; outcome recorded in this ticket
 - [ ] Never wired into `.emberloop/check`
+
+## Live probe outcomes (2026-10-12)
+
+- `run-upgrade-reviewer-submit-probe.sh` — **PASS after retry** (run `8d41e16e41f3fad57d0a3abc05dcde14`, Pig `openrouter/google/gemini-2.5-flash`). The initial Haiku attempt `16e46102db827c573ee056012ef3f047` timed out without a typed submit; tool-capable retries were needed. The final Reviewer emitted a typed `pass` at tip `f4003264c3d504668021fb9f81a702bd1accb21b` with one `ran` command, and the recorded verdict allowed the Ticket to merge.
+- `run-upgrade-chain-probe.sh` — **PASS** (run `87d28f777ab75f265c23dec35029c440`). The intentionally invalid Claude API key produced a real auth failure; the Worker Chain advanced to Pig on the same branch, received a Handoff and paused.
+- `run-upgrade-switch-probe.sh` — **PASS** (run `1c8cb39e3fb754d385ad0930a684bdd2`). A paused Ticket switched from Pig `openrouter/openai/gpt-4o-mini` to Pig `openrouter/anthropic/claude-haiku-4.5`; Switch did not start a Session, and manual Resume kept the branch and delivered a Handoff.
+- `run-upgrade-two-specs-probe.sh` — **PASS** (runs `dd882965bbb47ef6dcac4ff8af87666d` and `fd09549cfdb0e0cbc6864f4ff903ff50`). Both real Pig Workers ran concurrently on `spec/probe-north` and `spec/probe-south`; both Runs paused cleanly.
