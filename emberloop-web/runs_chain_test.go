@@ -55,6 +55,23 @@ func firstHandoffAndTask(events []Event) (handoff, task Event, ok bool) {
 	return handoff, task, false
 }
 
+// handoffTaskIdle reports whether the Handoff and the injected task prompt
+// both reached the Session and an idle status followed the task prompt. An
+// idle status from the Handoff turn alone is not enough: the task prompt can
+// land after it and before the Session turns working again.
+func handoffTaskIdle(s sessionBody) bool {
+	_, task, ok := firstHandoffAndTask(s.Events)
+	if !ok || s.Meta.Status != "idle" {
+		return false
+	}
+	for _, e := range s.Events {
+		if e.Seq > task.Seq && e.Kind == "status" && e.Status == "working" {
+			return true
+		}
+	}
+	return false
+}
+
 // A Chain-position write must not publish a placeholder driver-row state.
 func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
 	t.Parallel()
@@ -234,8 +251,7 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				t.Fatalf("fallback branch = %q, want same Ticket branch %q", after.Branch, before.Branch)
 			}
 			fallback := waitSessionCond(t, srv.URL, after.WorkerSession, func(s sessionBody) bool {
-				_, _, ok := firstHandoffAndTask(s.Events)
-				return ok && s.Meta.Status == "idle"
+				return handoffTaskIdle(s)
 			}, "Handoff and injected Worker task")
 			injections := injectionEventsOf(t, fallback.Events)
 			if len(injections) != 1 || injections[0].ProfileVersion != 11 {
@@ -442,8 +458,7 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 	}, "fallback Worker")
 	fallbackID := ticketByID(r, "01-first").WorkerSession
 	fallback := waitSessionCond(t, srv.URL, fallbackID, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "fallback Worker task")
 	change := filepath.Join(fallback.Meta.WorkDir, "fallback-change.txt")
 	if err := os.WriteFile(change, []byte("fallback change\n"), 0o644); err != nil {
@@ -531,8 +546,7 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 	}, "fallback Worker")
 	fallbackID := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, fallbackID, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "fallback Handoff and task")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -710,8 +724,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 		t.Fatalf("failed Reviewer Session did not retain its error log: %+v", old)
 	}
 	fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "reviewer Handoff and task")
 	handoff, task, ok := firstHandoffAndTask(fallback.Events)
 	if !ok || handoff.Seq >= task.Seq || !strings.Contains(task.Text, "Review ticket 01-first") || !strings.Contains(task.Text, "--- Ticket ") {
@@ -855,8 +868,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 					t.Fatalf("Reviewer did not advance after %s: old=%+v ticket=%+v", tc.name, old.Meta, tk)
 				}
 				fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
-					_, _, ok := firstHandoffAndTask(s.Events)
-					return ok && s.Meta.Status == "idle"
+					return handoffTaskIdle(s)
 				}, "Reviewer Handoff and task")
 				if _, _, ok := firstHandoffAndTask(fallback.Events); !ok {
 					t.Fatalf("Reviewer fallback after %s lacks Handoff and task", tc.name)
@@ -916,8 +928,7 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	}, "reconciled fallback Worker")
 	tk := ticketByID(r, "01-first")
 	fallback := waitSessionCond(t, srv2.URL, tk.WorkerSession, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "reconciled Handoff and task")
 	if fallback.Meta.WorkDir != getSession(t, srv2.URL, worker).Meta.WorkDir {
 		t.Fatal("reconciled fallback changed the Ticket worktree")
@@ -956,8 +967,7 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 	}, "fallback Worker position")
 	worker := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "fallback task completion")
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != 200 {
 		t.Fatalf("pause status = %d, want 200", code)

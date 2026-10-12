@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,12 +52,42 @@ func testGit(t *testing.T, dir string, args ...string) string {
 func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
 	t.Helper()
 	d := NewDaemon(stateDir, backend)
-	d.SetPollInterval(100 * time.Millisecond)
+	d.SetPollInterval(testPollInterval())
 	return d
+}
+
+// runTestSlots caps how many Run tests (driver goroutines, git subprocesses,
+// fast polls) run at once. Dozens in parallel on 4 cores stretch every
+// timing window and make order-sensitive assertions flake; a small cap keeps
+// the load predictable while the rest of the suite still runs in parallel.
+// A test takes one slot on its first initRunRepo and frees it at cleanup.
+var (
+	runTestSlots = make(chan struct{}, runTestParallelism())
+	runTestHeld  sync.Map
+)
+
+func runTestParallelism() int {
+	if v, err := strconv.Atoi(os.Getenv("EL_TEST_RUN_PAR")); err == nil && v > 0 {
+		return v
+	}
+	return 2
+}
+
+func holdRunTestSlot(t *testing.T) {
+	t.Helper()
+	if _, loaded := runTestHeld.LoadOrStore(t.Name(), true); loaded {
+		return
+	}
+	runTestSlots <- struct{}{}
+	t.Cleanup(func() {
+		runTestHeld.Delete(t.Name())
+		<-runTestSlots
+	})
 }
 
 func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	t.Helper()
+	holdRunTestSlot(t)
 	// Fast path: copy the cached template for this ticket set (no git
 	// spawn). The template holds byte-identical files and history to the
 	// init/add/commit below; git identity and config isolation come from
@@ -1342,9 +1373,12 @@ func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
 	if code, _ := submitGateRaw(t, srv.URL, worker, "blocked", nil, "Need a different token for Y", ""); code != http.StatusAccepted {
 		t.Fatalf("blocked after retry status = %d, want 202", code)
 	}
-	if got := getRun(t, srv.URL, run.ID); ticketByID(got, "01-first").State == "needs-you" {
-		t.Fatalf("blocked after retry state = needs-you, want a fresh count")
-	}
+	// The retry's row can still read needs-you until the next driver pass
+	// publishes; a blocked submit that wrongly counted as the repeat would
+	// keep it there, so wait for the state to leave needs-you.
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State != "needs-you"
+	}, "blocked after retry starts a fresh count")
 }
 
 // A retry clears the blocked question, and the blocked track survives a
@@ -1487,4 +1521,13 @@ func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
 	if prompts := workerPromptTexts(t, srv.URL, worker); len(prompts) != 1 {
 		t.Fatalf("capped Worker received %d prompts after idle timeout, want only its task: %q", len(prompts), prompts)
 	}
+}
+
+// testPollInterval is the driver poll for Run tests. EL_TEST_POLL_MS tunes
+// it for experiments; the default is 100ms.
+func testPollInterval() time.Duration {
+	if v, err := strconv.Atoi(os.Getenv("EL_TEST_POLL_MS")); err == nil && v > 0 {
+		return time.Duration(v) * time.Millisecond
+	}
+	return 100 * time.Millisecond
 }
