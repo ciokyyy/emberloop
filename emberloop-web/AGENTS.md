@@ -27,7 +27,10 @@ boxes and marking Tickets done.
   `runs_reviewers_test.go`, `runs_persist_test.go`, `runs_chain_test.go`,
   `runs_pause_switch_test.go`, `runs_specbranch_test.go`,
   `runs_worktree_test.go`, `runs_final_test.go`,
-  `runs_markdone_basered_test.go` and `runs_overlap_test.go` cover Run seams.
+  `runs_markdone_basered_test.go`, `runs_overlap_test.go` and
+  `runs_stopsubmit_test.go` cover Run seams. Stop-after-submit ends a Run
+  Worker or Reviewer turn on its accepted terminal submit
+  (`runs_stopsubmit.go`, opt out per Run with `noStopAfterSubmit`).
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go` and `grok_handoff_test.go`.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are

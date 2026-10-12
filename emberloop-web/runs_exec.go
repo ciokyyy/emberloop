@@ -236,6 +236,11 @@ type runState struct {
 	// large N is allowed and selects nothing in a small run. It is a Run
 	// setting and is recorded in the Run file.
 	RecallOffN int `json:"recallOffN,omitempty"`
+	// NoStopAfterSubmit is the Run opt-out of stop-after-submit: by default
+	// an accepted terminal Worker (done/blocked) or Reviewer (pass/changes)
+	// submit ends its turn at once, so no summary streams afterwards. It is
+	// a Run setting and is recorded in the Run file.
+	NoStopAfterSubmit bool `json:"noStopAfterSubmit,omitempty"`
 	// RecallOff marks the tickets whose Worker runs with recall off, by
 	// ticket ID. Assigned at worker start from RecallOffN in ticket order,
 	// stable across retries and resumes; old Run files without it read as
@@ -621,12 +626,13 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Spec       string `json:"spec"`
-		Repo       string `json:"repo"`
-		Harness    string `json:"harness"`
-		Model      string `json:"model"`
-		Effort     string `json:"effort"`
-		RecallOffN int    `json:"recallOffN"`
+		Spec              string `json:"spec"`
+		Repo              string `json:"repo"`
+		Harness           string `json:"harness"`
+		Model             string `json:"model"`
+		Effort            string `json:"effort"`
+		RecallOffN        int    `json:"recallOffN"`
+		NoStopAfterSubmit bool   `json:"noStopAfterSubmit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Spec == "" {
 		http.Error(w, "spec is required", http.StatusBadRequest)
@@ -724,6 +730,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Model:              model,
 		Effort:             effort,
 		RecallOffN:         req.RecallOffN,
+		NoStopAfterSubmit:  req.NoStopAfterSubmit,
 		CreatedAt:          time.Now().UTC(),
 		Owner:              creator.ID,
 		SpecBranch:         specRun.Branch,
@@ -3568,8 +3575,9 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
-		"recallOffN": rs.RecallOffN,
-		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase, "specBehind": specBehind,
+		"recallOffN":        rs.RecallOffN,
+		"noStopAfterSubmit": rs.NoStopAfterSubmit,
+		"specBranch":        rs.SpecBranch, "specBase": rs.SpecBase, "specBehind": specBehind,
 		"warnings":  warnings,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "finalMergeFiles": rs.FinalMergeFiles, "tickets": tickets,
 	}

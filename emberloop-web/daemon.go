@@ -103,9 +103,14 @@ type Daemon struct {
 	groups map[string]*spawnGroup
 	// runs tracks one deterministic Run each: its Tickets and their Worker
 	// Sessions. submits holds every Session's Worker submits by Session id,
-	// which the driver loop reads for merges and checkbox ticks.
-	runs    map[string]*runState
-	submits map[string]*submitRec
+	// which the driver loop reads for merges and checkbox ticks. stopSubmit
+	// arms one Session each whose accepted terminal submit still waits for the
+	// submit tool's terminal update before its turn is stopped
+	// (runs_stopsubmit.go). Memory only: a restart clears it and the turn
+	// simply runs on.
+	runs       map[string]*runState
+	submits    map[string]*submitRec
+	stopSubmit map[string]bool
 	// sudo holds the pending and settled sudo approval requests (sudo.go).
 	sudoOnce sync.Once
 	sudo     *sudoStore
@@ -255,6 +260,7 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		groups:        map[string]*spawnGroup{},
 		runs:          map[string]*runState{},
 		submits:       map[string]*submitRec{},
+		stopSubmit:    map[string]bool{},
 		restartCh:     make(chan struct{}, 1),
 	}
 	d.users = newUserStore(stateDir)
@@ -681,7 +687,11 @@ func (d *Daemon) finishTurn(id string) {
 }
 
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
-	return d.appendModeEvent(id, kind, text, status, "")
+	e := d.appendModeEvent(id, kind, text, status, "")
+	// Stop-after-submit reacts to the stored Event without the lock: every
+	// Backend turn, tool call and submit route funnels through here.
+	d.maybeStopAfterSubmit(id, e)
+	return e
 }
 
 func (d *Daemon) appendModeEvent(id, kind, text, status, mode string) Event {
