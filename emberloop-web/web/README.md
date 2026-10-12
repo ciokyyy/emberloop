@@ -51,7 +51,7 @@ Same-origin by default. To point the static build at another Daemon:
 
  - `src/Root.svelte` — sign-in gate: probes `GET /api/auth/me`; signed out shows `AuthScreen`, signed in mounts `App` with the User; sign out and any 401 from a non-auth route return to sign-in; an unreachable Daemon offers Try again
  - `src/lib/AuthScreen.svelte`, `src/lib/authForm.js` — sign-in, create-account and first-admin screen on `ui/` primitives; `authForm.js` holds the mode, copy and error-line helpers
- - `src/App.svelte` — layout, rail-1 icon rail (`Rail.svelte`) plus a contextual rail-2 sidebar (collapses to the rail on desktop via the rail-header toggle and Ctrl/⌘+B, persisted as `eb.sidebar-collapsed`; the same content renders in the phone drawer), Session tail loading (`?tail=6`, `?at=`) with load-earlier prepend, SSE stream with reconnect, pending prompt cards that the echoed prompt Event replaces with no second entrance animation (`noAnim` swap), queued-message panel with clear, route-driven chat/settings/runs switch, Session-not-found state, version badge mount, turn-done/failed and sudo-request sounds off the stream, service worker cue plus exact-path navigate handling
+- `src/App.svelte` — layout, rail-1 icon rail (`Rail.svelte`) plus a contextual rail-2 sidebar (collapses to the rail on desktop via the rail-header toggle and Ctrl/⌘+B, persisted as `eb.sidebar-collapsed`; the same content renders in the phone drawer), Session tail loading (`?tail=6`, `?at=`) with load-earlier prepend, SSE stream with reconnect, pending prompt cards that the echoed prompt Event replaces with no second entrance animation (`noAnim` swap), queued-message panel with clear, route-driven chat/settings/runs switch, Session-not-found state (composer/meter overlay stays unmounted there), the Git toggle (`#git-toggle`, `GitPanel`) closing on Escape with focus back on the toggle, version badge mount, turn-done/failed and sudo-request sounds off the stream, service worker cue plus exact-path navigate handling
  - `App.svelte` sidebar footer: the signed-in User and Sign out (desktop rail 2 and the drawer); the `user` and `onSignOut` props come from `Root.svelte`; unmount calls `stopLive`
 - `App.svelte` Session header: `created by <User>` from `meta.owner`, read through the people store. The sidebar feeds `OwnerGroups` from `sessions`, `runs`, `projects` and the account list (refreshed on the `users` topic).
 - `src/lib/router.js` — pure route parse/build (`/s/<id>` with `?at=`, `/runs[/<runId>[/<ticketId>]]`, `/settings`, `/quota`, `/memory`, `/` as last-viewed `eb.last` else newest); `App.svelte` owns pushState/popstate around it
@@ -69,7 +69,8 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/subagents.js` — pure Subagent display helpers (name fallback, spawn payloads, latest-tool line, child state, Group counts)
 - `src/lib/GroupCard.svelte` — live Group header card: one row per child (name, harness badge, type chip, latest-tool line, status dot) opening the child transcript
 - `src/lib/Card.svelte` — transcript card for every Event kind, incl. user image chips, the Group header, the live tool strip and the memory injection divider (`events.js` maps `injection` to a `divider` card carrying the injected Rule IDs, never the raw JSON); the divider offers a Promote button per Rule (`api.js` `promoteSessionRule`) that files the promotion against the Session's worktree for queue approval
-- `src/lib/ToolStrip.svelte`, `src/lib/toolstrip.js` — live tool strip: one card per burst of consecutive tool calls (status icon, tool glyph, server chip, target text, elapsed timer, progress hairline, swapping output stage capped at 232px, newest-first history drawer, settled `N tools · Xs` summary; per-tool file/diff/stream/JSON renderers; reduced-motion path); pure summary/target/format helpers in `toolstrip.js`
+- `src/lib/Markdown.svelte` — sanitized agent markdown (tables in the rounded scroll wrapper; each fenced block gets a delegated copy button — shadcn ghost icon styling, 44px touch hit area, lucide Copy/Check shapes, `Copied` feedback, `execCommand` fallback for plain-http tailnet)
+- `src/lib/ToolStrip.svelte`, `src/lib/toolstrip.js` — live tool strip: one card per burst of consecutive tool calls (status icon, tool glyph, server chip, target text, elapsed timer, progress hairline, swapping output stage capped at 232px, newest-first history drawer, settled `N tools · Xs` summary; per-tool file/diff/stream/JSON renderers; reduced-motion path); shell/output highlighters decode one JSON-escape layer first (`decodeJsonEscapes` in `lib/highlight.js`: quoted `"..."` lines parse as JSON, unquoted fragments decode only on `\uXXXX`, so real backslashes pass through); pure summary/target/format helpers in `toolstrip.js`
  - `src/lib/Rail.svelte` — narrow icon rail with the sliding active pill plus the rail-2 collapse toggle in its header
 - `src/lib/OwnerGroups.svelte` — sidebar Session list: filter chips Mine, Everyone and Project (persisted `eb.owner-filter` and `eb.owner-project`; the Project picker uses `ui/select.svelte`); one collapsible group per User, own group first and open, others collapsed with a count and an online dot (`eb.owners-collapsed`); the group's left bar takes its owner color (`--owner-1` to `--owner-6` in `app.css`)
 - `src/lib/owners.js` — pure owner grouping: `buildOwnerGroups` (groups, then Project sections, then tree roots with Runs and Subagents), `runRow` (a Run as a row), `dotState` (status dot), `ownerTone` (palette slot by account order), `projectIdForPath`
@@ -103,9 +104,10 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/InstallApp.svelte`, `src/lib/install.js` — settings Install app card: the `beforeinstallprompt` button plus the iOS Add-to-Home-Screen hint; pure standalone/iOS/state helpers in `install.js`
 - `src/lib/pwa.js` — service worker registration at app boot (before push is ever enabled)
 - `public/manifest.webmanifest`, `public/icons/`, `public/apple-touch-icon.png` — install metadata and artwork; icons come from `scripts/generate-icons.py` (from `public/logo.png`, outputs committed)
-
 `npm test` runs vitest: Event-to-card mapping and grouping
-(`events.test.js`), tool strip grouping, exclusions, summary and formatting
+(`events.test.js`), JSON-escape decode plus backslash passthrough
+(`highlight.test.js`), fenced-code copy button and http fallback
+(`Markdown.test.js`), tool strip grouping, exclusions, summary and formatting
 (`toolstrip.test.js`), strip header/summary/failure/history/stage-cap/reduced-motion/streaming
 render (`ToolStrip.test.js`), composer mode resolvers (`composer.test.js`),
 mounted Composer badge and send behavior (`Composer.test.js`), harness
@@ -121,7 +123,7 @@ Dispositions, gate, actions and SSE (`ticketPage.test.js`, `TicketPage.test.js`)
 Settings max_workers, validation, locked fields, ordered per-role Chains, inherited
 role fallbacks and alias-preserving saves (`SettingsPage.test.js`); plus install, sound, version, Session, Memory, auth,
 routing, Composer and navigation tests in their matching `*.test.js` files.
-Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (`stopLive`), plus the App footer (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
+Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (`stopLive`), plus the App footer, session-not-found overlay gate and Git Escape (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
 
 ## Routes
 
