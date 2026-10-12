@@ -1186,9 +1186,14 @@ func spawnACPConnEnv(command, env []string) (acpConn, error) {
 	return c, nil
 }
 
+// maxACPLine bounds one adapter output line.
+const maxACPLine = 256 * 1024 * 1024
+
 func (c *acpProcessConn) read(sc *bufio.Scanner) {
 	defer close(c.readDone)
-	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	// Resume replays carry whole tool-result images as base64, so one
+	// line can pass 1 MiB; a hard cap would read as "adapter closed".
+	sc.Buffer(make([]byte, 1024*1024), maxACPLine)
 	for sc.Scan() {
 		line := append([]byte(nil), sc.Bytes()...)
 		if len(strings.TrimSpace(string(line))) == 0 {
@@ -1201,6 +1206,10 @@ func (c *acpProcessConn) read(sc *bufio.Scanner) {
 		}
 		c.dispatch(msg)
 	}
+	closeErr := fmt.Errorf("adapter closed")
+	if err := sc.Err(); err != nil {
+		closeErr = fmt.Errorf("adapter closed: read adapter output: %w", err)
+	}
 	c.mu.Lock()
 	orphans := make([]chan acpResult, 0, len(c.wait))
 	for id, ch := range c.wait {
@@ -1210,7 +1219,7 @@ func (c *acpProcessConn) read(sc *bufio.Scanner) {
 	c.mu.Unlock()
 	for _, ch := range orphans {
 		select {
-		case ch <- acpResult{err: fmt.Errorf("adapter closed")}:
+		case ch <- acpResult{err: closeErr}:
 		default:
 		}
 	}
