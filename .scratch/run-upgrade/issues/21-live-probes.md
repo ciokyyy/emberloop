@@ -4,11 +4,11 @@
 
 **Blocked by:** reviewer-submit-tool (02), spec-branch-core (09), fallback-chain-run (14), pause-and-switch-api (15)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One probe script per behavior under `scripts/`, documented in `scripts/AGENTS.md`
-- [ ] Each probe run once; outcome recorded in this ticket
-- [ ] Never wired into `.emberloop/check`
+- [x] One probe script per behavior under `scripts/`, documented in `scripts/AGENTS.md`
+- [x] Each probe run once; outcome recorded in this ticket
+- [x] Never wired into `.emberloop/check`
 
 ## Live probe outcomes (2026-10-12)
 
