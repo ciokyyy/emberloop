@@ -135,7 +135,6 @@ func postEmpty(t *testing.T, url string) (int, map[string]any) {
 // stops that Daemon's server, as a restart does. It returns the Session ID.
 func blockedSession(t *testing.T, stateDir string) string {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	d.summarizer = &stepSummarizer{steps: []summaryStep{{err: errString("402 Payment Required")}}}

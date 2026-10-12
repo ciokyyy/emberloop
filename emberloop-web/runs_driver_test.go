@@ -3,11 +3,13 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -27,12 +29,16 @@ func testGit(t *testing.T, dir string, args ...string) string {
 
 func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "web-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "web-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
+	// Fast path: copy the cached template for this ticket set (no git
+	// spawn). The template holds byte-identical files and history to the
+	// init/add/commit below; git identity and config isolation come from
+	// TestMain's process env, never per-test Setenv, so this stays
+	// parallel-safe.
+	if dir, ok := runRepoTemplate(t, tickets); ok {
+		repo = tempDir(t)
+		copyDir(t, repo, dir)
+		return repo, filepath.Join(repo, ".scratch", "demo", "spec.md")
+	}
 	repo = tempDir(t)
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
@@ -46,6 +52,108 @@ func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	testGit(t, repo, "add", "-A")
 	testGit(t, repo, "commit", "-m", "spec")
 	return repo, filepath.Join(repo, ".scratch", "demo", "spec.md")
+}
+
+// runRepoTemplates caches one committed template repo per ticket set for the
+// process: the first test needing a set pays init/add/commit once, the rest
+// copy it. Template dirs are registered for TestMain removal after the run.
+var (
+	runTemplateMu sync.Mutex
+	runTemplates  = map[string]string{}
+)
+
+// runRepoTemplate returns the cached template for tickets, building it on
+// first use. False means the build failed; the caller falls back to a fresh
+// init. The build runs outside the cache lock: t.Fatal exits the goroutine,
+// which must never happen while holding it, and a rare double build of one
+// key is harmless (both are identical; the loser is still removed).
+func runRepoTemplate(t *testing.T, tickets map[string]string) (string, bool) {
+	t.Helper()
+	names := make([]string, 0, len(tickets))
+	for name := range tickets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var key strings.Builder
+	for _, name := range names {
+		key.WriteString(name)
+		key.WriteString("\x00")
+		key.WriteString(tickets[name])
+		key.WriteString("\x00")
+	}
+	runTemplateMu.Lock()
+	dir, ok := runTemplates[key.String()]
+	runTemplateMu.Unlock()
+	if ok {
+		return dir, true
+	}
+	build, err := os.MkdirTemp("", "el-web-runrepo-")
+	if err != nil {
+		return "", false
+	}
+	registerSharedTemp(build)
+	testGit(t, build, "init", "-b", "main", ".")
+	writeFile(t, build, ".scratch/demo/spec.md", "# Demo spec\n")
+	for _, name := range names {
+		writeFile(t, build, ".scratch/demo/issues/"+name, tickets[name])
+	}
+	writeFile(t, build, "AGENTS.md", "# AGENTS.md — demo\n\n## Child DOX Index\n\n(none)\n")
+	testGit(t, build, "add", "-A")
+	testGit(t, build, "commit", "-m", "spec")
+	runTemplateMu.Lock()
+	runTemplates[key.String()] = build
+	runTemplateMu.Unlock()
+	return build, true
+}
+
+// copyDir copies the template tree src into dst (which must exist): files
+// keep their modes, symlinks are recreated. It never spawns git.
+func copyDir(t *testing.T, dst, src string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(target, info.Mode())
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_ = os.Remove(target)
+			return os.Symlink(link, target)
+		default:
+			in, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer in.Close()
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(out, in)
+			cerr := out.Close()
+			if err != nil {
+				return err
+			}
+			return cerr
+		}
+	})
+	if err != nil {
+		t.Fatalf("copy template: %v", err)
+	}
 }
 
 func demoTickets() map[string]string {

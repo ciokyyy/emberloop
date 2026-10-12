@@ -98,7 +98,6 @@ func TestReviewerPromptCarriesNoExtra(t *testing.T) {
 // Pig agent Sessions carry the role extra as an appended system-prompt
 // section; one-off calls append nothing.
 func TestPigResourcesCarryRoleExtra(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	svcs, _, err := buildPigServices(tempDir(t), nil, SessionMeta{Model: "test-faux/faux-1", WorkDir: tempDir(t)})
 	if err != nil {
 		t.Fatal(err)

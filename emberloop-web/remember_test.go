@@ -22,7 +22,6 @@ import (
 // like handleDaemon but returning the pieces the remember tests need.
 func rememberDaemon(t *testing.T) (*Daemon, string, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
@@ -562,7 +561,6 @@ func TestSlashRememberInvalidLogsNothing(t *testing.T) {
 // Leftover lines after the /remember first line still route as the turn:
 // the Rule is created and the agent sees only the remainder.
 func TestSlashRememberWithRemainderRoutesTurn(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()

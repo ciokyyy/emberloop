@@ -14,7 +14,6 @@ import (
 // context meter fills; threshold and cooldown set the auto knobs.
 func autoDaemon(t *testing.T, usageSize, threshold, cooldown int) (*Daemon, *FakeBackend, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":`+strconv.Itoa(threshold)+`,"compress_cooldown":`+strconv.Itoa(cooldown)+`}`)
 	be := NewFakeBackend()
 	be.UsageSize = usageSize
@@ -47,7 +46,6 @@ func TestAutoCompressFiresAtThreshold(t *testing.T) {
 	}
 
 	// Below the threshold nothing runs.
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":99,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.UsageSize = 1000000
@@ -67,7 +65,6 @@ func TestAutoCompressFiresAtThreshold(t *testing.T) {
 // Auto fires only after the turn ends, never mid-token: while the Session
 // works nothing compresses, even past the threshold.
 func TestAutoCompressWaitsForTurnEnd(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.Delay = 800 * time.Millisecond
@@ -181,7 +178,6 @@ func TestAutoCompressUnsetModelWarns(t *testing.T) {
 // A blocked Session does not auto-compress again until Retry or dismiss:
 // the first auto blocks on credits, the second auto starts nothing new.
 func TestAutoCompressBlockedStaysBlocked(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
 	be.UsageSize = 40

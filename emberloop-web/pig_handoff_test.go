@@ -55,7 +55,6 @@ func compressibleOf(t *testing.T, base, id string) bool {
 // is gone. Thinking level and model survive the new handle, the resume token
 // rotates, and a Daemon restart then resumes the new handle.
 func TestPigSDKCompressesByHandoff(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
 	stateDir := tempDir(t)
 	agentDir := tempDir(t)
@@ -142,7 +141,6 @@ func TestPigSDKCompressesByHandoff(t *testing.T) {
 // compressible. Thinking level and model survive the new handle, the resume
 // token rotates, and a Daemon restart then resumes the new handle.
 func TestPigACPCompressesByHandoff(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
 	stateDir := tempDir(t)
 	model := oneCatalogModel(t)
@@ -363,7 +361,6 @@ func (f *failingSteerBackend) ClearQueued(sessionID string) int                {
 // A pig steer that misses the native queue waits in the Daemon pending list
 // and is not lost.
 func TestPigSteerMissFallsBackToPending(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := &failingSteerBackend{FakeBackend: NewFakeBackend()}
 	be.Delay = time.Second
@@ -393,7 +390,6 @@ func TestPigSteerMissFallsBackToPending(t *testing.T) {
 // degraded follow-up, so the Handoff leads and nothing is lost on the dying
 // handle.
 func TestPigSteerDuringHandoffQueuesFollowup(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = time.Second

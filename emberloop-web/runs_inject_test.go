@@ -273,12 +273,6 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 // The reviewer chain follows the changed files; the worker chain is the root
 // chain when no diff exists yet.
 func TestAgentsChainFollowsChangedPaths(t *testing.T) {
-	t.Setenv("GIT_AUTHOR_NAME", "web-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "web-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
 	repo := tempDir(t)
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, "AGENTS.md", "# AGENTS.md — root\n")

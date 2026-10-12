@@ -17,18 +17,6 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
-// promoteGitEnv isolates git the way runs_driver_test does.
-func promoteGitEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "web-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "web-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-}
-
 func promoteGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -43,7 +31,7 @@ func promoteGit(t *testing.T, dir string, args ...string) string {
 // initPromoteRepo creates a main-branch repo with the given files committed.
 func initPromoteRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
-	promoteGitEnv(t)
+	// Git identity and config isolation come from TestMain's process env.
 	repo := tempDir(t)
 	promoteGit(t, repo, "init", "-b", "main", ".")
 	for name, content := range files {
@@ -58,7 +46,6 @@ func initPromoteRepo(t *testing.T, files map[string]string) string {
 // at repo, returning the Daemon, base URL, Session ID and owner.
 func promoteDaemon(t *testing.T, repo string) (*Daemon, string, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}

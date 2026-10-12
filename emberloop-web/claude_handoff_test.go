@@ -14,7 +14,6 @@ import (
 
 func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string) (*Daemon, *ClaudeBackend, *stubConn, *httptest.Server, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
 		prev := memoryInjection

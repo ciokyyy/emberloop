@@ -17,7 +17,6 @@ import (
 // like handleDaemon but exposing the profile API base URL.
 func profileDaemon(t *testing.T) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()

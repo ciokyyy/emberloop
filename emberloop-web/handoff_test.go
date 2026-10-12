@@ -12,7 +12,6 @@ import (
 
 func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.UsageSize = 100000
@@ -212,7 +211,6 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 // keeps the work it was asked to do.
 func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
@@ -245,7 +243,6 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 // A Subagent's spawn prompt is a system prompt too; its Handoff keeps it as
 // the Task for the same reason.
 func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}

@@ -200,7 +200,6 @@ func TestInvariant_EveryRuleGroundedInUserEvent(t *testing.T) {
 // Rules, observations, Profile and queue never appear in B's recall,
 // injection or Memory page.
 func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()

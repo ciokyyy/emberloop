@@ -35,7 +35,6 @@ func (p *promptsSeen) all() []string {
 // the admin User. A non-nil hook replaces the injection hook until the test ends.
 func handleDaemon(t *testing.T, hook func(SessionMeta, handleOp) injection) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
 		prev := memoryInjection

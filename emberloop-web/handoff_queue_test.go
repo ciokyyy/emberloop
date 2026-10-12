@@ -35,7 +35,6 @@ func (p *promptRecord) texts() []string {
 // the Session ID.
 func queueDaemon(t *testing.T, delay time.Duration) (*Daemon, *promptRecord, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = delay
@@ -240,7 +239,6 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 // not hold a compress of the parent.
 func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 	stateDir := tempDir(t)
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	stuck := make(chan struct{}) // never closed: the old Daemon's child turn stays open
 	old := NewFakeBackend()

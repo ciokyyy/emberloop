@@ -61,7 +61,6 @@ func TestDeciderSettingsDefaults(t *testing.T) {
 // The admin write saves the mode, model and thresholds; bad values are
 // refused.
 func TestDeciderSettingsWriteAndValidate(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	srv, file := settingsServer(t, `{"roles":{}}`)
 	put := func(body string) (int, map[string]any) {
 		out, code := putSettingsBody(t, srv.URL, body)

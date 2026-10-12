@@ -18,7 +18,6 @@ import (
 // injection hook: production Profile and recall run.
 func recallDaemon(t *testing.T) (*Daemon, *promptsSeen, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
@@ -72,19 +71,6 @@ func writeNoteFile(t *testing.T, workDir, name, id, body string) {
 	}
 }
 
-// gitTestEnv isolates git like the memory package tests, but on tempDir so
-// Daemon goroutines never race t.TempDir cleanup.
-func gitTestEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "recall-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "recall-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-}
-
 func runGitRecall(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -99,7 +85,6 @@ func runGitRecall(t *testing.T, dir string, args ...string) string {
 // initRecallRepo creates a main-branch repo at a temp dir with one committed file.
 func initRecallRepo(t *testing.T, files map[string]string) (dir, head string) {
 	t.Helper()
-	gitTestEnv(t)
 	dir = tempDir(t)
 	runGitRecall(t, dir, "init", "-b", "main", ".")
 	for name, content := range files {
@@ -214,7 +199,6 @@ func TestAutoRecallCapsAtFive(t *testing.T) {
 
 // Flagged Rules show the verify flag.
 func TestAutoRecallFlaggedRuleShowsVerify(t *testing.T) {
-	gitTestEnv(t)
 	d, seen, base, _ := recallDaemon(t)
 	// Work in a git repo so anchor verification can flag the Rule.
 	repo, head := initRecallRepo(t, map[string]string{"app.go": "package app\n"})
@@ -247,7 +231,6 @@ func TestAutoRecallFlaggedRuleShowsVerify(t *testing.T) {
 
 // Deleted anchors go dormant and are not injected.
 func TestAutoRecallDormantSkipped(t *testing.T) {
-	gitTestEnv(t)
 	d, _, base, _ := recallDaemon(t)
 	repo, head := initRecallRepo(t, map[string]string{"gone.go": "package gone\n"})
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", repo))

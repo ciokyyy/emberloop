@@ -23,7 +23,6 @@ func newPigTestBackend(t *testing.T) *PigBackend {
 
 func newPigTestBackendAt(t *testing.T, agentDir string) *PigBackend {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	t.Setenv("PIG_TEST_FAUX_SCENARIO", "parity-basic")
 	config := `{"providers":{"test-faux":{"baseUrl":"http://localhost:0","api":"test-faux","authHeader":false,"models":[{"id":"faux-1","name":"Test Faux"}]}}}`
 	if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(config), 0o600); err != nil {

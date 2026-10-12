@@ -201,7 +201,6 @@ func TestConsolidateIgnoresOldObservationsAndNeverDeletes(t *testing.T) {
 }
 
 func TestConsolidateSkipsWithoutModel(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"decider_mode":"heuristic"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedObs(t, d, "alice", "s1", "1", "Use tabs, not spaces", "")

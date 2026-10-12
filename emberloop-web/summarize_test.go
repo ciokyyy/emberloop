@@ -58,7 +58,6 @@ func errorText(body map[string]any) string {
 // authed pig model.
 func TestCompressModelSettingAcceptsOnlyAuthedPigModels(t *testing.T) {
 	withoutPigAuth(t)
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, "")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -135,7 +134,6 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 		t.Fatalf("unauthed model compress = %d %v, want 409 with reason", code, body)
 	}
 
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if note := sessionField(t, srv.URL, id, "compressNote"); note != "" {
 		t.Fatalf("compressNote = %q with an authed model, want empty", note)
@@ -198,7 +196,6 @@ func (f *scriptedSummarizer) Summarize(model, system, user string) (string, erro
 // scripted summarizer and one idle Session whose first prompt is set.
 func summaryDaemon(t *testing.T, replies ...string) (*Daemon, *scriptedSummarizer, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
 	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	sum := &scriptedSummarizer{replies: replies}
