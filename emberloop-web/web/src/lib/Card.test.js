@@ -208,3 +208,15 @@ describe('Card promote action', () => {
     noRules.unmount();
   });
 });
+
+describe('Card thinking live state', () => {
+  it('disables the height animation only while the thinking block is live', () => {
+    const live = render(Card, { props: { block: { ...block('thinking', 'Thinking', 'hmm'), live: true } } });
+    expect(live.container.querySelector('[data-card="thinking"]')?.getAttribute('data-live')).toBe('true');
+    expect(live.container.querySelector('[data-card="thinking"] pre')?.textContent).toBe('hmm');
+    live.unmount();
+    const settled = render(Card, { props: { block: block('thinking', 'Thinking', 'hmm') } });
+    expect(settled.container.querySelector('[data-card="thinking"]')?.getAttribute('data-live')).toBeNull();
+    expect(settled.container.querySelector('[data-card="thinking"]')?.className).toMatch(/animate-rise/);
+  });
+});

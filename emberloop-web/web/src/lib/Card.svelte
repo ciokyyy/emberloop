@@ -13,7 +13,12 @@
   import UserAvatar from './UserAvatar.svelte';
   import { people, personFor } from './people.svelte.js';
   import { ownerTone } from './owners.js';
+  import { appendText } from './appendText.js';
   let { block, sessionId = null, sessions = [], onOpenSession = () => {} } = $props();
+  // A live thinking block grows per delta: its <pre> appends text only, and
+  // the details height animation is off until it settles, so the mount-only
+  // rise animation is never re-triggered by streaming.
+  const thinkingLive = $derived(block.card === 'thinking' && !!block.live);
   let sudoPassword = $state('');
   let sudoBusy = $state(false);
   let sudoError = $state('');
@@ -293,12 +298,12 @@
     </div>
   </details>
 {:else if block.card === 'thinking'}
-  <details class="group animate-rise rounded-2xl border bg-card text-card-foreground" data-card="thinking" open={!block.collapsed}>
+  <details class="group animate-rise rounded-2xl border bg-card text-card-foreground {thinkingLive ? 'think-live' : ''}" data-card="thinking" data-live={thinkingLive ? 'true' : undefined} open={!block.collapsed}>
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
       <Brain class="size-4" /><span class="flex-1">{block.title}</span>
       <ChevronRight class="size-4 transition-transform duration-200 group-open:rotate-90" />
     </summary>
-    <pre class="max-h-64 overflow-auto border-t bg-background/40 p-3.5 font-mono text-xs whitespace-pre-wrap">{block.body}</pre>
+    <pre class="max-h-64 overflow-auto border-t bg-background/40 p-3.5 font-mono text-xs whitespace-pre-wrap" use:appendText={block.body}></pre>
   </details>
 {:else if block.card === 'diff'}
   <div class="animate-rise overflow-hidden rounded-2xl border bg-card text-card-foreground" data-card="diff">
@@ -334,3 +339,8 @@
     <Markdown text={block.body} fade={block.card === 'assistant'} />
   </div>
 {/if}
+<style>
+  details.think-live::details-content {
+    transition: none;
+  }
+</style>

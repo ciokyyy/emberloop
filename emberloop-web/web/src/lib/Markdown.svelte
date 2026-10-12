@@ -2,19 +2,18 @@
   button (event delegation on the root, so streaming re-renders keep working;
   buttons are re-attached after each render). -->
 <script>
-  import { marked } from 'marked';
-  import DOMPurify from 'dompurify';
   import { buttonVariants } from './ui/button.svelte';
   import { cn } from './ui/cn.js';
-
   import { untrack } from 'svelte';
   import { fadeNewText } from './streamFade.js';
   import { nextShown, safeCut } from './pace.js';
+  import { renderMarkdown, createIncrementalMarkdown } from './markdown.js';
 
   let { text = '', class: className = '', fade = false } = $props();
   let root = $state(null);
   let fader = null;
-  marked.setOptions({ gfm: true, breaks: true });
+  const incr = createIncrementalMarkdown();
+
   // Tables sit in a clipped, rounded wrapper: a bare table cannot round its
   // corners with collapsed borders, and the wrapper scrolls wide ones.
   // Paced reveal: a mount shows the whole text (history never animates); a
@@ -47,13 +46,39 @@
   });
   const visible = $derived(safeCut(full, shown));
 
-  const html = $derived(
-    DOMPurify.sanitize(marked.parse(visible, { async: false }))
-      .replaceAll('<table', '<div class="md-table"><table')
-      .replaceAll('</table>', '</table></div>')
-      // Anchor for the copy button: a relative box for its absolute corner.
-      .replaceAll('<pre>', '<pre class="relative md-pre">'),
-  );
+  // Renders throttle to ~5Hz while streaming: a fast model pushes dozens of
+  // deltas per window, and every render replaces the whole DOM. The settled
+  // head parses once (see markdown.js); only the tail re-parses per tick.
+  // The settled message always gets one exact full render. Mount renders the
+  // mount text at once, so history and tests never see a blank frame.
+  const RENDER_MS = 200;
+  let html = $state(untrack(() => renderMarkdown(String(text ?? ''))));
+  let clock = $state(0);
+  let lastRender = 0;
+  $effect(() => {
+    const v = visible;
+    const f = full;
+    clock;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    untrack(() => {
+      if (v.length >= f.length) {
+        const next = incr.renderFull(f);
+        if (next !== html) html = next;
+        lastRender = now;
+        return;
+      }
+      if (now - lastRender >= RENDER_MS) {
+        const next = incr.render(v);
+        if (next !== html) html = next;
+        lastRender = now;
+        return;
+      }
+      const t = setTimeout(() => {
+        clock += 1;
+      }, RENDER_MS - (now - lastRender));
+      return () => clearTimeout(t);
+    });
+  });
 
   // Copy-button icons, same shapes as the lucide Copy and Check components
   // (inlined so they can live inside rendered HTML without a mount).
@@ -119,12 +144,15 @@
   }
 
   // Growing text fades in: only text that arrives after the first render is
-  // wrapped, so history and settled messages never animate.
+  // wrapped, so history and settled messages never animate. Past the skip
+  // backlog the text appears at once instead of churning splitText spans.
   $effect(() => {
     html;
+    const f = full;
+    const v = visible;
     if (!fade || !root) return;
     fader ??= fadeNewText();
-    fader.apply(root);
+    fader.apply(root, { backlog: f.length - v.length });
   });
 
   // Attach one copy button per fenced block after each render (streaming
