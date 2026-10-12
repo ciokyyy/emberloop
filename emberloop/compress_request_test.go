@@ -215,7 +215,9 @@ func TestCompressPaneWithoutForceWaitsPastTheOldBound(t *testing.T) {
 	defer func() { pollEvery, paneStopWait = oldPoll, oldWait }()
 	oldID := writeCompressWorker(t, pigCallLine("s1", "a1", "call_1", "mcp__el__bash"))
 	go func() {
-		time.Sleep(400 * time.Millisecond)
+		// Half the old 400ms: the production bound is 30s, so any tool
+		// call longer than the mid-test queue check proves the same point.
+		time.Sleep(200 * time.Millisecond)
 		root := filepath.Join(os.Getenv("HOME"), ".pig", "agent", "sessions")
 		f, err := os.OpenFile(filepath.Join(root, oldID+".jsonl"), os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -232,7 +234,7 @@ func TestCompressPaneWithoutForceWaitsPastTheOldBound(t *testing.T) {
 		defer close(done)
 		next, reqErr = CompressPaneWithForce(fake.run, "pane-1", compressSettings(), false)
 	}()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	if !CompressQueued("w1") {
 		t.Error("a long tool call must keep the queue standing")
 	}

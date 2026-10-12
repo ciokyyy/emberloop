@@ -349,6 +349,9 @@ func TestRunUpdateFlagsAndInstallAlias(t *testing.T) {
 // waitHealthy answers nil once the endpoint reports ok, and an error naming
 // what it saw when the endpoint never does.
 func TestWaitHealthy(t *testing.T) {
+	oldPoll := waitHealthyPollInterval
+	waitHealthyPollInterval = 10 * time.Millisecond
+	t.Cleanup(func() { waitHealthyPollInterval = oldPoll })
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -362,13 +365,13 @@ func TestWaitHealthy(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer bad.Close()
-	if err := waitHealthy(bad.URL, "", 500*time.Millisecond); err == nil {
+	if err := waitHealthy(bad.URL, "", 150*time.Millisecond); err == nil {
 		t.Error("a 404 endpoint must fail the wait")
 	} else if !strings.Contains(err.Error(), "404") {
 		t.Errorf("the failure must name what it saw, got: %v", err)
 	}
 
-	if err := waitHealthy("http://127.0.0.1:1/nope", "", 500*time.Millisecond); err == nil {
+	if err := waitHealthy("http://127.0.0.1:1/nope", "", 150*time.Millisecond); err == nil {
 		t.Error("an unreachable endpoint must fail the wait")
 	}
 }

@@ -655,7 +655,9 @@ func TestWrapHoldsInjectionWhileTyping(t *testing.T) {
 	if _, err := ctrlEnqueue("w1", QueueKindSteer, "steer it", "tell"); err != nil {
 		t.Fatalf("ctrlEnqueue: %v", err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	// Half the old 200ms: the pump polls every 5ms, so 100ms still gives it
+	// twenty chances to wrongly forward while the box is dirty.
+	time.Sleep(100 * time.Millisecond)
 	if got := child.fakeChild.forwardedString(); strings.Contains(got, "steer it") {
 		t.Fatalf("injection leaked into a dirty box: %q", got)
 	}

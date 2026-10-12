@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,6 +31,10 @@ type Result struct {
 }
 
 // osExec is the real implementation: plain os/exec, exit code in Result.
+// A timeout kills the whole process group (not just the direct child), or a
+// `sh -c` wrapper's children hold the output pipes and Run waits out their
+// full run. Own process group, killed as a group; WaitDelay bounds the pipe
+// wait past the kill. Test seam: none (timeout comes from ExecOpts).
 func osExec(cmd string, args []string, opts ExecOpts) (Result, error) {
 	ctx := context.Background()
 	if opts.Timeout > 0 {
@@ -46,6 +51,9 @@ func osExec(cmd string, args []string, opts ExecOpts) (Result, error) {
 	if opts.Stdin != "" {
 		c.Stdin = strings.NewReader(opts.Stdin)
 	}
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	c.WaitDelay = 2 * time.Second
 
 	var stdout, stderr strings.Builder
 	c.Stdout = &stdout

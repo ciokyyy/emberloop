@@ -224,12 +224,12 @@ func TestExecuteTimeoutKillsTheProcess(t *testing.T) {
 	ex := NewExecute(nil, "test execute", false)
 	start := time.Now()
 	out, err := ex.Execute(context.Background(), t.TempDir(),
-		json.RawMessage(`{"code":"import subprocess, time\nsubprocess.Popen([\"sleep\", \"57\"])\ntime.sleep(60)","timeout":2}`))
+		json.RawMessage(`{"code":"import subprocess, time\nsubprocess.Popen([\"sleep\", \"57\"])\ntime.sleep(10)","timeout":1}`))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if elapsed := time.Now().Sub(start); elapsed > 30*time.Second {
-		t.Fatalf("a 2s timeout took %v; the process group was not killed", elapsed)
+		t.Fatalf("a 1s timeout took %v; the process group was not killed", elapsed)
 	}
 	if !strings.Contains(out, "timed out") {
 		t.Fatalf("a timed-out script must say so: %q", out)

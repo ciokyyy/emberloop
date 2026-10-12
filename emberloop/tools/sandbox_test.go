@@ -132,7 +132,7 @@ func TestSandboxAllowsBridgeAndReads(t *testing.T) {
 
 func TestSandboxTimeoutKillsProcessGroup(t *testing.T) {
 	requireBwrap(t)
-	cfg := SandboxConfig{Worktree: t.TempDir(), Timeout: time.Second}
+	cfg := SandboxConfig{Worktree: t.TempDir(), Timeout: 300 * time.Millisecond}
 	start := time.Now()
 	_, err := RunSandbox(context.Background(), cfg, "bash", "-c", "sleep 300 & sleep 300")
 	elapsed := time.Since(start)

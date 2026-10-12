@@ -88,6 +88,11 @@ func (s restartState) describe() string {
 	return fmt.Sprintf("requested at %s (drain %s), waiting on %s", since, s.Drain, strings.Join(waiting, "; "))
 }
 
+// restartPollInterval spaces the /api/health polls while waiting for the
+// Daemon to go down and come back. A var so tests can shrink it; production
+// keeps the 500ms pace.
+var restartPollInterval = 500 * time.Millisecond
+
 func requestRestart(base, token string, wait bool, out io.Writer, timeout time.Duration) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest(http.MethodPost, base+"/api/restart", nil)
@@ -125,7 +130,7 @@ func requestRestart(base, token string, wait bool, out io.Writer, timeout time.D
 			fmt.Fprintln(out, "Daemon is back")
 			return nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(restartPollInterval)
 	}
 	return fmt.Errorf("el restart: Daemon did not come back within %s", timeout)
 }
