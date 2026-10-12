@@ -130,6 +130,10 @@ type Daemon struct {
 	// reads the host settings file. Set it before serving: tests give each
 	// parallel Daemon its own file instead of sharing EL_SETTINGS.
 	settingsPath string
+	// pollInterval caps this Daemon's Run driver sleep; zero keeps the
+	// production default. Tests set it before serving so multi-pass Run
+	// tests poll fast. Zero means runPollInterval.
+	pollInterval time.Duration
 	// Run final-merge hooks replace the generated-file build and repo check in seam tests.
 	runFinalBuild func(string) (string, error)
 	runRepoCheck  func(string) (string, error)

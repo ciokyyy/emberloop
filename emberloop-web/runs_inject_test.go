@@ -199,7 +199,7 @@ func TestRunSkillsAreAdminOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "alice")
 	bob := signedIn(t, h, "bob")
@@ -325,7 +325,7 @@ func TestRunFirstPromptsCarryInjectionAtSeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

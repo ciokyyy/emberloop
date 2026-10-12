@@ -1020,8 +1020,8 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		Sleep: func(wait time.Duration) {
 			d.snapshotAndPersist(rs.ID)
 			d.pauseGate(rs.ID)
-			if wait > runPollInterval {
-				wait = runPollInterval
+			if cap := d.pollIntervalOrDefault(); wait > cap {
+				wait = cap
 			}
 			time.Sleep(wait)
 		},
@@ -2662,7 +2662,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				}
 				// Freeze the cap wait while paused instead of burning retries.
 				d.pauseGate(runID)
-				time.Sleep(runPollInterval)
+				time.Sleep(d.pollIntervalOrDefault())
 			}
 			if startExhausted {
 				cleanup()

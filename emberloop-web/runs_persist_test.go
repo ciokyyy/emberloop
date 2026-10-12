@@ -110,7 +110,7 @@ func runFileRows(t *testing.T, stateDir, id string) map[string]map[string]any {
 func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -210,7 +210,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -242,7 +242,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 
@@ -292,7 +292,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 func TestPauseResumeValidation(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -335,7 +335,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 			t.Fatalf("pause never landed before the first start in 6 rounds")
 		}
 		repo, spec := initRunRepo(t, tickets)
-		d := NewDaemon(tempDir(t), NewFakeBackend())
+		d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 		srv := httptest.NewServer(authedHandler(t, d))
 		run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 		if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
@@ -393,7 +393,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 // outside these defensive branches: both error instead of touching a nil Run.
 func TestRunStartUnknownRunErrors(t *testing.T) {
 	t.Parallel()
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	if err := d.runStartWorker("no-such-run", el.DriverTicket{ID: "01-first"}); err == nil {
 		t.Fatalf("runStartWorker unknown run = nil, want error")
 	}
@@ -409,7 +409,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -437,7 +437,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	d2.ResumeAfterRestart()
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
@@ -459,7 +459,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 func TestFailedRunResumesWithSameWorker(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

@@ -16,7 +16,7 @@ func prepareFinalGateRun(t *testing.T, tickets map[string]string) (string, strin
 	repo, _ := initRunRepo(t, tickets)
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	testGit(t, repo, "branch", "spec/demo", master)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	runID := "final-gate-test"
 	d.mu.Lock()
 	d.runs[runID] = &runState{
@@ -219,7 +219,7 @@ func TestFinalMergeWaitsForEveryTicketToMergeOrDiscard(t *testing.T) {
 		"02-second.md": "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n",
 	})
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	d.runFinalBuild = func(string) (string, error) { builds.Add(1); return "", nil }
 	d.runRepoCheck = func(string) (string, error) { checks.Add(1); return "green", nil }
@@ -270,7 +270,7 @@ func TestFinalMergeWaitsForEveryTicketToMergeOrDiscard(t *testing.T) {
 func TestFinalRepoCheckMissingIsExplicit(t *testing.T) {
 	t.Parallel()
 	worktree := tempDir(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	output, err := d.runFinalRepoCheck(worktree)
 	if err == nil || !strings.Contains(err.Error(), ".emberloop/check is missing") || output != "" {
 		t.Fatalf("missing check = %q, %v; want explicit missing-check error", output, err)
@@ -310,7 +310,7 @@ func TestRunGeneratedBuildRefreshesWebAndE2ELockfiles(t *testing.T) {
 	t.Setenv("EL_NPM_WEB", webDir)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	if output, err := d.runGeneratedBuild(root); err != nil {
 		t.Fatalf("runGeneratedBuild = %q, %v", output, err)
 	}

@@ -96,7 +96,7 @@ func warningFiles(w []overlapWarningJSON) []string {
 func TestSpecOverlapWarnsBothRuns(t *testing.T) {
 	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -164,7 +164,7 @@ func containsFile(files []string, want string) bool {
 func TestSpecOverlapDisjointNoWarning(t *testing.T) {
 	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -205,7 +205,7 @@ func TestSpecOverlapDisjointNoWarning(t *testing.T) {
 func TestSpecOverlapDoneRunExcluded(t *testing.T) {
 	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

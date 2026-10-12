@@ -37,7 +37,7 @@ func TestSpecBranchCreatedFromMasterAtStart(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -87,7 +87,7 @@ func TestSpecBranchReusedWhenPresent(t *testing.T) {
 		t.Fatalf("spec/demo = %q, want it ahead of master %q", specTip, master)
 	}
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -120,7 +120,7 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -173,7 +173,7 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -215,7 +215,7 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -249,7 +249,7 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	reloaded := getRun(t, srv2.URL, run.ID)
@@ -290,7 +290,7 @@ func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -372,7 +372,7 @@ func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
 	if side == master {
 		t.Fatalf("HEAD = %q, want it off the master tip %q", side, master)
 	}
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -415,7 +415,7 @@ func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
 	writeFile(t, repo, "side.txt", "side\n")
 	testGit(t, repo, "add", "side.txt")
 	testGit(t, repo, "commit", "-m", "side work")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -433,7 +433,7 @@ func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
 func TestRebaseSpecBranchOntoMaster(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -469,7 +469,7 @@ func TestRebaseSpecBranchOntoMaster(t *testing.T) {
 func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -523,7 +523,7 @@ func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
 func TestAbandonRunRemovesBranchesAndWorktrees(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -572,7 +572,7 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	d.runFinalBuild = func(worktree string) (string, error) {
 		builds.Add(1)
@@ -648,7 +648,7 @@ func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	var failCheck atomic.Bool
 	failCheck.Store(true)
@@ -706,7 +706,7 @@ func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
 	testGit(t, repo, "add", "shared.txt")
 	testGit(t, repo, "commit", "-m", "add shared base")
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	d.runFinalBuild = func(string) (string, error) { builds.Add(1); return "", nil }
 	d.runRepoCheck = func(string) (string, error) { checks.Add(1); return "green", nil }

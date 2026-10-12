@@ -135,7 +135,7 @@ func TestTicketSteerReachesWorker(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	_ = repo
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -160,7 +160,7 @@ func TestTicketSteerReachesWorker(t *testing.T) {
 func TestTicketSteerValidation(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -193,7 +193,7 @@ func TestTicketParkAndRetry(t *testing.T) {
 	tickets["03-third.md"] = "# 03: Third\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] gamma\n"
 	repo, spec := initRunRepo(t, tickets)
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -242,7 +242,7 @@ func TestTicketParkAndRetry(t *testing.T) {
 func TestTicketDiscardRemovesWorktree(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -289,7 +289,7 @@ func TestTicketActionsOnFinishedRunConflict(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -334,7 +334,7 @@ func (c *fakeClock) advance(d time.Duration) {
 func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -367,7 +367,7 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -427,7 +427,7 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -466,7 +466,7 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

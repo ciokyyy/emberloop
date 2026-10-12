@@ -105,7 +105,7 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -173,6 +173,8 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 		}
 		return "VERDICT: pass", true
 	}
+	// Slow driver: this reviewer rework sequence races a fast driver the
+	// way pause/switch tests do.
 	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -268,7 +270,7 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -298,7 +300,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	d.mu.Lock()
 	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
@@ -352,7 +354,7 @@ func TestReviewVerdictStampsPromptedTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -407,7 +409,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, prompted)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -476,7 +478,7 @@ func TestReviewPassAfterRepromptBindsAnsweredTip(t *testing.T) {
 	cur := strings.TrimSpace(testGit(t, repo, "rev-parse", branch))
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	prompt := reviewerPrompt("01-first", "spec", "reviewer-spec", branch, t2)
 	d.mu.Lock()
 	d.sessions["rev-spec"] = &session{
@@ -586,7 +588,7 @@ func TestReviewerSubmitToolScriptMergesWithMinors(t *testing.T) {
 			},
 		}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -614,7 +616,7 @@ func TestReviewerSubmitPassEmptyRanRefused(t *testing.T) {
 	})
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -653,7 +655,7 @@ func TestReviewerSubmitChangesMinorsOnlyRefused(t *testing.T) {
 	})
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -695,7 +697,7 @@ func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
 	})
 	fb := NewFakeBackend()
 	fb.Delay = 30 * time.Second
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -750,7 +752,7 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 	})
 	fb := NewFakeBackend()
 	fb.ReplyFunc = func(string, string) (string, bool) { return "", true }
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -812,7 +814,7 @@ func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {
 // JSON and a worker submit without a status keep their own messages.
 func TestSessionSubmitRoutesAndMessages(t *testing.T) {
 	t.Parallel()
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -868,7 +870,7 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 		}
 		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: ran}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -971,7 +973,7 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 			Ran: []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
 		}, true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1081,6 +1083,8 @@ func TestReviewRereviewUsesSameSession(t *testing.T) {
 		}
 		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: ran}, true
 	}
+	// Slow driver: this reviewer rereview sequence races a fast driver the
+	// way pause/switch tests do.
 	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -1151,7 +1155,7 @@ func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

@@ -61,7 +61,7 @@ func TestRunWorkerWorktreeSeedsAgentsMD(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
 	testGit(t, repo, "rm", "-q", "AGENTS.md")
 	testGit(t, repo, "commit", "-qm", "drop root")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -91,7 +91,7 @@ func TestRunWorkerWorktreeSeedsAgentsMD(t *testing.T) {
 func TestRunStartWorkerEnsureError(t *testing.T) {
 	t.Parallel()
 	repo, _ := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	prev := ensureWorktreeDOX
 	ensureWorktreeDOX = func(string) (bool, error) { return false, errors.New("no space") }
 	t.Cleanup(func() { ensureWorktreeDOX = prev })

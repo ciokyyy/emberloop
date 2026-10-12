@@ -21,7 +21,7 @@ func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 		}
 		return strings.Repeat("x", 8000), true
 	}
-	d := NewDaemon(tempDir(t), be)
+	d := runTestDaemon(t, tempDir(t), be)
 	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -217,7 +217,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
@@ -251,7 +251,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
 	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum

@@ -26,6 +26,16 @@ func testGit(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+// runTestDaemon starts a Daemon for Run tests: the driver polls every
+// 100ms instead of the production 500ms, so multi-pass Runs settle fast.
+// Tests with pause/switch/resume sequences that race a fast driver keep
+// NewDaemon (see runs_pause_switch_test.go).
+func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
+	t.Helper()
+	d := NewDaemon(stateDir, backend)
+	d.SetPollInterval(100 * time.Millisecond)
+	return d
+}
 
 func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {
 	t.Helper()
@@ -280,7 +290,7 @@ func waitRunTickets(t *testing.T, base, id string, want map[string]string) runJS
 func TestStartRunCreatesRunAndRefusesSecond(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -366,7 +376,7 @@ func chainTickets() map[string]string {
 func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -436,7 +446,7 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetMaxRunning(1)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -494,7 +504,7 @@ func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -548,7 +558,7 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -614,7 +624,7 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -686,7 +696,7 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -714,7 +724,7 @@ func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -731,7 +741,7 @@ func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	missing := filepath.Join(tempDir(t), "missing.json")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(missing)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -749,7 +759,7 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -806,7 +816,7 @@ func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	testGit(t, repo, "checkout", "--detach")
 	initialHEAD := strings.TrimSpace(testGit(t, repo, "rev-parse", "HEAD"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -862,7 +872,7 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 	testGit(t, repo, "add", "main.txt")
 	testGit(t, repo, "commit", "-m", "main moves")
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	ticketPath := filepath.Join(repo, ".scratch", "demo", "issues", "01-first.md")
 	d.runs["r-detached"] = &runState{
 		ID: "r-detached", Spec: "spec", Repo: repo, Status: "running",
@@ -895,7 +905,7 @@ func TestStartRunRejectsSpecOutsideRepo(t *testing.T) {
 	t.Parallel()
 	_, spec := initRunRepo(t, demoTickets())
 	other := tempDir(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -926,7 +936,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "run-paused.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -954,7 +964,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 func TestServeRunEventsStreamsTable(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1010,7 +1020,7 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 	tip := strings.TrimSpace(testGit(t, worktree, "rev-parse", "HEAD"))
 	old := base
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	rs := &runState{
 		ID: "r-open", Spec: "spec", Repo: repo, Status: "running",
 		notify:    make(chan struct{}),
@@ -1062,7 +1072,7 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 	t.Parallel()
 	state := tempDir(t)
-	d := NewDaemon(state, NewFakeBackend())
+	d := runTestDaemon(t, state, NewFakeBackend())
 	d.mu.Lock()
 	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-sub"] = &runState{
@@ -1083,7 +1093,7 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(state, NewFakeBackend())
+	d2 := runTestDaemon(t, state, NewFakeBackend())
 	d2.mu.Lock()
 	rec := d2.submits["w1"]
 	d2.mu.Unlock()
@@ -1096,7 +1106,7 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 // reviewers are re-prompted for the new tip.
 func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
 	t.Parallel()
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.mu.Lock()
 	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-cnt"] = &runState{
@@ -1169,7 +1179,7 @@ func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
 		}
 		return "VERDICT: pass", true
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1208,7 +1218,7 @@ func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1253,7 +1263,7 @@ func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1313,7 +1323,7 @@ func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(state, NewFakeBackend())
+	d := runTestDaemon(t, state, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -1347,7 +1357,7 @@ func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
 		t.Fatalf("pause status = %d, want 200", code)
 	}
 	srv.Close()
-	d2 := NewDaemon(state, NewFakeBackend())
+	d2 := runTestDaemon(t, state, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	d2.mu.Lock()
@@ -1389,7 +1399,7 @@ func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
 		return "", false
 	}
 	clock := newFakeClock()
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

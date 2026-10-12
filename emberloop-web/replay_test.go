@@ -129,7 +129,7 @@ func TestAssignRecallOff(t *testing.T) {
 
 func TestNoRecallSkipsRecallBlock(t *testing.T) {
 	t.Parallel()
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	meta := SessionMeta{Owner: "u1", NoRecall: true}
 	rb, refs, err := d.recallBlockFor(context.Background(), meta, "remember: always wrap errors")
 	if err != nil {
@@ -143,7 +143,7 @@ func TestNoRecallSkipsRecallBlock(t *testing.T) {
 func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

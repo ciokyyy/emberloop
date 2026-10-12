@@ -27,7 +27,7 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -101,7 +101,7 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 func TestWorktreeMirrorStaysUntickedWhenSourceTicketIsTicked(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

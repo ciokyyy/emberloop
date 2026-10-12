@@ -19,7 +19,7 @@ func TestSeededWorkerCommitsAndMerges(t *testing.T) {
 	})
 	testGit(t, repo, "rm", "-q", "AGENTS.md")
 	testGit(t, repo, "commit", "-qm", "drop root")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
