@@ -160,7 +160,6 @@ func writeAuthJSON(t *testing.T, dir, body string) {
 // Slice 2: the Session offers no native tools, only the el MCP tools
 // (empty until ticket 06 serves spawn).
 func TestPigSessionStrippedToMCPOnly(t *testing.T) {
-	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -173,7 +172,6 @@ func TestPigSessionStrippedToMCPOnly(t *testing.T) {
 
 // Slice 2: a pig Session answers a prompt and streams normalized Events.
 func TestPigPromptStreamsNormalizedEvents(t *testing.T) {
-	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -212,7 +210,6 @@ func TestPigPromptStreamsNormalizedEvents(t *testing.T) {
 
 // Slice 3: an unknown model rejects the create instead of a broken Session.
 func TestPigUnknownModelRejected(t *testing.T) {
-	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -231,7 +228,6 @@ func TestPigUnknownModelRejected(t *testing.T) {
 // Slice 3: ending the Session closes the SDK session and runtime; the log
 // stays readable and a prompt after the end is refused.
 func TestPigEndClosesSession(t *testing.T) {
-	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -391,7 +387,6 @@ func hasChunkWith(events []Event, want string) bool {
 
 // Review: a repeat DELETE returns the Session without another ended Event.
 func TestPigDeleteEmitsSingleEnded(t *testing.T) {
-	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -413,8 +408,16 @@ func TestPigDeleteEmitsSingleEnded(t *testing.T) {
 }
 
 // Review: the test-faux provider passes validation only with PIG_TEST_FAUX.
+// This test stays serial: it unsets the package-wide flag and restores it
+// afterwards, so no parallel test may run while it does.
 func TestPigFauxModelRejectedWithoutEnv(t *testing.T) {
 	pb := newPigTestBackend(t)
+	prev, had := os.LookupEnv("PIG_TEST_FAUX")
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv("PIG_TEST_FAUX", prev)
+		}
+	})
 	if err := os.Unsetenv("PIG_TEST_FAUX"); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +448,6 @@ func TestPigPromptAfterCloseEmitsNoStatus(t *testing.T) {
 
 // Review: ended is terminal against late status edges at the Daemon.
 func TestEndedTerminalAgainstLateEdges(t *testing.T) {
-	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

@@ -427,7 +427,6 @@ func startChainedSlowTurns(t *testing.T, base, id string) {
 // pending list clears over HTTP, and the SDK native queues clear through
 // the backend seam.
 func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
-	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
