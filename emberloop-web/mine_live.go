@@ -1,6 +1,9 @@
 package web
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // mineFlight is the per-Session mining state. scan serializes scans of one
 // Session (the cursor file is single-writer). running and again coalesce
@@ -26,6 +29,10 @@ func (d *Daemon) mineFlightFor(id string) *mineFlight {
 	}
 	return fl
 }
+
+// mineWaitDefault bounds Shutdown's wait for turn-end scans: a hung scan
+// must wedge neither the restart nor the tests that call waitMining.
+const mineWaitDefault = 30 * time.Second
 
 // EnableLiveMining turns on the turn-end mine. The binary calls it once at
 // startup; tests that exercise the trigger call it too. Off by default so
@@ -60,8 +67,16 @@ func (d *Daemon) maybeMineLive(id string) {
 	fl.running = true
 	d.mineMu.Unlock()
 	d.mineWG.Add(1)
+	d.mineMu.Lock()
+	d.mineActive++
+	d.mineMu.Unlock()
 	go func() {
 		defer d.mineWG.Done()
+		defer func() {
+			d.mineMu.Lock()
+			d.mineActive--
+			d.mineMu.Unlock()
+		}()
 		for {
 			_, _ = d.mineSession(id, true)
 			d.mineMu.Lock()
@@ -79,3 +94,38 @@ func (d *Daemon) maybeMineLive(id string) {
 // waitMining blocks until every running turn-end scan finishes. Shutdown and
 // tests use it.
 func (d *Daemon) waitMining() { d.mineWG.Wait() }
+
+// waitMiningTimeout waits up to timeout for the running turn-end scans and
+// reports whether they all finished. Shutdown uses it so a hung scan cannot
+// wedge the restart past the drain.
+func (d *Daemon) waitMiningTimeout(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() { d.mineWG.Wait(); close(done) }()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// miningActive reports whether a turn-end scan runs. Callers of RestartState
+// hold neither lock; mineMu guards the count.
+func (d *Daemon) miningActive() bool {
+	d.mineMu.Lock()
+	defer d.mineMu.Unlock()
+	return d.mineActive > 0
+}
+
+// mineWaitOrDefault is Shutdown's mining bound: the test seam mineWait, else
+// mineWaitDefault.
+func (d *Daemon) mineWaitOrDefault() time.Duration {
+	d.mineMu.Lock()
+	defer d.mineMu.Unlock()
+	if d.mineWait > 0 {
+		return d.mineWait
+	}
+	return mineWaitDefault
+}

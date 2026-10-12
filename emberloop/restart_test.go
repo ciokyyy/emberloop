@@ -123,3 +123,40 @@ func TestDefaultTokenPathForDevUsesDevState(t *testing.T) {
 		t.Fatalf("dev token path = %q, want %q", got, want)
 	}
 }
+
+// el restart prints the Daemon's restart state: when the restart was asked
+// and what still blocks the drain.
+func TestRunRestartPrintsRestartState(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"restart":"requested","new":true,"state":{"requested":true,"since":"2026-10-12T07:38:00Z","drain":"5m0s","sessions":["s1"],"groups":["g1"],"runs":[],"starting":0}}`))
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunRestart([]string{"--url", srv.URL}, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "restart requested") {
+		t.Errorf("output = %q, want the request line", got)
+	}
+	if !strings.Contains(got, "restart state:") || !strings.Contains(got, "sessions s1") || !strings.Contains(got, "groups g1") {
+		t.Errorf("output = %q, want the waiting state", got)
+	}
+}
+
+// An older Daemon answers 202 without a state; el restart still prints the
+// request line and skips the state.
+func TestRunRestartWithoutStateStillPrints(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunRestart([]string{"--url", srv.URL}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.Contains(got, "restart requested") || strings.Contains(got, "restart state:") {
+		t.Errorf("output = %q, want only the request line", got)
+	}
+}

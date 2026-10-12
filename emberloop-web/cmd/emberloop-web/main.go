@@ -142,6 +142,7 @@ func main() {
 	claude.SetDaemonToken(d.MachineToken())
 	d.WithClaudeBackend(claude)
 	go watchForUpdate(d, exe, *restartCheck)
+	d.SetRestartDrain(*restartDrain)
 	go watchForRestartRequest(d, exe, *restartDrain)
 	go signalRestart(d)
 	d.EnableLiveMining()

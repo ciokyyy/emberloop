@@ -648,13 +648,23 @@ func (d *Daemon) groupOutstandingLocked(parentID string) bool {
 		if g.Parent != parentID {
 			continue
 		}
-		if g.fresh && !d.groupSentLocked(g) {
+		if d.groupOpenLocked(g) {
 			return true
 		}
-		for _, m := range g.Members {
-			if ms, ok := d.sessions[m]; ok && ms.hasWork() {
-				return true
-			}
+	}
+	return false
+}
+
+// groupOpenLocked reports whether one Group still holds its parent's
+// compress, the per-Group half of groupOutstandingLocked: the restart state
+// names the open Groups. Callers hold d.mu.
+func (d *Daemon) groupOpenLocked(g *spawnGroup) bool {
+	if g.fresh && !d.groupSentLocked(g) {
+		return true
+	}
+	for _, m := range g.Members {
+		if ms, ok := d.sessions[m]; ok && ms.hasWork() {
+			return true
 		}
 	}
 	return false

@@ -17,8 +17,8 @@ boxes and marking Tickets done.
 ## Test seams
 
 - Daemon API/lifecycle and invariants: `api_test.go`, `lifecycle_test.go`,
-  `handle_test.go` and `invariants_test.go`; the fake Backend drives the API
-  and lifecycle HTTP/SSE seams.
+  `handle_test.go`, `invariants_test.go` and `restart_state_test.go`; the
+  fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,

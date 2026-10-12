@@ -120,9 +120,13 @@ type Daemon struct {
 	// two quick bank calls, and no path takes it while holding mu.
 	rememberMu sync.Mutex
 	// restartCh fires once after RequestRestart; the binary waits on it,
-	// drains and re-executes. restartReq guards repeats (restart.go).
-	restartCh  chan struct{}
-	restartReq bool
+	// drains and re-executes. restartReq guards repeats, restartAt dates the
+	// request so a repeat can re-arm a stuck one, and restartDrain is the
+	// drain the binary waits (restart.go).
+	restartCh    chan struct{}
+	restartReq   bool
+	restartAt    time.Time
+	restartDrain time.Duration
 	// clock is the Daemon clock seam: idle quiet time and the runs driver read
 	// it; nil reads time.Now (idle.go).
 	clock func() time.Time
@@ -144,11 +148,14 @@ type Daemon struct {
 	nightlyLastDay string
 	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
 	// holds one in-flight/again flag per Session, mineWG lets tests and
-	// Shutdown wait for running scans.
-	liveMine  bool
-	mineMu    sync.Mutex
-	mineState map[string]*mineFlight
-	mineWG    sync.WaitGroup
+	// Shutdown wait for running scans, mineActive counts them for the
+	// restart state, and mineWait bounds Shutdown's wait (0 takes 30s).
+	liveMine   bool
+	mineMu     sync.Mutex
+	mineState  map[string]*mineFlight
+	mineActive int
+	mineWG     sync.WaitGroup
+	mineWait   time.Duration
 }
 
 type session struct {
