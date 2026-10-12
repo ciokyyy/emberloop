@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -355,4 +356,182 @@ func TestSettleFailedChildDeliversStatus(t *testing.T) {
 	// The grouped delivery steers the parent, whose turn fails like every
 	// turn under this backend: settled here means failed, not idle.
 	waitStatus(t, srv.URL, parent, "failed", 20*time.Second)
+}
+
+// A dead gated turn records a failure instead of burning reminders: with no
+// usage on the meter there is nothing to compress, so the turn ends failed
+// with a dead-turn error, the Chain classifier leaves it (no advance), and
+// the Group still delivers exactly once without a stopped notice.
+func TestDeadTurnSkipsRemindersAndFails(t *testing.T) {
+	withSubmitGate(t)
+	be := NewFakeBackend()
+	be.ReplyFunc = func(_, _ string) (string, bool) { return "", true }
+	d := NewDaemon(tempDir(t), be)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
+	meta, events := waitDeadFailed(t, srv.URL, child)
+	if meta.Status != "failed" {
+		t.Fatalf("child status = %q, want failed", meta.Status)
+	}
+	if n := countReminderPrompts(events); n != 0 {
+		t.Fatalf("reminder prompts = %d, want 0", n)
+	}
+	var dead bool
+	for _, e := range events {
+		if e.Kind == "error" && strings.Contains(e.Text, "dead turn") {
+			dead = true
+		}
+	}
+	if !dead {
+		t.Fatalf("no dead-turn error in %+v", events)
+	}
+	steer := waitGroupSteer(t, srv.URL, parent, group, 10*time.Second)
+	if strings.Contains(steer.Text, "stopped without submitting") {
+		t.Fatalf("grouped steer carries a give-up notice: %q", steer.Text)
+	}
+	_, pevents := sessionMeta(t, srv.URL, parent)
+	if n := countGroupSteers(pevents, group); n != 1 {
+		t.Fatalf("grouped steers = %d, want exactly 1", n)
+	}
+	waitParentIdle(t, srv.URL, parent)
+}
+
+// waitDeadFailed polls a Session until its status flips to failed, then
+// returns its meta and transcript.
+func waitDeadFailed(t *testing.T, base, id string) (SessionMeta, []Event) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		meta, events := sessionMeta(t, base, id)
+		if meta.Status == "failed" {
+			return meta, events
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	meta, events := sessionMeta(t, base, id)
+	t.Fatalf("session %s never failed: %+v", id, events)
+	return meta, events
+}
+
+// A dead gated turn with usage past the threshold compresses instead of
+// reminding: the Handoff runs with no reminder prompt before it.
+func TestDeadTurnNearWindowCompressesBeforeGate(t *testing.T) {
+	withSubmitGate(t)
+	t.Setenv("PIG_TEST_FAUX", "1")
+	useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
+	be := NewFakeBackend()
+	be.UsageSize = 10
+	be.ReplyFunc = func(_, _ string) (string, bool) { return "", true }
+	d := NewDaemon(tempDir(t), be)
+	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	_, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
+	evs := waitIdleAfter(t, srv.URL, child, 1)
+	if n := len(eventsOfKind(evs, "compressed")); n != 1 {
+		t.Fatalf("compressed = %d, want 1", n)
+	}
+	if n := countReminderPrompts(evs); n != 0 {
+		t.Fatalf("reminder prompts = %d, want 0", n)
+	}
+	for _, e := range evs {
+		if e.Kind == "error" && strings.Contains(e.Text, "dead turn") {
+			t.Fatalf("dead-turn failure recorded despite due compress")
+		}
+	}
+	waitParentIdle(t, srv.URL, parent)
+}
+
+// deadEvents builds one turn after mark from kinds, stamping CreatedAt so
+// the duration check is deterministic. The turn's prompt sits at mark (as
+// senders append it before the turn launches); kinds run after it. "working"
+// and "status" stamp those statuses, "status" settling idle.
+func deadEvents(mark int64, start time.Time, kinds ...string) []Event {
+	evs := []Event{{Seq: mark, Kind: "prompt", Text: "do the job", CreatedAt: start.Add(-time.Second)}}
+	seq := mark
+	at := start
+	for _, k := range kinds {
+		seq++
+		kind, text, status := k, "", ""
+		switch k {
+		case "working":
+			kind, status = "status", "working"
+		case "assistant_chunk":
+			// Blank by design: the "blank chunks stay dead" case needs
+			// chunks with no text, and the text case appends its own.
+			text = ""
+		case "status":
+			status = "idle"
+		case "error":
+			text = "boom"
+		}
+		evs = append(evs, Event{Seq: seq, Kind: kind, Text: text, Status: status, CreatedAt: at})
+		at = at.Add(time.Second)
+	}
+	return evs
+}
+
+// The dead-turn predicate fires only on a fast working-to-idle settle with
+// no output: text, a tool call, a submit, an error, a slow settle or a
+// non-idle end all clear it, and no working edge after the mark is no turn.
+func TestDeadTurnSince(t *testing.T) {
+	start := time.Now()
+	slow := deadEvents(7, start, "working", "status")
+	slow[len(slow)-1].CreatedAt = start.Add(deadTurnMaxDuration + time.Second)
+	failed := deadEvents(7, start, "working", "status")
+	failed[len(failed)-1].Status = "failed"
+	for _, tc := range []struct {
+		name   string
+		events []Event
+		want   bool
+	}{
+		{"fast empty turn is dead", deadEvents(7, start, "working", "status"), true},
+		{"blank chunks stay dead", deadEvents(7, start, "working", "assistant_chunk", "status"), true},
+		{"assistant text clears it", append(deadEvents(7, start, "working"), Event{Seq: 9, Kind: "assistant_chunk", Text: "working on it", CreatedAt: start.Add(2 * time.Second)}, Event{Seq: 10, Kind: "status", Status: "idle", CreatedAt: start.Add(3 * time.Second)}), false},
+		{"tool call clears it", append(deadEvents(7, start, "working"), Event{Seq: 9, Kind: "tool_call_started", Text: `{"id":"t1"}`, CreatedAt: start.Add(2 * time.Second)}, Event{Seq: 10, Kind: "status", Status: "idle", CreatedAt: start.Add(3 * time.Second)}), false},
+		{"submit clears it", append(deadEvents(7, start, "working"), Event{Seq: 9, Kind: "submit", Text: "done", CreatedAt: start.Add(2 * time.Second)}, Event{Seq: 10, Kind: "status", Status: "idle", CreatedAt: start.Add(3 * time.Second)}), false},
+		{"error clears it", deadEvents(7, start, "working", "error", "status"), false},
+		{"slow settle clears it", slow, false},
+		{"failed end clears it", failed, false},
+		{"no working edge is no turn", deadEvents(7, start, "status"), false},
+		{"events before the mark do not count", deadEvents(9, start, "status"), false},
+	} {
+		if got := deadTurnSince(tc.events, 7); got != tc.want {
+			t.Errorf("%s: deadTurnSince = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The synthetic dead-turn failure must not advance the Run Chain and must
+// not read as a capped Session: it is evidence of an empty turn, not of a
+// quota, credit, auth or session-limit failure.
+func TestDeadTurnErrorStaysOutOfChain(t *testing.T) {
+	for _, text := range []string{
+		deadTurnErrorText(296883, 272000, true),
+		deadTurnErrorText(0, 0, false),
+	} {
+		if got := classifyFailure(errors.New(text)); got != failureOther {
+			t.Errorf("classifyFailure(%q) = %q, want other", text, got)
+		}
+		if chainAdvances(errors.New(text)) {
+			t.Errorf("chainAdvances(%q) = true, want false", text)
+		}
+	}
+	now := time.Now()
+	evs := []Event{
+		{Seq: 1, Kind: "prompt", Text: "job", CreatedAt: now},
+		{Seq: 2, Kind: "error", Text: deadTurnErrorText(0, 0, false), CreatedAt: now.Add(time.Second)},
+		{Seq: 3, Kind: "status", Status: "failed", CreatedAt: now.Add(2 * time.Second)},
+	}
+	if sessionLimitFailureInTurn(evs) {
+		t.Error("dead-turn error reads as a session-limit failure, want false")
+	}
+	if got := lastTurnFailure(evs); !strings.Contains(got, "dead turn") {
+		t.Errorf("lastTurnFailure = %q, want the dead-turn text", got)
+	}
 }
