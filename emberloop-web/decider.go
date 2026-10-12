@@ -203,7 +203,7 @@ func (d *Daemon) jevSettingsOf() jevSettings {
 // off (no base URL). The caller falls back to the heuristic when it is nil.
 // The key stays optional so a local Laya server without one still works.
 func (d *Daemon) jevMineDecider() memory.Decider {
-	set := readJevSettings()
+	set := d.jevSettingsOf()
 	if set.BaseURL == "" {
 		return nil
 	}
