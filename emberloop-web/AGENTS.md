@@ -26,7 +26,9 @@ boxes and marking Tickets done.
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
   `runs_reviewers_test.go`, `runs_persist_test.go`, `runs_chain_test.go`,
   `runs_pause_switch_test.go`, `runs_specbranch_test.go`,
-  `runs_worktree_test.go`, `runs_final_test.go`,
+  `runs_worktree_test.go`, `runs_toolactive_test.go` (in-flight tool calls
+  date worker activity up to a cap), `runs_starttree_test.go` (stale branch
+  and worktree reuse or Needs-you), `runs_final_test.go`,
   `runs_markdone_basered_test.go`, `runs_overlap_test.go` and
   `runs_stopsubmit_test.go` cover Run seams. Stop-after-submit ends a Run
   Worker or Reviewer turn on its accepted terminal submit
