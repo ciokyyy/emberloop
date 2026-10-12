@@ -66,4 +66,22 @@ describe('VersionBadge', () => {
     unmount();
     vi.unstubAllGlobals();
   });
+
+  it('renders a static stamp for the phone drawer when inline', async () => {
+    stubVersion({ version: 'dev', commit: 'abc1234', uiHash: uiHash() });
+    const { container, unmount } = render(VersionBadge, { props: { inline: true } });
+    const line = await within(container).findByTestId('version-inline');
+    expect(line.textContent).toContain('be abc1234');
+    expect(within(container).queryByTestId('version-badge')).toBeNull();
+    unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it('offers a phone update pill when the build is stale', async () => {
+    stubVersion({ version: 'dev', commit: 'abc1234', uiHash: 'newer-build-2' });
+    const { container, unmount } = render(VersionBadge);
+    expect(await within(container).findByTestId('update-pill')).toBeTruthy();
+    unmount();
+    vi.unstubAllGlobals();
+  });
 });

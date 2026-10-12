@@ -366,14 +366,14 @@
                   <div class="grid items-center gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_minmax(0,16rem)_auto]" data-testid={`chain-entry-${role.id}-${index + 1}`}>
                     <span class="text-xs font-medium text-muted-foreground">Entry {index + 1}</span>
                     <Combobox
-                      class="h-10"
+                      class="md:h-10"
                       aria-label={`${role.label} Chain entry ${index + 1} Backend`}
                       value={entry.backend}
                       items={harnessItems}
                       onValueChange={(value) => pickChainBackend(role.id, index, value)}
                     />
                     <Combobox
-                      class="h-10"
+                      class="md:h-10"
                       aria-label={`${role.label} Chain entry ${index + 1} model`}
                       bind:value={entry.model}
                       items={itemsFor(entry.backend, entry.model)}
@@ -402,7 +402,7 @@
                 <div class="text-xs text-muted-foreground">Writes the Handoff. Only authed pig models are listed.</div>
                 {#if compressNote}<div class="text-xs text-amber-300">{compressNote}</div>{/if}
               </div>
-              <Combobox class="h-10" aria-label="Compress model" bind:value={compress.model} items={compressModelItems()} placeholder="Select a model" />
+              <Combobox class="md:h-10" aria-label="Compress model" bind:value={compress.model} items={compressModelItems()} placeholder="Select a model" />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">
@@ -455,7 +455,7 @@
                 <div class="text-sm font-medium">Decider mode</div>
                 <div class="text-xs text-muted-foreground">Heuristic is local. LLM and ensemble ask the memory model. Jev asks the decision endpoint.</div>
               </div>
-              <Combobox class="h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
+              <Combobox class="md:h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
@@ -463,7 +463,7 @@
                 <div class="text-xs text-muted-foreground">Confirms candidates. Only authed pig models are listed.</div>
                 {#if deciderNote}<div class="text-xs text-amber-300">{deciderNote}</div>{/if}
               </div>
-              <Combobox class="h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
+              <Combobox class="md:h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
@@ -532,7 +532,7 @@
                 <div class="text-sm font-medium">Pig naming model</div>
                 <div class="text-xs text-muted-foreground">Pig Sessions stay unnamed until you pick a model.</div>
               </div>
-              <Combobox class="h-10" aria-label="Pig naming model" bind:value={pigTitle} items={pigTitleItems()} placeholder="Select a model" />
+              <Combobox class="md:h-10" aria-label="Pig naming model" bind:value={pigTitle} items={pigTitleItems()} placeholder="Select a model" />
             </div>
           </div>
         </section>
@@ -567,20 +567,20 @@
                     <div class="text-xs text-muted-foreground">{r.hint}</div>
                   </div>
                   <Combobox
-                    class="h-10"
+                    class="md:h-10"
                     aria-label={`${r.label} harness`}
                     value={roles[r.id].harness}
                     items={harnessItems}
                     onValueChange={(v) => pickHarness(r.id, v)}
                   />
                   <Combobox
-                    class="h-10"
+                    class="md:h-10"
                     aria-label={`${r.label} model`}
                     bind:value={roles[r.id].model}
                     items={itemsFor(roles[r.id].harness, roles[r.id].model)}
                     placeholder="Select a model"
                   />
-                  <Combobox class="h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
+                  <Combobox class="md:h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
                 </div>
               {/each}
             </div>

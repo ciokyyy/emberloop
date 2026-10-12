@@ -36,6 +36,15 @@ Follow these for every UI change.
   `tw-animate-css` (`animate-in`/`fade-in-0`/`zoom-in-95`), interactive
   elements transition on the shared `--ease-smooth` curve. Reduced motion
   is honored in `app.css`.
+- Phones (`<md`): every `Button`/`Input`/`Combobox` is a 44px target
+  (`max-md:` sizes in `src/lib/ui/`), text inputs are 16px (no iOS focus
+  zoom), switches and checkboxes carry a 44px hit area, popovers never
+  exceed `100vw - 1rem`. The drawer is one `Sheet`: a header (User, Sign out,
+  Close), one scroll region for the contextual list, a pinned `DrawerNav`
+  tab row (areas from `src/lib/areas.js`) and an inline build stamp. It owns
+  one transient history entry while open, so system Back closes it; a
+  navigation from it replaces that entry. Runs open the ticket table, not
+  the graph, on phones.
 - Models show display names (`modelLabel` in `harnesses.js`); the Daemon owns
   the model list (`GET /api/models`).
 - Dev: `bun run dev` runs the Daemon (127.0.0.1:8910) and Vite (5190, proxies `/api`) together. Prod: `bun run prod` builds, then runs the Daemon (8920) and `vite preview` (8921, proxies `/api`). Override with `API_PORT` / `UI_PORT` per script.
@@ -61,7 +70,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/api.js` auth calls (`getAuthState`, `getMe`, `login`, `signup`, `logout`) and the `UNAUTHORIZED` window event that any 401 from a non-auth route fires
 - `src/lib/live.js` — the one EventSource channel: `watch(topic, fn)` per topic; `stopLive` closes it and drops the watchers on sign-out
 - `src/lib/version.js` — the bundle's own build hash, the Daemon version fetch, the stale predicate, the badge line and the clipboard copy
-- `src/lib/VersionBadge.svelte` — fixed bottom-right build stamp with click-to-copy and the update-available reload pill
+- `src/lib/VersionBadge.svelte` — fixed bottom-right build stamp with click-to-copy and the update-available reload pill (`sm` and up); on phones a top update pill, and the `inline` stamp in the drawer
 - `src/lib/events.js` — Event-to-card mapping and transcript grouping (one Group header block per spawn call; consecutive tool calls collapse into one live `toolstrip` block per burst except spawn/submit/sudo, which keep their own cards; idle/working status pills map to nothing)
 - `events.js` user prompt cards carry `sender` and `senderId`; `Card.svelte` shows the sender badge only on `sender=user` prompts, so system prompts show none.
 - `src/lib/composer.js` — composer mode (prompt / steer / follow-up)
@@ -70,7 +79,9 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/GroupCard.svelte` — live Group header card: one row per child (name, harness badge, type chip, latest-tool line, status dot) opening the child transcript
 - `src/lib/Card.svelte` — transcript card for every Event kind, incl. user image chips, the Group header, the live tool strip and the memory injection divider (`events.js` maps `injection` to a `divider` card carrying the injected Rule IDs, never the raw JSON); the divider offers a Promote button per Rule (`api.js` `promoteSessionRule`) that files the promotion against the Session's worktree for queue approval
 - `src/lib/ToolStrip.svelte`, `src/lib/toolstrip.js` — live tool strip: one card per burst of consecutive tool calls (status icon, tool glyph, server chip, target text, elapsed timer, progress hairline, swapping output stage capped at 232px, newest-first history drawer, settled `N tools · Xs` summary; per-tool file/diff/stream/JSON renderers; reduced-motion path); pure summary/target/format helpers in `toolstrip.js`
- - `src/lib/Rail.svelte` — narrow icon rail with the sliding active pill plus the rail-2 collapse toggle in its header
+ - `src/lib/areas.js` — the five app areas (id, label, short label, path, icon) shared by `Rail.svelte` and `DrawerNav.svelte`
+- `src/lib/DrawerNav.svelte` — phone drawer tab row switching the app area (44px-plus targets, active pill)
+- `src/lib/Rail.svelte` — narrow icon rail with the sliding active pill plus the rail-2 collapse toggle in its header
 - `src/lib/OwnerGroups.svelte` — sidebar Session list: filter chips Mine, Everyone and Project (persisted `eb.owner-filter` and `eb.owner-project`; the Project picker uses `ui/select.svelte`); one collapsible group per User, own group first and open, others collapsed with a count and an online dot (`eb.owners-collapsed`); the group's left bar takes its owner color (`--owner-1` to `--owner-6` in `app.css`)
 - `src/lib/owners.js` — pure owner grouping: `buildOwnerGroups` (groups, then Project sections, then tree roots with Runs and Subagents), `runRow` (a Run as a row), `dotState` (status dot), `ownerTone` (palette slot by account order), `projectIdForPath`
 - `src/lib/people.svelte.js` — the account list from `GET /api/users` (`people`, `refreshPeople`, `personFor`); a failed refresh keeps the last good list

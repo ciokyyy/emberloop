@@ -83,7 +83,9 @@
   let acting = $state(false);
   let confirmAbandon = $state(false);
   // List/Graph toggle for the live tickets; the graph is the default view.
-  let graphView = $state('graph');
+  // Phones open the ticket table: a wide dependency graph cannot fit there
+  // and its pan surface traps page scroll. The Graph toggle stays one tap away.
+  let graphView = $state(typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)')?.matches ? 'list' : 'graph');
   // Tickets waving the needs-you banner: the driver marks them after the
   // same refusal three times, ten idle minutes or three stall nudges.
   const needsYouTickets = $derived((run?.tickets ?? []).filter((t) => t.state !== 'discarded' && t.state !== 'parked' && t.state !== 'merged' && (t.state === 'needs-you' || t.needsYou)));
@@ -393,7 +395,8 @@
       </Button>
     </div>
     {#if discovery.tickets.length}
-      <table class="w-full text-left text-sm" data-testid="preview-table">
+      <div class="overflow-x-auto rounded-2xl border px-3" data-testid="preview-wrap">
+      <table class="w-full min-w-[30rem] text-left text-sm" data-testid="preview-table">
         <thead>
           <tr class="text-muted-foreground">
             <th class="py-1 pr-2 font-medium">No.</th>
@@ -422,6 +425,7 @@
           {/each}
         </tbody>
       </table>
+      </div>
     {/if}
   {:else}
     <p class="rounded-xl border px-4 py-2 text-sm text-muted-foreground">Pick a spec from the sidebar to preview its tickets.</p>
@@ -498,11 +502,11 @@
                   if (run?.id) onNavigate?.(`/runs/${run.id}/${t.id}`);
                 }}
               >
-                <td class="max-w-[22rem] px-3 py-2">
+                <td class="min-w-[14rem] max-w-[22rem] px-3 py-2 [overflow-wrap:anywhere]">
                   <div class="flex min-w-0 items-baseline gap-2">
                     <span class="shrink-0 tabular-nums text-muted-foreground">#{t.num}</span>
                     {#if onNavigate && run?.id}
-                      <Button variant="link" size="sm" class="h-auto min-w-0 justify-start whitespace-normal p-0 text-left font-medium" onclick={(e) => { e.stopPropagation(); onNavigate(`/runs/${run.id}/${t.id}`); }}>{t.title}</Button>
+                      <Button variant="link" size="sm" class="h-auto min-w-0 shrink justify-start whitespace-normal p-0 text-left font-medium max-md:min-h-11 max-md:py-2" onclick={(e) => { e.stopPropagation(); onNavigate(`/runs/${run.id}/${t.id}`); }}>{t.title}</Button>
                     {:else}
                       <span class="font-medium">{t.title}</span>
                     {/if}

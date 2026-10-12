@@ -314,13 +314,13 @@
             <ul class="flex flex-col gap-2">
               {#each rules as r (r.ruleId)}
                 <li class="flex items-start gap-3 rounded-xl border p-3" data-testid={`memory-rule-${r.ruleId}`}>
-                  <input
+                  <label class="-m-2.5 grid shrink-0 cursor-pointer place-items-center p-2.5"><input
                     type="checkbox"
                     aria-label={`Purge rule ${r.ruleId}`}
                     checked={selRules.includes(r.ruleId)}
                     onchange={() => (selRules = toggle(selRules, r.ruleId))}
-                    class="mt-1"
-                  />
+                    class="size-5 cursor-pointer accent-primary"
+                  /></label>
                   <div class="min-w-0 flex-1">
                     <div class="text-sm">{r.text}</div>
                     <div class="mt-1 text-xs text-muted-foreground">{r.kind} · {r.subjectKey} · {r.status} · v{r.version}</div>
@@ -361,13 +361,13 @@
             <ul class="flex flex-col gap-2">
               {#each observations as o (o.id)}
                 <li class="flex items-start gap-3 rounded-xl border p-3" data-testid={`memory-observation-${o.id}`}>
-                  <input
+                  <label class="-m-2.5 grid shrink-0 cursor-pointer place-items-center p-2.5"><input
                     type="checkbox"
                     aria-label={`Purge observation ${o.id}`}
                     checked={selObs.includes(o.id)}
                     onchange={() => (selObs = toggle(selObs, o.id))}
-                    class="mt-1"
-                  />
+                    class="size-5 cursor-pointer accent-primary"
+                  /></label>
                   <div class="min-w-0 flex-1">
                     <div class="text-sm">{o.quote}</div>
                     <div class="mt-1 text-xs text-muted-foreground">{o.kind} · {o.subjectKey} · session {o.sessionId} · ×{o.evidenceCount}</div>
@@ -399,13 +399,13 @@
                   {#each g.rows as { item, proposal } (item.id)}
                     <li class="rounded-xl border p-3" data-testid={`memory-queue-${item.id}`}>
                       <div class="flex items-start gap-3">
-                        <input
+                        <label class="-m-2.5 grid shrink-0 cursor-pointer place-items-center p-2.5"><input
                           type="checkbox"
                           aria-label={`Select proposal ${item.id}`}
                           checked={selQueue.includes(item.id)}
                           onchange={() => (selQueue = toggle(selQueue, item.id))}
-                          class="mt-1"
-                        />
+                          class="size-5 cursor-pointer accent-primary"
+                        /></label>
                         <div class="min-w-0 flex-1">
                           <div class="text-xs text-muted-foreground">#{item.id} · {item.status} · {proposal.kind} · {proposal.subjectKey}</div>
                           {#if editingId === item.id}
@@ -473,13 +473,13 @@
             <ul class="flex max-h-64 flex-col gap-1 overflow-auto">
               {#each ledger.slice(-20).reverse() as l (l.id)}
                 <li class="flex items-start gap-3 text-xs" data-testid={`memory-ledger-${l.id}`}>
-                  <input
+                  <label class="-m-2.5 grid shrink-0 cursor-pointer place-items-center p-2.5"><input
                     type="checkbox"
                     aria-label={`Purge ledger ${l.id}`}
                     checked={selLedger.includes(l.id)}
                     onchange={() => (selLedger = toggle(selLedger, l.id))}
-                    class="mt-0.5"
-                  />
+                    class="size-5 cursor-pointer accent-primary"
+                  /></label>
                   <span class="min-w-0 flex-1"><span class="font-medium">{l.stage}</span> · {l.status} · {l.runId}</span>
                 </li>
               {/each}

@@ -35,14 +35,14 @@
   sideOffset={6}
   data-placeholder={selected ? undefined : ''}
   class={cn(
-    'flex h-11 w-full items-center justify-between gap-2 rounded-xl border border-input bg-transparent px-3.5 text-left text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:opacity-50 data-[placeholder]:text-muted-foreground',
+    'flex min-h-11 w-full items-center justify-between gap-2 rounded-xl border border-input bg-transparent px-3.5 py-1.5 text-left text-base leading-snug md:text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:opacity-50 data-[placeholder]:text-muted-foreground',
     className,
   )}
   contentClass="w-(--bits-popover-anchor-width) min-w-40"
   {...rest}
 >
   {#snippet trigger()}
-    <span class="min-w-0 flex-1 truncate">{selected?.label ?? placeholder}{#if selected?.detail}<span class="text-muted-foreground"> · {selected.detail}</span>{/if}</span>
+    <span class="min-w-0 flex-1 break-words max-md:line-clamp-2 md:truncate">{selected?.label ?? placeholder}{#if selected?.detail}<span class="text-muted-foreground"> · {selected.detail}</span>{/if}</span>
     <ChevronDown class="size-4 shrink-0 text-muted-foreground" />
   {/snippet}
   {#key open}

@@ -1,6 +1,6 @@
 <script>
   import { onDestroy } from 'svelte';
-  import { Plus, SquarePen, Menu, MessageSquare, Settings, Layers, Gauge, Brain, FolderPlus, GitBranch, Search, LogOut } from '@lucide/svelte';
+  import { Plus, SquarePen, Menu, FolderPlus, GitBranch, Search, LogOut, X } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Input from './lib/ui/input.svelte';
   import Badge from './lib/ui/badge.svelte';
@@ -21,6 +21,8 @@
   import VersionBadge from './lib/VersionBadge.svelte';
   import Rail from './lib/Rail.svelte';
   import RunsSidebar from './lib/RunsSidebar.svelte';
+  import DrawerNav from './lib/DrawerNav.svelte';
+  import { areas } from './lib/areas.js';
   import { modelLabel } from './lib/harnesses.js';
   import { groupTranscript, latestUsage, withImageNote, compressBlockReason } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
@@ -107,6 +109,23 @@
     h?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   let menuOpen = $state(false);
+  // The phone drawer owns one transient history entry while open, so system
+  // Back closes it instead of leaving the app. A navigation from the drawer
+  // reuses that entry (replaceState); a plain close (scrim, Escape, X) pops it.
+  let drawerEntry = false;
+  let ignorePop = false;
+  $effect(() => {
+    if (menuOpen && !drawerEntry) {
+      history.pushState({ drawer: true }, '', window.location.href);
+      drawerEntry = true;
+    } else if (!menuOpen && drawerEntry) {
+      drawerEntry = false;
+      if (history.state?.drawer) {
+        ignorePop = true;
+        history.back();
+      }
+    }
+  });
   // Rail 2 (the contextual sidebar) collapses to the icon rail on desktop
   // and persists across reloads; on phones it is an off-canvas drawer.
   const SIDEBAR_KEY = 'eb.sidebar-collapsed';
@@ -205,8 +224,13 @@
   function navigate(path, { replace = false } = {}) {
     // Any navigation closes the phone drawer (backdrop taps close it
     // through the dialog itself).
+    const fromDrawer = drawerEntry && history.state?.drawer;
     menuOpen = false;
-    if (replace) history.replaceState(null, '', path);
+    if (fromDrawer) {
+      // The drawer's own entry becomes the destination: no dead Back step.
+      drawerEntry = false;
+      history.replaceState(null, '', path);
+    } else if (replace) history.replaceState(null, '', path);
     else if (window.location.pathname + window.location.search !== path) history.pushState(null, '', path);
     return applyRoute(path);
   }
@@ -605,7 +629,21 @@
   });
 
   // Back/forward follows the URL without pushing a new entry.
-  const onPop = () => applyRoute(window.location.pathname + window.location.search);
+  const onPop = (e) => {
+    if (ignorePop) {
+      ignorePop = false;
+      return;
+    }
+    // Back with the drawer open only closes it.
+    if (menuOpen) {
+      drawerEntry = false;
+      menuOpen = false;
+      return;
+    }
+    // Forward onto a stale drawer entry: stay on the page.
+    if (e?.state?.drawer) return;
+    applyRoute(window.location.pathname + window.location.search);
+  };
   window.addEventListener('popstate', onPop);
   onDestroy(() => window.removeEventListener('popstate', onPop));
   // Ctrl/⌘+B toggles rail 2: the drawer on phones, the collapse on desktop.
@@ -665,10 +703,12 @@
         {/each}
       </nav>
     {:else}
+      {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
         <h1 class="text-sm font-semibold tracking-tight">Emberloop</h1>
         <Button variant="ghost" size="icon-sm" onclick={newChat} aria-label="New Session"><SquarePen /></Button>
       </div>
+      {/if}
       <Button variant="secondary" class="justify-start" onclick={newChat}><Plus />New chat</Button>
       <div class="relative">
         <Search class="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -836,15 +876,27 @@
 </div>
 
 <Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota' : view === 'memory' ? 'Memory' : 'Sessions'}>
-  {#key view}
-    {@render rail2(true)}
-  {/key}
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/')}><MessageSquare />Chat</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/runs')}><Layers />Runs</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/memory')}><Brain />Memory</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/quota')}><Gauge />Quota</Button>
-  <Button variant="ghost" class="justify-start" onclick={() => navigate('/settings')}><Settings />Settings</Button>
-  {@render accountFooter()}
+  <div class="flex shrink-0 items-center gap-2" data-testid="drawer-head">
+    {#if user}
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
+      <div class="min-w-0 flex-1 leading-tight" data-testid="account">
+        <p class="truncate text-sm font-medium">{user.username}</p>
+        {#if user.admin}<p class="text-xs text-muted-foreground">Admin</p>{/if}
+      </div>
+      <Button variant="ghost" size="icon-sm" onclick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut /></Button>
+    {:else}
+      <span class="flex-1"></span>
+    {/if}
+    <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = false)} aria-label="Close menu"><X /></Button>
+  </div>
+  <!-- One scroll region for the contextual lists: nothing nests a second scroller. -->
+  <div class="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1" data-testid="drawer-scroll">
+    {#key view}
+      {@render rail2(true)}
+    {/key}
+  </div>
+  <DrawerNav view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : view === 'memory' ? 'memory' : 'chat'} onSelect={(id) => navigate(areas.find((a) => a.id === id)?.path ?? '/')} />
+  <VersionBadge inline />
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />
 <AddProjectDialog open={addOpen} busy={adding} error={addError} onClose={() => (addOpen = false)} onAdd={add} />
