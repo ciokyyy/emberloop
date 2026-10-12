@@ -32,17 +32,26 @@ func (d *Daemon) pauseRunSessions(w http.ResponseWriter, r *http.Request, id str
 	workers := map[string]string{}
 	branches := map[string]string{}
 	for _, ticket := range rs.Tickets {
-		if rs.Sessions[ticket.ID] != "" && rs.Merged[ticket.ID] == "" && !rs.Discarded[ticket.ID] {
-			rs.TicketPaused[ticket.ID] = true
-			d.markRunRolePausedLocked(rs, ticket.ID, "worker")
-			if rs.ChainPendingSubmit == nil {
-				rs.ChainPendingSubmit = map[string]bool{}
+		if rs.TicketPaused[ticket.ID] && !rs.TicketPauseHolds[ticket.ID] && len(rs.RunPausedRoles[ticket.ID]) == 0 {
+			if rs.TicketPauseHolds == nil {
+				rs.TicketPauseHolds = map[string]bool{}
 			}
-			rs.ChainPendingSubmit[ticket.ID] = true
+			rs.TicketPauseHolds[ticket.ID] = true
 		}
-		for role, sessionID := range rs.Reviewers[ticket.ID] {
-			if sessionID != "" {
-				d.markRunRolePausedLocked(rs, ticket.ID, role)
+		if !rs.TicketPauseHolds[ticket.ID] {
+			if rs.Sessions[ticket.ID] != "" && rs.Merged[ticket.ID] == "" && !rs.Discarded[ticket.ID] {
+				rs.TicketPaused[ticket.ID] = true
+				d.markRunRolePausedByRunLocked(rs, ticket.ID, "worker")
+				if rs.ChainPendingSubmit == nil {
+					rs.ChainPendingSubmit = map[string]bool{}
+				}
+				rs.ChainPendingSubmit[ticket.ID] = true
+			}
+			for role, sessionID := range rs.Reviewers[ticket.ID] {
+				if sessionID != "" {
+					rs.TicketPaused[ticket.ID] = true
+					d.markRunRolePausedByRunLocked(rs, ticket.ID, role)
+				}
 			}
 		}
 		if worktree := rs.Worktrees[ticket.ID]; worktree != "" && rs.Merged[ticket.ID] == "" && !rs.Discarded[ticket.ID] {
@@ -89,6 +98,10 @@ func (d *Daemon) pauseTicket(w http.ResponseWriter, r *http.Request, runID, tick
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "ticket is finished"})
 		return
 	}
+	if rs.TicketPauseHolds == nil {
+		rs.TicketPauseHolds = map[string]bool{}
+	}
+	rs.TicketPauseHolds[ticketID] = true
 	rs.TicketPaused[ticketID] = true
 	if rs.Sessions[ticketID] != "" {
 		d.markRunRolePausedLocked(rs, ticketID, "worker")
@@ -153,6 +166,31 @@ func (d *Daemon) markRunRolePausedLocked(rs *runState, ticketID, role string) {
 		rs.PausedRoles[ticketID] = map[string]bool{}
 	}
 	rs.PausedRoles[ticketID][role] = true
+}
+
+func (d *Daemon) markRunRolePausedByRunLocked(rs *runState, ticketID, role string) {
+	d.markRunRolePausedLocked(rs, ticketID, role)
+	if rs.RunPausedRoles == nil {
+		rs.RunPausedRoles = map[string]map[string]bool{}
+	}
+	if rs.RunPausedRoles[ticketID] == nil {
+		rs.RunPausedRoles[ticketID] = map[string]bool{}
+	}
+	rs.RunPausedRoles[ticketID][role] = true
+}
+
+func clearPausedRunRoleLocked(rs *runState, ticketID, role string) {
+	delete(rs.PausedRoles[ticketID], role)
+	if len(rs.PausedRoles[ticketID]) == 0 {
+		delete(rs.PausedRoles, ticketID)
+	}
+	delete(rs.RunPausedRoles[ticketID], role)
+	if len(rs.RunPausedRoles[ticketID]) == 0 {
+		delete(rs.RunPausedRoles, ticketID)
+	}
+	if len(rs.PausedRoles[ticketID]) == 0 && len(rs.RunPausedRoles[ticketID]) == 0 && !rs.TicketPauseHolds[ticketID] {
+		delete(rs.TicketPaused, ticketID)
+	}
 }
 
 // runSessionIDsLocked returns the Run-owned Sessions in scope, including
@@ -336,7 +374,8 @@ func (d *Daemon) resumeTicket(w http.ResponseWriter, r *http.Request, runID, tic
 	}
 	d.mu.Lock()
 	if rs := d.runs[runID]; rs != nil {
-		if len(rs.PausedRoles[ticketID]) == 0 {
+		delete(rs.TicketPauseHolds, ticketID)
+		if len(rs.PausedRoles[ticketID]) == 0 && len(rs.RunPausedRoles[ticketID]) == 0 {
 			delete(rs.TicketPaused, ticketID)
 		}
 		d.persistRun(rs)
@@ -368,7 +407,9 @@ func (d *Daemon) resumePausedRunRoles(runID, onlyTicket string) error {
 	}
 	tickets := make([]string, 0, len(rs.PausedRoles))
 	for ticketID := range rs.PausedRoles {
-		if onlyTicket == "" || onlyTicket == ticketID {
+		if onlyTicket != "" && onlyTicket == ticketID {
+			tickets = append(tickets, ticketID)
+		} else if onlyTicket == "" && !rs.TicketPauseHolds[ticketID] && len(rs.RunPausedRoles[ticketID]) > 0 {
 			tickets = append(tickets, ticketID)
 		}
 	}
@@ -380,6 +421,9 @@ func (d *Daemon) resumePausedRunRoles(runID, onlyTicket string) error {
 			d.mu.Lock()
 			rs = d.runs[runID]
 			needed := rs != nil && rs.PausedRoles[ticketID][role]
+			if needed && onlyTicket == "" {
+				needed = rs.RunPausedRoles[ticketID][role] && !rs.TicketPauseHolds[ticketID]
+			}
 			d.mu.Unlock()
 			if !needed {
 				continue
@@ -422,8 +466,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 	if role == "worker" && branch == "" {
 		// An unstarted Ticket has no branch or Session to hand off; clear its
 		// pause marker and let the normal driver start it after Resume.
-		delete(rs.PausedRoles[ticketID], role)
-		d.persistRun(rs)
+		clearPausedRunRoleLocked(rs, ticketID, role)
 		d.mu.Unlock()
 		return nil
 	}
@@ -521,10 +564,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 		}
 		rs.ReviewStarted[ticketID][role] = time.Now().UTC()
 	}
-	delete(rs.PausedRoles[ticketID], role)
-	if len(rs.PausedRoles[ticketID]) == 0 {
-		delete(rs.PausedRoles, ticketID)
-	}
+	clearPausedRunRoleLocked(rs, ticketID, role)
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -579,6 +619,25 @@ func (d *Daemon) decodeRunSwitch(w http.ResponseWriter, r *http.Request) (chainE
 	return chainEntry{Backend: backend, Model: model}, true
 }
 
+func setReviewerOverridesLocked(rs *runState, ticketID string, requested chainEntry) {
+	if rs.ReviewerOverrides == nil {
+		rs.ReviewerOverrides = map[string]map[string]chainEntry{}
+	}
+	for _, role := range []string{reviewerSpecType, reviewerStandardsType} {
+		chain := runRoleChain(rs, ticketID, role)
+		if len(chain) == 0 {
+			continue
+		}
+		position := clampChainPosition(chainPosition(rs, ticketID, role), len(chain))
+		selected := requested
+		selected.Effort = chain[position].Effort
+		if rs.ReviewerOverrides[ticketID] == nil {
+			rs.ReviewerOverrides[ticketID] = map[string]chainEntry{}
+		}
+		rs.ReviewerOverrides[ticketID][role] = selected
+	}
+}
+
 func (d *Daemon) switchTicketBackend(w http.ResponseWriter, r *http.Request, runID, ticketID string) {
 	entry, ok := d.decodeRunSwitch(w, r)
 	if !ok {
@@ -614,6 +673,7 @@ func (d *Daemon) switchTicketBackend(w http.ResponseWriter, r *http.Request, run
 		entry.Effort = rs.Effort
 	}
 	rs.WorkerOverrides[ticketID] = entry
+	setReviewerOverridesLocked(rs, ticketID, entry)
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
@@ -687,6 +747,9 @@ func (d *Daemon) switchRunBackend(w http.ResponseWriter, r *http.Request, runID 
 // same entry as an ordinary pause. Callers hold d.mu.
 func preparePausedRunChainFailuresLocked(d *Daemon, rs *runState) {
 	clear := func(ticketID, role, sessionID string) {
+		if rs.TicketPauseHolds[ticketID] || !rs.RunPausedRoles[ticketID][role] {
+			return
+		}
 		s := d.sessions[sessionID]
 		if s == nil || s.meta.Status != "failed" {
 			return
@@ -698,10 +761,12 @@ func preparePausedRunChainFailuresLocked(d *Daemon, rs *runState) {
 		if role == "worker" && rs.WorkerOverrides[ticketID].Backend != "" {
 			return
 		}
-		delete(rs.PausedRoles[ticketID], role)
-		delete(rs.TicketPaused, ticketID)
-		if len(rs.PausedRoles[ticketID]) == 0 {
-			delete(rs.PausedRoles, ticketID)
+		if role != "worker" && rs.ReviewerOverrides[ticketID][role].Backend != "" {
+			return
+		}
+		clearPausedRunRoleLocked(rs, ticketID, role)
+		if !rs.TicketPauseHolds[ticketID] {
+			delete(rs.TicketPaused, ticketID)
 		}
 	}
 	for ticketID, sessionID := range rs.Sessions {

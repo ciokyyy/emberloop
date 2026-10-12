@@ -203,14 +203,19 @@ type runState struct {
 	// Parked holds the user's park action: the driver never starts or finishes
 	// a parked Ticket, but its Worker Session remains available for retry.
 	Parked map[string]bool `json:"parked,omitempty"`
-	// TicketPaused holds per-Ticket manual pauses. Unlike Parked, a paused
-	// Ticket's Worker Session has been ended and is replaced only on Resume.
+	// TicketPaused blocks a Ticket while it is explicitly paused or its
+	// Run-level roles are stopped. The pause is cleared only by its Resume.
 	TicketPaused map[string]bool `json:"ticketPaused,omitempty"`
-	// PausedRoles records the Run Sessions that a manual Resume must replace
-	// with a new Session and Handoff. Keys are Ticket IDs and Run role names.
+	// TicketPauseHolds keeps an explicit Ticket Pause active across Run Resume.
+	TicketPauseHolds map[string]bool `json:"ticketPauseHolds,omitempty"`
+	// RunPausedRoles is the subset of PausedRoles that Run Resume may replace;
+	// roles paused only by a Ticket action stay paused.
+	RunPausedRoles map[string]map[string]bool `json:"runPausedRoles,omitempty"`
+	// PausedRoles records Run-owned Sessions awaiting manual Ticket or Run
+	// Resume, keyed by Ticket ID and Run role.
 	PausedRoles map[string]map[string]bool `json:"pausedRoles,omitempty"`
-	// ReviewerOverrides replaces the active Reviewer Chain entry for one
-	// Ticket after a Run-level Switch; later fallback entries stay intact.
+	// ReviewerOverrides replaces active Reviewer Chain entries after a Ticket
+	// or Run Switch; later fallback entries stay intact.
 	ReviewerOverrides map[string]map[string]chainEntry `json:"reviewerOverrides,omitempty"`
 	// WorkerOverrides replaces the active Worker Chain entry for one Ticket
 	// after a Ticket or Run Switch, without changing fallback entries.
@@ -747,6 +752,9 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Driver:             el.NewDriverRun(nil),
 		Parked:             map[string]bool{},
 		TicketPaused:       map[string]bool{},
+		TicketPauseHolds:   map[string]bool{},
+		PausedRoles:        map[string]map[string]bool{},
+		RunPausedRoles:     map[string]map[string]bool{},
 		WorkerOverrides:    map[string]chainEntry{},
 		ReviewerOverrides:  map[string]map[string]chainEntry{},
 		Discarded:          map[string]bool{},
@@ -4215,8 +4223,14 @@ func (d *Daemon) loadRuns() {
 		if rs.TicketPaused == nil {
 			rs.TicketPaused = map[string]bool{}
 		}
+		if rs.TicketPauseHolds == nil {
+			rs.TicketPauseHolds = map[string]bool{}
+		}
 		if rs.PausedRoles == nil {
 			rs.PausedRoles = map[string]map[string]bool{}
+		}
+		if rs.RunPausedRoles == nil {
+			rs.RunPausedRoles = map[string]map[string]bool{}
 		}
 		if rs.WorkerOverrides == nil {
 			rs.WorkerOverrides = map[string]chainEntry{}
@@ -4458,18 +4472,6 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 		d.mu.Unlock()
 		return nil, http.StatusConflict, err.Error()
 	}
-	d.mu.Lock()
-	if current := d.runs[id]; current != nil {
-		for ticketID := range current.TicketPaused {
-			if len(current.PausedRoles[ticketID]) == 0 {
-				delete(current.TicketPaused, ticketID)
-			}
-		}
-		d.persistRun(current)
-		d.broadcastRunLocked(current)
-		rs = current
-	}
-	d.mu.Unlock()
 	out := d.runJSON(rs)
 	if startDriver {
 		go d.driveRun(rs.ID, world)

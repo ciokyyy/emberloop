@@ -437,7 +437,7 @@ func (d *Daemon) launchRunChainHandoff(runID, ticketID, role, sessionID string, 
 		}
 		if role == "worker" {
 			d.mu.Lock()
-			if rs := d.runs[runID]; rs != nil && rs.Sessions[ticketID] == sessionID && !rs.PausedRoles[ticketID]["worker"] {
+			if rs := d.runs[runID]; rs != nil && rs.Sessions[ticketID] == sessionID && !rs.PausedRoles[ticketID]["worker"] && !rs.TicketPauseHolds[ticketID] && len(rs.RunPausedRoles[ticketID]) == 0 {
 				delete(rs.TicketPaused, ticketID)
 				d.persistRun(rs)
 				d.broadcastRunLocked(rs)
