@@ -206,7 +206,19 @@ func advanceCheckedMaster(repo, masterRef, masterSHA, candidateSHA string) (fina
 		}
 		return finalNeedsYou("final merge requires the selected master checkout", []string{"HEAD"}, detail), nil
 	}
-	dirtyFiles, status, err := masterCheckoutDirtyFiles(masterCheckout)
+	var dirtyFiles []string
+	var status string
+	if checkedOut {
+		dirtyFiles, status, err = masterCheckoutDirtyFiles(masterCheckout)
+	} else {
+		status, err = runGit(masterCheckout, "status", "--porcelain", "--untracked-files=all")
+		if err == nil && strings.TrimSpace(status) != "" {
+			dirtyFiles = workingTreeFiles(masterCheckout)
+			if len(dirtyFiles) == 0 {
+				dirtyFiles = []string{"."}
+			}
+		}
+	}
 	if err != nil {
 		return finalMergeOutcome{}, err
 	}
@@ -264,9 +276,9 @@ func masterBranchWorktree(repo, branchRef string) (string, bool, error) {
 	return "", false, nil
 }
 
-// masterCheckoutDirtyFiles ignores only registered linked worktrees nested
-// inside the master checkout. Their files belong to their own indexes, not
-// to master; all other tracked and untracked changes still block promotion.
+// masterCheckoutDirtyFiles ignores registered linked worktrees nested in an
+// existing master checkout. Temporary checkouts have no nested worktrees and
+// use plain git status. Other tracked and untracked changes block promotion.
 func masterCheckoutDirtyFiles(root string) ([]string, string, error) {
 	status, err := runGit(root, "status", "--porcelain", "--untracked-files=all")
 	if err != nil || strings.TrimSpace(status) == "" {
