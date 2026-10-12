@@ -1242,11 +1242,11 @@ func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
-	fb.TurnFailure = func(_ string, prompt string) string {
+	fb.TurnFailure = func(_ string, prompt string) (string, bool) {
 		if strings.Contains(prompt, "Implement ticket 01-first") {
-			return "session limit reached for this account"
+			return "session limit reached for this account", true
 		}
-		return ""
+		return "", false
 	}
 	clock := newFakeClock()
 	d := NewDaemon(tempDir(t), fb)
