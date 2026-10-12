@@ -966,3 +966,59 @@ func newRunTestServer(t *testing.T, d *Daemon) *httptest.Server {
 	t.Cleanup(srv.Close)
 	return srv
 }
+
+// A Run Worker turn that ends dead records a failure without Chain advance:
+// no submit reminder burns, the dead-turn error classifies outside the Chain
+// classes, the Worker stays on its first entry, and no fallback Session
+// starts.
+func TestDeadWorkerTurnFailsWithoutChainAdvance(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	useSettings(t, workerTestChainSettings)
+	fb := NewFakeBackend()
+	fb.ReplyFunc = func(string, string) (string, bool) { return "", true }
+	d := NewDaemon(tempDir(t), fb)
+	srv := newRunTestServer(t, d)
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	started := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "initial worker")
+	worker := ticketByID(started, "01-first").WorkerSession
+	dead := waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool {
+		for _, e := range s.Events {
+			if e.Kind == "error" && strings.Contains(e.Text, "dead turn") {
+				return true
+			}
+		}
+		return false
+	}, "dead-turn failure")
+	if dead.Meta.Status != "failed" {
+		t.Fatalf("worker status = %q, want failed", dead.Meta.Status)
+	}
+	if dead.Meta.Capped {
+		t.Fatal("dead worker reads as capped, want uncapped")
+	}
+	if n := countReminderPrompts(dead.Events); n != 0 {
+		t.Fatalf("reminder prompts = %d, want 0", n)
+	}
+	r := getRun(t, srv.URL, run.ID)
+	if got := ticketByID(r, "01-first").WorkerSession; got != worker {
+		t.Fatalf("dead Worker %q replaced with %q, want no fallback", worker, got)
+	}
+	if pos := ticketByID(r, "01-first").Chain["worker"].Position; pos != 1 {
+		t.Fatalf("worker Chain position = %d, want 1 (no advance)", pos)
+	}
+	assertHolds(t, 400*time.Millisecond, "dead Worker started a fallback Session", func() bool {
+		return countSessions(t, srv.URL) == 1
+	})
+	d.mu.Lock()
+	pending := d.runs[run.ID].ChainPendingSubmit["01-first"]
+	d.mu.Unlock()
+	if pending {
+		t.Fatal("dead Worker failure set the pending-submit marker")
+	}
+	pauseTestRun(t, srv.URL, run.ID)
+}

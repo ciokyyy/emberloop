@@ -94,6 +94,90 @@ func usageText(used, size int) string {
 	return string(b)
 }
 
+// autoCompressDue reports whether the newest usage Event sits at or past
+// compress_threshold_percent with no open tool call. Cooldown counts
+// non-Handoff prompts since the last compress, except past the window: a
+// Session at or over its window compresses whatever the cooldown says, since
+// every further turn into a full context returns nothing. The idle, model,
+// block and Group checks stay with the callers: this is the usage half only,
+// shared by the turn-end check and the pre-gate arm.
+func autoCompressDue(events []Event, set compressSettings) bool {
+	used, size, ok := usageOf(events)
+	if !ok || size <= 0 {
+		return false
+	}
+	if used*100 < int64(set.ThresholdPercent)*size {
+		return false
+	}
+	if openTask(events) {
+		return false
+	}
+	if used >= size {
+		return true
+	}
+	return cooldownPassed(events, set.Cooldown)
+}
+
+// armAutoCompress records a deferred automatic compress when one is due and
+// runnable: usage at or past the threshold, a Handoff Backend, a set
+// compress model and no block. It reports whether a wait is now armed. It
+// never starts the Handoff itself, so callers use it while the Session is
+// busy (the submit-gate arm, the finishTurn drain): runDeferredCompress runs
+// the wait once the Session settles and re-verifies it is still due.
+func (d *Daemon) armAutoCompress(id string) bool {
+	set := readCompressSettings()
+	if !set.Auto {
+		return false
+	}
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok || s.meta.Status == "ended" || s.meta.Scout || s.swapping || s.compressWait || s.meta.CompressBlock != "" {
+		d.mu.Unlock()
+		return false
+	}
+	events := append([]Event(nil), s.events...)
+	d.mu.Unlock()
+	if !autoCompressDue(events, set) {
+		return false
+	}
+	hb, _ := d.handoffFor(id)
+	if hb == nil {
+		return false
+	}
+	if compressNote(set.Model) != "" {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok = d.sessions[id]
+	if !ok || s.compressWait || s.swapping || s.meta.Status == "ended" || s.meta.CompressBlock != "" {
+		return false
+	}
+	s.compressWait = true
+	s.compressAuto = true
+	s.compressInstr = ""
+	return true
+}
+
+// compressBeforeGate arms an automatic compress when one is due, for a turn
+// that just settled under the submit gate. Reminders into a nearly full
+// context burn turns the compress would have saved: the gate skips them and
+// the deferred compress runs once the turn settles. A wait armed earlier
+// (manual or automatic) counts too, so no reminder lands while a compress
+// already pends. It reports whether the gate should stand down.
+func (d *Daemon) compressBeforeGate(id string) bool {
+	d.mu.Lock()
+	waiting := false
+	if s, ok := d.sessions[id]; ok {
+		waiting = s.compressWait
+	}
+	d.mu.Unlock()
+	if waiting {
+		return true
+	}
+	return d.armAutoCompress(id)
+}
+
 // maybeAutoCompress runs after a turn settles, before Group delivery settles
 // a deferred manual compress. When auto_compress is on and the newest usage
 // Event sits at or past compress_threshold_percent, it starts a Handoff
@@ -102,11 +186,11 @@ func usageText(used, size int) string {
 // call, per openTask) or when the Session is idle, never mid-token: the gate
 // is the one session.Idle definition (quiet 0, so a settled turn needs no
 // quiet wait), and a turn, queued input or resume/release in flight skips to
-// the next turn end. An outstanding Group is not idle, but it still routes to
-// requestCompress, which holds the compress as a compressWait instead of
-// skipping it, so runDeferredCompress runs it at Group delivery.
+// the next turn end. An outstanding Group still arms an automatic wait
+// instead of skipping, so runDeferredCompress runs it at Group delivery.
 // compress_cooldown counts non-Handoff prompts since the last compressed Event
-// (turns to wait); the first compress is never cooled. An unset or unauthed
+// (turns to wait); the first compress is never cooled. Past the window the
+// cooldown is bypassed (see autoCompressDue). An unset or unauthed
 // compress model, a blocked Session, a scout or an ended Session never starts
 // one: the Session GET compressNote and the Settings warning already name the
 // missing model.
@@ -132,25 +216,23 @@ func (d *Daemon) maybeAutoCompress(id string) {
 		return
 	}
 	events := append([]Event(nil), s.events...)
+	due := autoCompressDue(events, set)
 	d.mu.Unlock()
+	if !due {
+		return
+	}
+	if groupOpen {
+		// An outstanding Group holds the Handoff until delivery: arm an
+		// automatic wait (re-verified at run) instead of starting one.
+		// armAutoCompress re-checks viability without the lock held.
+		d.armAutoCompress(id)
+		return
+	}
 	hb, _ := d.handoffFor(id)
 	if hb == nil {
 		return
 	}
 	if compressNote(set.Model) != "" {
-		return
-	}
-	used, size, ok := usageOf(events)
-	if !ok || size <= 0 {
-		return
-	}
-	if used*100 < int64(set.ThresholdPercent)*size {
-		return
-	}
-	if openTask(events) {
-		return
-	}
-	if !cooldownPassed(events, set.Cooldown) {
 		return
 	}
 	d.requestCompress(id, "")
@@ -255,6 +337,9 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	}
 	// The Handoff must carry the Group's result, so the compress waits for
 	// the Group. runDeferredCompress resumes it at a turn end or a delivery.
+	// A wait armed here is manual: the operator asked, so it runs whatever
+	// the meter says when the Group clears. Automatic waits arm with
+	// compressAuto set and are re-verified at run time instead.
 	d.mu.Lock()
 	if d.groupOutstandingLocked(id) {
 		if s.meta.CompressBlock != "" {
@@ -263,6 +348,7 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 			return http.StatusConflict, map[string]any{"error": "compress is blocked; retry once the Group reports"}
 		}
 		s.compressWait = true
+		s.compressAuto = false
 		s.compressInstr = instructions
 		d.mu.Unlock()
 		return http.StatusAccepted, map[string]any{"ok": true, "waiting": "group"}
@@ -285,6 +371,7 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 	s.swapping = true
 	// This run settles any wait that held a compress of the Session.
 	s.compressWait = false
+	s.compressAuto = false
 	s.compressInstr = ""
 	d.mu.Unlock()
 	go d.runHandoff(id, hb, set.Model, instructions)
@@ -293,7 +380,10 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 
 // runDeferredCompress runs a compress that waited on a Group, once no Group
 // of the Session is outstanding and no turn runs. A Session that turns busy
-// again keeps the wait for its next turn end.
+// again keeps the wait for its next turn end. An automatic wait re-verifies
+// the meter first: usage may have fallen since it armed (a manual compress
+// ran meanwhile), and a stale auto wait must not spend a Handoff on a small
+// context. A manual wait always runs: the operator asked for it.
 func (d *Daemon) runDeferredCompress(id string) {
 	d.mu.Lock()
 	s, ok := d.sessions[id]
@@ -303,17 +393,40 @@ func (d *Daemon) runDeferredCompress(id string) {
 	}
 	if s.meta.Status == "ended" {
 		s.compressWait = false
+		s.compressAuto = false
 		d.mu.Unlock()
 		return
 	}
 	if s.meta.CompressBlock != "" {
 		// A blocked Session starts no deferred compress; a Retry asks again.
 		s.compressWait = false
+		s.compressAuto = false
 		s.compressInstr = ""
 		d.mu.Unlock()
 		return
 	}
+	if s.compressAuto {
+		events := append([]Event(nil), s.events...)
+		d.mu.Unlock()
+		if !autoCompressDue(events, readCompressSettings()) {
+			d.mu.Lock()
+			if cur, ok := d.sessions[id]; ok && cur.compressAuto {
+				cur.compressWait = false
+				cur.compressAuto = false
+				cur.compressInstr = ""
+			}
+			d.mu.Unlock()
+			return
+		}
+		d.mu.Lock()
+		s, ok = d.sessions[id]
+		if !ok || !s.compressWait || s.busy || d.groupOutstandingLocked(id) || s.meta.Status == "ended" || s.meta.CompressBlock != "" {
+			d.mu.Unlock()
+			return
+		}
+	}
 	s.compressWait = false
+	s.compressAuto = false
 	instructions := s.compressInstr
 	s.compressInstr = ""
 	d.mu.Unlock()
@@ -323,7 +436,9 @@ func (d *Daemon) runDeferredCompress(id string) {
 	}
 	d.mu.Lock()
 	if cur, ok := d.sessions[id]; ok && cur.busy && cur.meta.Status != "ended" {
-		// A turn started after the check: wait for its end instead.
+		// A turn started after the check: wait for its end instead. The
+		// wait keeps its manual or automatic kind, so the recheck still
+		// applies to an automatic one.
 		cur.compressWait = true
 		cur.compressInstr = instructions
 		d.mu.Unlock()

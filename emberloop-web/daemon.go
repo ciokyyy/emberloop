@@ -182,7 +182,11 @@ type session struct {
 	releasing bool
 	// compressWait holds a compress until no Group of the Session is
 	// outstanding; compressInstr keeps its instructions for the wait.
+	// compressAuto marks a wait the automatic check armed: runDeferredCompress
+	// re-verifies the meter before running one, while a manual wait always
+	// runs. Request paths clear all three together.
 	compressWait  bool
+	compressAuto  bool
 	compressInstr string
 	// swapping marks a Handoff from its claim until its turn ends.
 	swapping bool
@@ -629,6 +633,11 @@ func (d *Daemon) finishTurn(id string) {
 			promptBackend(be, id, btext, bimages, func(kind, text, status string) {
 				d.appendEvent(id, kind, text, status)
 			})
+			// Drained turns run no gate and no turn-end auto check, so a
+			// Session fed by a constant queue could cook its context
+			// unchecked: arm the automatic wait here and let
+			// runDeferredCompress run it once the queue drains.
+			d.armAutoCompress(id)
 			continue
 		}
 		s.busy = false
@@ -1260,12 +1269,21 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 		d.appendEvent(id, kind, text, status)
 	})
 	if gated {
-		// While el.WebSubmitEnabled holds, a spawned child settles only
-		// through submit: re-prompt one whose turn ended without a submit,
-		// up to the shared gate's bound, then record the give-up so its
-		// Group still delivers. With the flag off the gate returns at once
-		// and the child settles on its turn alone.
-		d.enforceSubmitGate(id, be, mark, harness)
+		// A turn that settled with a compress due compresses before the
+		// gate reminds: reminders into a nearly full context burn turns
+		// the Handoff would have saved, so the gate stands down and the
+		// deferred compress runs once the turn settles below. A user stop
+		// is deliberate: it takes no reminder and records no failure. A
+		// dead turn (fast, no assistant text, tool call or submit) gets no
+		// reminder either: it records a turn failure for the Run Chain
+		// classifier instead. Anything else reminds as today.
+		switch {
+		case d.compressBeforeGate(id):
+		case d.takeGateSkip(id):
+		case d.failDeadTurn(id, mark):
+		default:
+			d.enforceSubmitGate(id, be, mark, harness)
+		}
 	}
 	d.finishTurn(id)
 	chainHandled := d.handleRunChainFailure(id)
