@@ -4,9 +4,9 @@
 
 **Blocked by:** fallback-chain-run (14), pause-and-switch-api (15)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Active Chain entry visible per Ticket
-- [ ] Pause, picker and resume work from the UI
-- [ ] Settings page edits per-role Chains
-- [ ] `RunsView.test.js` and settings tests cover each; dist is not committed; `.emberloop/check` passes
+- [x] Active Chain entry visible per Ticket
+- [x] Pause, picker and resume work from the UI
+- [x] Settings page edits per-role Chains
+- [x] `RunsView.test.js` and settings tests cover each; dist is not committed; `.emberloop/check` passes
