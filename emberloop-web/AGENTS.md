@@ -757,7 +757,9 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   its Ticket worktrees/branches and spec branch; the Run remains listed as
   abandoned.
   The Run view shows the branch and distance from master, Rebase and confirmed
-  Abandon actions, final-gate files, plus Pause/Resume and Worker links.
+  Abandon actions, final-gate files, active Chain entries in the graph and table,
+  Run/Ticket Pause and Resume controls, paused Backend/model Switch pickers, and
+  Worker links.
 - The UI is a static build: `web/src/` is the Svelte source, `web/dist/`
   is the embedded build served at `/` with its bundle assets and correct
   content types. Styling is Tailwind with shadcn-svelte-idiom components

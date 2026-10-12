@@ -333,6 +333,26 @@ export const resumeRun = (id) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   }).then(json);
+export const switchRun = (id, { backend, model }) =>
+  fetch(url(`/api/runs/${id}/switch`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backend, model }),
+  }).then(json);
+
+export const pauseTicket = (runId, ticketId) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/pause`), { method: 'POST' }).then(json);
+
+export const resumeTicket = (runId, ticketId) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/resume`), { method: 'POST' }).then(json);
+
+export const switchTicket = (runId, ticketId, { backend, model }) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/switch`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backend, model }),
+  }).then(json);
+
 
 // Per-ticket actions: steer reaches the worker, retry clears the
 // needs-you banner and any park and starts the ticket over, park holds

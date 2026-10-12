@@ -1,6 +1,6 @@
 <!-- Settings page: harness, model and effort per role, grouped like Apple Settings. -->
 <script>
-  import { ArrowLeft, Check } from '@lucide/svelte';
+  import { ArrowDown, ArrowLeft, ArrowUp, Check, Trash2 } from '@lucide/svelte';
   import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
   import Switch from './ui/switch.svelte';
@@ -35,11 +35,18 @@
     },
   ];
   const ROLES = GROUPS.flatMap((g) => g.roles);
+
+  const CHAIN_ROLES = [
+    { id: 'worker', settingRoles: ['worker', 'implementer'], label: 'Worker' },
+    { id: 'reviewer-spec', settingRoles: ['reviewer-spec', 'spec-review'], label: 'Spec reviewer' },
+    { id: 'reviewer-standards', settingRoles: ['reviewer-standards', 'code-review'], label: 'Standards reviewer' },
+  ];
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
   const effortItems = ['low', 'medium', 'high', 'max'].map((e) => ({ value: e, label: e[0].toUpperCase() + e.slice(1) }));
   // The pig naming model is optional: "None" clears the role, so pig Sessions stay unnamed.
 
   let roles = $state({});
+  let chains = $state({});
   let maxWorkers = $state('3');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
@@ -59,7 +66,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, maxWorkers, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
+  const snapshot = () => JSON.stringify({ roles, chains, maxWorkers, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -82,6 +89,22 @@
       }
       await Promise.all(harnessItems.map((h) => models(h.value)));
       roles = next;
+      const storedChains = body.chains ?? {};
+      const nextChains = {};
+      for (const role of CHAIN_ROLES) {
+        const entries = storedChains[role.id] ?? role.settingRoles.map((name) => storedChains[name]).find(Array.isArray);
+        const fallback = role.settingRoles.map((name) => next[name]).find((setting) => setting?.model);
+        nextChains[role.id] = Array.isArray(entries)
+          ? entries.map((entry) => ({
+              backend: entry.backend ?? entry.harness ?? '',
+              model: entry.model ?? '',
+              ...(entry.effort ? { effort: entry.effort } : {}),
+            }))
+          : fallback?.model
+            ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }]
+            : [];
+      }
+      chains = nextChains;
       maxWorkers = body.max_workers != null ? String(body.max_workers) : '3';
       locked = !!body.max_workers_from_env;
       const t = body.roles?.['pig-title'];
@@ -136,8 +159,50 @@
   ];
 
   const deciderModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', decider.model === 'none' ? '' : decider.model)];
+  function addChainEntry(role) {
+    const entries = chains[role] ?? [];
+    if (entries.length >= 3) return;
+    const roleSettings = CHAIN_ROLES.find((item) => item.id === role)?.settingRoles ?? [];
+    const fallback = roleSettings.map((name) => roles[name]).find((setting) => setting?.model) ?? {};
+    const backend = fallback.model ? fallback.harness : 'claude';
+    const model = fallback.model || 'sonnet';
+    chains[role] = [...entries, { backend, model, ...(fallback.effort ? { effort: fallback.effort } : {}) }];
+  }
+
+  function removeChainEntry(role, index) {
+    chains[role] = chains[role].filter((_, at) => at !== index);
+  }
+
+  function moveChainEntry(role, index, delta) {
+    const entries = [...chains[role]];
+    const destination = index + delta;
+    if (destination < 0 || destination >= entries.length) return;
+    [entries[index], entries[destination]] = [entries[destination], entries[index]];
+    chains[role] = entries;
+  }
+
+  function pickChainBackend(role, index, backend) {
+    const entry = chains[role][index];
+    entry.backend = backend;
+    entry.model = catalogue[backend]?.[0] ?? modelsForHarness(backend)[0] ?? '';
+  }
+
+  function chainsValid() {
+    return CHAIN_ROLES.every(({ id }) => (chains[id] ?? []).length <= 3 && (chains[id] ?? []).every((entry) => entry.backend && entry.model));
+  }
+
+  function chainsForSave() {
+    return Object.fromEntries(CHAIN_ROLES.flatMap(({ id, settingRoles }) => [
+      [id, (chains[id] ?? []).map(({ backend, model, effort }) => ({ backend, model, ...(effort ? { effort } : {}) }))],
+      ...settingRoles.filter((name) => name !== id).map((name) => [name, []]),
+    ]));
+  }
 
   async function save() {
+    if (!chainsValid()) {
+      error = 'Each Run Chain entry needs a Backend and model; each role can have at most three entries.';
+      return;
+    }
     saving = true;
     error = '';
     try {
@@ -147,6 +212,7 @@
       // A role with no model was never configured: leave it out instead of failing the whole save.
       const configured = Object.fromEntries(Object.entries(roles).filter(([, r]) => r.model));
       const payload = { roles: { ...configured, 'pig-title': pigTitleRole } };
+      payload.chains = chainsForSave();
       if (!locked) payload.max_workers = Number(maxWorkers);
       if (!titlesLocked) payload.session_titles = sessionTitles === 'on';
       payload.compress = {
@@ -195,6 +261,7 @@
     decider = prev.decider;
     jev = prev.jev;
     signupOpen = prev.signupOpen;
+    chains = prev.chains;
   }
 </script>
 
@@ -239,6 +306,51 @@
             {:else}
               <p class="text-xs text-muted-foreground">Applies immediately, no restart.</p>
             {/if}
+          </div>
+        </section>
+        <section class="animate-rise flex flex-col gap-2" data-testid="run-chains-settings">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Run Chains</h2>
+            <p class="text-xs text-muted-foreground">Ordered Backend and model fallbacks for Workers and Reviewers. Each new Run snapshots these Chains; failures advance to the next entry only when the provider is out of quota, credit, auth or session capacity.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            {#each CHAIN_ROLES as role (role.id)}
+              <section class="p-4" data-testid={`run-chain-${role.id}`}>
+                <div class="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 class="text-sm font-medium">{role.label}</h3>
+                    {#if !chains[role.id]?.length}
+                      <p class="text-xs text-muted-foreground">No explicit Chain; the regular role setting or Run defaults are used.</p>
+                    {/if}
+                  </div>
+                  <Button size="sm" variant="outline" aria-label={`Add ${role.label} Chain entry`} onclick={() => addChainEntry(role.id)} disabled={saving || chains[role.id].length >= 3}>Add entry</Button>
+                </div>
+                {#each chains[role.id] as entry, index (index)}
+                  <div class="grid items-center gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_minmax(0,16rem)_auto]" data-testid={`chain-entry-${role.id}-${index + 1}`}>
+                    <span class="text-xs font-medium text-muted-foreground">Entry {index + 1}</span>
+                    <Combobox
+                      class="h-10"
+                      aria-label={`${role.label} Chain entry ${index + 1} Backend`}
+                      value={entry.backend}
+                      items={harnessItems}
+                      onValueChange={(value) => pickChainBackend(role.id, index, value)}
+                    />
+                    <Combobox
+                      class="h-10"
+                      aria-label={`${role.label} Chain entry ${index + 1} model`}
+                      bind:value={entry.model}
+                      items={itemsFor(entry.backend, entry.model)}
+                      placeholder="Select a model"
+                    />
+                    <div class="flex items-center justify-end gap-1">
+                      <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} Chain entry ${index + 1} up`} disabled={saving || index === 0} onclick={() => moveChainEntry(role.id, index, -1)}><ArrowUp /></Button>
+                      <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} Chain entry ${index + 1} down`} disabled={saving || index === chains[role.id].length - 1} onclick={() => moveChainEntry(role.id, index, 1)}><ArrowDown /></Button>
+                      <Button size="icon-sm" variant="ghost" aria-label={`Remove ${role.label} Chain entry ${index + 1}`} disabled={saving} onclick={() => removeChainEntry(role.id, index)}><Trash2 /></Button>
+                    </div>
+                  </div>
+                {/each}
+              </section>
+            {/each}
           </div>
         </section>
         <section class="animate-rise flex flex-col gap-2" data-testid="compress-settings">

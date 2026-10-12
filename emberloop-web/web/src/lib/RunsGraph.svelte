@@ -44,6 +44,7 @@
   const LEGEND = [
     { status: 'merged', dot: 'bg-green-500' },
     { status: 'running', dot: 'bg-blue-500' },
+    { status: 'paused', dot: 'bg-amber-300' },
     { status: 'needs-you', dot: 'bg-amber-400' },
     { status: 'blocked', dot: 'border border-muted-foreground' },
     { status: 'parked', dot: 'bg-muted-foreground/50' },
@@ -133,6 +134,7 @@
     let c = 'panzoom-exclude animate-rise absolute rounded-2xl border bg-card p-3 text-left hover:border-muted-foreground';
     if (n.status === 'needs-you') c += ' border-amber-400/40';
     if (n.status === 'blocked' || n.status === 'parked') c += ' bg-card/60 opacity-70';
+    if (n.status === 'paused') c += ' border-amber-300/40';
     if (n.id === selectedId) c += ' ring-[3px] ring-ring/40';
     return c;
   }
@@ -141,6 +143,7 @@
     if (n.status === 'merged') return 'text-green-400';
     if (n.status === 'running') return 'text-blue-300';
     if (n.status === 'needs-you') return 'text-amber-300';
+    if (n.status === 'paused') return 'text-amber-200';
     return 'text-muted-foreground';
   }
 </script>
@@ -188,6 +191,13 @@
           <div class="mt-0.5 line-clamp-2 text-sm font-medium leading-snug">{n.title ?? n.id}</div>
           {#if n.subtitle}
             <div class="mt-1 truncate text-xs {n.status === 'needs-you' ? 'text-amber-200/70' : 'text-muted-foreground'}">{n.subtitle}</div>
+          {/if}
+          {#if n.chain?.length}
+            <div class="mt-1 space-y-0.5 text-[10px] text-muted-foreground" title={n.chain.map((entry) => `${entry.label} ${entry.position}/${entry.total}: ${entry.backend}/${entry.model}`).join('\n')} data-testid="graph-chain">
+              {#each n.chain as entry (entry.role)}
+                <div class="truncate">{entry.label} {entry.position}/{entry.total}: {entry.backend}/{entry.model}</div>
+              {/each}
+            </div>
           {/if}
         </button>
       {/each}

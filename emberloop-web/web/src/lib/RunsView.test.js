@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, within, fireEvent } from '@testing-library/svelte';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import RunsView from './RunsView.svelte';
 import { discovery, resetDiscovery } from './runsDiscovery.svelte.js';
@@ -18,6 +18,7 @@ const specRow = { spec: '/repo/.scratch/demo/spec.md', title: 'Demo spec', ticke
 beforeEach(() => {
   resetDiscovery();
   vi.unstubAllGlobals();
+  if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
 });
 
 // The sidebar owns the spec list; the main area starts from a picked
@@ -63,8 +64,8 @@ describe('RunsView preview and live run', () => {
       spec: '/repo/.scratch/demo/spec.md',
       status: 'running',
       tickets: [
-        { id: '01-first', title: 'First', state: 'running', workerSession: 'sess-abcdef123456', lastRefusal: '' },
-        { id: '02-second', title: 'Second', state: 'queued', workerSession: '', lastRefusal: '' },
+        { id: '01-first', title: 'First', state: 'running', workerSession: 'sess-abcdef123456', chain: { worker: { position: 2, total: 3, backend: 'pig', model: 'fallback' }, 'reviewer-spec': { position: 1, total: 1, backend: 'claude', model: 'sonnet' } }, lastRefusal: '' },
+        { id: '02-second', title: 'Second', state: 'queued', workerSession: '' },
       ],
     };
     seedPreview();
@@ -82,10 +83,11 @@ describe('RunsView preview and live run', () => {
     const { container } = render(RunsView, { props: { workDir: '/repo', onOpenSession } });
     await fireEvent.click(await within(container).findByText(/start run/i));
     await within(container).findByTestId('runs-graph');
+    expect(await within(container).findByText('Worker 2/3: pig/fallback')).toBeTruthy();
     await fireEvent.click(within(container).getByRole('button', { name: 'List' }));
     const table = await within(container).findByTestId('live-tickets');
     expect(within(table).getByText('queued')).toBeTruthy();
-    await fireEvent.click(within(table).getByRole('button'));
+    await fireEvent.click(within(table).getByRole('button', { name: 'worker' }));
     expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
   });
 
@@ -568,5 +570,120 @@ describe('RunsView preview and live run', () => {
     expect(files.textContent).toContain('emberloop-web/main.go');
     await fireEvent.click(within(container).getByRole('button', { name: /resume/i }));
     expect(calls.some((url) => url.endsWith('/api/runs/run-1/resume'))).toBe(true);
+  });
+
+  it('pauses, switches and resumes one Ticket from the live table', async () => {
+    let ticketState = 'running';
+    let workerEntry = { position: 1, total: 2, backend: 'pig', model: 'auto' };
+    const calls = [];
+    const live = () => ({
+      id: 'run-1',
+      spec: '/repo/.scratch/demo/spec.md',
+      status: 'running',
+      harness: 'pig',
+      model: 'auto',
+      tickets: [{ id: '01-first', num: 1, title: 'First', state: ticketState, workerSession: 'sess-1', chain: { worker: workerEntry } }],
+    });
+    seedPreview();
+    stubRuns(async (url, opts) => {
+      const path = String(url);
+      calls.push({ path, opts });
+      if (path.endsWith('/tickets/01-first/pause')) {
+        ticketState = 'paused';
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.endsWith('/tickets/01-first/switch')) {
+        const choice = JSON.parse(opts.body);
+        workerEntry = { ...workerEntry, backend: choice.backend, model: choice.model };
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.endsWith('/tickets/01-first/resume')) {
+        ticketState = 'running';
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.includes('/api/models')) {
+        const harness = new URL(path, 'http://x').searchParams.get('harness');
+        return { ok: true, json: async () => ({ models: harness === 'claude' ? ['opus', 'sonnet'] : ['auto'] }) };
+      }
+      return {
+        ok: true,
+        json: async () => {
+          if (path.includes('/api/runs/')) return { run: live() };
+          if (path.includes('/api/runs') && opts?.method === 'POST') return { run: live() };
+          if (path.includes('/api/specs/preview')) return preview;
+          return { specs: [specRow] };
+        },
+      };
+    });
+    const onNavigate = vi.fn();
+    const { container } = render(RunsView, { props: { workDir: '/repo', onNavigate } });
+    await fireEvent.click(await within(container).findByText(/start run/i));
+    await within(container).findByTestId('runs-graph');
+    onNavigate.mockClear();
+    await fireEvent.click(within(container).getByRole('button', { name: 'List' }));
+    const table = await within(container).findByTestId('live-tickets');
+    const actions = within(table).getByTestId('ticket-actions-01-first');
+
+    await fireEvent.click(within(actions).getByRole('button', { name: 'Pause First' }));
+    expect(await within(actions).findByTestId('run-switch-picker')).toBeTruthy();
+    await fireEvent.click(within(actions).getByLabelText('First Backend'));
+    await fireEvent.click(await screen.findByRole('option', { name: 'Claude' }));
+    await fireEvent.click(within(actions).getByLabelText('First model'));
+    await fireEvent.click(await screen.findByRole('option', { name: /sonnet/i }));
+    await fireEvent.click(within(actions).getByRole('button', { name: 'Switch First' }));
+    await waitFor(() => expect(within(actions).getByRole('button', { name: 'Switch First' })).toBeTruthy());
+    expect(calls.some(({ path, opts }) => path.endsWith('/tickets/01-first/switch') && JSON.parse(opts.body).backend === 'claude' && JSON.parse(opts.body).model === 'sonnet')).toBe(true);
+    expect(within(table).getByText('Worker 1/2 · claude/sonnet')).toBeTruthy();
+
+    await fireEvent.click(within(actions).getByRole('button', { name: 'Resume First' }));
+    expect(calls.some(({ path }) => path.endsWith('/tickets/01-first/resume'))).toBe(true);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('switches every paused Ticket from the paused Run controls before resuming', async () => {
+    let harness = 'pig';
+    let model = 'auto';
+    let status = 'paused';
+    const calls = [];
+    const live = () => ({
+      id: 'run-paused',
+      spec: '/repo/.scratch/demo/spec.md',
+      status,
+      harness,
+      model,
+      tickets: [{ id: '01-first', num: 1, title: 'First', state: 'paused', workerSession: 'sess-1', chain: { worker: { position: 1, total: 1, backend: harness, model } } }],
+    });
+    stubRuns(async (url, opts) => {
+      const path = String(url);
+      calls.push({ path, opts });
+      if (path.endsWith('/switch')) {
+        ({ backend: harness, model } = JSON.parse(opts.body));
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.endsWith('/resume')) {
+        status = 'running';
+        return { ok: true, json: async () => ({ run: live() }) };
+      }
+      if (path.includes('/api/models')) {
+        const selected = new URL(path, 'http://x').searchParams.get('harness');
+        return { ok: true, json: async () => ({ models: selected === 'grok' ? ['grok-4.7'] : ['auto'] }) };
+      }
+      if (path.includes('/api/specs/preview')) return { ok: true, json: async () => preview };
+      if (path.includes('/api/specs')) return { ok: true, json: async () => ({ specs: [specRow] }) };
+      return { ok: true, json: async () => ({ run: live() }) };
+    });
+    const { container } = render(RunsView, { props: { runId: 'run-paused' } });
+    const controls = await within(container).findByTestId('run-switch-controls');
+    const picker = within(controls).getByTestId('run-switch-picker');
+    await fireEvent.click(within(picker).getByLabelText('Run Backend'));
+    await fireEvent.click(await screen.findByRole('option', { name: 'Grok' }));
+    await fireEvent.click(within(picker).getByLabelText('Run model'));
+    await fireEvent.click(await screen.findByRole('option', { name: /grok-4.7/i }));
+    await fireEvent.click(within(picker).getByRole('button', { name: 'Switch Run' }));
+    expect(calls.some(({ path, opts }) => path.endsWith('/api/runs/run-paused/switch') && JSON.parse(opts.body).backend === 'grok' && JSON.parse(opts.body).model === 'grok-4.7')).toBe(true);
+    await waitFor(() => expect(within(picker).getByRole('button', { name: 'Switch Run' })).toBeTruthy());
+    await fireEvent.click(within(container).getByRole('button', { name: 'Resume' }));
+    await waitFor(() => expect(calls.some(({ path }) => path.endsWith('/api/runs/run-paused/resume'))).toBe(true));
+    expect(calls.some(({ path }) => path.endsWith('/api/runs/run-paused/resume'))).toBe(true);
   });
 });

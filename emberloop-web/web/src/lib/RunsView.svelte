@@ -8,7 +8,8 @@
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
   import RunsGraph from './RunsGraph.svelte';
-  import { startRun, getRun, openRunStream, pauseRun, resumeRun, rebaseRun, abandonRun } from './api.js';
+  import { startRun, getRun, openRunStream, pauseRun, resumeRun, pauseTicket as pauseRunTicket, resumeTicket as resumeRunTicket, switchRun as switchRunBackend, switchTicket as switchTicketBackend, rebaseRun, abandonRun } from './api.js';
+  import RunSwitchPicker from './RunSwitchPicker.svelte';
   import TicketPage from './TicketPage.svelte';
   import { soundPlayer, runTransitions, seedRun } from './sound.js';
   import {
@@ -54,6 +55,16 @@
   const stateBadge = (state) =>
     state === 'merged' ? 'success' : state === 'needs-you' ? 'warning' : state === 'discarded' || state === 'parked' ? 'outline' : state === 'queued' ? 'outline' : 'secondary';
   const reviewerLabel = (type) => (type === 'reviewer-spec' ? 'spec' : type === 'reviewer-standards' ? 'standards' : String(type));
+  const chainRoles = [
+    { role: 'worker', label: 'Worker' },
+    { role: 'reviewer-spec', label: 'Spec review' },
+    { role: 'reviewer-standards', label: 'Standards' },
+  ];
+  const activeChainEntries = (ticket) => chainRoles.flatMap((role) => {
+    const entry = ticket.chain?.[role.role];
+    return entry ? [{ ...role, ...entry }] : [];
+  });
+  const ticketFinished = (ticket) => ['merged', 'discarded', 'parked'].includes(ticket.state);
   const boxCount = (t) => {
     const boxes = t.boxes ?? [];
     return boxes.length ? `${boxes.filter((b) => b.checked).length}/${boxes.length}` : '—';
@@ -216,6 +227,39 @@
     }
   }
 
+  async function actTicket(fn, ticket, failed) {
+    if (!run?.id || acting) return;
+    acting = true;
+    runError = '';
+    try {
+      const body = await fn(run.id, ticket.id);
+      applyRun(body.run ?? body);
+      if (liveDone(run)) closeRunStream();
+      else if (run?.id) subscribeRun(run.id);
+    } catch (e) {
+      if (e?.run) applyRun(e.run);
+      runError = failed;
+    } finally {
+      acting = false;
+    }
+  }
+
+  async function pauseTicketItem(ticket) {
+    await actTicket(pauseRunTicket, ticket, 'Could not pause the Ticket.');
+  }
+
+  async function resumeTicketItem(ticket) {
+    await actTicket(resumeRunTicket, ticket, 'Could not resume the Ticket.');
+  }
+
+  async function switchTicketItem(ticket, selection) {
+    await actTicket((runID, ticketID) => switchTicketBackend(runID, ticketID, selection), ticket, 'Could not switch the Ticket Backend and model.');
+  }
+
+  async function switchRunSelection(selection) {
+    await act((runID) => switchRunBackend(runID, selection), 'Could not switch the Run Backend and model.');
+  }
+
   async function pause() {
     await act(pauseRun, 'Could not pause the Run.');
   }
@@ -324,6 +368,15 @@
         {/if}
       </div>
     </div>
+    {#if run.status === 'paused'}
+      <section class="animate-rise flex flex-col gap-2 rounded-2xl border bg-card p-3" data-testid="run-switch-controls">
+        <div>
+          <h4 class="text-sm font-medium">Switch paused Run</h4>
+          <p class="text-xs text-muted-foreground">Choose a Backend and model for every unmerged Ticket, then resume when ready.</p>
+        </div>
+        <RunSwitchPicker label="Run" initialBackend={run.harness} initialModel={run.model} onSwitch={switchRunSelection} disabled={acting} />
+      </section>
+    {/if}
     {#if run.error}
       <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{run.error}</p>
     {/if}
@@ -420,17 +473,19 @@
         <RunsGraph tickets={run.tickets ?? []} selectedId={ticketId} onSelect={(t) => run?.id && onNavigate?.(`/runs/${run.id}/${t.id}`)} />
       {:else if run.tickets?.length}
         <div class="overflow-x-auto rounded-2xl border" data-testid="live-tickets-wrap">
-        <table class="w-full min-w-[760px] text-left text-sm" data-testid="live-tickets">
+        <table class="w-full min-w-[1120px] text-left text-sm" data-testid="live-tickets">
           <thead>
             <tr class="border-b bg-sidebar/60 text-xs text-muted-foreground">
               <th class="px-3 py-2 font-medium">Ticket</th>
               <th class="px-3 py-2 font-medium">State</th>
               <th class="px-3 py-2 font-medium">Agents</th>
+              <th class="px-3 py-2 font-medium">Active Chain</th>
               <th class="px-3 py-2 font-medium">Spec review</th>
               <th class="px-3 py-2 font-medium">Standards</th>
               <th class="px-3 py-2 font-medium">Boxes</th>
               <th class="px-3 py-2 font-medium">Tip</th>
               <th class="px-3 py-2 font-medium">Refusal</th>
+              <th class="px-3 py-2 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -438,7 +493,10 @@
               <tr
                 class="cursor-pointer border-t transition-colors hover:bg-accent/60 {ticketId && t.id === ticketId ? 'bg-accent' : ''}"
                 data-current={ticketId && t.id === ticketId ? '' : undefined}
-                onclick={() => run?.id && onNavigate?.(`/runs/${run.id}/${t.id}`)}
+                onclick={(event) => {
+                  if (event.target?.closest?.('button,[role="combobox"]')) return;
+                  if (run?.id) onNavigate?.(`/runs/${run.id}/${t.id}`);
+                }}
               >
                 <td class="max-w-[22rem] px-3 py-2">
                   <div class="flex min-w-0 items-baseline gap-2">
@@ -463,11 +521,39 @@
                     {#if !t.workerSession}<span class="text-muted-foreground">—</span>{/if}
                   </div>
                 </td>
+                <td class="px-3 py-2" data-testid={`ticket-chain-${t.id}`}>
+                  <div class="flex min-w-52 flex-col gap-0.5 text-xs">
+                    {#each activeChainEntries(t) as entry (entry.role)}
+                      <span title={`${entry.label}: ${entry.backend}/${entry.model}`}>
+                        {entry.label} {entry.position}/{entry.total} · {entry.backend}/{entry.model}
+                      </span>
+                    {/each}
+                    {#if !activeChainEntries(t).length}<span class="text-muted-foreground">—</span>{/if}
+                  </div>
+                </td>
                 <td class="px-3 py-2">{@render verdict(t.verdicts?.['reviewer-spec'])}</td>
                 <td class="px-3 py-2">{@render verdict(t.verdicts?.['reviewer-standards'])}</td>
                 <td class="px-3 py-2 tabular-nums">{boxCount(t)}</td>
                 <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{t.tip ? t.tip.slice(0, 8) : '—'}</td>
                 <td class="max-w-[16rem] truncate px-3 py-2 text-xs text-muted-foreground" title={t.lastRefusal || t.needsYou || ''}>{t.lastRefusal || t.needsYou || '—'}</td>
+                <td class="px-3 py-2" data-testid={`ticket-actions-${t.id}`}>
+                  <div class="flex min-w-[18rem] flex-col gap-2">
+                    {#if t.state === 'paused' && run.status === 'running'}
+                      <Button size="sm" variant="outline" class="w-fit" disabled={acting} onclick={(event) => { event.stopPropagation(); resumeTicketItem(t); }}>Resume {t.title || 'Ticket'}</Button>
+                    {:else if run.status === 'running' && !ticketFinished(t) && t.state !== 'paused'}
+                      <Button size="sm" variant="outline" class="w-fit" disabled={acting} onclick={(event) => { event.stopPropagation(); pauseTicketItem(t); }}>Pause {t.title || 'Ticket'}</Button>
+                    {/if}
+                    {#if t.state === 'paused' && !['done', 'failed', 'abandoned'].includes(run.status)}
+                      <RunSwitchPicker
+                        label={t.title || `Ticket ${t.id}`}
+                        initialBackend={t.chain?.worker?.backend ?? run.harness}
+                        initialModel={t.chain?.worker?.model ?? run.model}
+                        onSwitch={(selection) => switchTicketItem(t, selection)}
+                        disabled={acting}
+                      />
+                    {/if}
+                  </div>
+                </td>
               </tr>
             {/each}
           </tbody>

@@ -5,10 +5,9 @@
 // unmerged, so the node reads blocked instead of silently floating free.
 import dagre from '@dagrejs/dagre';
 
-// Fixed card footprint the layout reserves. The cards render at this size
-// (title clamps to two lines) so an SSE status flip never moves a node.
-export const GRAPH_NODE_W = 240;
-export const GRAPH_NODE_H = 92;
+// Run cards reserve enough space for all three active Chain entries.
+export const GRAPH_NODE_W = 280;
+export const GRAPH_NODE_H = 150;
 
 // Graph tones: merged green, running blue, needs-you amber, blocked dim,
 // parked/discarded muted, queued neutral.
@@ -34,6 +33,7 @@ export function nodeStatus(ticket, byId) {
   if (s === 'merged') return 'merged';
   if (s === 'needs-you') return 'needs-you';
   if (s === 'parked' || s === 'discarded') return 'parked';
+  if (s === 'paused') return 'paused';
   if (s === 'running' || s === 'in-review' || s === 'merging') return 'running';
   const blockers = ticket.blockers ?? [];
   if (blockers.length && blockers.some((b) => !blockerMerged(byId, b))) return 'blocked';
@@ -50,6 +50,7 @@ function shortRef(ref) {
 export function statusLabel(ticket, status) {
   if (status === 'blocked') return `blocked by ${(ticket.blockers ?? []).map(shortRef).join(', ') || '…'}`;
   if (status === 'parked') return ticket.state ?? 'parked';
+  if (status === 'paused') return 'paused';
   if (status === 'queued') return 'queued';
   return status;
 }
@@ -63,6 +64,20 @@ export function nodeSubtitle(ticket) {
     .map((k) => (v[k] ? `${k === 'reviewer-spec' ? 'spec' : 'standards'} ${v[k].verdict}${v[k].fresh ? '' : ' (stale)'}` : ''))
     .filter(Boolean);
   return bits.join(' · ');
+}
+
+export function activeChainLines(ticket) {
+  const chain = ticket?.chain ?? {};
+  return [
+    ['worker', 'Worker'],
+    ['reviewer-spec', 'Spec review'],
+    ['reviewer-standards', 'Standards'],
+  ].flatMap(([role, label]) => {
+    const entry = chain[role];
+    return entry
+      ? [{ role, label, position: entry.position, total: entry.total, backend: entry.backend, model: entry.model }]
+      : [];
+  });
 }
 
 export function graphEdges(tickets) {
@@ -120,6 +135,7 @@ export function layoutRunGraph(tickets, opts = {}) {
       label: statusLabel(t, status),
       subtitle: nodeSubtitle(t),
       blockers: t.blockers ?? [],
+      chain: activeChainLines(t),
       x: n.x - n.width / 2,
       y: n.y - n.height / 2,
       cx: n.x,

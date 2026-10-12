@@ -5,6 +5,7 @@ import {
   nodeStatus,
   statusLabel,
   nodeSubtitle,
+  activeChainLines,
   graphEdges,
   structureKey,
   layoutRunGraph,
@@ -27,6 +28,7 @@ describe('runsGraph state mapping', () => {
     expect(nodeStatus(byId['01-a'], byId)).toBe('merged');
     expect(nodeStatus(byId['02-b'], byId)).toBe('running');
     expect(nodeStatus(byId['04-d'], byId)).toBe('needs-you');
+    expect(nodeStatus({ id: 'paused', state: 'paused', blockers: [] }, byId)).toBe('paused');
     expect(nodeStatus(byId['05-e'], byId)).toBe('parked');
     expect(nodeStatus({ ...byId['05-e'], state: 'discarded' }, byId)).toBe('parked');
     for (const s of ['running', 'in-review', 'merging']) {
@@ -64,6 +66,18 @@ describe('runsGraph state mapping', () => {
       }),
     ).toBe('spec pass · standards changes (stale)');
     expect(nodeSubtitle({})).toBe('');
+  });
+
+  it('summarizes each active role Chain entry', () => {
+    expect(activeChainLines({
+      chain: {
+        worker: { position: 2, total: 3, backend: 'pig', model: 'openai/model' },
+        'reviewer-spec': { position: 1, total: 1, backend: 'claude', model: 'sonnet' },
+      },
+    })).toEqual([
+      { role: 'worker', label: 'Worker', position: 2, total: 3, backend: 'pig', model: 'openai/model' },
+      { role: 'reviewer-spec', label: 'Spec review', position: 1, total: 1, backend: 'claude', model: 'sonnet' },
+    ]);
   });
 
   it('resolves blockers by id or number', () => {
@@ -126,6 +140,7 @@ describe('runsGraph edges and layout', () => {
 
   it('counts cards per tone for the legend', () => {
     const g = layoutRunGraph(tickets);
+    expect(countByStatus(layoutRunGraph([{ id: 'p', state: 'paused', blockers: [] }]).nodes)).toEqual({ paused: 1 });
     expect(countByStatus(g.nodes)).toEqual({ merged: 1, running: 1, blocked: 1, 'needs-you': 1, parked: 1 });
   });
 

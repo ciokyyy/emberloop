@@ -1,10 +1,14 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, within, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import SettingsPage from './SettingsPage.svelte';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+beforeEach(() => {
+  if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
 });
 
 function stubSettings({ settings, failPut = false, seen = {} }) {
@@ -14,7 +18,8 @@ function stubSettings({ settings, failPut = false, seen = {} }) {
       const url = String(u);
       if (url.includes('/api/models')) {
         const harness = new URL(url, 'http://x').searchParams.get('harness');
-        return { ok: true, json: async () => ({ models: harness === 'claude' ? ['opus'] : ['auto'] }) };
+        const models = harness === 'claude' ? ['opus'] : harness === 'grok' ? ['grok-4.7'] : ['auto'];
+        return { ok: true, json: async () => ({ models }) };
       }
       if (url.includes('/api/settings') && opts?.method === 'PUT') {
         seen.body = JSON.parse(opts.body);
@@ -360,5 +365,66 @@ describe('SettingsPage jev decider', () => {
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect('jev' in seen.body).toBe(false);
+  });
+});
+
+describe('SettingsPage Run Chains', () => {
+  it('edits each per-role Chain, including its order, and saves the result', async () => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        chains: {
+          worker: [{ backend: 'pig', model: 'auto' }, { backend: 'claude', model: 'opus' }],
+          'reviewer-spec': [{ backend: 'claude', model: 'sonnet' }],
+          'reviewer-standards': [{ backend: 'grok', model: 'grok-4.7' }],
+        },
+      },
+      seen,
+    });
+    const { container } = render(SettingsPage);
+    const chains = await within(container).findByTestId('run-chains-settings');
+    expect(within(chains).getByTestId('run-chain-worker')).toBeTruthy();
+    expect(within(chains).getByTestId('run-chain-reviewer-spec')).toBeTruthy();
+    expect(within(chains).getByTestId('run-chain-reviewer-standards')).toBeTruthy();
+    expect(within(chains).getByLabelText('Worker Chain entry 1 Backend').textContent).toMatch(/pig/i);
+    expect(within(chains).getByLabelText('Worker Chain entry 2 model').textContent).toMatch(/opus/i);
+
+    await fireEvent.click(within(chains).getByLabelText('Move Worker Chain entry 2 up'));
+    await fireEvent.click(within(chains).getByLabelText('Remove Worker Chain entry 2'));
+    await fireEvent.click(within(chains).getByLabelText('Add Worker Chain entry'));
+    await fireEvent.click(within(chains).getByLabelText('Worker Chain entry 2 Backend'));
+    await fireEvent.click(await screen.findByRole('option', { name: 'Grok' }));
+    await fireEvent.click(within(chains).getByLabelText('Worker Chain entry 2 model'));
+    await fireEvent.click(await screen.findByRole('option', { name: /grok-4.7/i }));
+    expect(within(chains).getByLabelText('Worker Chain entry 2 model').textContent).toMatch(/grok-4.7/i);
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.chains).toEqual({
+      worker: [{ backend: 'claude', model: 'opus' }, { backend: 'grok', model: 'grok-4.7' }],
+      implementer: [],
+      'reviewer-spec': [{ backend: 'claude', model: 'sonnet' }],
+      'spec-review': [],
+      'reviewer-standards': [{ backend: 'grok', model: 'grok-4.7' }],
+      'code-review': [],
+    });
+  });
+
+  it('uses existing role settings as the single-entry Chain fallback', async () => {
+    stubSettings({
+      settings: {
+        ...base,
+        roles: {
+          implementer: { harness: 'pig', model: 'auto', effort: 'high' },
+          'spec-review': { harness: 'claude', model: 'sonnet' },
+          'code-review': { harness: 'grok', model: 'grok-4.7' },
+        },
+      },
+    });
+    const { container } = render(SettingsPage);
+    const chains = await within(container).findByTestId('run-chains-settings');
+    expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/auto/i);
+    expect(within(chains).getByLabelText('Spec reviewer Chain entry 1 model').textContent).toMatch(/sonnet/i);
+    expect(within(chains).getByLabelText('Standards reviewer Chain entry 1 model').textContent).toMatch(/grok-4.7/i);
   });
 });
