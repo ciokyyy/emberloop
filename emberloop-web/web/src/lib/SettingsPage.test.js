@@ -147,12 +147,13 @@ describe('SettingsPage context compression', () => {
   it('shows saved values and sends the edited ones', async () => {
     const seen = {};
     stubSettings({
-      settings: { ...base, compress: { auto_compress: false, compress_threshold_percent: 70, compress_cooldown: 3, compress_instructions: 'keep ids' } },
+      settings: { ...base, compress: { auto_compress: false, compress_threshold_percent: 70, compress_threshold_tokens: 120000, compress_cooldown: 3, compress_instructions: 'keep ids' } },
       seen,
     });
     const { container } = render(SettingsPage);
     const threshold = await within(container).findByLabelText('Threshold %');
     expect(threshold.value).toBe('70');
+    expect(within(container).getByLabelText('Threshold tokens').value).toBe('120000');
     expect(within(container).getByLabelText('Turns').value).toBe('3');
     expect(within(container).getByLabelText('Summary focus').value).toBe('keep ids');
     expect(within(container).getByLabelText('Auto-compress').getAttribute('aria-checked')).toBe('false');
@@ -164,6 +165,7 @@ describe('SettingsPage context compression', () => {
     expect(seen.body.compress).toEqual({
       auto_compress: false,
       compress_threshold_percent: 70,
+      compress_threshold_tokens: 120000,
       compress_cooldown: 3,
       compress_instructions: 'keep paths',
       compress_model: '',
@@ -174,6 +176,7 @@ describe('SettingsPage context compression', () => {
     stubSettings({ settings: base });
     const { container } = render(SettingsPage);
     expect((await within(container).findByLabelText('Threshold %')).value).toBe('80');
+    expect(within(container).getByLabelText('Threshold tokens').value).toBe('300000');
     expect(within(container).getByLabelText('Turns').value).toBe('5');
     expect(within(container).getByLabelText('Auto-compress').getAttribute('aria-checked')).toBe('true');
   });
@@ -182,6 +185,7 @@ describe('SettingsPage context compression', () => {
     stubSettings({ settings: { ...base, compress: { auto_compress: false } } });
     const { container } = render(SettingsPage);
     expect((await within(container).findByLabelText('Threshold %')).disabled).toBe(true);
+    expect(within(container).getByLabelText('Threshold tokens').disabled).toBe(true);
     expect(within(container).getByLabelText('Turns').disabled).toBe(true);
   });
 });

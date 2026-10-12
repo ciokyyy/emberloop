@@ -16,15 +16,27 @@ import (
 // compressSettings are the knobs stored in the settings file. They mirror the
 // terminal system's auto_compress and compress_cooldown names.
 type compressSettings struct {
-	Auto             bool   `json:"auto_compress"`
-	ThresholdPercent int    `json:"compress_threshold_percent"`
-	Cooldown         int    `json:"compress_cooldown"`
-	Instructions     string `json:"compress_instructions"`
-	Model            string `json:"compress_model"`
+	Auto             bool `json:"auto_compress"`
+	ThresholdPercent int  `json:"compress_threshold_percent"`
+	// ThresholdTokens is the absolute token count that also trips
+	// auto-compress, OR'd with the percent gate; 0 means off. The percent
+	// gate alone never fires on 1M-window models (claude reports size
+	// 1,000,000, so 80% is 800k, far past anything seen in prod), while an
+	// absolute cap fires on every harness.
+	ThresholdTokens int    `json:"compress_threshold_tokens"`
+	Cooldown        int    `json:"compress_cooldown"`
+	Instructions    string `json:"compress_instructions"`
+	Model           string `json:"compress_model"`
 }
 
 const (
-	defaultCompressPercent  = 80
+	defaultCompressPercent = 80
+	// defaultCompressTokens is the out-of-the-box absolute auto-compress
+	// cap: ~30% of a 1M claude window, past the percent gate on smaller
+	// pig windows (80% of 272k is 218k), so it only ever hurries
+	// large-window models. It acts only with a compress model set and auto
+	// on, so no surprise Handoff runs without configuration.
+	defaultCompressTokens   = 300000
 	defaultCompressCooldown = 5
 	compressTimeout         = 5 * time.Minute
 )
@@ -34,7 +46,7 @@ const (
 func readCompressSettings() compressSettings {
 	all, err := readSettingsMap()
 	if err != nil {
-		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
+		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown}
 	}
 	return parseCompressSettings(all)
 }
@@ -42,7 +54,7 @@ func readCompressSettings() compressSettings {
 // parseCompressSettings decodes the compress knobs: shared by the host
 // reader and the Daemon-scoped test seam so the two never diverge.
 func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
-	s := compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
+	s := compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown}
 	if raw, ok := all["auto_compress"]; ok {
 		var b bool
 		if json.Unmarshal(raw, &b) == nil {
@@ -53,6 +65,12 @@ func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
 		var n int
 		if json.Unmarshal(raw, &n) == nil && n >= 10 && n <= 99 {
 			s.ThresholdPercent = n
+		}
+	}
+	if raw, ok := all["compress_threshold_tokens"]; ok {
+		var n int
+		if json.Unmarshal(raw, &n) == nil && n >= 0 {
+			s.ThresholdTokens = n
 		}
 	}
 	if raw, ok := all["compress_cooldown"]; ok {
@@ -81,12 +99,16 @@ func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
 func (d *Daemon) compressSettingsOf() compressSettings {
 	all, err := d.settingsMap()
 	if err != nil {
-		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, Cooldown: defaultCompressCooldown}
+		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown}
 	}
 	return parseCompressSettings(all)
 }
 
 // ContextUsage reports the projected context tokens and the model window.
+// The window alone counts as known (true) even when the token count is not
+// (yet): right after a compaction Tokens is nil while ContextWindow is set,
+// and callers seed a zero-used reading from the window instead of dropping
+// the meter.
 func (b *PigBackend) ContextUsage(sessionID string) (int, int, bool) {
 	b.mu.Lock()
 	ps, ok := b.sessions[sessionID]
@@ -102,7 +124,7 @@ func (b *PigBackend) ContextUsage(sessionID string) (int, int, bool) {
 	if u.Tokens != nil {
 		used = *u.Tokens
 	}
-	return used, u.ContextWindow, u.Tokens != nil
+	return used, u.ContextWindow, true
 }
 
 func usageText(used, size int) string {
@@ -111,18 +133,22 @@ func usageText(used, size int) string {
 }
 
 // autoCompressDue reports whether the newest usage Event sits at or past
-// compress_threshold_percent with no open tool call. Cooldown counts
-// non-Handoff prompts since the last compress, except past the window: a
-// Session at or over its window compresses whatever the cooldown says, since
-// every further turn into a full context returns nothing. The idle, model,
-// block and Group checks stay with the callers: this is the usage half only,
-// shared by the turn-end check and the pre-gate arm.
+// either gate — compress_threshold_percent of the window, or the absolute
+// compress_threshold_tokens cap (0 means off) — with no open tool call.
+// Cooldown counts non-Handoff prompts since the last compress, except past
+// the window: a Session at or over its window compresses whatever the
+// cooldown says, since every further turn into a full context returns
+// nothing. The idle, model, block and Group checks stay with the callers:
+// this is the usage half only, shared by the turn-end check and the pre-gate
+// arm.
 func autoCompressDue(events []Event, set compressSettings) bool {
 	used, size, ok := usageOf(events)
 	if !ok || size <= 0 {
 		return false
 	}
-	if used*100 < int64(set.ThresholdPercent)*size {
+	percentDue := used*100 >= int64(set.ThresholdPercent)*size
+	tokensDue := set.ThresholdTokens > 0 && used >= int64(set.ThresholdTokens)
+	if !percentDue && !tokensDue {
 		return false
 	}
 	if openTask(events) {
@@ -469,6 +495,7 @@ func (d *Daemon) runDeferredCompress(id string) {
 type compressPatch struct {
 	Auto             *bool   `json:"auto_compress"`
 	ThresholdPercent *int    `json:"compress_threshold_percent"`
+	ThresholdTokens  *int    `json:"compress_threshold_tokens"`
 	Cooldown         *int    `json:"compress_cooldown"`
 	Instructions     *string `json:"compress_instructions"`
 	Model            *string `json:"compress_model"`
@@ -480,6 +507,9 @@ func (p *compressPatch) validate() string {
 	}
 	if p.ThresholdPercent != nil && (*p.ThresholdPercent < 10 || *p.ThresholdPercent > 99) {
 		return "compress_threshold_percent must be between 10 and 99"
+	}
+	if p.ThresholdTokens != nil && *p.ThresholdTokens < 0 {
+		return "compress_threshold_tokens must be zero or more"
 	}
 	if p.Cooldown != nil && *p.Cooldown < 0 {
 		return "compress_cooldown must be zero or more"
@@ -508,6 +538,9 @@ func (p *compressPatch) apply(all map[string]json.RawMessage) {
 	if p.ThresholdPercent != nil {
 		set("compress_threshold_percent", *p.ThresholdPercent)
 	}
+	if p.ThresholdTokens != nil {
+		set("compress_threshold_tokens", *p.ThresholdTokens)
+	}
 	if p.Cooldown != nil {
 		set("compress_cooldown", *p.Cooldown)
 	}
@@ -517,4 +550,67 @@ func (p *compressPatch) apply(all map[string]json.RawMessage) {
 	if p.Model != nil {
 		set("compress_model", strings.TrimSpace(*p.Model))
 	}
+}
+
+// usageWindowBackend is the optional Backend seam that reports the model's
+// context window with no turn running: the pig SDK window, the catalog
+// window, or the adapter's known size. The Daemon seeds the meter from it.
+type usageWindowBackend interface {
+	UsageWindow(model string) int
+}
+
+// estimateUsed guesses the context tokens from the Event log at four
+// characters per token: prompts and model text so far. It sizes a seed, not
+// a gate; real readings replace it.
+func estimateUsed(events []Event) int {
+	chars := 0
+	for _, e := range events {
+		switch e.Kind {
+		case "prompt", "assistant_chunk", "thinking_chunk":
+			chars += len(e.Text)
+		}
+	}
+	return chars / 4
+}
+
+// usageWindowLocked resolves the context window for one Session: the live
+// pig window first (authoritative past compactions), else the Backend seam.
+// Callers hold d.mu: lock order is d.mu before the Backend lock.
+func (d *Daemon) usageWindowLocked(id string, meta SessionMeta) int {
+	be := d.backendForLocked(meta.Harness)
+	if pb, ok := be.(*PigBackend); ok {
+		if _, size, ok := pb.ContextUsage(id); ok && size > 0 {
+			return size
+		}
+	}
+	if wb, ok := be.(usageWindowBackend); ok {
+		return wb.UsageWindow(meta.Model)
+	}
+	return 0
+}
+
+// seedUsage appends an estimated usage Event so the meter shows from Session
+// start and from the first prompt dispatch: without it a new Session reads
+// "no usage yet" until its first turn ends, and a stalled first turn (seen
+// with opencode-go pig models) holds the meter dead the whole turn. It
+// never overwrites a real reading: with a usage Event already in the log it
+// does nothing, and the auto-compress gates keep reading the newest Event.
+func (d *Daemon) seedUsage(id string) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if _, _, ok := usageOf(s.events); ok {
+		d.mu.Unlock()
+		return
+	}
+	size := d.usageWindowLocked(id, s.meta)
+	used := estimateUsed(s.events)
+	d.mu.Unlock()
+	if size <= 0 {
+		return
+	}
+	d.appendEvent(id, "usage", usageText(used, size), "")
 }

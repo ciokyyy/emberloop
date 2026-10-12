@@ -56,7 +56,7 @@
   let maxWorkers = $state('3');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
-  let compress = $state({ auto: 'on', threshold: '80', cooldown: '5', instructions: '', model: 'none' });
+  let compress = $state({ auto: 'on', threshold: '80', tokens: '300000', cooldown: '5', instructions: '', model: 'none' });
   let compressNote = $state('');
   let decider = $state({ mode: 'heuristic', model: 'none', low: '0.35', high: '0.7' });
   let jev = $state({ baseURL: '', apiKey: '', model: 'jev-latest' });
@@ -134,6 +134,7 @@
       compress = {
         auto: c.auto_compress === false ? 'off' : 'on',
         threshold: String(c.compress_threshold_percent ?? 80),
+        tokens: String(c.compress_threshold_tokens ?? 300000),
         cooldown: String(c.compress_cooldown ?? 5),
         instructions: c.compress_instructions ?? '',
         model: c.compress_model || 'none',
@@ -244,6 +245,7 @@
       payload.compress = {
         auto_compress: compress.auto === 'on',
         compress_threshold_percent: Number(compress.threshold),
+        compress_threshold_tokens: Number(compress.tokens),
         compress_cooldown: Number(compress.cooldown),
         compress_instructions: compress.instructions,
         compress_model: compress.model === 'none' ? '' : compress.model,
@@ -418,6 +420,13 @@
                 <div class="text-xs text-muted-foreground">Percent of the model's context window, 10 to 99.</div>
               </div>
               <FloatingInput id="compress-threshold" label="Threshold %" type="number" min="10" max="99" step="1" bind:value={compress.threshold} disabled={compress.auto === 'off'} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Threshold tokens</div>
+                <div class="text-xs text-muted-foreground">Absolute token count that also triggers auto-compress; 0 means off. The percent gate never fires on 1M-window models, so keep this near 300000 for those.</div>
+              </div>
+              <FloatingInput id="compress-threshold-tokens" label="Threshold tokens" type="number" min="0" step="1000" inputClass="text-base sm:text-sm" bind:value={compress.tokens} disabled={compress.auto === 'off'} />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">

@@ -315,6 +315,9 @@ func NewGrokACPBackend(stateDir, daemonAddr string) (*GrokACPBackend, error) {
 		mcpEnv:   [][2]string{{"HOME", home}},
 		sessions: map[string]*claudeState{},
 	}
+	// The grok adapter sends no usage_update: fallback readings size from
+	// the known grok window so the meter and the gates still move.
+	cb.windowFor = func(string) int { return grokWindow }
 	cb.daemonAddr = daemonAddr
 	b := &GrokACPBackend{
 		ClaudeBackend: cb, stateDir: stateDir, grokBin: grokBin, srcHome: srcHome,
