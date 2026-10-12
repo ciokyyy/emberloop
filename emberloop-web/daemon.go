@@ -140,7 +140,10 @@ type Daemon struct {
 	nightlyFailStage   string
 	// baseCheck scripts the spec-branch base-red gate in tests; nil runs
 	// .emberloop/check at the requested tip in a detached worktree.
-	baseCheck      func(repo, specBranch, tip string) (bool, []string)
+	baseCheck func(repo, specBranch, tip string) (bool, []string)
+	// tipCheck scripts the per-tip repo check before Reviewers in tests; nil
+	// runs .emberloop/check at the requested tip in a detached worktree.
+	tipCheck       func(repo, ticketBranch, tip string) (bool, []string)
 	nightlyLastDay string
 	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
 	// holds one in-flight/again flag per Session, mineWG lets tests and

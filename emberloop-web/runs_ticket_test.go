@@ -167,6 +167,7 @@ func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
@@ -204,6 +205,7 @@ func TestReviewerMessagesRefused409(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	rev := revs["reviewer-spec"]
@@ -256,6 +258,7 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
@@ -305,6 +308,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitWorker(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"}, "done. Follow-ups: check lint")
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -398,6 +402,7 @@ func TestHeldPassNoRerun(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	// Dirty the branch before the verdicts arrive so the finish cannot merge
@@ -417,6 +422,11 @@ func TestHeldPassNoRerun(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	// The dirty file was never committed, so removing it cleans the tree
+	// without a new commit: the resubmit tests the same-tip hold.
+	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
 	deadline = time.Now().Add(15 * time.Second)
@@ -468,6 +478,7 @@ func TestRunTicketJSONExposesPageFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	commitTicketWork(t, repo, "01-first")
 	submitWorker(t, srv.URL, worker, "done", []string{"alpha"}, "done. Follow-ups: check lint")
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -608,6 +619,7 @@ func TestRunSSEPublishesTicketChanges(t *testing.T) {
 		}, "boxes ticked, both verdicts, a round and followups over SSE")
 		done <- got
 	}()
+	commitTicketWork(t, repo, "01-first")
 	submitWorker(t, srv.URL, worker, "done", []string{"alpha"}, "done. Follow-ups: check lint")
 	select {
 	case got := <-done:

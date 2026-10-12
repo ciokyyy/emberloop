@@ -119,6 +119,9 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 			ticketByID(r, "02-second").WorkerSession == ""
 	}, "only 01-first started")
 	first := ticketByID(r, "01-first").WorkerSession
+	// The worker commits before the pause, so the late submit below passes
+	// the uncommitted-work gate and is recorded (but held while paused).
+	commitTicketWork(t, repo, "01-first")
 
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
 		t.Fatalf("pause status = %d, want 200", code)
@@ -164,6 +167,7 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "01-first merged and 02-second started after resume")
 	second := ticketByID(r, "02-second").WorkerSession
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, second, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -171,6 +175,7 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 			ticketByID(r, "03-third").WorkerSession != ""
 	}, "02-second merged and 03-third started")
 	third := ticketByID(r, "03-third").WorkerSession
+	commitTicketWork(t, repo, "03-third")
 	submitSession(t, srv.URL, third, "done", []string{"gamma"})
 	passReviewers(t, srv.URL, run.ID, "03-third")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -270,6 +275,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 		t.Fatalf("sessions after resume = %d, want %d (no second Worker)", got, before)
 	}
 
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv2.URL, first, "done", []string{"alpha"})
 	passReviewers(t, srv2.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
@@ -277,6 +283,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "01-first merged and 02-second started after resume")
 	second := ticketByID(r, "02-second").WorkerSession
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv2.URL, second, "done", []string{"beta"})
 	passReviewers(t, srv2.URL, run.ID, "02-second")
 	_ = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
@@ -363,7 +370,9 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 			t.Fatalf("sessions = %d, want 2 (no orphan from the dropped start)", got)
 		}
 		first, second := ticketByID(r, "01-first").WorkerSession, ticketByID(r, "02-second").WorkerSession
+		commitTicketWork(t, repo, "01-first")
 		submitSession(t, srv.URL, first, "done", []string{"alpha"})
+		commitTicketWork(t, repo, "02-second")
 		submitSession(t, srv.URL, second, "done", []string{"beta"})
 		passReviewers(t, srv.URL, run.ID, "01-first")
 		passReviewers(t, srv.URL, run.ID, "02-second")

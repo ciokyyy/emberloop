@@ -224,6 +224,7 @@ func TestFinalMergeWaitsForEveryTicketToMergeOrDiscard(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "first worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {

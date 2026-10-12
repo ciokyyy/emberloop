@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,9 +11,25 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// commitTicketWorkSeq numbers the committed files so every call has something
+// new to commit.
+var commitTicketWorkSeq atomic.Int64
+
+// commitTicketWork commits one uniquely-named file in the Ticket's worktree,
+// so a following done submit passes the uncommitted-work gate (a done submit
+// with no commits ahead of the base, or with uncommitted changes, is
+// refused). Repeated calls commit distinct files.
+func commitTicketWork(t *testing.T, repo, ticketID string) {
+	t.Helper()
+	n := commitTicketWorkSeq.Add(1)
+	name := fmt.Sprintf("ticket-work-%d.go", n)
+	commitTicketFile(t, filepath.Join(repo, ".el-worktrees", ticketID), name, fmt.Sprintf("package main\n// ticket work %d\n", n), "ticket work")
+}
 
 func testGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -276,6 +293,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 			first = tk.WorkerSession
 		}
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, first, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -293,6 +311,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 			second = tk.WorkerSession
 		}
 	}
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, second, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -305,6 +324,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 	}, "02-second merged and 03-third started")
 	for _, tk := range r.Tickets {
 		if tk.ID == "03-third" {
+			commitTicketWork(t, repo, "03-third")
 			submitSession(t, srv.URL, tk.WorkerSession, "done", []string{"gamma"})
 		}
 	}
@@ -355,6 +375,7 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 			busySession = tk.WorkerSession
 		}
 	}
+	commitTicketWork(t, repo, busy)
 	submitSession(t, srv.URL, busySession, "done", nil)
 	passReviewers(t, srv.URL, run.ID, busy)
 	_ = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -401,6 +422,7 @@ func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
 			sess = tk.WorkerSession
 		}
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -429,8 +451,10 @@ func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
 	}
 }
 
-// Slice 5a: a dirty worktree keeps the Worker alive and shows the refusal
-// on the Ticket row. Cleaning and resubmitting merges.
+// Slice 5a: a dirty worktree keeps the Worker alive with a submit-time
+// refusal naming uncommitted changes. Committing and resubmitting merges.
+// The finish keeps its own dirty check for the submit-to-finish race; the
+// submit gate is what Workers normally hit.
 func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -456,33 +480,34 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 	}
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "dirty.txt", "dirty\n")
-	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
-	passReviewers(t, srv.URL, run.ID, "01-first")
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		for _, tk := range r.Tickets {
-			if tk.ID == "01-first" && tk.LastRefusal != "" {
-				return true
-			}
-		}
-		return false
-	}, "refusal shown")
+	code, msg := submitGateRaw(t, srv.URL, sess, "done", []string{"alpha"}, "all done", "")
+	if code != http.StatusConflict {
+		t.Fatalf("dirty done status = %d, want 409", code)
+	}
+	if !strings.Contains(strings.ToLower(msg), "uncommitted changes") {
+		t.Fatalf("dirty done error = %q, want uncommitted changes", msg)
+	}
+	// The Worker stays alive on the same Session and no Reviewer starts.
+	r = getRun(t, srv.URL, run.ID)
 	for _, tk := range r.Tickets {
 		if tk.ID == "01-first" {
 			if tk.State == "merged" {
 				t.Fatalf("dirty ticket merged, want it kept alive")
 			}
-			if !strings.Contains(tk.LastRefusal, "uncommitted changes") {
-				t.Fatalf("lastRefusal = %q, want uncommitted changes", tk.LastRefusal)
-			}
 			if tk.WorkerSession != sess {
 				t.Fatalf("worker changed, want the same Worker alive")
+			}
+			if len(tk.ReviewerSessions) != 0 {
+				t.Fatalf("reviewers = %v, want none after a refused submit", tk.ReviewerSessions)
 			}
 		}
 	}
 	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
 		t.Fatal(err)
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
+	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done after clean resubmit")
@@ -668,6 +693,7 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 			}
 		}
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, sess, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -704,7 +730,9 @@ func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
 	for _, tk := range r.Tickets {
 		sess[tk.ID] = tk.WorkerSession
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, sess["01-first"], "done", []string{"alpha"})
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, sess["02-second"], "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	passReviewers(t, srv.URL, run.ID, "02-second")
@@ -1050,6 +1078,7 @@ func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "all done", ""); code != http.StatusAccepted {
 		t.Fatalf("first done status = %d, want 202", code)
 	}
@@ -1088,6 +1117,7 @@ func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	code, msg := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "Not done: auth handler missing", "")
 	if code != http.StatusConflict {
 		t.Fatalf("not-done done status = %d, want 409", code)
@@ -1155,6 +1185,7 @@ func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
 	}, "repeat blocked becomes needs-you")
 	// A done submit clears the blocked question track, while needs-you stays
 	// until a retry: the next identical blocked starts a fresh count.
+	commitTicketWork(t, repo, "01-first")
 	if code, _ := submitGateRaw(t, srv.URL, worker, "done", []string{"alpha"}, "All done", ""); code != http.StatusAccepted {
 		t.Fatalf("done after blocked status = %d, want 202", code)
 	}
