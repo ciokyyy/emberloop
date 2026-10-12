@@ -352,7 +352,7 @@ func (d *Daemon) resumeTicket(w http.ResponseWriter, r *http.Request, runID, tic
 		http.NotFound(w, r)
 		return
 	}
-	if rs.Status != runStatusRunning {
+	if rs.Status != runStatusRunning && !(rs.Status == runStatusPaused && rs.IdlePaused) {
 		d.mu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "resume the Run first"})
 		return
@@ -381,7 +381,20 @@ func (d *Daemon) resumeTicket(w http.ResponseWriter, r *http.Request, runID, tic
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 	}
+	idle := false
+	if rs := d.runs[runID]; rs != nil && rs.Status == runStatusPaused && rs.IdlePaused {
+		idle = true
+		rs.IdlePaused = false
+	}
 	d.mu.Unlock()
+	if idle {
+		// The Run paused itself while every open Ticket was paused: bring the
+		// driver back now that one Ticket resumed.
+		if _, code, msg := d.resumeRunCore(runID); code != 0 {
+			writeJSON(w, code, map[string]any{"error": msg})
+			return
+		}
+	}
 	d.writeCurrentRun(w, runID)
 }
 

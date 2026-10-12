@@ -6,6 +6,7 @@ import "testing"
 // session-limit or other. The texts are forms the pig SDK puts into its
 // errors; the negatives are prose that must stay other.
 func TestClassifyFailure(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		text string
 		want failureClass
@@ -48,6 +49,7 @@ func TestClassifyFailure(t *testing.T) {
 
 // Only the four advancing classes move the Run chain; anything else surfaces.
 func TestFailureAdvancesChain(t *testing.T) {
+	t.Parallel()
 	for _, c := range []failureClass{failureQuota, failureCredit, failureAuth, failureSessionLimit} {
 		if !c.advancesChain() {
 			t.Errorf("%q: advancesChain = false, want true", c)
@@ -62,6 +64,7 @@ func TestFailureAdvancesChain(t *testing.T) {
 // matcher caught advances the chain, and every transient or other failure
 // does not.
 func TestCompressBlockMatchesChainAdvancing(t *testing.T) {
+	t.Parallel()
 	block := []string{
 		"402 status code (no body)",
 		"anthropic: HTTP 401: authentication_error: invalid x-api-key",

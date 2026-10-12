@@ -13,12 +13,13 @@ import (
 // onto the spec branch instead of tripping the dirty-worktree refusal on
 // every finish. Master never moves here; the final merge carries it later.
 func TestSeededWorkerCommitsAndMerges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	testGit(t, repo, "rm", "-q", "AGENTS.md")
 	testGit(t, repo, "commit", "-qm", "drop root")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

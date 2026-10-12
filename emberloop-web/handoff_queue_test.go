@@ -35,13 +35,13 @@ func (p *promptRecord) texts() []string {
 // the Session ID.
 func queueDaemon(t *testing.T, delay time.Duration) (*Daemon, *promptRecord, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = delay
 	rec := &promptRecord{}
 	be.ReplyFunc = rec.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -79,10 +79,13 @@ func waitSettled(t *testing.T, base, id string, ok func([]Event) bool) []Event {
 // Follow-ups queued during a Handoff wait for it. They reach the new handle
 // after the Handoff prompt, in the order they were sent.
 func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
-	_, rec, base, id := queueDaemon(t, time.Second)
+	t.Parallel()
+	// The hold only needs to cover local HTTP roundtrips between turn start
+	// and the next request: 300ms holds the window with wide margin.
+	_, rec, base, id := queueDaemon(t, 300*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitPrompt(t, base, id, "# Handoff", 5*time.Second)
@@ -113,10 +116,11 @@ func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
 // one into pending the way the claude path leaves it. Across a Handoff it
 // degrades to a Follow-up, lands after the Handoff and is not lost.
 func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
-	d, rec, base, id := queueDaemon(t, time.Second)
+	t.Parallel()
+	d, rec, base, id := queueDaemon(t, 300*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitPrompt(t, base, id, "# Handoff", 5*time.Second)
@@ -144,6 +148,7 @@ func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
 // A claude Steer that arrives while a Handoff runs must not wait as a held
 // Steer for a tool call: the Handoff leads, so the Steer queues as a Follow-up.
 func TestClaudeSteerDuringHandoffQueuesFollowup(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -173,10 +178,12 @@ func TestClaudeSteerDuringHandoffQueuesFollowup(t *testing.T) {
 // Compress waits while a Group of the Session is outstanding. The Group's
 // result reaches the parent first; the compress runs after that turn.
 func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
+	t.Parallel()
 	for _, deliver := range []string{"group", "each"} {
 		deliver := deliver
 		t.Run(deliver, func(t *testing.T) {
-			_, _, base, parent := queueDaemon(t, time.Second)
+			t.Parallel()
+			_, _, base, parent := queueDaemon(t, 300*time.Millisecond)
 			sendPrompt(t, base, parent, "plan the work")
 			waitStatus(t, base, parent, "idle", 5*time.Second)
 			if code, out := postSpawn(t, base, parent, map[string]any{
@@ -185,7 +192,7 @@ func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
 			}); code != http.StatusCreated {
 				t.Fatalf("spawn = %d %v", code, out)
 			}
-			if code, body := compressReq(t, base, parent, ""); code != http.StatusAccepted || body["waiting"] != "group" {
+			if code, body := compressReqIdle(t, base, parent, ""); code != http.StatusAccepted || body["waiting"] != "group" {
 				t.Fatalf("compress while the Group runs = %d %v, want 202 waiting", code, body)
 			}
 			if n := len(eventsOfKind(transcriptOf(t, base, parent), "compressed")); n != 0 {
@@ -205,10 +212,11 @@ func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
 
 // A Group spawned after a compress reports to the parent on the new handle.
 func TestGroupResultReachesParentAfterCompress(t *testing.T) {
+	t.Parallel()
 	_, rec, base, parent := queueDaemon(t, 20*time.Millisecond)
 	sendPrompt(t, base, parent, "plan the work")
 	waitStatus(t, base, parent, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, parent, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, parent, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitSettled(t, base, parent, func(evs []Event) bool {
@@ -239,9 +247,9 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 // A Group stranded by a restart never delivers. Its persisted member must
 // not hold a compress of the parent.
 func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	stuck := make(chan struct{}) // never closed: the old Daemon's child turn stays open
 	old := NewFakeBackend()
 	old.ReplyFunc = func(_, text string) (string, bool) {
@@ -251,6 +259,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 		return "", false
 	}
 	d1 := NewDaemon(stateDir, old)
+	d1.SetSettingsPath(settingsPath)
 	srv1 := httptest.NewServer(authedHandler(t, d1))
 	defer srv1.Close()
 	parent := createSession(t, srv1.URL, "fake", "fake-model", tempDir(t))
@@ -278,10 +287,11 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 
 	// Restart: the reloaded Daemon sees the Group and its member mid-turn on disk.
 	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	d2.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
-	if code, body := compressReq(t, srv2.URL, parent, ""); code != http.StatusAccepted || body["waiting"] != nil {
+	if code, body := compressReqIdle(t, srv2.URL, parent, ""); code != http.StatusAccepted || body["waiting"] != nil {
 		t.Fatalf("compress after restart = %d %v, want 202 with no wait", code, body)
 	}
 	waitSettled(t, srv2.URL, parent, func(evs []Event) bool {
@@ -292,6 +302,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 // A compress that runs while another compress still waits on a Group settles
 // that wait. A held compress must not run a second Handoff after it.
 func TestCompressNowSettlesHeldCompress(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := queueDaemon(t, 20*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -301,7 +312,7 @@ func TestCompressNowSettlesHeldCompress(t *testing.T) {
 	d.sessions[id].compressWait = true
 	d.sessions[id].compressInstr = "keep the plan"
 	d.mu.Unlock()
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	waitSettled(t, base, id, func(evs []Event) bool {

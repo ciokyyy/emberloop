@@ -3,6 +3,7 @@ package web
 import "testing"
 
 func TestToolTrackerCloseOpenEndsOnlyUnfinishedCalls(t *testing.T) {
+	t.Parallel()
 	tr := newToolTracker()
 	var got []string
 	emit := func(kind, text, status string) { got = append(got, kind+":"+status) }

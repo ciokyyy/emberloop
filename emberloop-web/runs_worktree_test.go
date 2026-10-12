@@ -17,6 +17,7 @@ import (
 // seam runs_driver_test.go drives: start a Run and assert on the worktree it
 // creates.
 func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	// A new spec file created after the base commit must still be readable
 	// from the worktree: a fresh worktree add only carries committed files,
@@ -26,7 +27,7 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -98,8 +99,9 @@ func TestRunWorktreeHasIdentityAndReadOnlySpec(t *testing.T) {
 // the read-only worktree mirror remains unchanged. Spec-branch Run progress
 // uses report-only completed names until the merge done-mark commit.
 func TestWorktreeMirrorStaysUntickedWhenSourceTicketIsTicked(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

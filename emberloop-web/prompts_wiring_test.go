@@ -8,6 +8,7 @@ import (
 // claudeSystemPromptFor carries the role extra ahead of the project context:
 // a web Session names remember, a worker and a reviewer never do.
 func TestClaudeSystemPromptForCarriesRoleExtra(t *testing.T) {
+	t.Parallel()
 	work := tempDir(t)
 	web := claudeSystemPromptFor(SessionMeta{Owner: "u"}, work, tempDir(t))
 	if !strings.Contains(strings.ToLower(web), "remember") {
@@ -33,6 +34,7 @@ func TestClaudeSystemPromptForCarriesRoleExtra(t *testing.T) {
 // sessionMetaFor carries the role extra into the ACP session params: web
 // names remember, reviewers never do while their el role is run-worker.
 func TestSessionMetaForCarriesRoleExtra(t *testing.T) {
+	t.Parallel()
 	b := newStubClaudeBackend(nil)
 	webMeta := b.sessionMetaFor(SessionMeta{Owner: "u", Model: "sonnet"}, ownerDirs{})
 	web, _ := webMeta["systemPrompt"].(string)
@@ -55,6 +57,7 @@ func TestSessionMetaForCarriesRoleExtra(t *testing.T) {
 // A seeded worktree adds one commit line for the seeded root AGENTS.md, so an
 // untracked seed never trips the merge's dirty-worktree refusal.
 func TestWorkerTaskPromptCarriesDox(t *testing.T) {
+	t.Parallel()
 	p := workerTaskPrompt("27-x", "spec", "tickets/27-x.md", "implement/27-x", false)
 	if !strings.Contains(p, "implement/27-x") || !strings.Contains(p, "tickets/27-x.md") {
 		t.Errorf("worker task lacks branch or ticket: %q", p)
@@ -84,6 +87,7 @@ func TestWorkerTaskPromptCarriesDox(t *testing.T) {
 // prompt already carries the reviewer extra, so repeating it would inject it
 // twice. It describes the submit tool with verdict, tip, ran and findings.
 func TestReviewerPromptCarriesNoExtra(t *testing.T) {
+	t.Parallel()
 	for _, typ := range []string{reviewerSpecType, reviewerStandardsType} {
 		p := reviewerPrompt("27-x", "spec", typ, "branch", "tip")
 		if strings.Contains(p, reviewerRolePrompt()) {
@@ -98,7 +102,7 @@ func TestReviewerPromptCarriesNoExtra(t *testing.T) {
 // Pig agent Sessions carry the role extra as an appended system-prompt
 // section; one-off calls append nothing.
 func TestPigResourcesCarryRoleExtra(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
+	t.Parallel()
 	svcs, _, err := buildPigServices(tempDir(t), nil, SessionMeta{Model: "test-faux/faux-1", WorkDir: tempDir(t)})
 	if err != nil {
 		t.Fatal(err)

@@ -71,15 +71,30 @@ func chainNames(role string) []string {
 // readChains returns the stored per-role chains. A missing or unreadable
 // settings file means no chains.
 func readChains() map[string][]chainEntry {
-	chains := map[string][]chainEntry{}
 	all, err := readSettingsMap()
 	if err != nil {
-		return chains
+		return map[string][]chainEntry{}
 	}
+	return parseChains(all)
+}
+
+// parseChains decodes the stored chains: shared by the host reader and the
+// Daemon-scoped test seam so the two never diverge.
+func parseChains(all map[string]json.RawMessage) map[string][]chainEntry {
+	chains := map[string][]chainEntry{}
 	if raw, ok := all["chains"]; ok {
 		_ = json.Unmarshal(raw, &chains)
 	}
 	return chains
+}
+
+// settingsChains reads this Daemon's stored chains.
+func (d *Daemon) settingsChains() map[string][]chainEntry {
+	all, err := d.settingsMap()
+	if err != nil {
+		return map[string][]chainEntry{}
+	}
+	return parseChains(all)
 }
 
 // chainFor returns the active fallback chain for a role: the stored chain
@@ -87,14 +102,23 @@ func readChains() map[string][]chainEntry {
 // chain of one, so a role without a chain still runs once. Empty when the
 // role is nowhere configured.
 func chainFor(role string) []chainEntry {
-	chains := readChains()
+	return lookupChain(readChains(), readRoles(), role)
+}
+
+// daemonChainFor returns this Daemon's active fallback chain for a role.
+func (d *Daemon) daemonChainFor(role string) []chainEntry {
+	return lookupChain(d.settingsChains(), d.settingsRoles(), role)
+}
+
+// lookupChain resolves a role against decoded chains and roles maps: shared
+// by the host reader and the Daemon-scoped test seam.
+func lookupChain(chains map[string][]chainEntry, roles map[string]roleSetting, role string) []chainEntry {
 	names := chainNames(role)
 	for _, name := range names {
 		if c, ok := chains[name]; ok && len(c) > 0 {
 			return c
 		}
 	}
-	roles := readRoles()
 	for _, name := range names {
 		if r, ok := roles[name]; ok && r.Harness != "" && r.Model != "" {
 			if r.Harness == "claude" && !validClaudeModel(r.Model) {

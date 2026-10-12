@@ -208,7 +208,8 @@ func stripOwner(t *testing.T, path string) {
 
 // Creating a Session records the signed-in User who sent the create.
 func TestCreateRecordsCookieUserAsOwner(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	signedIn(t, h, "admin")
 	bob := signedIn(t, h, "bob")
@@ -224,7 +225,8 @@ func TestCreateRecordsCookieUserAsOwner(t *testing.T) {
 
 // The machine token is no User: it cannot create a Session or a Run.
 func TestMachineTokenCannotCreateSessionOrRun(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	signedIn(t, h, "admin")
 	agent := httptest.NewServer(withBearer(h, d.MachineToken()))
@@ -245,7 +247,8 @@ func TestMachineTokenCannotCreateSessionOrRun(t *testing.T) {
 // Subagents take the owner of their parent, not the owner of the User who
 // spawned them. Each first prompt is typed by the sender of the spawn request.
 func TestSubagentsInheritParentOwner(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
 	adminID := userOf(t, h, admin).ID
@@ -277,8 +280,9 @@ func TestSubagentsInheritParentOwner(t *testing.T) {
 // A Run records the User who started it; its Worker and Reviewer Sessions
 // inherit that owner, and their driver prompts are system prompts.
 func TestRunOwnerReachesWorkerAndReviewers(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
 	adminID := userOf(t, h, admin).ID
@@ -290,6 +294,7 @@ func TestRunOwnerReachesWorkerAndReviewers(t *testing.T) {
 		t.Fatalf("run owner = %v, want %q", got, adminID)
 	}
 	worker := waitChildren(t, srv.URL, run.ID, 1)[0]
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker.ID, "done", []string{"alpha"})
 	kids := waitChildren(t, srv.URL, run.ID, 3)
 	for _, kid := range kids {
@@ -308,8 +313,9 @@ func TestRunOwnerReachesWorkerAndReviewers(t *testing.T) {
 // Sessions and Runs with no owner predate owners: lists skip them and every
 // route answers 404, so no User reaches them. Data is not migrated.
 func TestOwnerlessSessionsAndRunsAreHidden(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
-	d1 := NewDaemon(stateDir, NewFakeBackend())
+	d1 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv1 := httptest.NewServer(authedHandler(t, d1))
 	legacy := createSession(t, srv1.URL, "fake", "fake-model", tempDir(t))
 	srv1.Close()
@@ -323,7 +329,7 @@ func TestOwnerlessSessionsAndRunsAreHidden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d2))
 	defer srv.Close()
 	owned := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
@@ -357,7 +363,8 @@ func TestOwnerlessSessionsAndRunsAreHidden(t *testing.T) {
 
 // Any signed-in User prompts, interrupts and ends any Session: no ACLs.
 func TestAnyUserCanPromptInterruptAndEndAnySession(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
 	bob := signedIn(t, h, "bob")
@@ -384,7 +391,8 @@ func TestAnyUserCanPromptInterruptAndEndAnySession(t *testing.T) {
 // message is "user" with that User's ID in any mode; a machine caller's
 // message is "system".
 func TestPromptSteerAndFollowupCarrySender(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
 	adminID := userOf(t, h, admin).ID
@@ -430,9 +438,10 @@ func TestPromptSteerAndFollowupCarrySender(t *testing.T) {
 // Messages queued behind a turn keep their own sender: a delivered prompt
 // Event never joins one User's text with another's.
 func TestQueuedMessagesNeverMixSenders(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
-	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
 	adminID := userOf(t, h, admin).ID
@@ -476,8 +485,9 @@ func TestQueuedMessagesNeverMixSenders(t *testing.T) {
 // A create with no Project and no folder opens in the User's home directory,
 // which is made on first use under the user store.
 func TestSessionWithNoProjectOpensInUserHome(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	h := d.Handler()
 	signedIn(t, h, "admin")
 	bob := signedIn(t, h, "bob")

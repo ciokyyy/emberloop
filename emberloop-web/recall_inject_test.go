@@ -18,12 +18,12 @@ import (
 // injection hook: production Profile and recall run.
 func recallDaemon(t *testing.T) (*Daemon, *promptsSeen, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -72,19 +72,6 @@ func writeNoteFile(t *testing.T, workDir, name, id, body string) {
 	}
 }
 
-// gitTestEnv isolates git like the memory package tests, but on tempDir so
-// Daemon goroutines never race t.TempDir cleanup.
-func gitTestEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "recall-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "recall-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
-	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
-}
-
 func runGitRecall(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -99,7 +86,6 @@ func runGitRecall(t *testing.T, dir string, args ...string) string {
 // initRecallRepo creates a main-branch repo at a temp dir with one committed file.
 func initRecallRepo(t *testing.T, files map[string]string) (dir, head string) {
 	t.Helper()
-	gitTestEnv(t)
 	dir = tempDir(t)
 	runGitRecall(t, dir, "init", "-b", "main", ".")
 	for name, content := range files {
@@ -120,6 +106,7 @@ func initRecallRepo(t *testing.T, files map[string]string) (dir, head string) {
 // untrusted notes, not instructions. The injection Event lists Rule IDs and
 // versions.
 func TestAutoRecallBlockOrderFenceAndEvent(t *testing.T) {
+	t.Parallel()
 	d, seen, base, id := recallDaemon(t)
 	meta, _ := sessionMeta(t, base, id)
 	putProfileLines(t, base, "profile workflow line")
@@ -167,6 +154,7 @@ func TestAutoRecallBlockOrderFenceAndEvent(t *testing.T) {
 
 // An empty prompt (no tokens) injects the Profile only.
 func TestAutoRecallEmptyPromptInjectsProfileOnly(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	freshMeta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))
 	_ = d
@@ -192,6 +180,7 @@ func TestAutoRecallEmptyPromptInjectsProfileOnly(t *testing.T) {
 
 // Injection is capped at 5 hits of at most 300 chars.
 func TestAutoRecallCapsAtFive(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))
 	for i := 0; i < 7; i++ {
@@ -214,7 +203,7 @@ func TestAutoRecallCapsAtFive(t *testing.T) {
 
 // Flagged Rules show the verify flag.
 func TestAutoRecallFlaggedRuleShowsVerify(t *testing.T) {
-	gitTestEnv(t)
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	// Work in a git repo so anchor verification can flag the Rule.
 	repo, head := initRecallRepo(t, map[string]string{"app.go": "package app\n"})
@@ -247,7 +236,7 @@ func TestAutoRecallFlaggedRuleShowsVerify(t *testing.T) {
 
 // Deleted anchors go dormant and are not injected.
 func TestAutoRecallDormantSkipped(t *testing.T) {
-	gitTestEnv(t)
+	t.Parallel()
 	d, _, base, _ := recallDaemon(t)
 	repo, head := initRecallRepo(t, map[string]string{"gone.go": "package gone\n"})
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", repo))
@@ -290,6 +279,7 @@ func TestAutoRecallDormantSkipped(t *testing.T) {
 
 // User Rules and Project notes merge by rank fusion: both inject.
 func TestAutoRecallMergesNotes(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	work := tempDir(t)
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", work))
@@ -308,6 +298,7 @@ func TestAutoRecallMergesNotes(t *testing.T) {
 
 // The query comes from identifiers, paths and rare terms: camelCase matches.
 func TestAutoRecallQueryFromIdentifiers(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))
 	addRule(t, d, meta.Owner, "TestUploadHandler retries with backoff")
@@ -321,6 +312,7 @@ func TestAutoRecallQueryFromIdentifiers(t *testing.T) {
 
 // Decider timeout and error fall back to the FTS5 order.
 func TestAutoRecallDeciderFallback(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))
 	addRule(t, d, meta.Owner, "tabs first rule alpha")
@@ -357,6 +349,7 @@ func TestAutoRecallDeciderFallback(t *testing.T) {
 
 // Resume injects the Profile only, even when the follow-up matches Rules.
 func TestAutoRecallResumeInjectsProfileOnly(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	putProfileLines(t, base, "resume profile line")
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))
@@ -402,6 +395,7 @@ func TestAutoRecallResumeInjectsProfileOnly(t *testing.T) {
 
 // Reviewers get the filtered Profile with recall.
 func TestAutoRecallReviewerFilteredProfile(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	if code, _ := putProfile(t, base, []memory.ProfileOp{
 		{Op: memory.ProfileAdd, Text: "run go vet before submit", Tag: memory.ProfileWorkflow},
@@ -434,6 +428,7 @@ func TestAutoRecallReviewerFilteredProfile(t *testing.T) {
 
 // Engine failure posts a notice and the turn still runs.
 func TestAutoRecallEngineFailurePostsNotice(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	// Break the memory root so the next engine open fails: close any open
 	// engine, drop the directory and leave a file behind. The next Profile
@@ -468,6 +463,7 @@ func TestAutoRecallEngineFailurePostsNotice(t *testing.T) {
 
 // Compress injects Profile, fresh recall from the Handoff, then the Handoff.
 func TestAutoRecallCompressInjectsRecallThenHandoff(t *testing.T) {
+	t.Parallel()
 	d, seen, base, id := recallDaemon(t)
 	meta, _ := sessionMeta(t, base, id)
 	putProfileLines(t, base, "compress profile line")
@@ -508,6 +504,7 @@ func TestAutoRecallCompressInjectsRecallThenHandoff(t *testing.T) {
 // the second recall owner: if the synchronous sites ever stop flipping
 // injectOp to resume, this fails on a duplicated recall block.
 func TestAutoRecallRunWorkerFallback(t *testing.T) {
+	t.Parallel()
 	d, seen, base, _ := recallDaemon(t)
 	putProfileLines(t, base, "fallback profile line")
 	meta, _ := sessionMeta(t, base, createSession(t, base, "fake", "fake-model", tempDir(t)))

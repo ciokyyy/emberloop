@@ -69,6 +69,7 @@ func decodePushMessage(t *testing.T, decrypt func([]byte) []byte, body []byte) p
 }
 
 func TestPushTurnDoneCueKeyAndPath(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -91,6 +92,7 @@ func TestPushTurnDoneCueKeyAndPath(t *testing.T) {
 }
 
 func TestPushTurnFailedUsesErrorCue(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -107,6 +109,7 @@ func TestPushTurnFailedUsesErrorCue(t *testing.T) {
 }
 
 func TestPushSudoRequestUsesMentionCue(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -136,6 +139,7 @@ func TestPushSudoRequestUsesMentionCue(t *testing.T) {
 }
 
 func TestPushRunNeedsYouUsesBlockedCueAndTicketPath(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	cap, decrypt := capturePush(t, d)
 
@@ -155,6 +159,7 @@ func TestPushRunNeedsYouUsesBlockedCueAndTicketPath(t *testing.T) {
 }
 
 func TestNoteNeedsYouPushDedupsPerReason(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	rs := &runState{ID: "run-1"}
 
@@ -173,6 +178,7 @@ func TestNoteNeedsYouPushDedupsPerReason(t *testing.T) {
 }
 
 func TestTruncatePushCollapsesWhitespace(t *testing.T) {
+	t.Parallel()
 	if got := truncatePush("a\n  b\tc", 100); got != "a b c" {
 		t.Fatalf("truncate = %q", got)
 	}
@@ -182,6 +188,7 @@ func TestTruncatePushCollapsesWhitespace(t *testing.T) {
 }
 
 func TestTruncatePushSlicesRunes(t *testing.T) {
+	t.Parallel()
 	got := truncatePush(strings.Repeat("é", 200), 100)
 	if n := len([]rune(got)); n != 101 {
 		t.Fatalf("runes = %d, want 100 kept plus the ellipsis", n)
@@ -192,6 +199,7 @@ func TestTruncatePushSlicesRunes(t *testing.T) {
 }
 
 func TestNeedsYouKeyIncludesReasonHash(t *testing.T) {
+	t.Parallel()
 	same := "same refusal 3 times: boom"
 	if a, b := needsYouKey("run-1", "t1", same), needsYouKey("run-1", "t1", same); a != b {
 		t.Fatalf("same reason gave different keys %q and %q", a, b)
@@ -213,6 +221,7 @@ func TestNeedsYouKeyIncludesReasonHash(t *testing.T) {
 // with a new key. This drives the same per-reason gate the driver Notify
 // holds before pushRunNeedsYou, through the real encrypted push path.
 func TestPushDuplicateNotifySendsOnce(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	cap, decrypt := capturePush(t, d)
 	rs := &runState{ID: "run-1", Tickets: []staticTicket{{ID: "01-first", Num: 1, Title: "First"}}}
@@ -256,6 +265,7 @@ func TestPushDuplicateNotifySendsOnce(t *testing.T) {
 // A settling child or scout sends no push of its own: only the parent's
 // grouped-result turn notifies. Driven through spawn and real turn settles.
 func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -293,8 +303,9 @@ func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
 // session, which notifies nothing. Driven through send, DELETE and the real
 // turn end.
 func TestPushEndedSessionStaysSilent(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
-	fake.Delay = time.Second
+	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -332,6 +343,7 @@ func TestPushEndedSessionStaysSilent(t *testing.T) {
 // Gone subscriptions drop: a 404 or 410 answer removes the endpoint, so a
 // later notify sends nowhere.
 func TestPushNotifyDropsGoneSubscriptions(t *testing.T) {
+	t.Parallel()
 	var code int
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)

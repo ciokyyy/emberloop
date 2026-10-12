@@ -39,6 +39,7 @@ var grokFixtureTools = []grokMCPTool{
 }
 
 func TestRenderGrokCatalogListsTypedArguments(t *testing.T) {
+	t.Parallel()
 	got := renderGrokCatalog("el", grokFixtureTools)
 	want := "- el__read(path:str, limit?:int, offset?:int): Read a file.\n" +
 		"- el__ctx_search(queries:str[], source?:str): Search stored output"
@@ -48,6 +49,7 @@ func TestRenderGrokCatalogListsTypedArguments(t *testing.T) {
 }
 
 func TestFirstSentenceCutsLongDescriptions(t *testing.T) {
+	t.Parallel()
 	if got := firstSentence("One. Two."); got != "One." {
 		t.Fatalf("got %q", got)
 	}
@@ -58,6 +60,7 @@ func TestFirstSentenceCutsLongDescriptions(t *testing.T) {
 }
 
 func TestGrokToolBlockFallsBackToSearchWithoutCatalog(t *testing.T) {
+	t.Parallel()
 	if b := grokToolBlock(""); !strings.Contains(b, "search_tool") {
 		t.Fatalf("no-catalog block should name search_tool: %q", b)
 	}
@@ -68,6 +71,7 @@ func TestGrokToolBlockFallsBackToSearchWithoutCatalog(t *testing.T) {
 }
 
 func TestParseGrokModels(t *testing.T) {
+	t.Parallel()
 	out := "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  grok-5\n"
 	got := parseGrokModels(out)
 	if len(got) != 2 || got[0] != "grok-4.7" || got[1] != "grok-5" {
@@ -79,6 +83,7 @@ func TestParseGrokModels(t *testing.T) {
 }
 
 func TestGrokProfileAllowlist(t *testing.T) {
+	t.Parallel()
 	p := grokProfile(false)
 	if !strings.Contains(p, "agents_md: false") || !strings.Contains(p, "  - use_tool\n") || strings.Contains(p, "search_tool") {
 		t.Fatalf("profile without search:\n%s", p)
@@ -102,6 +107,7 @@ func newTestGrokBackend(t *testing.T) (*GrokACPBackend, string) {
 }
 
 func TestPrepareDirStripsAndIsolates(t *testing.T) {
+	t.Parallel()
 	b, src := newTestGrokBackend(t)
 	if _, err := b.prepareDir("s1", "web"); err == nil || !strings.Contains(err.Error(), "grok login") {
 		t.Fatalf("missing login should name grok login, got %v", err)
@@ -137,6 +143,7 @@ func TestPrepareDirStripsAndIsolates(t *testing.T) {
 }
 
 func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
+	t.Parallel()
 	b, src := newTestGrokBackend(t)
 	srcAuth := filepath.Join(src, "auth.json")
 	if err := os.WriteFile(srcAuth, []byte(`{"t":"old"}`), 0o600); err != nil {
@@ -184,6 +191,7 @@ func TestSyncAuthWritesRefreshedTokenBack(t *testing.T) {
 }
 
 func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
+	t.Parallel()
 	b, _ := newTestGrokBackend(t)
 	meta := b.meta("s1", "grok-4.7", "", tempDir(t), "web", ownerDirs{}, webRolePrompt())
 	if meta["yoloMode"] != true {
@@ -202,6 +210,7 @@ func TestGrokMetaCarriesOverrideCatalogAndYolo(t *testing.T) {
 }
 
 func TestGrokPromptWrapAppendsReminderOnly(t *testing.T) {
+	t.Parallel()
 	got := grokPromptWrap("do it")
 	if !strings.HasPrefix(got, "do it\n\n<reminder>") || !strings.Contains(got, "CAVEMAN") {
 		t.Fatalf("wrapped prompt %q", got)
@@ -242,6 +251,7 @@ func newStubGrok(t *testing.T, conn *grokStubConn) *GrokACPBackend {
 }
 
 func TestGrokStartWaitsForMCPAndSendsOverrideMeta(t *testing.T) {
+	t.Parallel()
 	conn := &grokStubConn{stubConn: &stubConn{}}
 	b := newStubGrok(t, conn)
 	meta := SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", Effort: "max", WorkDir: tempDir(t)}
@@ -260,6 +270,7 @@ func TestGrokStartWaitsForMCPAndSendsOverrideMeta(t *testing.T) {
 }
 
 func TestGrokStartFailsWhenMCPNeverReady(t *testing.T) {
+	t.Parallel()
 	conn := &grokStubConn{stubConn: &stubConn{}, waitErr: errors.New("adapter MCP servers not ready after 45s")}
 	b := newStubGrok(t, conn)
 	err := b.CreateSession(SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", WorkDir: tempDir(t)}, func(string, string, string) {})
@@ -272,6 +283,7 @@ func TestGrokStartFailsWhenMCPNeverReady(t *testing.T) {
 }
 
 func TestGrokCreateRejectsUnknownModelAndEffort(t *testing.T) {
+	t.Parallel()
 	b := newStubGrok(t, &grokStubConn{stubConn: &stubConn{}})
 	if err := b.CreateSession(SessionMeta{ID: "a", Model: "nope", WorkDir: tempDir(t)}, nil); err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("unknown model: %v", err)
@@ -282,6 +294,7 @@ func TestGrokCreateRejectsUnknownModelAndEffort(t *testing.T) {
 }
 
 func TestGrokPromptReachesAgentWithReminder(t *testing.T) {
+	t.Parallel()
 	conn := &grokStubConn{stubConn: &stubConn{}}
 	b := newStubGrok(t, conn)
 	if err := b.CreateSession(SessionMeta{ID: "s1", Harness: "grok", Model: "grok-4.7", WorkDir: tempDir(t)}, func(string, string, string) {}); err != nil {
@@ -294,6 +307,7 @@ func TestGrokPromptReachesAgentWithReminder(t *testing.T) {
 }
 
 func TestUnregisteredGrokHarnessAnswers503(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

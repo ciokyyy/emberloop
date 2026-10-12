@@ -25,6 +25,21 @@ func configuredRunChains(harness, model, effort string) map[string][]chainEntry 
 	return chains
 }
 
+// daemonConfiguredRunChains snapshots this Daemon's configured chains, so a
+// settings edit or Daemon restart cannot change a Ticket's fallback order
+// mid-run.
+func (d *Daemon) daemonConfiguredRunChains(harness, model, effort string) map[string][]chainEntry {
+	chains := make(map[string][]chainEntry, len(runRoles))
+	for _, role := range runRoles {
+		entries := d.daemonChainFor(role)
+		if len(entries) == 0 {
+			entries = []chainEntry{{Backend: harness, Model: model, Effort: effort}}
+		}
+		chains[role] = append([]chainEntry(nil), entries...)
+	}
+	return chains
+}
+
 // runChain returns a copy of a Run's snapshotted Chain. Old Run files without
 // chains fall back to current settings, then to the Run's Start configuration.
 func runChain(rs *runState, role string) []chainEntry {

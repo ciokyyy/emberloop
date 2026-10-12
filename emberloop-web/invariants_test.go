@@ -29,6 +29,7 @@ var invariantTables = []string{"observations", "rules", "queue", "profile_versio
 // the human purge aborts with "use purge", and no non-test Go file outside the
 // purge and schema owns a DELETE.
 func TestInvariant_NoDeleteOutsidePurge(t *testing.T) {
+	t.Parallel()
 	// Static: no DELETE FROM outside purge.go and schema.go.
 	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -108,6 +109,7 @@ func TestInvariant_NoDeleteOutsidePurge(t *testing.T) {
 // Daemon creates cites a sender=user Event whose quote verifies, and anything
 // else is rejected without a model.
 func TestInvariant_EveryRuleGroundedInUserEvent(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner := rememberDaemon(t)
 	runPrompt(t, base, id, "the team always wraps errors with context in this repo")
 	body, _ := json.Marshal(map[string]string{"text": "/remember always wrap errors with context"})
@@ -200,12 +202,13 @@ func TestInvariant_EveryRuleGroundedInUserEvent(t *testing.T) {
 // Rules, observations, Profile and queue never appear in B's recall,
 // injection or Memory page.
 func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -380,6 +383,7 @@ func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
 // spawned workers, Run Sessions and Reviewers get recall only, before and
 // after a compress.
 func TestInvariant_RecallOnlyRolesHaveNoRemember(t *testing.T) {
+	t.Parallel()
 	d, base, parent, _ := rememberDaemon(t)
 	d.maxRunning = 10
 	runPrompt(t, base, parent, "parent task uses tabs everywhere")
@@ -421,7 +425,7 @@ func TestInvariant_RecallOnlyRolesHaveNoRemember(t *testing.T) {
 	compressAndSettle(t, base, worker, 1)
 	compressAndSettle(t, base, runWorker.ID, 1)
 	compressAndSettle(t, base, reviewer.ID, 1)
-	if code, body := compressReq(t, base, scout, ""); code != http.StatusForbidden {
+	if code, body := compressReqIdle(t, base, scout, ""); code != http.StatusForbidden {
 		t.Fatalf("scout compress = %d %v, want 403", code, body)
 	}
 	for name, sid := range recallOnly {
@@ -444,6 +448,7 @@ func TestInvariant_RecallOnlyRolesHaveNoRemember(t *testing.T) {
 // state in a handle": startHandle derives owner, tool set and bank bindings
 // from the Session record on every create, resume and compress.
 func TestInvariant_OwnerToolsetBankBindingsIdenticalAcrossCompress(t *testing.T) {
+	t.Parallel()
 	d, be, seen, base, id := handleDaemon(t, nil)
 	runPrompt(t, base, id, "build the thing")
 	waitReleased(t, d, id)
@@ -595,6 +600,7 @@ func TestInvariant_NothingInjectedIsUserAndMinerReadsOnlyUser(t *testing.T) {
 // gate": pasted remember: text and /remember inside tool output never act;
 // only a structural /remember first line of a typed user message does.
 func TestInvariant_PastedRememberAndToolOutputCreateNothing(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner := rememberDaemon(t)
 	runPrompt(t, base, id, "remember: use tabs in this repo")
 	runPrompt(t, base, id, "context first\n/remember use tabs")
@@ -657,6 +663,7 @@ func TestInvariant_PastedRememberAndToolOutputCreateNothing(t *testing.T) {
 // redactor runs before anything is stored or sent to the distill LLM, a
 // Decider or the Jev API.
 func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
+	t.Parallel()
 	secret := "key AKIAIOSFODNN7EXAMPLE here"
 	if got := memory.Redact(secret); !strings.Contains(got, "[redacted:aws-access-key]") || strings.Contains(got, "AKIAIOSFODNN7EXAMPLE") {
 		t.Fatalf("Redact(%q) = %q, want the marker without the secret", secret, got)
@@ -847,6 +854,7 @@ func callsSendStem(s, stem string) bool {
 }
 
 func TestCallsSendStemOnlyCountsCalls(t *testing.T) {
+	t.Parallel()
 	call := []string{
 		"reply, err := sum.summarize(model, system, user)",
 		"func (pigsummarizer) summarize(model string) (string, error) {",

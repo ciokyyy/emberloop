@@ -76,6 +76,7 @@ func waitPrompt(t *testing.T, base, id, substr string, timeout time.Duration) {
 // A parent steers its own working child through the pig tool: the message
 // lands as a steer without interrupting the parent turn.
 func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
@@ -107,6 +108,7 @@ func TestSteerChildParentSteersOwnWorkingChild(t *testing.T) {
 // A parent steers its idle child through the Daemon: it starts as a
 // follow-up turn.
 func TestSteerChildIdleStartsFollowup(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -229,6 +231,7 @@ func TestProxySteerSteersOwnChild(t *testing.T) {
 // Workers gain spawn, steer, check and cancel; scouts gain none of the four:
 // they have no spawn tool, so no children to message, peek at or stop.
 func TestPigLoadoutWorkerGainsSubagentTools(t *testing.T) {
+	t.Parallel()
 	pb := NewPigBackend()
 	pb.Spawn = func(string, []SpawnAgent, string) (string, []SessionMeta, error) { return "", nil, nil }
 	pb.SteerChild = func(string, string, string) (string, error) { return "", nil }

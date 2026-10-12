@@ -988,10 +988,7 @@ func TestDriverReportsAnUnknownCheckboxAndStillMerges(t *testing.T) {
 // leaves the edit uncommitted: the box ticks, the rest stays, and git
 // reports the file modified but uncommitted.
 func TestTickDriverTicketFileTicksBoxesAndLeavesEditUncommitted(t *testing.T) {
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
+	repo := templatedGitRepo(t)
 	ticket := filepath.Join(repo, "01-first.md")
 	writeFile(t, ticket, "# 01: Test ticket\n\n**Blocked by:** None\n\n- [ ] first box\n- [ ] second box\n")
 	gitOut(t, repo, "add", ".")

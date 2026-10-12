@@ -1,6 +1,7 @@
 package el
 
 import (
+	"encoding/json"
 	goflag "flag"
 	"fmt"
 	"io"
@@ -44,6 +45,54 @@ func RunRestart(argv []string, out io.Writer) error {
 	return requestRestart(base, restartToken(*dev), *wait, out, 6*time.Minute)
 }
 
+// restartState mirrors the Daemon's RestartState (emberloop-web/restart.go):
+// what a pending restart still waits on. Parsed loosely so an older Daemon
+// that answers without it still works.
+type restartState struct {
+	Requested bool      `json:"requested"`
+	Since     time.Time `json:"since"`
+	Drain     string    `json:"drain"`
+	Sessions  []string  `json:"sessions"`
+	Groups    []string  `json:"groups"`
+	Runs      []string  `json:"runs"`
+	Starting  int       `json:"starting"`
+	Mining    bool      `json:"mining"`
+}
+
+// describe renders the state as one line: when the restart was requested and
+// what still blocks the drain, or that nothing blocks it.
+func (s restartState) describe() string {
+	var waiting []string
+	if len(s.Sessions) > 0 {
+		waiting = append(waiting, "sessions "+strings.Join(s.Sessions, ","))
+	}
+	if len(s.Groups) > 0 {
+		waiting = append(waiting, "groups "+strings.Join(s.Groups, ","))
+	}
+	if len(s.Runs) > 0 {
+		waiting = append(waiting, "runs "+strings.Join(s.Runs, ","))
+	}
+	if s.Starting > 0 {
+		waiting = append(waiting, fmt.Sprintf("starting %d", s.Starting))
+	}
+	if s.Mining {
+		waiting = append(waiting, "mining")
+	}
+	since := s.Since.Format(time.RFC3339)
+	if s.Since.IsZero() {
+		since = "unknown time"
+	}
+	if len(waiting) == 0 {
+		return fmt.Sprintf("requested at %s (drain %s), nothing blocking", since, s.Drain)
+	}
+	return fmt.Sprintf("requested at %s (drain %s), waiting on %s", since, s.Drain, strings.Join(waiting, "; "))
+}
+
+// restartPollInterval spaces the /api/health polls while waiting for the
+// Daemon to go down and come back. A var so tests can shrink it; production
+// keeps the 500ms pace.
+var restartPollInterval = 500 * time.Millisecond
+
 func requestRestart(base, token string, wait bool, out io.Writer, timeout time.Duration) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest(http.MethodPost, base+"/api/restart", nil)
@@ -54,7 +103,7 @@ func requestRestart(base, token string, wait bool, out io.Writer, timeout time.D
 	if err != nil {
 		return fmt.Errorf("el restart: Daemon at %s unreachable: %w", base, err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("el restart: Daemon refused the machine token: set EL_WEB_TOKEN to the token in <state dir>/enderbloom/daemon.token")
 	}
@@ -62,6 +111,12 @@ func requestRestart(base, token string, wait bool, out io.Writer, timeout time.D
 		return fmt.Errorf("el restart: Daemon answered %s (is it an older build? run el update)", resp.Status)
 	}
 	fmt.Fprintln(out, "restart requested: running Runs pause, Sessions drain, the Daemon re-executes and resumes the Runs")
+	var res struct {
+		State *restartState `json:"state"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err == nil && res.State != nil {
+		fmt.Fprintln(out, "restart state: "+res.State.describe())
+	}
 	if !wait {
 		return nil
 	}
@@ -75,7 +130,7 @@ func requestRestart(base, token string, wait bool, out io.Writer, timeout time.D
 			fmt.Fprintln(out, "Daemon is back")
 			return nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(restartPollInterval)
 	}
 	return fmt.Errorf("el restart: Daemon did not come back within %s", timeout)
 }

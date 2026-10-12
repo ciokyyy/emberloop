@@ -385,15 +385,7 @@ func (e errorString) Error() string { return string(e) }
 // graphGitRepo is a temp git repo with one commit, for Spawn fixtures.
 func graphGitRepo(t *testing.T) string {
 	t.Helper()
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	return repo
 }
 

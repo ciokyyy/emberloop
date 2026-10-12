@@ -30,6 +30,7 @@ func postRunJSON(t *testing.T, base, path string, body any) (int, runJSON, strin
 }
 
 func TestTicketPauseSwitchResumeKeepsBranchAndWIP(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -126,6 +127,7 @@ func TestTicketPauseSwitchResumeKeepsBranchAndWIP(t *testing.T) {
 }
 
 func TestRunPauseSwitchResumeReplacesWorkersManually(t *testing.T) {
+	t.Parallel()
 	tickets := map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -197,6 +199,7 @@ func TestRunPauseSwitchResumeReplacesWorkersManually(t *testing.T) {
 }
 
 func TestRunSwitchRequiresPause(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -208,6 +211,7 @@ func TestRunSwitchRequiresPause(t *testing.T) {
 }
 
 func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -274,6 +278,7 @@ func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
 }
 
 func TestRunResumePreservesStartedAndUnstartedTicketPauses(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",

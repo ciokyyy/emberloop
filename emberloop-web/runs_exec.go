@@ -91,6 +91,10 @@ type storedReview struct {
 	Findings []ReviewFinding `json:"findings,omitempty"`
 	Ran      []ReviewRan     `json:"ran,omitempty"`
 	PatchID  string          `json:"patchId,omitempty"`
+	// Note carries how the verdict reached its tip without a rerun: a
+	// selective carry reads "carried from <short-T1>". Empty on fresh
+	// verdicts and same-tip or patch-id reuses.
+	Note string `json:"note,omitempty"`
 }
 
 // runWarning is one overlap warning Event on a Run: at each Ticket merge
@@ -165,6 +169,12 @@ type runState struct {
 	// BaseCheckCache stores each spec-branch tip's repo-check result. A tip is
 	// checked once per Run, and the cache survives a Daemon restart.
 	BaseCheckCache map[string]baseCheckResult `json:"baseCheckCache,omitempty"`
+	// TipCheckCache stores each Ticket tip's repo-check result for the
+	// pre-review tip gate, one check per tip per Run, surviving a restart.
+	TipCheckCache map[string]baseCheckResult `json:"tipCheckCache,omitempty"`
+	// TipRedTold records, per ticket, the tip already returned to the Worker
+	// as red, so the driver tells once per tip instead of every pass.
+	TipRedTold map[string]string `json:"tipRedTold,omitempty"`
 	// Warnings holds the overlap warnings published at Ticket merges: one
 	// entry per live spec branch this Run's changed files intersect with.
 	// It survives a restart in the Run file and streams with the Run table.
@@ -191,7 +201,9 @@ type runState struct {
 	Rounds map[string][]ticketRound `json:"rounds,omitempty"`
 	// NeedsYouReason holds the needs-you alert text per ticket: the same
 	// refusal x3, idle 10m or stall-nudge message from the driver Notify,
-	// or a reviewer-format error needing the user.
+	// a reviewer-format error needing the user, or a worktree block (a stale
+	// branch or worktree the start could not reuse, through
+	// markStartBlockedNeedsYou rather than the driver Notify).
 	NeedsYouReason map[string]string `json:"needsYouReason,omitempty"`
 	// pushedNeedsYou is the needs-you reason last pushed per ticket, so the
 	// driver pushing every pass still notifies once per reason. Memory only:
@@ -236,6 +248,11 @@ type runState struct {
 	// large N is allowed and selects nothing in a small run. It is a Run
 	// setting and is recorded in the Run file.
 	RecallOffN int `json:"recallOffN,omitempty"`
+	// NoStopAfterSubmit is the Run opt-out of stop-after-submit: by default
+	// an accepted terminal Worker (done/blocked) or Reviewer (pass/changes)
+	// submit ends its turn at once, so no summary streams afterwards. It is
+	// a Run setting and is recorded in the Run file.
+	NoStopAfterSubmit bool `json:"noStopAfterSubmit,omitempty"`
 	// RecallOff marks the tickets whose Worker runs with recall off, by
 	// ticket ID. Assigned at worker start from RecallOffN in ticket order,
 	// stable across retries and resumes; old Run files without it read as
@@ -244,6 +261,9 @@ type runState struct {
 	// ResumeOnRestart marks a Run that a graceful restart paused: the next
 	// Daemon resumes it on its own (ResumeAfterRestart). A Pause by hand
 	// never sets it.
+	// IdlePaused marks a Run the driver paused because every open Ticket is
+	// paused by the user; resuming one of those Tickets resumes the Run.
+	IdlePaused      bool                    `json:"idlePaused,omitempty"`
 	ResumeOnRestart bool                    `json:"resumeOnRestart,omitempty"`
 	Rows            map[string]savedRow     `json:"rows,omitempty"`
 	Chains          map[string][]chainEntry `json:"chains,omitempty"`
@@ -251,12 +271,18 @@ type runState struct {
 	// ChainPendingSubmit invalidates an old Worker done submit on a provider
 	// Chain failure until the replacement Worker submits done.
 	ChainPendingSubmit map[string]bool `json:"chainPendingSubmit,omitempty"`
-	chainHandling      map[string]bool `json:"-"`
-	SpecRun            el.SpecRun      `json:"-"`
-	Driver             *el.DriverRun   `json:"-"`
-	notify             chan struct{}   `json:"-"`
-	unpause            chan struct{}   `json:"-"`
-	driving            bool            `json:"-"`
+	// StartBlocked holds the worktree-block reason per ticket: a stale
+	// branch or worktree an earlier Run left behind that the start could
+	// not safely reuse. The driver treats a blocked ticket as parked (no
+	// start, no finish, slot freed) while NeedsYouReason shows the remedy;
+	// retry clears it. Old run files without it still load.
+	StartBlocked  map[string]string `json:"startBlocked,omitempty"`
+	chainHandling map[string]bool   `json:"-"`
+	SpecRun       el.SpecRun        `json:"-"`
+	Driver        *el.DriverRun     `json:"-"`
+	notify        chan struct{}     `json:"-"`
+	unpause       chan struct{}     `json:"-"`
+	driving       bool              `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -268,7 +294,18 @@ const runPollInterval = 500 * time.Millisecond
 // older worker slot. Empty when neither is set, so the caller falls back to
 // the Session default.
 func roleWorkerConfig() (harness, model, effort string) {
-	roles := readRoles()
+	return lookupWorkerRole(readRoles())
+}
+
+// daemonRoleWorkerConfig reads this Daemon's Run worker harness, model and
+// effort from its settings roles.
+func (d *Daemon) daemonRoleWorkerConfig() (harness, model, effort string) {
+	return lookupWorkerRole(d.settingsRoles())
+}
+
+// lookupWorkerRole resolves the worker slot from a decoded roles map: shared
+// by the host reader and the Daemon-scoped test seam.
+func lookupWorkerRole(roles map[string]roleSetting) (harness, model, effort string) {
 	for _, name := range []string{"implementer", "worker"} {
 		r, ok := roles[name]
 		if !ok || r.Harness == "" || r.Model == "" {
@@ -493,19 +530,39 @@ func (d *Daemon) reviewPatchIDFor(runID, ticketID, tip string) string {
 }
 
 // gitPatchID pipes `git diff base tip` into `git patch-id` and returns the
-// patch id. Empty on any failure or empty diff.
+// patch id. Empty on any failure or empty diff. Git subprocesses can fail
+// transiently under parallel-test load (fork pressure, index reads), so the
+// diff and patch-id steps retry briefly before giving up; callers already
+// degrade to tip equality on empty, so a persistent failure only costs a
+// re-review, never a wrong reuse.
 func gitPatchID(repo, base, tip string) string {
-	diff := exec.Command("git", "diff", base, tip)
-	diff.Dir = repo
-	raw, err := diff.Output()
-	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
+	var raw []byte
+	for attempt := 0; attempt < 3; attempt++ {
+		diff := exec.Command("git", "diff", base, tip)
+		diff.Dir = repo
+		out, err := diff.Output()
+		if err == nil {
+			raw = out
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return ""
 	}
 	for _, args := range [][]string{{"patch-id", "--stable"}, {"patch-id"}} {
-		patch := exec.Command("git", args...)
-		patch.Dir = repo
-		patch.Stdin = bytes.NewReader(raw)
-		out, err := patch.Output()
+		var out []byte
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			patch := exec.Command("git", args...)
+			patch.Dir = repo
+			patch.Stdin = bytes.NewReader(raw)
+			out, err = patch.Output()
+			if err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		if err != nil {
 			continue
 		}
@@ -621,12 +678,13 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Spec       string `json:"spec"`
-		Repo       string `json:"repo"`
-		Harness    string `json:"harness"`
-		Model      string `json:"model"`
-		Effort     string `json:"effort"`
-		RecallOffN int    `json:"recallOffN"`
+		Spec              string `json:"spec"`
+		Repo              string `json:"repo"`
+		Harness           string `json:"harness"`
+		Model             string `json:"model"`
+		Effort            string `json:"effort"`
+		RecallOffN        int    `json:"recallOffN"`
+		NoStopAfterSubmit bool   `json:"noStopAfterSubmit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Spec == "" {
 		http.Error(w, "spec is required", http.StatusBadRequest)
@@ -672,7 +730,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "spec is not inside the repo", http.StatusBadRequest)
 		return
 	}
-	harness, model, effort := roleWorkerConfig()
+	harness, model, effort := d.daemonRoleWorkerConfig()
 	if harness == "" {
 		harness = req.Harness
 	}
@@ -724,6 +782,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Model:              model,
 		Effort:             effort,
 		RecallOffN:         req.RecallOffN,
+		NoStopAfterSubmit:  req.NoStopAfterSubmit,
 		CreatedAt:          time.Now().UTC(),
 		Owner:              creator.ID,
 		SpecBranch:         specRun.Branch,
@@ -745,9 +804,10 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		NeedsYouReason:     map[string]string{},
 		Followups:          map[string]string{},
 		Rows:               map[string]savedRow{},
-		Chains:             configuredRunChains(harness, model, effort),
+		Chains:             d.daemonConfiguredRunChains(harness, model, effort),
 		ChainExhausted:     map[string]bool{},
 		ChainPendingSubmit: map[string]bool{},
+		StartBlocked:       map[string]string{},
 		SpecRun:            specRun,
 		Driver:             el.NewDriverRun(nil),
 		Parked:             map[string]bool{},
@@ -795,7 +855,14 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	}
 	res, err := el.RunDriver(rs.SpecRun, world)
 	var final finalMergeOutcome
-	if err == nil && rs.SpecBranch != "" {
+	// The driver exits when nothing runs and nothing can start: with every
+	// open Ticket paused by the user that is a wait, not a conclusion. The
+	// Run pauses until a Ticket resumes, instead of reading as done or
+	// running the final merge over unmerged Tickets.
+	d.mu.Lock()
+	waitsOnPausedTicket := err == nil && runHasPausedOpenTicketLocked(rs)
+	d.mu.Unlock()
+	if err == nil && !waitsOnPausedTicket && rs.SpecBranch != "" {
 		final = d.finalMergeReadiness(id, res)
 		if !final.NeedsYou {
 			final, err = d.finalizeSpecRun(id)
@@ -814,7 +881,10 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 			rs.Merged[m.ID] = m.SHA
 		}
 	}
-	if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou && rs.Status != runStatusPaused {
+	if waitsOnPausedTicket && rs.Status == runStatusRunning {
+		rs.Status = runStatusPaused
+		rs.IdlePaused = true
+	} else if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou && rs.Status != runStatusPaused {
 		if err != nil {
 			rs.Status = runStatusFailed
 			rs.Error = err.Error()
@@ -853,9 +923,17 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			userParked := rs.Parked[ticketID] || rs.TicketPaused[ticketID]
 			started := rs.Sessions[ticketID] != ""
 			discarded := rs.Discarded[ticketID]
+			// A worktree-blocked Ticket (a stale branch or worktree the start
+			// could not reuse) sits out like a red base: the slot frees, the
+			// driver neither starts nor finishes it, and NeedsYouReason shows
+			// the remedy until a retry clears it.
+			worktreeBlocked := rs.StartBlocked[ticketID] != ""
 			repo, specBranch, runID := rs.Repo, rs.SpecBranch, rs.ID
 			d.mu.Unlock()
 			if discarded {
+				return true
+			}
+			if worktreeBlocked {
 				return true
 			}
 			if userParked || started || specBranch == "" {
@@ -931,11 +1009,18 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			defer d.mu.Unlock()
 			return !sessionLimitCapped(d.sessions[rs.Sessions[ticketID]])
 		},
+		// Working dates activity while the worker's turn runs. A long
+		// foreground tool call (a minutes-long go test) emits no commits,
+		// verdicts or submits, so an in-flight tool call also counts as
+		// busy, up to runToolActiveCap (see runs_toolactive.go).
 		Working: func(ticketID string) bool {
 			d.mu.Lock()
 			defer d.mu.Unlock()
 			s, ok := d.sessions[rs.Sessions[ticketID]]
-			return ok && s.meta.Status == "working"
+			if !ok {
+				return false
+			}
+			return s.meta.Status == "working" || sessionToolActiveLocked(s, d.now())
 		},
 		Submits: func(ticketID string) int {
 			return d.runSubmitCount(rs.ID, ticketID)
@@ -1009,8 +1094,8 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		Sleep: func(wait time.Duration) {
 			d.snapshotAndPersist(rs.ID)
 			d.pauseGate(rs.ID)
-			if wait > runPollInterval {
-				wait = runPollInterval
+			if cap := d.pollIntervalOrDefault(); wait > cap {
+				wait = cap
 			}
 			time.Sleep(wait)
 		},
@@ -1314,7 +1399,7 @@ func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
 	}
-	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined.", ticketID, spec, reviewerType, axis, branch, tip)
+	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined. "+reviewerScopeRule, ticketID, spec, reviewerType, axis, branch, tip)
 }
 
 // declinedFindingsPrompt adds prior Worker declines to each later review. The
@@ -1349,16 +1434,10 @@ func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 	return reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip, nil)
 }
 
+// reviewerPromptWithDeclined adds prior Worker declines; the extras variant
+// also carries the driver-check evidence, scope warning and round-4+ note.
 func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string, declined []declinedReviewFinding) string {
-	brief := standardsBrief
-	if reviewerType == reviewerSpecType {
-		brief = specBrief
-	}
-	prefix := reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip)
-	if feedback := declinedFindingsPrompt(declined); feedback != "" {
-		prefix += "\n\n" + feedback
-	}
-	return prefix + "\n\n" + brief
+	return reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip, declined, "", "", "")
 }
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
@@ -1937,10 +2016,16 @@ func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
 // done again, so they keep their context across Passes: a re-review is a new
 // message in the same Session, never a new Session. Each prompt queues its
 // tip as owed; a verdict answers the oldest queued tip, so a Worker commit
-// between prompts never lets a T1 judgement read fresh at T2. A done at the
+// between prompts never lets a T1 judgement read fresh at T2. Before any
+// Reviewer starts, the tip gate runs the repo check on the tip: a red tip
+// returns to the Worker with the failing output and spends no Reviewer turn,
+// while a green tip is passed to Reviewer prompts as evidence. A done at the
 // already-judged tip, or at a new tip whose diff patch-id against the base
 // is unchanged (a rebase), reuses the verdicts with no Reviewer turn: a
 // patch-identical verdict is carried to the new tip so the gate reads fresh.
+// A seat that passed at T1 while the other said changes is selectively
+// carried to T2 without a rerun when the T1..T2 diff is safe (no cited
+// files, few changed lines, same scope); otherwise it is re-prompted.
 // A Reviewer turn that ended without a recorded verdict at the current tip
 // counts as no verdict: the Ticket stays under review and never merges on
 // it. It spawns nothing before the first done submit. A refused
@@ -2002,6 +2087,11 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	if err != nil || tip == "" {
 		return
 	}
+	// The tip gate: a red repo check returns the tip to the Worker with the
+	// failing output and spends no Reviewer turn.
+	if d.checkTipBeforeReview(runID, ticketID, tip) {
+		return
+	}
 	// The short-circuit patch id: a rebase that kept the diff identical
 	// reuses both verdicts with no Reviewer turn.
 	curPatch := d.reviewPatchIDFor(runID, ticketID, tip)
@@ -2010,6 +2100,10 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 			return
 		}
 	}
+	// Selective re-review: a seat that passed at T1 while the other said
+	// changes keeps its pass at T2 without a rerun when the T1..T2 diff is
+	// safe (no cited files, few changed lines, same scope). Runs unlocked.
+	carry := d.selectiveCarryFor(runID, ticketID, tip)
 	d.mu.Lock()
 	rs, ok = d.runs[runID]
 	if !ok {
@@ -2038,9 +2132,26 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 			reuse[typ] = true
 		}
 	}
+	// A selectively carried pass joins the reuse set with its T1 noted, so
+	// the gate reads it fresh at the new tip and the round holds it without
+	// a prompt. The final merge still needs both seats fresh or carried.
+	carryNote := map[string]string{}
+	for typ, t1 := range carry {
+		if reuse[typ] {
+			continue
+		}
+		if r, ok := rs.Reviews[ticketID][typ]; ok && r.Verdict == "pass" && r.At != tip {
+			reuse[typ] = true
+			carryNote[typ] = t1
+		}
+	}
 	for typ := range reuse {
 		if r := rs.Reviews[ticketID][typ]; r.At != tip {
 			r.At = tip
+			r.Note = ""
+			if t1, ok := carryNote[typ]; ok {
+				r.Note = "carried from " + t1
+			}
 			rs.Reviews[ticketID][typ] = r
 		}
 	}
@@ -2058,6 +2169,40 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		rs.ReviewStarted[ticketID] = map[string]time.Time{}
 	}
 	_, need := appendRoundLocked(rs, ticketID, tip, now, reuse)
+	// A verdict can land before its round exists: runStartReviewer prompts
+	// before ensureReviewers opens the round, so under load a fast turn
+	// records its verdict while the other seat still starts. Backfill those
+	// early verdicts at this tip into the new round so Reviews and Rounds
+	// never diverge; stale tips stay out because only At==tip backfills.
+	if rounds := rs.Rounds[ticketID]; len(rounds) > 0 {
+		last := &rounds[len(rounds)-1]
+		for typ, t1 := range carryNote {
+			if rv, ok := last.Reviews[typ]; ok {
+				rv.Note = "carried from " + t1
+				last.Reviews[typ] = rv
+			}
+		}
+		for _, typ := range requiredReviewerTypes {
+			if _, ok := last.Reviews[typ]; ok {
+				continue
+			}
+			if r, ok := rs.Reviews[ticketID][typ]; ok && r.Verdict != "" && r.At == tip {
+				var dur int64
+				if st := rs.ReviewStarted[ticketID][typ]; !st.IsZero() {
+					dur = now.Sub(st).Milliseconds()
+					if dur < 0 {
+						dur = 0
+					}
+				}
+				if last.Reviews == nil {
+					last.Reviews = map[string]roundReview{}
+				}
+				last.Reviews[typ] = roundReview{Verdict: r.Verdict, Findings: append([]ReviewFinding(nil), r.Findings...), At: tip, DurationMs: dur}
+			}
+		}
+		closeRoundIfCompleteLocked(rs, ticketID, now)
+		rs.Rounds[ticketID] = rounds
+	}
 	for _, typ := range requiredReviewerTypes {
 		if !need[typ] {
 			continue
@@ -2070,12 +2215,16 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	d.broadcastRunLocked(rs)
 	declined := declinedFindingsForRounds(rs.Rounds[ticketID])
 	d.mu.Unlock()
+	// Re-review prompts carry the green driver-check evidence (so reviewers
+	// need not rerun the full suite), the scope warning and the round-4+
+	// note. All three are non-blocking additions to the gate prompt.
+	evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip)
 	for _, typ := range requiredReviewerTypes {
 		if !need[typ] {
 			continue
 		}
 		if sess := existing[typ]; sess != "" {
-			_ = d.runTellSession(sess, reviewerPromptWithDeclined(ticketID, spec, typ, branch, tip, declined))
+			_ = d.runTellSession(sess, reviewerPromptWithExtras(ticketID, spec, typ, branch, tip, declined, evidence, scope, late))
 		}
 	}
 }
@@ -2229,6 +2378,16 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	d.persistResumeToken(be, meta.ID)
 	d.appendEvent(meta.ID, "status", "", "idle")
 	prompt := buildReviewerFirstPromptWithDeclined(ticketID, spec, ticketFile, reviewerType, branch, tip, worktree, repo, base, declined)
+	// First prompts carry the same non-blocking extras as re-reviews: green
+	// driver-check evidence (cached only), the scope warning and the
+	// round-4+ note.
+	if evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip); evidence != "" || scope != "" || late != "" {
+		for _, extra := range []string{evidence, scope, late} {
+			if extra != "" {
+				prompt += "\n\n" + extra
+			}
+		}
+	}
 	d.mu.Lock()
 	if s, ok := d.sessions[meta.ID]; ok {
 		s.busy = true
@@ -2575,6 +2734,16 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				return fmt.Errorf("could not read HEAD in %s: %w", repo, err)
 			}
 		}
+		// An earlier Run may have left this ticket's branch or worktree
+		// behind. Reuse or clean what holds no unique work; anything else
+		// becomes a ticket Needs-you with the remedy, so the rest of the
+		// Run keeps going instead of failing the whole Run at this ticket.
+		if blocked, err := reconcileTicketWorktree(repo, branch, worktree, base); err != nil {
+			return err
+		} else if blocked != "" {
+			d.markStartBlockedNeedsYou(runID, tk.ID, startBlockedReason(tk.ID, blocked))
+			return nil
+		}
 		if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
 			return err
 		}
@@ -2651,7 +2820,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				}
 				// Freeze the cap wait while paused instead of burning retries.
 				d.pauseGate(runID)
-				time.Sleep(runPollInterval)
+				time.Sleep(d.pollIntervalOrDefault())
 			}
 			if startExhausted {
 				cleanup()
@@ -2720,6 +2889,16 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		setChainPosition(rs, tk.ID, "worker", chainPos)
 		if rs.ChainExhausted != nil {
 			delete(rs.ChainExhausted, tk.ID)
+		}
+		// A start after the user resolved a worktree block clears it. Only
+		// the block's own banner goes: any other Needs-you reason stays.
+		if rs.StartBlocked != nil {
+			if reason, ok := rs.StartBlocked[tk.ID]; ok {
+				delete(rs.StartBlocked, tk.ID)
+				if rs.NeedsYouReason != nil && rs.NeedsYouReason[tk.ID] == reason {
+					delete(rs.NeedsYouReason, tk.ID)
+				}
+			}
 		}
 		rs.Sessions[tk.ID] = meta.ID
 		rs.Branches[tk.ID] = branch
@@ -3568,8 +3747,9 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		"id": rs.ID, "spec": rs.Spec, "title": el.SpecTitle(rs.Spec), "repo": rs.Repo, "status": rs.Status,
 		"owner":   rs.Owner,
 		"harness": rs.Harness, "model": rs.Model, "effort": rs.Effort,
-		"recallOffN": rs.RecallOffN,
-		"specBranch": rs.SpecBranch, "specBase": rs.SpecBase, "specBehind": specBehind,
+		"recallOffN":        rs.RecallOffN,
+		"noStopAfterSubmit": rs.NoStopAfterSubmit,
+		"specBranch":        rs.SpecBranch, "specBase": rs.SpecBase, "specBehind": specBehind,
 		"warnings":  warnings,
 		"createdAt": rs.CreatedAt, "error": rs.Error, "finalMergeFiles": rs.FinalMergeFiles, "tickets": tickets,
 	}
@@ -3967,6 +4147,25 @@ func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, 
 		writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 		return
 	}
+	// A done submit needs committed work: the worktree must be clean and the
+	// Ticket branch must hold a commit ahead of its base. Like the refusals
+	// above this is a tool error (409) telling the Worker to commit. It runs
+	// after the merged-ticket early return, so a post-merge done stays an
+	// idempotent accept.
+	{
+		tip := ""
+		if branch := rs.Branches[workerTicket]; branch != "" {
+			if sha, err := runGit(rs.Repo, "rev-parse", branch); err == nil {
+				tip = sha
+			}
+		}
+		base := ticketBranchBase(rs.Repo, rs.Targets[workerTicket], rs.Bases[workerTicket], tip)
+		if why := refuseUncommittedWork(rs.Repo, rs.Branches[workerTicket], base, rs.Worktrees[workerTicket], tip); why != "" {
+			d.mu.Unlock()
+			writeJSON(w, http.StatusConflict, map[string]any{"error": why})
+			return
+		}
+	}
 	count := d.storeSubmitLocked(id, workerTicket, rs, "done", completed, report, summary)
 	if rs.Followups == nil {
 		rs.Followups = map[string]string{}
@@ -4256,6 +4455,9 @@ func (d *Daemon) loadRuns() {
 		if rs.ChainPendingSubmit == nil {
 			rs.ChainPendingSubmit = map[string]bool{}
 		}
+		if rs.StartBlocked == nil {
+			rs.StartBlocked = map[string]string{}
+		}
 		// Older Run rows could persist Worker Chain positions but not the
 		// pending-submit marker. Recover it from a fallback position or a failed
 		// active Worker whose last-turn error advances the Chain.
@@ -4439,6 +4641,7 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	rs.SpecRun = specRun
 	preparePausedRunChainFailuresLocked(d, rs)
 	rs.Status = runStatusRunning
+	rs.IdlePaused = false
 	rs.ResumeOnRestart = false
 	// A failed Run or final-gate Needs-you resumes from saved state: merged
 	// Tickets and their Sessions stay, and the gate diagnostics clear.
@@ -4597,6 +4800,12 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 	if rs.ChainExhausted != nil {
 		delete(rs.ChainExhausted, ticketID)
 	}
+	// A retry after a worktree block lets the next Resume start over: the
+	// new driver loop seeds unstarted, reconciles again and clears the
+	// block on success.
+	if rs.StartBlocked != nil {
+		delete(rs.StartBlocked, ticketID)
+	}
 	if rs.pushedNeedsYou != nil {
 		delete(rs.pushedNeedsYou, ticketID)
 	}
@@ -4686,6 +4895,11 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 	if rs.Parked != nil {
 		delete(rs.Parked, ticketID)
 	}
+	// A discarded worktree block goes with the ticket: there is nothing
+	// left to start, so no retry can revive it.
+	if rs.StartBlocked != nil {
+		delete(rs.StartBlocked, ticketID)
+	}
 	d.writeTicketRun(w, rs)
 	// Best effort like the start cleanup: the discard stands even when git
 	// has nothing left to remove.
@@ -4695,4 +4909,15 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 	if branch != "" {
 		_, _ = runGit(repo, "branch", "-D", branch)
 	}
+}
+
+// runHasPausedOpenTicketLocked reports whether some Ticket is paused by the
+// user and neither merged nor discarded. Callers hold d.mu.
+func runHasPausedOpenTicketLocked(rs *runState) bool {
+	for id, paused := range rs.TicketPaused {
+		if paused && rs.Merged[id] == "" && !rs.Discarded[id] {
+			return true
+		}
+	}
+	return false
 }

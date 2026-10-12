@@ -64,8 +64,9 @@ var GraphHiddenTools = []string{
 // missing graph never stalls a session.
 const DefaultGraphGateWait = 15 * time.Second
 
-// graphGatePoll is the pause between index_status checks while waiting.
-const graphGatePoll = 500 * time.Millisecond
+// graphGatePoll is the pause between index_status checks while waiting. A var
+// so tests can shrink it; production keeps the 500ms pace.
+var graphGatePoll = 500 * time.Millisecond
 
 // GraphProjectSlug names the graph project for a worktree: the absolute path
 // with separators folded to dashes, plus a short hash of the full path, so two

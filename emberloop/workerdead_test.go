@@ -160,15 +160,7 @@ func TestDeadPaneWorkerIsCancelledByThePrune(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	ticket := filepath.Join(repo, "dead-c.md")
 	if err := os.WriteFile(ticket, []byte("# dead-c\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -289,15 +281,7 @@ func TestRespawnReusesCancelledWorktreeAndBranch(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	ticket := filepath.Join(repo, "dead-e.md")
 	if err := os.WriteFile(ticket, []byte("# dead-e\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -533,15 +517,7 @@ func TestSpawnRefusesAStrayWorktreePath(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	ticket := filepath.Join(repo, "stray-x.md")
 	if err := os.WriteFile(ticket, []byte("# stray-x\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -569,15 +545,7 @@ func TestRespawnReusesCancelledBranchWithCommits(t *testing.T) {
 	statePath = filepath.Join(t.TempDir(), "workers.json")
 	t.Cleanup(func() { statePath = oldState })
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	ticket := filepath.Join(repo, "dead-f.md")
 	if err := os.WriteFile(ticket, []byte("# dead-f\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -623,15 +591,7 @@ func TestRespawnReusesCancelledBranchWithCommits(t *testing.T) {
 // Git lists resolved real paths, so a repo reached through a symlink still
 // matches its registered worktree.
 func TestWorktreeRegisteredThroughSymlink(t *testing.T) {
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	tree := worktreePath(repo, "sym-x")
 	gitOut(t, repo, "worktree", "add", "-q", "-b", "implement/sym-x", tree, "main")
 	linked := filepath.Join(t.TempDir(), "linked-repo")

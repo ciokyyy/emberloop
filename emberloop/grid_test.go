@@ -650,7 +650,7 @@ func TestGridPlacementSurvivesSimultaneousSessions(t *testing.T) {
 		"EL_CONCURRENCY_HERDR":    herdrDir,
 		"EL_CONCURRENCY_TAB":      "w1:t1",
 		"EL_CONCURRENCY_OVERFLOW": "scouts",
-		"EL_CONCURRENCY_DELAY_MS": "50",
+		"EL_CONCURRENCY_DELAY_MS": "25",
 	}, nil)
 
 	slots := map[string]string{}
@@ -725,7 +725,7 @@ func TestGridOverflowCreatesOneTabAcrossSessions(t *testing.T) {
 		"EL_CONCURRENCY_STATE":    stateFile,
 		"EL_CONCURRENCY_HERDR":    herdrDir,
 		"EL_CONCURRENCY_OVERFLOW": "scouts",
-		"EL_CONCURRENCY_DELAY_MS": "50",
+		"EL_CONCURRENCY_DELAY_MS": "25",
 	}, tabFor)
 
 	placed := map[string]string{}
@@ -808,7 +808,7 @@ func TestGridDirectAndOverflowPlacementsShareOneTab(t *testing.T) {
 		"EL_CONCURRENCY_STATE":    stateFile,
 		"EL_CONCURRENCY_HERDR":    herdrDir,
 		"EL_CONCURRENCY_OVERFLOW": "scouts",
-		"EL_CONCURRENCY_DELAY_MS": "50",
+		"EL_CONCURRENCY_DELAY_MS": "25",
 	}, tabFor)
 
 	placed := map[string]string{}

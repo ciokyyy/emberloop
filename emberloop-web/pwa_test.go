@@ -11,6 +11,7 @@ import (
 // The installable shell: manifest, worker and icons serve with the headers
 // install and push depend on.
 func TestServesPWAInstallFiles(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -107,6 +108,7 @@ func TestServesPWAInstallFiles(t *testing.T) {
 
 // The shell entry still advertises the manifest and install meta.
 func TestIndexAdvertisesPWA(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

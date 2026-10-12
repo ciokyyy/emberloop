@@ -47,6 +47,7 @@ func (t liveEchoTool) ExecutionMode() agent.ToolExecutionMode { return agent.Too
 // to a healthy provider/model (the ticket-01 spike's deepseek model stalls
 // tool-call turns, so it cannot prove execution).
 func TestLivePigBackend(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EL_LIVE_PIG") == "" {
 		t.Skip("set EL_LIVE_PIG=1 and PIG_LIVE_MODEL for the real-pig probe")
 	}

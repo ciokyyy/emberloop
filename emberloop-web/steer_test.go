@@ -109,6 +109,7 @@ func waitGroupedDelivery(t *testing.T, base, parent, child string) {
 
 // Slice 1: a Steer on an idle fake Session runs a turn labelled steer.
 func TestSteerOnIdleRunsLabeledTurn(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -139,6 +140,7 @@ func TestSteerOnIdleRunsLabeledTurn(t *testing.T) {
 
 // Slice 1: a Follow-up on an idle fake Session runs a turn labelled followup.
 func TestFollowupOnIdleRunsLabeledTurn(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -167,6 +169,7 @@ func TestFollowupOnIdleRunsLabeledTurn(t *testing.T) {
 // Slice 2: while a fake Session works, steer and follow-up queue, list, and
 // clear before delivery.
 func TestQueuedModesListAndClearBeforeDelivery(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 400 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
@@ -207,6 +210,7 @@ func TestQueuedModesListAndClearBeforeDelivery(t *testing.T) {
 
 // Slice 3: a queued Follow-up runs after the current fake turn.
 func TestQueuedFollowupRunsAfterTurn(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
@@ -253,6 +257,7 @@ func TestQueuedFollowupRunsAfterTurn(t *testing.T) {
 // Slice 4: a queued Steer on the fake Backend delivers after the turn,
 // labelled steer.
 func TestQueuedSteerDeliversLabeledAfterTurn(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
@@ -284,6 +289,7 @@ func TestQueuedSteerDeliversLabeledAfterTurn(t *testing.T) {
 // Slice 5: a Steer to a working claude Session degrades to a Follow-up; the
 // transcript shows it as one, with the text untouched.
 func TestClaudeSteerDegradesToFollowup(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -324,6 +330,7 @@ func TestClaudeSteerDegradesToFollowup(t *testing.T) {
 // An idle claude Steer needs no degradation: nothing runs, so it starts a
 // turn at once labelled steer.
 func TestClaudeSteerOnIdleKeepsSteerLabel(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{updates: []map[string]any{chunk("done")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -354,6 +361,7 @@ func TestClaudeSteerOnIdleKeepsSteerLabel(t *testing.T) {
 
 // Steer and follow-up validation: unknown Session, empty text, ended.
 func TestSteerFollowupValidation(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -419,6 +427,7 @@ func startChainedSlowTurns(t *testing.T, base, id string) {
 // pending list clears over HTTP, and the SDK native queues clear through
 // the backend seam.
 func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
+	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -468,6 +477,7 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 // recovers: transition flags single-flight the resume and fence the
 // release, so a stale release never kills a freshly resumed process.
 func TestSendDuringTransitionAnswers409(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -526,6 +536,7 @@ func (s *steerStub) Steer(acpID, text string) (bool, error) {
 // A Steer to a working claude Session whose adapter advertises steering is
 // injected: it is not queued and the transcript keeps the steer label.
 func TestClaudeSteerInjectsWhenAdapterSupportsIt(t *testing.T) {
+	t.Parallel()
 	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}, outcome: true}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -582,6 +593,7 @@ func TestClaudeSteerInjectsWhenAdapterSupportsIt(t *testing.T) {
 // promptRequired from the adapter (no turn running) falls back to a labelled
 // Follow-up.
 func TestClaudeSteerFallsBackWhenNotInjected(t *testing.T) {
+	t.Parallel()
 	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -608,6 +620,7 @@ func TestClaudeSteerFallsBackWhenNotInjected(t *testing.T) {
 // context arrives as injected content only when a WorkDir is present, never
 // as a read-these-files instruction.
 func TestClaudeMetaCarriesSystemPrompt(t *testing.T) {
+	t.Parallel()
 	meta := newStubClaudeBackend(nil).strippingMeta("sonnet")
 	sp, _ := meta["systemPrompt"].(string)
 	if !strings.Contains(sp, "level: ultra") {
@@ -620,6 +633,7 @@ func TestClaudeMetaCarriesSystemPrompt(t *testing.T) {
 
 // Messages queued behind a running turn go out as one message, in order.
 func TestQueuedMessagesMergeIntoOne(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)

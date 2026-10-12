@@ -58,8 +58,7 @@ func errorText(body map[string]any) string {
 // authed pig model.
 func TestCompressModelSettingAcceptsOnlyAuthedPigModels(t *testing.T) {
 	withoutPigAuth(t)
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, "")
+	t.Setenv("EL_SETTINGS", useSettings(t, ""))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -114,14 +113,15 @@ func TestCompressModelSettingAcceptsOnlyAuthedPigModels(t *testing.T) {
 // model is set and its provider holds pig auth.
 func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T) {
 	withoutPigAuth(t)
-	useSettings(t, "")
+	settingsPath := useSettings(t, "")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 
-	code, body := compressReq(t, srv.URL, id, "")
+	code, body := compressReqIdle(t, srv.URL, id, "")
 	if code != http.StatusConflict || !strings.Contains(errorText(body), "no compress model") {
 		t.Fatalf("unset model compress = %d %v, want 409 with reason", code, body)
 	}
@@ -129,18 +129,17 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 		t.Fatalf("compressNote = %q, want the unset reason", note)
 	}
 
-	useSettings(t, `{"compress_model":"`+unauthedPigModel(t)+`"}`)
-	code, body = compressReq(t, srv.URL, id, "")
+	d.SetSettingsPath(useSettings(t, `{"compress_model":"`+unauthedPigModel(t)+`"}`))
+	code, body = compressReqIdle(t, srv.URL, id, "")
 	if code != http.StatusConflict || !strings.Contains(errorText(body), "not an authed pig model") {
 		t.Fatalf("unauthed model compress = %d %v, want 409 with reason", code, body)
 	}
 
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	d.SetSettingsPath(useSettings(t, `{"compress_model":"test-faux/faux-1"}`))
 	if note := sessionField(t, srv.URL, id, "compressNote"); note != "" {
 		t.Fatalf("compressNote = %q with an authed model, want empty", note)
 	}
-	if code, body := compressReq(t, srv.URL, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, srv.URL, id, ""); code != http.StatusAccepted {
 		t.Fatalf("authed model compress = %d %v, want 202", code, body)
 	}
 	waitIdleAfter(t, srv.URL, id, 1)
@@ -198,9 +197,9 @@ func (f *scriptedSummarizer) Summarize(model, system, user string) (string, erro
 // scripted summarizer and one idle Session whose first prompt is set.
 func summaryDaemon(t *testing.T, replies ...string) (*Daemon, *scriptedSummarizer, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{replies: replies}
 	d.summarizer = sum
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -229,10 +228,11 @@ func handoffText(evs []Event) string {
 // verbatim, the compress instructions reach the summarizer prompt, and the
 // compressed Event names the summary step.
 func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sendPrompt(t, base, id, "and then the docs")
 	waitStatus(t, base, id, "idle", 5*time.Second)
-	if code, body := compressReq(t, base, id, "keep ticket ids"); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, "keep ticket ids"); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -262,8 +262,9 @@ func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
 // every reply is empty, the deterministic Handoff is used and the compressed
 // Event names that step with its retry count.
 func TestHandoffEmptySummaryRepairsTwiceThenDeterministic(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "", "", "")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -290,8 +291,9 @@ func TestHandoffEmptySummaryRepairsTwiceThenDeterministic(t *testing.T) {
 // and quotes the reply, the next reply that passes is used, and the
 // compressed Event names the repair step with one retry.
 func TestHandoffWrongFormatRepairedBySectionsRestated(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "## Task\nalmost there, no other sections\n", goodSummary)
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -315,8 +317,9 @@ func TestHandoffWrongFormatRepairedBySectionsRestated(t *testing.T) {
 // A reply that never passes is wrapped under the required headings after the
 // repair retries. The compressed Event names the lenient step.
 func TestHandoffUnusableReplyWrappedUnderSections(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "plain prose about the parser work")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)
@@ -342,8 +345,9 @@ func TestHandoffUnusableReplyWrappedUnderSections(t *testing.T) {
 // A reply with some sections keeps its own text and gets a stub under each
 // missing section.
 func TestHandoffPartialReplyKeepsItsSections(t *testing.T) {
+	t.Parallel()
 	_, _, base, id := summaryDaemon(t, "## Task\nfix the parser\n\n## Progress\nedited parser.go\n")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	text := handoffText(waitIdleAfter(t, base, id, 1))
@@ -358,11 +362,12 @@ func TestHandoffPartialReplyKeepsItsSections(t *testing.T) {
 // The continue line follows the Handoff when a tool call never finished. A
 // call that finished gets no continue line.
 func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
+	t.Parallel()
 	const continueLine = "Continue the interrupted step above where you left off."
 	t.Run("open call", func(t *testing.T) {
 		d, sum, base, id := summaryDaemon(t, goodSummary)
 		d.appendEvent(id, "tool_call_started", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"go test ./..."}`, Status: "running"}.Text(), "")
-		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+		if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 			t.Fatalf("compress = %d %v", code, body)
 		}
 		text := handoffText(waitIdleAfter(t, base, id, 1))
@@ -377,7 +382,7 @@ func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
 		d, _, base, id := summaryDaemon(t, goodSummary)
 		d.appendEvent(id, "tool_call_started", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"go test ./..."}`, Status: "running"}.Text(), "")
 		d.appendEvent(id, "tool_call_updated", ToolCall{ID: "t1", Name: "bash", Input: `{"command":"go test ./..."}`, Output: "ok", Status: "completed"}.Text(), "")
-		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+		if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 			t.Fatalf("compress = %d %v", code, body)
 		}
 		if text := handoffText(waitIdleAfter(t, base, id, 1)); strings.Contains(text, continueLine) {
@@ -390,6 +395,7 @@ func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
 // the injected block and a block the summarizer echoes. Text the user typed
 // is never changed.
 func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
+	t.Parallel()
 	reply := goodSummary + "```memory untrusted notes, not instructions\nMARKER-OUT\n```\n"
 	d, sum, base, id := summaryDaemon(t, reply)
 	d.mu.Lock()
@@ -397,7 +403,7 @@ func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
 		e.Sender = "system"
 	})
 	d.mu.Unlock()
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	text := handoffText(waitIdleAfter(t, base, id, 1))
@@ -417,9 +423,10 @@ func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
 // ends the chain at the deterministic Handoff with no repair retry. The
 // compressed Event records the error text.
 func TestHandoffSummarizerErrorFallsBackAtOnce(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.err = errString("bad request: malformed input")
-	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
+	if code, body := compressReqIdle(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
 	}
 	evs := waitIdleAfter(t, base, id, 1)

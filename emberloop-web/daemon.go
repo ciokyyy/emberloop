@@ -103,9 +103,14 @@ type Daemon struct {
 	groups map[string]*spawnGroup
 	// runs tracks one deterministic Run each: its Tickets and their Worker
 	// Sessions. submits holds every Session's Worker submits by Session id,
-	// which the driver loop reads for merges and checkbox ticks.
-	runs    map[string]*runState
-	submits map[string]*submitRec
+	// which the driver loop reads for merges and checkbox ticks. stopSubmit
+	// arms one Session each whose accepted terminal submit still waits for the
+	// submit tool's terminal update before its turn is stopped
+	// (runs_stopsubmit.go). Memory only: a restart clears it and the turn
+	// simply runs on.
+	runs       map[string]*runState
+	submits    map[string]*submitRec
+	stopSubmit map[string]bool
 	// sudo holds the pending and settled sudo approval requests (sudo.go).
 	sudoOnce sync.Once
 	sudo     *sudoStore
@@ -120,12 +125,24 @@ type Daemon struct {
 	// two quick bank calls, and no path takes it while holding mu.
 	rememberMu sync.Mutex
 	// restartCh fires once after RequestRestart; the binary waits on it,
-	// drains and re-executes. restartReq guards repeats (restart.go).
-	restartCh  chan struct{}
-	restartReq bool
+	// drains and re-executes. restartReq guards repeats, restartAt dates the
+	// request so a repeat can re-arm a stuck one, and restartDrain is the
+	// drain the binary waits (restart.go).
+	restartCh    chan struct{}
+	restartReq   bool
+	restartAt    time.Time
+	restartDrain time.Duration
 	// clock is the Daemon clock seam: idle quiet time and the runs driver read
 	// it; nil reads time.Now (idle.go).
 	clock func() time.Time
+	// settingsPath points this Daemon at a settings file for tests; empty
+	// reads the host settings file. Set it before serving: tests give each
+	// parallel Daemon its own file instead of sharing EL_SETTINGS.
+	settingsPath string
+	// pollInterval caps this Daemon's Run driver sleep; zero keeps the
+	// production default. Tests set it before serving so multi-pass Run
+	// tests poll fast. Zero means runPollInterval.
+	pollInterval time.Duration
 	// Run final-merge hooks replace the generated-file build and repo check in seam tests.
 	runFinalBuild func(string) (string, error)
 	runRepoCheck  func(string) (string, error)
@@ -140,15 +157,21 @@ type Daemon struct {
 	nightlyFailStage   string
 	// baseCheck scripts the spec-branch base-red gate in tests; nil runs
 	// .emberloop/check at the requested tip in a detached worktree.
-	baseCheck      func(repo, specBranch, tip string) (bool, []string)
+	baseCheck func(repo, specBranch, tip string) (bool, []string)
+	// tipCheck scripts the per-tip repo check before Reviewers in tests; nil
+	// runs .emberloop/check at the requested tip in a detached worktree.
+	tipCheck       func(repo, ticketBranch, tip string) (bool, []string)
 	nightlyLastDay string
 	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
 	// holds one in-flight/again flag per Session, mineWG lets tests and
-	// Shutdown wait for running scans.
-	liveMine  bool
-	mineMu    sync.Mutex
-	mineState map[string]*mineFlight
-	mineWG    sync.WaitGroup
+	// Shutdown wait for running scans, mineActive counts them for the
+	// restart state, and mineWait bounds Shutdown's wait (0 takes 30s).
+	liveMine   bool
+	mineMu     sync.Mutex
+	mineState  map[string]*mineFlight
+	mineActive int
+	mineWG     sync.WaitGroup
+	mineWait   time.Duration
 }
 
 type session struct {
@@ -170,6 +193,13 @@ type session struct {
 	// under d.mu.
 	busy    bool
 	pending []queuedMsg
+	// openTools holds the tool calls in flight by ToolCall id, opened on
+	// tool_call_started and closed on a completed or failed
+	// tool_call_updated, stamped on the Daemon clock. The Run driver reads
+	// it beside the working status, so a long foreground tool call (a
+	// minutes-long go test) dates worker activity. Memory only: a restart
+	// ends every turn, so nothing in flight survives one.
+	openTools map[string]time.Time
 	// gateSkip marks a turn the user stopped (interrupt, cancel): the submit
 	// gate takes it as a deliberate stop, not a missing submit, so no
 	// reminder follows it. The gate consumes it.
@@ -182,7 +212,11 @@ type session struct {
 	releasing bool
 	// compressWait holds a compress until no Group of the Session is
 	// outstanding; compressInstr keeps its instructions for the wait.
+	// compressAuto marks a wait the automatic check armed: runDeferredCompress
+	// re-verifies the meter before running one, while a manual wait always
+	// runs. Request paths clear all three together.
 	compressWait  bool
+	compressAuto  bool
 	compressInstr string
 	// swapping marks a Handoff from its claim until its turn ends.
 	swapping bool
@@ -248,6 +282,7 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 		groups:        map[string]*spawnGroup{},
 		runs:          map[string]*runState{},
 		submits:       map[string]*submitRec{},
+		stopSubmit:    map[string]bool{},
 		restartCh:     make(chan struct{}, 1),
 	}
 	d.users = newUserStore(stateDir)
@@ -629,6 +664,11 @@ func (d *Daemon) finishTurn(id string) {
 			promptBackend(be, id, btext, bimages, func(kind, text, status string) {
 				d.appendEvent(id, kind, text, status)
 			})
+			// Drained turns run no gate and no turn-end auto check, so a
+			// Session fed by a constant queue could cook its context
+			// unchecked: arm the automatic wait here and let
+			// runDeferredCompress run it once the queue drains.
+			d.armAutoCompress(id)
 			continue
 		}
 		s.busy = false
@@ -674,7 +714,11 @@ func (d *Daemon) finishTurn(id string) {
 }
 
 func (d *Daemon) appendEvent(id, kind, text, status string) Event {
-	return d.appendModeEvent(id, kind, text, status, "")
+	e := d.appendModeEvent(id, kind, text, status, "")
+	// Stop-after-submit reacts to the stored Event without the lock: every
+	// Backend turn, tool call and submit route funnels through here.
+	d.maybeStopAfterSubmit(id, e)
+	return e
 }
 
 func (d *Daemon) appendModeEvent(id, kind, text, status, mode string) Event {
@@ -739,6 +783,7 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 	}
 	s.events = append(s.events, e)
 	s.last = d.now()
+	trackSessionToolEvent(s, kind, text, s.last)
 	if kind == "status" && status != "" {
 		prev := s.meta.Status
 		s.meta.Status = status
@@ -1260,12 +1305,21 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 		d.appendEvent(id, kind, text, status)
 	})
 	if gated {
-		// While el.WebSubmitEnabled holds, a spawned child settles only
-		// through submit: re-prompt one whose turn ended without a submit,
-		// up to the shared gate's bound, then record the give-up so its
-		// Group still delivers. With the flag off the gate returns at once
-		// and the child settles on its turn alone.
-		d.enforceSubmitGate(id, be, mark, harness)
+		// A turn that settled with a compress due compresses before the
+		// gate reminds: reminders into a nearly full context burn turns
+		// the Handoff would have saved, so the gate stands down and the
+		// deferred compress runs once the turn settles below. A user stop
+		// is deliberate: it takes no reminder and records no failure. A
+		// dead turn (fast, no assistant text, tool call or submit) gets no
+		// reminder either: it records a turn failure for the Run Chain
+		// classifier instead. Anything else reminds as today.
+		switch {
+		case d.compressBeforeGate(id):
+		case d.takeGateSkip(id):
+		case d.failDeadTurn(id, mark):
+		default:
+			d.enforceSubmitGate(id, be, mark, harness)
+		}
 	}
 	d.finishTurn(id)
 	chainHandled := d.handleRunChainFailure(id)
@@ -1522,7 +1576,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		d.mu.Unlock()
 		var compressBlocked string
 		if isHandoff {
-			compressBlocked = compressNote(readCompressSettings().Model)
+			compressBlocked = compressNote(d.compressSettingsOf().Model)
 		}
 		// Full log for old clients; ?tail= and ?before= page by turn.
 		tail, hasBefore, before, turns, at := parseSnapshotQuery(r.URL.Query())

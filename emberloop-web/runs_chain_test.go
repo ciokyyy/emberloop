@@ -55,8 +55,26 @@ func firstHandoffAndTask(events []Event) (handoff, task Event, ok bool) {
 	return handoff, task, false
 }
 
+// handoffTaskIdle reports whether the Handoff and the injected task prompt
+// both reached the Session and an idle status followed the task prompt. An
+// idle status from the Handoff turn alone is not enough: the task prompt can
+// land after it and before the Session turns working again.
+func handoffTaskIdle(s sessionBody) bool {
+	_, task, ok := firstHandoffAndTask(s.Events)
+	if !ok || s.Meta.Status != "idle" {
+		return false
+	}
+	for _, e := range s.Events {
+		if e.Seq > task.Seq && e.Kind == "status" && e.Status == "working" {
+			return true
+		}
+	}
+	return false
+}
+
 // A Chain-position write must not publish a placeholder driver-row state.
 func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
+	t.Parallel()
 	rs := &runState{}
 	setChainPosition(rs, "01-first", "worker", 1)
 	row := rs.Rows["01-first"]
@@ -66,6 +84,7 @@ func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
 }
 
 func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	runsDir := filepath.Join(stateDir, "enderbloom", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -85,7 +104,7 @@ func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runsDir, "legacy-run.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	d.mu.Lock()
 	loaded := d.runs["legacy-run"]
 	row := loaded.Rows["01-first"]
@@ -100,7 +119,8 @@ func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 }
 
 func TestRunChainFailureClampsPersistedPosition(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	d.runs["r-chain"] = &runState{
 		ID: "r-chain", Status: runStatusRunning,
 		Tickets:   []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
@@ -155,7 +175,7 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				return injection{}
 			}
 			t.Cleanup(func() { memoryInjection = previousInjection })
-			useSettings(t, workerTestChainSettings)
+			settingsPath := useSettings(t, workerTestChainSettings)
 			fake := NewFakeBackend()
 			var failOnce sync.Once
 			var failureMu sync.Mutex
@@ -178,7 +198,8 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				defer failureMu.Unlock()
 				return failedID
 			}
-			d := NewDaemon(tempDir(t), fake)
+			d := runTestDaemon(t, tempDir(t), fake)
+			d.SetSettingsPath(settingsPath)
 			srv := newRunTestServer(t, d)
 			defer srv.Close()
 
@@ -230,8 +251,7 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				t.Fatalf("fallback branch = %q, want same Ticket branch %q", after.Branch, before.Branch)
 			}
 			fallback := waitSessionCond(t, srv.URL, after.WorkerSession, func(s sessionBody) bool {
-				_, _, ok := firstHandoffAndTask(s.Events)
-				return ok && s.Meta.Status == "idle"
+				return handoffTaskIdle(s)
 			}, "Handoff and injected Worker task")
 			injections := injectionEventsOf(t, fallback.Events)
 			if len(injections) != 1 || injections[0].ProfileVersion != 11 {
@@ -275,13 +295,15 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 }
 
 func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.CreateErrs = []error{errors.New("quota exceeded")}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -308,10 +330,11 @@ func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
 }
 
 func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.ResumeNote = "fallback resume unavailable"
 	var failOnce sync.Once
@@ -323,7 +346,8 @@ func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -350,10 +374,11 @@ func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
 }
 
 func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	var failOnce sync.Once
 	fake.TurnFailure = func(_, prompt string) (string, bool) {
@@ -367,7 +392,8 @@ func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
 		})
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -390,10 +416,11 @@ func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
 }
 
 func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.Delay = 150 * time.Millisecond
 	var failOnce sync.Once
@@ -405,7 +432,8 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -414,6 +442,7 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "initial Worker")
 	initial := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, initial, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -429,8 +458,7 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 	}, "fallback Worker")
 	fallbackID := ticketByID(r, "01-first").WorkerSession
 	fallback := waitSessionCond(t, srv.URL, fallbackID, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "fallback Worker task")
 	change := filepath.Join(fallback.Meta.WorkDir, "fallback-change.txt")
 	if err := os.WriteFile(change, []byte("fallback change\n"), 0o644); err != nil {
@@ -475,10 +503,11 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 }
 
 func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.Delay = 250 * time.Millisecond
 	var failOnce sync.Once
@@ -490,7 +519,8 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -500,6 +530,7 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 	}, "initial Worker")
 	initial := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, initial, func(s sessionBody) bool { return s.Meta.Status == "idle" }, "initial Worker idle")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, initial, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -515,8 +546,7 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 	}, "fallback Worker")
 	fallbackID := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, fallbackID, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "fallback Handoff and task")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -550,15 +580,17 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 }
 
 func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	fake := NewFakeBackend()
 	fake.TurnFailure = func(_, prompt string) (string, bool) {
 		return "quota exceeded", strings.Contains(prompt, "Implement ticket 01-first")
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -579,12 +611,14 @@ func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
 }
 
 func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -599,6 +633,7 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 		}
 		return nil
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		tk := ticketByID(r, "01-first")
@@ -623,10 +658,11 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 }
 
 func TestRunReviewerFallbackChain(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
 	var mu sync.Mutex
 	failedID := ""
@@ -643,7 +679,8 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 		failed, failedID = true, id
 		return "HTTP 401 unauthorized", true
 	}
-	d := NewDaemon(tempDir(t), fake)
+	d := runTestDaemon(t, tempDir(t), fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -652,6 +689,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "Worker")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
 	deadline := time.Now().Add(15 * time.Second)
@@ -686,8 +724,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 		t.Fatalf("failed Reviewer Session did not retain its error log: %+v", old)
 	}
 	fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "reviewer Handoff and task")
 	handoff, task, ok := firstHandoffAndTask(fallback.Events)
 	if !ok || handoff.Seq >= task.Seq || !strings.Contains(task.Text, "Review ticket 01-first") || !strings.Contains(task.Text, "--- Ticket ") {
@@ -702,11 +739,12 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 }
 
 func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := newRunTestServer(t, d)
 	defer srv.Close()
 
@@ -756,6 +794,7 @@ func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
 }
 
 func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		error    string
@@ -772,7 +811,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 			repo, spec := initRunRepo(t, map[string]string{
 				"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 			})
-			useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+			settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 			fake := NewFakeBackend()
 			var failOnce sync.Once
 			var mu sync.Mutex
@@ -790,7 +829,8 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 				})
 				return tc.error, fired
 			}
-			d := NewDaemon(tempDir(t), fake)
+			d := runTestDaemon(t, tempDir(t), fake)
+			d.SetSettingsPath(settingsPath)
 			srv := newRunTestServer(t, d)
 			defer srv.Close()
 
@@ -798,6 +838,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 			r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 				return ticketByID(r, "01-first").WorkerSession != ""
 			}, "Worker")
+			commitTicketWork(t, repo, "01-first")
 			submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 			r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 				tk := ticketByID(r, "01-first")
@@ -827,8 +868,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 					t.Fatalf("Reviewer did not advance after %s: old=%+v ticket=%+v", tc.name, old.Meta, tk)
 				}
 				fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
-					_, _, ok := firstHandoffAndTask(s.Events)
-					return ok && s.Meta.Status == "idle"
+					return handoffTaskIdle(s)
 				}, "Reviewer Handoff and task")
 				if _, _, ok := firstHandoffAndTask(fallback.Events); !ok {
 					t.Fatalf("Reviewer fallback after %s lacks Handoff and task", tc.name)
@@ -848,12 +888,14 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 }
 
 func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -873,7 +915,8 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	d.appendEvent(worker, "status", "", "failed")
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	srv2 := newRunTestServer(t, d2)
 	defer srv2.Close()
 	if _, code := postRunAction(t, srv2.URL, run.ID, "resume"); code != 200 {
@@ -885,8 +928,7 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	}, "reconciled fallback Worker")
 	tk := ticketByID(r, "01-first")
 	fallback := waitSessionCond(t, srv2.URL, tk.WorkerSession, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "reconciled Handoff and task")
 	if fallback.Meta.WorkDir != getSession(t, srv2.URL, worker).Meta.WorkDir {
 		t.Fatal("reconciled fallback changed the Ticket worktree")
@@ -898,10 +940,11 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 }
 
 func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	useSettings(t, workerTestChainSettings)
+	settingsPath := useSettings(t, workerTestChainSettings)
 	stateDir := tempDir(t)
 	fake := NewFakeBackend()
 	var failOnce sync.Once
@@ -913,7 +956,8 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 		failOnce.Do(func() { fired = true })
 		return "quota exceeded", fired
 	}
-	d := NewDaemon(stateDir, fake)
+	d := runTestDaemon(t, stateDir, fake)
+	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -923,15 +967,15 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 	}, "fallback Worker position")
 	worker := ticketByID(r, "01-first").WorkerSession
 	waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok && s.Meta.Status == "idle"
+		return handoffTaskIdle(s)
 	}, "fallback task completion")
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != 200 {
 		t.Fatalf("pause status = %d, want 200", code)
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	srv2 := newRunTestServer(t, d2)
 	defer srv2.Close()
 	loaded := getRun(t, srv2.URL, run.ID)
@@ -965,4 +1009,62 @@ func newRunTestServer(t *testing.T, d *Daemon) *httptest.Server {
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// A Run Worker turn that ends dead records a failure without Chain advance:
+// no submit reminder burns, the dead-turn error classifies outside the Chain
+// classes, the Worker stays on its first entry, and no fallback Session
+// starts.
+func TestDeadWorkerTurnFailsWithoutChainAdvance(t *testing.T) {
+	t.Parallel()
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	settingsPath := useSettings(t, workerTestChainSettings)
+	fb := NewFakeBackend()
+	fb.ReplyFunc = func(string, string) (string, bool) { return "", true }
+	d := runTestDaemon(t, tempDir(t), fb)
+	d.SetSettingsPath(settingsPath)
+	srv := newRunTestServer(t, d)
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	started := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "initial worker")
+	worker := ticketByID(started, "01-first").WorkerSession
+	dead := waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool {
+		for _, e := range s.Events {
+			if e.Kind == "error" && strings.Contains(e.Text, "dead turn") {
+				return true
+			}
+		}
+		return false
+	}, "dead-turn failure")
+	if dead.Meta.Status != "failed" {
+		t.Fatalf("worker status = %q, want failed", dead.Meta.Status)
+	}
+	if dead.Meta.Capped {
+		t.Fatal("dead worker reads as capped, want uncapped")
+	}
+	if n := countReminderPrompts(dead.Events); n != 0 {
+		t.Fatalf("reminder prompts = %d, want 0", n)
+	}
+	r := getRun(t, srv.URL, run.ID)
+	if got := ticketByID(r, "01-first").WorkerSession; got != worker {
+		t.Fatalf("dead Worker %q replaced with %q, want no fallback", worker, got)
+	}
+	if pos := ticketByID(r, "01-first").Chain["worker"].Position; pos != 1 {
+		t.Fatalf("worker Chain position = %d, want 1 (no advance)", pos)
+	}
+	assertHolds(t, 400*time.Millisecond, "dead Worker started a fallback Session", func() bool {
+		return countSessions(t, srv.URL) == 1
+	})
+	d.mu.Lock()
+	pending := d.runs[run.ID].ChainPendingSubmit["01-first"]
+	d.mu.Unlock()
+	if pending {
+		t.Fatal("dead Worker failure set the pending-submit marker")
+	}
+	pauseTestRun(t, srv.URL, run.ID)
 }

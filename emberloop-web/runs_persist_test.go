@@ -108,8 +108,9 @@ func runFileRows(t *testing.T, stateDir, id string) map[string]map[string]any {
 // Resume is explicit and replaces each started Worker with a Handoff Session
 // on the same branch; unstarted Tickets remain queued until the Run continues.
 func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -119,6 +120,9 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 			ticketByID(r, "02-second").WorkerSession == ""
 	}, "only 01-first started")
 	first := ticketByID(r, "01-first").WorkerSession
+	// The worker commits before the pause, so the late submit below passes
+	// the uncommitted-work gate and is recorded (but held while paused).
+	commitTicketWork(t, repo, "01-first")
 
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
 		t.Fatalf("pause status = %d, want 200", code)
@@ -164,6 +168,7 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "01-first merged and 02-second started after resume")
 	second := ticketByID(r, "02-second").WorkerSession
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, second, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -171,6 +176,7 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 			ticketByID(r, "03-third").WorkerSession != ""
 	}, "02-second merged and 03-third started")
 	third := ticketByID(r, "03-third").WorkerSession
+	commitTicketWork(t, repo, "03-third")
 	submitSession(t, srv.URL, third, "done", []string{"gamma"})
 	passReviewers(t, srv.URL, run.ID, "03-third")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -206,9 +212,10 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 // Worker. Run state reaches the file on every driver pass, so the reloaded
 // Run shows its Ticket rows.
 func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -218,17 +225,21 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	first := ticketByID(r, "01-first").WorkerSession
 	before := countSessions(t, srv.URL)
 
-	// Every driver pass reaches the file: the row for the started Ticket is
-	// already there before any restart.
+	// Every driver pass reaches the file: the running row for the started
+	// Ticket is already there before any restart. Existence alone is not
+	// enough: the worker-start persist writes chain positions before the
+	// driver's first pass publishes, so the row can briefly read empty or
+	// queued while the Worker is already running.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if rows := runFileRows(t, stateDir, run.ID); rows["01-first"] != nil {
+		rows := runFileRows(t, stateDir, run.ID)
+		if st, ok := rows["01-first"]["state"].(string); ok && st != "" && st != "queued" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("run file has no row for 01-first")
+			t.Fatalf("run file has no running row for 01-first: %v", rows["01-first"])
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	// RequestRestart is the graceful-restart path: it freezes the driver but
@@ -238,7 +249,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 
@@ -270,6 +281,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 		t.Fatalf("sessions after resume = %d, want %d (no second Worker)", got, before)
 	}
 
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv2.URL, first, "done", []string{"alpha"})
 	passReviewers(t, srv2.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
@@ -277,6 +289,7 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "01-first merged and 02-second started after resume")
 	second := ticketByID(r, "02-second").WorkerSession
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv2.URL, second, "done", []string{"beta"})
 	passReviewers(t, srv2.URL, run.ID, "02-second")
 	_ = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
@@ -286,8 +299,9 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 
 // Pause and Resume refuse the wrong states and unknown Runs.
 func TestPauseResumeValidation(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -320,6 +334,7 @@ func TestPauseResumeValidation(t *testing.T) {
 // behind. Rounds retry until a Pause lands before the driver's first start;
 // other rounds prove nothing and close their server.
 func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
+	t.Parallel()
 	tickets := map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -329,7 +344,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 			t.Fatalf("pause never landed before the first start in 6 rounds")
 		}
 		repo, spec := initRunRepo(t, tickets)
-		d := NewDaemon(tempDir(t), NewFakeBackend())
+		d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 		srv := httptest.NewServer(authedHandler(t, d))
 		run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 		if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
@@ -363,7 +378,9 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 			t.Fatalf("sessions = %d, want 2 (no orphan from the dropped start)", got)
 		}
 		first, second := ticketByID(r, "01-first").WorkerSession, ticketByID(r, "02-second").WorkerSession
+		commitTicketWork(t, repo, "01-first")
 		submitSession(t, srv.URL, first, "done", []string{"alpha"})
+		commitTicketWork(t, repo, "02-second")
 		submitSession(t, srv.URL, second, "done", []string{"beta"})
 		passReviewers(t, srv.URL, run.ID, "01-first")
 		passReviewers(t, srv.URL, run.ID, "02-second")
@@ -386,7 +403,8 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 // No API call deletes a Run, so starting for an unknown Run is unreachable
 // outside these defensive branches: both error instead of touching a nil Run.
 func TestRunStartUnknownRunErrors(t *testing.T) {
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	if err := d.runStartWorker("no-such-run", el.DriverTicket{ID: "01-first"}); err == nil {
 		t.Fatalf("runStartWorker unknown run = nil, want error")
 	}
@@ -399,9 +417,10 @@ func TestRunStartUnknownRunErrors(t *testing.T) {
 // resumes it on its own with the same Worker and no second one. A Run the
 // user paused by hand stays paused.
 func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -429,7 +448,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	d2.ResumeAfterRestart()
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
@@ -449,8 +468,9 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 // its saved state: the same Worker Session, no restart from zero, error
 // cleared.
 func TestFailedRunResumesWithSameWorker(t *testing.T) {
+	// Serial: the failed-run resume flakes under parallel git load.
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

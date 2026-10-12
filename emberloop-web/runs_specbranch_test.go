@@ -34,9 +34,10 @@ func isAncestor(t *testing.T, repo, ancestor, ref string) bool {
 // spec/<slug> at the master tip, records the branch and the base SHA on the
 // row, and forks the first ticket branch from it.
 func TestSpecBranchCreatedFromMasterAtStart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -71,6 +72,7 @@ func TestSpecBranchCreatedFromMasterAtStart(t *testing.T) {
 // A spec branch that already exists is reused as it stands: Start records
 // the current master tip as the base but never resets the branch to it.
 func TestSpecBranchReusedWhenPresent(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	// Pre-create the spec branch with a commit master lacks.
@@ -85,7 +87,7 @@ func TestSpecBranchReusedWhenPresent(t *testing.T) {
 		t.Fatalf("spec/demo = %q, want it ahead of master %q", specTip, master)
 	}
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -115,9 +117,10 @@ func TestSpecBranchReusedWhenPresent(t *testing.T) {
 // Tickets merge into the spec branch as they finish. Once the whole chain
 // completes, the final gate moves master to the checked spec-branch tip.
 func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -125,6 +128,7 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "01-first started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -137,12 +141,14 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 	if !isAncestor(t, repo, firstSHA, "implement/02-second") {
 		t.Fatalf("spec tip %q is not an ancestor of implement/02-second, want the ticket forked from the first merge", firstSHA)
 	}
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "02-second").State == "merged" &&
 			ticketByID(r, "03-third").WorkerSession != ""
 	}, "02-second merged and 03-third started")
+	commitTicketWork(t, repo, "03-third")
 	submitSession(t, srv.URL, ticketByID(r, "03-third").WorkerSession, "done", []string{"gamma"})
 	passReviewers(t, srv.URL, run.ID, "03-third")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -165,11 +171,12 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 // A master move during a Ticket does not block that Ticket. At the final
 // merge gate, the completed spec branch is rebased onto the moved master.
 func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -187,6 +194,7 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 	if moved == master {
 		t.Fatalf("main = %q, want it moved past %q", moved, master)
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -207,10 +215,11 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 // The branch name and base SHA persist in the Run file and resume after a
 // restart: the reloaded Run merges into the same spec branch.
 func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -244,7 +253,7 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	reloaded := getRun(t, srv2.URL, run.ID)
@@ -257,12 +266,14 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 	if _, code := postRunAction(t, srv2.URL, run.ID, "resume"); code != 200 {
 		t.Fatalf("resume status = %d, want 200", code)
 	}
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv2.URL, first, "done", []string{"alpha"})
 	passReviewers(t, srv2.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").State == "merged" &&
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "01-first merged and 02-second started after resume")
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv2.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv2.URL, run.ID, "02-second")
 	_ = waitRunCond(t, srv2.URL, run.ID, func(r runJSON) bool {
@@ -281,10 +292,11 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 // moves the ref with update-ref instead of pushing, so a User working on
 // spec/<slug> by hand never wedges the ticket (their checkout falls behind).
 func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -319,6 +331,7 @@ func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
 // tip: the worker stays alive with a clear refusal instead of forcing the
 // ref. Equal tips are a no-op success.
 func TestFFUpdateSpecBranchRefusesNonFastForward(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -351,6 +364,7 @@ func TestFFUpdateSpecBranchRefusesNonFastForward(t *testing.T) {
 // from the master tip: ensureSpecBranch resolves the master ref explicitly,
 // never HEAD.
 func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -364,7 +378,7 @@ func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
 	if side == master {
 		t.Fatalf("HEAD = %q, want it off the master tip %q", side, master)
 	}
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -388,6 +402,7 @@ func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
 // elsewhere: the branch keeps its own tip while the base names master for
 // the later final-merge rebase.
 func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -406,7 +421,7 @@ func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
 	writeFile(t, repo, "side.txt", "side\n")
 	testGit(t, repo, "add", "side.txt")
 	testGit(t, repo, "commit", "-m", "side work")
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -422,8 +437,9 @@ func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
 // A checkpoint rebase updates the spec branch to master, records the new
 // base and reports how many master commits the branch was behind.
 func TestRebaseSpecBranchOntoMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -457,8 +473,9 @@ func TestRebaseSpecBranchOntoMaster(t *testing.T) {
 // A checkpoint conflict leaves the spec ref unchanged and publishes a
 // needs-you Run snapshot naming the conflicting files.
 func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -510,8 +527,9 @@ func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
 // Abandon ends the Run's Sessions and removes its Ticket and spec worktrees
 // and branches, while keeping an abandoned Run row for the UI.
 func TestAbandonRunRemovesBranchesAndWorktrees(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -556,10 +574,11 @@ func writeGeneratedTestFiles(root string) error {
 }
 
 func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	d.runFinalBuild = func(worktree string) (string, error) {
 		builds.Add(1)
@@ -598,6 +617,7 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 		t.Fatal("master did not move in the fixture")
 	}
 
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == "done" }, "green final merge")
@@ -630,11 +650,12 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 }
 
 func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	var failCheck atomic.Bool
 	failCheck.Store(true)
@@ -655,6 +676,7 @@ func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusNeedsYou }, "red final check needs-you")
@@ -683,6 +705,7 @@ func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
 }
 
 func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n",
@@ -691,7 +714,7 @@ func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
 	testGit(t, repo, "add", "shared.txt")
 	testGit(t, repo, "commit", "-m", "add shared base")
 	initialMaster := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	var builds, checks atomic.Int32
 	d.runFinalBuild = func(string) (string, error) { builds.Add(1); return "", nil }
 	d.runRepoCheck = func(string) (string, error) { checks.Add(1); return "green", nil }
@@ -717,6 +740,7 @@ func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
 	if movedMaster == initialMaster {
 		t.Fatal("master did not move in the fixture")
 	}
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, ticketByID(r, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv.URL, run.ID, "02-second")
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == runStatusNeedsYou }, "final rebase conflict needs-you")

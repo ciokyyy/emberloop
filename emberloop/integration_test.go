@@ -40,15 +40,7 @@ func TestSpecSlugFromAFileName(t *testing.T) {
 // The first launch creates the integration branch from HEAD and checks it out;
 // a second launch, after work has landed on it, reuses it as it stands.
 func TestEnterIntegrationBranchCreatesThenReuses(t *testing.T) {
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	main := gitOut(t, repo, "rev-parse", "main")
 
 	created, err := EnterIntegrationBranch(osExec, repo, "spec/x")

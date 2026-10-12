@@ -78,6 +78,7 @@ func TestInjectionEventOnEveryInjection(t *testing.T) {
 }
 
 func TestNoInjectionLogsNoEvent(t *testing.T) {
+	t.Parallel()
 	_, _, _, base, id := handleDaemon(t, nil)
 	runPrompt(t, base, id, "build the thing")
 	for _, e := range transcriptOf(t, base, id) {
@@ -112,6 +113,7 @@ func TestCompressLogsInjectionEvent(t *testing.T) {
 }
 
 func TestMinerReadableOnlyUserPrompts(t *testing.T) {
+	t.Parallel()
 	user := Event{Kind: "prompt", Sender: "user", User: "u1", Text: "fix it"}
 	cases := []struct {
 		name string
@@ -141,6 +143,7 @@ func TestMinerReadableOnlyUserPrompts(t *testing.T) {
 }
 
 func TestFilterMinerEventsDropsEverythingButUserPrompts(t *testing.T) {
+	t.Parallel()
 	events := []Event{
 		{Kind: "prompt", Sender: "user", User: "u1", Text: "keep me"},
 		{Kind: "prompt", Mode: "steer", Sender: "user", User: "u2", Text: "keep me too"},
@@ -171,6 +174,7 @@ func minerGuarded(src string) bool {
 }
 
 func TestMinerReadsThroughFilter(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]bool{
 		"// Miner scans events.jsonl\nfunc Mine() { FilterMinerEvents(evs) }":   true,
 		"// Miner scans events.jsonl\nfunc Mine() { for _, e := range evs {} }": false,

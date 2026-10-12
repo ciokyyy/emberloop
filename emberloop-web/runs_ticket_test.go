@@ -15,6 +15,7 @@ import (
 // Table tests for ticket checkbox parsing: the same marker rule the driver
 // ticks by.
 func TestParseTicketBoxesTable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -59,6 +60,7 @@ func TestParseTicketBoxesTable(t *testing.T) {
 
 // Table tests for worker follow-ups parsing: text after Follow-ups:.
 func TestParseFollowupsTable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		text string
@@ -156,10 +158,11 @@ func submitWorker(t *testing.T, base, id, status string, completed []string, sum
 // A reviewer submit without its tip is refused as a tool error: reviewers
 // report through the submit tool with verdict, tip, ran and findings.
 func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -167,6 +170,7 @@ func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
@@ -193,10 +197,11 @@ func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
 // Messages to reviewer sessions are refused: prompt, steer, follow-up and
 // spawn are read-only for reviewers.
 func TestReviewerMessagesRefused409(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -204,6 +209,7 @@ func TestReviewerMessagesRefused409(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	rev := revs["reviewer-spec"]
@@ -238,6 +244,7 @@ func TestReviewerMessagesRefused409(t *testing.T) {
 // An unparseable reviewer reply re-prompts once for the format; a second
 // failure marks the ticket needs-you for the user.
 func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -248,7 +255,7 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 		}
 		return "", false
 	}
-	d := NewDaemon(tempDir(t), fb)
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -256,6 +263,7 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 
@@ -294,24 +302,52 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 // Rounds persist per ticket and reload without loss; old run files without
 // rounds still load.
 func TestRoundsPersistAndReload(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitWorker(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"}, "done. Follow-ups: check lint")
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done")
-	er := getExtRun(t, srv.URL, run.ID)
-	tk := extTicketByID(er, "01-first")
+	// The run-done row can land before the ticket round closes under parallel
+	// load, so wait for the real precondition (one complete round) rather
+	// than asserting the rounds the moment the run flips to done.
+	deadline := time.Now().Add(15 * time.Second)
+	var er extRun
+	var tk extTicket
+	for {
+		er = getExtRun(t, srv.URL, run.ID)
+		tk = extTicketByID(er, "01-first")
+		if len(tk.Rounds) == 1 {
+			rd := tk.Rounds[0]
+			complete := rd.StartedAt.IsZero() == false && rd.EndedAt != nil && !rd.EndedAt.IsZero()
+			for _, typ := range []string{"reviewer-spec", "reviewer-standards"} {
+				rv, ok := rd.Reviews[typ]
+				if !ok || rv.Verdict != "pass" || rv.At != rd.Tip {
+					complete = false
+					break
+				}
+			}
+			if complete {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rounds never completed after run done: %+v", tk.Rounds)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if len(tk.Rounds) != 1 {
 		t.Fatalf("rounds = %+v, want one round", tk.Rounds)
 	}
@@ -343,7 +379,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	}
 	srv.Close()
 
-	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()
 	er2 := getExtRun(t, srv2.URL, run.ID)
@@ -370,7 +406,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyDir, "enderbloom", "runs", "run-legacy.json"), lraw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d3 := NewDaemon(legacyDir, NewFakeBackend())
+	d3 := runTestDaemon(t, legacyDir, NewFakeBackend())
 	srv3 := httptest.NewServer(authedHandler(t, d3))
 	defer srv3.Close()
 	resp, err := http.Get(srv3.URL + "/api/runs/run-legacy")
@@ -386,10 +422,11 @@ func TestRoundsPersistAndReload(t *testing.T) {
 // A same-tip second done holds the passes instead of rerunning the
 // reviewers: the new round carries heldFromRound and no new gate prompt.
 func TestHeldPassNoRerun(t *testing.T) {
+	// Serial: the same-tip hold miscounts gate prompts under parallel git load.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -398,6 +435,7 @@ func TestHeldPassNoRerun(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	// Dirty the branch before the verdicts arrive so the finish cannot merge
@@ -417,6 +455,11 @@ func TestHeldPassNoRerun(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	// The dirty file was never committed, so removing it cleans the tree
+	// without a new commit: the resubmit tests the same-tip hold.
+	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
 	deadline = time.Now().Add(15 * time.Second)
@@ -449,10 +492,11 @@ func TestHeldPassNoRerun(t *testing.T) {
 // The ticket page fields ride GET: boxes, body, title, branch, tip, state,
 // stateSince, needsYou, lastRefusal, followups, agents, gate and rounds.
 func TestRunTicketJSONExposesPageFields(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -468,6 +512,7 @@ func TestRunTicketJSONExposesPageFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	commitTicketWork(t, repo, "01-first")
 	submitWorker(t, srv.URL, worker, "done", []string{"alpha"}, "done. Follow-ups: check lint")
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
@@ -581,10 +626,11 @@ func sseRunReader(t *testing.T, base, runID string, deadline time.Duration, cond
 // Every ticket change publishes a snapshot over the Run SSE: box ticks,
 // verdicts, round appends and state changes arrive without polling.
 func TestRunSSEPublishesTicketChanges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -608,6 +654,7 @@ func TestRunSSEPublishesTicketChanges(t *testing.T) {
 		}, "boxes ticked, both verdicts, a round and followups over SSE")
 		done <- got
 	}()
+	commitTicketWork(t, repo, "01-first")
 	submitWorker(t, srv.URL, worker, "done", []string{"alpha"}, "done. Follow-ups: check lint")
 	select {
 	case got := <-done:
@@ -621,10 +668,11 @@ func TestRunSSEPublishesTicketChanges(t *testing.T) {
 
 // A scout spawned on the worker publishes its agent over the Run SSE.
 func TestRunSSEPublishesScoutAgent(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -661,10 +709,11 @@ func TestRunSSEPublishesScoutAgent(t *testing.T) {
 
 // The same refusal three times marks the ticket needs-you with its reason.
 func TestRunNeedsYouReasonSameRefusal(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

@@ -17,6 +17,7 @@ import (
 // laya-serve /v1/systemone URL, whose key may stay empty), and optional
 // JEV_MODEL (default jev-latest). Each call bills like any other.
 func TestLiveJevDecider(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EL_LIVE_JEV") == "" {
 		t.Skip("set EL_LIVE_JEV=1 with JEV_API_KEY for the real-endpoint probe")
 	}

@@ -86,7 +86,7 @@ func rolePromptFor(meta SessionMeta) string {
 // the Worker to commit it with its work: left untracked it would trip the
 // merge's dirty-worktree refusal on every finish.
 func workerTaskPrompt(ticketID, spec, ticketPath, branch string, seeded bool) string {
-	prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, submit done with the completed checkboxes. %s", ticketID, spec, ticketPath, branch, workerReviewNote)
+	prompt := fmt.Sprintf("Implement ticket %s for spec %s. Ticket file: %s. Work on branch %s in this worktree. When the work is done, commit your work and submit done with the completed checkboxes (a done submit with no commits ahead of the base, or with uncommitted changes, is refused). %s %s", ticketID, spec, ticketPath, branch, workerReviewNote, workerScopeRule)
 	if seeded {
 		prompt += "\n\nA root AGENTS.md was seeded in this worktree for the DOX chain; commit it with your work."
 	}

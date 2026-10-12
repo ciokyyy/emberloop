@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -865,7 +866,10 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 
 // runBrowserOnce renders target with one browser binary and returns the
 // rendered HTML. Each run gets a fresh profile directory, removed
-// afterwards, and WaitDelay bounds pipe waits past a timeout kill.
+// afterwards. A timeout kills the whole process group (a shell wrapper's
+// sleep would otherwise hold the output pipes), with WaitDelay bounding the
+// pipe wait past the kill. Test seam: EL_CHROME_BIN picks the binary,
+// EL_URL_TIMEOUT bounds the run.
 func runBrowserOnce(ctx context.Context, bin, target string) (string, bool, error) {
 	profile, err := os.MkdirTemp("", "el-chrome-*")
 	if err != nil {
@@ -879,7 +883,9 @@ func runBrowserOnce(ctx context.Context, bin, target string) (string, bool, erro
 		"--host-resolver-rules="+browserHostBlockRules(),
 		"--dump-dom", "--virtual-time-budget=8000", target)
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.WaitDelay = 10 * time.Second
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 2 * time.Second
 	var stdout, stderr cappedWriter
 	stdout.cap = urlBodyCap()
 	stderr.cap = 4096

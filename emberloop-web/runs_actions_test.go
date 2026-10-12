@@ -91,7 +91,7 @@ func waitActionState(t *testing.T, base, runID, ticketID, want, what string) act
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s: ticket %s state = %q, want %q", what, ticketID, actionTicketByID(getActionRun(t, base, runID), ticketID).State, want)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -125,16 +125,17 @@ func waitPromptContaining(t *testing.T, base, sessionID, substr string, n int, w
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s: %d prompts contain %q, want %d", what, found, substr, n)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
 // A ticket steer reaches its worker: the worker transcript holds the text
 // and the answered snapshot names the run.
 func TestTicketSteerReachesWorker(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	_ = repo
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -157,8 +158,9 @@ func TestTicketSteerReachesWorker(t *testing.T) {
 // Steer validation: empty text is 400, an unknown ticket is 404, and a
 // ticket with no worker yet (or a finished run) is 409.
 func TestTicketSteerValidation(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -183,6 +185,7 @@ func TestTicketSteerValidation(t *testing.T) {
 // unparks, bumps the retry generation in the run file and the ticket runs
 // again.
 func TestTicketParkAndRetry(t *testing.T) {
+	t.Parallel()
 	// A second independent ticket keeps the Run live while 01 is parked. A
 	// Run whose only work is parked ends on the driver's next poll, and the
 	// repeat park and the retry below would race that end.
@@ -190,7 +193,7 @@ func TestTicketParkAndRetry(t *testing.T) {
 	tickets["03-third.md"] = "# 03: Third\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] gamma\n"
 	repo, spec := initRunRepo(t, tickets)
 	stateDir := tempDir(t)
-	d := NewDaemon(stateDir, NewFakeBackend())
+	d := runTestDaemon(t, stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -237,8 +240,9 @@ func TestTicketParkAndRetry(t *testing.T) {
 // refuses further actions on it. The worker session stays for its
 // transcript.
 func TestTicketDiscardRemovesWorktree(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -281,10 +285,11 @@ func TestTicketDiscardRemovesWorktree(t *testing.T) {
 // A finished run refuses every per-ticket action with 409: reviewers pass
 // by default, so one done submit merges the single ticket and ends the run.
 func TestTicketActionsOnFinishedRunConflict(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -292,6 +297,7 @@ func TestTicketActionsOnFinishedRunConflict(t *testing.T) {
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 	waitRunTickets(t, srv.URL, run.ID, map[string]string{"01-first": "merged"})
 	for _, action := range []string{"steer", "retry", "park", "discard"} {
@@ -327,8 +333,9 @@ func (c *fakeClock) advance(d time.Duration) {
 // Ten minutes with no worker activity marks the ticket needs-you with the
 // idle reason, surfaced on the ticket snapshot the banner reads.
 func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -349,7 +356,7 @@ func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("idle needs-you never surfaced: state=%q reason=%q", got.State, got.NeedsYou)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -357,10 +364,11 @@ func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 // stall reason. Commits between nudges date fresh activity, so the idle
 // alert never fires first.
 func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	clock := newFakeClock()
 	d.clock = clock.get
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -406,20 +414,21 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("stall needs-you never surfaced: state=%q reason=%q", got.State, got.NeedsYou)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
-// The same refusal three times in a row marks the ticket needs-you: a dirty
-// worktree refuses every finish identically, the worker submits done three
-// times, and each refusal is told back before the next submit. A dirty
+// The same refusal three times in a row marks the ticket needs-you: a rebase
+// conflict refuses every finish identically, the worker submits done three
+// times, and each refusal is told back before the next submit. A conflict
 // refusal repeats verbatim (unlike a changes verdict, which the submit gate
 // refuses as an empty resubmit), so it still exercises the driver's streak.
 func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -428,13 +437,23 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
-	writeFile(t, filepath.Join(repo, ".el-worktrees", "01-first"), "dirty.txt", "dirty\n")
+	// A committed worker change plus a conflicting spec-branch move makes
+	// the finish rebase conflict deterministically on every pass. (A dirty
+	// worktree never reaches the finish: the submit gate refuses it first.)
+	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
+	commitTicketFile(t, worktree, "conflict.txt", "worker\n", "worker change")
+	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
+	testGit(t, repo, "worktree", "add", specWT, "spec/demo")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", specWT) })
+	writeFile(t, specWT, "conflict.txt", "spec\n")
+	testGit(t, specWT, "add", "conflict.txt")
+	testGit(t, specWT, "commit", "-m", "spec moves")
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 		// Each submit's refusal reaches the worker before the next
 		// submit, so the streak counts consecutive identical refusals.
-		waitPromptContaining(t, srv.URL, worker, "uncommitted changes", n, "refusal tell")
+		waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
@@ -445,19 +464,21 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("refusal needs-you never surfaced: state=%q reason=%q refusal=%q", got.State, got.NeedsYou, got.LastRefusal)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
 // Retry after the refusal alert clears the banner and the ticket works
 // again: the retry generation resets the driver's streak and backoff, so a
-// clean worktree from here merges. A dirty refusal repeats verbatim (unlike
-// a changes verdict, which the submit gate refuses as an empty resubmit).
+// resolved branch from here merges. A conflict refusal repeats verbatim
+// (unlike a changes verdict, which the submit gate refuses as an empty
+// resubmit).
 func TestRetryAfterRefusalAlertMerges(t *testing.T) {
+	// Serial: the retry-after-refusal merge stalls under parallel git load.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -467,11 +488,17 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
-	writeFile(t, worktree, "dirty.txt", "dirty\n")
+	commitTicketFile(t, worktree, "conflict.txt", "worker\n", "worker change")
+	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
+	testGit(t, repo, "worktree", "add", specWT, "spec/demo")
+	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", specWT) })
+	writeFile(t, specWT, "conflict.txt", "spec\n")
+	testGit(t, specWT, "add", "conflict.txt")
+	testGit(t, specWT, "commit", "-m", "spec moves")
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
-		waitPromptContaining(t, srv.URL, worker, "uncommitted changes", n, "refusal tell")
+		waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
 	}
 	waitActionState(t, srv.URL, run.ID, "01-first", "needs-you", "refusal needs-you")
 
@@ -485,10 +512,10 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	// The retry's steer reached the worker.
 	waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")
 
-	// A clean worktree from here merges.
-	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
-		t.Fatal(err)
-	}
+	// A branch reset onto the moved spec, plus a new commit, merges: the
+	// rebase lands and the reviewers judge the new tip.
+	testGit(t, worktree, "reset", "--hard", "spec/demo")
+	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	waitRunTickets(t, srv.URL, run.ID, map[string]string{"01-first": "merged"})
 }

@@ -44,6 +44,7 @@ func waitEvent(t *testing.T, d *Daemon, id string, pred func(Event) bool) Event 
 }
 
 func TestUsesSudo(t *testing.T) {
+	t.Parallel()
 	for cmd, want := range map[string]bool{
 		"sudo apt update":       true,
 		"cd x && sudo rm -rf y": true,
@@ -61,6 +62,7 @@ func TestUsesSudo(t *testing.T) {
 // A sudo request waits for the user; an approved one runs and its TOON result
 // reaches the Session.
 func TestSudoRequestApproveDeliversTOON(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -103,6 +105,7 @@ func TestSudoRequestApproveDeliversTOON(t *testing.T) {
 }
 
 func TestSudoDenyDeliversDenied(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -123,6 +126,7 @@ func TestSudoDenyDeliversDenied(t *testing.T) {
 }
 
 func TestSudoShellWrapsSudo(t *testing.T) {
+	t.Parallel()
 	if got := sudoShell("sudo ls", false); !strings.Contains(got, "sudo -n") {
 		t.Fatal(got)
 	}

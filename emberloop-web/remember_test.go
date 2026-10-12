@@ -22,12 +22,12 @@ import (
 // like handleDaemon but returning the pieces the remember tests need.
 func rememberDaemon(t *testing.T) (*Daemon, string, string, string) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -100,6 +100,7 @@ func queueRules(t *testing.T, d *Daemon, owner string) []memory.QueueItem {
 // An agent remember always creates a queue item in the caller's User bank
 // with reason and quote, and never a Rule.
 func TestAgentRememberCreatesQueueItemNeverRule(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner := rememberDaemon(t)
 	runPrompt(t, base, id, "the team uses tabs for indentation here")
 	code, out := postRemember(t, base, id, map[string]any{
@@ -130,6 +131,7 @@ func TestAgentRememberCreatesQueueItemNeverRule(t *testing.T) {
 // Remember needs a reason and grounded evidence: missing fields, an
 // ungrounded quote and over-long text are all refused.
 func TestAgentRememberNeedsReasonAndGrounding(t *testing.T) {
+	t.Parallel()
 	_, base, id, _ := rememberDaemon(t)
 	runPrompt(t, base, id, "keep the build green at all times")
 	if code, _ := postRemember(t, base, id, map[string]any{"text": "keep green"}); code != http.StatusBadRequest {
@@ -176,6 +178,7 @@ func TestRememberRateLimitRefused(t *testing.T) {
 // Only top-level Sessions propose Rules: workers, scouts, Run Sessions and
 // Reviewers are refused, while every role keeps recall.
 func TestRememberRolesRefusedRecallAllowed(t *testing.T) {
+	t.Parallel()
 	d, base, parent, _ := rememberDaemon(t)
 	// The role check needs five live Sessions at once; the default cap is
 	// three, and recall adds a beat before each first turn releases, so lift
@@ -222,6 +225,7 @@ func TestRememberRolesRefusedRecallAllowed(t *testing.T) {
 // one. Scouts cannot compress themselves, so the parent compresses while the
 // scout watches; the Run Session compresses itself.
 func TestScoutAndRunHaveNoRememberAfterCompress(t *testing.T) {
+	t.Parallel()
 	d, base, parent, _ := rememberDaemon(t)
 	runPrompt(t, base, parent, "parent work before compress")
 	scout := spawnScout(t, base, parent)
@@ -268,6 +272,7 @@ func TestScoutAndRunHaveNoRememberAfterCompress(t *testing.T) {
 // A structural /remember on the first line of a typed message creates a Rule
 // directly after grounding, with no queue item.
 func TestSlashRememberCreatesRuleDirectly(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner := rememberDaemon(t)
 	body, _ := json.Marshal(map[string]string{"text": "/remember keep replies short"})
 	resp, err := http.Post(base+"/api/sessions/"+id+"/prompt", "application/json", bytes.NewReader(body))
@@ -312,6 +317,7 @@ func TestSlashRememberCreatesRuleDirectly(t *testing.T) {
 // The same words anywhere else create nothing: pasted blocks (a later line),
 // colon forms, and system messages all route as normal prompts.
 func TestSlashRememberOnlyFirstLineTyped(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner := rememberDaemon(t)
 	runPrompt(t, base, id, "remember: use tabs in this repo")
 	runPrompt(t, base, id, "context first\n/remember use tabs")
@@ -343,6 +349,7 @@ func TestSlashRememberOnlyFirstLineTyped(t *testing.T) {
 // Recall never returns another User's observations or Rules: each bank stays
 // private to its User.
 func TestRecallNeverCrossesUsers(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -412,6 +419,7 @@ func TestRecallNeverCrossesUsers(t *testing.T) {
 
 // Recall searches Project notes beside the User bank.
 func TestRecallIncludesProjectNotes(t *testing.T) {
+	t.Parallel()
 	_, base, id, _ := rememberDaemon(t)
 	meta, _ := sessionMeta(t, base, id)
 	notesDir := filepath.Join(meta.WorkDir, ".emberloop", "notes")
@@ -432,6 +440,7 @@ func TestRecallIncludesProjectNotes(t *testing.T) {
 // The pig loadout gates memory tools by role: top-level Sessions propose and
 // search, everyone else searches only; unwired backends serve neither.
 func TestPigMemoryToolGating(t *testing.T) {
+	t.Parallel()
 	pb := NewPigBackend()
 	pb.Remember = func(string, string, string, string) (int64, error) { return 1, nil }
 	pb.Recall = func(string, string) (string, error) { return "rules", nil }
@@ -466,6 +475,7 @@ func TestPigMemoryToolGating(t *testing.T) {
 // A quote from User B's steer inside A's Session lands in B's bank,
 // never A's: candidates follow the grounded Event's sender.
 func TestRememberCrossUserSteerStaysInSenderBank(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -508,6 +518,7 @@ func TestRememberCrossUserSteerStaysInSenderBank(t *testing.T) {
 // create Rules directly, just like prompt. All three route through
 // sendMessage, so one hook covers them.
 func TestSlashRememberSteerAndFollowupCreateRules(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner := rememberDaemon(t)
 	for _, tc := range []struct{ sub, text, want string }{
 		{"steer", "/remember steer rule text", "steer rule text"},
@@ -540,6 +551,7 @@ func TestSlashRememberSteerAndFollowupCreateRules(t *testing.T) {
 // A rejected command logs nothing: an empty /remember and an over-long
 // one answer 400 with no prompt Event behind them.
 func TestSlashRememberInvalidLogsNothing(t *testing.T) {
+	t.Parallel()
 	_, base, id, _ := rememberDaemon(t)
 	for _, text := range []string{"/remember", "/remember   ", "/remember " + strings.Repeat("x", memory.MaxRuleChars+1)} {
 		body, _ := json.Marshal(map[string]string{"text": text})
@@ -562,12 +574,13 @@ func TestSlashRememberInvalidLogsNothing(t *testing.T) {
 // Leftover lines after the /remember first line still route as the turn:
 // the Rule is created and the agent sees only the remainder.
 func TestSlashRememberWithRemainderRoutesTurn(t *testing.T) {
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	t.Parallel()
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -645,6 +658,7 @@ func TestRememberLimitHoldsUnderConcurrency(t *testing.T) {
 // observations, and drops a failing observation search while keeping the
 // Rule and note hits.
 func TestFormatRecallResults(t *testing.T) {
+	t.Parallel()
 	flagged := memory.VerifyResult{Status: memory.VerifyChanged, CommitDate: time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)}
 	hits := []memory.MergedHit{
 		{Source: memory.MergeRule, Rule: memory.Rule{RuleID: "r1", Text: "use tabs"}, RuleResult: memory.VerifyResult{Status: memory.VerifyClean}},

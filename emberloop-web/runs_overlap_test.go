@@ -24,12 +24,6 @@ type overlapWarningJSON struct {
 // tickets merge and the overlap check sees two running Runs.
 func initTwoSpecRepo(t *testing.T) (repo, demoSpec, otherSpec string) {
 	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "web-test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
-	t.Setenv("GIT_COMMITTER_NAME", "web-test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.com")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("HOME", tempDir(t))
 	repo = tempDir(t)
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
@@ -100,8 +94,9 @@ func warningFiles(w []overlapWarningJSON) []string {
 // naming it and the other Run. The chained second tickets keep both Runs
 // running while the first tickets merge, so the check sees live Runs.
 func TestSpecOverlapWarnsBothRuns(t *testing.T) {
+	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -167,8 +162,9 @@ func containsFile(files []string, want string) bool {
 // Two live specs that dirty disjoint files never warn: both Runs merge
 // clean and both warning lists stay empty.
 func TestSpecOverlapDisjointNoWarning(t *testing.T) {
+	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -207,8 +203,9 @@ func TestSpecOverlapDisjointNoWarning(t *testing.T) {
 // A finished Run is not live: when one spec is already done, the other
 // merging the same file warns on neither Run.
 func TestSpecOverlapDoneRunExcluded(t *testing.T) {
+	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -231,6 +228,7 @@ func TestSpecOverlapDoneRunExcluded(t *testing.T) {
 		return ticketByID(r, "01-first").State == "merged" &&
 			ticketByID(r, "02-second").WorkerSession != ""
 	}, "demo first merged and second started")
+	commitTicketWork(t, repo, "02-second")
 	submitSession(t, srv.URL, ticketByID(rA, "02-second").WorkerSession, "done", []string{"beta"})
 	passReviewers(t, srv.URL, runA.ID, "02-second")
 	waitRunCond(t, srv.URL, runA.ID, func(r runJSON) bool {

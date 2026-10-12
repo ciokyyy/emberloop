@@ -42,10 +42,10 @@ func (c *rulesClock) Advance(d time.Duration) {
 // Session, its owner and the clock.
 func rulesDaemon(t *testing.T) (*Daemon, string, string, string, *rulesClock) {
 	t.Helper()
-	t.Setenv("PIG_TEST_FAUX", "1")
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	clock := newRulesClock()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.clock = clock.Now
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -140,6 +140,7 @@ func getQueueStats(t *testing.T, base string) memory.QueueStats {
 // A single mention never reaches the queue; the same subject key in two
 // Sessions on different tasks does.
 func TestRuleQueuePromoteNeedsRecurrence(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, _ := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -192,6 +193,7 @@ func TestRuleQueuePromoteNeedsRecurrence(t *testing.T) {
 
 // Approve creates a new rule version; the queue row stays as the record.
 func TestRuleQueueApproveCreatesRule(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner, _ := rulesDaemon(t)
 	runPrompt(t, base, id, "the team uses tabs for indentation here")
 	code, _ := postRemember(t, base, id, map[string]any{
@@ -223,6 +225,7 @@ func TestRuleQueueApproveCreatesRule(t *testing.T) {
 // An edit keeps both the proposal and the final text: the queue row holds
 // the proposal, the Rule holds the edit.
 func TestRuleQueueEditKeepsBoth(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner, _ := rulesDaemon(t)
 	runPrompt(t, base, id, "the team uses tabs for indentation here")
 	if code, _ := postRemember(t, base, id, map[string]any{
@@ -254,6 +257,7 @@ func TestRuleQueueEditKeepsBoth(t *testing.T) {
 
 // Reject keeps the item as a label and writes no Rule.
 func TestRuleQueueRejectKeepsLabel(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner, _ := rulesDaemon(t)
 	runPrompt(t, base, id, "the team uses tabs for indentation here")
 	if code, _ := postRemember(t, base, id, map[string]any{
@@ -282,6 +286,7 @@ func TestRuleQueueRejectKeepsLabel(t *testing.T) {
 // source observations (the approver fallback when there are none), never the
 // approver alone.
 func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner, clock := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -389,6 +394,7 @@ func TestRuleQueueSupersessionAndDisagreement(t *testing.T) {
 
 // Rule text over 300 chars is refused at write, not clipped later.
 func TestRuleQueueOver300Refused(t *testing.T) {
+	t.Parallel()
 	_, base, id, _, _ := rulesDaemon(t)
 	runPrompt(t, base, id, "the team uses tabs for indentation here")
 	if code, _ := postRemember(t, base, id, map[string]any{
@@ -410,6 +416,7 @@ func TestRuleQueueOver300Refused(t *testing.T) {
 // Batch approval per Session works: one call decides every pending item of
 // the Session and leaves other Sessions alone.
 func TestRuleQueueBatchPerSession(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, _ := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -464,6 +471,7 @@ func TestRuleQueueBatchPerSession(t *testing.T) {
 // API tests run on the fake clock: queue timestamps, budget and approval
 // latency follow it.
 func TestRuleQueueStatsFollowFakeClock(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, clock := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -504,6 +512,7 @@ func TestRuleQueueStatsFollowFakeClock(t *testing.T) {
 // The rule queue never decides a profile_patch item: single and batch
 // rejects both refuse it, and it stays pending.
 func TestRuleQueueRejectRefusesNonRule(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, _ := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -536,6 +545,7 @@ func TestRuleQueueRejectRefusesNonRule(t *testing.T) {
 // a disagreement: the relation and the conflicting Rule travel with it for
 // the human, instead of superseding.
 func TestRuleQueuePromoteMarksDisagreement(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, _ := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -578,6 +588,7 @@ func TestRuleQueuePromoteMarksDisagreement(t *testing.T) {
 // writes a ledger row with the counts, so the nightly summary reads stored
 // rows instead of recomputing them.
 func TestRuleQueueLedgerRecorded(t *testing.T) {
+	t.Parallel()
 	d, base, id, owner, clock := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -650,6 +661,7 @@ func TestRuleQueueLedgerRecorded(t *testing.T) {
 // kindPreferenceOf picks the most common valid kind; ties keep the earliest
 // leader and anything without a valid kind defaults to preference.
 func TestKindPreferenceOf(t *testing.T) {
+	t.Parallel()
 	if got := kindPreferenceOf(nil); got != memory.KindPreference {
 		t.Fatalf("empty group = %q, want preference", got)
 	}
@@ -675,6 +687,7 @@ func TestKindPreferenceOf(t *testing.T) {
 // in-between candidate supersedes the older one while landing stillborn
 // itself, so exactly the newest text stays live.
 func TestRuleQueueMixedAgesConverge(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, clock := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)
@@ -728,6 +741,7 @@ func TestRuleQueueMixedAgesConverge(t *testing.T) {
 // A batch that decides nothing writes no ledger row: an empty selection is
 // refused up front, and an all-failed batch records nothing.
 func TestRuleQueueBatchLedgerOnlyOnSuccess(t *testing.T) {
+	t.Parallel()
 	d, base, _, owner, _ := rulesDaemon(t)
 	ctx := context.Background()
 	bank := rulesBank(t, d, owner)

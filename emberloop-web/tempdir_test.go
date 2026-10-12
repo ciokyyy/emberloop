@@ -68,6 +68,7 @@ func checkTempDirSource(filename, src string) []string {
 // testsupport.TempDir retry removal instead. Add the wrapper at the call
 // site, never an exception.
 func TestNoTempDir(t *testing.T) {
+	t.Parallel()
 	var files []string
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -104,6 +105,7 @@ func TestNoTempDir(t *testing.T) {
 }
 
 func TestCheckTempDirSource(t *testing.T) {
+	t.Parallel()
 	call := "package p\n\nimport \"testing\"\n\nfunc f(t *testing.T) { _ = " + bannedCall + " }\n"
 	if reports := checkTempDirSource("x_test.go", call); len(reports) != 1 {
 		t.Fatalf("call reported %d times, want 1: %v", len(reports), reports)

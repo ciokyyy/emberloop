@@ -10,6 +10,7 @@ import (
 // Table test on the project-context prompt builder: root only, nested chain,
 // CLAUDE.md fallback, oversize cap, and no files.
 func TestClaudeSystemPromptProjectContext(t *testing.T) {
+	t.Parallel()
 	write := func(t *testing.T, dir, name, content string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -107,6 +108,7 @@ func TestClaudeSystemPromptProjectContext(t *testing.T) {
 
 // The injected context reaches the ACP session params on create and resume.
 func TestClaudeContextReachesSessionParams(t *testing.T) {
+	t.Parallel()
 	work := tempDir(t)
 	marker := "session-marker-rules"
 	if err := os.WriteFile(filepath.Join(work, "AGENTS.md"), []byte(marker+"\n"), 0o644); err != nil {

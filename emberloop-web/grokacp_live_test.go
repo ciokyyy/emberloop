@@ -14,6 +14,7 @@ import (
 // conversation carries, then a Steer that must degrade to a Follow-up. Not in
 // the main check: set EL_LIVE_GROK=1 with grok logged in and el-mcp on PATH.
 func TestLiveGrokACP(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EL_LIVE_GROK") == "" {
 		t.Skip("set EL_LIVE_GROK=1 (grok logged in, el-mcp on PATH) for the grok probe")
 	}

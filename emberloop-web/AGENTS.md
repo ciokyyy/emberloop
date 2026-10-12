@@ -17,17 +17,24 @@ boxes and marking Tickets done.
 ## Test seams
 
 - Daemon API/lifecycle and invariants: `api_test.go`, `lifecycle_test.go`,
-  `handle_test.go` and `invariants_test.go`; the fake Backend drives the API
-  and lifecycle HTTP/SSE seams.
+  `handle_test.go`, `invariants_test.go` and `restart_state_test.go`; the
+  fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
-  `runs_reviewers_test.go`, `runs_persist_test.go`, `runs_chain_test.go`,
-  `runs_pause_switch_test.go`, `runs_specbranch_test.go`,
-  `runs_worktree_test.go`, `runs_final_test.go`,
-  `runs_markdone_basered_test.go` and `runs_overlap_test.go` cover Run seams.
+  `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
+  check, selective re-review, scope warning), `runs_persist_test.go`,
+  `runs_chain_test.go`, `runs_pause_switch_test.go`,
+  `runs_specbranch_test.go`, `runs_worktree_test.go`,
+  `runs_toolactive_test.go` (in-flight tool calls date worker activity up to
+  a cap), `runs_starttree_test.go` (stale branch and worktree reuse or
+  Needs-you), `runs_final_test.go`, `runs_markdone_basered_test.go`,
+  `runs_overlap_test.go` and `runs_stopsubmit_test.go` cover Run seams.
+  Stop-after-submit ends a Run Worker or Reviewer turn on its accepted
+  terminal submit (`runs_stopsubmit.go`, opt out per Run with
+  `noStopAfterSubmit`).
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go` and `grok_handoff_test.go`.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
@@ -45,6 +52,20 @@ boxes and marking Tickets done.
   `PIG_ACP_SPAWN_BIN` set to a built Daemon runs `TestLivePigACP`; and
   `EL_LIVE_JEV=1` with `JEV_API_KEY` (or `JEV_BASE_URL` for a local server;
   `JEV_MODEL` overrides the default) runs `TestLiveJevDecider`.
+
+## Test speed
+
+- Tests use `t.Parallel()` unless they touch process env or shared globals
+  (settings PUT/file tests, titles, quota, wire adapters, the submit gate
+  suite, injection hooks). `useSettings` returns a path each Daemon takes
+  with `SetSettingsPath`; `initRunRepo` copies a per-ticket-set template
+  instead of init/add/commit; git and faux env live in `TestMain`.
+- Run tests start Daemons with `runTestDaemon` (100ms driver polls);
+  pause/switch/resume and reviewer rework sequences (findings, rereview,
+  selective carry) keep `NewDaemon` (500ms) and stay serial: they race a
+  fast driver into concluded runs. Same-tip hold, patch-identical reuse,
+  retry-after-refusal, failed-run resume and fake-clock idle tests stay
+  serial: their counts and waits flake under parallel git load.
 
 ## Child DOX Index
 

@@ -328,9 +328,15 @@ func TestReadURLTimeoutEscalates(t *testing.T) {
 	t.Setenv("EL_URL_TIMEOUT", "200ms")
 	jf := startJinaFake(t, 200, jinaLong("Jina after timeout"))
 	t.Setenv("JINA_API_KEY", "")
+	// Cancellable sleep: the client's 200ms timeout drops the connection,
+	// so the handler must exit at once instead of holding Server.Close for
+	// the full 2s at cleanup.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2 * time.Second)
-		_, _ = w.Write([]byte("too slow"))
+		select {
+		case <-time.After(2 * time.Second):
+			_, _ = w.Write([]byte("too slow"))
+		case <-r.Context().Done():
+		}
 	}))
 	t.Cleanup(srv.Close)
 	out, err := readURLPath(t, srv.URL+"/slow")

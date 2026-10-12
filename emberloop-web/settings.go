@@ -37,6 +37,13 @@ func readSettingsMap() (map[string]json.RawMessage, error) {
 	if p == "" {
 		return all, nil
 	}
+	return readSettingsFileMap(p)
+}
+
+// readSettingsFileMap reads one settings path: a missing file means empty
+// settings, a broken one errors.
+func readSettingsFileMap(p string) (map[string]json.RawMessage, error) {
+	all := map[string]json.RawMessage{}
 	raw, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
 		return all, nil
@@ -50,21 +57,60 @@ func readSettingsMap() (map[string]json.RawMessage, error) {
 	return all, nil
 }
 
+// SetSettingsPath points this Daemon at a settings file for tests; empty
+// restores the host file. Call it before serving: the write happens before
+// the server's goroutines start, so no lock is needed.
+func (d *Daemon) SetSettingsPath(p string) {
+	d.settingsPath = p
+}
+
+// settingsMap reads this Daemon's settings: the override file when set, else
+// the host file. Production leaves the override empty, so this matches
+// readSettingsMap exactly.
+func (d *Daemon) settingsMap() (map[string]json.RawMessage, error) {
+	if d != nil && d.settingsPath != "" {
+		return readSettingsFileMap(d.settingsPath)
+	}
+	return readSettingsMap()
+}
+
 func readRoles() map[string]roleSetting {
-	roles := map[string]roleSetting{}
 	all, err := readSettingsMap()
 	if err != nil {
-		return roles
+		return map[string]roleSetting{}
 	}
+	return parseRoles(all)
+}
+
+// parseRoles decodes the roles map: shared by the host reader and the
+// Daemon-scoped test seam so the two never diverge.
+func parseRoles(all map[string]json.RawMessage) map[string]roleSetting {
+	roles := map[string]roleSetting{}
 	if raw, ok := all["roles"]; ok {
 		_ = json.Unmarshal(raw, &roles)
 	}
 	return roles
 }
 
+// settingsRoles reads this Daemon's roles: the override file when set, else
+// the host file.
+func (d *Daemon) settingsRoles() map[string]roleSetting {
+	all, err := d.settingsMap()
+	if err != nil {
+		return map[string]roleSetting{}
+	}
+	return parseRoles(all)
+}
+
 // roleFor returns the configured harness and model for a role, or empty.
 func roleFor(name string) (string, string) {
-	r, ok := readRoles()[name]
+	return lookupRole(readRoles(), name)
+}
+
+// lookupRole resolves one role from a decoded roles map: shared by the host
+// reader and the Daemon-scoped test seam so the two never diverge.
+func lookupRole(roles map[string]roleSetting, name string) (string, string) {
+	r, ok := roles[name]
 	if !ok || r.Harness == "" || r.Model == "" {
 		return "", ""
 	}
@@ -72,6 +118,11 @@ func roleFor(name string) (string, string) {
 		return "", ""
 	}
 	return r.Harness, r.Model
+}
+
+// daemonRoleFor resolves one role from this Daemon's settings.
+func (d *Daemon) daemonRoleFor(name string) (string, string) {
+	return lookupRole(d.settingsRoles(), name)
 }
 
 // envMaxWorkers reports the EL_MAX_WORKERS override when it sets a

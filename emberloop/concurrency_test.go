@@ -542,15 +542,7 @@ func TestWorkerStoreSurvivesSimultaneousSessions(t *testing.T) {
 	t.Setenv("EL_CONCURRENCY_STATE", stateFile)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
 
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	if err := os.MkdirAll(filepath.Join(repo, ".scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -699,15 +691,7 @@ func TestConcurrentReviewerSpawnProducesOneReviewer(t *testing.T) {
 	spawnGap, pollEvery, toolBudget = 0, 5*time.Millisecond, time.Second
 	t.Cleanup(func() { spawnGap, pollEvery, toolBudget = oldGap, oldPoll, oldBudget })
 
-	repo := t.TempDir()
-	gitOut(t, repo, "init", "-q", "-b", "main")
-	gitOut(t, repo, "config", "user.email", "el@test.local")
-	gitOut(t, repo, "config", "user.name", "el")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitOut(t, repo, "add", ".")
-	gitOut(t, repo, "commit", "-qm", "base")
+	repo := templatedReadmeRepo(t)
 	base := gitOut(t, repo, "rev-parse", "HEAD")
 
 	mkWorktree := func(id string) string {
@@ -832,7 +816,7 @@ func TestLaunchesAreSpacedAcrossSessions(t *testing.T) {
 	oldState, oldGap := statePath, spawnGap
 	stateFile := filepath.Join(t.TempDir(), "workers.json")
 	statePath = stateFile
-	spawnGap = time.Second
+	spawnGap = 300 * time.Millisecond
 	t.Cleanup(func() { statePath, spawnGap = oldState, oldGap })
 	herdrDir := t.TempDir()
 	t.Setenv("EL_CONCURRENCY_HERDR", herdrDir)
@@ -840,7 +824,7 @@ func TestLaunchesAreSpacedAcrossSessions(t *testing.T) {
 	results := runConcurrencyHelpers(t, "spacing", []string{"a", "b"}, map[string]string{
 		"EL_CONCURRENCY_STATE": stateFile,
 		"EL_CONCURRENCY_HERDR": herdrDir,
-		"EL_CONCURRENCY_GAP":   "1s",
+		"EL_CONCURRENCY_GAP":   "300ms",
 	})
 	at := make([]int64, 2)
 	for i, r := range results {
@@ -854,7 +838,7 @@ func TestLaunchesAreSpacedAcrossSessions(t *testing.T) {
 	if diff < 0 {
 		diff = -diff
 	}
-	if diff < int64(800*time.Millisecond) {
-		t.Fatalf("two simultaneous launches are %v apart, want at least the 1s pause", time.Duration(diff))
+	if diff < int64(240*time.Millisecond) {
+		t.Fatalf("two simultaneous launches are %v apart, want at least the 300ms pause", time.Duration(diff))
 	}
 }
