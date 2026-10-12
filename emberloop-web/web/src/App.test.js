@@ -103,6 +103,32 @@ describe('Sidebar collapse', () => {
     expect(await screen.findAllByLabelText('Filter chats')).toHaveLength(1);
   });
 
+  it('closes the drawer on system Back and keeps the page', async () => {
+    stubApp();
+    history.replaceState(null, '', '/');
+    const { container } = render(App, { props: { user: me } });
+    await within(container).findByTestId('sidebar');
+    await new Promise((r) => setTimeout(r, 50));
+    const before = window.location.pathname;
+    await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
+    expect(await screen.findByTestId('drawer-nav')).toBeTruthy();
+    expect(history.state?.drawer).toBe(true);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    await vi.waitFor(() => expect(screen.queryByTestId('drawer-nav')).toBeNull());
+    expect(window.location.pathname).toBe(before);
+  });
+
+  it('shows Close and the area tabs in the drawer', async () => {
+    stubApp();
+    history.replaceState(null, '', '/');
+    const { container } = render(App, { props: { user: me } });
+    await within(container).findByTestId('sidebar');
+    await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
+    const nav = await screen.findByTestId('drawer-nav');
+    for (const name of ['Chat', 'Runs', 'Memory', 'Quota', 'Settings']) expect(within(nav).getByRole('button', { name })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Close menu' })).toBeTruthy();
+  });
+
   it('shows the creator in the Session header', async () => {
     stubApp();
     history.replaceState(null, '', '/s/s1');
