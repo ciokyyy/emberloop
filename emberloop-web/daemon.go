@@ -170,6 +170,13 @@ type session struct {
 	// under d.mu.
 	busy    bool
 	pending []queuedMsg
+	// openTools holds the tool calls in flight by ToolCall id, opened on
+	// tool_call_started and closed on a completed or failed
+	// tool_call_updated, stamped on the Daemon clock. The Run driver reads
+	// it beside the working status, so a long foreground tool call (a
+	// minutes-long go test) dates worker activity. Memory only: a restart
+	// ends every turn, so nothing in flight survives one.
+	openTools map[string]time.Time
 	// gateSkip marks a turn the user stopped (interrupt, cancel): the submit
 	// gate takes it as a deliberate stop, not a missing submit, so no
 	// reminder follows it. The gate consumes it.
@@ -739,6 +746,7 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 	}
 	s.events = append(s.events, e)
 	s.last = d.now()
+	trackSessionToolEvent(s, kind, text, s.last)
 	if kind == "status" && status != "" {
 		prev := s.meta.Status
 		s.meta.Status = status

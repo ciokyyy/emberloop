@@ -191,7 +191,9 @@ type runState struct {
 	Rounds map[string][]ticketRound `json:"rounds,omitempty"`
 	// NeedsYouReason holds the needs-you alert text per ticket: the same
 	// refusal x3, idle 10m or stall-nudge message from the driver Notify,
-	// or a reviewer-format error needing the user.
+	// a reviewer-format error needing the user, or a worktree block (a stale
+	// branch or worktree the start could not reuse, through
+	// markStartBlockedNeedsYou rather than the driver Notify).
 	NeedsYouReason map[string]string `json:"needsYouReason,omitempty"`
 	// pushedNeedsYou is the needs-you reason last pushed per ticket, so the
 	// driver pushing every pass still notifies once per reason. Memory only:
@@ -251,12 +253,18 @@ type runState struct {
 	// ChainPendingSubmit invalidates an old Worker done submit on a provider
 	// Chain failure until the replacement Worker submits done.
 	ChainPendingSubmit map[string]bool `json:"chainPendingSubmit,omitempty"`
-	chainHandling      map[string]bool `json:"-"`
-	SpecRun            el.SpecRun      `json:"-"`
-	Driver             *el.DriverRun   `json:"-"`
-	notify             chan struct{}   `json:"-"`
-	unpause            chan struct{}   `json:"-"`
-	driving            bool            `json:"-"`
+	// StartBlocked holds the worktree-block reason per ticket: a stale
+	// branch or worktree an earlier Run left behind that the start could
+	// not safely reuse. The driver treats a blocked ticket as parked (no
+	// start, no finish, slot freed) while NeedsYouReason shows the remedy;
+	// retry clears it. Old run files without it still load.
+	StartBlocked  map[string]string `json:"startBlocked,omitempty"`
+	chainHandling map[string]bool   `json:"-"`
+	SpecRun       el.SpecRun        `json:"-"`
+	Driver        *el.DriverRun     `json:"-"`
+	notify        chan struct{}     `json:"-"`
+	unpause       chan struct{}     `json:"-"`
+	driving       bool              `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -748,6 +756,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Chains:             configuredRunChains(harness, model, effort),
 		ChainExhausted:     map[string]bool{},
 		ChainPendingSubmit: map[string]bool{},
+		StartBlocked:       map[string]string{},
 		SpecRun:            specRun,
 		Driver:             el.NewDriverRun(nil),
 		Parked:             map[string]bool{},
@@ -853,9 +862,17 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			userParked := rs.Parked[ticketID] || rs.TicketPaused[ticketID]
 			started := rs.Sessions[ticketID] != ""
 			discarded := rs.Discarded[ticketID]
+			// A worktree-blocked Ticket (a stale branch or worktree the start
+			// could not reuse) sits out like a red base: the slot frees, the
+			// driver neither starts nor finishes it, and NeedsYouReason shows
+			// the remedy until a retry clears it.
+			worktreeBlocked := rs.StartBlocked[ticketID] != ""
 			repo, specBranch, runID := rs.Repo, rs.SpecBranch, rs.ID
 			d.mu.Unlock()
 			if discarded {
+				return true
+			}
+			if worktreeBlocked {
 				return true
 			}
 			if userParked || started || specBranch == "" {
@@ -931,11 +948,18 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			defer d.mu.Unlock()
 			return !sessionLimitCapped(d.sessions[rs.Sessions[ticketID]])
 		},
+		// Working dates activity while the worker's turn runs. A long
+		// foreground tool call (a minutes-long go test) emits no commits,
+		// verdicts or submits, so an in-flight tool call also counts as
+		// busy, up to runToolActiveCap (see runs_toolactive.go).
 		Working: func(ticketID string) bool {
 			d.mu.Lock()
 			defer d.mu.Unlock()
 			s, ok := d.sessions[rs.Sessions[ticketID]]
-			return ok && s.meta.Status == "working"
+			if !ok {
+				return false
+			}
+			return s.meta.Status == "working" || sessionToolActiveLocked(s, d.now())
 		},
 		Submits: func(ticketID string) int {
 			return d.runSubmitCount(rs.ID, ticketID)
@@ -2575,6 +2599,16 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				return fmt.Errorf("could not read HEAD in %s: %w", repo, err)
 			}
 		}
+		// An earlier Run may have left this ticket's branch or worktree
+		// behind. Reuse or clean what holds no unique work; anything else
+		// becomes a ticket Needs-you with the remedy, so the rest of the
+		// Run keeps going instead of failing the whole Run at this ticket.
+		if blocked, err := reconcileTicketWorktree(repo, branch, worktree, base); err != nil {
+			return err
+		} else if blocked != "" {
+			d.markStartBlockedNeedsYou(runID, tk.ID, startBlockedReason(tk.ID, blocked))
+			return nil
+		}
 		if _, err := runGit(repo, "worktree", "add", "-b", branch, worktree, base); err != nil {
 			return err
 		}
@@ -2720,6 +2754,16 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		setChainPosition(rs, tk.ID, "worker", chainPos)
 		if rs.ChainExhausted != nil {
 			delete(rs.ChainExhausted, tk.ID)
+		}
+		// A start after the user resolved a worktree block clears it. Only
+		// the block's own banner goes: any other Needs-you reason stays.
+		if rs.StartBlocked != nil {
+			if reason, ok := rs.StartBlocked[tk.ID]; ok {
+				delete(rs.StartBlocked, tk.ID)
+				if rs.NeedsYouReason != nil && rs.NeedsYouReason[tk.ID] == reason {
+					delete(rs.NeedsYouReason, tk.ID)
+				}
+			}
 		}
 		rs.Sessions[tk.ID] = meta.ID
 		rs.Branches[tk.ID] = branch
@@ -4256,6 +4300,9 @@ func (d *Daemon) loadRuns() {
 		if rs.ChainPendingSubmit == nil {
 			rs.ChainPendingSubmit = map[string]bool{}
 		}
+		if rs.StartBlocked == nil {
+			rs.StartBlocked = map[string]string{}
+		}
 		// Older Run rows could persist Worker Chain positions but not the
 		// pending-submit marker. Recover it from a fallback position or a failed
 		// active Worker whose last-turn error advances the Chain.
@@ -4597,6 +4644,12 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 	if rs.ChainExhausted != nil {
 		delete(rs.ChainExhausted, ticketID)
 	}
+	// A retry after a worktree block lets the next Resume start over: the
+	// new driver loop seeds unstarted, reconciles again and clears the
+	// block on success.
+	if rs.StartBlocked != nil {
+		delete(rs.StartBlocked, ticketID)
+	}
 	if rs.pushedNeedsYou != nil {
 		delete(rs.pushedNeedsYou, ticketID)
 	}
@@ -4685,6 +4738,11 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 	rs.Discarded[ticketID] = true
 	if rs.Parked != nil {
 		delete(rs.Parked, ticketID)
+	}
+	// A discarded worktree block goes with the ticket: there is nothing
+	// left to start, so no retry can revive it.
+	if rs.StartBlocked != nil {
+		delete(rs.StartBlocked, ticketID)
 	}
 	d.writeTicketRun(w, rs)
 	// Best effort like the start cleanup: the discard stands even when git
