@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -58,10 +57,10 @@ func watchForUpdate(d *web.Daemon, exe string, every time.Duration) {
 		if !d.Idle(0) {
 			continue
 		}
-		fmt.Println("el-web: binary changed and idle, restarting")
+		d.LogRestart("binary changed and idle, restarting")
 		d.Shutdown()
 		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
-			fmt.Fprintln(os.Stderr, "restart:", err)
+			d.LogRestart("update restart exec failed: %v", err)
 		}
 	}
 }
@@ -69,21 +68,54 @@ func watchForUpdate(d *web.Daemon, exe string, every time.Duration) {
 // watchForRestartRequest serves the graceful restart: once the Daemon
 // asked for it (POST /api/restart or SIGUSR1) it waits until no Session is
 // mid-turn, at most drain, then closes the agents and re-executes in place.
-// Runs were paused and marked by RequestRestart, so the new Daemon resumes
-// them. Exec failing cancels the request and resumes them here.
+// The drain deadline forces the restart regardless of Idle: a Session that
+// never settles delays the restart but cannot wedge it. Runs were paused
+// and marked by RequestRestart, so the new Daemon resumes them. Exec failing
+// cancels the request and resumes them here. Every step is logged to stderr
+// and the state dir's restart.log, so a dead stdout never hides it.
 func watchForRestartRequest(d *web.Daemon, exe string, drain time.Duration) {
 	for range d.RestartCh() {
-		fmt.Println("el-web: restart requested, waiting for idle")
-		deadline := time.Now().Add(drain)
-		for !d.Idle(0) && time.Now().Before(deadline) {
-			time.Sleep(500 * time.Millisecond)
+		// Re-establish the request without signaling: a re-arm consumed
+		// after a failed exec's cancel is a fresh request, and a signal
+		// here would queue another drain cycle behind itself forever.
+		d.ReassertRestart()
+		st := d.RestartState()
+		d.LogRestart("requested, waiting for idle up to %s (sessions=%v groups=%v runs=%v starting=%d mining=%v)",
+			drain, st.Sessions, st.Groups, st.Runs, st.Starting, st.Mining)
+		if forced := waitRestartIdle(d, drain, 500*time.Millisecond); forced {
+			d.LogRestart("drain %s expired, forcing the restart regardless of idle", drain)
 		}
-		fmt.Println("el-web: restarting")
+		d.LogRestart("shutting down agent processes")
 		d.Shutdown()
+		d.LogRestart("re-executing %s", exe)
 		if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
-			fmt.Fprintln(os.Stderr, "restart:", err)
+			d.LogRestart("exec failed: %v", err)
 			d.CancelRestart()
 		}
+	}
+}
+
+// waitRestartIdle waits until the Daemon is idle or drain passes, polling
+// every poll and logging the blockers every 30s. It reports whether the
+// drain forced the return past idle: a Session that never settles delays the
+// restart but cannot wedge it.
+func waitRestartIdle(d *web.Daemon, drain, poll time.Duration) bool {
+	deadline := time.Now().Add(drain)
+	lastLog := time.Now()
+	for {
+		if d.Idle(0) {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return true
+		}
+		if time.Since(lastLog) >= 30*time.Second {
+			st := d.RestartState()
+			d.LogRestart("still waiting on sessions=%v groups=%v runs=%v starting=%d mining=%v",
+				st.Sessions, st.Groups, st.Runs, st.Starting, st.Mining)
+			lastLog = time.Now()
+		}
+		time.Sleep(poll)
 	}
 }
 

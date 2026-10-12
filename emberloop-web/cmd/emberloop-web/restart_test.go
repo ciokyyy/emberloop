@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,14 +22,16 @@ func TestRestartsWhenBinaryChanges(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	cmd := exec.Command(bin, "-addr", "127.0.0.1:0", "-state-dir", filepath.Join(dir, "state"), "-restart-check", "100ms")
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Restart steps log to stderr (and the state dir's restart.log), so the
+	// test reads the Daemon's combined output.
+	outR, outW := io.Pipe()
+	cmd.Stdout = outW
+	cmd.Stderr = outW
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait(); _ = outW.Close() }()
+	out := outR
 	lines := make(chan string, 16)
 	go func() {
 		sc := bufio.NewScanner(out)
