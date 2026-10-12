@@ -222,17 +222,19 @@ func TestRestartPausesRunAndResumeKeepsWorker(t *testing.T) {
 	first := ticketByID(r, "01-first").WorkerSession
 	before := countSessions(t, srv.URL)
 
-	// Every driver pass reaches the file: the row for the started Ticket is
-	// already there before any restart.
+	// Every driver pass reaches the file: the row for the started Ticket,
+	// with its state recorded, is already there before any restart. The
+	// state check matters: an early pass can persist the row before the
+	// Ticket state lands, and restarting then would reload an empty state.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if rows := runFileRows(t, stateDir, run.ID); rows["01-first"] != nil {
+		if rows := runFileRows(t, stateDir, run.ID); rows["01-first"] != nil && rows["01-first"]["state"] != "" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("run file has no row for 01-first")
+			t.Fatalf("run file has no state row for 01-first")
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	// RequestRestart is the graceful-restart path: it freezes the driver but
