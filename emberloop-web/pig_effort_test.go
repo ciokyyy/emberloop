@@ -26,6 +26,7 @@ func TestValidPigEffort(t *testing.T) {
 
 // An unknown pig effort rejects the create like an unknown model does.
 func TestPigUnknownEffortRejected(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -43,6 +44,7 @@ func TestPigUnknownEffortRejected(t *testing.T) {
 
 // A known pig effort is accepted and kept on the Session.
 func TestPigEffortAcceptedAndKept(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

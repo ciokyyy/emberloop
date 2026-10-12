@@ -51,6 +51,10 @@ func TestMain(m *testing.M) {
 	os.Unsetenv("EL_WEB_DAEMON_URL")
 	os.Setenv("EL_SESSION_TITLES", "0")
 	os.Setenv("PIG_TEST_FAUX", "1")
+	// Every faux backend uses the parity-basic scenario; the SDK defaults to
+	// it when unset, so fixing it here changes no behavior and lets pig
+	// tests stay parallel-safe.
+	os.Setenv("PIG_TEST_FAUX_SCENARIO", "parity-basic")
 	os.Setenv("GIT_AUTHOR_NAME", "web-test")
 	os.Setenv("GIT_AUTHOR_EMAIL", "test@example.com")
 	os.Setenv("GIT_COMMITTER_NAME", "web-test")

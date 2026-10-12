@@ -11,6 +11,7 @@ import (
 // saved pig Session: the Daemon id lives on, the transcript carries over, and
 // the fresh stack answers the next prompt.
 func TestPigRecoverWedgedRebuildsFromSavedSession(t *testing.T) {
+	t.Parallel()
 	pb := newPigTestBackend(t)
 	pb.LogDir = tempDir(t)
 	meta := SessionMeta{ID: "wedge1", Harness: "pig", Model: pigFauxModel, WorkDir: tempDir(t)}
