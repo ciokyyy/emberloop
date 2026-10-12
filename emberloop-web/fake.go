@@ -230,6 +230,14 @@ func (f *FakeBackend) CreateSession(meta SessionMeta, emit func(kind, text, stat
 
 func (f *FakeBackend) CloseSession(sessionID string) {}
 
+// UsageWindow reports the scripted context window for the Daemon's usage
+// seed: 0 while UsageSize is unset, so unscripted Sessions seed nothing.
+func (f *FakeBackend) UsageWindow(model string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.UsageSize
+}
+
 func (f *FakeBackend) Models() []string { return []string{"fake-model"} }
 
 // ReleaseSession drops the fake handle; the token is a fixed marker.

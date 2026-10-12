@@ -70,6 +70,14 @@ func NewPigACPBackend(stateDir, daemonBin, daemonAddr string) (*PigACPBackend, e
 	}
 	cb := &ClaudeBackend{plain: true, mcpName: "el", mcpCommand: "el-mcp", adapterCommand: runner, sessions: map[string]*claudeState{}}
 	cb.daemonAddr = daemonAddr
+	// Fallback usage sizes from the pig catalog window: pig windows are far
+	// smaller than claude's, so the claude default would under-read the meter.
+	cb.windowFor = func(model string) int {
+		if w := catalogWindow(model); w > 0 {
+			return w
+		}
+		return defaultSummaryWindow
+	}
 	b := &PigACPBackend{ClaudeBackend: cb, stateDir: stateDir, runner: runner, pigBin: pigBin, shimBin: daemonBin, sdk: NewPigBackend()}
 	cb.newConnFor = b.connFor
 	return b, nil

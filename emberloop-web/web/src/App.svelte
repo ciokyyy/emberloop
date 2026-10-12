@@ -819,6 +819,11 @@
               <Composer status="idle" busy={sending} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
               <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
+            {/if}
+            {#if currentId && !drafting}
+              <!-- The meter always renders, read-only on scout, ended and
+                   unresumable Sessions: only the Compress button and the
+                   composer stay gated by canCompress. -->
               <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
             {/if}
           </div>

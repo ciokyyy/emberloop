@@ -35,3 +35,20 @@ describe('ContextMeter compress reason', () => {
     expect(within(container).getByText(reason)).toBeTruthy();
   });
 });
+describe('ContextMeter read-only meter', () => {
+  it('shows the usage even when the Session cannot compress', () => {
+    const { container } = render(ContextMeter, { props: { model: 'm', usage: { used: 150000, size: 1000000 } } });
+    expect(within(container).queryByText('Compress')).toBeNull();
+    expect(container.querySelector('[data-testid="context-meter"]')).toBeTruthy();
+    expect(within(container).getByText(/15%/)).toBeTruthy();
+  });
+  it('keeps the meter row on one line and hides the window on phones', () => {
+    const { container } = render(ContextMeter, { props: { model: 'm', usage: { used: 1500, size: 4000 } } });
+    const meter = container.querySelector('[data-testid="context-meter"]');
+    expect(meter.className).toMatch(/whitespace-nowrap/);
+    const size = meter.querySelector('span span');
+    expect(size.textContent).toMatch(/4\.0k/);
+    expect(size.className).toMatch(/hidden/);
+    expect(size.className).toMatch(/sm:inline/);
+  });
+});

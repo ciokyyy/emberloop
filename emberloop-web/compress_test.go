@@ -49,6 +49,7 @@ func compressReq(t *testing.T, base, id, instructions string) (int, map[string]a
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	return resp.StatusCode, out
 }
+
 // compressReqIdle compresses once the Session's turn fully settles. The idle
 // status lands just before the turn's busy flag clears, so a bare compressReq
 // right after it can meet a working turn under load and answer 409. This
@@ -166,19 +167,26 @@ func TestCompressSettings(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	if s := get(); !s.Auto || s.ThresholdPercent != 80 || s.Cooldown != 5 || s.Instructions != "" {
+	if s := get(); !s.Auto || s.ThresholdPercent != 80 || s.Cooldown != 5 || s.Instructions != "" || s.ThresholdTokens != defaultCompressTokens {
 		t.Fatalf("defaults = %+v", s)
 	}
-	if code := put(`{"compress":{"auto_compress":false,"compress_threshold_percent":65,"compress_cooldown":2,"compress_instructions":"  keep ids  "}}`); code != http.StatusOK {
+	if code := put(`{"compress":{"auto_compress":false,"compress_threshold_percent":65,"compress_cooldown":2,"compress_instructions":"  keep ids  ","compress_threshold_tokens":120000}}`); code != http.StatusOK {
 		t.Fatalf("put = %d", code)
 	}
-	if s := get(); s.Auto || s.ThresholdPercent != 65 || s.Cooldown != 2 || s.Instructions != "keep ids" {
+	if s := get(); s.Auto || s.ThresholdPercent != 65 || s.Cooldown != 2 || s.Instructions != "keep ids" || s.ThresholdTokens != 120000 {
 		t.Fatalf("saved = %+v", s)
+	}
+	if code := put(`{"compress":{"compress_threshold_tokens":0}}`); code != http.StatusOK {
+		t.Fatalf("put tokens 0 = %d, want 200", code)
+	}
+	if s := get(); s.ThresholdTokens != 0 {
+		t.Fatalf("tokens off = %+v, want 0", s)
 	}
 	for _, bad := range []string{
 		`{"compress":{"compress_threshold_percent":5}}`,
 		`{"compress":{"compress_threshold_percent":100}}`,
 		`{"compress":{"compress_cooldown":-1}}`,
+		`{"compress":{"compress_threshold_tokens":-1}}`,
 		`{"compress":{"compress_instructions":"` + strings.Repeat("x", 2001) + `"}}`,
 	} {
 		if code := put(bad); code != http.StatusBadRequest {
@@ -200,4 +208,64 @@ func hasStatusAfter(evs []Event, n int) bool {
 		}
 	}
 	return c >= n
+}
+
+// parseCompressSettings decodes the absolute token gate: unset means the
+// default cap, 0 means off, a negative value keeps the default.
+func TestParseCompressThresholdTokens(t *testing.T) {
+	t.Parallel()
+	mk := func(body string) compressSettings {
+		all := map[string]json.RawMessage{}
+		if err := json.Unmarshal([]byte(body), &all); err != nil {
+			t.Fatal(err)
+		}
+		return parseCompressSettings(all)
+	}
+	if got := mk(`{}`); got.ThresholdTokens != defaultCompressTokens {
+		t.Fatalf("unset tokens = %d, want default %d", got.ThresholdTokens, defaultCompressTokens)
+	}
+	if got := mk(`{"compress_threshold_tokens":0}`); got.ThresholdTokens != 0 {
+		t.Fatalf("tokens 0 = %d, want off", got.ThresholdTokens)
+	}
+	if got := mk(`{"compress_threshold_tokens":150000}`); got.ThresholdTokens != 150000 {
+		t.Fatalf("tokens = %d, want 150000", got.ThresholdTokens)
+	}
+	if got := mk(`{"compress_threshold_tokens":-5}`); got.ThresholdTokens != defaultCompressTokens {
+		t.Fatalf("negative tokens = %d, want default %d", got.ThresholdTokens, defaultCompressTokens)
+	}
+}
+
+// A new Session seeds an estimated usage Event from the Backend window, so
+// the meter shows immediately: no prompt has run, yet the log already holds
+// a sized reading. A later real reading is never overwritten by a seed.
+func TestSeededUsageAtSessionStart(t *testing.T) {
+	t.Setenv("PIG_TEST_FAUX", "1")
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
+	be := NewFakeBackend()
+	be.UsageSize = 4000
+	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	seed := eventsOfKind(transcriptOf(t, srv.URL, id), "usage")
+	if len(seed) != 1 {
+		t.Fatalf("seeded usage events = %d, want 1 before any prompt", len(seed))
+	}
+	used, size, ok := usageOf(transcriptOf(t, srv.URL, id))
+	if !ok || size != 4000 {
+		t.Fatalf("seeded usage = %d/%d ok=%v, want size 4000", used, size, ok)
+	}
+	// The seed never overwrites a real reading: after a turn the newest
+	// usage is the turn's own, and no second seed appears.
+	sendPrompt(t, srv.URL, id, "hello")
+	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
+	evs := transcriptOf(t, srv.URL, id)
+	if n := len(eventsOfKind(evs, "usage")); n != 2 {
+		t.Fatalf("usage events after one turn = %d, want seed plus turn", n)
+	}
+	used, size, _ = usageOf(evs)
+	if size != 4000 || used <= 0 {
+		t.Fatalf("newest usage = %d/%d, want the turn reading", used, size)
+	}
 }

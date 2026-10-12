@@ -259,7 +259,10 @@ func dueEvents(openTool bool, promptsAfterCompress int, used, size int) []Event 
 // window compresses whatever the cooldown says. An open tool always holds.
 func TestAutoCompressDueTable(t *testing.T) {
 	set := func(cooldown int) compressSettings {
-		return compressSettings{Auto: true, ThresholdPercent: 80, Cooldown: cooldown}
+		return compressSettings{Auto: true, ThresholdPercent: 80, Cooldown: cooldown, ThresholdTokens: defaultCompressTokens}
+	}
+	setTokens := func(cooldown, tokens int) compressSettings {
+		return compressSettings{Auto: true, ThresholdPercent: 80, Cooldown: cooldown, ThresholdTokens: tokens}
 	}
 	for _, tc := range []struct {
 		name   string
@@ -276,6 +279,13 @@ func TestAutoCompressDueTable(t *testing.T) {
 		{"at window bypasses cooldown", dueEvents(false, 0, 100, 100), set(99), true},
 		{"open tool holds past threshold", dueEvents(true, -1, 90, 100), set(0), false},
 		{"no usage never fires", nil, set(0), false},
+		{"tokens threshold fires below percent", dueEvents(false, -1, 60, 100), setTokens(0, 50), true},
+		{"tokens threshold holds below tokens", dueEvents(false, -1, 40, 100), setTokens(0, 50), false},
+		{"tokens zero means off", dueEvents(false, -1, 60, 100), setTokens(0, 0), false},
+		{"tokens threshold cooled holds", dueEvents(false, 1, 60, 100), setTokens(5, 50), false},
+		{"tokens threshold cooled passes with prompts", dueEvents(false, 5, 60, 100), setTokens(5, 50), true},
+		{"tokens threshold open tool holds", dueEvents(true, -1, 60, 100), setTokens(0, 50), false},
+		{"tokens threshold past window bypasses cooldown", dueEvents(false, 1, 117, 100), setTokens(99, 1000), true},
 	} {
 		if got := autoCompressDue(tc.events, tc.set); got != tc.want {
 			t.Errorf("%s: autoCompressDue = %v, want %v", tc.name, got, tc.want)
