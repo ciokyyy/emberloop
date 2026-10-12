@@ -91,7 +91,7 @@ func waitActionState(t *testing.T, base, runID, ticketID, want, what string) act
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s: ticket %s state = %q, want %q", what, ticketID, actionTicketByID(getActionRun(t, base, runID), ticketID).State, want)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -125,7 +125,7 @@ func waitPromptContaining(t *testing.T, base, sessionID, substr string, n int, w
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s: %d prompts contain %q, want %d", what, found, substr, n)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -355,7 +355,7 @@ func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("idle needs-you never surfaced: state=%q reason=%q", got.State, got.NeedsYou)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -413,7 +413,7 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("stall needs-you never surfaced: state=%q reason=%q", got.State, got.NeedsYou)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -453,7 +453,7 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("refusal needs-you never surfaced: state=%q reason=%q refusal=%q", got.State, got.NeedsYou, got.LastRefusal)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

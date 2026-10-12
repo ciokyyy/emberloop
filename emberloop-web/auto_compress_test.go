@@ -71,7 +71,7 @@ func TestAutoCompressWaitsForTurnEnd(t *testing.T) {
 	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":true,"compress_threshold_percent":10,"compress_cooldown":0}`)
 	be := NewFakeBackend()
-	be.Delay = 800 * time.Millisecond
+	be.Delay = 400 * time.Millisecond
 	be.UsageSize = 40
 	d := NewDaemon(tempDir(t), be)
 	d.SetSettingsPath(settingsPath)
@@ -100,7 +100,7 @@ func TestAutoCompressSkipsWhileBusy(t *testing.T) {
 	d, be, base, id := autoDaemon(t, 40, 10, 0)
 	sendPrompt(t, base, id, "one")
 	waitIdleAfter(t, base, id, 1)
-	be.Delay = 800 * time.Millisecond
+	be.Delay = 400 * time.Millisecond
 	sendPrompt(t, base, id, "two")
 	waitStatus(t, base, id, "working", 5*time.Second)
 	d.appendEvent(id, "usage", usageText(90, 100), "")

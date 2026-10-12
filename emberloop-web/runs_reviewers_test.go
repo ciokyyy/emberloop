@@ -28,7 +28,7 @@ func waitReviewers(t *testing.T, base, runID, ticketID string) map[string]string
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for reviewers of %s", ticketID)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -97,7 +97,9 @@ func TestReviewersSpawnOnDoneAndGateRefusesWithoutPass(t *testing.T) {
 	fb := NewFakeBackend()
 	fb.ReplyFunc = func(id, text string) (string, bool) {
 		if strings.Contains(text, "reviewer-standards") {
-			time.Sleep(4 * time.Second)
+			// Hold the gate open while the assertions below run: they
+			// land in well under a second, so 2s keeps wide margin.
+			time.Sleep(2 * time.Second)
 			return "VERDICT: pass", true
 		}
 		if strings.Contains(text, "Review ticket") || strings.Contains(text, "RESPOND IN FORMAT") {
@@ -455,7 +457,7 @@ func TestReviewStaleVerdictRepromptsCurrentTip(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("reviewer transcript misses the re-prompt at %q", cur)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -929,7 +931,7 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no reused second round: %+v", extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first").Rounds)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	// No second Reviewer turn went out: one gate prompt per reviewer, and
 	// the same persistent Sessions. The reused changes refusal still stands.
@@ -1183,6 +1185,6 @@ func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no needs-you for the silent reviewer: %+v", extTicketByID(getExtRun(t, srv.URL, run.ID), "01-first"))
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }

@@ -431,7 +431,15 @@ func TestCancelNonChildRefusedScoutStoppable(t *testing.T) {
 // and kills through DELETE.
 func TestProxyCancelInterruptsAndKills(t *testing.T) {
 	fake := NewFakeBackend()
-	fake.Delay = 5 * time.Second
+	// Only the child's turn stays open: the parent's delivery turn settles
+	// fast, so the idle wait never waits out the hold. The grouped result
+	// carries "(no reply)", never the job text, so the match is exact.
+	fake.DelayFunc = func(text string) time.Duration {
+		if strings.Contains(text, "slow job") {
+			return 5 * time.Second
+		}
+		return 0
+	}
 	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

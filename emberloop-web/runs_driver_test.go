@@ -271,7 +271,7 @@ func waitRunTickets(t *testing.T, base, id string, want map[string]string) runJS
 			}
 			t.Fatalf("tickets = %v, want %v", got, want)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -349,7 +349,7 @@ func waitRunCond(t *testing.T, base, id string, cond func(runJSON) bool, what st
 			}
 			t.Fatalf("timed out waiting for %s: %v (run %s error %q files %v)", what, states, r.Status, r.Error, r.FinalMergeFiles)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -1440,7 +1440,7 @@ func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("capped Worker did not reach idle needs-you: state=%q reason=%q", got.State, got.NeedsYou)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	if prompts := workerPromptTexts(t, srv.URL, worker); len(prompts) != 1 {
 		t.Fatalf("capped Worker received %d prompts after idle timeout, want only its task: %q", len(prompts), prompts)

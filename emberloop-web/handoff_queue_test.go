@@ -80,7 +80,9 @@ func waitSettled(t *testing.T, base, id string, ok func([]Event) bool) []Event {
 // after the Handoff prompt, in the order they were sent.
 func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
 	t.Parallel()
-	_, rec, base, id := queueDaemon(t, time.Second)
+	// The hold only needs to cover local HTTP roundtrips between turn start
+	// and the next request: 300ms holds the window with wide margin.
+	_, rec, base, id := queueDaemon(t, 300*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
@@ -115,7 +117,7 @@ func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
 // degrades to a Follow-up, lands after the Handoff and is not lost.
 func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
 	t.Parallel()
-	d, rec, base, id := queueDaemon(t, time.Second)
+	d, rec, base, id := queueDaemon(t, 300*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
@@ -181,7 +183,7 @@ func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
 		deliver := deliver
 		t.Run(deliver, func(t *testing.T) {
 			t.Parallel()
-			_, _, base, parent := queueDaemon(t, time.Second)
+			_, _, base, parent := queueDaemon(t, 300*time.Millisecond)
 			sendPrompt(t, base, parent, "plan the work")
 			waitStatus(t, base, parent, "idle", 5*time.Second)
 			if code, out := postSpawn(t, base, parent, map[string]any{

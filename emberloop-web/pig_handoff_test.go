@@ -371,7 +371,7 @@ func TestPigSteerMissFallsBackToPending(t *testing.T) {
 	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := &failingSteerBackend{FakeBackend: NewFakeBackend()}
-	be.Delay = time.Second
+	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
 	d.RegisterBackend("pig", be)
@@ -402,7 +402,7 @@ func TestPigSteerDuringHandoffQueuesFollowup(t *testing.T) {
 	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
-	be.Delay = time.Second
+	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
 	d.RegisterBackend("pig", be)

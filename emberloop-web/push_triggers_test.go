@@ -305,7 +305,7 @@ func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
 func TestPushEndedSessionStaysSilent(t *testing.T) {
 	t.Parallel()
 	fake := NewFakeBackend()
-	fake.Delay = time.Second
+	fake.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

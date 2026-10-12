@@ -129,12 +129,14 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	}
 
 	// The old Session is ended by Pause. A late submit on that history cannot
-	// merge or start reviewers, and the dependent Ticket stays queued.
+	// merge or start reviewers, and the dependent Ticket stays queued. The
+	// test driver polls every 100ms, so 750ms covers several passes that
+	// could violate the hold.
 	submitSession(t, srv.URL, first, "done", []string{"alpha"})
-	assertHolds(t, 1500*time.Millisecond, "01-first merged while paused", func() bool {
+	assertHolds(t, 750*time.Millisecond, "01-first merged while paused", func() bool {
 		return ticketByID(getRun(t, srv.URL, run.ID), "01-first").State != "merged"
 	})
-	assertHolds(t, 1500*time.Millisecond, "02-second started while paused", func() bool {
+	assertHolds(t, 750*time.Millisecond, "02-second started while paused", func() bool {
 		return ticketByID(getRun(t, srv.URL, run.ID), "02-second").WorkerSession == ""
 	})
 	if got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").WorkerSession; got != first {
@@ -348,7 +350,7 @@ func TestPauseDuringStartStartsEveryTicketOnce(t *testing.T) {
 			continue
 		}
 		// Pause won: no Worker may appear until the Resume.
-		assertHolds(t, time.Second, "worker started while paused", func() bool {
+		assertHolds(t, 750*time.Millisecond, "worker started while paused", func() bool {
 			rr := getRun(t, srv.URL, run.ID)
 			return ticketByID(rr, "01-first").WorkerSession == "" &&
 				ticketByID(rr, "02-second").WorkerSession == ""

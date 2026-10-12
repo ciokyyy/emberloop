@@ -106,7 +106,7 @@ func TestGateChildThatSubmitsIsUntouched(t *testing.T) {
 	submitSession(t, srv.URL, child, "done", []string{"alpha"})
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 	waitGroupSteer(t, srv.URL, parent, group, 10*time.Second)
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	_, events := sessionMeta(t, srv.URL, child)
 	if n := countReminderPrompts(events); n != 0 {
@@ -132,7 +132,7 @@ func TestGateRemindsOnceThenChildSubmits(t *testing.T) {
 	group, child := spawnOneWithGroup(t, srv.URL, parent, "job A")
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
 	waitGroupSteer(t, srv.URL, parent, group, 10*time.Second)
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	_, events := sessionMeta(t, srv.URL, child)
 	if n := countReminderPrompts(events); n != 1 {
@@ -163,7 +163,7 @@ func TestGateGiveUpDeliversStoppedNoticeOnce(t *testing.T) {
 	if !strings.Contains(steer.Text, "stopped without submitting") {
 		t.Fatalf("grouped steer missing stopped notice: %q", steer.Text)
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	_, events := sessionMeta(t, srv.URL, child)
 	if n := countReminderPrompts(events); n != 3 {
@@ -212,7 +212,7 @@ func TestGateKilledChildGetsNoReminder(t *testing.T) {
 			t.Fatalf("delete status = %d", resp.StatusCode)
 		}
 	}
-	time.Sleep(1200 * time.Millisecond)
+	time.Sleep(800 * time.Millisecond)
 	_, events := sessionMeta(t, srv.URL, child)
 	if n := countReminderPrompts(events); n != 0 {
 		t.Fatalf("reminder prompts on killed child = %d, want 0", n)
@@ -224,7 +224,14 @@ func TestGateKilledChildGetsNoReminder(t *testing.T) {
 func TestGateInterruptedChildGetsNoReminder(t *testing.T) {
 	withSubmitGate(t)
 	fake := NewFakeBackend()
-	fake.Delay = 5 * time.Second
+	// Only the child's turn stays open: the parent's delivery turn settles
+	// fast, so waitParentIdle never waits out the hold.
+	fake.DelayFunc = func(text string) time.Duration {
+		if strings.Contains(text, "slow job") {
+			return 5 * time.Second
+		}
+		return 0
+	}
 	d := NewDaemon(tempDir(t), fake)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -238,7 +245,7 @@ func TestGateInterruptedChildGetsNoReminder(t *testing.T) {
 	}
 	resp.Body.Close()
 	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	_, events := sessionMeta(t, srv.URL, child)
 	if n := countReminderPrompts(events); n != 0 {
 		t.Fatalf("reminder prompts on interrupted child = %d, want 0", n)
@@ -264,7 +271,7 @@ func TestSettleDeliversLastMessageWithoutSubmit(t *testing.T) {
 	if !strings.Contains(steer.Text, "fake reply to: job A") {
 		t.Fatalf("grouped steer missing last message: %q", steer.Text)
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 
 	_, events := sessionMeta(t, srv.URL, child)
 	if n := countReminderPrompts(events); n != 0 {
@@ -309,7 +316,7 @@ func TestSettleDeliversSubmitTextWhenSubmitted(t *testing.T) {
 	if !strings.Contains(steer.Text, "settled report") {
 		t.Fatalf("grouped steer missing submit text: %q", steer.Text)
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	_, pevents := sessionMeta(t, srv.URL, parent)
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)
@@ -347,7 +354,7 @@ func TestSettleFailedChildDeliversStatus(t *testing.T) {
 	if !strings.Contains(steer.Text, "[failed]") {
 		t.Fatalf("grouped steer missing failed status: %q", steer.Text)
 	}
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond)
 	_, pevents := sessionMeta(t, srv.URL, parent)
 	if n := countGroupSteers(pevents, group); n != 1 {
 		t.Fatalf("grouped steers = %d, want exactly 1", n)

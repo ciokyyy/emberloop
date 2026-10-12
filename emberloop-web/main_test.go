@@ -62,6 +62,9 @@ func TestMain(m *testing.M) {
 	// watchdog ends it. Real timings cost ~30s per hit, so shrink them.
 	pigTailStallTimeout = 2 * time.Second
 	pigStallTick = 200 * time.Millisecond
+	// The Run driver caps its poll sleep at runPollInterval: a fast cadence
+	// keeps multi-pass Run tests quick without changing their assertions.
+	runPollInterval = 100 * time.Millisecond
 	code := m.Run()
 	sharedTempMu.Lock()
 	roots := sharedTempRoots
