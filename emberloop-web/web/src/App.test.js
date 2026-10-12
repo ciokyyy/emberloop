@@ -118,9 +118,9 @@ describe('Sidebar collapse', () => {
       vi.fn(async (u) => {
         if (String(u).includes('/api/sessions/doesnotexist123'))
           return { ok: false, status: 404, json: async () => ({}) };
-        if (String(u).includes('/api/sessions')) return sessionsBody;
-        if (String(u).includes('/api/projects')) return projectsBody;
-        if (String(u).includes('/api/users')) return usersBody;
+        if (String(u).includes('/api/sessions')) return { ok: true, json: async () => sessionsBody };
+        if (String(u).includes('/api/projects')) return { ok: true, json: async () => projectsBody };
+        if (String(u).includes('/api/users')) return { ok: true, json: async () => usersBody };
         return { ok: true, json: async () => [] };
       }),
     );
@@ -128,6 +128,28 @@ describe('Sidebar collapse', () => {
     expect(await within(container).findByTestId('session-missing')).toBeTruthy();
     expect(within(container).queryByLabelText('composer')).toBeNull();
     expect(within(container).queryByTestId('context-meter')).toBeNull();
+  });
+  it('closes the Git panel on Escape and returns focus to its toggle', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/git')) return { ok: true, json: async () => ({ isRepo: true, branch: 'main', files: [], log: [] }) };
+        if (String(u).includes('/api/sessions/s1')) return { ok: true, json: async () => ({ session: sessionsBody[0], events: [], resumable: true, hasMore: false, firstSeq: 0 }) };
+        if (String(u).includes('/api/sessions')) return { ok: true, json: async () => sessionsBody };
+        if (String(u).includes('/api/projects')) return { ok: true, json: async () => projectsBody };
+        if (String(u).includes('/api/users')) return { ok: true, json: async () => usersBody };
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App, { props: { user: me } });
+    await fireEvent.click(await within(container).findByRole('button', { name: /Git|main/ }));
+    expect(await within(container).findByLabelText('Git')).toBeTruthy();
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await vi.waitFor(() => expect(within(container).queryByLabelText('Git')).toBeNull());
+    expect(document.getElementById('git-toggle')).toBe(document.activeElement);
   });
 });
 

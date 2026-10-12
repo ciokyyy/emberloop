@@ -610,7 +610,14 @@
   onDestroy(() => window.removeEventListener('popstate', onPop));
   // Ctrl/⌘+B toggles rail 2: the drawer on phones, the collapse on desktop.
   // Typing keeps the key (bold in editors, and the composer must not lose it).
+  // Escape closes the Git panel like every other overlay, with focus back on
+  // its toggle.
   const onKeys = (e) => {
+    if (e.key === 'Escape' && gitOpen) {
+      gitOpen = false;
+      document.getElementById('git-toggle')?.focus();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -748,7 +755,7 @@
         {/if}
         <Button variant="ghost" size="sm" class="md:hidden" onclick={newChat}><Plus />New</Button>
         {#if activeProject}
-          <Button variant="outline" size="sm" onclick={() => (gitOpen = !gitOpen)} aria-pressed={gitOpen}>
+          <Button variant="outline" size="sm" id="git-toggle" onclick={() => (gitOpen = !gitOpen)} aria-pressed={gitOpen}>
             <GitBranch /><span class="max-w-24 truncate max-sm:hidden">{git?.isRepo ? git.branch : 'Git'}</span>{#if git?.isRepo && git.files.length}<Badge class="px-1.5 py-0 text-[10px]">{git.files.length}</Badge>{/if}
           </Button>
         {/if}
