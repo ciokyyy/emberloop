@@ -35,7 +35,7 @@ func (p *promptsSeen) all() []string {
 // the admin User. A non-nil hook replaces the injection hook until the test ends.
 func handleDaemon(t *testing.T, hook func(SessionMeta, handleOp) injection) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
 		prev := memoryInjection
 		memoryInjection = hook
@@ -45,6 +45,7 @@ func handleDaemon(t *testing.T, hook func(SessionMeta, handleOp) injection) (*Da
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)

@@ -19,8 +19,9 @@ func urlQueryEscape(s string) string { return url.QueryEscape(s) }
 // wired, returning the Daemon and its authed base URL.
 func memoryPageDaemon(t *testing.T) (*Daemon, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -31,8 +32,9 @@ func memoryPageDaemon(t *testing.T) (*Daemon, string) {
 // private-notes invariant, returning both bases and owners.
 func memoryTwoUsers(t *testing.T) (*Daemon, string, string, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")

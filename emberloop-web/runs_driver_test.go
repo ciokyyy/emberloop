@@ -679,8 +679,8 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -706,8 +706,8 @@ func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -721,8 +721,9 @@ func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "missing.json"))
+	missing := filepath.Join(tempDir(t), "missing.json")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(missing)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

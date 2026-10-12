@@ -201,8 +201,9 @@ func TestConsolidateIgnoresOldObservationsAndNeverDeletes(t *testing.T) {
 }
 
 func TestConsolidateSkipsWithoutModel(t *testing.T) {
-	useSettings(t, `{"decider_mode":"heuristic"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"heuristic"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	seedObs(t, d, "alice", "s1", "1", "Use tabs, not spaces", "")
 	res := d.nightlyConsolidate(context.Background(), "run", []string{"alice"})
 	if res.Status != memory.LedgerNoData || !strings.Contains(res.Detail, "no memory model") {

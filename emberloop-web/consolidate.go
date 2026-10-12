@@ -317,7 +317,7 @@ func (d *Daemon) nightlyConsolidate(ctx context.Context, runID string, owners []
 		return NightlyStageResult{Stage: nightlyStageConsolidate, Status: memory.LedgerNoData,
 			Counts: map[string]any{"owners": 0}, Detail: "no banks to consolidate"}
 	}
-	set := readDeciderSettings()
+	set := d.deciderSettingsOf()
 	model := strings.TrimSpace(set.Model)
 	if model == "" && d.consolidateOneShot == nil {
 		return finish(memory.LedgerNoData, map[string]any{"owners": len(owners)},

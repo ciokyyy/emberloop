@@ -14,7 +14,7 @@ import (
 
 func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string) (*Daemon, *ClaudeBackend, *stubConn, *httptest.Server, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	if hook != nil {
 		prev := memoryInjection
 		memoryInjection = func(meta SessionMeta, op handleOp) injection {
@@ -32,6 +32,7 @@ func claudeHandoffDaemon(t *testing.T, hook func(SessionMeta, handleOp) []string
 	stub := &stubConn{updates: []map[string]any{chunk("ok")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)

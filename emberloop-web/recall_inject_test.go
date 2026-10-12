@@ -18,11 +18,12 @@ import (
 // injection hook: production Profile and recall run.
 func recallDaemon(t *testing.T) (*Daemon, *promptsSeen, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)

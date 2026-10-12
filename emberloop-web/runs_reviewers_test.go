@@ -265,8 +265,8 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	if err := os.WriteFile(settings, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("EL_SETTINGS", settings)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 

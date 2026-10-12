@@ -370,7 +370,7 @@ func (d *Daemon) nightlyDistill(ctx context.Context, runID string, owners []stri
 		return briefs, sessionOwner, NightlyStageResult{Stage: nightlyStageDistill, Status: memory.LedgerNoData,
 			Counts: map[string]any{"sessions": 0}, Detail: "no sessions with new observations to distill"}
 	}
-	set := readDeciderSettings()
+	set := d.deciderSettingsOf()
 	model := strings.TrimSpace(set.Model)
 	needModel := model == "" && d.distillOneShot == nil
 	if needModel {
@@ -598,7 +598,7 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 		}
 		byOwner[owner] = append(byOwner[owner], brief)
 	}
-	set := readDeciderSettings()
+	set := d.deciderSettingsOf()
 	model := strings.TrimSpace(set.Model)
 	needModel := model == "" && d.profileOneShot == nil
 	proposed, none, failed := 0, 0, 0

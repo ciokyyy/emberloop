@@ -17,11 +17,12 @@ import (
 // like handleDaemon but exposing the profile API base URL.
 func profileDaemon(t *testing.T) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	// Wire the pig profile paths the way the binary does, so tool gating
 	// tests read the real loadout.
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}

@@ -200,11 +200,12 @@ func TestInvariant_EveryRuleGroundedInUserEvent(t *testing.T) {
 // Rules, observations, Profile and queue never appear in B's recall,
 // injection or Memory page.
 func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	seen := &promptsSeen{}
 	be := NewFakeBackend()
 	be.ReplyFunc = seen.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary, goodSummary, goodSummary, goodSummary}}
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")

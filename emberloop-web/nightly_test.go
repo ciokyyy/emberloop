@@ -32,8 +32,9 @@ var wantNightlyStageOrder = []string{
 // seams scripted. A nil reply keeps the seam unset.
 func nightlyTestDaemon(t *testing.T, distillReply *string, profileReply *string) (*Daemon, *fakeClock) {
 	t.Helper()
-	useSettings(t, `{"decider_mode":"heuristic","memory_model":"test-faux/distill"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"heuristic","memory_model":"test-faux/distill"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	clock := newFakeClock()
 	d.clock = clock.get
 	d.consolidateOneShot = func(model, system, user string) (string, error) { return "none", nil }

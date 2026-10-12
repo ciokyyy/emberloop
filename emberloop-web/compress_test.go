@@ -12,15 +12,29 @@ import (
 	"time"
 )
 
-func useSettings(t *testing.T, json string) {
+// useSettings writes a settings file for the test and returns its path. The
+// caller points each Daemon at it with SetSettingsPath before serving:
+// settings never touch process env, so settings tests stay parallel-safe.
+// TestMain's global EL_SETTINGS still covers tests that read host defaults.
+func useSettings(t *testing.T, json string) string {
 	t.Helper()
 	p := filepath.Join(tempDir(t), "settings.json")
-	t.Setenv("EL_SETTINGS", p)
 	if json != "" {
 		if err := os.WriteFile(p, []byte(json), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	return p
+}
+
+// daemonWithSettings points a fresh Daemon at json settings: one line for
+// the common useSettings-then-NewDaemon shape.
+func daemonWithSettings(t *testing.T, json string, backend Backend) (*Daemon, string) {
+	t.Helper()
+	p := useSettings(t, json)
+	d := NewDaemon(tempDir(t), backend)
+	d.SetSettingsPath(p)
+	return d, p
 }
 
 func compressReq(t *testing.T, base, id, instructions string) (int, map[string]any) {
@@ -73,10 +87,11 @@ func (e errString) Error() string { return string(e) }
 // Compress refuses while a turn runs, for unknown Sessions, and for scouts.
 // A Handoff Backend swaps by Handoff.
 func TestCompressGuards(t *testing.T) {
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = 300 * time.Millisecond
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -103,7 +118,7 @@ func TestCompressGuards(t *testing.T) {
 
 // Settings round-trip through GET and PUT, with defaults and validation.
 func TestCompressSettings(t *testing.T) {
-	useSettings(t, "")
+	t.Setenv("EL_SETTINGS", useSettings(t, ""))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

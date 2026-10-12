@@ -35,12 +35,13 @@ func (p *promptRecord) texts() []string {
 // the Session ID.
 func queueDaemon(t *testing.T, delay time.Duration) (*Daemon, *promptRecord, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = delay
 	rec := &promptRecord{}
 	be.ReplyFunc = rec.reply
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -239,7 +240,7 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 // not hold a compress of the parent.
 func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 	stateDir := tempDir(t)
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	stuck := make(chan struct{}) // never closed: the old Daemon's child turn stays open
 	old := NewFakeBackend()
 	old.ReplyFunc = func(_, text string) (string, bool) {
@@ -249,6 +250,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 		return "", false
 	}
 	d1 := NewDaemon(stateDir, old)
+	d1.SetSettingsPath(settingsPath)
 	srv1 := httptest.NewServer(authedHandler(t, d1))
 	defer srv1.Close()
 	parent := createSession(t, srv1.URL, "fake", "fake-model", tempDir(t))
@@ -276,6 +278,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 
 	// Restart: the reloaded Daemon sees the Group and its member mid-turn on disk.
 	d2 := NewDaemon(stateDir, NewFakeBackend())
+	d2.SetSettingsPath(settingsPath)
 	d2.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv2 := httptest.NewServer(authedHandler(t, d2))
 	defer srv2.Close()

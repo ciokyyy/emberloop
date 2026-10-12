@@ -42,9 +42,10 @@ func (c *rulesClock) Advance(d time.Duration) {
 // Session, its owner and the clock.
 func rulesDaemon(t *testing.T) (*Daemon, string, string, string, *rulesClock) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	clock := newRulesClock()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.clock = clock.Now
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))

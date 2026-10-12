@@ -46,8 +46,9 @@ func initPromoteRepo(t *testing.T, files map[string]string) string {
 // at repo, returning the Daemon, base URL, Session ID and owner.
 func promoteDaemon(t *testing.T, repo string) (*Daemon, string, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)

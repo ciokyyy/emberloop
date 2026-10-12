@@ -58,7 +58,7 @@ func errorText(body map[string]any) string {
 // authed pig model.
 func TestCompressModelSettingAcceptsOnlyAuthedPigModels(t *testing.T) {
 	withoutPigAuth(t)
-	useSettings(t, "")
+	t.Setenv("EL_SETTINGS", useSettings(t, ""))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -113,8 +113,9 @@ func TestCompressModelSettingAcceptsOnlyAuthedPigModels(t *testing.T) {
 // model is set and its provider holds pig auth.
 func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T) {
 	withoutPigAuth(t)
-	useSettings(t, "")
+	settingsPath := useSettings(t, "")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -128,13 +129,13 @@ func TestHandoffCompressRefusedWithReasonWithoutAuthedCompressModel(t *testing.T
 		t.Fatalf("compressNote = %q, want the unset reason", note)
 	}
 
-	useSettings(t, `{"compress_model":"`+unauthedPigModel(t)+`"}`)
+	d.SetSettingsPath(useSettings(t, `{"compress_model":"`+unauthedPigModel(t)+`"}`))
 	code, body = compressReq(t, srv.URL, id, "")
 	if code != http.StatusConflict || !strings.Contains(errorText(body), "not an authed pig model") {
 		t.Fatalf("unauthed model compress = %d %v, want 409 with reason", code, body)
 	}
 
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	d.SetSettingsPath(useSettings(t, `{"compress_model":"test-faux/faux-1"}`))
 	if note := sessionField(t, srv.URL, id, "compressNote"); note != "" {
 		t.Fatalf("compressNote = %q with an authed model, want empty", note)
 	}
@@ -196,8 +197,9 @@ func (f *scriptedSummarizer) Summarize(model, system, user string) (string, erro
 // scripted summarizer and one idle Session whose first prompt is set.
 func summaryDaemon(t *testing.T, replies ...string) (*Daemon, *scriptedSummarizer, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{replies: replies}
 	d.summarizer = sum
 	srv := httptest.NewServer(authedHandler(t, d))

@@ -264,7 +264,7 @@ func TestMineSessionStoresHeuristicModelVersion(t *testing.T) {
 // Ensemble mode end to end: below confirmLow drops, between the thresholds
 // stores an observation, at confirmHigh marks it queue-eligible.
 func TestMineSessionEnsembleThresholds(t *testing.T) {
-	useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","decider_confirm_low":0.35,"decider_confirm_high":0.7}`)
+	settingsPath := useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","decider_confirm_low":0.35,"decider_confirm_high":0.7}`)
 	cases := []struct {
 		name     string
 		durable  float64
@@ -279,6 +279,7 @@ func TestMineSessionEnsembleThresholds(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			d := NewDaemon(tempDir(t), NewFakeBackend())
+			d.SetSettingsPath(settingsPath)
 			d.deciderOneShot = func(model, system, user string) (string, error) {
 				return `{"answers":[{"question":"durable","noul":` + jsonNumber(c.durable) + `}]}`, nil
 			}
@@ -319,8 +320,9 @@ func TestMineSessionEnsembleThresholds(t *testing.T) {
 // Ensemble without a memory model still stores the observation: an
 // unconfirmable candidate is never dropped on a missing model.
 func TestMineSessionEnsembleWithoutModelStores(t *testing.T) {
-	useSettings(t, `{"decider_mode":"ensemble"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"ensemble"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	res, err := d.MineSession("s1")
 	if err != nil {
@@ -385,8 +387,9 @@ func TestMineSessionReplaySkipsDecider(t *testing.T) {
 // Redaction runs before every llm call: the one-off sees the marker, never
 // the secret.
 func TestMineSessionLLMRedactsBeforeCall(t *testing.T) {
-	useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	var saw string
 	d.deciderOneShot = func(model, system, user string) (string, error) {
 		saw = user
@@ -421,8 +424,9 @@ func TestMineSessionLLMRedactsBeforeCall(t *testing.T) {
 // no confirmer answering means no eligibility, even when the heuristic score
 // clears the high threshold.
 func TestMineSessionLLMErrorNeverEligible(t *testing.T) {
-	useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.deciderOneShot = func(model, system, user string) (string, error) {
 		return "", errFakeDecider
 	}
@@ -453,8 +457,9 @@ func TestMineSessionLLMErrorNeverEligible(t *testing.T) {
 // llm without a memory model has no confirmer: the heuristic hit is stored
 // (nothing is lost) but never queue-eligible on the heuristic score alone.
 func TestMineSessionLLMWithoutModelNeverEligible(t *testing.T) {
-	useSettings(t, `{"decider_mode":"llm"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"llm"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	res, err := d.MineSession("s1")
 	if err != nil {
@@ -645,8 +650,9 @@ func TestJevNoteNamesEgress(t *testing.T) {
 func TestMineSessionJevConfirms(t *testing.T) {
 	stub := &jevStub{status: http.StatusOK, body: jevConfirmBody}
 	srv := jevStubServer(t, stub)
-	useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`","jev_api_key":"k","jev_model":"jev-latest"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`","jev_api_key":"k","jev_model":"jev-latest"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	res, err := d.MineSession("s1")
 	if err != nil {
@@ -684,8 +690,9 @@ func TestMineSessionJevConfirms(t *testing.T) {
 // jev mode with the endpoint off stores the heuristic hit but never marks it
 // eligible: nothing is sent anywhere.
 func TestMineSessionJevOffNeverEligible(t *testing.T) {
-	useSettings(t, `{"decider_mode":"jev"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"jev"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	res, err := d.MineSession("s1")
 	if err != nil {
@@ -715,8 +722,9 @@ func TestMineSessionJevOffNeverEligible(t *testing.T) {
 func TestMineSessionJevErrorNeverEligible(t *testing.T) {
 	stub := &jevStub{status: http.StatusUnauthorized, body: `{"error":"bad key"}`}
 	srv := jevStubServer(t, stub)
-	useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	res, err := d.MineSession("s1")
 	if err != nil {
@@ -744,8 +752,9 @@ func TestMineSessionJevErrorNeverEligible(t *testing.T) {
 func TestMineSessionEnsemblePrefersJev(t *testing.T) {
 	stub := &jevStub{status: http.StatusOK, body: `{"model":"jev-1.13","answers":{"durable":{"type":"noul","noul":0.9}}}`}
 	srv := jevStubServer(t, stub)
-	useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","jev_base_url":"`+srv.URL+`","jev_model":"jev-latest"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","jev_base_url":"`+srv.URL+`","jev_model":"jev-latest"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	d.deciderOneShot = func(model, system, user string) (string, error) {
 		return `{"answers":[{"question":"durable","noul":0.1}]}`, nil
 	}
@@ -781,8 +790,9 @@ func TestMineSessionEnsemblePrefersJev(t *testing.T) {
 func TestMineSessionJevRedactsBeforeCall(t *testing.T) {
 	stub := &jevStub{status: http.StatusOK, body: jevConfirmBody}
 	srv := jevStubServer(t, stub)
-	useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`"}`)
+	settingsPath := useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	text := "remember: the password is hunter2-2026, always use tabs"
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", text)})
 	res, err := d.MineSession("s1")

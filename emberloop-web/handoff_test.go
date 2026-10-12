@@ -12,7 +12,7 @@ import (
 
 func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 	t.Helper()
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.UsageSize = 100000
 	be.ReplyFunc = func(_, text string) (string, bool) {
@@ -22,6 +22,7 @@ func handoffDaemon(t *testing.T) (*Daemon, *FakeBackend, string, string) {
 		return strings.Repeat("x", 8000), true
 	}
 	d := NewDaemon(tempDir(t), be)
+	d.SetSettingsPath(settingsPath)
 	d.summarizer = &scriptedSummarizer{replies: []string{goodSummary}}
 	srv := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(srv.Close)
@@ -211,8 +212,9 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 // keeps the work it was asked to do.
 func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 	repo, spec := initRunRepo(t, demoTickets())
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
 	h := d.Handler()
@@ -243,8 +245,9 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 // A Subagent's spawn prompt is a system prompt too; its Handoff keeps it as
 // the Task for the same reason.
 func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
-	useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
+	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
 	sum := &scriptedSummarizer{err: errString("bad request: malformed input")}
 	d.summarizer = sum
 	h := d.Handler()
