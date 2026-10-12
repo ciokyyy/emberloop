@@ -74,6 +74,9 @@ func setChainPosition(rs *runState, ticketID, role string, position int) {
 	if row.State == "" {
 		row.State = "queued"
 	}
+	if row.Since.IsZero() {
+		row.Since = time.Now().UTC()
+	}
 	if row.ChainPositions == nil {
 		row.ChainPositions = map[string]int{}
 	}
@@ -165,7 +168,7 @@ func (d *Daemon) handleRunChainFailure(id string) bool {
 		d.persistRun(rs)
 	}
 	chain := append([]chainEntry(nil), runChain(rs, role)...)
-	position := chainPosition(rs, ticketID, role)
+	position := clampChainPosition(chainPosition(rs, ticketID, role), len(chain))
 	d.mu.Unlock()
 
 	if paused {

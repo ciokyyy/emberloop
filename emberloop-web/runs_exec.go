@@ -4154,14 +4154,36 @@ func (d *Daemon) loadRuns() {
 		for ticket, row := range rs.Rows {
 			if row.State == "" {
 				row.State = "queued"
-				rs.Rows[ticket] = row
 			}
+			if row.Since.IsZero() {
+				row.Since = time.Now().UTC()
+			}
+			rs.Rows[ticket] = row
 		}
 		if rs.ChainExhausted == nil {
 			rs.ChainExhausted = map[string]bool{}
 		}
 		if rs.ChainPendingSubmit == nil {
 			rs.ChainPendingSubmit = map[string]bool{}
+		}
+		// Older Run rows could persist Worker Chain positions but not the
+		// pending-submit marker. Recover it from a fallback position or a failed
+		// active Worker whose last-turn error advances the Chain.
+		for ticket, row := range rs.Rows {
+			failedAdvancing := false
+			if id := rs.Sessions[ticket]; id != "" {
+				if s := d.sessions[id]; s != nil && s.meta.Status == "failed" {
+					detail := lastTurnFailure(s.events)
+					failedAdvancing = detail != "" && chainAdvances(errors.New(detail))
+				}
+			}
+			if row.ChainPositions["worker"] == 0 && !failedAdvancing {
+				continue
+			}
+			if rec, ok := rs.SubmitRecs[ticket]; ok && rec.Status == "done" && !failedAdvancing {
+				continue
+			}
+			rs.ChainPendingSubmit[ticket] = true
 		}
 		rs.chainHandling = map[string]bool{}
 		rs.Driver = el.NewDriverRun(nil)

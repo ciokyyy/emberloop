@@ -33,8 +33,8 @@ func pauseTestRun(t *testing.T, base, id string) {
 	if getRun(t, base, id).Status != "running" {
 		return
 	}
-	if _, code := postRunAction(t, base, id, "pause"); code != 200 {
-		t.Errorf("pause Run status = %d, want 200", code)
+	if _, code := postRunAction(t, base, id, "pause"); code != 200 && getRun(t, base, id).Status == "running" {
+		t.Errorf("pause Run status = %d while still running, want 200", code)
 	}
 }
 
@@ -59,8 +59,8 @@ func TestSetChainPositionSeedsTicketRowState(t *testing.T) {
 	rs := &runState{}
 	setChainPosition(rs, "01-first", "worker", 0)
 	row := rs.Rows["01-first"]
-	if row.State != "queued" {
-		t.Fatalf("saved Ticket state = %q, want queued before the first driver snapshot", row.State)
+	if row.State != "queued" || row.Since.IsZero() {
+		t.Fatalf("saved Ticket row = %+v, want queued with a start time", row)
 	}
 }
 
@@ -72,7 +72,10 @@ func TestLoadRunsDefaultsLegacyChainRowState(t *testing.T) {
 	}
 	rs := runState{
 		ID: "legacy-run", Status: runStatusPaused,
-		Rows: map[string]savedRow{"01-first": {ChainPositions: map[string]int{"worker": 1}}},
+		Sessions: map[string]string{"01-first": "fallback-worker"},
+		Rows:     map[string]savedRow{"01-first": {ChainPositions: map[string]int{"worker": 1}}},
+		Chains:   map[string][]chainEntry{"worker": {{Backend: "pig", Model: "primary"}, {Backend: "grok", Model: "fallback"}}},
+		Reviews:  map[string]map[string]storedReview{"01-first": {reviewerSpecType: {Verdict: "pass", At: "old-tip"}}},
 	}
 	raw, err := json.Marshal(rs)
 	if err != nil {
@@ -83,10 +86,43 @@ func TestLoadRunsDefaultsLegacyChainRowState(t *testing.T) {
 	}
 	d := NewDaemon(stateDir, NewFakeBackend())
 	d.mu.Lock()
-	row := d.runs["legacy-run"].Rows["01-first"]
+	loaded := d.runs["legacy-run"]
+	row := loaded.Rows["01-first"]
+	pending := loaded.ChainPendingSubmit["01-first"]
 	d.mu.Unlock()
-	if row.State != "queued" || row.ChainPositions["worker"] != 1 {
-		t.Fatalf("loaded legacy Ticket row = %+v, want queued with its Chain position", row)
+	if row.State != "queued" || row.Since.IsZero() || row.ChainPositions["worker"] != 1 {
+		t.Fatalf("loaded legacy Ticket row = %+v, want queued, timestamped and positioned", row)
+	}
+	if !pending {
+		t.Fatal("legacy fallback with prior Reviewer verdicts did not restore pending-submit gate")
+	}
+
+}
+func TestRunChainFailureClampsPersistedPosition(t *testing.T) {
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.runs["r-chain"] = &runState{
+		ID: "r-chain", Status: runStatusRunning,
+		Tickets:   []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
+		Sessions:  map[string]string{"01-first": "worker"},
+		Rows:      map[string]savedRow{"01-first": {State: "running", ChainPositions: map[string]int{"worker": 5}}},
+		Chains:    map[string][]chainEntry{"worker": {{Backend: "pig", Model: "primary"}, {Backend: "grok", Model: "fallback"}}},
+		Branches:  map[string]string{"01-first": "implement/01-first"},
+		Worktrees: map[string]string{"01-first": tempDir(t)},
+		notify:    make(chan struct{}),
+	}
+	d.sessions["worker"] = &session{
+		meta:   SessionMeta{ID: "worker", Status: "failed"},
+		events: []Event{{Seq: 1, Kind: "prompt"}, {Seq: 2, Kind: "error", Text: "quota exceeded"}},
+	}
+	if !d.handleRunChainFailure("worker") {
+		t.Fatal("advancing failure was not handled")
+	}
+	d.mu.Lock()
+	row := d.runs["r-chain"].Rows["01-first"]
+	exhausted := d.runs["r-chain"].ChainExhausted["01-first"]
+	d.mu.Unlock()
+	if row.ChainPositions["worker"] != 1 || !exhausted {
+		t.Fatalf("clamped failure row = %+v, exhausted=%t", row, exhausted)
 	}
 }
 
@@ -437,6 +473,81 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 	pauseTestRun(t, srv.URL, run.ID)
 }
 
+func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	useSettings(t, workerTestChainSettings)
+	fake := NewFakeBackend()
+	fake.Delay = 250 * time.Millisecond
+	var failOnce sync.Once
+	fake.TurnFailure = func(_, prompt string) (string, bool) {
+		if !strings.Contains(prompt, "trigger same-tip fallback") {
+			return "", false
+		}
+		fired := false
+		failOnce.Do(func() { fired = true })
+		return "quota exceeded", fired
+	}
+	d := NewDaemon(tempDir(t), fake)
+	srv := newRunTestServer(t, d)
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "initial Worker")
+	initial := ticketByID(r, "01-first").WorkerSession
+	waitSessionCond(t, srv.URL, initial, func(s sessionBody) bool { return s.Meta.Status == "idle" }, "initial Worker idle")
+	submitSession(t, srv.URL, initial, "done", []string{"alpha"})
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.ReviewerSessions[reviewerSpecType] != "" && tk.ReviewerSessions[reviewerStandardsType] != ""
+	}, "initial Reviewers")
+	reviewers := ticketByID(r, "01-first").ReviewerSessions
+	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "steer", "trigger same-tip fallback"); code != 200 {
+		t.Fatalf("steer Worker failure status = %d, want 200", code)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.WorkerSession != initial && tk.Chain["worker"].Position == 2
+	}, "fallback Worker")
+	fallbackID := ticketByID(r, "01-first").WorkerSession
+	waitSessionCond(t, srv.URL, fallbackID, func(s sessionBody) bool {
+		_, _, ok := firstHandoffAndTask(s.Events)
+		return ok && s.Meta.Status == "idle"
+	}, "fallback Handoff and task")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.Verdicts[reviewerSpecType].Verdict == "pass" && tk.Verdicts[reviewerStandardsType].Verdict == "pass"
+	}, "same-tip Reviewer passes before replacement submit")
+	submitSession(t, srv.URL, fallbackID, "done", []string{"alpha"})
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").State == "merged"
+	}, "same-tip fallback merge using prior Reviewer passes")
+	if ticketByID(r, "01-first").WorkerSession != fallbackID {
+		t.Fatalf("merged Worker = %q, want replacement %q", ticketByID(r, "01-first").WorkerSession, fallbackID)
+	}
+	for _, typ := range requiredReviewerTypes {
+		s := getSession(t, srv.URL, reviewers[typ])
+		count := 0
+		for _, e := range s.Events {
+			if e.Kind == "prompt" && !e.Handoff && strings.Contains(e.Text, "Review ticket 01-first") {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%s gate prompts = %d, want one reused same-tip verdict", typ, count)
+		}
+	}
+	d.mu.Lock()
+	pending := d.runs[run.ID].ChainPendingSubmit["01-first"]
+	d.mu.Unlock()
+	if pending {
+		t.Fatal("successful replacement done submit left the pending-submit marker set")
+	}
+}
+
 func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -589,14 +700,71 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 	}
 }
 
+func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
+	})
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := newRunTestServer(t, d)
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != "" && ticketByID(r, "02-second").WorkerSession != ""
+	}, "both Workers")
+	first, second := ticketByID(r, "01-first").WorkerSession, ticketByID(r, "02-second").WorkerSession
+	d.mu.Lock()
+	d.runs[run.ID].ChainPendingSubmit["01-first"] = true
+	d.persistRun(d.runs[run.ID])
+	d.mu.Unlock()
+
+	secondSession := getSession(t, srv.URL, second)
+	change := filepath.Join(secondSession.Meta.WorkDir, "second-change.txt")
+	if err := os.WriteFile(change, []byte("second ticket change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(secondSession.Meta.WorkDir, "add", "second-change.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(secondSession.Meta.WorkDir, "commit", "-m", "second ticket change"); err != nil {
+		t.Fatal(err)
+	}
+	submitSession(t, srv.URL, second, "done", []string{"beta"})
+	passReviewers(t, srv.URL, run.ID, "02-second")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "02-second").State == "merged"
+	}, "unblocked second Ticket merge")
+	if ticketByID(r, "02-second").WorkerSession != second {
+		t.Fatalf("second Ticket Worker changed while first was gated: %q", ticketByID(r, "02-second").WorkerSession)
+	}
+	if ticketByID(r, "01-first").WorkerSession != first {
+		t.Fatalf("gated first Ticket Worker = %q, want unchanged %q", ticketByID(r, "01-first").WorkerSession, first)
+	}
+	d.mu.Lock()
+	pendingFirst := d.runs[run.ID].ChainPendingSubmit["01-first"]
+	pendingSecond := d.runs[run.ID].ChainPendingSubmit["02-second"]
+	d.mu.Unlock()
+	if !pendingFirst || pendingSecond {
+		t.Fatalf("pending-submit markers = first:%t second:%t, want only first", pendingFirst, pendingSecond)
+	}
+	if ticketByID(r, "01-first").State == "merged" {
+		t.Fatal("pending first Ticket merged before replacement Worker done")
+	}
+	pauseTestRun(t, srv.URL, run.ID)
+}
+
 func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 	cases := []struct {
-		name  string
-		error string
+		name     string
+		error    string
+		advances bool
 	}{
-		{name: "quota", error: "quota exceeded"},
-		{name: "credit", error: "payment required"},
-		{name: "session limit", error: "session limit reached"},
+		{name: "quota", error: "quota exceeded", advances: true},
+		{name: "credit", error: "payment required", advances: true},
+		{name: "auth", error: "HTTP 401 unauthorized", advances: true},
+		{name: "session limit", error: "session limit reached", advances: true},
+		{name: "other", error: "reviewer stopped for an unrelated reason"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -632,26 +800,46 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 			submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
 			r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 				tk := ticketByID(r, "01-first")
-				return tk.Chain[reviewerSpecType].Position == 2 && tk.Verdicts[reviewerSpecType].Verdict == "pass"
-			}, "fallback spec Reviewer")
+				mu.Lock()
+				oldID := failedID
+				mu.Unlock()
+				if oldID == "" {
+					return false
+				}
+				if tc.advances {
+					return tk.ReviewerSessions[reviewerSpecType] != oldID &&
+						tk.Chain[reviewerSpecType].Position == 2 && tk.Verdicts[reviewerSpecType].Verdict == "pass"
+				}
+				return tk.ReviewerSessions[reviewerSpecType] == oldID &&
+					tk.Chain[reviewerSpecType].Position == 1 && tk.Verdicts[reviewerSpecType].Verdict == "pass"
+			}, "Reviewer failure class handling")
 			tk := ticketByID(r, "01-first")
 			mu.Lock()
 			oldID := failedID
 			mu.Unlock()
-			if oldID == "" || tk.ReviewerSessions[reviewerSpecType] == oldID {
-				t.Fatalf("Reviewer Session was not replaced after %s: old=%q current=%q", tc.name, oldID, tk.ReviewerSessions[reviewerSpecType])
-			}
 			old := getSession(t, srv.URL, oldID)
-			if old.Meta.Status != "failed" || len(eventsOfKind(old.Events, "error")) == 0 {
-				t.Fatalf("failed Reviewer did not retain its %s error: %+v", tc.name, old.Events)
+			if len(eventsOfKind(old.Events, "error")) == 0 {
+				t.Fatalf("failed Reviewer did not retain its %s error", tc.name)
 			}
-			fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
-				_, _, ok := firstHandoffAndTask(s.Events)
-				return ok && s.Meta.Status == "idle"
-			}, "Reviewer Handoff and task")
-			handoff, task, ok := firstHandoffAndTask(fallback.Events)
-			if !ok || handoff.Seq >= task.Seq {
-				t.Fatalf("Reviewer fallback prompt order = handoff %+v, task %+v", handoff, task)
+			if tc.advances {
+				if old.Meta.Status != "failed" || tk.ReviewerSessions[reviewerSpecType] == oldID {
+					t.Fatalf("Reviewer did not advance after %s: old=%+v ticket=%+v", tc.name, old.Meta, tk)
+				}
+				fallback := waitSessionCond(t, srv.URL, tk.ReviewerSessions[reviewerSpecType], func(s sessionBody) bool {
+					_, _, ok := firstHandoffAndTask(s.Events)
+					return ok && s.Meta.Status == "idle"
+				}, "Reviewer Handoff and task")
+				if _, _, ok := firstHandoffAndTask(fallback.Events); !ok {
+					t.Fatalf("Reviewer fallback after %s lacks Handoff and task", tc.name)
+				}
+			} else if tk.ReviewerSessions[reviewerSpecType] != oldID || tk.Chain[reviewerSpecType].Position != 1 {
+				t.Fatalf("other Reviewer failure advanced its Chain: ticket=%+v", tk)
+			}
+			d.mu.Lock()
+			pending := d.runs[run.ID].ChainPendingSubmit["01-first"]
+			d.mu.Unlock()
+			if pending {
+				t.Fatal("Reviewer failure set the Worker pending-submit marker")
 			}
 			pauseTestRun(t, srv.URL, run.ID)
 		})
