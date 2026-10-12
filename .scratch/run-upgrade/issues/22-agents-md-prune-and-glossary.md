@@ -4,8 +4,8 @@
 
 **Blocked by:** all other tickets (01-21)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `emberloop-web/AGENTS.md` pruned with no contract lost (every removed fact lives in code, a test or another doc)
-- [ ] `GLOSSARY.md` has Disposition, Chain, Switch
-- [ ] DOX index test passes; `.emberloop/check` passes
+- [x] `emberloop-web/AGENTS.md` pruned with no contract lost (every removed fact lives in code, a test or another doc)
+- [x] `GLOSSARY.md` has Disposition, Chain, Switch
+- [x] DOX index test passes; `.emberloop/check` passes
