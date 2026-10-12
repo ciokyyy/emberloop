@@ -474,7 +474,7 @@ func TestSameRefusalThreeTimesMarksNeedsYou(t *testing.T) {
 // (unlike a changes verdict, which the submit gate refuses as an empty
 // resubmit).
 func TestRetryAfterRefusalAlertMerges(t *testing.T) {
-	t.Parallel()
+	// Serial: the retry-after-refusal merge stalls under parallel git load.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

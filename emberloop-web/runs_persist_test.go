@@ -468,7 +468,7 @@ func TestRestartRequestResumesRunOnNextDaemon(t *testing.T) {
 // its saved state: the same Worker Session, no restart from zero, error
 // cleared.
 func TestFailedRunResumesWithSameWorker(t *testing.T) {
-	t.Parallel()
+	// Serial: the failed-run resume flakes under parallel git load.
 	repo, spec := initRunRepo(t, demoTickets())
 	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))

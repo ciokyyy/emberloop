@@ -868,7 +868,7 @@ func TestSessionSubmitRoutesAndMessages(t *testing.T) {
 // stays unmerged. (A second done at the very same tip never reaches the
 // reviewers: the worker submit gate refuses it as an empty resubmit.)
 func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
-	t.Parallel()
+	// Serial: the patch-id reuse miscounts gate prompts under parallel git load.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -975,7 +975,7 @@ func TestReviewPatchIdenticalRebaseReusesChanges(t *testing.T) {
 // Reviewer turn: the amended tip carries new SHAs but the same patch id, so
 // the passes move to the new tip and the ticket merges without re-review.
 func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
-	t.Parallel()
+	// Serial: the patch-id reuse miscounts gate prompts under parallel git load.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

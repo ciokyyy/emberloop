@@ -422,7 +422,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 // A same-tip second done holds the passes instead of rerunning the
 // reviewers: the new round carries heldFromRound and no new gate prompt.
 func TestHeldPassNoRerun(t *testing.T) {
-	t.Parallel()
+	// Serial: the same-tip hold miscounts gate prompts under parallel git load.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

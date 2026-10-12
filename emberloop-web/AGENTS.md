@@ -63,8 +63,9 @@ boxes and marking Tickets done.
 - Run tests start Daemons with `runTestDaemon` (100ms driver polls);
   pause/switch/resume and reviewer rework sequences (findings, rereview,
   selective carry) keep `NewDaemon` (500ms) and stay serial: they race a
-  fast driver into concluded runs. Fake-clock idle tests stay serial: the
-  idle wait times out under parallel git load.
+  fast driver into concluded runs. Same-tip hold, patch-identical reuse,
+  retry-after-refusal, failed-run resume and fake-clock idle tests stay
+  serial: their counts and waits flake under parallel git load.
 
 ## Child DOX Index
 
