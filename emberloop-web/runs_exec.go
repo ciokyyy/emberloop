@@ -4151,15 +4151,6 @@ func (d *Daemon) loadRuns() {
 		if rs.Rows == nil {
 			rs.Rows = map[string]savedRow{}
 		}
-		for ticket, row := range rs.Rows {
-			if row.State == "" {
-				row.State = "queued"
-			}
-			if row.Since.IsZero() {
-				row.Since = time.Now().UTC()
-			}
-			rs.Rows[ticket] = row
-		}
 		if rs.ChainExhausted == nil {
 			rs.ChainExhausted = map[string]bool{}
 		}

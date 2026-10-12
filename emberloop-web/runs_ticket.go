@@ -194,6 +194,7 @@ func validateWorkerDispositions(findings []workerReviewFinding, submitted []Revi
 	}
 	return out, nil
 }
+
 // ticketChainEntry is the active position for one role on a Ticket row.
 // Position is one-based for display; Total names the configured Chain size.
 type ticketChainEntry struct {

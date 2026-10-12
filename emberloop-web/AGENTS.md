@@ -717,24 +717,24 @@ In `emberloop-web/`: `go vet ./memory/ && go test ./memory/`. The repo check run
   A start failure advances without a Handoff because no Session exists; a turn
   failure keeps the old Session `failed` with its Event log and starts the next
   entry on the same Ticket worktree with a Handoff followed by the normal
-  injected role task. A Ticket row first created by a Chain-position write
-  starts as `queued` with `since` until the driver's next snapshot publishes its
-  live state; load repairs blank legacy row state and timestamps. An advancing
-  Worker failure persists a Ticket-scoped pending-submit marker: old same-tip
-  verdicts cannot merge until the replacement Worker submits done; other
-  Tickets and Runs keep the existing finish gate. Load infers this marker for
-  legacy fallback rows or failed advancing Workers without a replacement done
-  submit. A done submit clears the marker; the replacement's Reviewer re-prompt
-  counter resets so changed tips are reviewed again. A failed fallback resume
-  or task send marks Needs-you, not Chain exhaustion. Exhaustion marks the whole
-  Ticket Needs-you and stops further Reviewer starts for that Ticket. Chain
-  positions persist, and Resume reconciles a failed active Session before the
-  driver re-prompts it. Ticket Retry clears its alert and driver backoff but
-  retains the active Session, Chain positions and pending-submit marker; it does
-  not restart a failed Session or rewind an exhausted Chain. `runs_chain_test.go`
-  covers Worker and Reviewer failure classes, start fallback, pending-submit
-  isolation and migration, replacement-worker re-review, fallback dispatch
-  failure, exhaustion, Resume reconciliation and persisted Ticket rows.
+  injected role task. A Ticket row first created only by a Chain-position write
+  leaves `state` and `since` blank until the driver's next snapshot; load
+  preserves those blank fields rather than fabricating a queued state or
+  timestamp. An advancing Worker failure persists a Ticket-scoped pending-submit
+  marker: old same-tip verdicts cannot merge until the replacement Worker submits
+  done; other Tickets and Runs keep the existing finish gate. Load infers this
+  marker for legacy fallback rows or failed advancing Workers without a
+  replacement done submit. A done submit clears the marker; the replacement's
+  Reviewer re-prompt counter resets so changed tips are reviewed again. A failed
+  fallback resume or task send marks Needs-you, not Chain exhaustion. Exhaustion
+  marks the whole Ticket Needs-you and stops further Reviewer starts for that
+  Ticket. Chain positions persist, and Resume reconciles a failed active Session
+  before the driver re-prompts it. Ticket Retry clears its alert and driver
+  backoff but retains the active Session, Chain positions and pending-submit
+  marker; it does not restart a failed Session or rewind an exhausted Chain.
+  `runs_chain_test.go` covers Worker and Reviewer failure classes, start fallback,
+  pending-submit isolation and migration, replacement-worker re-review, fallback
+  dispatch failure, exhaustion, Resume reconciliation and persisted Ticket rows.
   Runs persist as `enderbloom/runs/{id}.json` with one row per Ticket
   (state, tip, last refusal, times) after every driver pass (plus `warnings`).
   Reload spawns nothing: running Runs become paused and needs-you Runs stay needs-you.

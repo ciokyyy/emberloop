@@ -55,16 +55,17 @@ func firstHandoffAndTask(events []Event) (handoff, task Event, ok bool) {
 	return handoff, task, false
 }
 
-func TestSetChainPositionSeedsTicketRowState(t *testing.T) {
+// A Chain-position write must not publish a placeholder driver-row state.
+func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
 	rs := &runState{}
-	setChainPosition(rs, "01-first", "worker", 0)
+	setChainPosition(rs, "01-first", "worker", 1)
 	row := rs.Rows["01-first"]
-	if row.State != "queued" || row.Since.IsZero() {
-		t.Fatalf("saved Ticket row = %+v, want queued with a start time", row)
+	if row.State != "" || !row.Since.IsZero() || row.ChainPositions["worker"] != 1 {
+		t.Fatalf("saved Ticket row = %+v, want only Chain position 1", row)
 	}
 }
 
-func TestLoadRunsDefaultsLegacyChainRowState(t *testing.T) {
+func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 	stateDir := tempDir(t)
 	runsDir := filepath.Join(stateDir, "enderbloom", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -90,14 +91,14 @@ func TestLoadRunsDefaultsLegacyChainRowState(t *testing.T) {
 	row := loaded.Rows["01-first"]
 	pending := loaded.ChainPendingSubmit["01-first"]
 	d.mu.Unlock()
-	if row.State != "queued" || row.Since.IsZero() || row.ChainPositions["worker"] != 1 {
-		t.Fatalf("loaded legacy Ticket row = %+v, want queued, timestamped and positioned", row)
+	if row.State != "" || !row.Since.IsZero() || row.ChainPositions["worker"] != 1 {
+		t.Fatalf("loaded legacy Ticket row = %+v, want blank driver fields and persisted Chain position", row)
 	}
 	if !pending {
 		t.Fatal("legacy fallback with prior Reviewer verdicts did not restore pending-submit gate")
 	}
-
 }
+
 func TestRunChainFailureClampsPersistedPosition(t *testing.T) {
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.runs["r-chain"] = &runState{

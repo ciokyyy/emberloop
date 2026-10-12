@@ -71,12 +71,6 @@ func setChainPosition(rs *runState, ticketID, role string, position int) {
 		rs.Rows = map[string]savedRow{}
 	}
 	row := rs.Rows[ticketID]
-	if row.State == "" {
-		row.State = "queued"
-	}
-	if row.Since.IsZero() {
-		row.Since = time.Now().UTC()
-	}
 	if row.ChainPositions == nil {
 		row.ChainPositions = map[string]int{}
 	}
