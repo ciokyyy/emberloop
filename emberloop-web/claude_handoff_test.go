@@ -328,6 +328,7 @@ func TestClaudeHandoffFailureKeepsOldHandle(t *testing.T) {
 // StartHandle derives the el role from the record, so the new ACP session
 // gets the same tool set on every role.
 func TestClaudeStartHandleDerivesRoleFromRecord(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		meta SessionMeta

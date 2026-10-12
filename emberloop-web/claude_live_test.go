@@ -20,6 +20,7 @@ import (
 // It uses the spike echo server as the MCP server, so no el-mcp
 // binary is needed.
 func TestLiveClaudeBackend(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EL_LIVE") != "claude" {
 		t.Skip("set EL_LIVE=claude for the real-adapter probe")
 	}

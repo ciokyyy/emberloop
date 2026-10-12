@@ -79,6 +79,7 @@ func waitSettled(t *testing.T, base, id string, ok func([]Event) bool) []Event {
 // Follow-ups queued during a Handoff wait for it. They reach the new handle
 // after the Handoff prompt, in the order they were sent.
 func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
+	t.Parallel()
 	_, rec, base, id := queueDaemon(t, time.Second)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -113,6 +114,7 @@ func TestHandoffQueuedFollowupsRunAfterHandoffInOrder(t *testing.T) {
 // one into pending the way the claude path leaves it. Across a Handoff it
 // degrades to a Follow-up, lands after the Handoff and is not lost.
 func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
+	t.Parallel()
 	d, rec, base, id := queueDaemon(t, time.Second)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -144,6 +146,7 @@ func TestHandoffHeldSteerDegradesToFollowupAndIsNotLost(t *testing.T) {
 // A claude Steer that arrives while a Handoff runs must not wait as a held
 // Steer for a tool call: the Handoff leads, so the Steer queues as a Follow-up.
 func TestClaudeSteerDuringHandoffQueuesFollowup(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{blockPrompt: make(chan struct{})}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -173,9 +176,11 @@ func TestClaudeSteerDuringHandoffQueuesFollowup(t *testing.T) {
 // Compress waits while a Group of the Session is outstanding. The Group's
 // result reaches the parent first; the compress runs after that turn.
 func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
+	t.Parallel()
 	for _, deliver := range []string{"group", "each"} {
 		deliver := deliver
 		t.Run(deliver, func(t *testing.T) {
+			t.Parallel()
 			_, _, base, parent := queueDaemon(t, time.Second)
 			sendPrompt(t, base, parent, "plan the work")
 			waitStatus(t, base, parent, "idle", 5*time.Second)
@@ -205,6 +210,7 @@ func TestCompressWaitsWhileGroupOutstanding(t *testing.T) {
 
 // A Group spawned after a compress reports to the parent on the new handle.
 func TestGroupResultReachesParentAfterCompress(t *testing.T) {
+	t.Parallel()
 	_, rec, base, parent := queueDaemon(t, 20*time.Millisecond)
 	sendPrompt(t, base, parent, "plan the work")
 	waitStatus(t, base, parent, "idle", 5*time.Second)
@@ -239,6 +245,7 @@ func TestGroupResultReachesParentAfterCompress(t *testing.T) {
 // A Group stranded by a restart never delivers. Its persisted member must
 // not hold a compress of the parent.
 func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	stuck := make(chan struct{}) // never closed: the old Daemon's child turn stays open
@@ -293,6 +300,7 @@ func TestStrandedGroupAfterRestartDoesNotBlockCompress(t *testing.T) {
 // A compress that runs while another compress still waits on a Group settles
 // that wait. A held compress must not run a second Handoff after it.
 func TestCompressNowSettlesHeldCompress(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := queueDaemon(t, 20*time.Millisecond)
 	sendPrompt(t, base, id, "build the thing")
 	waitStatus(t, base, id, "idle", 5*time.Second)

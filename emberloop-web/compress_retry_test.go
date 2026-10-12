@@ -162,6 +162,7 @@ func hasHeldPrompt(evs []Event) bool {
 // retry. Prose with bare numbers or loose words is other. The texts are forms
 // the pig SDK puts into its errors.
 func TestCompressFailureClasses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		text string
 		want compressFailure
@@ -200,6 +201,7 @@ func TestCompressFailureClasses(t *testing.T) {
 
 // A deadline of the one-off is other: retrying it would stall the Session.
 func TestOneShotDeadlineIsOtherNotTransient(t *testing.T) {
+	t.Parallel()
 	expired, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
 	<-expired.Done()
@@ -222,6 +224,7 @@ func TestOneShotDeadlineIsOtherNotTransient(t *testing.T) {
 
 // StartErrs fail the next StartHandle calls in order, then StartErr applies.
 func TestFakeBackendStartErrsFailInOrder(t *testing.T) {
+	t.Parallel()
 	be := NewFakeBackend()
 	emit := func(string, string, string) {}
 	be.StartErrs = []error{errString("first"), errString("second")}
@@ -242,6 +245,7 @@ func TestFakeBackendStartErrsFailInOrder(t *testing.T) {
 // A transient summarizer failure waits 2s and retries. The Handoff lands with
 // the retry count on the compressed Event, and the handle rotates.
 func TestCompressTransientFailureRetriesThenSucceeds(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := summaryDaemon(t, goodSummary)
 	sum := &stepSummarizer{steps: []summaryStep{{err: errString("503 Service Unavailable")}, {reply: goodSummary}}}
 	d.summarizer = sum
@@ -273,6 +277,7 @@ func TestCompressTransientFailureRetriesThenSucceeds(t *testing.T) {
 // Transient failures that outlast the three retries fall to the deterministic
 // Handoff. The waits run 2s, 8s and 30s, and the error text stays on the Event.
 func TestCompressTransientFailureExhaustsRetriesThenFallsBack(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := summaryDaemon(t, goodSummary)
 	var steps []summaryStep
 	for i := 0; i < 4; i++ {
@@ -300,6 +305,7 @@ func TestCompressTransientFailureExhaustsRetriesThenFallsBack(t *testing.T) {
 // A credit failure does not retry. The Session blocks: no swap, the old handle
 // and its resume token stay, and the compress_blocked Event carries Retry.
 func TestCompressCreditFailureBlocksSession(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -338,6 +344,7 @@ func TestCompressCreditFailureBlocksSession(t *testing.T) {
 // While blocked, a new prompt queues and does not run. Retry reruns the whole
 // compress. The held prompt runs after the Handoff, and the block clears.
 func TestCompressBlockHoldsPromptUntilRetrySucceeds(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -378,6 +385,7 @@ func TestCompressBlockHoldsPromptUntilRetrySucceeds(t *testing.T) {
 // Dismiss clears the block without a compress. The old handle stays, the
 // resume token is unchanged, and the held prompt runs on the old handle.
 func TestCompressBlockDismissKeepsOldHandleAndReleasesHeld(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -407,6 +415,7 @@ func TestCompressBlockDismissKeepsOldHandleAndReleasesHeld(t *testing.T) {
 
 // Dismiss answers 409 while no block is set and 404 for an unknown Session.
 func TestDismissRefusedWithoutBlockAndForUnknownSession(t *testing.T) {
+	t.Parallel()
 	_, _, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -421,6 +430,7 @@ func TestDismissRefusedWithoutBlockAndForUnknownSession(t *testing.T) {
 // Dismiss answers 409 while the Session works, and the block stays until the
 // Retry settles. The backoff wait holds the Retry open.
 func TestDismissRefusedWhileCompressRuns(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -459,6 +469,7 @@ func TestDismissRefusedWhileCompressRuns(t *testing.T) {
 // The block lives in the Session metadata. A restarted Daemon keeps it: a send
 // resumes the Session and queues behind the block, and Dismiss clears it.
 func TestCompressBlockSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	id := blockedSession(t, stateDir)
 	d := NewDaemon(stateDir, NewFakeBackend())
@@ -486,6 +497,7 @@ func TestCompressBlockSurvivesRestart(t *testing.T) {
 // Dismiss on a released Session resumes it first, clears the block, and the
 // next prompt runs.
 func TestDismissResumesReleasedSession(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	id := blockedSession(t, stateDir)
 	d := NewDaemon(stateDir, NewFakeBackend())
@@ -509,6 +521,7 @@ func TestDismissResumesReleasedSession(t *testing.T) {
 
 // A released Session that cannot resume refuses Dismiss, and the block stays.
 func TestDismissRefusedWhileSessionCannotResume(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	id := blockedSession(t, stateDir)
 	be := NewFakeBackend()
@@ -528,6 +541,7 @@ func TestDismissRefusedWhileSessionCannotResume(t *testing.T) {
 // While blocked, a compress that would wait on a Group answers 409 instead of
 // waiting, so no block holds a wait that nothing sends.
 func TestBlockedCompressRefusedWhileGroupRuns(t *testing.T) {
+	t.Parallel()
 	d, _, base, parent := queueDaemon(t, time.Second)
 	sendPrompt(t, base, parent, "plan the work")
 	waitStatus(t, base, parent, "idle", 5*time.Second)
@@ -560,6 +574,7 @@ func TestBlockedCompressRefusedWhileGroupRuns(t *testing.T) {
 // A block drops a compress that waits on a Group. A stale wait that reaches
 // runDeferredCompress on a blocked Session starts nothing either.
 func TestBlockCompressDropsDeferredCompress(t *testing.T) {
+	t.Parallel()
 	d, _, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -595,6 +610,7 @@ func TestBlockCompressDropsDeferredCompress(t *testing.T) {
 // A compress that gets a credit failure from the start-handle step blocks and
 // leaves the old handle alone.
 func TestCompressStartHandleTransientRetriesThenSwaps(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -620,6 +636,7 @@ func TestCompressStartHandleTransientRetriesThenSwaps(t *testing.T) {
 // An auth failure while starting the new handle blocks the Session. The old
 // handle and its resume token stay.
 func TestCompressStartHandleAuthFailureBlocks(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)

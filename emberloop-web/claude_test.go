@@ -119,6 +119,7 @@ func chunk(text string) map[string]any {
 
 // Slice 1: the claude Backend offers exactly opus, sonnet and haiku.
 func TestClaudeModelsAreOpusSonnetHaiku(t *testing.T) {
+	t.Parallel()
 	want := []string{"opus", "sonnet", "haiku"}
 	if got := ClaudeModels(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ClaudeModels() = %v, want %v", got, want)
@@ -128,6 +129,7 @@ func TestClaudeModelsAreOpusSonnetHaiku(t *testing.T) {
 // Slice 2: session/new and session/load carry the same full stripping set,
 // with an absolute MCP command.
 func TestNewAndLoadShareFullStrippingSet(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
@@ -195,6 +197,7 @@ func mustStripped(t *testing.T, meta map[string]any, model string) {
 // Slice 3: a prompt streams message chunks, thought, tool calls and diffs
 // as normalized Events.
 func TestPromptStreamsNormalizedEvents(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{updates: []map[string]any{
 		chunk("hello "),
 		chunk("world"),
@@ -244,6 +247,7 @@ func TestPromptStreamsNormalizedEvents(t *testing.T) {
 
 // Slice 4: permission requests auto-approve the allow-once option and log.
 func TestPermissionAutoApprovedAndLogged(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{permissions: []stubPermission{
 		{
 			toolName: "mcp__el__echo",
@@ -286,6 +290,7 @@ func TestPermissionAutoApprovedAndLogged(t *testing.T) {
 
 // Slice 5: the first prompt waits until session/new answers (MCP ready).
 func TestFirstPromptWaitsForMCPReady(t *testing.T) {
+	t.Parallel()
 	block := make(chan struct{})
 	started := make(chan struct{})
 	stub := &stubConn{blockNew: block, promptStarted: started, updates: []map[string]any{chunk("late")}}
@@ -331,6 +336,7 @@ func TestFirstPromptWaitsForMCPReady(t *testing.T) {
 // A prompt racing a failed start reports failed instead of hanging: drop
 // closes ready, and OnPrompt rechecks the entry after it wakes.
 func TestPromptAfterFailedStartReportsFailed(t *testing.T) {
+	t.Parallel()
 	block := make(chan struct{})
 	started := make(chan struct{})
 	stub := &stubConn{blockNew: block, promptStarted: started, newErr: errNoAdapter}
@@ -378,6 +384,7 @@ func TestPromptAfterFailedStartReportsFailed(t *testing.T) {
 // A DropSession racing a blocked start still wakes a waiting prompt:
 // the Once signals ready even though the later failure-drop finds no entry.
 func TestPromptAfterDropDuringStartReportsFailed(t *testing.T) {
+	t.Parallel()
 	block := make(chan struct{})
 	started := make(chan struct{})
 	stub := &stubConn{blockNew: block, promptStarted: started, newErr: errNoAdapter}
@@ -450,6 +457,7 @@ func TestClaudeSessionsCarryVoiceReminder(t *testing.T) {
 // binding carries the Session the Daemon tools and sudo approvals act under.
 // Scouts and children never see a second server.
 func TestClaudeMCPServesSingleBoundServer(t *testing.T) {
+	t.Parallel()
 	b := newStubClaudeBackend(nil)
 	b.SetDaemonAddr("http://127.0.0.1:9")
 	for _, tc := range []struct {

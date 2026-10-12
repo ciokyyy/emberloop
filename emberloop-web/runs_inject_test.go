@@ -16,6 +16,7 @@ import (
 
 // trimRunSkill drops optional HTML blocks and (optional) markdown sections.
 func TestTrimRunSkillDropsOptional(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -273,6 +274,7 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 // The reviewer chain follows the changed files; the worker chain is the root
 // chain when no diff exists yet.
 func TestAgentsChainFollowsChangedPaths(t *testing.T) {
+	t.Parallel()
 	repo := tempDir(t)
 	testGit(t, repo, "init", "-b", "main", ".")
 	writeFile(t, repo, "AGENTS.md", "# AGENTS.md — root\n")

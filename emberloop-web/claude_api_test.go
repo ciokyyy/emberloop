@@ -16,6 +16,7 @@ var errNoAdapter = errors.New("no adapter")
 // A claude Session created through the API answers over SSE with normalized
 // Events; unknown claude models are refused at creation.
 func TestClaudeSessionOverAPIStreamsEvents(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{updates: []map[string]any{chunk("real answer")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -37,6 +38,7 @@ func TestClaudeSessionOverAPIStreamsEvents(t *testing.T) {
 }
 
 func TestClaudeSessionCreationValidates(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
@@ -70,6 +72,7 @@ func TestClaudeSessionCreationValidates(t *testing.T) {
 // A claude start failure answers 500 and leaves no Session or backend
 // state behind.
 func TestClaudeStartFailureRemovesSession(t *testing.T) {
+	t.Parallel()
 	be := newStubClaudeBackend(func() (acpConn, error) { return &stubConn{newErr: errNoAdapter}, nil })
 	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -106,6 +109,7 @@ func TestClaudeStartFailureRemovesSession(t *testing.T) {
 }
 
 func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

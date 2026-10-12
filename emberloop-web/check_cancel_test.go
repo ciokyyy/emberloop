@@ -107,6 +107,7 @@ func proxyCallOne(t *testing.T, daemonURL, parent, name, args string) (string, e
 // Check with no id lists the caller's own children, worker and scout alike,
 // without messaging them.
 func TestCheckListsOwnChildren(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -158,6 +159,7 @@ func TestCheckListsOwnChildren(t *testing.T) {
 // Check with an id shows the child's summary plus its recent events, and the
 // tool description tells callers not to poll.
 func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -261,6 +263,7 @@ func TestProxyCheckReadsOwnChildren(t *testing.T) {
 // Cancelling a working child interrupts its turn and drops its queue while
 // the parent and the sibling keep going.
 func TestCancelInterruptsWorkingChild(t *testing.T) {
+	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 5 * time.Second
 	d := NewDaemon(tempDir(t), fake)
@@ -302,6 +305,7 @@ func TestCancelInterruptsWorkingChild(t *testing.T) {
 
 // Cancelling an idle child is a no-op that says so.
 func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -335,6 +339,7 @@ func TestCancelIdleReportsAlreadyIdle(t *testing.T) {
 // Kill ends the child Session like DELETE does: it reads ended and refuses
 // further sends, while the parent keeps going.
 func TestCancelKillEndsChild(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

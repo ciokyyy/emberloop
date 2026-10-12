@@ -87,6 +87,7 @@ func (e errString) Error() string { return string(e) }
 // Compress refuses while a turn runs, for unknown Sessions, and for scouts.
 // A Handoff Backend swaps by Handoff.
 func TestCompressGuards(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = 300 * time.Millisecond

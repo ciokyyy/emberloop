@@ -57,6 +57,7 @@ func firstHandoffAndTask(events []Event) (handoff, task Event, ok bool) {
 
 // A Chain-position write must not publish a placeholder driver-row state.
 func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
+	t.Parallel()
 	rs := &runState{}
 	setChainPosition(rs, "01-first", "worker", 1)
 	row := rs.Rows["01-first"]
@@ -66,6 +67,7 @@ func TestSetChainPositionPreservesUnpublishedTicketRow(t *testing.T) {
 }
 
 func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	runsDir := filepath.Join(stateDir, "enderbloom", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -100,6 +102,7 @@ func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 }
 
 func TestRunChainFailureClampsPersistedPosition(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.runs["r-chain"] = &runState{
 		ID: "r-chain", Status: runStatusRunning,
@@ -276,6 +279,7 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 }
 
 func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -310,6 +314,7 @@ func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
 }
 
 func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -353,6 +358,7 @@ func TestRunFallbackTaskResumeFailureNeedsYou(t *testing.T) {
 }
 
 func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -394,6 +400,7 @@ func TestRunFallbackStartOtherFailureNeedsYouNotExhausted(t *testing.T) {
 }
 
 func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -480,6 +487,7 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 }
 
 func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -556,6 +564,7 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 }
 
 func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -586,6 +595,7 @@ func TestRunWorkerChainExhaustionNeedsYou(t *testing.T) {
 }
 
 func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -631,6 +641,7 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 }
 
 func TestRunReviewerFallbackChain(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -711,6 +722,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 }
 
 func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -765,6 +777,7 @@ func TestChainPendingSubmitDoesNotBlockOtherTickets(t *testing.T) {
 }
 
 func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		error    string
@@ -858,6 +871,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 }
 
 func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -910,6 +924,7 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 }
 
 func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

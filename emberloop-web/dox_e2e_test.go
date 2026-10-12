@@ -13,6 +13,7 @@ import (
 // onto the spec branch instead of tripping the dirty-worktree refusal on
 // every finish. Master never moves here; the final merge carries it later.
 func TestSeededWorkerCommitsAndMerges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

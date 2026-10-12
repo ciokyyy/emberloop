@@ -42,6 +42,7 @@ func listImages(t *testing.T, base, session string) (int, []ImageMeta) {
 
 // Upload, list and serve round-trip one image with its metadata.
 func TestImageUploadListServe(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -84,6 +85,7 @@ func TestImageUploadListServe(t *testing.T) {
 
 // Uploads refuse non-images, bad data and oversized payloads.
 func TestImageUploadRefusals(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -117,6 +119,7 @@ func TestImageUploadRefusals(t *testing.T) {
 // agent receives their file paths (the fake Backend echoes its prompt, so
 // the reply carries the resolved path).
 func TestPromptWithImageIDsReachesAgentAsPaths(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -164,6 +167,7 @@ func TestPromptWithImageIDsReachesAgentAsPaths(t *testing.T) {
 
 // A prompt naming an unattached image is refused.
 func TestPromptUnknownImageIDRefused(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -182,6 +186,7 @@ func TestPromptUnknownImageIDRefused(t *testing.T) {
 
 // Deleting the Session deletes its attached images with it.
 func TestDeleteSessionDeletesImages(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	d := NewDaemon(stateDir, NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -211,6 +216,7 @@ func TestDeleteSessionDeletesImages(t *testing.T) {
 
 // Queued stored references merge with the text and stay on the Event.
 func TestMergePendingKeepsImageIDs(t *testing.T) {
+	t.Parallel()
 	got := mergePending([]queuedMsg{{text: "one", imageIDs: []string{"a"}}, {text: "", imageIDs: []string{"b"}}})
 	if got.text != "one" || len(got.imageIDs) != 2 {
 		t.Fatalf("merged = %+v", got)
@@ -220,6 +226,7 @@ func TestMergePendingKeepsImageIDs(t *testing.T) {
 // A prompt carrying stored image ids reaches the Backend as inline vision
 // bytes too, while the prompt Event keeps the clean text plus the ids.
 func TestPromptWithImageIDsReachesBackendAsInlineBytes(t *testing.T) {
+	t.Parallel()
 	be := &imageFake{}
 	d := NewDaemon(tempDir(t), be)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -277,6 +284,7 @@ func TestPromptWithImageIDsReachesBackendAsInlineBytes(t *testing.T) {
 // Stored references queued behind a working turn still reach the Backend as
 // inline bytes when the Daemon delivers them after the turn.
 func TestQueuedImageIDsDeliverInlineBytesAfterTurn(t *testing.T) {
+	t.Parallel()
 	be := &imageFake{}
 	be.Delay = 500 * time.Millisecond
 	d := NewDaemon(tempDir(t), be)
@@ -331,6 +339,7 @@ func TestQueuedImageIDsDeliverInlineBytesAfterTurn(t *testing.T) {
 
 // Unknown stored ids resolve to nothing: the text-only path stays intact.
 func TestStoredImagesAsInlineSkipsUnknown(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

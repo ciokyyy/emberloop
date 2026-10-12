@@ -154,6 +154,7 @@ func TestDeciderSettingsAreAdminOnly(t *testing.T) {
 
 // A scripted durable below the cut drops the hit: nothing is stored.
 func TestMineSessionDropsWithScriptedDecider(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.decider = &memory.ScriptedDecider{Durable: 0.1}
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
@@ -172,6 +173,7 @@ func TestMineSessionDropsWithScriptedDecider(t *testing.T) {
 // A scripted verdict stores the kind with the model and version in
 // decider_json, and marks queue eligibility at the high threshold.
 func TestMineSessionStoresScriptedVerdict(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.decider = &memory.ScriptedDecider{Durable: 0.9, Kind: memory.KindFact, Scope: "situational"}
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
@@ -213,6 +215,7 @@ func TestMineSessionStoresScriptedVerdict(t *testing.T) {
 // An unavailable confirmer leaves the heuristic verdict standing: the hit is
 // stored, never dropped on a missing answer.
 func TestMineSessionFallsBackWhenDeciderUnavailable(t *testing.T) {
+	t.Parallel()
 	for _, scripted := range []*memory.ScriptedDecider{{Unavailable: true}, {Durable: 0.9}} {
 		d := NewDaemon(tempDir(t), NewFakeBackend())
 		d.decider = scripted
@@ -235,6 +238,7 @@ func TestMineSessionFallsBackWhenDeciderUnavailable(t *testing.T) {
 
 // The default heuristic mine stores the model and version with every output.
 func TestMineSessionStoresHeuristicModelVersion(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	seedEndedSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	if _, err := d.MineSession("s1"); err != nil {
@@ -264,6 +268,7 @@ func TestMineSessionStoresHeuristicModelVersion(t *testing.T) {
 // Ensemble mode end to end: below confirmLow drops, between the thresholds
 // stores an observation, at confirmHigh marks it queue-eligible.
 func TestMineSessionEnsembleThresholds(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","decider_confirm_low":0.35,"decider_confirm_high":0.7}`)
 	cases := []struct {
 		name     string
@@ -278,6 +283,7 @@ func TestMineSessionEnsembleThresholds(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			d := NewDaemon(tempDir(t), NewFakeBackend())
 			d.SetSettingsPath(settingsPath)
 			d.deciderOneShot = func(model, system, user string) (string, error) {
@@ -320,6 +326,7 @@ func TestMineSessionEnsembleThresholds(t *testing.T) {
 // Ensemble without a memory model still stores the observation: an
 // unconfirmable candidate is never dropped on a missing model.
 func TestMineSessionEnsembleWithoutModelStores(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"ensemble"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
@@ -346,6 +353,7 @@ func TestMineSessionEnsembleWithoutModelStores(t *testing.T) {
 // A replayed Event never reaches the Decider: after a cursor reset the same
 // Session Events count as duplicates with no confirming call.
 func TestMineSessionReplaySkipsDecider(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	keep := &memory.ScriptedDecider{Durable: 0.9}
 	d.decider = keep
@@ -387,6 +395,7 @@ func TestMineSessionReplaySkipsDecider(t *testing.T) {
 // Redaction runs before every llm call: the one-off sees the marker, never
 // the secret.
 func TestMineSessionLLMRedactsBeforeCall(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
@@ -424,6 +433,7 @@ func TestMineSessionLLMRedactsBeforeCall(t *testing.T) {
 // no confirmer answering means no eligibility, even when the heuristic score
 // clears the high threshold.
 func TestMineSessionLLMErrorNeverEligible(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"llm","memory_model":"test-faux/decider"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
@@ -457,6 +467,7 @@ func TestMineSessionLLMErrorNeverEligible(t *testing.T) {
 // llm without a memory model has no confirmer: the heuristic hit is stored
 // (nothing is lost) but never queue-eligible on the heuristic score alone.
 func TestMineSessionLLMWithoutModelNeverEligible(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"llm"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
@@ -648,6 +659,7 @@ func TestJevNoteNamesEgress(t *testing.T) {
 // jev mode end to end: a confirming endpoint stores the verdict with the
 // model and version in decider_json, queue-eligible at the high threshold.
 func TestMineSessionJevConfirms(t *testing.T) {
+	t.Parallel()
 	stub := &jevStub{status: http.StatusOK, body: jevConfirmBody}
 	srv := jevStubServer(t, stub)
 	settingsPath := useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`","jev_api_key":"k","jev_model":"jev-latest"}`)
@@ -690,6 +702,7 @@ func TestMineSessionJevConfirms(t *testing.T) {
 // jev mode with the endpoint off stores the heuristic hit but never marks it
 // eligible: nothing is sent anywhere.
 func TestMineSessionJevOffNeverEligible(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"jev"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
@@ -720,6 +733,7 @@ func TestMineSessionJevOffNeverEligible(t *testing.T) {
 
 // A failing endpoint stores the heuristic hit but never marks it eligible.
 func TestMineSessionJevErrorNeverEligible(t *testing.T) {
+	t.Parallel()
 	stub := &jevStub{status: http.StatusUnauthorized, body: `{"error":"bad key"}`}
 	srv := jevStubServer(t, stub)
 	settingsPath := useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`"}`)
@@ -750,6 +764,7 @@ func TestMineSessionJevErrorNeverEligible(t *testing.T) {
 // one-shot would drop this hit, so a stored eligible verdict proves jev.
 // The stub answers durable only, which is all the ensemble asks.
 func TestMineSessionEnsemblePrefersJev(t *testing.T) {
+	t.Parallel()
 	stub := &jevStub{status: http.StatusOK, body: `{"model":"jev-1.13","answers":{"durable":{"type":"noul","noul":0.9}}}`}
 	srv := jevStubServer(t, stub)
 	settingsPath := useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","jev_base_url":"`+srv.URL+`","jev_model":"jev-latest"}`)
@@ -788,6 +803,7 @@ func TestMineSessionEnsemblePrefersJev(t *testing.T) {
 // Redaction runs before every jev call: the endpoint sees the marker, never
 // the secret.
 func TestMineSessionJevRedactsBeforeCall(t *testing.T) {
+	t.Parallel()
 	stub := &jevStub{status: http.StatusOK, body: jevConfirmBody}
 	srv := jevStubServer(t, stub)
 	settingsPath := useSettings(t, `{"decider_mode":"jev","jev_base_url":"`+srv.URL+`"}`)

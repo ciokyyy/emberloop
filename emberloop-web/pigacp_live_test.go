@@ -14,6 +14,7 @@ import (
 // the main check: set EL_LIVE_PIG_ACP=1 and PIG_ACP_SPAWN_BIN to a built
 // emberloop-web binary (it runs the pig shim).
 func TestLivePigACP(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("EL_LIVE_PIG_ACP") == "" {
 		t.Skip("set EL_LIVE_PIG_ACP=1 and PIG_ACP_SPAWN_BIN for the pi-acp probe")
 	}

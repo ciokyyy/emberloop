@@ -10,6 +10,7 @@ import (
 // Release captures the ACP session id and drops the adapter; ResumeSession
 // reloads it through session/load with the full stripping set.
 func TestClaudeReleaseAndResumeRoundTrip(t *testing.T) {
+	t.Parallel()
 	stub := &stubConn{}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
 	meta := SessionMeta{ID: "d1", Harness: "claude", Model: "sonnet", WorkDir: tempDir(t)}
@@ -49,6 +50,7 @@ func TestClaudeReleaseAndResumeRoundTrip(t *testing.T) {
 // The full lifecycle through the API with the stub adapter: create, prompt,
 // idle release, resume on the next prompt, and resume after a restart.
 func TestClaudeLifecycleOverAPI(t *testing.T) {
+	t.Parallel()
 	dir := tempDir(t)
 	stub := &stubConn{updates: []map[string]any{chunk("hello")}}
 	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })

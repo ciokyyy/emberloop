@@ -89,6 +89,7 @@ func nightlyLedgerLen(t *testing.T, d *Daemon, owner string) int {
 // TestNightlyRunsOnlyWhenIdleAndLogsPerStage pins the idle gate and the
 // ledger-row-per-stage contract.
 func TestNightlyRunsOnlyWhenIdleAndLogsPerStage(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -149,6 +150,7 @@ func TestNightlyRunsOnlyWhenIdleAndLogsPerStage(t *testing.T) {
 // TestNightlyFailingStageLeavesLaterStagesRunning pins continue-on-failure
 // with visibility on the ledger.
 func TestNightlyFailingStageLeavesLaterStagesRunning(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -201,6 +203,7 @@ func TestNightlyFailingStageLeavesLaterStagesRunning(t *testing.T) {
 // TestNightlySnapshotFailureAbortsBeforeAnyWrite pins the abort: no mine
 // writes and no later ledger rows.
 func TestNightlySnapshotFailureAbortsBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -242,6 +245,7 @@ func TestNightlySnapshotFailureAbortsBeforeAnyWrite(t *testing.T) {
 // TestNightlyFlushOKYieldsNoQueueItem pins the distill sentinel: a Session
 // with new observations but nothing durable enqueues nothing.
 func TestNightlyFlushOKYieldsNoQueueItem(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -280,6 +284,7 @@ func TestNightlyFlushOKYieldsNoQueueItem(t *testing.T) {
 // TestNightlyDistillInputIsRedactedAndCapped pins the 15 KB redacted cap at
 // the distill egress.
 func TestNightlyDistillInputIsRedactedAndCapped(t *testing.T) {
+	t.Parallel()
 	var got string
 	d, clock := nightlyTestDaemon(t, nil, nil)
 	d.distillOneShot = func(model, system, user string) (string, error) {
@@ -312,6 +317,7 @@ func TestNightlyDistillInputIsRedactedAndCapped(t *testing.T) {
 // TestNightlyDeletesNothing asserts row counts before and after: Rules,
 // queue and Profile versions never shrink; only ledger grows.
 func TestNightlyDeletesNothing(t *testing.T) {
+	t.Parallel()
 	brief := "Prefer tabs for indentation."
 	ops, _ := json.Marshal(map[string]any{"ops": []any{map[string]any{"op": "add", "text": "nightly keeps tabs", "tag": "workflow"}}})
 	profileReply := string(ops)
@@ -353,6 +359,7 @@ func TestNightlyDeletesNothing(t *testing.T) {
 // TestNightlyWithFakeMemoryDeciderAndClock drives the pairing helper with the
 // in-memory fake, the scripted Decider and the fake clock.
 func TestNightlyWithFakeMemoryDeciderAndClock(t *testing.T) {
+	t.Parallel()
 	clock := newFakeClock()
 	fake := memory.NewFake(memory.Options{Now: clock.get})
 	ctx := context.Background()
@@ -403,6 +410,7 @@ func TestNightlyWithFakeMemoryDeciderAndClock(t *testing.T) {
 // TestNightlyOnDemandRoutes covers the Memory-page seams: the admin POST runs
 // the job, GET serves the own-bank ledger, and auth gates both.
 func TestNightlyOnDemandRoutes(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -486,6 +494,7 @@ func TestNightlyOnDemandRoutes(t *testing.T) {
 // TestNightlyHandlerSurvivesClientDisconnect pins the detached context: the
 // client cancels mid-run and the seven-stage job still completes.
 func TestNightlyHandlerSurvivesClientDisconnect(t *testing.T) {
+	t.Parallel()
 	none := "none"
 	d, clock := nightlyTestDaemon(t, nil, &none)
 	seedEndedSession(t, d, "cancel-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for cancel")})
@@ -538,6 +547,7 @@ func TestNightlyHandlerSurvivesClientDisconnect(t *testing.T) {
 
 // TestNightlyDue fires once per local day at 03:00.
 func TestNightlyDue(t *testing.T) {
+	t.Parallel()
 	day := time.Date(2026, 10, 11, 3, 0, 0, 0, time.Local)
 	if due, _ := nightlyDue(day, ""); !due {
 		t.Fatal("03:00 with no run today is not due")
@@ -555,6 +565,7 @@ func TestNightlyDue(t *testing.T) {
 // overlapping stored Rule written back onto its queue payload. A second run
 // leaves it alone.
 func TestNightlyPairAnnotatesNewCandidates(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -617,6 +628,7 @@ func TestNightlyPairAnnotatesNewCandidates(t *testing.T) {
 // return FLUSH_OK: a Session with new observations but no miner-readable text
 // counts as a failure, never as a sentinel.
 func TestNightlyDistillEmptyTextIsFailure(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, _ := nightlyTestDaemon(t, &flush, &none)
@@ -641,6 +653,7 @@ func TestNightlyDistillEmptyTextIsFailure(t *testing.T) {
 // injected seam: a file blocking the snapshot directory fails VACUUM INTO,
 // aborts the run before any mine write, and stays visible on the ledger.
 func TestNightlySnapshotRealFailureAborts(t *testing.T) {
+	t.Parallel()
 	d, clock := nightlyTestDaemon(t, nil, nil)
 	seedEndedSession(t, d, "snapreal-s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here for snapreal")})
 	nightlySettle(clock)
@@ -679,6 +692,7 @@ func TestNightlySnapshotRealFailureAborts(t *testing.T) {
 // non-JSON reply and a refused proposal both fail the stage without stopping
 // later stages.
 func TestNightlyProfileRealFailures(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		reply string
@@ -714,6 +728,7 @@ func TestNightlyProfileRealFailures(t *testing.T) {
 // TestNightlyDistillCallErrorFailsTheStage covers the failing-LLM path: the
 // one-off call errors and the stage records FAILED while later stages run.
 func TestNightlyDistillCallErrorFailsTheStage(t *testing.T) {
+	t.Parallel()
 	none := "none"
 	d, clock := nightlyTestDaemon(t, nil, &none)
 	d.distillOneShot = func(model, system, user string) (string, error) {
@@ -741,6 +756,7 @@ func TestNightlyDistillCallErrorFailsTheStage(t *testing.T) {
 // TestNightlyInjectedFailureTable runs every stage's failure seam: snapshot
 // aborts, every later stage records FAILED while the rest still run.
 func TestNightlyInjectedFailureTable(t *testing.T) {
+	t.Parallel()
 	for _, stage := range wantNightlyStageOrder {
 		t.Run(stage, func(t *testing.T) {
 			flush := "FLUSH_OK"
@@ -779,6 +795,7 @@ func TestNightlyInjectedFailureTable(t *testing.T) {
 // an aborted run still marks the day (no per-minute FAILED spam), and a busy
 // Daemon marks nothing.
 func TestNightlyMaybeRunMarksDayOnce(t *testing.T) {
+	t.Parallel()
 	flush := "FLUSH_OK"
 	none := "none"
 	d, clock := nightlyTestDaemon(t, &flush, &none)
@@ -830,6 +847,7 @@ func TestNightlyMaybeRunMarksDayOnce(t *testing.T) {
 // TestCapDistillInputKeepsEarlierInvalidBytes pins the trailing-only trim:
 // invalid bytes before the cut survive, a trailing partial rune trims.
 func TestCapDistillInputKeepsEarlierInvalidBytes(t *testing.T) {
+	t.Parallel()
 	s := strings.Repeat("a", 100) + "\xff" + strings.Repeat("b", nightlyDistillCap)
 	got := capDistillInput(s)
 	if len(got) != nightlyDistillCap {
@@ -850,6 +868,7 @@ func TestCapDistillInputKeepsEarlierInvalidBytes(t *testing.T) {
 
 // TestRedactServedDiagnostics pins the serve-time guard on the on-demand run.
 func TestRedactServedDiagnostics(t *testing.T) {
+	t.Parallel()
 	res := NightlyResult{
 		RunID: "r1",
 		Stages: []NightlyStageResult{

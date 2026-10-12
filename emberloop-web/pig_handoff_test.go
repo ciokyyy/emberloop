@@ -143,6 +143,7 @@ func TestPigSDKCompressesByHandoff(t *testing.T) {
 // compressible. Thinking level and model survive the new handle, the resume
 // token rotates, and a Daemon restart then resumes the new handle.
 func TestPigACPCompressesByHandoff(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1","auto_compress":false}`)
 	stateDir := tempDir(t)
 	model := oneCatalogModel(t)
@@ -239,6 +240,7 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 // shares one: the new shim cannot steal the Listen and the old shim's exit
 // cannot unlink the new shim's live socket.
 func TestPigACPSocksRotateAcrossHandoff(t *testing.T) {
+	t.Parallel()
 	model := oneCatalogModel(t)
 	stub := &thoughtStubConn{}
 	be := newThoughtStubBackend(stub)
@@ -273,6 +275,7 @@ func TestPigACPSocksRotateAcrossHandoff(t *testing.T) {
 // Queued native messages move to the new pig-over-ACP handle as follow-ups:
 // a held steer degrades so the Handoff leads.
 func TestPigACPCarryDegradesSteerToFollowup(t *testing.T) {
+	t.Parallel()
 	oldSock := filepath.Join(tempDir(t), "old.sock")
 	newSock := filepath.Join(tempDir(t), "new.sock")
 	serveQueue := func(sock string, q pigQueue, received *[]string) func() {
@@ -365,6 +368,7 @@ func (f *failingSteerBackend) ClearQueued(sessionID string) int                {
 // A pig steer that misses the native queue waits in the Daemon pending list
 // and is not lost.
 func TestPigSteerMissFallsBackToPending(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := &failingSteerBackend{FakeBackend: NewFakeBackend()}
 	be.Delay = time.Second
@@ -395,6 +399,7 @@ func TestPigSteerMissFallsBackToPending(t *testing.T) {
 // degraded follow-up, so the Handoff leads and nothing is lost on the dying
 // handle.
 func TestPigSteerDuringHandoffQueuesFollowup(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	be := NewFakeBackend()
 	be.Delay = time.Second

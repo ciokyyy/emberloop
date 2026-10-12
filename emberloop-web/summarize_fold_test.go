@@ -54,6 +54,7 @@ func hasStep(evs []Event, want string) bool {
 // Input over the window is summarized in chunks. Each chunk call fits the
 // window, and the Handoff call reads the chunk summaries.
 func TestSummarizerOverWindowFoldsIntoChunks(t *testing.T) {
+	t.Parallel()
 	d, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.window = 30000
 	sum.partReply = foldReply
@@ -89,6 +90,7 @@ func TestSummarizerOverWindowFoldsIntoChunks(t *testing.T) {
 // A chunk the summarizer refuses is halved while it is over the fold floor.
 // Each half that fits is summarized, and the Handoff call still gets a summary.
 func TestSummarizerRefusedChunkHalvesToFloor(t *testing.T) {
+	t.Parallel()
 	d, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.maxInput = 9000
 	sum.partReply = foldReply
@@ -112,6 +114,7 @@ func TestSummarizerRefusedChunkHalvesToFloor(t *testing.T) {
 // At the fold floor a tool result is cut to 500 characters of head. The chunk
 // with that result is sent once more, and the summary goes on.
 func TestSummarizerFloorCutsToolResultsToHead(t *testing.T) {
+	t.Parallel()
 	d, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.maxInput = 1200
 	sum.partReply = foldReply
@@ -146,6 +149,7 @@ func TestSummarizerFloorCutsToolResultsToHead(t *testing.T) {
 // Input that still does not fit after folding gives the deterministic Handoff,
 // and the Event log names the reason.
 func TestSummarizerStillOversizeFallsBackDeterministic(t *testing.T) {
+	t.Parallel()
 	d, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.maxInput = 300
 	sum.partReply = foldReply
@@ -169,6 +173,7 @@ func TestSummarizerStillOversizeFallsBackDeterministic(t *testing.T) {
 
 // Each repair and fallback step appends a compress_step Event with its reason.
 func TestSummarizerFallbackStepsRecordReason(t *testing.T) {
+	t.Parallel()
 	t.Run("missed sections", func(t *testing.T) {
 		_, _, base, id := summaryDaemon(t, "plain prose about the parser work")
 		if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
@@ -205,6 +210,7 @@ func TestSummarizerFallbackStepsRecordReason(t *testing.T) {
 // A provider's overflow wording maps to errSummaryOverflow. Other failures
 // pass through unchanged.
 func TestOverflowErrorIsClassified(t *testing.T) {
+	t.Parallel()
 	if err := overflowOr(errString("prompt is too long: 250000 tokens > 200000 maximum"), 0); !errors.Is(err, errSummaryOverflow) {
 		t.Fatalf("overflow wording = %v, want errSummaryOverflow", err)
 	}
@@ -216,6 +222,7 @@ func TestOverflowErrorIsClassified(t *testing.T) {
 // capHeadTail keeps the head and the tail within about n bytes and never
 // splits a character, even where the cut falls inside one.
 func TestCapHeadTailKeepsEndsWholeCharacters(t *testing.T) {
+	t.Parallel()
 	s := "héllo" + strings.Repeat("é", 3000) + "END"
 	out := capHeadTail(s, 2000)
 	if !utf8.ValidString(out) {
@@ -232,6 +239,7 @@ func TestCapHeadTailKeepsEndsWholeCharacters(t *testing.T) {
 // A chunk call that returns no text ends the fold at the deterministic Handoff.
 // The compressed Event carries the reason as its error text.
 func TestSummarizerEmptyChunkSummaryFallsBackDeterministic(t *testing.T) {
+	t.Parallel()
 	d, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.window = 30000
 	sum.partReply = " "

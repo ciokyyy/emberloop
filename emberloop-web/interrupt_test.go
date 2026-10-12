@@ -24,6 +24,7 @@ func postInterrupt(t *testing.T, base, id string) (int, map[string]any) {
 // Interrupt stops a working pig Session, drops what was queued behind the
 // turn, and leaves the Session idle and usable.
 func TestInterruptStopsWorkingPigSession(t *testing.T) {
+	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -47,6 +48,7 @@ func TestInterruptStopsWorkingPigSession(t *testing.T) {
 }
 
 func TestInterruptIdleSessionReportsFalse(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

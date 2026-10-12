@@ -53,6 +53,7 @@ func TestPigRecoverWedgedRebuildsFromSavedSession(t *testing.T) {
 }
 
 func TestPigLogNilIsSilent(t *testing.T) {
+	t.Parallel()
 	var l *pigLog
 	l.write("x", nil) // must not panic
 	if newPigLog("", "id") != nil {

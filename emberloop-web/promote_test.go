@@ -150,6 +150,7 @@ func decidePromotion(t *testing.T, base string, id int64, body any) (int, map[st
 // Promoting a Rule produces a proposed diff against the nearest AGENTS.md
 // shown for approval.
 func TestPromoteProducesDiffAgainstNearestAgentsMD(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{
 		"AGENTS.md":         "# AGENTS.md — demo\n\nContract.\n",
 		"sub/AGENTS.md":     "# AGENTS.md — sub\n\nSub contract.\n",
@@ -188,6 +189,7 @@ func TestPromoteProducesDiffAgainstNearestAgentsMD(t *testing.T) {
 // Approval writes the file in the Session's worktree and leaves it
 // uncommitted; the Rule is marked promoted with its provenance intact.
 func TestPromoteApproveWritesUncommittedAndMarksRule(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{
 		"AGENTS.md": "# AGENTS.md — demo\n\nContract.\n",
 	})
@@ -255,6 +257,7 @@ func TestPromoteApproveWritesUncommittedAndMarksRule(t *testing.T) {
 // is approved. A rejection through that route keeps the label and writes
 // nothing.
 func TestPromoteDecidesThroughRulesQueueRoute(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# AGENTS.md\n"})
 	d, base, sessionID, owner := promoteDaemon(t, repo)
 	rule := addPromoteRule(t, d, owner, nil)
@@ -321,6 +324,7 @@ func TestPromoteDecidesThroughRulesQueueRoute(t *testing.T) {
 
 // Approval is idempotent: approving twice never duplicates the AGENTS.md line.
 func TestPromoteApproveIsIdempotent(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# AGENTS.md\n"})
 	d, base, sessionID, owner := promoteDaemon(t, repo)
 	rule := addPromoteRule(t, d, owner, nil)
@@ -348,6 +352,7 @@ func TestPromoteApproveIsIdempotent(t *testing.T) {
 // A note target adds a frontmatter file under .emberloop/notes/ that parses
 // and recalls like other project notes.
 func TestPromoteNoteTargetAddsParseableFile(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# AGENTS.md\n"})
 	d, base, sessionID, owner := promoteDaemon(t, repo)
 	rule := addPromoteRule(t, d, owner, nil)
@@ -382,6 +387,7 @@ func TestPromoteNoteTargetAddsParseableFile(t *testing.T) {
 // Rejection keeps the item as a label, writes nothing and leaves the Rule
 // unmarked.
 func TestPromoteRejectKeepsLabelAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# AGENTS.md\n"})
 	d, base, sessionID, owner := promoteDaemon(t, repo)
 	rule := addPromoteRule(t, d, owner, nil)
@@ -404,6 +410,7 @@ func TestPromoteRejectKeepsLabelAndWritesNothing(t *testing.T) {
 
 // Promotion needs a human: the machine token answers 401.
 func TestPromoteRefusesMachineToken(t *testing.T) {
+	t.Parallel()
 	_ = initPromoteRepo(t, map[string]string{"AGENTS.md": "# root\n"})
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(d.Handler())
@@ -423,6 +430,7 @@ func TestPromoteRefusesMachineToken(t *testing.T) {
 // Unknown rules and Sessions fail without queueing anything. A missing
 // session with no provenance to resolve fails the same way.
 func TestPromoteBadInputsQueueNothing(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root\n"})
 	d, base, sessionID, owner := promoteDaemon(t, repo)
 	if code, _ := postPromotion(t, base, "missing-rule", sessionID, ""); code != http.StatusNotFound {
@@ -454,6 +462,7 @@ func TestPromoteBadInputsQueueNothing(t *testing.T) {
 // Without a session_id the worktree resolves from the Rule's provenance: the
 // newest source-observation Session still known to the Daemon.
 func TestPromoteResolvesSessionFromProvenance(t *testing.T) {
+	t.Parallel()
 	repo := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root\n"})
 	d, base, sessionID, owner := promoteDaemon(t, repo)
 	obs := addPromoteObservation(t, d, owner, sessionID)
@@ -474,6 +483,7 @@ func TestPromoteResolvesSessionFromProvenance(t *testing.T) {
 // chat-promoting, approving with an override, and provenance fallback all
 // answer 404 and write nothing into the other User's worktree.
 func TestPromoteRefusesCrossUserSession(t *testing.T) {
+	t.Parallel()
 	repoA := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root A\n"})
 	repoB := initPromoteRepo(t, map[string]string{"AGENTS.md": "# root B\n"})
 	d, base, adminSession, _ := promoteDaemon(t, repoA)

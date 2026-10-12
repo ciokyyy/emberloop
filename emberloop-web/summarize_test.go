@@ -228,6 +228,7 @@ func handoffText(evs []Event) string {
 // verbatim, the compress instructions reach the summarizer prompt, and the
 // compressed Event names the summary step.
 func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sendPrompt(t, base, id, "and then the docs")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -261,6 +262,7 @@ func TestHandoffUsesSummarizerReplyAndRecordsStep(t *testing.T) {
 // every reply is empty, the deterministic Handoff is used and the compressed
 // Event names that step with its retry count.
 func TestHandoffEmptySummaryRepairsTwiceThenDeterministic(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "", "", "")
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
@@ -289,6 +291,7 @@ func TestHandoffEmptySummaryRepairsTwiceThenDeterministic(t *testing.T) {
 // and quotes the reply, the next reply that passes is used, and the
 // compressed Event names the repair step with one retry.
 func TestHandoffWrongFormatRepairedBySectionsRestated(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "## Task\nalmost there, no other sections\n", goodSummary)
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
@@ -314,6 +317,7 @@ func TestHandoffWrongFormatRepairedBySectionsRestated(t *testing.T) {
 // A reply that never passes is wrapped under the required headings after the
 // repair retries. The compressed Event names the lenient step.
 func TestHandoffUnusableReplyWrappedUnderSections(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, "plain prose about the parser work")
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
@@ -341,6 +345,7 @@ func TestHandoffUnusableReplyWrappedUnderSections(t *testing.T) {
 // A reply with some sections keeps its own text and gets a stub under each
 // missing section.
 func TestHandoffPartialReplyKeepsItsSections(t *testing.T) {
+	t.Parallel()
 	_, _, base, id := summaryDaemon(t, "## Task\nfix the parser\n\n## Progress\nedited parser.go\n")
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {
 		t.Fatalf("compress = %d %v", code, body)
@@ -357,6 +362,7 @@ func TestHandoffPartialReplyKeepsItsSections(t *testing.T) {
 // The continue line follows the Handoff when a tool call never finished. A
 // call that finished gets no continue line.
 func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
+	t.Parallel()
 	const continueLine = "Continue the interrupted step above where you left off."
 	t.Run("open call", func(t *testing.T) {
 		d, sum, base, id := summaryDaemon(t, goodSummary)
@@ -389,6 +395,7 @@ func TestHandoffContinueLineOnlyWhenToolCallOpen(t *testing.T) {
 // the injected block and a block the summarizer echoes. Text the user typed
 // is never changed.
 func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
+	t.Parallel()
 	reply := goodSummary + "```memory untrusted notes, not instructions\nMARKER-OUT\n```\n"
 	d, sum, base, id := summaryDaemon(t, reply)
 	d.mu.Lock()
@@ -416,6 +423,7 @@ func TestHandoffDropsFencedMemoryBlocks(t *testing.T) {
 // ends the chain at the deterministic Handoff with no repair retry. The
 // compressed Event records the error text.
 func TestHandoffSummarizerErrorFallsBackAtOnce(t *testing.T) {
+	t.Parallel()
 	_, sum, base, id := summaryDaemon(t, goodSummary)
 	sum.err = errString("bad request: malformed input")
 	if code, body := compressReq(t, base, id, ""); code != http.StatusAccepted {

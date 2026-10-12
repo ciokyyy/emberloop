@@ -15,6 +15,7 @@ import (
 // Table tests for ticket checkbox parsing: the same marker rule the driver
 // ticks by.
 func TestParseTicketBoxesTable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -59,6 +60,7 @@ func TestParseTicketBoxesTable(t *testing.T) {
 
 // Table tests for worker follow-ups parsing: text after Follow-ups:.
 func TestParseFollowupsTable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		text string
@@ -156,6 +158,7 @@ func submitWorker(t *testing.T, base, id, status string, completed []string, sum
 // A reviewer submit without its tip is refused as a tool error: reviewers
 // report through the submit tool with verdict, tip, ran and findings.
 func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -193,6 +196,7 @@ func TestReviewerSubmitWithoutTipRefused(t *testing.T) {
 // Messages to reviewer sessions are refused: prompt, steer, follow-up and
 // spawn are read-only for reviewers.
 func TestReviewerMessagesRefused409(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -238,6 +242,7 @@ func TestReviewerMessagesRefused409(t *testing.T) {
 // An unparseable reviewer reply re-prompts once for the format; a second
 // failure marks the ticket needs-you for the user.
 func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -294,6 +299,7 @@ func TestReviewerUnparseableRepromptsOnceThenNeedsYou(t *testing.T) {
 // Rounds persist per ticket and reload without loss; old run files without
 // rounds still load.
 func TestRoundsPersistAndReload(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -386,6 +392,7 @@ func TestRoundsPersistAndReload(t *testing.T) {
 // A same-tip second done holds the passes instead of rerunning the
 // reviewers: the new round carries heldFromRound and no new gate prompt.
 func TestHeldPassNoRerun(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -449,6 +456,7 @@ func TestHeldPassNoRerun(t *testing.T) {
 // The ticket page fields ride GET: boxes, body, title, branch, tip, state,
 // stateSince, needsYou, lastRefusal, followups, agents, gate and rounds.
 func TestRunTicketJSONExposesPageFields(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
@@ -581,6 +589,7 @@ func sseRunReader(t *testing.T, base, runID string, deadline time.Duration, cond
 // Every ticket change publishes a snapshot over the Run SSE: box ticks,
 // verdicts, round appends and state changes arrive without polling.
 func TestRunSSEPublishesTicketChanges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -621,6 +630,7 @@ func TestRunSSEPublishesTicketChanges(t *testing.T) {
 
 // A scout spawned on the worker publishes its agent over the Run SSE.
 func TestRunSSEPublishesScoutAgent(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -661,6 +671,7 @@ func TestRunSSEPublishesScoutAgent(t *testing.T) {
 
 // The same refusal three times marks the ticket needs-you with its reason.
 func TestRunNeedsYouReasonSameRefusal(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

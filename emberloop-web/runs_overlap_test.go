@@ -94,6 +94,7 @@ func warningFiles(w []overlapWarningJSON) []string {
 // naming it and the other Run. The chained second tickets keep both Runs
 // running while the first tickets merge, so the check sees live Runs.
 func TestSpecOverlapWarnsBothRuns(t *testing.T) {
+	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -161,6 +162,7 @@ func containsFile(files []string, want string) bool {
 // Two live specs that dirty disjoint files never warn: both Runs merge
 // clean and both warning lists stay empty.
 func TestSpecOverlapDisjointNoWarning(t *testing.T) {
+	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -201,6 +203,7 @@ func TestSpecOverlapDisjointNoWarning(t *testing.T) {
 // A finished Run is not live: when one spec is already done, the other
 // merging the same file warns on neither Run.
 func TestSpecOverlapDoneRunExcluded(t *testing.T) {
+	t.Parallel()
 	repo, demoSpec, otherSpec := initTwoSpecRepo(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))

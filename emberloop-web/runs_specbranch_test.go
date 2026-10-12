@@ -34,6 +34,7 @@ func isAncestor(t *testing.T, repo, ancestor, ref string) bool {
 // spec/<slug> at the master tip, records the branch and the base SHA on the
 // row, and forks the first ticket branch from it.
 func TestSpecBranchCreatedFromMasterAtStart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -71,6 +72,7 @@ func TestSpecBranchCreatedFromMasterAtStart(t *testing.T) {
 // A spec branch that already exists is reused as it stands: Start records
 // the current master tip as the base but never resets the branch to it.
 func TestSpecBranchReusedWhenPresent(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	// Pre-create the spec branch with a commit master lacks.
@@ -115,6 +117,7 @@ func TestSpecBranchReusedWhenPresent(t *testing.T) {
 // Tickets merge into the spec branch as they finish. Once the whole chain
 // completes, the final gate moves master to the checked spec-branch tip.
 func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -165,6 +168,7 @@ func TestTicketsMergeIntoSpecThenMasterAtFinalGate(t *testing.T) {
 // A master move during a Ticket does not block that Ticket. At the final
 // merge gate, the completed spec branch is rebased onto the moved master.
 func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -207,6 +211,7 @@ func TestMovingMasterDoesNotBlockTicket(t *testing.T) {
 // The branch name and base SHA persist in the Run file and resume after a
 // restart: the reloaded Run merges into the same spec branch.
 func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
 	stateDir := tempDir(t)
@@ -281,6 +286,7 @@ func TestSpecBranchPersistsAcrossRestart(t *testing.T) {
 // moves the ref with update-ref instead of pushing, so a User working on
 // spec/<slug> by hand never wedges the ticket (their checkout falls behind).
 func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -319,6 +325,7 @@ func TestSpecBranchCheckedOutElsewhereStillMerges(t *testing.T) {
 // tip: the worker stays alive with a clear refusal instead of forcing the
 // ref. Equal tips are a no-op success.
 func TestFFUpdateSpecBranchRefusesNonFastForward(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -351,6 +358,7 @@ func TestFFUpdateSpecBranchRefusesNonFastForward(t *testing.T) {
 // from the master tip: ensureSpecBranch resolves the master ref explicitly,
 // never HEAD.
 func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -388,6 +396,7 @@ func TestSpecBranchForksFromMasterWhenCheckoutElsewhere(t *testing.T) {
 // elsewhere: the branch keeps its own tip while the base names master for
 // the later final-merge rebase.
 func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -422,6 +431,7 @@ func TestSpecBranchReuseRecordsMasterTipWhenCheckoutElsewhere(t *testing.T) {
 // A checkpoint rebase updates the spec branch to master, records the new
 // base and reports how many master commits the branch was behind.
 func TestRebaseSpecBranchOntoMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -457,6 +467,7 @@ func TestRebaseSpecBranchOntoMaster(t *testing.T) {
 // A checkpoint conflict leaves the spec ref unchanged and publishes a
 // needs-you Run snapshot naming the conflicting files.
 func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -510,6 +521,7 @@ func TestRebaseConflictNeedsYouWithFiles(t *testing.T) {
 // Abandon ends the Run's Sessions and removes its Ticket and spec worktrees
 // and branches, while keeping an abandoned Run row for the UI.
 func TestAbandonRunRemovesBranchesAndWorktrees(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -556,6 +568,7 @@ func writeGeneratedTestFiles(root string) error {
 }
 
 func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -630,6 +643,7 @@ func TestFinalMergeBuildsGeneratedFilesRebasesAndChecksBeforeMovingMaster(t *tes
 }
 
 func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -683,6 +697,7 @@ func TestFinalMergeRedCheckNeedsYouAndKeepsMaster(t *testing.T) {
 }
 
 func TestFinalMergeConflictNeedsYouListsFilesAndKeepsMaster(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n",

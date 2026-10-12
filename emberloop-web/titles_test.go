@@ -11,6 +11,7 @@ import (
 )
 
 func TestCleanTitle(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"Retry with backoff":                          "Retry with backoff",
 		"Here is a title:\n\n**Add retry to client**": "Here is a title",

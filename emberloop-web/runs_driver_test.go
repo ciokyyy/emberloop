@@ -278,6 +278,7 @@ func waitRunTickets(t *testing.T, base, id string, want map[string]string) runJS
 // Slice 1: Start creates a Run and returns it; a second Start on the same
 // spec while active is refused.
 func TestStartRunCreatesRunAndRefusesSecond(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -363,6 +364,7 @@ func chainTickets() map[string]string {
 // Slice 2: Tickets start in number order once their blockers merged, and a
 // Worker that submits done merges.
 func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, chainTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -429,6 +431,7 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 
 // Slice 3: independent Tickets still start one at a time under a cap of one.
 func TestRunRespectsLiveSessionCap(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -487,6 +490,7 @@ func TestRunRespectsLiveSessionCap(t *testing.T) {
 // A completed list is report-only until the Ticket merges into the spec
 // branch. The final green gate then fast-forwards that checked branch to master.
 func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n- [ ] beta\n",
 	})
@@ -540,6 +544,7 @@ func TestRunMarksTicketDoneAfterSpecAndMasterMerge(t *testing.T) {
 // Slice 5a: a dirty worktree keeps the Worker alive and shows the refusal
 // on the Ticket row. Cleaning and resubmitting merges.
 func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -605,6 +610,7 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 // The conflict is against the spec branch, the merge target: a main move
 // alone never blocks a ticket.
 func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -667,6 +673,7 @@ func TestRunRebaseConflictKeepsWorkerAlive(t *testing.T) {
 // Slice 6: roles choose harness, model and effort; a missing role falls
 // back to the Session default from the Start request.
 func TestRunRolesChooseWorkerConfig(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -693,6 +700,7 @@ func TestRunRolesChooseWorkerConfig(t *testing.T) {
 // The settings page's implementer slot is the Run worker role and beats the
 // older worker slot.
 func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -718,6 +726,7 @@ func TestRunImplementerRoleBeatsWorkerRole(t *testing.T) {
 }
 
 func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -736,6 +745,7 @@ func TestRunFallsBackToRequestWithoutRole(t *testing.T) {
 // Review fixes: a Worker that submits blocked is not merged; its refusal
 // waits for done, and the next done submit merges.
 func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -788,6 +798,7 @@ func TestRunBlockedSubmitWaitsForDone(t *testing.T) {
 // fast-forwards master in a temporary clean worktree, leaving the detached
 // checkout untouched.
 func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -834,6 +845,7 @@ func TestRunDetachedPromotesThroughTemporaryMasterCheckout(t *testing.T) {
 // base rebase is a no-op and the fast-forward fails, the current HEAD
 // rebase lands it.
 func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -880,6 +892,7 @@ func TestRunDetachedFinishRebasesOntoCurrentHead(t *testing.T) {
 // Review fixes: Start refuses a spec outside the picked repo, so ticket
 // paths never escape it.
 func TestStartRunRejectsSpecOutsideRepo(t *testing.T) {
+	t.Parallel()
 	_, spec := initRunRepo(t, demoTickets())
 	other := tempDir(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -900,6 +913,7 @@ func TestStartRunRejectsSpecOutsideRepo(t *testing.T) {
 // Review fixes: a Run saved as running reloads as paused, spending nothing
 // after a Daemon restart.
 func TestLoadRunsRestoresPaused(t *testing.T) {
+	t.Parallel()
 	stateDir := tempDir(t)
 	dir := filepath.Join(stateDir, "enderbloom", "runs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -938,6 +952,7 @@ func TestLoadRunsRestoresPaused(t *testing.T) {
 // Review fixes: the events stream serves the live Ticket table at once with
 // wait=0.
 func TestServeRunEventsStreamsTable(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -981,6 +996,7 @@ func TestServeRunEventsStreamsTable(t *testing.T) {
 // submit while the worker waits for the verdict. Once the round closes
 // with fresh changes, finish refuses with them.
 func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1044,6 +1060,7 @@ func TestRunFinishOpenRoundAtTipIsUnderReview(t *testing.T) {
 // carries it, so the count stays above Reprompted and the next done submit
 // re-prompts the reviewers instead of being read as already handled.
 func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
+	t.Parallel()
 	state := tempDir(t)
 	d := NewDaemon(state, NewFakeBackend())
 	d.mu.Lock()
@@ -1078,6 +1095,7 @@ func TestWorkerSubmitSurvivesDaemonRestart(t *testing.T) {
 // A submit count reset to 1 while Reprompted is 2 is lifted past it, so the
 // reviewers are re-prompted for the new tip.
 func TestWorkerSubmitCountOutrunsReprompted(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.mu.Lock()
 	d.sessions["w1"] = &session{meta: SessionMeta{ID: "w1", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
@@ -1129,6 +1147,7 @@ func submitGateRaw(t *testing.T, base, id, status string, completed []string, re
 // A done submit with no new commit since the last changes verdict is refused
 // with a reason; a new commit lets the next done through.
 func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1185,6 +1204,7 @@ func TestWorkerDoneWithoutNewCommitAfterChangesRefused(t *testing.T) {
 // A done submit whose text says the work is not done is refused; finished
 // text, Follow-ups notes and reports about handling bad input go through.
 func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1229,6 +1249,7 @@ func TestWorkerDoneNotDoneTextRefused(t *testing.T) {
 // A second blocked submit with the same question becomes needs-you; a
 // different question does not.
 func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -1287,6 +1308,7 @@ func TestWorkerSecondBlockedSameQuestionNeedsYou(t *testing.T) {
 // A retry clears the blocked question, and the blocked track survives a
 // Daemon restart through the persisted Run file.
 func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
+	t.Parallel()
 	state := tempDir(t)
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -1355,6 +1377,7 @@ func TestWorkerBlockedResetOnRetryAndRestart(t *testing.T) {
 // A provider session-limit failure is visible on the Session, skips submit and
 // stall reminders, and still reaches the Run's normal idle needs-you alert.
 func TestCappedWorkerGetsNoSubmitNudges(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

@@ -12,6 +12,7 @@ import (
 // carries no ldflags stamps, so the version falls back to the placeholder
 // and the UI hash to nothing (which the UI reads as unknown, never stale).
 func TestCurrentDefaults(t *testing.T) {
+	t.Parallel()
 	oldV, oldC, oldH := Version, Commit, UIHash
 	Version, Commit, UIHash = "", "", ""
 	defer func() { Version, Commit, UIHash = oldV, oldC, oldH }()
@@ -29,6 +30,7 @@ func TestCurrentDefaults(t *testing.T) {
 
 // Stamped values always win, and the commit arrives short.
 func TestCurrentPrefersStamps(t *testing.T) {
+	t.Parallel()
 	oldV, oldC, oldH := Version, Commit, UIHash
 	Version, Commit, UIHash = "v1.2.3", "abc1234def5678", "0123456789ab"
 	defer func() { Version, Commit, UIHash = oldV, oldC, oldH }()
@@ -41,6 +43,7 @@ func TestCurrentPrefersStamps(t *testing.T) {
 // GET /api/version answers the build identity with no login and no state;
 // anything else is 405.
 func TestVersionEndpoint(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -81,6 +84,7 @@ func TestVersionEndpoint(t *testing.T) {
 // GET /api/health is the update gate's probe: 200 with ok true; anything
 // else is 405.
 func TestHealthEndpoint(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()

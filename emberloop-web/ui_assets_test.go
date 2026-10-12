@@ -10,6 +10,7 @@ import (
 // The built UI is a static bundle: index plus its hashed assets must all
 // serve from the embedded dist with correct content types.
 func TestServesBuiltStaticAssets(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -35,6 +36,7 @@ func TestServesBuiltStaticAssets(t *testing.T) {
 }
 
 func TestContentTypeFor(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"index.html":  "text/html",
 		"app-abc.js":  "javascript",

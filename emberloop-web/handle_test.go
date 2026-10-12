@@ -147,6 +147,7 @@ func spawnScout(t *testing.T, base, parent string) string {
 }
 
 func TestStartHandleDerivesFromRecord(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		meta SessionMeta
@@ -217,6 +218,7 @@ func TestCompressInjectsProfileRecallThenHandoff(t *testing.T) {
 }
 
 func TestCompressWithoutMemorySendsHandoffAlone(t *testing.T) {
+	t.Parallel()
 	_, be, seen, base, id := handleDaemon(t, nil)
 	runPrompt(t, base, id, "build the thing")
 	compressAndSettle(t, base, id, 1)
@@ -262,6 +264,7 @@ func TestResumeInjectsOnEachResumedTurn(t *testing.T) {
 }
 
 func TestCompressKeepsOwnerAcrossTokenRotation(t *testing.T) {
+	t.Parallel()
 	d, be, _, base, id := handleDaemon(t, nil)
 	runPrompt(t, base, id, "build the thing")
 	waitReleased(t, d, id)
@@ -285,6 +288,7 @@ func TestCompressKeepsOwnerAcrossTokenRotation(t *testing.T) {
 }
 
 func TestToolSetHoldsAcrossCompress(t *testing.T) {
+	t.Parallel()
 	d, be, _, base, parent := handleDaemon(t, nil)
 	parentMeta, _ := sessionMeta(t, base, parent)
 
@@ -332,6 +336,7 @@ func TestToolSetHoldsAcrossCompress(t *testing.T) {
 }
 
 func TestParentLinksSurviveCompress(t *testing.T) {
+	t.Parallel()
 	d, _, _, base, parent := handleDaemon(t, nil)
 	child := spawnOne(t, base, parent, "slow job")
 	waitStatus(t, base, child, "idle", 10*time.Second)
@@ -363,6 +368,7 @@ func TestParentLinksSurviveCompress(t *testing.T) {
 }
 
 func TestPigLoadoutGatesDaemonToolsByRole(t *testing.T) {
+	t.Parallel()
 	pb := NewPigBackend()
 	pb.DaemonURL = "http://127.0.0.1:1"
 	pb.Spawn = func(string, []SpawnAgent, string) (string, []SessionMeta, error) { return "", nil, nil }

@@ -15,6 +15,7 @@ import (
 // the spec-branch done commit writes them only after the Ticket merge. The
 // spec's own status remains open until a later master-merge stage owns it.
 func TestMarkDoneOrderingWaitsForSpecBranchMerge(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -85,6 +86,7 @@ func TestMarkDoneOrderingWaitsForSpecBranchMerge(t *testing.T) {
 // Statusless tickets still get their boxes committed, but only after the
 // Ticket branch has been merged into the spec branch.
 func TestStatuslessTicketBoxesTickAfterMerge(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n- [ ] alpha\n- [ ] beta\n",
 	})
@@ -119,6 +121,7 @@ func TestStatuslessTicketBoxesTickAfterMerge(t *testing.T) {
 // A red base blocks starts, lists failures in Needs-you, and shares one check
 // result across every Ticket whose base has the same tip.
 func TestBaseRedNeedsYouAndCachesPerTip(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
@@ -157,6 +160,7 @@ func TestBaseRedNeedsYouAndCachesPerTip(t *testing.T) {
 // A new spec-branch tip gets a new check; an already-started Worker is not
 // rejected by a later red base, while the next Ticket is blocked on that tip.
 func TestBaseRedRechecksNewTipWithoutGatingStartedWorker(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n",
@@ -217,6 +221,7 @@ func TestBaseRedRechecksNewTipWithoutGatingStartedWorker(t *testing.T) {
 }
 
 func TestRunRepoCheckAtTipParsesFailingTests(t *testing.T) {
+	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

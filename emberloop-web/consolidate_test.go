@@ -65,6 +65,7 @@ func queueRuleItems(t *testing.T, d *Daemon, owner string) []memory.QueueItem {
 }
 
 func TestConsolidateProposesGeneralizationAndSkipsCoveredSources(t *testing.T) {
+	t.Parallel()
 	var a, b int64
 	calls := 0
 	d, _ := consolidateDaemon(t, func(string) string {
@@ -103,6 +104,7 @@ func TestConsolidateProposesGeneralizationAndSkipsCoveredSources(t *testing.T) {
 }
 
 func TestConsolidateRejectsUngroundedOrWeakProposals(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(sources []int64) string{
 		"unknown source": func(s []int64) string { return proposalJSON([]int64{s[0], 9999}, nil) },
 		"single source":  func(s []int64) string { return proposalJSON(s[:1], nil) },
@@ -121,6 +123,7 @@ func TestConsolidateRejectsUngroundedOrWeakProposals(t *testing.T) {
 	}
 	for name, mk := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var ids []int64
 			d, _ := consolidateDaemon(t, func(string) string { return mk(ids) }, nil)
 			ids = []int64{
@@ -139,6 +142,7 @@ func TestConsolidateRejectsUngroundedOrWeakProposals(t *testing.T) {
 }
 
 func TestConsolidateNoneAndBadReply(t *testing.T) {
+	t.Parallel()
 	d, _ := consolidateDaemon(t, func(string) string { return "none" }, nil)
 	seedObs(t, d, "alice", "s1", "1", "Use tabs, not spaces", "")
 	res := d.nightlyConsolidate(context.Background(), "run", []string{"alice"})
@@ -154,6 +158,7 @@ func TestConsolidateNoneAndBadReply(t *testing.T) {
 }
 
 func TestConsolidateRefineNamesStoredRuleAndSendsRedactedInput(t *testing.T) {
+	t.Parallel()
 	var seen []string
 	var obsID int64
 	var ruleID string
@@ -186,6 +191,7 @@ func TestConsolidateRefineNamesStoredRuleAndSendsRedactedInput(t *testing.T) {
 }
 
 func TestConsolidateIgnoresOldObservationsAndNeverDeletes(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	d, clock := consolidateDaemon(t, func(string) string { calls++; return "none" }, nil)
 	seedObs(t, d, "alice", "s1", "1", "Use tabs, not spaces", "")
@@ -201,6 +207,7 @@ func TestConsolidateIgnoresOldObservationsAndNeverDeletes(t *testing.T) {
 }
 
 func TestConsolidateSkipsWithoutModel(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"decider_mode":"heuristic"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)

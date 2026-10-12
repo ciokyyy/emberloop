@@ -160,6 +160,7 @@ func writeAuthJSON(t *testing.T, dir, body string) {
 // Slice 2: the Session offers no native tools, only the el MCP tools
 // (empty until ticket 06 serves spawn).
 func TestPigSessionStrippedToMCPOnly(t *testing.T) {
+	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -172,6 +173,7 @@ func TestPigSessionStrippedToMCPOnly(t *testing.T) {
 
 // Slice 2: a pig Session answers a prompt and streams normalized Events.
 func TestPigPromptStreamsNormalizedEvents(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -210,6 +212,7 @@ func TestPigPromptStreamsNormalizedEvents(t *testing.T) {
 
 // Slice 3: an unknown model rejects the create instead of a broken Session.
 func TestPigUnknownModelRejected(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -228,6 +231,7 @@ func TestPigUnknownModelRejected(t *testing.T) {
 // Slice 3: ending the Session closes the SDK session and runtime; the log
 // stays readable and a prompt after the end is refused.
 func TestPigEndClosesSession(t *testing.T) {
+	t.Parallel()
 	d, pb := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -289,6 +293,7 @@ func TestPigEndClosesSession(t *testing.T) {
 
 // Slice 4: SDK stream and execution events normalize to the Event schema.
 func TestMapAgentEventToolCalls(t *testing.T) {
+	t.Parallel()
 	msg := func(ev ai.AssistantMessageEvent) agent.MessageUpdateEvent {
 		return agent.MessageUpdateEvent{AssistantMessageEvent: ev}
 	}
@@ -386,6 +391,7 @@ func hasChunkWith(events []Event, want string) bool {
 
 // Review: a repeat DELETE returns the Session without another ended Event.
 func TestPigDeleteEmitsSingleEnded(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -439,6 +445,7 @@ func TestPigPromptAfterCloseEmitsNoStatus(t *testing.T) {
 
 // Review: ended is terminal against late status edges at the Daemon.
 func TestEndedTerminalAgainstLateEdges(t *testing.T) {
+	t.Parallel()
 	d, _ := newPigDaemon(t)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -511,6 +518,7 @@ func lastSeqOf(events []Event) int64 {
 }
 
 func TestPigSpawnToolSpawnsUnderItsSession(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -551,6 +559,7 @@ func TestPigSpawnToolSpawnsUnderItsSession(t *testing.T) {
 
 // Scouts keep a tool-free loadout: no spawn tool, nothing writable through it.
 func TestPigScoutHasNoSpawnTool(t *testing.T) {
+	t.Parallel()
 	pb := NewPigBackend()
 	pb.Spawn = func(string, []SpawnAgent, string) (string, []SessionMeta, error) {
 		return "", nil, nil

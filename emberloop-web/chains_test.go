@@ -206,6 +206,7 @@ func TestChainForPrefersChainsThenRoles(t *testing.T) {
 // chainAdvances is the ticket-14 predicate on the shared classifier: each
 // advancing class moves the chain, anything else does not.
 func TestChainAdvancesOnFourClasses(t *testing.T) {
+	t.Parallel()
 	advance := []string{
 		"429 quota exceeded for this key",
 		"insufficient_quota",

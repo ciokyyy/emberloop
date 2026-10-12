@@ -55,6 +55,7 @@ func waitIdleAfter(t *testing.T, base, id string, n int) []Event {
 }
 
 func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	for _, p := range []string{"build the thing", "and more", "and again"} {
 		sendPrompt(t, base, id, p)
@@ -152,6 +153,7 @@ func indexOfSeq(evs []Event, seq int64) int {
 }
 
 func TestHandoffFailureKeepsOldHandle(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -184,6 +186,7 @@ func TestHandoffFailureKeepsOldHandle(t *testing.T) {
 }
 
 func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
+	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	sendPrompt(t, base, id, "hello")
 	waitStatus(t, base, id, "idle", 5*time.Second)
@@ -211,6 +214,7 @@ func TestHandoffTurnErrorKeepsOldHandle(t *testing.T) {
 // deterministic Handoff still names it as the Task, so a compressed Worker
 // keeps the work it was asked to do.
 func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -245,6 +249,7 @@ func TestHandoffOfRunWorkerKeepsTicketAsTask(t *testing.T) {
 // A Subagent's spawn prompt is a system prompt too; its Handoff keeps it as
 // the Task for the same reason.
 func TestHandoffOfSubagentKeepsSpawnPromptAsTask(t *testing.T) {
+	t.Parallel()
 	settingsPath := useSettings(t, `{"compress_model":"test-faux/faux-1"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)

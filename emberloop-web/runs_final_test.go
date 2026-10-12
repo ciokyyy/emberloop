@@ -33,6 +33,7 @@ func prepareFinalGateRun(t *testing.T, tickets map[string]string) (string, strin
 }
 
 func TestFinalMergeBuildFailureNeedsYouAndKeepsMaster(t *testing.T) {
+	t.Parallel()
 	repo, runID, masterRef, d, master := prepareFinalGateRun(t, nil)
 	var checks atomic.Int32
 	d.runFinalBuild = func(worktree string) (string, error) {
@@ -65,6 +66,7 @@ func TestFinalMergeBuildFailureNeedsYouAndKeepsMaster(t *testing.T) {
 }
 
 func TestFinalMergeNeedsYouWhenSpecBranchMovesDuringBuild(t *testing.T) {
+	t.Parallel()
 	repo, runID, masterRef, d, master := prepareFinalGateRun(t, nil)
 	initialSpec := strings.TrimSpace(testGit(t, repo, "rev-parse", "spec/demo"))
 	var checks atomic.Int32
@@ -101,6 +103,7 @@ func TestFinalMergeNeedsYouWhenSpecBranchMovesDuringBuild(t *testing.T) {
 }
 
 func TestFinalMergeNeedsYouWhenMasterMovesDuringCheck(t *testing.T) {
+	t.Parallel()
 	repo, runID, masterRef, d, master := prepareFinalGateRun(t, nil)
 	d.runFinalBuild = func(worktree string) (string, error) {
 		return "generated", writeGeneratedTestFiles(worktree)
@@ -130,6 +133,7 @@ func TestFinalMergeNeedsYouWhenMasterMovesDuringCheck(t *testing.T) {
 }
 
 func TestFinalMergeUsesSafeMasterCheckout(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name         string
 		prepare      func(t *testing.T, repo string)
@@ -191,6 +195,7 @@ func TestFinalMergeUsesSafeMasterCheckout(t *testing.T) {
 }
 
 func TestGenericRepoSkipsWebBuildAndNeedsYouWithoutRepoCheck(t *testing.T) {
+	t.Parallel()
 	repo, runID, masterRef, d, master := prepareFinalGateRun(t, nil)
 	out, err := d.finalizeSpecRun(runID)
 	if err != nil || !out.NeedsYou {
@@ -208,6 +213,7 @@ func TestGenericRepoSkipsWebBuildAndNeedsYouWithoutRepoCheck(t *testing.T) {
 }
 
 func TestFinalMergeWaitsForEveryTicketToMergeOrDiscard(t *testing.T) {
+	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** 01\n\n**Status:** open\n\n- [ ] beta\n",
@@ -262,6 +268,7 @@ func TestFinalMergeWaitsForEveryTicketToMergeOrDiscard(t *testing.T) {
 }
 
 func TestFinalRepoCheckMissingIsExplicit(t *testing.T) {
+	t.Parallel()
 	worktree := tempDir(t)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	output, err := d.runFinalRepoCheck(worktree)

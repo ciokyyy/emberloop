@@ -47,6 +47,7 @@ func oneCatalogModel(t *testing.T) string {
 // Creating a pig ACP Session with an effort picks the adapter's thought
 // level; an empty effort leaves the model default alone.
 func TestPigACPEffortSetsThoughtLevel(t *testing.T) {
+	t.Parallel()
 	model := oneCatalogModel(t)
 	emit := func(kind, text, status string) {}
 
@@ -78,6 +79,7 @@ func TestPigACPEffortSetsThoughtLevel(t *testing.T) {
 
 // An unknown effort is refused before the adapter starts.
 func TestPigACPEffortRejected(t *testing.T) {
+	t.Parallel()
 	stub := &thoughtStubConn{}
 	be := newThoughtStubBackend(stub)
 	err := be.CreateSession(SessionMeta{ID: "pig-acp-bad", Model: oneCatalogModel(t), WorkDir: tempDir(t), Effort: "ultra"}, func(kind, text, status string) {})
@@ -94,6 +96,7 @@ func TestPigACPEffortRejected(t *testing.T) {
 // Resuming re-applies the Session's effort, and an adapter refusal fails
 // the create with no Session left behind.
 func TestPigACPResumeReappliesEffort(t *testing.T) {
+	t.Parallel()
 	model := oneCatalogModel(t)
 	emit := func(kind, text, status string) {}
 

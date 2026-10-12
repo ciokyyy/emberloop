@@ -12,6 +12,7 @@ import (
 
 // Slice 1: a directory with no spec returns an empty list.
 func TestListSpecsEmptyDir(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -44,6 +45,7 @@ func TestListSpecsEmptyDir(t *testing.T) {
 
 // Slice 2: the list returns title and ticket count for each spec found.
 func TestListSpecsFindsSpecWithTitleAndCount(t *testing.T) {
+	t.Parallel()
 	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [ ] a box\n")
@@ -83,6 +85,7 @@ func TestListSpecsFindsSpecWithTitleAndCount(t *testing.T) {
 
 // Specs under a directory named archive are never listed.
 func TestListSpecsSkipsArchive(t *testing.T) {
+	t.Parallel()
 	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/live/spec.md", "# Live spec\n")
 	writeFile(t, repo, ".scratch/archive/old/spec.md", "# Old spec\n")
@@ -108,6 +111,7 @@ func writeFile(t *testing.T, root, name, content string) {
 
 // Slice 3: the preview returns number, title, blockers and checkbox progress.
 func TestSpecPreviewBlockersAndProgress(t *testing.T) {
+	t.Parallel()
 	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [x] done box\n- [ ] todo box\n")
@@ -158,6 +162,7 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 // Slice 4: an unparsable Blocked by line surfaces as an error on that
 // ticket and blocks nothing else in the list.
 func TestSpecPreviewBadBlockedByIsRowError(t *testing.T) {
+	t.Parallel()
 	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [ ] a box\n")

@@ -37,6 +37,7 @@ func userNamed(list []userView, name string) userView {
 }
 
 func TestUsersListsAccountsInCreationOrderOffline(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -57,6 +58,7 @@ func TestUsersListsAccountsInCreationOrderOffline(t *testing.T) {
 }
 
 func TestOpenLiveChannelMakesUserOnlineUntilItCloses(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
@@ -95,6 +97,7 @@ func TestOpenLiveChannelMakesUserOnlineUntilItCloses(t *testing.T) {
 }
 
 func TestUsersNeedASignedInUser(t *testing.T) {
+	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	h := d.Handler()
 	signedIn(t, h, "mira")
