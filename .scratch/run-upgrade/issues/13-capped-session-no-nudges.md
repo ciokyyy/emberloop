@@ -4,8 +4,8 @@
 
 **Blocked by:** failure-classifier-and-chain-settings (05)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] No "you have not submitted" nudge to a capped Session
-- [ ] Capped state visible on the Session
-- [ ] Run seam test with a scripted session-limit failure; `.emberloop/check` passes
+- [x] No "you have not submitted" nudge to a capped Session
+- [x] Capped state visible on the Session
+- [x] Run seam test with a scripted session-limit failure; `.emberloop/check` passes
