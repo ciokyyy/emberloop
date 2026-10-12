@@ -261,6 +261,9 @@ type runState struct {
 	// ResumeOnRestart marks a Run that a graceful restart paused: the next
 	// Daemon resumes it on its own (ResumeAfterRestart). A Pause by hand
 	// never sets it.
+	// IdlePaused marks a Run the driver paused because every open Ticket is
+	// paused by the user; resuming one of those Tickets resumes the Run.
+	IdlePaused      bool                    `json:"idlePaused,omitempty"`
 	ResumeOnRestart bool                    `json:"resumeOnRestart,omitempty"`
 	Rows            map[string]savedRow     `json:"rows,omitempty"`
 	Chains          map[string][]chainEntry `json:"chains,omitempty"`
@@ -852,7 +855,14 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 	}
 	res, err := el.RunDriver(rs.SpecRun, world)
 	var final finalMergeOutcome
-	if err == nil && rs.SpecBranch != "" {
+	// The driver exits when nothing runs and nothing can start: with every
+	// open Ticket paused by the user that is a wait, not a conclusion. The
+	// Run pauses until a Ticket resumes, instead of reading as done or
+	// running the final merge over unmerged Tickets.
+	d.mu.Lock()
+	waitsOnPausedTicket := err == nil && runHasPausedOpenTicketLocked(rs)
+	d.mu.Unlock()
+	if err == nil && !waitsOnPausedTicket && rs.SpecBranch != "" {
 		final = d.finalMergeReadiness(id, res)
 		if !final.NeedsYou {
 			final, err = d.finalizeSpecRun(id)
@@ -871,7 +881,10 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 			rs.Merged[m.ID] = m.SHA
 		}
 	}
-	if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou && rs.Status != runStatusPaused {
+	if waitsOnPausedTicket && rs.Status == runStatusRunning {
+		rs.Status = runStatusPaused
+		rs.IdlePaused = true
+	} else if rs.Status != runStatusAbandoned && rs.Status != runStatusNeedsYou && rs.Status != runStatusPaused {
 		if err != nil {
 			rs.Status = runStatusFailed
 			rs.Error = err.Error()
@@ -4628,6 +4641,7 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	rs.SpecRun = specRun
 	preparePausedRunChainFailuresLocked(d, rs)
 	rs.Status = runStatusRunning
+	rs.IdlePaused = false
 	rs.ResumeOnRestart = false
 	// A failed Run or final-gate Needs-you resumes from saved state: merged
 	// Tickets and their Sessions stay, and the gate diagnostics clear.
@@ -4895,4 +4909,15 @@ func (d *Daemon) discardTicket(w http.ResponseWriter, r *http.Request, id, ticke
 	if branch != "" {
 		_, _ = runGit(repo, "branch", "-D", branch)
 	}
+}
+
+// runHasPausedOpenTicketLocked reports whether some Ticket is paused by the
+// user and neither merged nor discarded. Callers hold d.mu.
+func runHasPausedOpenTicketLocked(rs *runState) bool {
+	for id, paused := range rs.TicketPaused {
+		if paused && rs.Merged[id] == "" && !rs.Discarded[id] {
+			return true
+		}
+	}
+	return false
 }
