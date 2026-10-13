@@ -334,6 +334,9 @@ func TestRunFirstPromptsCarryInjectionAtSeam(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	// The Session exists before its first prompt lands; read the transcript
+	// only once that prompt is in, or a loaded machine reads it empty.
+	firstPromptWhere(t, srv.URL, worker, func(Event) bool { return true })
 	wt := sessTranscript(getSession(t, srv.URL, worker))
 	specRaw, _ := os.ReadFile(spec)
 	for _, want := range []string{
@@ -352,6 +355,7 @@ func TestRunFirstPromptsCarryInjectionAtSeam(t *testing.T) {
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	for typ, sess := range revs {
+		firstPromptWhere(t, srv.URL, sess, func(Event) bool { return true })
 		tr := sessTranscript(getSession(t, srv.URL, sess))
 		for _, want := range []string{"alpha", string(specRaw), "AGENTS.md"} {
 			if !strings.Contains(tr, want) {

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	el "example.com/emberloop"
@@ -284,6 +285,12 @@ type runState struct {
 	notify        chan struct{}     `json:"-"`
 	unpause       chan struct{}     `json:"-"`
 	driving       bool              `json:"-"`
+	// gateParked counts goroutines blocked in pauseGate on unpause. Tests
+	// read it to know a paused driver is parked, not between gates.
+	gateParked int `json:"-"`
+	// ensuring holds one lock per Ticket that serializes ensureReviewers.
+	// Guarded by d.mu.
+	ensuring map[string]*sync.Mutex `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -2041,8 +2048,34 @@ func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
 // the Run: the driver keeps polling and the next pass tries again. The
 // submit route runs this sync (bounded to two starts plus two steers) so
 // prompts queue in submit order and the driver's next finish sees the
-// re-prompt already out.
+// re-prompt already out. Calls for one Ticket run one at a time: the submit
+// route and the driver's finish race on the same done submit, and a second
+// caller that saw the Reviewer seats mid-start would re-prompt a seat whose
+// verdict had not landed yet.
 func (d *Daemon) ensureReviewers(runID, ticketID string) {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if rs.ensuring == nil {
+		rs.ensuring = map[string]*sync.Mutex{}
+	}
+	lock := rs.ensuring[ticketID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		rs.ensuring[ticketID] = lock
+	}
+	d.mu.Unlock()
+	lock.Lock()
+	defer lock.Unlock()
+	d.ensureReviewersSerial(runID, ticketID)
+}
+
+// ensureReviewersSerial is the body of ensureReviewers; it runs with the
+// Ticket's ensuring lock held and d.mu free.
+func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
@@ -3083,13 +3116,28 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		// worker's next submit while the worker waits for the verdict:
 		// nothing moves. Report under review; the verdict closes the round
 		// and the next pass tells it.
+		// The verdicts above were copied before the tip read, and a verdict
+		// can land in between (the git call is slow under load) and close
+		// the round. Judge again from the verdicts as they stand with the
+		// round state, in one lock: a refusal built from the old copy would
+		// tell the Worker about a pass that has since arrived, and the told
+		// refusal parks the driver until a submit that never comes.
 		d.mu.Lock()
 		open := false
 		if rs, ok := d.runs[runID]; ok {
 			open = roundOpenAtTip(rs.Rounds[ticketID], tip)
+			for typ, r := range rs.Reviews[ticketID] {
+				verdicts[typ] = r
+			}
 		}
 		d.mu.Unlock()
 		if open {
+			return el.DriverFinish{}, nil
+		}
+		why = reviewGateDetail(verdicts, tip)
+		if why == "" || noneFreshAtTip(verdicts, tip) {
+			// The gate passes now (the next pass merges) or no verdict
+			// judged the tip yet: nothing to tell.
 			return el.DriverFinish{}, nil
 		}
 		detail := why
@@ -4585,6 +4633,21 @@ func (d *Daemon) snapshotAndPersist(runID string) {
 	d.broadcastRunLocked(rs)
 }
 
+// closeUnpauseLocked wakes a paused Run's driver waiters. It is idempotent: a
+// channel already closed (or absent) is left alone, so a second close never
+// panics — a panic here would strand d.mu, and in production a Resume after an
+// Abandon would close the same channel twice. Callers hold d.mu.
+func closeUnpauseLocked(rs *runState) {
+	if rs.unpause == nil {
+		return
+	}
+	select {
+	case <-rs.unpause:
+	default:
+		close(rs.unpause)
+	}
+}
+
 // pauseGate blocks while a Run is paused or needs User intervention and
 // returns once it runs again or has been abandoned. It holds no lock while
 // waiting, so Pause, Resume and Abandon never block on the driver.
@@ -4597,11 +4660,16 @@ func (d *Daemon) pauseGate(runID string) {
 			return
 		}
 		ch := rs.unpause
-		d.mu.Unlock()
 		if ch == nil {
+			d.mu.Unlock()
 			return
 		}
+		rs.gateParked++
+		d.mu.Unlock()
 		<-ch
+		d.mu.Lock()
+		rs.gateParked--
+		d.mu.Unlock()
 	}
 }
 
@@ -4706,9 +4774,7 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	// Tickets and their Sessions stay, and the gate diagnostics clear.
 	rs.Error = ""
 	rs.FinalMergeFiles = nil
-	if rs.unpause != nil {
-		close(rs.unpause)
-	}
+	closeUnpauseLocked(rs)
 	rs.unpause = make(chan struct{})
 	var world el.DriverWorld
 	startDriver := !rs.driving

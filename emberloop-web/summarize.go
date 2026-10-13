@@ -137,14 +137,14 @@ func compressNote(model string) string {
 	return ""
 }
 
-// pigModelAuthed reports whether model is a pig catalog model whose provider
-// holds usable auth in the user's pig agent dir. It is the same test the
-// new-Session picker applies, for one model.
+// pigModelAuthed reports whether model is a pig catalog or models.json model
+// whose provider holds usable auth in the user's pig agent dir. It is the same
+// test the new-Session picker applies, for one model.
 func pigModelAuthed(model string) bool {
 	if isTestFauxModel(model) {
 		return true
 	}
-	if _, ok := ai.LookupModel(model); !ok {
+	if !pigModelKnown(model, "") {
 		return false
 	}
 	provider, _, _ := strings.Cut(model, "/")

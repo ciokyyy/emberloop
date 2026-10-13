@@ -79,6 +79,24 @@ func waitStatus(t *testing.T, base, id, want string, timeout time.Duration) {
 	t.Fatalf("status = %q, want %q", meta.Status, want)
 }
 
+// waitTurnEnd waits for the turn a prompt started to finish: an idle status
+// Event after the prompt's seq. A bare working-then-idle wait misses fast
+// fake turns (a few ms), because the idle status read before the turn begins
+// looks the same as the idle after it.
+func waitTurnEnd(t *testing.T, base, id string, promptSeq int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range transcriptOf(t, base, id) {
+			if e.Seq > promptSeq && e.Kind == "status" && e.Status == "idle" {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("turn after seq %d never ended: %+v", promptSeq, transcriptOf(t, base, id))
+}
+
 // waitParentIdle waits out a spawn parent's grouped delivery before the
 // test's TempDir is removed: the last child to settle steers the parent, so
 // the parent works briefly after its children go idle, and its writes race

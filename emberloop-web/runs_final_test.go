@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	el "example.com/emberloop"
 )
 
 func prepareFinalGateRun(t *testing.T, tickets map[string]string) (string, string, string, *Daemon, string) {
@@ -338,5 +340,26 @@ func TestRunGeneratedBuildRefreshesWebAndE2ELockfiles(t *testing.T) {
 		if !strings.Contains(commands, want) {
 			t.Errorf("npm commands %q do not include %q", commands, want)
 		}
+	}
+}
+
+// A resumed Run's driver result lists only its own merges: Tickets merged
+// before the resume (rs.Merged) must not read as unresolved at the final gate.
+func TestFinalMergeReadinessCountsEarlierMerges(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.runs["r"] = &runState{
+		Repo:      "/repo",
+		Tickets:   []staticTicket{{ID: "01-a", Path: "/repo/01-a.md"}, {ID: "02-b", Path: "/repo/02-b.md"}, {ID: "03-c", Path: "/repo/03-c.md"}},
+		Merged:    map[string]string{"01-a": "sha1"},
+		Discarded: map[string]bool{"03-c": true},
+	}
+	out := d.finalMergeReadiness("r", el.DriverResult{})
+	if !out.NeedsYou || !strings.Contains(out.Reason, "unresolved Tickets: 02-b") || strings.Contains(out.Reason, "01-a") || strings.Contains(out.Reason, "03-c") {
+		t.Fatalf("outcome = %+v, want only 02-b unresolved", out)
+	}
+	d.runs["r"].Merged["02-b"] = "sha2"
+	if out := d.finalMergeReadiness("r", el.DriverResult{}); out.NeedsYou {
+		t.Fatalf("all resolved, outcome = %+v", out)
 	}
 }

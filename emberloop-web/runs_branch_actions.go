@@ -205,13 +205,7 @@ func (d *Daemon) abandonRun(w http.ResponseWriter, r *http.Request, id string) {
 	sort.Strings(sessions)
 	rs.Status = runStatusAbandoned
 	rs.Error = ""
-	if rs.unpause != nil {
-		select {
-		case <-rs.unpause:
-		default:
-			close(rs.unpause)
-		}
-	}
+	closeUnpauseLocked(rs)
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()

@@ -117,6 +117,48 @@ func TestPigModelsEnvKeyAuth(t *testing.T) {
 	}
 }
 
+// A model declared in models.json on an authed provider is offered even
+// though it is not in the generated catalog (the opencode-go cat-jam-free
+// case). An unauthed provider does not leak its models.json entries.
+func TestPigModelsIncludeModelsJSONEntry(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENCODE_API_KEY", "")
+	agentDir := tempDir(t)
+	writeAuthJSON(t, agentDir, `{"opencode-go":{"type":"api_key","key":"fake-key"}}`)
+	cfg := `{"providers":{"opencode-go":{"name":"OpenCode Go","baseUrl":"https://example.invalid/v1","api":"openai-completions","models":[{"id":"cat-jam-free","name":"Cat Jam Free"}]}}}`
+	if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pb := NewPigBackend()
+	pb.AgentDir = agentDir
+	if models := pb.Models(); !slices.Contains(models, "opencode-go/cat-jam-free") {
+		t.Fatalf("models.json entry missing from picker (len=%d)", len(models))
+	}
+	writeAuthJSON(t, agentDir, `{"openrouter":{"type":"api_key","key":"fake-key"}}`)
+	if models := pb.Models(); slices.Contains(models, "opencode-go/cat-jam-free") {
+		t.Fatalf("models.json entry listed without provider auth")
+	}
+}
+
+// The create-time gate admits a models.json entry, so a model the picker
+// offers is never refused as unknown by the SDK or ACP path.
+func TestPigModelKnownIncludesModelsJSONEntry(t *testing.T) {
+	agentDir := tempDir(t)
+	cfg := `{"providers":{"opencode-go":{"models":[{"id":"cat-jam-free"}]}}}`
+	if err := os.WriteFile(filepath.Join(agentDir, "models.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !pigModelKnown("opencode-go/cat-jam-free", agentDir) {
+		t.Fatal("models.json entry reported unknown")
+	}
+	if pigModelKnown("opencode-go/nope", agentDir) {
+		t.Fatal("undeclared model reported known")
+	}
+	if pigModelKnown("anthropic/not-a-real-model", agentDir) {
+		t.Fatal("unknown catalog model reported known")
+	}
+}
+
 // ?current= keeps the selected model visible even when its provider holds
 // no auth, so a stored choice never vanishes from the picker.
 func TestModelsEndpointKeepsCurrent(t *testing.T) {

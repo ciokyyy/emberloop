@@ -719,11 +719,14 @@ func (b *PigBackend) Models() []string {
 	return PigAvailableModels(dir)
 }
 
-// PigAvailableModels lists the catalog models whose providers hold usable
-// auth (a stored credential in <agentDir>/auth.json, an environment key, or
-// an OAuth login), checked through the SDK's own CheckProviderAuth, so the
-// picker never offers a model the harness cannot run. The test-faux provider
-// counts as available only with PIG_TEST_FAUX=1, mirroring creation.
+// PigAvailableModels lists the models whose providers hold usable auth (a
+// stored credential in <agentDir>/auth.json, an environment key, or an OAuth
+// login), checked through the SDK's own CheckProviderAuth, so the picker never
+// offers a model the harness cannot run. The candidates are the generated
+// catalog plus the models declared in <agentDir>/models.json, so a model added
+// to an already-authed provider (opencode-go/cat-jam-free) is offered.
+// The test-faux provider counts as available only with PIG_TEST_FAUX=1,
+// mirroring creation.
 func PigAvailableModels(agentDir string) []string {
 	creds := pigCredentials(agentDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -733,13 +736,81 @@ func PigAvailableModels(agentDir string) []string {
 		authed[p] = pigProviderAuthed(ctx, p, creds)
 	}
 	var out []string
-	for _, m := range ai.ListModels("") {
-		if authed[m.Provider] {
-			out = append(out, m.Provider+"/"+m.ID)
+	add := func(spec string) {
+		if provider, _, ok := strings.Cut(spec, "/"); ok && authed[provider] {
+			out = append(out, spec)
 		}
+	}
+	for _, m := range ai.ListModels("") {
+		add(m.Provider + "/" + m.ID)
+	}
+	for _, spec := range pigJSONModels(agentDir) {
+		add(spec)
+	}
+	uniq := make(map[string]struct{}, len(out))
+	for _, s := range out {
+		uniq[s] = struct{}{}
+	}
+	out = out[:0]
+	for s := range uniq {
+		out = append(out, s)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// pigJSONModels lists the "provider/id" models declared in
+// <agentDir>/models.json, the custom-provider file. It returns nothing when
+// the file is absent or unparseable, so a broken file never empties the
+// picker. An empty agentDir is the user's pig agent dir.
+func pigJSONModels(agentDir string) []string {
+	if agentDir == "" {
+		agentDir = coding.DefaultAgentDir()
+	}
+	raw, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Providers map[string]struct {
+			Models []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil
+	}
+	var out []string
+	for provider, p := range cfg.Providers {
+		for _, m := range p.Models {
+			if provider != "" && m.ID != "" {
+				out = append(out, provider+"/"+m.ID)
+			}
+		}
+	}
+	return out
+}
+
+// pigModelKnown reports whether model names a model the harness can run: one
+// from the generated catalog, or one declared in <agentDir>/models.json (the
+// custom-provider file). It is the create-time twin of the picker list, so a
+// model the picker offers is never refused as unknown.
+func pigModelKnown(model, agentDir string) bool {
+	if _, ok := ai.LookupModel(model); ok {
+		return true
+	}
+	// test-faux is admitted only through isTestFauxModel, never as a
+	// models.json entry, so an unlisted faux create still reads "unknown".
+	if provider, _, _ := strings.Cut(model, "/"); provider == "test-faux" {
+		return false
+	}
+	for _, spec := range pigJSONModels(agentDir) {
+		if spec == model {
+			return true
+		}
+	}
+	return false
 }
 
 // pigCredentials reads the auth store under agentDir, or an empty store when
@@ -925,9 +996,10 @@ func buildPigServices(agentDir string, extra []agent.AgentTool, meta SessionMeta
 		return nil, nil, fmt.Errorf("pig: services: %w", err)
 	}
 	// BuildModel still builds unknown specs, so the listing check owns the
-	// rejection: only catalog models create. The test-faux provider passes
-	// only with PIG_TEST_FAUX=1, so production never admits unlisted models.
-	if _, ok := ai.LookupModel(meta.Model); !ok && !isTestFauxModel(meta.Model) {
+	// rejection: only catalog models and models.json entries create. The
+	// test-faux provider passes only with PIG_TEST_FAUX=1, so production
+	// never admits unlisted models.
+	if !pigModelKnown(meta.Model, agentDir) && !isTestFauxModel(meta.Model) {
 		svcs.Close()
 		return nil, nil, fmt.Errorf("pig: unknown model %q", meta.Model)
 	}

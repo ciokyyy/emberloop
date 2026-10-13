@@ -342,9 +342,24 @@ func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
-	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
+	// The initial turn must end before the clock jumps: a pass that sees the
+	// Worker still busy after the jump dates its activity at the new time,
+	// and the fixed clock never moves again to reach the idle limit.
+	waitSessionCond(t, srv.URL, ticketByID(r, "01-first").WorkerSession, func(s sessionBody) bool {
+		// An idle status after the prompt, not the idle before the turn starts.
+		prompted := false
+		for _, e := range s.Events {
+			if e.Kind == "prompt" {
+				prompted = true
+			} else if prompted && e.Kind == "status" && e.Status == "idle" {
+				return true
+			}
+		}
+		return false
+	}, "worker first turn ended")
 
 	clock.advance(11 * time.Minute)
 	deadline := time.Now().Add(15 * time.Second)

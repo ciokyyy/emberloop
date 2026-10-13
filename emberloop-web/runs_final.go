@@ -39,9 +39,17 @@ func (d *Daemon) finalMergeReadiness(runID string, result el.DriverResult) final
 		discarded[id] = yes
 	}
 	tickets := append([]staticTicket(nil), rs.Tickets...)
+	// The driver result lists only merges of this driver invocation. A
+	// resumed or restarted Run holds earlier merges in rs.Merged, and those
+	// count as resolved too.
+	merged := make(map[string]bool, len(result.Merged)+len(rs.Merged))
+	for id, sha := range rs.Merged {
+		if sha != "" {
+			merged[id] = true
+		}
+	}
 	d.mu.Unlock()
 
-	merged := make(map[string]bool, len(result.Merged))
 	for _, item := range result.Merged {
 		merged[item.ID] = true
 	}

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/MichaelKinsy/PiG/ai"
 )
 
 // PigACPBackend runs pig Sessions through pi-acp, the ACP adapter for pi,
@@ -101,7 +99,7 @@ func (b *PigACPBackend) Models() []string { return PigAvailableModels("") }
 // 400 like the SDK path. A thinking level the adapter refuses fails the
 // start with no Session left behind.
 func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, status string)) error {
-	if _, ok := ai.LookupModel(meta.Model); !ok {
+	if !pigModelKnown(meta.Model, "") {
 		return fmt.Errorf("pig: unknown model %q", meta.Model)
 	}
 	if !validPigEffort(meta.Effort) {
@@ -152,7 +150,7 @@ func (b *PigACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 // as follow-ups, degrading held steers per the swap contract.
 func (b *PigACPBackend) StartHandle(meta SessionMeta, emit func(kind, text, status string)) (string, func(), error) {
 	_ = emit
-	if _, ok := ai.LookupModel(meta.Model); !ok {
+	if !pigModelKnown(meta.Model, "") {
 		return "", nil, fmt.Errorf("pig: unknown model %q", meta.Model)
 	}
 	if !validPigEffort(meta.Effort) {

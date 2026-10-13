@@ -66,7 +66,12 @@ func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
 // turns (a straggler's event appends persist): bounded, and never fails the
 // test. Spawn Groups are not waited on: a group that outlives its test has
 // a lost member and never delivers, so it cannot resurrect anything.
+// A Run test registers this cleanup twice (runTestDaemon and authedHandler),
+// so runsStopped makes the second call a no-op instead of paying the wait again.
 func (d *Daemon) stopRunsForTest() {
+	if _, loaded := runsStopped.LoadOrStore(d, true); loaded {
+		return
+	}
 	d.mu.Lock()
 	for _, rs := range d.runs {
 		if rs.Discarded == nil {
@@ -75,12 +80,12 @@ func (d *Daemon) stopRunsForTest() {
 		for _, tk := range rs.Tickets {
 			rs.Discarded[tk.ID] = true
 		}
-		if rs.unpause != nil {
-			close(rs.unpause)
-			rs.unpause = nil
-		}
+		closeUnpauseLocked(rs)
+		rs.unpause = nil
 	}
 	d.mu.Unlock()
+	const stuckPolls = 50
+	polls := map[string]int{}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		d.mu.Lock()
@@ -91,21 +96,42 @@ func (d *Daemon) stopRunsForTest() {
 				break
 			}
 		}
-		if !busy {
-			for _, s := range d.sessions {
-				if s.active > 0 || s.busy {
-					busy = true
-					break
+		// End any turn still running, every poll. A scripted fake Delay on a
+		// turn no submit ever stopped — the second Reviewer, say — would
+		// otherwise hold its Session busy for the whole delay, and a turn the
+		// driver starts after one interrupt would do the same.
+		// A Session still busy after stuckPolls interrupts has a turn that
+		// ignores them (a test parked it on purpose): stop waiting on it
+		// instead of burning the whole deadline.
+		type busySession struct{ id, harness string }
+		var stop []busySession
+		for id, s := range d.sessions {
+			if s.active > 0 || s.busy {
+				if polls[id]++; polls[id] > stuckPolls {
+					continue
 				}
+				busy = true
+				stop = append(stop, busySession{id, s.meta.Harness})
 			}
 		}
 		d.mu.Unlock()
 		if !busy || time.Now().After(deadline) {
 			return
 		}
+		for _, b := range stop {
+			d.mu.Lock()
+			ib, _ := d.backendForLocked(b.harness).(interruptBackend)
+			d.mu.Unlock()
+			if ib != nil {
+				ib.Interrupt(b.id)
+			}
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// runsStopped marks Daemons whose stopRunsForTest already ran.
+var runsStopped sync.Map
 
 // runTestSlots caps how many Run tests (driver goroutines, git subprocesses,
 // fast polls) run at once. Dozens in parallel on 4 cores stretch every

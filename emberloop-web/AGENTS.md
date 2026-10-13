@@ -98,6 +98,19 @@ and subagents are uncapped.
   fast driver into concluded runs. Same-tip hold, patch-identical reuse,
   retry-after-refusal, failed-run resume and fake-clock idle tests stay
   serial: their counts and waits flake under parallel git load.
+- `stopRunsForTest` runs once per Daemon (`runsStopped`; `runTestDaemon` and
+  `authedHandler` both register it), interrupts busy Sessions every poll, and
+  stops waiting on a Session still busy after 50 polls. Fake turns last about
+  5ms, so tests wait for a turn's end with `waitTurnEnd` (an idle status after
+  the prompt's seq), never working-then-idle polls. A test that jumps the fake
+  clock first waits for the Worker's first turn to end.
+- A Session exists before its first prompt lands: tests read a transcript only
+  after `firstPromptWhere` sees a prompt. A test that forces a Run's status
+  after a pause first waits for the driver to exit (`driving` false) or park
+  in `pauseGate` (`gateParked`); a driver between gates rewrites the status.
+- `ensureReviewers` runs one call per Ticket at a time (`ensuring` lock): the
+  submit route and the driver's finish race on one done submit, and an
+  unserialized second call re-prompts a seat whose verdict has not landed.
 
 ## Child DOX Index
 

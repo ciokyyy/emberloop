@@ -58,9 +58,8 @@ func TestHandoffSwapKeepsSessionAndRotatesToken(t *testing.T) {
 	t.Parallel()
 	d, be, base, id := handoffDaemon(t)
 	for _, p := range []string{"build the thing", "and more", "and again"} {
-		sendPrompt(t, base, id, p)
-		waitStatus(t, base, id, "working", 5*time.Second)
-		waitStatus(t, base, id, "idle", 5*time.Second)
+		seq := sendPrompt(t, base, id, p)
+		waitTurnEnd(t, base, id, seq)
 	}
 	d.mu.Lock()
 	metaBefore := d.sessions[id].meta

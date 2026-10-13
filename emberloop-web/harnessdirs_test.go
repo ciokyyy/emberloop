@@ -129,9 +129,8 @@ func TestResumeAndHandoffStartsCarryOwnerEnv(t *testing.T) {
 	hostDirsForTest(t, d)
 	owner := metaOf(t, base, id).Owner
 	for _, p := range []string{"build the thing", "and more"} {
-		sendPrompt(t, base, id, p)
-		waitStatus(t, base, id, "working", 5*time.Second)
-		waitStatus(t, base, id, "idle", 5*time.Second)
+		seq := sendPrompt(t, base, id, p)
+		waitTurnEnd(t, base, id, seq)
 	}
 	if code, body := compressReqIdle(t, base, id, ""); code != 202 {
 		t.Fatalf("compress = %d %v", code, body)

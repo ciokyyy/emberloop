@@ -29,6 +29,10 @@ func postRunAction(t *testing.T, base, id, action string) (runJSON, int) {
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			t.Fatal(err)
 		}
+	} else {
+		var body bytes.Buffer
+		_, _ = body.ReadFrom(resp.Body)
+		t.Logf("%s %s = %d: %s", action, id, resp.StatusCode, bytes.TrimSpace(body.Bytes()))
 	}
 	return out.Run, resp.StatusCode
 }
@@ -482,6 +486,16 @@ func TestFailedRunResumesWithSameWorker(t *testing.T) {
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
 		t.Fatalf("pause status = %d, want 200", code)
 	}
+	// After a pause the driver either exits or parks in pauseGate until
+	// Resume closes unpause. Force the failure only then: a driver still
+	// between gates would see the forced status, run to its end and
+	// rewrite it, which flakes under load.
+	waitUntil(t, "paused driver to exit or park", func() bool {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		rs := d.runs[run.ID]
+		return !rs.driving || rs.gateParked > 0
+	})
 	d.mu.Lock()
 	d.runs[run.ID].Status = runStatusFailed
 	d.runs[run.ID].Error = "could not finish 01-first: exit status 128"
