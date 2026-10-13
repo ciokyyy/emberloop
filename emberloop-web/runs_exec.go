@@ -291,6 +291,9 @@ type runState struct {
 	// ensuring holds one lock per Ticket that serializes ensureReviewers.
 	// Guarded by d.mu.
 	ensuring map[string]*sync.Mutex `json:"-"`
+	// baseChecking names the spec-branch tips whose base check runs now;
+	// each channel closes when its check ends. Guarded by d.mu.
+	baseChecking map[string]chan struct{} `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -942,6 +945,16 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			// driver neither starts nor finishes it, and NeedsYouReason shows
 			// the remedy until a retry clears it.
 			worktreeBlocked := rs.StartBlocked[ticketID] != ""
+			// Other Tickets with a live Worker keep the driver busy, so a
+			// missing base check runs in the background rather than stalling
+			// their reviews and merges; with none, waiting costs nothing.
+			othersRunning := false
+			for id, sess := range rs.Sessions {
+				if id != ticketID && sess != "" && rs.Merged[id] == "" && !rs.Discarded[id] && !rs.Parked[id] {
+					othersRunning = true
+					break
+				}
+			}
 			repo, specBranch, runID := rs.Repo, rs.SpecBranch, rs.ID
 			d.mu.Unlock()
 			if discarded {
@@ -963,6 +976,9 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 				return true
 			}
 			tip = strings.TrimSpace(tip)
+			if othersRunning && !d.baseCheckReady(runID, repo, specBranch, tip) {
+				return true
+			}
 			green, failing := d.cachedBaseCheck(runID, repo, specBranch, tip)
 			if !green {
 				d.recordBaseRedForTicket(runID, ticketID, specBranch, tip, failing)
@@ -1208,41 +1224,95 @@ func baseRedReason(ticketID, specBranch, tip string, failing []string) string {
 
 // cachedBaseCheck runs the repo check once per spec-branch tip and persists
 // its result. Git and check work stay outside d.mu; cache accesses are locked.
+// A tip some Ticket's tip check already passed is green with no new run: a
+// fast-forward merge makes the spec branch tip that same commit. Concurrent
+// callers for one tip share one run.
 func (d *Daemon) cachedBaseCheck(runID, repo, specBranch, tip string) (bool, []string) {
+	for {
+		d.mu.Lock()
+		rs, ok := d.runs[runID]
+		if !ok {
+			d.mu.Unlock()
+			return false, []string{"base check could not run: Run no longer exists"}
+		}
+		if result, exists := rs.BaseCheckCache[tip]; exists {
+			d.mu.Unlock()
+			return result.OK, append([]string(nil), result.Failing...)
+		}
+		if result, exists := rs.TipCheckCache[tip]; exists && result.OK {
+			if rs.BaseCheckCache == nil {
+				rs.BaseCheckCache = map[string]baseCheckResult{}
+			}
+			rs.BaseCheckCache[tip] = baseCheckResult{OK: true}
+			d.persistRun(rs)
+			d.mu.Unlock()
+			return true, nil
+		}
+		if wait, busy := rs.baseChecking[tip]; busy {
+			d.mu.Unlock()
+			<-wait
+			continue
+		}
+		if rs.baseChecking == nil {
+			rs.baseChecking = map[string]chan struct{}{}
+		}
+		done := make(chan struct{})
+		rs.baseChecking[tip] = done
+		d.mu.Unlock()
+
+		green, failing := true, []string(nil)
+		if d.baseCheck != nil {
+			green, failing = d.baseCheck(repo, specBranch, tip)
+		} else {
+			green, failing = runRepoCheckAtTip(repo, tip)
+		}
+
+		d.mu.Lock()
+		delete(rs.baseChecking, tip)
+		close(done)
+		rs, ok = d.runs[runID]
+		if !ok {
+			d.mu.Unlock()
+			return false, []string{"base check could not run: Run no longer exists"}
+		}
+		if rs.BaseCheckCache == nil {
+			rs.BaseCheckCache = map[string]baseCheckResult{}
+		}
+		if cached, exists := rs.BaseCheckCache[tip]; exists {
+			d.mu.Unlock()
+			return cached.OK, append([]string(nil), cached.Failing...)
+		}
+		rs.BaseCheckCache[tip] = baseCheckResult{OK: green, Failing: append([]string(nil), failing...)}
+		d.persistRun(rs)
+		d.mu.Unlock()
+		return green, append([]string(nil), failing...)
+	}
+}
+
+// baseCheckReady reports whether the spec-branch tip's base check has a
+// result. Without one it starts the check in the background (once per tip)
+// and reports false, so a driver with other Tickets running keeps them
+// moving instead of waiting out a full repo check.
+func (d *Daemon) baseCheckReady(runID, repo, specBranch, tip string) bool {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
 		d.mu.Unlock()
-		return false, []string{"base check could not run: Run no longer exists"}
+		return true
 	}
-	if result, exists := rs.BaseCheckCache[tip]; exists {
-		d.mu.Unlock()
-		return result.OK, append([]string(nil), result.Failing...)
+	_, cached := rs.BaseCheckCache[tip]
+	if r, exists := rs.TipCheckCache[tip]; exists && r.OK {
+		cached = true
 	}
+	_, busy := rs.baseChecking[tip]
 	d.mu.Unlock()
-
-	green, failing := true, []string(nil)
-	if d.baseCheck != nil {
-		green, failing = d.baseCheck(repo, specBranch, tip)
-	} else {
-		green, failing = runRepoCheckAtTip(repo, tip)
+	if cached {
+		return true
 	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	rs, ok = d.runs[runID]
-	if !ok {
-		return false, []string{"base check could not run: Run no longer exists"}
+	if !busy {
+		go d.cachedBaseCheck(runID, repo, specBranch, tip)
 	}
-	if rs.BaseCheckCache == nil {
-		rs.BaseCheckCache = map[string]baseCheckResult{}
-	}
-	if cached, exists := rs.BaseCheckCache[tip]; exists {
-		return cached.OK, append([]string(nil), cached.Failing...)
-	}
-	rs.BaseCheckCache[tip] = baseCheckResult{OK: green, Failing: append([]string(nil), failing...)}
-	d.persistRun(rs)
-	return green, append([]string(nil), failing...)
+	return false
 }
 
 // recordBaseRedForTicket persists and publishes a red-base Needs-you banner.
@@ -1294,9 +1364,10 @@ func (d *Daemon) clearBaseRedForTicket(runID, ticketID string) {
 	d.broadcastRunLocked(rs)
 }
 
-// runRepoCheckAtTip runs .emberloop/check in a detached worktree at tip.
-// A repository with no check file is green; a check that cannot be verified
-// or run fails closed so no Worker starts on an unknown base.
+// runRepoCheckAtTip runs .emberloop/check in the repo's check worktree
+// checked out at tip. A repository with no check file is green; a check
+// that cannot be verified or run fails closed so no Worker starts on an
+// unknown base.
 func runRepoCheckAtTip(repo, tip string) (bool, []string) {
 	if _, err := runGit(repo, "cat-file", "-e", tip); err != nil {
 		return false, []string{"base check could not run: base tip: " + strings.TrimSpace(err.Error())}
@@ -1307,15 +1378,13 @@ func runRepoCheckAtTip(repo, tip string) (bool, []string) {
 		}
 		return false, []string{"base check could not run: check file: " + strings.TrimSpace(err.Error())}
 	}
-	dir, err := os.MkdirTemp("", "el-base-check-*")
+	lock := repoCheckLock(repo)
+	lock.Lock()
+	defer lock.Unlock()
+	dir, err := checkWorktreeAt(repo, tip)
 	if err != nil {
-		return false, []string{"base check could not run: temp dir: " + strings.TrimSpace(err.Error())}
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	if _, err := runGit(repo, "worktree", "add", "--detach", dir, tip); err != nil {
 		return false, []string{"base check could not run: worktree: " + strings.TrimSpace(err.Error())}
 	}
-	defer func() { _, _ = runGit(repo, "worktree", "remove", "--force", dir) }()
 	cmd := exec.Command("sh", ".emberloop/check")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -1326,6 +1395,45 @@ func runRepoCheckAtTip(repo, tip string) (bool, []string) {
 		return false, []string{"base check could not run: " + strings.TrimSpace(err.Error())}
 	}
 	return false, parseCheckFailing(string(out))
+}
+
+// repoCheckLocks holds one lock per repo: its check worktree serves one
+// check at a time.
+var repoCheckLocks sync.Map
+
+func repoCheckLock(repo string) *sync.Mutex {
+	lock, _ := repoCheckLocks.LoadOrStore(filepath.Clean(repo), &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+// checkWorktreeAt returns the repo's check worktree, .el-worktrees/.check,
+// checked out clean at tip. The path stays the same across checks, so Go's
+// build and test caches hit for every package the tip did not change; a
+// fresh path per check rebuilt and reran everything. Untracked and ignored
+// files are cleaned, so the tree matches a fresh checkout. A worktree git
+// no longer knows, or one that fails to move, is recreated. Callers hold
+// repoCheckLock.
+func checkWorktreeAt(repo, tip string) (string, error) {
+	dir := filepath.Join(repo, ".el-worktrees", ".check")
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		if _, err := runGit(dir, "checkout", "--detach", "--force", tip); err == nil {
+			if _, err := runGit(dir, "clean", "-ffdx"); err == nil {
+				return dir, nil
+			}
+		}
+	}
+	_, _ = runGit(repo, "worktree", "remove", "--force", dir)
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	_, _ = runGit(repo, "worktree", "prune")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return "", err
+	}
+	if _, err := runGit(repo, "worktree", "add", "--detach", dir, tip); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // parseCheckFailing extracts failing Go tests and packages for Needs-you.
@@ -2048,10 +2156,12 @@ func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
 // the Run: the driver keeps polling and the next pass tries again. The
 // submit route runs this sync (bounded to two starts plus two steers) so
 // prompts queue in submit order and the driver's next finish sees the
-// re-prompt already out. Calls for one Ticket run one at a time: the submit
-// route and the driver's finish race on the same done submit, and a second
-// caller that saw the Reviewer seats mid-start would re-prompt a seat whose
-// verdict had not landed yet.
+// re-prompt already out. One call per Ticket runs at a time and a call that
+// finds one in flight returns at once: the submit route and the driver's
+// finish race on the same done submit, a second caller that saw the Reviewer
+// seats mid-start would re-prompt a seat whose verdict had not landed, and
+// the driver must not wait out a repo check another call runs. The
+// driver's next pass retries whatever the busy call missed.
 func (d *Daemon) ensureReviewers(runID, ticketID string) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
@@ -2068,7 +2178,9 @@ func (d *Daemon) ensureReviewers(runID, ticketID string) {
 		rs.ensuring[ticketID] = lock
 	}
 	d.mu.Unlock()
-	lock.Lock()
+	if !lock.TryLock() {
+		return
+	}
 	defer lock.Unlock()
 	d.ensureReviewersSerial(runID, ticketID)
 }
@@ -3781,6 +3893,17 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			stateSince = saved.Since
 		} else if rs.Status == runStatusPaused {
 			state = runStatusPaused
+		}
+		// The driver publishes rows once per pass, after any new starts, so
+		// its row can still read merging while the merge already landed and
+		// the freed slot started the next Ticket. The recorded merge wins.
+		if rs.Merged[t.ID] != "" {
+			state = "merged"
+		}
+		// A Ticket waiting on a background base check reads parked to the
+		// driver; with no park, Needs-you or block of its own it is queued.
+		if state == "parked" && !rs.Parked[t.ID] && rs.NeedsYouReason[t.ID] == "" && rs.StartBlocked[t.ID] == "" && len(rs.baseChecking) > 0 {
+			state = "queued"
 		}
 		needsYou := rs.NeedsYouReason[t.ID]
 		if needsYou != "" && state != "merged" && state != "discarded" && state != "needs-you" && (state != "parked" || !rs.Parked[t.ID]) {

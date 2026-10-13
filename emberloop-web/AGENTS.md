@@ -39,6 +39,12 @@ and subagents are uncapped.
   a cap), `runs_starttree_test.go` (stale branch and worktree reuse or
   Needs-you), `runs_final_test.go`, `runs_markdone_basered_test.go`,
   `runs_overlap_test.go` and `runs_stopsubmit_test.go` cover Run seams.
+  Base and tip checks (`runRepoCheckAtTip`, `runs_checkspeed_test.go`) run
+  `.emberloop/check` in one reused, cleaned worktree per repo
+  (`.el-worktrees/.check`, one check at a time), so Go caches hit. A base
+  check is shared per spec tip (`baseChecking`), reuses a green tip check of
+  the same commit, and runs in the background while other Tickets have live
+  Workers, so the driver never stalls their reviews and merges on it.
   Stop-after-submit ends a Run Worker or Reviewer turn on its accepted
   terminal submit (`runs_stopsubmit.go`, opt out per Run with
   `noStopAfterSubmit`). A merged Ticket's Worker Session ends before its
