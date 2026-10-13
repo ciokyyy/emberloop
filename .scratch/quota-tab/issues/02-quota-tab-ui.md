@@ -4,12 +4,12 @@
 
 **Blocked by:** 01-quota-api
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Rail shows a Quota entry; `/quota` loads on reload and works with back/forward
-- [ ] Cards show bars colored by header thresholds, countdowns, Antigravity `gemini` and `3p` groups
+- [x] Rail shows a Quota entry; `/quota` loads on reload and works with back/forward
+- [x] Cards show bars colored by header thresholds, countdowns, Antigravity `gemini` and `3p` groups
 - [x] Not-configured, error (with last values kept) and Claude stale states render
-- [ ] Per-card refresh and refresh-all call `POST /api/quota/refresh` and show a busy state
+- [x] Per-card refresh and refresh-all call `POST /api/quota/refresh` and show a busy state
 - [x] The page fetches once per visit and sets no timers; only the buttons update it afterward
 - [x] vitest covers router, helpers and page behaviour
-- [ ] `emberloop-web/AGENTS.md` and root `AGENTS.md` index updated; repo check passes
+- [x] `emberloop-web/AGENTS.md` and root `AGENTS.md` index updated; repo check passes

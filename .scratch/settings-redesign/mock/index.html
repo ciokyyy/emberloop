@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#171717" />
+<title>Emberloop · Settings, Quota, Providers mock</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // Real tokens from emberloop-web/web/src/app.css (dark only). Never invent a color outside them.
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          background: '#212121', foreground: '#ececec', card: '#2a2a2a', popover: '#2f2f2f', sidebar: '#171717',
+          muted: '#303030', 'muted-foreground': '#9b9ba1', accent: '#383838', primary: '#ececec',
+          'primary-foreground': '#171717', destructive: '#f87171', border: '#3a3a3c', input: '#48484a', ring: '#0a84ff',
+        },
+        borderColor: { DEFAULT: '#3a3a3c' }, divideColor: { DEFAULT: '#3a3a3c' },
+        borderRadius: { sm: '0.5rem', md: '0.75rem', lg: '1rem', xl: '1.25rem', '2xl': '1.5rem' },
+        fontFamily: {
+          sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Inter', 'Segoe UI', 'system-ui', 'sans-serif'],
+          mono: ['ui-monospace', 'SF Mono', 'JetBrains Mono', 'Menlo', 'monospace'],
+        },
+      },
+    },
+  };
+</script>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root { color-scheme: dark; --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1); }
+  * { border-color: #3a3a3c; }
+  body { background: #212121; color: #ececec; -webkit-font-smoothing: antialiased; }
+  button, a, input, select, textarea { transition: color .18s var(--ease-smooth), background-color .18s var(--ease-smooth), border-color .18s var(--ease-smooth), box-shadow .18s var(--ease-smooth), opacity .18s, transform .18s var(--ease-smooth); }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+  .animate-rise { animation: rise .35s var(--ease-smooth) both; }
+  @media (prefers-reduced-motion: reduce) { .animate-rise { animation: none; } * { transition: none !important; } }
+  /* switch: real size h-5 w-9, 44px hit area via ::before */
+  .sw { position: relative; display: inline-flex; height: 1.25rem; width: 2.25rem; align-items: center; border-radius: 9999px; background: #48484a; flex-shrink: 0; }
+  .sw::before { content: ""; position: absolute; inset: -0.75rem -0.375rem; }
+  .sw i { display: block; width: 1rem; height: 1rem; margin-left: 2px; border-radius: 9999px; background: #212121; transition: transform .18s var(--ease-smooth); }
+  .sw[aria-checked="true"] { background: #ececec; }
+  .sw[aria-checked="true"] i { transform: translateX(1rem); }
+  .seg button[aria-pressed="true"] { background: #ececec; color: #171717; }
+  select, input, textarea { color-scheme: dark; }
+  ::-webkit-scrollbar { width: 12px; height: 12px; background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(155,155,161,.25); border-radius: 9999px; border: 4px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(155,155,161,.55); background-clip: content-box; }
+  [data-pill] { transition: transform .3s var(--ease-smooth); }
+  #aside { transition: width .3s var(--ease-smooth); }
+  #drawer { transition: transform .3s var(--ease-smooth); }
+  #scrim { transition: opacity .3s; }
+</style>
+</head>
+<body class="font-sans antialiased">
+
+<!--
+  DESIGN BRIEF (for the model that builds the real thing). Mock covers /settings/*, /quota and /providers.
+
+  SHELL (matches emberloop-web/web today; do not add a third column)
+  1. Desktop: Rail (w-14, bg-sidebar, 5 area icons + sliding pill, collapse toggle on top)
+     | Second sidebar (w-64, bg-sidebar, p-3, contextual list, account footer) | Main (bg-background).
+     The page-specific navigation lives ONLY in the second sidebar. The page itself never draws its own side nav.
+  2. Second sidebar per area:
+       Settings          -> Workspace group (Agents, Runs, Context & names, Memory, Users & access) + You group (Profile, Notifications, Sound & voice).
+       Quota (rail icon) -> Quota, Providers, then a "Live status" list: one row per provider with a tone dot and percent.
+     Quota no longer collapses the second sidebar to w-0 (it does today). Memory keeps its own rules.
+  3. Phones (<md): Rail and second sidebar are hidden. Top bar has the Menu button. The Sheet drawer (w-80, max-w-[88vw])
+     holds: header (User, Sign out, Close) | the SAME second-sidebar list in one scroll region | pinned DrawerNav (5 tabs) | build stamp.
+     /settings on a phone renders the HUB in the main area (grouped list, icon tile + label + hint + chevron); each sub-page shows a
+     "< Settings" link above its title. On desktop /settings redirects to /settings/agents.
+  4. Every phone control is a 44px target (Button/Input/select max-md:h-11, switch hit area, seg buttons), inputs are 16px (text-base),
+     popovers never exceed 100vw - 1rem, safe-area padding on the drawer and the save bar. Cards stack to one column; row controls drop under their label.
+
+  TOKENS (from app.css, dark only; never hardcode other colors)
+     background #212121 | card #2a2a2a | popover #2f2f2f | sidebar #171717 (rail + second sidebar) | muted #303030 | accent #383838 (hover/active row)
+     foreground #ececec | muted-foreground #9b9ba1 | primary #ececec / primary-foreground #171717 (switch on, active seg, default Button)
+     border #3a3a3c | input #48484a (input border, switch off) | ring #0a84ff (focus only) | destructive #f87171
+     Status uses Badge variants: success green-500/10 + green-300, warning amber-500/10 + amber-300, destructive destructive/10.
+     Quota bars follow thresholdClass: calm <60 green-500, warm <80 amber-500, hot >=80 red-500 on a muted track (h-1.5).
+  SHAPES: Button and Badge = rounded-full. Input/select = rounded-xl h-11 (md:h-10 inside dense rows), border-input, bg-transparent. Cards rounded-2xl border bg-card.
+     Font stack: system (-apple-system, SF Pro). Icons: @lucide/svelte. Motion: animate-rise on new blocks, --ease-smooth everywhere.
+
+  SETTINGS PAGES
+  5. One page = one concern, scope Badge (outline) next to the title: Global | You | Admin | You · this device.
+  6. Agents merges "role" rows and "Run Chains" into ONE ordered chain per role. Every entry has harness + model + thinking effort.
+     Entry 1 is Primary, others are Fallbacks (used on quota, credit, auth or session-limit failure).
+  7. Rows: label + hint on the left, control on the right. No nested lists. Shared save bar appears on first change; applies to new agents/Runs only.
+
+  QUOTA (/quota, read-only, global)
+  8. Every card shows percent used 0-100 first; dollars/tokens are secondary text. Providers: Claude, Gemini (Antigravity), ChatGPT Plus,
+     OpenCode-Go, OpenRouter. Live (the Daemon serves cached values at once and refreshes in the background; no spinner wall).
+     Card states: ok | stale (refresh failing, last values + age) | expired (host login expired, links to Providers) | not connected.
+     The "Preview" control in the mock only demonstrates states; it is not part of the product.
+
+  PROVIDERS (/providers, global connections, admin-only writes)
+  9. Rows grouped: Subscription logins (Claude, ChatGPT, Gemini via Antigravity), API keys (paste; masked after save), CLI-only (command hint + copy).
+     Connect opens an inline panel under the row (never a modal on phones): Claude = pty `claude auth login` (writes ~/.claude only),
+     ChatGPT = device code, Antigravity = paste the redirect URL, API key = password field. Non-admins see status only; buttons are disabled with a lock.
+ 10. Project scope: Settings, Quota and Providers are global, so the second sidebar shows NO project switcher here. /p/<id>/settings is a separate shell.
+-->
+
+<div class="flex h-dvh overflow-hidden" id="app">
+  <!-- Rail 1 -->
+  <nav id="rail" class="relative flex w-14 shrink-0 flex-col items-center gap-1 border-r bg-sidebar py-3 max-md:hidden" aria-label="Areas"></nav>
+  <!-- Second sidebar -->
+  <aside id="aside" class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar max-md:hidden w-64">
+    <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3">
+      <div id="asideBody" class="animate-rise flex min-h-0 flex-1 flex-col gap-3"></div>
+      <div id="asideFoot"></div>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <!-- Phone top bar -->
+    <header class="flex items-center gap-2 px-3 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] md:hidden">
+      <button id="menuBtn" aria-label="Menu" class="grid size-11 place-items-center rounded-full hover:bg-muted"><i data-lucide="menu" class="size-5"></i></button>
+      <span id="mtitle" class="truncate text-base font-semibold tracking-tight"></span>
+    </header>
+    <main id="scroller" class="min-h-0 flex-1 overflow-auto">
+      <div id="page" class="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pb-40 pt-6 md:pt-10"></div>
+    </main>
+  </div>
+</div>
+
+<!-- Phone drawer -->
+<div id="scrim" class="pointer-events-none fixed inset-0 z-40 bg-black/50 opacity-0 backdrop-blur-sm md:hidden"></div>
+<div id="drawer" class="fixed inset-y-0 left-0 z-50 flex w-80 max-w-[88vw] -translate-x-full flex-col gap-2 overflow-hidden border-r bg-sidebar p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden" role="dialog" aria-label="Menu">
+  <div class="flex items-center gap-2 border-b pb-3">
+    <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase">c</span>
+    <div class="min-w-0 flex-1 leading-tight"><p class="truncate text-sm font-medium">cioky</p><p class="text-xs text-muted-foreground">Admin</p></div>
+    <button class="grid size-11 place-items-center rounded-full hover:bg-muted" aria-label="Sign out"><i data-lucide="log-out" class="size-4"></i></button>
+    <button id="drawerClose" class="grid size-11 place-items-center rounded-full hover:bg-muted" aria-label="Close"><i data-lucide="x" class="size-4"></i></button>
+  </div>
+  <div id="drawerBody" class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto pt-1"></div>
+  <div id="drawerTabs"></div>
+  <p class="px-1 pt-1 text-center text-[10px] text-muted-foreground">ui 3f2a1c · be 9d41e07</p>
+</div>
+
+<!-- Save bar (Settings only) -->
+<div id="bar" class="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] opacity-0">
+  <div class="pointer-events-auto flex items-center gap-2 rounded-full border bg-popover/90 py-2 pl-5 pr-2 shadow-2xl backdrop-blur-xl">
+    <span id="barmsg" class="text-sm text-muted-foreground">Unsaved changes</span>
+    <button id="revert" class="inline-flex h-9 items-center rounded-full px-3 text-sm text-muted-foreground hover:text-foreground max-md:h-11">Revert</button>
+    <button id="save" class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/85 max-md:h-11">Save</button>
+  </div>
+</div>
+
+<!-- Mock-only controls (not product) -->
+<div id="mockTools" class="fixed bottom-3 right-3 z-[60] hidden items-center gap-2 rounded-full border border-dashed bg-popover/90 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur md:flex">
+  <span>Mock</span>
+  <button id="phoneBtn" class="inline-flex items-center gap-1 rounded-full px-2 py-1 hover:bg-muted hover:text-foreground"><i data-lucide="smartphone" class="size-3.5"></i>Phone view</button>
+  <button id="adminBtn" class="inline-flex items-center gap-1 rounded-full px-2 py-1 hover:bg-muted hover:text-foreground"><i data-lucide="shield" class="size-3.5"></i><span id="adminLbl">Admin</span></button>
+</div>
+<div id="phoneOverlay" class="fixed inset-0 z-[90] hidden items-center justify-center bg-black/75 p-4">
+  <button id="phoneClose" class="absolute right-4 top-4 grid size-11 place-items-center rounded-full bg-popover" aria-label="Close preview"><i data-lucide="x" class="size-5"></i></button>
+  <iframe id="phoneFrame" class="h-[min(844px,92vh)] w-[390px] rounded-[2.25rem] border-4 border-input bg-background"></iframe>
+</div>
+
+<script>
+  // ---------- tiny view helpers (classes mirror src/lib/ui) ----------
+  const I = (n, c = 'size-4') => `<i data-lucide="${n}" class="${c}"></i>`;
+  const BTN = 'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40';
+  const BV = { default: 'bg-primary text-primary-foreground hover:bg-primary/85', outline: 'border border-border hover:bg-muted', ghost: 'hover:bg-muted', secondary: 'bg-muted hover:bg-accent', destructive: 'bg-destructive text-white hover:bg-destructive/90' };
+  const BS = { default: 'h-9 px-4 max-md:h-11', sm: 'h-8 px-3 text-xs max-md:h-11 max-md:text-sm', icon: 'size-9 max-md:size-11', 'icon-sm': 'size-8 max-md:size-11' };
+  const btn = (label, { v = 'outline', s = 'sm', icon = '', attrs = '', cls = '' } = {}) => `<button type="button" class="${BTN} ${BV[v]} ${BS[s]} ${cls}" ${attrs}>${icon ? I(icon) : ''}${label}</button>`;
+
+  const BADGE = { default: 'bg-primary text-primary-foreground', secondary: 'bg-muted text-muted-foreground', outline: 'border border-border text-muted-foreground', success: 'bg-green-500/10 text-green-300', warning: 'bg-amber-500/10 text-amber-300', destructive: 'bg-destructive/10 text-destructive' };
+  const badge = (t, v = 'secondary', icon = '') => `<span class="inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${BADGE[v]}">${icon ? I(icon, 'size-3') : ''}${t}</span>`;
+  const INPUT = 'h-11 md:h-10 w-full rounded-xl border border-input bg-transparent px-3.5 text-base md:text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 disabled:opacity-50';
+  const input = (attrs = '', cls = '') => `<input class="${INPUT} ${cls}" ${attrs} />`;
+  const select = (opts, val, attrs = '', cls = '') => `<select class="${INPUT} ${cls}" ${attrs}>${opts.map((o) => `<option ${o === val ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+  const sw = (on, attrs = 'data-dirty') => `<button class="sw" role="switch" aria-checked="${on}" ${attrs}><i></i></button>`;
+  const CARD = 'divide-y divide-border overflow-hidden rounded-2xl border bg-card';
+  const tile = (icon, cls = 'bg-muted') => `<span class="grid size-9 shrink-0 place-items-center rounded-xl ${cls}">${I(icon)}</span>`;
+  const row = (label, hint, ctl, { wide = '' } = {}) => `<div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_${wide || 'auto'}]"><div class="min-w-0"><div class="text-sm font-medium">${label}</div><div class="text-xs text-muted-foreground">${hint}</div></div><div class="min-w-0">${ctl}</div></div>`;
+  const group = (title, note, body) => `<section class="animate-rise flex flex-col gap-2"><div class="px-1"><h2 class="text-sm font-semibold">${title}</h2>${note ? `<p class="text-xs text-muted-foreground">${note}</p>` : ''}</div>${body}</section>`;
+  const SCOPE = { global: 'Global', you: 'You', admin: 'Admin', device: 'You · this device', readonly: 'Global · read-only', adminw: 'Global · admin writes' };
+  function head(icon, title, scope, desc, { back = '', extra = '' } = {}) {
+    return `<header class="animate-rise flex flex-col gap-2">${back}<div class="flex flex-wrap items-center gap-2.5">${tile(icon, 'bg-card')}<h1 class="text-3xl font-semibold tracking-tight max-md:text-2xl">${title}</h1>${badge(SCOPE[scope], 'outline')}<div class="ml-auto">${extra}</div></div>${desc ? `<p class="text-sm text-muted-foreground">${desc}</p>` : ''}</header>`;
+  }
+  const backLink = `<a href="#/settings" class="-ml-2 inline-flex w-fit items-center gap-1 rounded-full px-2 py-1 text-sm text-muted-foreground hover:text-foreground max-md:min-h-11 md:hidden">${I('chevron-left')}Settings</a>`;
+
+  // ---------- areas, nav model ----------
+  const AREAS = [
+    { id: 'chat', label: 'Chat', short: 'Chat', icon: 'message-square', href: '#/chat' },
+    { id: 'runs', label: 'Specs and Runs', short: 'Runs', icon: 'layers', href: '#/runs' },
+    { id: 'memory', label: 'Memory', short: 'Memory', icon: 'brain', href: '#/memory' },
+    { id: 'quota', label: 'Quota and Providers', short: 'Quota', icon: 'gauge', href: '#/quota' },
+    { id: 'settings', label: 'Settings', short: 'Settings', icon: 'settings', href: '#/settings' },
+  ];
+  const SETTINGS_NAV = [
+    { title: 'Workspace', items: [
+      { id: 'agents', label: 'Agents', icon: 'bot', hint: 'Models, effort and fallbacks per role' },
+      { id: 'runs', label: 'Runs', icon: 'ticket', hint: 'Ticket concurrency' },
+      { id: 'context', label: 'Context & names', icon: 'layers', hint: 'Compression, Session names' },
+      { id: 'memory', label: 'Memory', icon: 'brain', hint: 'Deciders and Jev' },
+      { id: 'access', label: 'Users & access', icon: 'shield-check', hint: 'Sign-up, Users' },
+    ] },
+    { title: 'You', items: [
+      { id: 'profile', label: 'Profile', icon: 'user', hint: 'What agents know about you' },
+      { id: 'notifications', label: 'Notifications', icon: 'bell', hint: 'Push on this device' },
+      { id: 'sound-voice', label: 'Sound & voice', icon: 'volume-2', hint: 'Sounds, dictation, install' },
+    ] },
+  ];
+  const SETTINGS_ITEMS = SETTINGS_NAV.flatMap((g) => g.items);
+  const ACCOUNT_NAV = [
+    { id: 'quota', label: 'Quota', icon: 'gauge', href: '#/quota' },
+    { id: 'providers', label: 'Providers', icon: 'plug', href: '#/providers' },
+  ];
+
+  // ---------- state ----------
+  let admin = true;
+  let claudeState = 'ok';
+  const state = { collapsed: false };
+
+  function route() {
+    const h = (location.hash.replace(/^#\/?/, '') || 'settings').split('/');
+    const desktop = innerWidth >= 768;
+    let area = h[0];
+    let page = h[1] || '';
+    if (area === 'providers') area = 'providers';
+    if (area === 'settings' && desktop && !page) page = 'agents';
+    if (area === 'settings' && page && !SETTINGS_ITEMS.find((i) => i.id === page)) page = desktop ? 'agents' : '';
+    return { area, page, railArea: area === 'providers' ? 'quota' : area, desktop };
+  }
+
+  // ---------- second-sidebar content (also the phone drawer body) ----------
+  const NAVI = 'flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm max-md:min-h-11 hover:bg-accent hover:text-foreground';
+  const navItem = (href, icon, label, on, extra = '') => `<a href="${href}" ${on ? 'aria-current="page"' : ''} class="${NAVI} ${on ? 'bg-accent text-foreground' : 'text-muted-foreground'}">${I(icon, 'size-4 shrink-0')}<span class="min-w-0 flex-1 truncate">${label}</span>${extra}</a>`;
+  const TONE = (p) => (p < 60 ? 'calm' : p < 80 ? 'warm' : 'hot');
+  const BAR = { calm: 'bg-green-500', warm: 'bg-amber-500', hot: 'bg-red-500' };
+  const PCT = { calm: 'text-muted-foreground', warm: 'text-amber-300', hot: 'text-red-400' };
+
+  function sidebarHTML(r) {
+    if (r.railArea === 'settings') {
+      return `<div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Settings</h1></div>
+        <div class="relative"><span class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground">${I('search')}</span>${input('id="q" type="search" placeholder="Search settings" aria-label="Search settings"', 'h-9 rounded-full bg-muted pl-10 pr-3 border-transparent max-md:h-11')}</div>
+        <nav class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto" data-nav>${settingsNavHTML(r)}</nav>`;
+    }
+    if (r.railArea === 'quota') {
+      return `<div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Quota and Providers</h1></div>
+        <nav class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
+          <div class="flex flex-col gap-0.5">${ACCOUNT_NAV.map((i) => navItem(i.href, i.icon, i.label, i.id === r.area)).join('')}</div>
+          <div class="flex flex-col gap-0.5"><div class="flex items-center justify-between px-2 pb-1"><span class="text-xs font-medium text-muted-foreground">Live status</span><span class="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><span class="size-1.5 animate-pulse rounded-full bg-green-500"></span>live</span></div>
+            ${QUOTA.map((p) => { const top = p.w.length ? Math.max(...p.w.map((w) => w[1] ?? 0)) : null; const t = TONE(top ?? 0); return `<a href="#/quota" class="${NAVI} text-muted-foreground"><span class="size-2 shrink-0 rounded-full ${top == null ? 'bg-input' : BAR[t]}"></span><span class="min-w-0 flex-1 truncate">${p.name}</span><span class="text-xs tabular-nums ${top == null ? 'text-muted-foreground' : PCT[t]}">${top == null ? '—' : top + '%'}</span></a>`; }).join('')}
+          </div></nav>`;
+    }
+    return `<div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">${AREAS.find((a) => a.id === r.railArea).label}</h1></div>
+      <p class="px-2 text-sm text-muted-foreground">Not part of this mock. The real list keeps its current second sidebar.</p>`;
+  }
+  function settingsNavHTML(r, term = '') {
+    term = term.trim().toLowerCase();
+    return SETTINGS_NAV.map((g) => {
+      const items = g.items.filter((i) => !term || (i.label + ' ' + i.hint).toLowerCase().includes(term));
+      if (!items.length) return '';
+      return `<div class="flex flex-col gap-0.5"><div class="px-2 pb-1 text-xs font-medium text-muted-foreground">${g.title}</div>${items.map((i) => navItem('#/settings/' + i.id, i.icon, i.label, i.id === r.page)).join('')}</div>`;
+    }).join('') || '<p class="px-2 text-sm text-muted-foreground">No match.</p>';
+  }
+  const footHTML = `<div class="flex items-center gap-2 border-t pt-3"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase">c</span><div class="min-w-0 flex-1 leading-tight"><p class="truncate text-sm font-medium">cioky</p><p class="text-xs text-muted-foreground">${admin ? 'Admin' : 'User'}</p></div><button class="${BTN} ${BV.ghost} ${BS['icon-sm']}" aria-label="Sign out" title="Sign out">${I('log-out')}</button></div>`;
+
+  // ---------- rail ----------
+  function railHTML(r) {
+    const idx = Math.max(0, AREAS.findIndex((a) => a.id === r.railArea));
+    return `<button id="toggleSide" title="${state.collapsed ? 'Expand' : 'Collapse'} sidebar (Ctrl/⌘+B)" aria-label="Toggle sidebar" class="relative grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none">${I(state.collapsed ? 'panel-left-open' : 'panel-left-close', 'size-[18px]')}</button>
+      <div class="my-1 h-px w-8 shrink-0 bg-border"></div>
+      <div class="relative flex flex-col items-center gap-1"><span data-pill class="pointer-events-none absolute left-1/2 top-0 size-11 -translate-x-1/2 rounded-xl bg-accent" style="transform:translate(-50%,${idx * 3}rem)"></span>
+      ${AREAS.map((a) => `<a href="${a.href}" title="${a.label}" aria-label="${a.label}" ${a.id === r.railArea ? 'aria-current="page"' : ''} class="relative grid size-11 place-items-center rounded-xl hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none ${a.id === r.railArea ? 'text-foreground' : 'text-muted-foreground'}">${I(a.icon, 'size-[18px]')}</a>`).join('')}</div>`;
+  }
+  const tabsHTML = (r) => `<nav class="grid shrink-0 grid-cols-5 gap-0.5 border-t pt-2" aria-label="Areas">${AREAS.map((a) => `<a href="${a.href}" ${a.id === r.railArea ? 'aria-current="page"' : ''} class="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-[11px] font-medium leading-none active:scale-[0.97] max-[360px]:text-[10px] ${a.id === r.railArea ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}">${I(a.icon, 'size-5')}<span class="max-w-full truncate">${a.short}</span></a>`).join('')}</nav>`;
+
+  // ---------- QUOTA ----------
+  // REAL values read from this host on 2026-10-13 (read-only calls; see "Real data" notes in the quota ticket).
+  // w = [label, pct, resets-in, secondary text]. Claude: GET api.anthropic.com/api/oauth/usage (five_hour, seven_day; Pro plan).
+  // ChatGPT: GET chatgpt.com/backend-api/wham/usage (primary 18000s = 5-hour, secondary 604800s = weekly; plan_type plus).
+  // OpenCode-Go: cached usage-opencode-go.json (rolling 5h, weekly, monthly). OpenRouter: /credits 59.16 of 63 + /key usage.
+  // Antigravity: no ~/.el/agy-oauth.json on this host, so the real state is "not configured".
+  const QUOTA = [
+    { id: 'claude', name: 'Claude', plan: 'Pro', icon: 'sparkles', src: 'Host login', upd: 'updated 8s ago', w: [['5-hour', 36, '4h14m'], ['Weekly', 8, '6d14h']] },
+    { id: 'chatgpt', name: 'ChatGPT', plan: 'Plus', icon: 'message-circle', src: 'pig login', upd: 'updated 8s ago', w: [['5-hour', 4, '4h21m'], ['Weekly', 4, '6d18h', 'No extra credits']] },
+    { id: 'opencode', name: 'OpenCode-Go', plan: 'Go', icon: 'terminal', src: 'API key', upd: 'cached 5h ago', w: [['5-hour', 0, 'now'], ['Weekly', 7, '5d9h'], ['Monthly', 53, '2d21h']] },
+    { id: 'openrouter', name: 'OpenRouter', plan: 'Credits', icon: 'route', src: 'API key', upd: 'updated 8s ago', w: [['Credits', 94, null, '$59.16 of $63.00 · $3.84 left'], ['Spend this week', null, null, '$2.37 · today $0.91 · month $5.70']] },
+    { id: 'gemini', name: 'Antigravity', plan: 'Gemini + 3P', icon: 'gem', src: 'pig login', state: 'none', hint: 'Needs <code class="font-mono">~/.el/agy-oauth.json</code> from the pig-antigravity-auth login. Shows Gemini and Claude + GPT-OSS pools, each with a 5-hour and a weekly bar.', w: [] },
+  ];
+  function quotaCard(p) {
+    const st = p.state || (p.id === 'claude' ? claudeState : 'ok');
+    const dim = st === 'expired' ? 'opacity-50' : '';
+    const stateBadge = { ok: '', stale: badge('stale', 'warning', 'clock'), expired: badge('login expired', 'warning', 'lock'), none: badge('not connected', 'secondary') }[st];
+    const head = `<div class="flex items-center gap-2.5">${tile(p.icon)}<div class="min-w-0 flex-1 leading-tight"><div class="flex flex-wrap items-center gap-1.5"><h2 class="text-sm font-semibold">${p.name}</h2>${badge(p.plan, 'outline')}${stateBadge}</div><p class="text-[11px] text-muted-foreground">${st === 'stale' ? 'updated 12m ago · retrying' : st === 'expired' ? 'last read 3h ago' : st === 'none' ? p.src : p.upd + ' · ' + p.src}</p></div>
+      <button class="${BTN} ${BV.ghost} ${BS['icon-sm']}" aria-label="Refresh ${p.name}">${I('refresh-cw')}</button></div>`;
+    let body;
+    if (st === 'none') body = `<p class="mt-3 text-xs text-muted-foreground">${p.hint || 'Not connected.'}</p><a href="#/providers" class="mt-3 ${BTN} ${BV.outline} ${BS.sm} w-fit">${I('plug')}Connect in Providers</a>`;
+    else {
+      const warn = st === 'expired' ? `<div class="mt-3 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-300">${I('triangle-alert', 'mt-0.5 size-3.5 shrink-0')}<span>Host login expired, so quota cannot refresh. Run <code class="font-mono">claude auth login</code> or <a class="underline" href="#/providers">reconnect in Providers</a>.</span></div>` : '';
+      body = `${warn}<div class="mt-3 flex flex-col gap-3 ${dim}">${p.w.map((w) => { if (w[1] == null) return `<div class="flex items-baseline justify-between border-t pt-3 text-xs"><span class="font-medium">${w[0]}</span><span class="text-muted-foreground">${w[3]}</span></div>`; const t = TONE(w[1]); return `<div><div class="flex items-baseline justify-between text-xs"><span class="font-medium">${w[0]}</span><span class="font-medium tabular-nums ${PCT[t]}">${w[1]}%</span></div><div class="mt-1 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow="${w[1]}" aria-valuemin="0" aria-valuemax="100"><div class="h-full rounded-full ${BAR[t]}" style="width:${w[1]}%"></div></div><div class="mt-1 flex justify-between text-[11px] text-muted-foreground"><span>${w[3] || ''}</span><span>${w[2] ? 'resets in ' + w[2] : ''}</span></div></div>`; }).join('')}</div>`;
+    }
+    return `<div class="animate-rise flex flex-col rounded-2xl border bg-card p-4">${head}${body}</div>`;
+  }
+  function quotaPage() {
+    const prev = `<div class="seg inline-flex rounded-full bg-muted p-1 text-xs" data-claude>${[['ok', 'OK'], ['stale', 'Stale'], ['expired', 'Expired'], ['none', 'None']].map(([k, l]) => `<button class="rounded-full px-2.5 py-1.5 max-md:min-h-11 max-md:px-3" data-cs="${k}" aria-pressed="${claudeState === k}">${l}</button>`).join('')}</div>`;
+    return head('gauge', 'Quota', 'readonly', 'Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live.',
+      { extra: `<button class="${BTN} ${BV.outline} ${BS.sm}">${I('refresh-cw')}Refresh all</button>` })
+      + `<div class="-mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-xs text-muted-foreground"><span>Mock · Claude card state</span>${prev}</div>`
+      + `<div class="grid gap-4 sm:grid-cols-2">${QUOTA.map(quotaCard).join('')}</div>`;
+  }
+
+  // ---------- PROVIDERS ----------
+  const PROV = {
+    login: [
+      { id: 'claude', name: 'Claude', icon: 'sparkles', how: 'pty', connected: true, line: 'Host login · Max · token valid 6h' },
+      { id: 'chatgpt', name: 'ChatGPT Plus', icon: 'message-circle', how: 'device', connected: true, line: 'pig login · openai-codex' },
+      { id: 'antigravity', name: 'Gemini via Antigravity', icon: 'gem', how: 'paste', connected: false, line: 'Google sign-in, paste the redirect URL' },
+    ],
+    keys: [
+      { id: 'openrouter', name: 'OpenRouter', icon: 'route', how: 'key', connected: true, line: 'sk-or-v1-887…155' },
+      { id: 'opencode', name: 'OpenCode-Go', icon: 'terminal', how: 'key', connected: true, line: 'ocg-…c41a' },
+      { id: 'gemini', name: 'Gemini API (direct)', icon: 'gem', how: 'key', connected: false, line: 'Google AI Studio key' },
+      { id: 'deepseek', name: 'DeepSeek', icon: 'waves', how: 'key', connected: true, line: 'sk-…9d02' },
+      { id: 'openai', name: 'OpenAI', icon: 'cpu', how: 'key', connected: false, line: 'platform.openai.com key' },
+    ],
+    cli: ['xai', 'groq', 'mistral', 'github-copilot', 'cerebras'],
+  };
+  const openPanel = {};
+  function panel(p) {
+    if (p.how === 'key') return `<div class="mt-3 grid gap-3 rounded-xl border bg-background p-3">${input('type="password" placeholder="Paste API key" autocomplete="off"')}<p class="text-xs text-muted-foreground">Saved to pig <code class="font-mono">auth.json</code> on the host. Shown masked after saving, never again.</p><div class="flex flex-wrap gap-2">${btn('Save key', { v: 'default', s: 'default', attrs: `data-act="save" data-id="${p.id}"` })}${btn('Cancel', { v: 'ghost', s: 'default', attrs: `data-act="close" data-id="${p.id}"` })}</div></div>`;
+    if (p.how === 'device') return `<div class="mt-3 grid gap-3 rounded-xl border bg-background p-3"><p class="text-sm">1. Open <span class="font-mono text-xs">auth.openai.com/codex/device</span> on any device.<br/>2. Enter this code:</p><div class="flex items-center gap-3"><span class="rounded-xl bg-muted px-4 py-2 font-mono text-xl tracking-widest">KQ4M-7ZXD</span>${btn('Copy', { s: 'sm', icon: 'copy' })}${btn('Open page', { s: 'sm', icon: 'external-link' })}</div><p class="flex items-center gap-2 text-xs text-muted-foreground"><span class="size-1.5 animate-pulse rounded-full bg-amber-500"></span>Waiting for approval…</p><div>${btn('Cancel', { v: 'ghost', s: 'default', attrs: `data-act="close" data-id="${p.id}"` })}</div></div>`;
+    if (p.how === 'paste') return `<div class="mt-3 grid gap-3 rounded-xl border bg-background p-3"><p class="text-sm">1. Sign in with Google.<br/>2. The final page fails to load. Copy its full address and paste it here.</p>${btn('Open Google sign-in', { s: 'sm', icon: 'external-link', cls: 'w-fit' })}${input('placeholder="http://localhost:51121/oauth-callback?code=…"')}<div class="flex flex-wrap gap-2">${btn('Finish', { v: 'default', s: 'default', attrs: `data-act="save" data-id="${p.id}"` })}${btn('Cancel', { v: 'ghost', s: 'default', attrs: `data-act="close" data-id="${p.id}"` })}</div></div>`;
+    return `<div class="mt-3 grid gap-3 rounded-xl border bg-background p-3"><div class="rounded-lg bg-sidebar p-3 font-mono text-xs leading-relaxed text-muted-foreground"><span class="text-foreground">$ claude auth login</span><br/>Open this URL to sign in:<br/><span class="tk-path" style="color:#79c0ff">https://claude.ai/oauth/authorize?code=true&amp;client_id=…</span><br/>Paste the code shown after sign-in:</div>${input('placeholder="Paste code"')}<p class="text-xs text-muted-foreground">Runs on the host in a terminal. Writes <code class="font-mono">~/.claude</code> only, never pig auth.</p><div class="flex flex-wrap gap-2">${btn('Submit code', { v: 'default', s: 'default', attrs: `data-act="save" data-id="${p.id}"` })}${btn('Cancel', { v: 'ghost', s: 'default', attrs: `data-act="close" data-id="${p.id}"` })}</div></div>`;
+  }
+  function provRow(p) {
+    const status = p.connected ? badge('Connected', 'success', 'check') : badge('Not connected', 'secondary');
+    const verb = p.how === 'key' ? (p.connected ? 'Replace' : 'Add key') : p.connected ? 'Reconnect' : 'Connect';
+    const lock = !admin;
+    const act = lock
+      ? `${badge('Admin only', 'outline', 'lock')}`
+      : `${btn(verb, { s: 'sm', icon: p.connected ? 'refresh-cw' : 'plus', attrs: `data-act="open" data-id="${p.id}"` })}${p.connected && p.how === 'key' ? btn('Remove', { v: 'ghost', s: 'sm', icon: 'trash-2', cls: 'text-destructive', attrs: `data-act="remove" data-id="${p.id}"` }) : ''}`;
+    return `<div class="p-4"><div class="flex flex-wrap items-center gap-3">${tile(p.icon)}<div class="min-w-0 flex-1 basis-40 leading-tight"><div class="flex flex-wrap items-center gap-2"><span class="text-sm font-medium">${p.name}</span>${status}</div><p class="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">${p.line}</p></div><div class="flex items-center gap-2 max-md:w-full max-md:[&>*]:flex-1">${act}</div></div>${openPanel[p.id] && !lock ? panel(p) : ''}</div>`;
+  }
+  function providersPage() {
+    const all = [...PROV.login, ...PROV.keys];
+    return head('plug', 'Providers', 'adminw', 'Connect the accounts and keys every Session and Run uses. Everyone sees status; only admins change connections.')
+      + (admin ? '' : `<div class="-mt-3 flex items-start gap-2 rounded-xl bg-muted p-3 text-sm text-muted-foreground">${I('lock', 'mt-0.5 size-4 shrink-0')}<span>You are a User. Ask an admin to connect or change providers.</span></div>`)
+      + group('Subscription logins', 'Sign in with an account plan. Quota for these shows on the Quota page.', `<div class="${CARD}">${PROV.login.map(provRow).join('')}</div>`)
+      + group('API keys', 'Paste a key. It is masked after saving.', `<div class="${CARD}">${PROV.keys.map(provRow).join('')}</div>`)
+      + group('More providers', 'Connect these from a terminal on the host. Tap a command to copy it.', `<div class="flex flex-wrap gap-2">${PROV.cli.map((c) => `<button class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-xs text-muted-foreground hover:bg-muted hover:text-foreground max-md:min-h-11">${I('terminal', 'size-3.5')}pig auth login ${c}${I('copy', 'size-3.5')}</button>`).join('')}</div>`);
+  }
+
+  // ---------- SETTINGS pages ----------
+  const SET = {
+    runs: () => head('ticket', 'Runs', 'global', 'How Runs execute tickets. Worker and Reviewer chains live in Agents.', { back: backLink })
+      + `<div class="${CARD}">${row('Maximum tickets per Run', 'Each Run (one spec) starts at most this many tickets at once. A spec\'s own <code class="rounded bg-muted px-1 font-mono">max_tickets</code> can only lower it. Chat Sessions and Subagents are uncapped.', input('type="number" min="1" value="3" data-dirty'), { wide: '9rem' })}
+        <a href="#/settings/agents" class="flex min-h-14 items-center justify-between p-4 text-sm hover:bg-muted"><span class="flex items-center gap-3 text-muted-foreground">${I('git-branch')}<span class="text-foreground">Worker and Reviewer chains</span></span><span class="flex items-center gap-1 text-xs text-muted-foreground">Open Agents${I('chevron-right')}</span></a></div>`,
+    context: () => head('layers', 'Context & names', 'global', 'Keep long Sessions small and readable.', { back: backLink })
+      + group('Compression', '', `<div class="${CARD}">
+          ${row('Compress model', 'Writes the Handoff: one call, no tools. Only authed pig models are listed.', select(['openrouter / muse-spark-1.3-contributor', 'deepseek / deepseek-flash'], '', 'data-dirty'), { wide: '16rem' })}
+          ${row('Auto-compress', 'Runs after a turn when context passes the threshold.', sw(true))}
+          ${row('Threshold', 'Percent of the window, or a token count: whichever hits first.', `<div class="flex items-center gap-2">${input('type="number" value="80" data-dirty', 'w-20')}<span class="text-xs text-muted-foreground">%</span>${input('type="number" value="300000" step="1000" data-dirty', 'w-28')}<span class="text-xs text-muted-foreground">tokens</span></div>`)}
+          ${row('Cooldown', 'Turns to wait after a compress.', input('type="number" value="5" data-dirty', 'w-24'))}
+          <div class="grid gap-3 p-4"><div><div class="text-sm font-medium">Summary focus</div><div class="text-xs text-muted-foreground">Optional instructions added to every Handoff.</div></div><textarea rows="3" placeholder="e.g. keep exact file paths and failing test names" data-dirty class="w-full rounded-xl border border-input bg-transparent p-3 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 md:text-sm"></textarea></div></div>`)
+      + group('Session names', '', `<div class="${CARD}">${row('Name Claude Sessions', 'Titles each new Session after its first reply.', sw(true))}${row('Pig naming model', 'None leaves pig Sessions unnamed.', select(['None', 'deepseek / deepseek-flash'], 'None', 'data-dirty'), { wide: '16rem' })}</div>`),
+    memory: () => head('brain', 'Memory', 'global', 'Who decides which remembered notes become Rules. Your own Rules and Profile live in the Memory area.', { back: backLink })
+      + `<div class="${CARD}"><div class="grid gap-3 p-4"><div><div class="text-sm font-medium">Decider</div><div class="text-xs text-muted-foreground">Heuristic uses no network. Jev asks the decisions model through OpenRouter. Ensemble lets the heuristic propose and Jev confirm.</div></div>
+        <div class="seg inline-flex w-fit max-w-full flex-wrap rounded-full bg-muted p-1 text-sm" data-group>${['Heuristic', 'LLM', 'Jev', 'Ensemble'].map((x) => `<button class="rounded-full px-3 py-1.5 max-md:min-h-11 max-md:px-4" aria-pressed="${x === 'Jev'}">${x}</button>`).join('')}</div></div>
+        ${row('Memory model', 'Used by the LLM decider and the miner.', select(['openrouter / muse-spark-1.3-contributor'], '', 'data-dirty'), { wide: '16rem' })}
+        ${row('Confirm band', 'Below Low a candidate is dropped, above High it is kept, in between Jev decides.', `<div class="flex items-center gap-2"><span class="text-xs text-muted-foreground">Low</span>${input('type="number" step="0.05" value="0.35" data-dirty', 'w-20')}<span class="text-xs text-muted-foreground">High</span>${input('type="number" step="0.05" value="0.7" data-dirty', 'w-20')}</div>`)}
+        <details class="group p-4"><summary class="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium"><span>Custom Jev endpoint <span class="ml-2 text-xs font-normal text-muted-foreground">advanced · off by default</span></span>${I('chevron-down', 'size-4 text-muted-foreground transition group-open:rotate-180')}</summary>
+        <div class="mt-3 grid gap-3">${input('placeholder="Endpoint URL" data-dirty')}<div class="grid gap-3 sm:grid-cols-2">${input('type="password" placeholder="API key (set)" data-dirty')}${input('placeholder="Model · jev-latest" data-dirty')}</div><p class="text-xs text-muted-foreground">Empty uses OpenRouter with the pig OpenRouter key. The key is never shown again after saving.</p></div></details></div>`,
+    access: () => head('shield-check', 'Users & access', 'admin', 'Who can sign in to this Daemon.', { back: backLink })
+      + `<div class="${CARD}">${row('Allow sign-up', 'Off refuses new accounts. Existing accounts keep signing in.', sw(true))}<a href="#/settings/access" class="flex min-h-14 items-center justify-between p-4 text-sm hover:bg-muted"><span class="flex items-center gap-3 text-muted-foreground">${I('users')}<span class="text-foreground">Manage Users</span></span>${I('chevron-right', 'size-4 text-muted-foreground')}</a></div>`,
+    profile: () => head('user', 'Profile', 'you', 'What every agent should know about you. Injected at the start of each Session.', { back: backLink })
+      + `<div class="grid gap-3 rounded-2xl border bg-card p-4"><textarea rows="6" data-dirty class="w-full rounded-xl border border-input bg-transparent p-3 text-base outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 md:text-sm">Prefers terse answers. Works in Go and Svelte. Never commit unless asked.</textarea><p class="text-xs text-muted-foreground">Changes need approval in Memory before they apply.</p></div>`,
+    notifications: () => head('bell', 'Notifications', 'device', '', { back: backLink })
+      + `<div class="${CARD}">${row('Push notifications', 'When a Session needs you or a Run finishes.', sw(false))}${row('Send a test', 'Checks this device receives pushes.', btn('Send test', { s: 'default' }))}</div>`,
+    'sound-voice': () => head('volume-2', 'Sound & voice', 'device', '', { back: backLink })
+      + `<div class="${CARD}">${row('Completion sound', 'Plays when a turn ends in a background tab.', sw(true))}${row('Dictation model', 'Speech-to-text for the mic button.', select(['openai / gpt-transcribe'], '', 'data-dirty'), { wide: '16rem' })}${row('Install as app', 'Adds Emberloop to your home screen.', btn('Install', { s: 'default', icon: 'download' }))}</div>`,
+  };
+
+  // ---------- AGENTS: one ordered chain per role ----------
+  const HARNESS = { claude: { label: 'Claude', dot: 'bg-orange-400' }, pig: { label: 'Pig', dot: 'bg-pink-400' }, grok: { label: 'Grok', dot: 'bg-sky-400' } };
+  const MODELS = {
+    claude: ['sonnet', 'opus', 'haiku'],
+    pig: ['openai-codex / gpt-6.1-sol', 'openai-codex / gpt-6-sol', 'openai-codex / gpt-6-luna', 'opencode-go / muse-spark-1.3', 'deepseek / deepseek-flash', 'google-antigravity / gemini-3'],
+    grok: ['grok-5', 'grok-5-fast'],
+  };
+  const EFFORTS = ['Default', 'Low', 'Medium', 'High', 'Max'];
+  const GROUPS = [
+    { title: 'Session agents', note: 'Chat Sessions and the Subagents they spawn.', icon: 'sparkles', roles: [
+      { id: 'orchestrator', label: 'Orchestrator', hint: 'Plans, delegates and reviews results.', icon: 'compass', chain: [{ h: 'claude', m: 'sonnet', e: 'High' }] },
+      { id: 'worker', label: 'Subagent', hint: 'Edits code for the Orchestrator.', icon: 'hammer', chain: [{ h: 'pig', m: 'openai-codex / gpt-6-sol', e: 'Medium' }, { h: 'pig', m: 'openai-codex / gpt-6-luna', e: 'High' }] },
+      { id: 'scout', label: 'Scout', hint: 'Read-only: explores and reports facts.', icon: 'telescope', chain: [{ h: 'pig', m: 'deepseek / deepseek-flash', e: 'Low' }] },
+    ] },
+    { title: 'Run agents', note: 'Used by every Run. Each new Run snapshots these chains.', icon: 'ticket', roles: [
+      { id: 'run-worker', label: 'Ticket worker', hint: 'Implements one ticket in its own worktree.', icon: 'hammer', chain: [{ h: 'pig', m: 'openai-codex / gpt-6.1-sol', e: 'Medium' }, { h: 'pig', m: 'openai-codex / gpt-6-luna', e: 'High' }, { h: 'claude', m: 'sonnet', e: 'High' }] },
+      { id: 'run-spec', label: 'Spec reviewer', hint: 'Checks the change against the spec.', icon: 'file-check', chain: [{ h: 'claude', m: 'sonnet', e: 'High' }] },
+      { id: 'run-std', label: 'Standards reviewer', hint: 'Checks repo standards and defects.', icon: 'scan-search', chain: [{ h: 'pig', m: 'deepseek / deepseek-flash', e: 'Default' }, { h: 'claude', m: 'haiku', e: 'Medium' }] },
+    ] },
+  ];
+  const findRole = (id) => GROUPS.flatMap((g) => g.roles).find((r) => r.id === id);
+  function entryRow(e, i, n) {
+    const tag = i === 0 ? badge('Primary', 'default') : badge('Fallback ' + i, 'outline');
+    const mv = (act, dis, icon, label) => `<button type="button" data-act="${act}" aria-label="${label}" class="${BTN} ${BV.ghost} ${BS['icon-sm']} text-muted-foreground ${dis ? 'pointer-events-none opacity-30' : ''}">${I(icon)}</button>`;
+    return `<div class="grid items-center gap-2 py-3 first:pt-0 last:pb-0 lg:grid-cols-[5.5rem_9rem_minmax(0,1fr)_auto]" data-entry>
+      <div>${tag}</div>
+      <label class="flex items-center gap-2"><span class="size-2 shrink-0 rounded-full ${HARNESS[e.h].dot}"></span><select data-k="h" class="${INPUT} md:h-10">${Object.keys(HARNESS).map((k) => `<option value="${k}" ${k === e.h ? 'selected' : ''}>${HARNESS[k].label}</option>`).join('')}</select></label>
+      ${select(MODELS[e.h], e.m, 'data-k="m"', 'min-w-0')}
+      <div class="flex justify-end gap-0.5 lg:col-start-4 lg:row-start-1">${mv('up', i === 0, 'arrow-up', 'Move up')}${mv('down', i === n - 1, 'arrow-down', 'Move down')}${mv('del', n === 1, 'trash-2', 'Remove entry')}</div>
+      <div class="flex items-center gap-2 lg:col-span-3 lg:col-start-2"><span class="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">${I('brain-circuit', 'size-3.5')}Effort</span><div class="seg flex min-w-0 flex-1 rounded-full bg-muted p-1 text-xs" data-k="e">${EFFORTS.map((x) => `<button type="button" class="flex-1 rounded-full px-1.5 py-1.5 max-md:min-h-11 ${x === 'Default' && x !== e.e ? '' : ''}" aria-pressed="${x === e.e}">${x}</button>`).join('')}</div></div>
+    </div>`;
+  }
+  function roleCard(r) {
+    const n = r.chain.length;
+    return `<div class="p-4" data-role="${r.id}"><div class="mb-3 flex items-start justify-between gap-3"><div class="flex min-w-0 items-start gap-3">${tile(r.icon)}<div class="min-w-0"><div class="text-sm font-medium">${r.label}</div><div class="text-xs text-muted-foreground">${r.hint}</div></div></div>
+      <button type="button" data-act="add" class="${BTN} ${BV.outline} ${BS.sm} ${n >= 3 ? 'pointer-events-none opacity-40' : ''}">${I('plus')}Fallback</button></div>
+      <div class="divide-y divide-border/60 rounded-xl border bg-background/40 p-3">${r.chain.map((e, i) => entryRow(e, i, n)).join('')}</div></div>`;
+  }
+  const agentsPage = () => head('bot', 'Agents', 'global', 'Pick the harness, model and thinking effort for each role. Add fallbacks: the next entry runs only when the one above is out of quota, credit, auth or session capacity. Changes apply to new agents and new Runs.', { back: backLink })
+    + GROUPS.map((g) => group(`<span class="flex items-center gap-2">${I(g.icon, 'size-4 text-muted-foreground')}${g.title}</span>`, g.note, `<div class="${CARD}" data-agents>${g.roles.map(roleCard).join('')}</div>`)).join('');
+
+  // ---------- hub (phone /settings) ----------
+  const hubPage = () => head('settings', 'Settings', 'global', '')
+    + SETTINGS_NAV.map((g) => group(g.title, '', `<div class="${CARD}">${g.items.map((i) => `<a href="#/settings/${i.id}" class="flex min-h-16 items-center gap-3 p-4 hover:bg-muted">${tile(i.icon)}<span class="min-w-0 flex-1"><span class="block text-sm font-medium">${i.label}</span><span class="block truncate text-xs text-muted-foreground">${i.hint}</span></span>${I('chevron-right', 'size-4 text-muted-foreground')}</a>`).join('')}</div>`)).join('')
+    + group('Accounts', 'Own area in the rail.', `<div class="${CARD}">${ACCOUNT_NAV.map((i) => `<a href="${i.href}" class="flex min-h-16 items-center gap-3 p-4 hover:bg-muted">${tile(i.icon)}<span class="min-w-0 flex-1 text-sm font-medium">${i.label}</span>${I('arrow-up-right', 'size-4 text-muted-foreground')}</a>`).join('')}</div>`);
+
+  // ---------- render ----------
+  const $ = (id) => document.getElementById(id);
+  function render() {
+    const r = route();
+    $('rail').innerHTML = railHTML(r);
+    const side = sidebarHTML(r);
+    $('asideBody').innerHTML = side;
+    $('asideBody').classList.remove('animate-rise'); void $('asideBody').offsetWidth; $('asideBody').classList.add('animate-rise');
+    $('asideFoot').innerHTML = footHTML;
+    $('drawerBody').innerHTML = side;
+    $('drawerTabs').innerHTML = tabsHTML(r);
+    $('aside').style.width = state.collapsed ? '0px' : '';
+    $('aside').classList.toggle('border-transparent', state.collapsed);
+    let html, title;
+    if (r.area === 'quota') { html = quotaPage(); title = 'Quota'; }
+    else if (r.area === 'providers') { html = providersPage(); title = 'Providers'; }
+    else if (r.area === 'settings') {
+      if (!r.page) { html = hubPage(); title = 'Settings'; }
+      else { html = r.page === 'agents' ? agentsPage() : SET[r.page](); title = SETTINGS_ITEMS.find((i) => i.id === r.page).label; }
+    } else { html = head(AREAS.find((a) => a.id === r.area)?.icon || 'circle', AREAS.find((a) => a.id === r.area)?.label || 'Page', 'global', 'Not part of this mock.'); title = 'Emberloop'; }
+    $('page').innerHTML = html;
+    $('mtitle').textContent = title;
+    $('bar').classList.add('opacity-0');
+    lucide.createIcons();
+    bindSearch(r);
+  }
+  function bindSearch(r) {
+    document.querySelectorAll('#q').forEach((q) => q.addEventListener('input', () => {
+      document.querySelectorAll('[data-nav]').forEach((n) => { n.innerHTML = settingsNavHTML(r, q.value); });
+      lucide.createIcons();
+    }));
+  }
+  addEventListener('hashchange', () => { if (!window.__keep) closeDrawer(); render(); });
+  addEventListener('resize', () => { render(); });
+
+  // ---------- drawer ----------
+  const drawer = $('drawer'), scrim = $('scrim');
+  function openDrawer() { drawer.classList.remove('-translate-x-full'); scrim.classList.remove('opacity-0', 'pointer-events-none'); }
+  function closeDrawer() { drawer.classList.add('-translate-x-full'); scrim.classList.add('opacity-0', 'pointer-events-none'); }
+  $('menuBtn').onclick = openDrawer; $('drawerClose').onclick = closeDrawer; scrim.onclick = closeDrawer;
+
+  // ---------- interactions ----------
+  const bar = $('bar');
+  function dirty() { if (route().area !== 'settings') return; bar.classList.remove('opacity-0'); $('barmsg').textContent = 'Unsaved changes'; ['revert', 'save'].forEach((i) => $(i).classList.remove('hidden')); }
+  document.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (t.closest('#toggleSide')) { state.collapsed = !state.collapsed; render(); return; }
+    const s = t.closest('.sw'); if (s) { s.setAttribute('aria-checked', s.getAttribute('aria-checked') !== 'true'); dirty(); return; }
+    const cs = t.closest('[data-cs]'); if (cs) { claudeState = cs.dataset.cs; render(); return; }
+    const g = t.closest('.seg[data-group] button'); if (g) { g.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b === g)); dirty(); return; }
+    const a = t.closest('[data-act][data-id]');
+    if (a) {
+      const all = [...PROV.login, ...PROV.keys]; const p = all.find((x) => x.id === a.dataset.id);
+      if (a.dataset.act === 'open') openPanel[p.id] = true;
+      if (a.dataset.act === 'close') delete openPanel[p.id];
+      if (a.dataset.act === 'save') { p.connected = true; if (p.how === 'key') p.line = 'sk-…' + Math.random().toString(16).slice(2, 6); delete openPanel[p.id]; }
+      if (a.dataset.act === 'remove') { p.connected = false; p.line = 'Removed just now'; }
+      render(); return;
+    }
+    const ag = t.closest('[data-agents]');
+    if (ag) {
+      const b = t.closest('button'); if (!b) return;
+      const card = b.closest('[data-role]'); const r = findRole(card.dataset.role);
+      const row = b.closest('[data-entry]'); const idx = row ? [...card.querySelectorAll('[data-entry]')].indexOf(row) : -1;
+      const act = b.dataset.act;
+      if (act === 'add' && r.chain.length < 3) r.chain.push({ ...r.chain[r.chain.length - 1] });
+      else if (act === 'del' && r.chain.length > 1) r.chain.splice(idx, 1);
+      else if (act === 'up' && idx > 0) [r.chain[idx - 1], r.chain[idx]] = [r.chain[idx], r.chain[idx - 1]];
+      else if (act === 'down' && idx < r.chain.length - 1) [r.chain[idx + 1], r.chain[idx]] = [r.chain[idx], r.chain[idx + 1]];
+      else if (b.closest('.seg')) r.chain[idx].e = b.textContent.trim();
+      else return;
+      const y = $('scroller').scrollTop; render(); $('scroller').scrollTop = y; dirty();
+    }
+  });
+  document.addEventListener('change', (ev) => {
+    const el = ev.target;
+    if (el.closest('[data-agents]') && el.dataset.k) {
+      const card = el.closest('[data-role]'); const r = findRole(card.dataset.role);
+      const idx = [...card.querySelectorAll('[data-entry]')].indexOf(el.closest('[data-entry]'));
+      if (el.dataset.k === 'h') { r.chain[idx].h = el.value; r.chain[idx].m = MODELS[el.value][0]; }
+      if (el.dataset.k === 'm') r.chain[idx].m = el.value;
+      const y = $('scroller').scrollTop; render(); $('scroller').scrollTop = y;
+    }
+    if (el.hasAttribute('data-dirty') || el.closest('[data-agents]')) dirty();
+  });
+  document.addEventListener('input', (ev) => { if (ev.target.hasAttribute('data-dirty')) dirty(); });
+  $('save').onclick = () => { $('barmsg').innerHTML = '<span class="text-green-300">Saved. Applies to new agents and Runs.</span>'; ['revert', 'save'].forEach((i) => $(i).classList.add('hidden')); setTimeout(() => bar.classList.add('opacity-0'), 1800); };
+  $('revert').onclick = () => location.reload();
+  document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); state.collapsed = !state.collapsed; render(); } });
+
+  // ---------- mock-only tools ----------
+  const embed = new URLSearchParams(location.search).has('embed');
+  if (!embed) {
+  $('adminBtn').onclick = () => { admin = !admin; $('adminLbl').textContent = admin ? 'Admin' : 'User'; render(); };
+  $('phoneBtn').onclick = () => { $('phoneFrame').src = location.pathname + '?embed' + location.hash; $('phoneOverlay').classList.remove('hidden'); $('phoneOverlay').classList.add('flex'); };
+  $('phoneClose').onclick = () => { $('phoneOverlay').classList.add('hidden'); $('phoneOverlay').classList.remove('flex'); };
+  } else { $('mockTools').remove(); }
+
+  render();
+  if (new URLSearchParams(location.search).has('drawer')) { window.__keep = true; drawer.style.transition = scrim.style.transition = 'none'; openDrawer(); }
+</script>
+</body>
+</html>
