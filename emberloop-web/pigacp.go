@@ -84,6 +84,11 @@ func NewPigACPBackend(stateDir, daemonBin, daemonAddr string) (*PigACPBackend, e
 	}
 	b := &PigACPBackend{ClaudeBackend: cb, stateDir: stateDir, runner: runner, pigBin: pigBin, shimBin: daemonBin, sdk: NewPigBackend()}
 	cb.newConnFor = b.connFor
+	// A dead adapter respawns through the outer ResumeSession, which also
+	// restages the steer socket and re-applies the effort (see acpretry.go).
+	cb.resumer = func(meta SessionMeta, emit func(kind, text, status string)) error {
+		return b.ResumeSession(meta, emit)
+	}
 	return b, nil
 }
 
@@ -182,7 +187,7 @@ func (b *PigACPBackend) StartHandle(meta SessionMeta, emit func(kind, text, stat
 		return "", nil, err
 	}
 	b.waitMCPReady(meta.ID)
-	fresh := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{})}
+	fresh := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{}), meta: meta, model: meta.Model}
 	fresh.signalReady()
 	if ts, ok := conn.(acpThoughtLevelSetter); ok && meta.Effort != "" {
 		if err := ts.SetThoughtLevel(acpID, meta.Effort); err != nil {

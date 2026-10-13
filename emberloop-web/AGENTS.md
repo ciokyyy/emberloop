@@ -51,9 +51,21 @@ and subagents are uncapped.
   Shutdown marks open turns `restart: turn interrupted` and maps their close
   errors to idle, never failed.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
-  `handoff_test.go`, `compress_retry_test.go` and `grok_handoff_test.go`.
+  `handoff_test.go`, `compress_retry_test.go`, `grok_handoff_test.go` and
+  `acpretry_test.go`.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
   mapped in `web/README.md`.
+
+## Adapter retry
+
+- An `adapter closed` prompt failure on a Session the Daemon closed
+  deliberately (end, pause settle, abandon, restart Shutdown) drops quietly:
+  no error Event, no failed status, no retry (`acpretry.go`).
+- An unexpected adapter death respawns through the Session's ResumeSession
+  (pig-acp and grok through their outer one) and resends the same prompt,
+  at most 3 sends with 1s/3s backoff (`acpRespawnBackoff`); a reconnecting
+  status Event marks each retry, and exhaustion fails once naming the
+  attempts. `claudeState` keeps the Session record for the respawn.
 
 ## Verification
 

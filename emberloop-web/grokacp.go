@@ -326,6 +326,11 @@ func NewGrokACPBackend(stateDir, daemonAddr string) (*GrokACPBackend, error) {
 	cb.newConnFor = b.connFor
 	cb.metaHook = b.meta
 	cb.promptWrap = grokPromptWrap
+	// A dead adapter respawns through the outer ResumeSession, which also
+	// re-applies the effort (see acpretry.go).
+	cb.resumer = func(meta SessionMeta, emit func(kind, text, status string)) error {
+		return b.ResumeSession(meta, emit)
+	}
 	return b, nil
 }
 

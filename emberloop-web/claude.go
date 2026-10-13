@@ -237,6 +237,12 @@ type ClaudeBackend struct {
 	// OnPromptImages runs on the embedded *ClaudeBackend, where an outer
 	// override method would never dispatch.
 	windowFor func(model string) int
+	// resumer, when set, respawns a dead adapter around the saved ACP
+	// session id (pig-acp and grok point it at their outer ResumeSession,
+	// which also restages the steer socket and the effort). Unset respawns
+	// through ResumeSession. A plain struct field for the same embedding
+	// reason as windowFor.
+	resumer func(meta SessionMeta, emit func(kind, text, status string)) error
 
 	mu       sync.Mutex
 	sessions map[string]*claudeState
@@ -263,6 +269,9 @@ type claudeState struct {
 	acpID string
 	conn  acpConn
 	ready chan struct{}
+	// meta is the Session record the handle started from: a dead adapter
+	// respawns through the resume path from it (role, WorkDir, owner dirs).
+	meta SessionMeta
 	// model sizes fallback usage readings when the adapter sends none.
 	model string
 	// lastUsed is the highest used count an adapter usage_update reported:
@@ -409,7 +418,7 @@ func (b *ClaudeBackend) StartSession(meta SessionMeta) error {
 		return fmt.Errorf("start claude adapter: %w", err)
 	}
 	b.applyTimeouts(conn)
-	st := &claudeState{conn: conn, ready: make(chan struct{}), model: meta.Model}
+	st := &claudeState{conn: conn, ready: make(chan struct{}), meta: meta, model: meta.Model}
 	b.mu.Lock()
 	b.sessions[meta.ID] = st
 	b.mu.Unlock()
@@ -453,7 +462,7 @@ func (b *ClaudeBackend) loadSessionEffort(daemonID, acpID, model, effort, cwd, r
 		return fmt.Errorf("restart claude adapter: %w", err)
 	}
 	b.applyTimeouts(conn)
-	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{}), model: model}
+	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{}), meta: SessionMeta{ID: daemonID, Model: model, Effort: effort, WorkDir: cwd, Dirs: dirs}, model: model}
 	b.mu.Lock()
 	b.sessions[daemonID] = st
 	b.mu.Unlock()
@@ -631,8 +640,11 @@ func (b *ClaudeBackend) loadSessionWithMeta(meta SessionMeta, acpID string) erro
 		return fmt.Errorf("restart claude adapter: %w", err)
 	}
 	b.applyTimeouts(conn)
-	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{}), model: meta.Model}
+	st := &claudeState{acpID: acpID, conn: conn, ready: make(chan struct{}), meta: meta, model: meta.Model}
 	b.mu.Lock()
+	if old, ok := b.sessions[meta.ID]; ok && old.lastUsed > st.lastUsed {
+		st.lastUsed = old.lastUsed
+	}
 	b.sessions[meta.ID] = st
 	b.mu.Unlock()
 	if err := conn.Initialize(); err != nil {
@@ -699,7 +711,7 @@ func (b *ClaudeBackend) newHandoffConn(meta SessionMeta) (acpConn, string, error
 func (b *ClaudeBackend) swapHandoffHandle(meta SessionMeta, conn acpConn, acpID string) (string, func()) {
 	b.mu.Lock()
 	old, ok := b.sessions[meta.ID]
-	st := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{}), model: meta.Model}
+	st := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{}), meta: meta, model: meta.Model}
 	if ok && old.lastUsed > 0 {
 		st.lastUsed = old.lastUsed
 	}
@@ -852,24 +864,61 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 			tap("permission", toolName+" auto-approved as "+optionID, "auto-approved")
 		},
 	}
-	promptOnce := func() error {
+	send := func(c acpConn, id string) error {
 		var perr error
 		if len(images) == 0 {
-			_, perr = conn.Prompt(acpID, text, cbs)
-		} else if ip, ok := conn.(acpImagePrompter); ok {
-			_, perr = ip.PromptImages(acpID, text, images, cbs)
+			_, perr = c.Prompt(id, text, cbs)
+		} else if ip, ok := c.(acpImagePrompter); ok {
+			_, perr = ip.PromptImages(id, text, images, cbs)
 		} else {
 			perr = errors.New("claude adapter cannot take images")
 		}
 		return perr
 	}
-	perr := promptOnce()
-	if isClaudeLoginRaceErr(perr) {
-		// The refresh lock is documented as transient: one retry after a
-		// pause. With a shared token this error should not occur at all;
-		// the retry is harmless there and the advice still applies.
-		time.Sleep(claudeLoginRetry)
-		perr = promptOnce()
+	// sendOnce is one send with the login-race retry: the refresh lock is
+	// documented as transient, so one retry after a pause. With a shared
+	// token this error should not occur at all; the retry is harmless
+	// there and the advice still applies.
+	sendOnce := func(c acpConn, id string) error {
+		perr := send(c, id)
+		if isClaudeLoginRaceErr(perr) {
+			time.Sleep(claudeLoginRetry)
+			perr = send(c, id)
+		}
+		return perr
+	}
+	perr := sendOnce(conn, acpID)
+	// A dead adapter resends the same prompt on a respawned handle (see
+	// acpretry.go): a deliberate close drops the orphaned result quietly,
+	// an unexpected death reconnects and retries.
+	attempts := 1
+	for isAdapterClosedErr(perr) && attempts < maxACPPromptAttempts {
+		if b.promptHandleClosed(sessionID, conn) {
+			return
+		}
+		attempts++
+		appendEvent("status", fmt.Sprintf("adapter lost, reconnecting (attempt %d of %d)", attempts, maxACPPromptAttempts), "working")
+		if wait := acpRespawnBackoffFor(attempts - 2); wait > 0 {
+			time.Sleep(wait)
+		}
+		if rerr := b.respawnAdapter(sessionID); rerr != nil {
+			if errors.Is(rerr, errAdapterSessionClosed) {
+				return
+			}
+			perr = fmt.Errorf("adapter closed during prompt; reconnect failed on attempt %d: %v", attempts, rerr)
+			break
+		}
+		b.mu.Lock()
+		st, ok = b.sessions[sessionID]
+		b.mu.Unlock()
+		if !ok {
+			return
+		}
+		conn, acpID = st.conn, st.acpID
+		perr = sendOnce(conn, acpID)
+	}
+	if isAdapterClosedErr(perr) && attempts >= maxACPPromptAttempts {
+		perr = fmt.Errorf("adapter closed during prompt; gave up after %d attempts: %v", attempts, perr)
 	}
 	tracker.closeOpen(tap)
 	// Without an adapter reading, estimate one from the known window so the

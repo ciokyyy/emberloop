@@ -591,8 +591,10 @@ func TestClaudeLoginRaceRetriesOnceThenAdvises(t *testing.T) {
 		t.Fatalf("statuses = %v, want a terminal failed", statuses)
 	}
 
-	// Any other prompt error neither retries nor advises.
-	stub3 := &stubConn{promptErr: fmt.Errorf("acp: session/prompt: adapter closed")}
+	// A dead adapter is not a plain failure: it respawns and retries the
+	// same prompt (see acpretry_test.go). A non-race, non-close prompt
+	// error still neither retries nor advises.
+	stub3 := &stubConn{promptErr: fmt.Errorf("acp: session/prompt: model overloaded")}
 	be3 := newStubClaudeBackend(func() (acpConn, error) { return stub3, nil })
 	meta3 := SessionMeta{ID: "d3", Harness: "claude", Model: "haiku", WorkDir: tempDir(t)}
 	if err := be3.StartSession(meta3); err != nil {
