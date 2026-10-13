@@ -61,9 +61,9 @@ func toolsOf(t *testing.T, reply map[string]any) []map[string]any {
 }
 
 // The harness batches read-only calls only when the server says they are safe
-// to batch, and it must never be told a call that writes or spawns is.
+// to batch, and it must never be told a call that writes is.
 func TestToolsListMarksExactlyReadFindGrepGitCheckReadOnly(t *testing.T) {
-	replies := serve(t, el.AllTools(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	replies := serve(t, tools.All(), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	if len(replies) != 1 {
 		t.Fatalf("want one reply, got %d", len(replies))
 	}
@@ -126,35 +126,6 @@ func TestTwoSlowCallsFinishInAboutOneCallsTime(t *testing.T) {
 	}
 	if elapsed > 2*delay {
 		t.Errorf("two %s calls took %s: they ran in series", delay, elapsed)
-	}
-}
-
-// tools/list offers one spawn tool, described with only the caller's spawnable
-// types, and the scout tool is gone.
-func TestToolsListHasSpawnAndNoScout(t *testing.T) {
-	isolatedSettings(t)
-	served, err := el.RoleTools("implement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	replies := serve(t, served, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	var spawnDesc string
-	found := false
-	for _, tl := range toolsOf(t, replies[0]) {
-		name, _ := tl["name"].(string)
-		if name == "scout" {
-			t.Fatal("tools/list still serves the removed scout tool")
-		}
-		if name == "spawn" {
-			found = true
-			spawnDesc, _ = tl["description"].(string)
-		}
-	}
-	if !found {
-		t.Fatal("tools/list does not serve spawn")
-	}
-	if !strings.Contains(spawnDesc, "scout") {
-		t.Errorf("implement may spawn scout; the description must list it:\n%s", spawnDesc)
 	}
 }
 
@@ -315,18 +286,6 @@ func TestCancelledNotificationEndsTheNamedCall(t *testing.T) {
 	}
 }
 
-// isolatedSettings points both settings layers at missing temp files, so a
-// test asserting an exact tool list never reads the developer's own tools
-// configuration.
-func isolatedSettings(t *testing.T) {
-	t.Helper()
-	t.Setenv("EL_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("EL_DECISION_MODEL", "")
-	t.Setenv("EL_FIND_THRESHOLD", "")
-	t.Setenv("EL_MAX_WORKERS", "")
-}
-
 // listNames digs the tool names out of a tools/list reply.
 func listNames(t *testing.T, reply map[string]any) []string {
 	t.Helper()
@@ -351,7 +310,11 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 	t.Setenv("EL_DECISION_MODEL", "")
 	t.Setenv("EL_FIND_THRESHOLD", "")
 	t.Setenv("EL_MAX_WORKERS", "")
-	served, err := el.RoleTools("work")
+	// A Daemon binding would resolve Daemon tools into the web role, so the
+	// exact list never depends on the shell the test runs in.
+	t.Setenv("EL_WEB_PARENT", "")
+	t.Setenv("EL_WEB_DAEMON_URL", "")
+	served, err := el.RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +337,7 @@ func TestToolsListServesTheResolvedMainList(t *testing.T) {
 	if !found {
 		t.Fatalf("tools/list does not serve the renamed read: %v", names)
 	}
-	main, execute, err := el.ResolvedTools("work")
+	main, execute, err := el.ResolvedTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}

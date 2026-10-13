@@ -18,8 +18,17 @@ type Model struct {
 	Efforts []string `json:"efforts,omitempty"`
 }
 
-// pigEffortLevels are the thinking levels pig takes. The spec fixes them, so a
-// pig model that thinks gets all of them.
+// pigEffortLevels are the thinking levels pig takes. A pig model that thinks
+// gets all of them.
+
+// pigBin is the pig CLI, overridable for tests.
+func pigBin() string {
+	if p := os.Getenv("EL_PIG"); p != "" {
+		return p
+	}
+	return "pig"
+}
+
 var pigEffortLevels = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 // Models lists a harness's models through the Exec seam, so a test can feed it

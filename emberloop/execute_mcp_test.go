@@ -44,7 +44,7 @@ func readMethodLog(t *testing.T, log string) string {
 func TestExecuteMCPToolCallEndToEnd(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
-	ex, _, _, _ := resolveExecuteWithFake(t, "work",
+	ex, _, _, _ := resolveExecuteWithFake(t, "web",
 		mcpfake.Config{Tools: []mcpfake.ToolDef{{Name: "search_repos", Description: "search repos"}}},
 		map[string]any{"summary": "GitHub search"})
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(`{"code":"import tools\n`+
@@ -62,7 +62,7 @@ func TestExecuteMCPToolCallEndToEnd(t *testing.T) {
 func TestExecuteMCPToolErrorNamesServer(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
-	ex, _, _, _ := resolveExecuteWithFake(t, "work",
+	ex, _, _, _ := resolveExecuteWithFake(t, "web",
 		mcpfake.Config{
 			Tools: []mcpfake.ToolDef{{Name: "search_repos"}},
 			Calls: map[string]mcpfake.Result{"search_repos": {Text: "quota spent", IsError: true}},
@@ -84,7 +84,7 @@ func TestExecuteMCPToolErrorNamesServer(t *testing.T) {
 func TestExecuteMCPDescriptionServerLines(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
-	ex, _, execute, _ := resolveExecuteWithFake(t, "work",
+	ex, _, execute, _ := resolveExecuteWithFake(t, "web",
 		mcpfake.Config{Tools: []mcpfake.ToolDef{
 			{Name: "search_repos", Description: "search repos"},
 			{Name: "get_repo", Description: "fetch a repo"},
@@ -109,7 +109,7 @@ func TestExecuteMCPDescriptionServerLines(t *testing.T) {
 func TestExecuteMCPSearchHelpAreLazy(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
-	ex, _, _, log := resolveExecuteWithFake(t, "work",
+	ex, _, _, log := resolveExecuteWithFake(t, "web",
 		mcpfake.Config{Tools: []mcpfake.ToolDef{{Name: "search_repos", Description: "search repos"}}},
 		nil)
 	before := readMethodLog(t, log)
@@ -161,7 +161,7 @@ func TestExecuteMCPSettingsTakeEffect(t *testing.T) {
 		}
 		return executeToolByName(t, main, "execute"), toolNames(main), toolNames(execute)
 	}
-	ex, _, execute := newFake(t, "work", map[string]any{
+	ex, _, execute := newFake(t, "web", map[string]any{
 		"include": []string{"search_*", "get_*"},
 		"exclude": []string{"get_repo"},
 		"rename":  map[string]string{"search_repos": "gh_search"},
@@ -179,17 +179,17 @@ func TestExecuteMCPSettingsTakeEffect(t *testing.T) {
 		t.Fatalf("the stub search must reflect the shaped set: %q", out)
 	}
 
-	reviewEx, main, execute := newFake(t, "review", map[string]any{
-		"roles": map[string]any{"review": map[string]string{"placement": "main"}},
+	reviewEx, main, execute := newFake(t, "scout", map[string]any{
+		"roles": map[string]any{"scout": map[string]string{"placement": "main"}},
 	})
 	if !containsName(main, "search_repos") || containsName(execute, "search_repos") {
-		t.Fatalf("per-role placement must promote to main for review: main=%v execute=%v", main, execute)
+		t.Fatalf("per-role placement must promote to main for scout: main=%v execute=%v", main, execute)
 	}
 	if strings.Contains(reviewEx.Description(), `"gh"`) {
 		t.Fatalf("main-placed MCP tools are in the tool list, not the execute description:\n%s", reviewEx.Description())
 	}
-	_, main, execute = newFake(t, "work", map[string]any{
-		"roles": map[string]any{"review": map[string]string{"placement": "main"}},
+	_, main, execute = newFake(t, "web", map[string]any{
+		"roles": map[string]any{"scout": map[string]string{"placement": "main"}},
 	})
 	if containsName(main, "search_repos") || !containsName(execute, "search_repos") {
 		t.Fatalf("other roles keep the execute placement: main=%v execute=%v", main, execute)
@@ -210,17 +210,17 @@ func TestExecuteMCPSettingsTakeEffect(t *testing.T) {
 func TestExecuteMCPListAndStubAgree(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
-	ex, main, execute, _ := resolveExecuteWithFake(t, "work",
+	ex, main, execute, _ := resolveExecuteWithFake(t, "web",
 		mcpfake.Config{Tools: []mcpfake.ToolDef{
 			{Name: "search_repos", Description: "search repos"},
 			{Name: "get_repo", Description: "fetch a repo"},
 		}},
 		map[string]any{
 			"rename": map[string]string{"search_repos": "gh_search"},
-			"roles":  map[string]any{"review": map[string]string{"placement": "main"}},
+			"roles":  map[string]any{"scout": map[string]string{"placement": "main"}},
 		})
 	if containsName(main, "gh_search") || !containsName(execute, "gh_search") {
-		t.Fatalf("work keeps gh_search behind execute: main=%v execute=%v", main, execute)
+		t.Fatalf("web keeps gh_search behind execute: main=%v execute=%v", main, execute)
 	}
 	out, err := ex.Execute(context.Background(), t.TempDir(), json.RawMessage(`{"code":"import tools\nprint(tools.search(\"\"))"}`))
 	if err != nil {
@@ -238,7 +238,7 @@ func TestExecuteMCPListAndStubAgree(t *testing.T) {
 
 // Seam: MCP tools in a sandboxed read-only role work through the socket: the
 // server runs outside the sandbox.
-func TestExecuteMCPSandboxedReviewCallsThroughSocket(t *testing.T) {
+func TestExecuteMCPSandboxedScoutCallsThroughSocket(t *testing.T) {
 	hermeticSettings(t)
 	requireExecutePython(t)
 	t.Setenv("EL_STATE_DIR", t.TempDir())
@@ -246,11 +246,11 @@ func TestExecuteMCPSandboxedReviewCallsThroughSocket(t *testing.T) {
 	if err := tools.EnsureHealthy(root); err != nil {
 		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
 	}
-	ex, _, execute, _ := resolveExecuteWithFake(t, "review",
+	ex, _, execute, _ := resolveExecuteWithFake(t, "scout",
 		mcpfake.Config{Tools: []mcpfake.ToolDef{{Name: "search_repos", Description: "search repos"}}},
 		nil)
 	if !containsName(execute, "search_repos") {
-		t.Fatalf("review must offer the MCP tool behind execute: %v", execute)
+		t.Fatalf("scout must offer the MCP tool behind execute: %v", execute)
 	}
 	out, err := ex.Execute(context.Background(), root, json.RawMessage(`{"code":"import tools\n`+
 		`print(tools.search_repos(query=\"el\"))\n"}`))
@@ -258,6 +258,6 @@ func TestExecuteMCPSandboxedReviewCallsThroughSocket(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	if !strings.Contains(out, "search_repos(") {
-		t.Fatalf("a sandboxed reviewer script must reach the MCP server: %q", out)
+		t.Fatalf("a sandboxed scout script must reach the MCP server: %q", out)
 	}
 }

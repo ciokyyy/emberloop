@@ -35,7 +35,6 @@ func TestDriverRunPublishesRowsForEveryState(t *testing.T) {
 			reviewerSpec:      {Verdict: verdictPass, At: "tip-" + id},
 		}
 	}
-	world.WorkerPane = func(id string) string { return "pane-" + id }
 	world.Finish = func(id string) (DriverFinish, error) {
 		return DriverFinish{Merged: true, SHA: "sha-" + id}, nil
 	}
@@ -67,8 +66,8 @@ func TestDriverRunPublishesRowsForEveryState(t *testing.T) {
 	if inReview.State != DriverRowInReview {
 		t.Errorf("02-second state = %q, want in-review", inReview.State)
 	}
-	if inReview.Worker == "" || inReview.Pane != "pane-02-second" {
-		t.Errorf("02-second worker/pane = %q/%q, want the worker and its pane", inReview.Worker, inReview.Pane)
+	if inReview.Worker == "" {
+		t.Errorf("02-second worker = %q, want the worker", inReview.Worker)
 	}
 	if inReview.Verdicts[reviewerSpec].Verdict != verdictChanges {
 		t.Errorf("02-second spec verdict = %+v, want changes at the tip", inReview.Verdicts[reviewerSpec])
@@ -113,8 +112,8 @@ func TestDriverRunMarksRunningAndQueued(t *testing.T) {
 	if byID["02-blocked"].State != DriverRowQueued {
 		t.Errorf("02-blocked state = %q, want queued", byID["02-blocked"].State)
 	}
-	if byID["02-blocked"].Worker != "" || byID["02-blocked"].Pane != "" {
-		t.Errorf("queued ticket carries worker %q pane %q, want none", byID["02-blocked"].Worker, byID["02-blocked"].Pane)
+	if byID["02-blocked"].Worker != "" {
+		t.Errorf("queued ticket carries worker %q, want none", byID["02-blocked"].Worker)
 	}
 }
 
@@ -346,33 +345,6 @@ func TestParkDriverTicketFileAddsAStatusLine(t *testing.T) {
 	}
 }
 
-// The live world names the worker's herdr pane from its agent state, so the
-// row jumps to the worker; unknown workers leave the pane empty.
-func TestDriverLiveWorldNamesTheWorkerPane(t *testing.T) {
-	oldState := statePath
-	statePath = filepath.Join(t.TempDir(), "workers.json")
-	t.Cleanup(func() { statePath = oldState })
-	dir := t.TempDir()
-	ticket := filepath.Join(dir, "01-first.md")
-	files := map[string]string{ticket: ticketDoc("None")}
-	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-pane"}
-	if err := WriteAgentState(AgentState{ID: WorkerID(ticket), Type: "worker", Pane: "pane-1"}); err != nil {
-		t.Fatal(err)
-	}
-	world := liveDriverWorld(spec, t.TempDir(), files)
-	if world.WorkerPane == nil {
-		t.Fatal("live world wires no WorkerPane hook")
-	}
-	if got := world.WorkerPane("01-first"); got != "pane-1" {
-		t.Errorf("WorkerPane = %q, want the worker's pane", got)
-	}
-	if got := world.WorkerPane("09-missing"); got != "" {
-		t.Errorf("WorkerPane for an unknown ticket = %q, want empty", got)
-	}
-}
-
-// The park command refuses a merged ticket: rewriting Status done to parked
-// would corrupt the merge record. The file stays untouched.
 func TestParkDriverTicketFileRefusesMerged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "01-first.md")
 	doc := "# 01: Test ticket\n\nStatus: done\n\n**Blocked by:** None\n"

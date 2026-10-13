@@ -2,8 +2,6 @@ package el
 
 import (
 	"strings"
-
-	"example.com/emberloop/tools"
 )
 
 // DefaultContextWindow is the window for a model neither the settings
@@ -64,9 +62,4 @@ func ModelWindow(model string, overrides map[string]int64) int64 {
 		return modelWindowFamilies[best].window
 	}
 	return DefaultContextWindow
-}
-
-// SnapshotWindow is the window for a snapshot's model under settings.
-func SnapshotWindow(snap ContextSnapshot, s tools.Settings) int64 {
-	return ModelWindow(snap.Model, s.ContextWindows())
 }

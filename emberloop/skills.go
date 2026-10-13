@@ -9,6 +9,31 @@ import (
 	"strings"
 )
 
+// skillsRoot is where el keeps the skill libraries it installs. The env var
+// names the root itself, so EL_SKILLS_DIR overrides the whole tree, not one
+// library inside it.
+func skillsRoot() string {
+	if dir := os.Getenv("EL_SKILLS_DIR"); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.Getenv("HOME"), ".emberloop", "skills")
+}
+
+// skillsNamespace is the library's directory under the skills root, and the
+// namespace its el:// addresses carry. The two must stay one string: an
+// address that names a namespace the read tool cannot find reads as nothing.
+const skillsNamespace = "matt-pocock"
+
+// skillsDir is the library el installs: the mattpocock skills, one
+// directory per skill, under the root.
+func skillsDir() string {
+	return filepath.Join(skillsRoot(), skillsNamespace)
+}
+
+// SkillLibraryDir is where el installs and reads the skill library, for
+// callers outside the package.
+func SkillLibraryDir() string { return skillsDir() }
+
 // skillsRepo is the upstream library el installs.
 const skillsRepo = "mattpocock/skills"
 

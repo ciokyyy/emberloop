@@ -1,16 +1,14 @@
 package el
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// Seam (ticket 13): install gate — with a live worker in the store and the
-// fake multiplexer, install exits non-zero, names the agent and replaces
-// nothing (the builder is never invoked).
+// Install and update tests: the fake builder writes markers where -o points,
+// so the tests see what would be installed without a toolchain.
 
 func installTestState(t *testing.T) string {
 	t.Helper()
@@ -53,8 +51,8 @@ func readInstallFile(t *testing.T, dir, name string) string {
 	return string(raw)
 }
 
-// installPaneExec answers `herdr pane list` with panes alive, and fails the
-// test on any `go build` — a refused install must never build.
+// installPaneExec fails the test on any `go build` — a refused install must
+// never build.
 func installPaneExec(t *testing.T, panes ...string) Exec {
 	t.Helper()
 	return func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -78,10 +76,10 @@ func installPaneExec(t *testing.T, panes ...string) Exec {
 	}
 }
 
-// installBuildExec answers `herdr pane list` with panes alive and plays `go
-// build` by writing a marker where -o points, so the test sees what would be
-// installed without a toolchain. Builds run in the source checkout, or in
-// the web sibling module under it for the update's el-web target.
+// installBuildExec plays `go build` by writing a marker where -o points, so
+// the test sees what would be installed without a toolchain. Builds run in
+// the source checkout, or in the web sibling module under it for the
+// update's el-web target.
 func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 	t.Helper()
 	return func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -111,8 +109,7 @@ func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 	}
 }
 
-// Seam (ticket 13): install — with no live agent the build runs and both
-// binaries are replaced.
+// Install builds and replaces both binaries.
 func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	dir := installTestState(t)
 	src := os.Getenv("EL_SOURCE_DIR")
@@ -121,7 +118,7 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 
 	res, err := InstallBinaries(installBuildExec(t, src), InstallOptions{})
 	if err != nil {
-		t.Fatalf("install with no live agent must succeed: %v", err)
+		t.Fatalf("install must succeed: %v", err)
 	}
 	if res.Dir != dir {
 		t.Errorf("install dir = %q, want %q", res.Dir, dir)
@@ -132,17 +129,6 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/emberloop-mcp" {
 		t.Errorf("el-mcp = %q, want the new build", got)
 	}
-}
-
-var errInstallHerdrDown = errors.New("herdr down")
-
-// Seam (ticket 13): install CLI — `el install` refuses live agents by
-// name, installs cleanly, and --force installs with the stale-session
-// warning; unknown flags fail with usage.
-func installCLIExec(t *testing.T, panes ...string) Exec {
-	t.Helper()
-	src := os.Getenv("EL_SOURCE_DIR")
-	return installBuildExec(t, src, panes...)
 }
 
 func TestRunInstallRefusesUnknownFlagsWithUsage(t *testing.T) {

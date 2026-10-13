@@ -63,7 +63,7 @@ func TestSessionSnapshotSharesBlobsAcrossSessions(t *testing.T) {
 	if prompt == "" {
 		t.Fatal("SystemPrompt must expose the prompt every session carries")
 	}
-	toolsJSON, err := ToolDefsJSON(mustRoleTools(t, "review"))
+	toolsJSON, err := ToolDefsJSON(mustRoleTools(t, "web"))
 	if err != nil {
 		t.Fatalf("ToolDefsJSON: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestSessionSnapshotSharesBlobsAcrossSessions(t *testing.T) {
 		}
 	}
 	// A changed tool set adds exactly one blob; the prompt blob is still shared.
-	changed, err := ToolDefsJSON(mustRoleTools(t, "work"))
+	changed, err := ToolDefsJSON(mustRoleTools(t, "scout"))
 	if err != nil {
 		t.Fatalf("ToolDefsJSON: %v", err)
 	}
@@ -231,61 +231,9 @@ func assertFileLines(t *testing.T, path string, want int) {
 	}
 }
 
-// Seam 4 (ticket 05): session wiring — every launched session tells its
-// el-mcp who it is (session id, harness, model, effort), so the session's
-// own el process can snapshot the blobs and tail the transcript.
-func TestEverySessionTellsItsElProcessWhoItIs(t *testing.T) {
-	isolateState(t)
-	for _, harness := range HarnessNames() {
-		cmd, err := BuildCommand(harness, Session{
-			Role: "work", ID: "sess-1", Label: "01-x", Model: "m1", Effort: "high",
-			Dir: "/sessions",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		env := map[string]string{}
-		for _, e := range cmd.Env {
-			k, v, _ := strings.Cut(e, "=")
-			env[k] = v
-		}
-		for k, want := range map[string]string{
-			"EL_SESSION_ID": "sess-1",
-			"EL_HARNESS":    harness,
-			"EL_MODEL":      "m1",
-			"EL_EFFORT":     "high",
-		} {
-			if env[k] != want {
-				t.Errorf("%s: %s = %q, want %q in %q", harness, k, env[k], want, cmd.Env)
-			}
-		}
-		// Only pig takes a session dir: its transcript lives under it, so
-		// only pig sessions name it. Claude takes none.
-		if dir, ok := env["EL_SESSION_DIR"]; ok != (harness == "pig") || (ok && dir != "/sessions") {
-			t.Errorf("%s: EL_SESSION_DIR = %q, present = %v", harness, dir, ok)
-		}
-		// The MCP config claude serves its el-mcp must carry the same
-		// identity: the child reads env, not the launch line.
-		if harness == "claude" {
-			cfg, err := readLaunchConfig(cmd)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for k, want := range map[string]string{
-				"EL_SESSION_ID": "sess-1",
-				"EL_HARNESS":    "claude",
-			} {
-				if cfg[k] != want {
-					t.Errorf("claude MCP env %s = %q, want %q", k, cfg[k], want)
-				}
-			}
-		}
-	}
-}
-
-// Seam 5 (ticket 05): the session's own el process snapshots the blobs at
-// start and tails its harness transcript — exercised here through the same
-// env-driven helpers el-mcp runs, against a fake pig session dir.
+// The session's own el process snapshots the blobs at start and tails its
+// harness transcript — exercised here through the same env-driven helpers
+// el-mcp runs, against a fake pig session dir.
 func TestArchiverSnapshotsAndTailsItsOwnTranscript(t *testing.T) {
 	isolateState(t)
 	sessDir := t.TempDir()
@@ -293,11 +241,11 @@ func TestArchiverSnapshotsAndTailsItsOwnTranscript(t *testing.T) {
 	t.Setenv("EL_SESSION_ID", "sess-archive")
 	t.Setenv("EL_SESSION_DIR", sessDir)
 	t.Setenv("EL_HARNESS", "pig")
-	t.Setenv("EL_ROLE", "review")
+	t.Setenv("EL_ROLE", "web")
 	t.Setenv("EL_MODEL", "m1")
 	t.Setenv("EL_EFFORT", "high")
 	t.Setenv("EL_SPEC", "/repo/.scratch/archive/run-records/spec.md")
-	served, err := RoleTools("review")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +253,7 @@ func TestArchiverSnapshotsAndTailsItsOwnTranscript(t *testing.T) {
 		t.Fatalf("SnapshotFromEnv: %v", err)
 	}
 	rec := readSession(t, "run-records", "01-archive")
-	if rec.Harness != "pig" || rec.Role != "review" {
+	if rec.Harness != "pig" || rec.Role != "web" {
 		t.Errorf("snapshot must name the session: %+v", rec)
 	}
 	for _, h := range []string{rec.SystemPrompt, rec.Tools, rec.Flags} {
@@ -331,39 +279,6 @@ func TestArchiverSnapshotsAndTailsItsOwnTranscript(t *testing.T) {
 	}
 	assertFileLines(t, TranscriptCopyPath("run-records", "01-archive"), 2)
 }
-
-// readLaunchConfig decodes the MCP config a claude launch wrote for its
-// el-mcp: the env the child reads.
-func readLaunchConfig(cmd Command) (map[string]string, error) {
-	path := ""
-	for i, a := range cmd.Args {
-		if a == "--mcp-config" && i+1 < len(cmd.Args) {
-			path = cmd.Args[i+1]
-		}
-	}
-	if path == "" {
-		return nil, errNoConfig
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var cfg struct {
-		Servers map[string]struct {
-			Env map[string]string `json:"env"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return nil, err
-	}
-	return cfg.Servers["el"].Env, nil
-}
-
-var errNoConfig = errConfig("no --mcp-config in the launch")
-
-type errConfig string
-
-func (e errConfig) Error() string { return string(e) }
 
 func readSession(t *testing.T, run, agent string) SessionRecord {
 	t.Helper()
@@ -421,47 +336,6 @@ func TestTranscriptCopyRepairsATornTail(t *testing.T) {
 	assertFileLines(t, TranscriptCopyPath("run-records", "agent-torn"), 2)
 }
 
-// A reviewer, scout or read-only agent spawned inside a run archives under
-// that run: its session inherits the spawner's spec, so its transcript copy
-// and session record land under archive/<run>, never archive/adhoc.
-func TestSpawnedAgentsInheritTheRunSpec(t *testing.T) {
-	const spec = "/repo/.scratch/archive/run-records/spec.md"
-	t.Setenv("EL_SPEC", spec)
-	// Scouts inherit the spec through their launch env.
-	spawnTestState(t)
-	g := newFakeGrid()
-	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	ex := &scoutExec{g: g, writeOn: 1}
-	spawnExec = ex.run
-	spawn, _ := spawnToolForRole(t, "implement")
-	if _, err := spawn("/repo", map[string]any{"agents": []any{
-		map[string]any{"type": "scout", "prompt": "where is the auth check?"},
-	}}); err != nil {
-		t.Fatalf("spawn: %v", err)
-	}
-	if len(ex.lines) != 1 {
-		t.Fatalf("launched %d scouts, want 1", len(ex.lines))
-	}
-	if got := envIn(ex.lines[0], "EL_SPEC"); got != spec {
-		t.Errorf("scout EL_SPEC = %q, want %q", got, spec)
-	}
-	// Read-only sessions carry the caller's spec.
-	if sess := readOnlySession("id-1", t.TempDir(), "", ""); sess.Spec != spec {
-		t.Errorf("read-only session spec = %q, want %q", sess.Spec, spec)
-	}
-	// Reviewers inherit the spec through their launch env.
-	_, tree := reviewRepo(t)
-	f := newFakeReviewers(answers(verdictPass, verdictPass))
-	if _, err := reviewSpawn(t, f, tree, bothReviewers()...); err != nil {
-		t.Fatal(err)
-	}
-	for _, typ := range []string{reviewerStandards, reviewerSpec} {
-		if got := envIn(f.paneOf(t, typ).line, "EL_SPEC"); got != spec {
-			t.Errorf("%s reviewer EL_SPEC = %q, want %q", typ, got, spec)
-		}
-	}
-}
-
 // A copy that lost recorded bytes is rebuilt from the source start, not
 // resumed mid-file: the archive never holds a hole.
 func TestTranscriptCopyRebuildsAShortenedCopy(t *testing.T) {
@@ -505,9 +379,9 @@ func TestFirstCopyRecordsTheTranscriptSource(t *testing.T) {
 	t.Setenv("EL_SESSION_ID", "sess-source")
 	t.Setenv("EL_SESSION_DIR", sessDir)
 	t.Setenv("EL_HARNESS", "pig")
-	t.Setenv("EL_ROLE", "review")
+	t.Setenv("EL_ROLE", "web")
 	t.Setenv("EL_SPEC", "/repo/.scratch/archive/run-records/spec.md")
-	served, err := RoleTools("review")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,30 +411,8 @@ func TestFirstCopyRecordsTheTranscriptSource(t *testing.T) {
 	}
 }
 
-// A harness command carries the first message exactly once: a doubled prompt
-// would send the brief to the agent twice.
-func TestHarnessCommandCarriesThePromptExactlyOnce(t *testing.T) {
-	isolateState(t)
-	for _, harness := range HarnessNames() {
-		cmd, err := BuildCommand(harness, Session{Role: "work", ID: "sess-1", Prompt: "the brief"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := 0
-		for _, a := range cmd.Args {
-			if a == "the brief" {
-				got++
-			}
-		}
-		if got != 1 {
-			t.Errorf("%s: prompt appears %d times in args %q, want once", harness, got, cmd.Args)
-		}
-	}
-}
-
-// ArchiveSize covers the archive and blob store for the dashboard's Settings
-// tab: an empty state reads zero, and every file under both directories
-// counts.
+// ArchiveSize covers the archive and blob store: an empty state reads zero,
+// and every file under both directories counts.
 func TestArchiveSizeCoversArchiveAndBlobs(t *testing.T) {
 	isolateState(t)
 	if got := ArchiveSize(); got != 0 {

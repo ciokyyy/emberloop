@@ -233,25 +233,16 @@ func stamp(ts string) string {
 // ---------------------------------------------------------------------------
 // tail
 // ---------------------------------------------------------------------------
-
 // usageDir holds the tailer's resume state (byte offsets and seen keys) and
 // the legacy per-agent usage logs the database import reads on first open.
-// New usage records land in the database, not in per-agent JSONL: the old
-// files stay until prune removes them. EL_STATE_DIR redirects the
-// directory the way it redirects the rest of the state dir.
+// New usage records land in the database, not in per-agent JSONL.
+// EL_STATE_DIR redirects the directory the way it redirects the rest of the
+// state dir.
 func usageDir() string {
 	if dir := os.Getenv("EL_STATE_DIR"); dir != "" {
 		return filepath.Join(dir, "usage")
 	}
 	return filepath.Join(filepath.Dir(statePath), "usage")
-}
-
-// UsageLogPath is the agent's legacy append-only usage log: one JSON record
-// per line, one line per request (or per find call, or per cost snapshot).
-// The tailer no longer writes it; it stays for the one-time import and until
-// prune removes it.
-func UsageLogPath(agent string) string {
-	return filepath.Join(usageDir(), lockName(agent)+".jsonl")
 }
 
 // usageTailPath is where the tailer keeps its byte offset and seen keys.
@@ -447,21 +438,6 @@ func TailUsage(transcriptPath, agent, harness string) (int, error) {
 // ---------------------------------------------------------------------------
 // session tail
 // ---------------------------------------------------------------------------
-
-// usageTailEnv names a harness session for its el-mcp: the harness, the id
-// the transcript file carries, and the session dir when the harness takes
-// one. An empty session id means no transcript to tail (a headless or bare
-// run), and the tailer stays off.
-func usageTailEnv(harness, sessionID, dir string) []string {
-	env := []string{"EL_HARNESS=" + harness}
-	if sessionID != "" {
-		env = append(env, "EL_SESSION_ID="+sessionID)
-	}
-	if dir != "" {
-		env = append(env, "EL_SESSION_DIR="+dir)
-	}
-	return env
-}
 
 // UsageTailConfig is what the session's own el process needs to tail its
 // harness's transcript: the harness, the session id naming the transcript,

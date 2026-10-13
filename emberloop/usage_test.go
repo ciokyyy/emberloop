@@ -1,7 +1,6 @@
 package el
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -385,95 +384,9 @@ func TestTailUsageScopesDedupeKeysPerAgent(t *testing.T) {
 	}
 }
 
-// Seam 3: wiring — the harness launch tells its el-mcp which transcript to
-// tail, and the tail loop follows it. The session's own el process tails
-// as requests happen; the final pass when it settles is a plain re-tail.
-
-func envValue(env []string, key string) (string, bool) {
-	for _, e := range env {
-		if v, ok := strings.CutPrefix(e, key+"="); ok {
-			return v, true
-		}
-	}
-	return "", false
-}
-
-func TestHarnessCommandsExportUsageTailIdentity(t *testing.T) {
-	isolateState(t)
-	// Pig names the transcript file after --session-id (the session id,
-	// else the ticket label) under its session dir.
-	pig, err := BuildCommand("pig", Session{Role: "work", ID: "sess-1", Label: "01-x", Dir: "/tmp/sess"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"EL_HARNESS=pig", "EL_SESSION_ID=sess-1", "EL_SESSION_DIR=/tmp/sess"} {
-		k, v, _ := strings.Cut(want, "=")
-		if got, ok := envValue(pig.Env, k); !ok || got != v {
-			t.Errorf("pig env %q = %q, want %q", k, got, v)
-		}
-	}
-	label, err := BuildCommand("pig", Session{Role: "work", Label: "01-x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := envValue(label.Env, "EL_SESSION_ID"); got != "01-x" {
-		t.Errorf("pig label session id = %q, want 01-x", got)
-	}
-	if _, ok := envValue(label.Env, "EL_SESSION_DIR"); ok {
-		t.Errorf("pig with no dir must not set EL_SESSION_DIR: %q", label.Env)
-	}
-	bare, err := BuildCommand("pig", Session{Role: "work"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := envValue(bare.Env, "EL_SESSION_ID"); ok {
-		t.Errorf("a session with no id has no transcript to tail: %q", bare.Env)
-	}
-	// Claude's transcript is named by its session id; without one there is
-	// nothing to tail, and claude takes no session dir.
-	claude, err := BuildCommand("claude", Session{Role: "review", ID: "sess-9", Dir: "/tmp/x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The tail identity must also reach el-mcp through the MCP config:
-	// claude starts its MCP servers from that config's env map, not from
-	// its own process env, so Command.Env alone would leave the tailer off.
-	cfgRaw, err := os.ReadFile(mcpConfigPath(Session{Role: "review", ID: "sess-9", Dir: "/tmp/x"}))
-	if err != nil {
-		t.Fatalf("claude MCP config: %v", err)
-	}
-	var cfg struct {
-		Servers map[string]struct {
-			Env map[string]string `json:"env"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(cfgRaw, &cfg); err != nil {
-		t.Fatalf("claude MCP config is not JSON: %v", err)
-	}
-	mcpEnv := cfg.Servers["el"].Env
-	for _, want := range []string{"EL_HARNESS=claude", "EL_SESSION_ID=sess-9"} {
-		k, v, _ := strings.Cut(want, "=")
-		if mcpEnv[k] != v {
-			t.Errorf("claude MCP config env %q = %q, want %q", k, mcpEnv[k], v)
-		}
-	}
-	for _, want := range []string{"EL_HARNESS=claude", "EL_SESSION_ID=sess-9"} {
-		k, v, _ := strings.Cut(want, "=")
-		if got, ok := envValue(claude.Env, k); !ok || got != v {
-			t.Errorf("claude env %q = %q, want %q", k, got, v)
-		}
-	}
-	if _, ok := envValue(claude.Env, "EL_SESSION_DIR"); ok {
-		t.Errorf("claude takes no session dir: %q", claude.Env)
-	}
-	noid, err := BuildCommand("claude", Session{Role: "review", Label: "01-x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := envValue(noid.Env, "EL_SESSION_ID"); ok {
-		t.Errorf("claude with no session id has no transcript to tail: %q", noid.Env)
-	}
-}
+// The tailer reads its identity from the environment, and the tail loop
+// follows the transcript. The session's own el process tails as requests
+// happen; the final pass when it settles is a plain re-tail.
 
 func TestUsageTailFromEnvStaysOffWithoutASession(t *testing.T) {
 	t.Setenv("EL_HARNESS", "pig")

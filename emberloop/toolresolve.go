@@ -3,6 +3,7 @@ package el
 import (
 	"fmt"
 	"log"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -10,6 +11,15 @@ import (
 
 	"example.com/emberloop/tools"
 )
+
+// cwd is the working directory tools resolve against: the process's own,
+// falling back to empty when it cannot be read.
+func cwd() string {
+	if dir, err := os.Getwd(); err == nil {
+		return dir
+	}
+	return ""
+}
 
 // ResolvedTools is the final tool list for one role: the main list the MCP
 // server serves, and the tools callable only inside execute. Both lists carry
@@ -32,11 +42,8 @@ func ResolvedToolsWithMCP(role string, mcp map[string][]tools.Tool) (main, execu
 }
 
 // baseToolsFor is the role's tool set before settings narrow it: the role
-// table's allowlist over every tool, with the implement edit/write guard.
+// table's allowlist over every tool.
 func baseToolsFor(role string) ([]tools.Tool, error) {
-	if role == "agent" {
-		return agentTools()
-	}
 	names, ok := roles[role]
 	if !ok {
 		if role == "" {
@@ -44,11 +51,7 @@ func baseToolsFor(role string) ([]tools.Tool, error) {
 		}
 		return nil, fmt.Errorf("unknown role %q; choose one of: %s", role, strings.Join(RoleNames(), ", "))
 	}
-	types, err := LoadAgentTypes(cwd())
-	if err != nil {
-		return nil, err
-	}
-	all := append(tools.All(), orchestrationTools(types, spawnableNames(role, types))...)
+	all := tools.All()
 	if names == nil {
 		return all, nil
 	}
@@ -59,9 +62,6 @@ func baseToolsFor(role string) ([]tools.Tool, error) {
 	out := make([]tools.Tool, 0, len(names))
 	for _, n := range names {
 		if t, ok := byName[n]; ok {
-			if role == "implement" && (n == "edit" || n == "write") {
-				t = tools.Guard(t, tools.ProjectWritePaths)
-			}
 			out = append(out, t)
 		}
 	}
@@ -73,9 +73,9 @@ func baseToolsFor(role string) ([]tools.Tool, error) {
 // (web-worker, scout) and runs the Daemon submit gate for them. It is false:
 // a spawned child's Group result is delivered when the child settles idle
 // (or fails/ends), carrying its submit text when one exists, else its last
-// assistant message. The herdr-era submit tool and the Run worker/reviewer
-// submit route are untouched by this flag. Re-enabling is one line: set it
-// true (tests flip it per test, never globally).
+// assistant message. The Run worker/reviewer submit route is untouched by
+// this flag. Re-enabling is one line: set it true (tests flip it per test,
+// never globally).
 var WebSubmitEnabled = false
 
 // webProxyRoles is the Daemon-tool matrix for the single el MCP server: which
@@ -99,10 +99,10 @@ var webProxyRoles = map[string][]string{
 
 // withWebProxies serves the Daemon-hosted tools for one web role, but only
 // when the process is bound to a Daemon Session: without EL_WEB_PARENT and
-// EL_WEB_DAEMON_URL the role resolves exactly as for the herdr harness, so
-// pig's in-process loadout and hand-started servers never see them. A proxy
-// replaces the same-named core tool (check): the role cannot serve both the
-// repo checks and the child peek under one name, and the Daemon tool wins.
+// EL_WEB_DAEMON_URL the role resolves to the core tools alone, so
+// hand-started servers never see them. A proxy replaces the same-named core
+// tool (check): the role cannot serve both the repo checks and the child
+// peek under one name, and the Daemon tool wins.
 func withWebProxies(role string, base []tools.Tool) []tools.Tool {
 	names, ok := webProxyRoles[role]
 	if !ok {
@@ -142,12 +142,12 @@ func withWebProxies(role string, base []tools.Tool) []tools.Tool {
 // resolveRoleTools applies settings to one role's base list plus its MCP
 // listing. Settings only narrow: a settings entry for a known tool the role
 // does not serve changes nothing, and an unknown name warns once and is
-// ignored. submit always stays in main under its own name, because every
-// agent brief addresses it by name. warn reports settings problems; nil
-// skips the reports but still ignores the entries.
+// ignored. submit stays known under its own name, because the Daemon serves
+// it as a proxy. warn reports settings problems; nil skips the reports but
+// still ignores the entries.
 func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Tool, s tools.Settings, warn func(string)) (main, execute []tools.Tool) {
 	known := map[string]bool{"submit": true}
-	for _, t := range AllTools() {
+	for _, t := range tools.All() {
 		known[t.Name()] = true
 	}
 	for _, listed := range mcp {

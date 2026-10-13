@@ -707,7 +707,7 @@ func TestSettingsSetsMCPServerFields(t *testing.T) {
 		{"mcp-server", "github", "include", "search_*,get_*"},
 		{"mcp-server", "github", "exclude", "delete_*"},
 		{"mcp-server", "github", "rename", "search_repositories=gh_search"},
-		{"mcp-server", "github", "role", "review", "placement", "main"},
+		{"mcp-server", "github", "role", "scout", "placement", "main"},
 	} {
 		if err := runSettings(argv, &out, noModels); err != nil {
 			t.Fatalf("%v: %v", argv, err)
@@ -723,7 +723,7 @@ func TestSettingsSetsMCPServerFields(t *testing.T) {
 	if len(got.Include) != 2 || len(got.Exclude) != 1 || got.Rename["search_repositories"] != "gh_search" {
 		t.Fatalf("server globs/rename not saved: %+v", got)
 	}
-	if got.Roles["review"].Placement != "main" {
+	if got.Roles["scout"].Placement != "main" {
 		t.Fatalf("server role override not saved: %+v", got.Roles)
 	}
 	if !strings.Contains(out.String(), "github") {

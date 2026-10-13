@@ -34,9 +34,8 @@ const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max
 // with the dashboard's Settings tab.
 const defaultThreshold = tools.DefaultThreshold
 
-// defaultHarness is the harness a slot with nothing stored launches with; the
-// resolver's built-in default is the single source for it.
-const defaultHarness = el.DefaultHarness
+// defaultHarness is the harness a role slot with nothing stored uses.
+const defaultHarness = "pig"
 
 // modelSource lists the models one harness offers. refresh rebuilds the list
 // from the harness instead of reading the cache. A function value, so the

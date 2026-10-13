@@ -31,10 +31,10 @@ func requireExecutePython(t *testing.T) {
 	}
 }
 
-// Seam: roles offered execute serve it in main; implement does not.
+// Seam: every role serves execute in main.
 func TestExecuteRoleGating(t *testing.T) {
 	hermeticSettings(t)
-	for _, role := range []string{"work", "plan", "full", "review", "scout"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "scout", "full"} {
 		served, err := RoleTools(role)
 		if err != nil {
 			t.Fatal(err)
@@ -42,20 +42,6 @@ func TestExecuteRoleGating(t *testing.T) {
 		if !containsName(toolNames(served), "execute") {
 			t.Errorf("%s must serve execute in main: %v", role, toolNames(served))
 		}
-	}
-	served, err := RoleTools("implement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if containsName(toolNames(served), "execute") {
-		t.Errorf("implement must not serve execute: %v", toolNames(served))
-	}
-	_, execute, err := ResolvedTools("implement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if containsName(toolNames(execute), "execute") {
-		t.Errorf("implement must not offer execute behind execute either: %v", toolNames(execute))
 	}
 }
 
@@ -65,7 +51,7 @@ func TestExecuteHonoursDisabledAndRenamed(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"grep":{"enabled":false},"find":{"rename":"seek"}}}`)
 	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
-	main, _, err := ResolvedTools("work")
+	main, _, err := ResolvedTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +73,7 @@ func TestExecuteRenamedToolInStub(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"grep":{"rename":"rip"}}}`)
 	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
-	main, execute, err := ResolvedTools("work")
+	main, execute, err := ResolvedTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,12 +90,12 @@ func TestExecuteRenamedToolInStub(t *testing.T) {
 	}
 }
 
-// Seam: orchestration tools and execute itself are not callable from a script.
-func TestExecuteExcludesOrchestration(t *testing.T) {
+// Seam: spawn and execute itself are not callable from a script.
+func TestExecuteRefusesSpawnAndItself(t *testing.T) {
 	hermeticSettings(t)
 	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
-	main, _, err := ResolvedTools("plan")
+	main, _, err := ResolvedTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +109,7 @@ func TestExecuteExcludesOrchestration(t *testing.T) {
 	}
 	for _, want := range []string{"spawn refused", "execute refused"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("orchestration must be refused inside execute: %q", out)
+			t.Errorf("spawn and execute must be refused inside execute: %q", out)
 		}
 	}
 }
@@ -153,7 +139,7 @@ func TestExecuteHonoursGuard(t *testing.T) {
 // Seam: disabling execute removes it from the role.
 func TestExecuteDisabledServesNothing(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"execute":{"enabled":false}}}`)
-	served, err := RoleTools("work")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,82 +148,10 @@ func TestExecuteDisabledServesNothing(t *testing.T) {
 	}
 }
 
-// Seam: a reviewer's execute runs sandboxed — the script cannot write files,
-// yet tools.check runs outside the sandbox and can still write its own
-// caches.
-func TestReviewExecuteIsSandboxed(t *testing.T) {
-	hermeticSettings(t)
-	if _, err := tools.ResolveBinary("python3"); err != nil {
-		t.Skipf("python3 not installed, skipping execute test: %v", err)
-	}
-	t.Setenv("EL_STATE_DIR", t.TempDir())
-	root := t.TempDir()
-	if err := tools.EnsureHealthy(root); err != nil {
-		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".emberloop"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".emberloop", "check"), []byte("echo cached > wrote-by-check.txt"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	main, _, err := ResolvedTools("review")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ex := executeToolByName(t, main, "execute")
-	if !strings.Contains(ex.Description(), "grep") || !strings.Contains(ex.Description(), "tools.grep") {
-		t.Fatalf("the bound description must list the tools and carry a grep example:\n%s", ex.Description())
-	}
-	out, err := ex.Execute(context.Background(), root, json.RawMessage(`{"code":"import tools\n`+
-		`print(tools.search(\"check\"))\n`+
-		`print(tools.check())\n`+
-		`open(\"escape.txt\", \"w\").write(\"no\")\n"}`))
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if !strings.Contains(out, "check(") {
-		t.Errorf("a reviewer script must see check: %q", out)
-	}
-	if cached, err := os.ReadFile(filepath.Join(root, "wrote-by-check.txt")); err != nil || strings.TrimSpace(string(cached)) != "cached" {
-		t.Errorf("check must still write its caches outside the sandbox: %q, %v", cached, err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "escape.txt")); !os.IsNotExist(err) {
-		t.Errorf("the script's own write must not land: %v", err)
-	}
-}
-
-// Seam: sandboxing follows the agent type's checkout, not its name — a
-// custom read-only type is sandboxed, a writing one is not.
-func TestAgentTypeSandboxedByCheckout(t *testing.T) {
-	types := map[string]AgentType{
-		"auditor": {Name: "auditor", Checkout: "none", Tools: []string{"read", "execute"}},
-		"sneaky":  {Name: "sneaky", Checkout: "parent", Tools: []string{"read", "edit", "execute"}},
-		"helper":  {Name: "helper", Checkout: "parent", Tools: []string{"read", "find", "execute"}},
-		"builder": {Name: "builder", Checkout: "worktree", Tools: []string{"read", "execute"}},
-	}
-	for typ, want := range map[string]bool{"auditor": true, "sneaky": false, "helper": true, "builder": false, "missing": false} {
-		if got := agentTypeSandboxed(types, typ); got != want {
-			t.Errorf("agentTypeSandboxed(%q) = %v, want %v", typ, got, want)
-		}
-	}
-	builtins, err := LoadAgentTypes(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for typ, want := range map[string]bool{"scout": true, "reviewer-standards": true, "reviewer-spec": true, "worker": false} {
-		if got := agentTypeSandboxed(builtins, typ); got != want {
-			t.Errorf("agentTypeSandboxed(%q) = %v, want %v", typ, got, want)
-		}
-	}
-}
-
-// Seam: a spawned scout's execute is sandboxed through the agent role: grep
-// and git live only inside it, and the script cannot write.
+// Seam: the scout role's execute is sandboxed: grep and git live only inside
+// it, and the script cannot write.
 func TestScoutAgentExecuteIsSandboxed(t *testing.T) {
 	hermeticSettings(t)
-	t.Setenv("EL_AGENT_TYPE", "scout")
-	t.Setenv("EL_AGENT_ID", "s1")
 	if _, err := tools.ResolveBinary("python3"); err != nil {
 		t.Skipf("python3 not installed, skipping execute test: %v", err)
 	}
@@ -246,7 +160,7 @@ func TestScoutAgentExecuteIsSandboxed(t *testing.T) {
 	if err := tools.EnsureHealthy(root); err != nil {
 		t.Skipf("bwrap not installed or unhealthy, skipping sandboxed execute test: %v", err)
 	}
-	main, execute, err := ResolvedTools("agent")
+	main, execute, err := ResolvedTools("scout")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +210,7 @@ func TestExecuteIncludesMCPTools(t *testing.T) {
 	t.Setenv("EL_STATE_DIR", t.TempDir())
 	requireExecutePython(t)
 	listed := map[string][]tools.Tool{"gh": {mcpListedFake{name: "gh_search", original: "search_repositories"}}}
-	main, execute, err := ResolvedToolsWithMCP("work", listed)
+	main, execute, err := ResolvedToolsWithMCP("web", listed)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,66 +1,16 @@
 package el
 
 import (
-	"os"
 	"sort"
 
 	"example.com/emberloop/tools"
 )
 
 // executeSandboxed reports whether a role's execute Python runs under the
-// bubblewrap sandbox: the read-only roles review and scout, and spawned
-// agents whose type is read-only (a `none` checkout, or a `parent` checkout
-// with no writing tools, judged against the same read-only set that gates
-// `none` types). A custom repo type that can write runs directly, the way a
-// worker does: sandboxing it would break the writes its contract allows.
-// Every other role already holds bash or a worktree, so its script runs
-// directly. implement never reaches execute at all.
+// bubblewrap sandbox: the read-only scout role. Every other role already
+// holds bash or a worktree, so its script runs directly.
 func executeSandboxed(role string) bool {
-	switch role {
-	case "review", "scout":
-		return true
-	case "agent":
-		typ := os.Getenv("EL_AGENT_TYPE")
-		if typ == "" {
-			return false
-		}
-		return agentTypeSandboxed(mustLoadAgentTypes(cwd()), typ)
-	}
-	return false
-}
-
-// agentTypeSandboxed is executeSandboxed for one spawned type: `none`
-// checkouts sandbox, and `parent` checkouts sandbox while every tool they
-// name is read-only by its own marker (`execute` itself is the boundary, so
-// it counts). A type that can write runs directly, the way a worker does:
-// sandboxing it would break the writes its contract allows. An unknown type
-// is not sandboxed, but it also serves no execute: agentTools refuses it
-// before resolution.
-func agentTypeSandboxed(types map[string]AgentType, typ string) bool {
-	t, ok := types[typ]
-	if !ok {
-		return false
-	}
-	if t.Checkout == "none" {
-		return true
-	}
-	if t.Checkout == "parent" {
-		for _, name := range t.Tools {
-			if name == "execute" {
-				continue
-			}
-			resolved := tools.Named(name)
-			if len(resolved) != 1 {
-				return false
-			}
-			ro, ok := resolved[0].(tools.ReadOnly)
-			if !ok || !ro.ReadOnly() {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return role == "scout"
 }
 
 // isMCPTool reports whether t came from a configured MCP server: only those

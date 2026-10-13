@@ -8,48 +8,11 @@ import (
 	"example.com/emberloop/tools"
 )
 
-// plan is a planning session: file tools plus spawn, so it can start scouts. It
-// must not carry the review tools or anything that spawns, merges or reports
-// workers, so the same tool set that plans cannot run an implementation loop.
-func TestPlanServesFileToolsAndSpawnOnly(t *testing.T) {
-	hermeticSettings(t)
-	served, err := RoleTools("plan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := make([]string, len(served))
-	for i, tool := range served {
-		got[i] = tool.Name()
-	}
-	want := []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("plan tools = %v, want %v", got, want)
-	}
-}
-
-// implement delegates and explores; it never runs code or reviews, and its
-// edit and write are limited to the project's listed paths.
-func TestImplementDelegatesAndSpawns(t *testing.T) {
-	hermeticSettings(t)
-	served, err := RoleTools("implement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := make([]string, len(served))
-	for i, tool := range served {
-		got[i] = tool.Name()
-	}
-	want := []string{"read", "edit", "write", "find", "websearch", "ctx_search", "spawn", "finish", "tell"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("implement tools = %v, want %v", got, want)
-	}
-}
-
 // ctx_search rides with read: every role that can read serves it, so stored
 // output is searchable wherever it is readable.
 func TestEveryRoleThatCanReadServesCtxSearch(t *testing.T) {
 	hermeticSettings(t)
-	for _, role := range []string{"implement", "review", "scout", "work", "plan", "full"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "scout", "full"} {
 		served, err := RoleTools(role)
 		if err != nil {
 			t.Fatal(err)
@@ -66,9 +29,9 @@ func TestEveryRoleThatCanReadServesCtxSearch(t *testing.T) {
 	}
 }
 
-// full stays reachable, but only by asking for it: it is every tool, including
-// the orchestration tools no planning session should hold. Tools whose default
-// placement is execute (grep, git, check) serve behind execute, not in main.
+// full stays reachable, but only by asking for it: it is every tool.
+// Tools whose default placement is execute (grep, git, check) serve behind
+// execute, not in main.
 func TestFullServesEveryTool(t *testing.T) {
 	hermeticSettings(t)
 	served, err := RoleTools("full")
@@ -79,8 +42,8 @@ func TestFullServesEveryTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(served)+len(execute) != len(AllTools()) {
-		t.Errorf("full served %d in main plus %d behind execute, want all %d", len(served), len(execute), len(AllTools()))
+	if len(served)+len(execute) != len(tools.All()) {
+		t.Errorf("full served %d in main plus %d behind execute, want all %d", len(served), len(execute), len(tools.All()))
 	}
 	for _, want := range []string{"grep", "git", "check"} {
 		if containsName(toolNames(served), want) {
@@ -94,10 +57,8 @@ func TestFullServesEveryTool(t *testing.T) {
 	for _, tool := range served {
 		names[tool.Name()] = true
 	}
-	for _, want := range []string{"spawn", "execute"} {
-		if !names[want] {
-			t.Errorf("full must still reach %q", want)
-		}
+	if !names["execute"] {
+		t.Error("full must still reach execute")
 	}
 	for _, gone := range []string{"spawn_worker", "scout", "code_review"} {
 		if names[gone] {
@@ -112,13 +73,13 @@ func TestUnknownRoleIsAnError(t *testing.T) {
 	}
 }
 
-// RoleFromEnv is the launcher's channel: el and the harnesses always
-// set EL_ROLE, so an empty value means a el-mcp started by hand with no
+// RoleFromEnv is the Daemon's channel: the Daemon always sets EL_ROLE,
+// so an empty value means a el-mcp started by hand with no
 // role. That is refused at startup: there is no silent fallback.
 func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
-	t.Setenv("EL_ROLE", "plan")
-	if got := RoleFromEnv(); got != "plan" {
-		t.Errorf("RoleFromEnv() = %q, want the env role plan", got)
+	t.Setenv("EL_ROLE", "web")
+	if got := RoleFromEnv(); got != "web" {
+		t.Errorf("RoleFromEnv() = %q, want the env role web", got)
 	}
 	t.Setenv("EL_ROLE", "")
 	if got := RoleFromEnv(); got != "" {
@@ -127,12 +88,12 @@ func TestRoleFromEnvHonoursTheLauncher(t *testing.T) {
 }
 
 // A server started with no role refuses with a message naming every valid
-// role, so a hand-started server can never silently serve spawn, finish or
-// tell. An explicit full role still serves everything. The want list is a
+// role, so a hand-started server can never silently serve the full tool
+// set. An explicit full role still serves everything. The want list is a
 // literal, not RoleNames(), so the test can catch a role missing from either
 // side.
 func TestMissingRoleNamesEveryRole(t *testing.T) {
-	want := []string{"agent", "full", "implement", "plan", "review", "run-worker", "scout", "web", "web-worker", "work"}
+	want := []string{"full", "run-worker", "scout", "web", "web-worker"}
 	if got := RoleNames(); !reflect.DeepEqual(got, want) {
 		t.Errorf("RoleNames() = %v, want %v", got, want)
 	}
@@ -156,11 +117,11 @@ func mustRoleErr(t *testing.T, role string) error {
 }
 
 // No role serves a wait tool: the parent learns a result arrived instead of
-// blocking on it. tell and finish are what a delegating role gets instead.
+// blocking on it.
 func TestNoRoleServesAWaitTool(t *testing.T) {
 	hermeticSettings(t)
 	removed := []string{"wait_workers", "tell_worker", "finish_worker", "wait"}
-	for _, role := range []string{"implement", "plan", "work", "review", "scout", "full"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "scout", "full"} {
 		served, err := RoleTools(role)
 		if err != nil {
 			t.Fatal(err)
@@ -175,25 +136,13 @@ func TestNoRoleServesAWaitTool(t *testing.T) {
 			}
 		}
 	}
-	for _, role := range []string{"implement", "full"} {
-		served, _ := RoleTools(role)
-		names := map[string]bool{}
-		for _, tool := range served {
-			names[tool.Name()] = true
-		}
-		for _, want := range []string{"tell", "finish"} {
-			if !names[want] {
-				t.Errorf("%s role must serve %s", role, want)
-			}
-		}
-	}
 }
 
-// check lives behind execute by default for review, work, plan and full,
-// and is offered to no scout list at all.
+// check lives behind execute by default for the web roles that offer it, and
+// is offered to no scout list at all.
 func TestCheckLivesBehindExecuteForItsRoles(t *testing.T) {
 	hermeticSettings(t)
-	for _, role := range []string{"review", "work", "plan", "full"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "full"} {
 		main, execute, err := ResolvedTools(role)
 		if err != nil {
 			t.Fatal(err)
@@ -219,7 +168,7 @@ func TestCheckLivesBehindExecuteForItsRoles(t *testing.T) {
 // Settings can promote check to the main list for a role that offers it.
 func TestCheckPlacementMainServesIt(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"check":{"placement":"main"}}}`)
-	served, err := RoleTools("work")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +188,7 @@ func TestCheckPlacementMainServesIt(t *testing.T) {
 // the same engine, and settings can still narrow it per role.
 func TestEveryReadingRoleServesWebsearch(t *testing.T) {
 	hermeticSettings(t)
-	for _, role := range []string{"implement", "plan", "work", "review", "scout", "full"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "scout", "full"} {
 		served, err := RoleTools(role)
 		if err != nil {
 			t.Fatal(err)
@@ -256,23 +205,21 @@ func TestEveryReadingRoleServesWebsearch(t *testing.T) {
 	}
 }
 
-// Ticket 18: one test per role asserting its served tool list (the main list
-// the MCP server serves) and its execute-reachable tools, in serve order,
-// under default settings. review and scout read, find and execute (with
-// websearch and ctx_search riding with read); work, plan and full add
-// execute to their file tools; implement never gets execute.
+// One test per role asserting its served tool list (the main list the MCP
+// server serves) and its execute-reachable tools, in serve order, under
+// default settings. scout reads, finds and executes (with websearch and
+// ctx_search riding with read); the web roles add the file tools.
 func TestRoleToolsetsPerRole(t *testing.T) {
 	hermeticSettings(t)
 	cases := []struct {
 		role          string
 		main, execute []string
 	}{
-		{"implement", []string{"read", "edit", "write", "find", "websearch", "ctx_search", "spawn", "finish", "tell"}, []string{}},
-		{"review", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
+		{"run-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
 		{"scout", []string{"read", "find", "websearch", "ctx_search", "execute"}, []string{"grep", "git"}},
-		{"work", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}, []string{"check", "grep", "git"}},
-		{"plan", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "execute"}, []string{"check", "grep", "git"}},
-		{"full", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "finish", "tell", "execute"}, []string{"grep", "git", "check"}},
+		{"full", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "execute"}, []string{"grep", "git", "check"}},
 	}
 	for _, tc := range cases {
 		main, execute, err := ResolvedTools(tc.role)

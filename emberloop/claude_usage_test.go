@@ -1,14 +1,9 @@
 package el
 
 import (
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/muesli/termenv"
 )
 
 const statusBlob = `{"session_id":"s","rate_limits":{"five_hour":{"used_percentage":36.6,"resets_at":2000},"seven_day":{"used_percentage":14,"resets_at":900000}}}`
@@ -66,64 +61,5 @@ func TestUsagePie(t *testing.T) {
 		if got := usagePie(pct); got != want {
 			t.Errorf("usagePie(%d) = %q, want %q", pct, got, want)
 		}
-	}
-}
-
-func TestSecondRowShowsClaudeUsage(t *testing.T) {
-	snap := HeaderSnapshot{
-		AgentName: "implementer", State: HeaderIdle, Window: 1000, ContextTokens: 100,
-		Now:   time.Unix(0, 0),
-		Usage: ClaudeUsage{Has: true, FiveHour: UsageWindow{Pct: 37, ResetsAt: 6000}, SevenDay: UsageWindow{Pct: 92, ResetsAt: 4 * 86400}}.Set(),
-	}
-	out := stripANSI(RenderHeader(snap, 120, HeaderOpts{Rows: 2, Dark: true, Profile: termenv.TrueColor}))
-	rows := strings.Split(out, "\n")
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d", len(rows))
-	}
-	for _, want := range []string{"5h ◔ 37% ↻1h40m", "wk ● 92% ↻4d0h"} {
-		if !strings.Contains(rows[1], want) {
-			t.Errorf("second row misses %q: %q", want, rows[1])
-		}
-	}
-	snap.Usage = UsageSet{}
-	if out := stripANSI(RenderHeader(snap, 120, HeaderOpts{Rows: 2, Dark: true, Profile: termenv.TrueColor})); strings.Contains(out, "5h") {
-		t.Error("usage shown with none reported")
-	}
-}
-
-func TestClaudeStopGateCarriesStatusLine(t *testing.T) {
-	if !strings.Contains(claudeStopGate, `"statusLine":{"type":"command","command":"el claude-status"}`) {
-		t.Error("claude settings lack the statusLine command")
-	}
-}
-
-func TestTopLevelChipName(t *testing.T) {
-	for _, c := range []struct{ typ, role, want string }{
-		{"", "implement", "orchestrator"},
-		{"", "", "orchestrator"},
-		{"", "plan", "plan"},
-		{"", "full", "full"},
-		{"worker", "implement", "implementer"},
-	} {
-		if got := TopLevelChipName(c.typ, c.role); got != c.want {
-			t.Errorf("TopLevelChipName(%q, %q) = %q, want %q", c.typ, c.role, got, c.want)
-		}
-	}
-}
-
-func TestStatusLineStoresLiveTranscriptForResume(t *testing.T) {
-	dir := t.TempDir()
-	tr := filepath.Join(dir, "resumed.jsonl")
-	if err := os.WriteFile(tr, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("EL_AGENT_ID", "a1")
-	in := `{"session_id":"s2","transcript_path":` + strconv.Quote(tr) + `}`
-	if err := RunClaudeStatus(strings.NewReader(in), dir); err != nil {
-		t.Fatal(err)
-	}
-	got := resolveTranscript(HeaderSource{Harness: "claude", AgentID: "a1", SessionID: "s1", StateDir: dir})
-	if got != tr {
-		t.Fatalf("got %q, want %q", got, tr)
 	}
 }

@@ -2,7 +2,6 @@ package el
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -319,43 +318,6 @@ func TestDriverSubmittingWorkerIsNotNudged(t *testing.T) {
 	}
 }
 
-// The live world reads the worker transcript for the spawn error through the
-// same Transcript hook the loop scans: an unknown agent reads as no
-// transcript, never a failure. Notifications go through the shared needs-you
-// wiring.
-func TestDriverLiveWorldNotifiesAndReadsTranscripts(t *testing.T) {
-	oldState, oldNotify := statePath, notifyExec
-	statePath = filepath.Join(t.TempDir(), "workers.json")
-	t.Cleanup(func() { statePath = oldState; notifyExec = oldNotify })
-	repo, dir := t.TempDir(), t.TempDir()
-	ticket := filepath.Join(dir, "01-first.md")
-	files := map[string]string{ticket: ticketDoc("None")}
-	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-stall"}
-	var notified [][]string
-	notifyExec = func(cmd string, args []string, opts ExecOpts) (Result, error) {
-		notified = append(notified, args)
-		return Result{Code: 0}, nil
-	}
-	world := liveDriverWorld(spec, repo, files)
-	id := WorkerID(ticket)
-	if got := world.Transcript(id); got != "" {
-		t.Errorf("Transcript = %q for an unknown agent, want empty", got)
-	}
-	if err := world.Notify("01-first", "ticket 01-first needs you: stalled with no submit after 3 nudges"); err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
-	if len(notified) != 1 {
-		t.Fatalf("herdr calls = %d, want 1 notification", len(notified))
-	}
-	want := []string{"notification", "show", "el: ticket 01-first needs you", "--body", "ticket 01-first needs you: stalled with no submit after 3 nudges"}
-	if !equalIDs(notified[0], want) {
-		t.Errorf("notify args = %q, want %q", notified[0], want)
-	}
-}
-
-// A dead worker pane never aborts the run: failed nudges are recorded on the
-// stall, the alert still fires through the shared notify path, and the
-// recovered worker still merges.
 func TestDriverFailedNudgeIsRecordedNotFatal(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),

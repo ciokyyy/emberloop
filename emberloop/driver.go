@@ -2,7 +2,6 @@ package el
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,7 +36,7 @@ type DriverMerged struct {
 
 // DriverWorld is the injected world the deterministic driver runs against:
 // the ticket files, a fake clock, and the operations the driver calls. Tests
-// build it from a map and a fake; the CLI fills the files from disk.
+// build it from a map and a fake; the Daemon fills the files from disk.
 // A world without Finish is a check world: RunDriver only orders tickets and
 // never starts workers. A world with it is a run world: RunDriver also runs
 // the happy-path loop to a stable state.
@@ -85,18 +84,18 @@ type DriverWorld struct {
 	// for the real reviewer spawn error when the worker stalls. Nil means no
 	// transcript: the run state keeps no spawn error.
 	Transcript func(ticketID string) string
-	// Working reports whether a ticket's worker is busy right now: its pane
-	// reports the working agent status. A busy worker is never idle, so the
-	// stall nudge waits until it stops. Nil means no busy signal, and idleness
-	// reads only commits, verdicts and submits.
+	// Working reports whether a ticket's worker is busy right now. A busy
+	// worker is never idle, so the stall nudge waits until it stops. Nil
+	// means no busy signal, and idleness reads only commits, verdicts and
+	// submits.
 	Working func(ticketID string) bool
 	// StallNudgeAllowed can suppress the fixed stall reminder per ticket.
 	// Nil allows it; false does not suppress the 10-minute idle alert.
 	StallNudgeAllowed func(ticketID string) bool
-	// Parked reports the user's park action, taken with p in the pane. A
-	// parked ticket keeps its worktree and branch, so the driver never starts
-	// or finishes it; only the tickets that depend on it wait. Read every
-	// pass, beside the seeded Status park. Nil means nothing is parked.
+	// Parked reports the user's park action. A parked ticket keeps its
+	// worktree and branch, so the driver never starts or finishes it; only
+	// the tickets that depend on it wait. Read every pass, beside the
+	// seeded Status park. Nil means nothing is parked.
 	Parked func(ticketID string) bool
 	// Finish merges a ticket's worker once its gate passes.
 	Finish func(ticketID string) (DriverFinish, error)
@@ -108,12 +107,11 @@ type DriverWorld struct {
 	// the edit uncommitted. It reports the names with no checkbox in the
 	// ticket; the driver reports those and still merges. Nil skips ticking.
 	TickCheckboxes func(ticketID string, boxes []string) (unknown []string, err error)
-	// Notify sends a ticket's needs-you alert as a herdr notification. The
-	// driver retries it until herdr accepts it, so at most one delivery
-	// succeeds per ticket per run. A notification herdr never accepts is
-	// recorded on the report line instead of stopping the run. Nil means a
-	// world without notifications: the ticket is still marked needs-you in
-	// the result.
+	// Notify sends a ticket's needs-you alert. The driver retries it until
+	// it succeeds, so at most one delivery succeeds per ticket per run. A
+	// notification that never succeeds is recorded on the report line
+	// instead of stopping the run. Nil means a world without notifications:
+	// the ticket is still marked needs-you in the result.
 	Notify func(ticketID, message string) error
 	// Discard is the user's discard op: it removes a worker and its worktree
 	// on request. The driver never calls it; no run destroys work on its
@@ -135,14 +133,11 @@ type DriverWorld struct {
 	// verbatim into the final report. Nil or empty means the worker left
 	// none.
 	Followups func(ticketID string) string
-	// Run is the in-memory run state the loop shares with the run pane: when
+	// Run is the in-memory run state the loop shares with the Daemon: when
 	// non-nil the loop publishes one row per ticket every pass (state,
-	// worker and pane, verdicts at the tip, state entry time, last
-	// refusal) and the pane reads snapshots. Nil publishes nothing.
+	// worker, verdicts at the tip, state entry time, last refusal) and the
+	// Daemon reads snapshots. Nil publishes nothing.
 	Run *DriverRun
-	// WorkerPane names a ticket worker's herdr pane for the row's jump. Nil
-	// leaves the pane empty and the jump nowhere.
-	WorkerPane func(ticketID string) string
 	// Required names the reviewer types every finish needs. Nil means the
 	// two built-in reviewers.
 	Required []string
@@ -151,13 +146,13 @@ type DriverWorld struct {
 	// Nil falls back to Required.
 	RequiredFor func(ticketID string) []string
 	// StallNudge is the text a worker idle with no submit is told. Empty
-	// means the CLI default, which tells the worker to spawn its reviewers.
+	// means the default, which tells the worker to spawn its reviewers.
 	StallNudge string
 	// Sleep waits between polls while tickets stay unmerged but nothing
 	// changed. Nil means tests: the run ends at a stable state and no
-	// backoff delay ever gates a retry. A live run passes time.Sleep, so the
-	// driver waits for workers instead of ending, and spaces a needs-you
-	// ticket's retries with a growing delay.
+	// backoff delay ever gates a retry. The Daemon passes time.Sleep, so
+	// the driver waits for workers instead of ending, and spaces a
+	// needs-you ticket's retries with a growing delay.
 	Sleep func(time.Duration)
 }
 
@@ -301,7 +296,7 @@ func driverBackoffDelay(step int) time.Duration {
 // finish runs again only after the worker's next submit. There is no attempt
 // limit: every refusal is told and retried like the first. The same refusal
 // text three times in a row, or ten minutes with no worker activity (a new
-// submit, tip or verdict), marks the ticket "needs you" with one herdr
+// submit, tip or verdict), marks the ticket "needs you" with one
 // notification, and the retries continue with a growing delay. Completed
 // checkboxes tick into the ticket file as best effort beside it. Other
 // tickets keep running while one waits: the alert and the delay never gate
@@ -385,7 +380,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 	stallAlert := map[string]bool{}
 	// markNeedsYou marks the ticket and queues its alert text. Marking never
 	// fails and never stops the run: the notification below retries until it
-	// succeeds, so a herdr outage never kills the other tickets.
+	// succeeds, so a notification outage never kills the other tickets.
 	markNeedsYou := func(id, message string) {
 		if needsYou[id] {
 			return
@@ -411,11 +406,11 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			started[tk.ID] = true
 		}
 	}
-	// isParked is the seeded park plus the user's live park action, taken with
-	// p in the pane: a parked ticket keeps its worktree and branch, so the
-	// driver never starts or finishes it and only its dependents wait. Read
-	// every pass, so parking mid-run takes effect at once and unparking
-	// resumes the ticket where it stood.
+	// isParked is the seeded park plus the user's live park action: a parked
+	// ticket keeps its worktree and branch, so the driver never starts or
+	// finishes it and only its dependents wait. Read every pass, so parking
+	// mid-run takes effect at once and unparking resumes the ticket where it
+	// stood.
 	isParked := func(id string) bool {
 		if parked[id] {
 			return true
@@ -442,10 +437,10 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 		}
 		return n
 	}
-	// publish shares one row per ticket with the run pane: the state the
-	// loop sees this pass, the worker and its pane, the verdicts at the
-	// tip, and the last refusal. A nil Run publishes nothing, so worlds
-	// without a pane read the world exactly as before.
+	// publish shares one row per ticket with the Daemon: the state the
+	// loop sees this pass, the worker, the verdicts at the tip, and the
+	// last refusal. A nil Run publishes nothing, so worlds without one
+	// read the world exactly as before.
 	publish := func(at time.Time) {
 		if world.Run == nil {
 			return
@@ -469,9 +464,6 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				row.State = DriverRowQueued
 			default:
 				row.Worker = WorkerID(tk.Path)
-				if world.WorkerPane != nil {
-					row.Pane = world.WorkerPane(tk.ID)
-				}
 				required := driverRequired(world, tk.ID)
 				row.Tip = world.Tip(tk.ID)
 				row.Verdicts = cloneDriverVerdicts(world.Reviews(tk.ID))
@@ -674,7 +666,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 				// counts as progress, so the repeat gets its own pass. A
 				// told refusal waits for its submit instead of a nudge, so
 				// nothing here runs while waiting above holds. Delivery is
-				// best effort and needs a submit count: a dead pane is
+				// best effort and needs a submit count: a failed delivery is
 				// recorded on the stall, never fatal to the run, and
 				// without Submits no submit can be ruled out, so nothing is
 				// nudged.
@@ -818,7 +810,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 		}
 	}
 	// The last pass changed state after its publish: share the final rows
-	// before the report, so the pane ends where the run did.
+	// before the report, so the Daemon ends where the run did.
 	publish(driverNow(world))
 	return out, needsYouIDs, driverUnknownOrNil(unknown), stalls, driverReport(order, out, started, merged, refused, parked, gone, unknown, tickFailed, notifyErr, followups, stalls), nil
 }
@@ -888,6 +880,22 @@ func driverSpawnError(transcript string) string {
 	}
 	return found
 }
+
+// The reviewer types a Run gates on: the spec-fit and the repository
+// standards reviewers. A ticket's own hook overrides these through the
+// world's list.
+const (
+	reviewerStandards = "reviewer-standards"
+	reviewerSpec      = "reviewer-spec"
+)
+
+var defaultReviewers = []string{reviewerStandards, reviewerSpec}
+
+// verdictPass and verdictChanges are the reviewer statuses the merge gate
+// reads.
+const verdictPass = "pass"
+
+const verdictChanges = "changes"
 
 // driverRequired names the reviewer types one ticket's finish needs: its own
 // hook, then the world's list, then the two built-in reviewers.
@@ -1022,366 +1030,16 @@ func driverUnknownOrNil(unknown map[string][]string) map[string][]string {
 	return unknown
 }
 
-// RunDriverCheck reads the spec's tickets from disk, checks the graph through
-// RunDriver, and prints the start order, one ticket id per line. It is what
-// `el implement <spec> --driver --check` runs.
-func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
-	files, err := readDriverFiles(spec)
-	if err != nil {
-		return err
-	}
-	res, err := RunDriver(spec, DriverWorld{Files: files, MaxTickets: effectiveTicketCapForSpec(spec.Spec)})
-	if err != nil {
-		return err
-	}
-	for _, tk := range res.Order {
-		fmt.Fprintln(stdout, tk.ID)
-	}
-	return nil
-}
-
-// RunDriverLive runs the whole spec through the live operations: the same
-// worker spawn, reviewer verdicts and finish the LLM orchestrator uses, with
-// the ticket cap from settings. It prints the plain final report: merged
-// tickets with their sha, unmerged tickets with their last refusal, and the
-// workers' follow-ups verbatim. The repo is already on the integration
-// branch, and uncommitted edits in its checkout are left alone: the merge
-// refuses on overlap, like every finish, and completeTicket in worker.go
-// commits only the ticket file. The run waits for workers rather than
-// quitting on them, alerts needs-you tickets through a herdr notification
-// with a growing retry delay, and keeps every other ticket running. Parking
-// reads the ticket's parked status and discarding stays the user's op, never
-// the driver's.
-func RunDriverLive(spec SpecRun, repo string, stdout io.Writer) error {
-	files, err := readDriverFiles(spec)
-	if err != nil {
-		return err
-	}
-	if _, err := RunDriver(spec, DriverWorld{Files: files}); err != nil {
-		return err
-	}
-	// Every worker records the spec, the way workers spawned from an
-	// implement session do. Restored on return: the variable is process
-	// global and the value belongs to this run.
-	oldSpec, hadSpec := os.LookupEnv("EL_SPEC")
-	_ = os.Setenv("EL_SPEC", spec.Spec)
-	defer func() {
-		if hadSpec {
-			_ = os.Setenv("EL_SPEC", oldSpec)
-		} else {
-			_ = os.Unsetenv("EL_SPEC")
-		}
-	}()
-	res, err := RunDriver(spec, liveDriverWorld(spec, repo, files))
-	if err != nil {
-		return err
-	}
-	fmt.Fprint(stdout, res.Report)
-	return nil
-}
-
-// liveDriverWorld wires the live operations behind the driver seam: spawns go
-// through the same spawn call the orchestrator uses, tips resolve the same
-// implement branches, verdicts read the review record finish gates on,
-// tells reach the worker's own pane through the same delivery the tell tool
-// uses, submit counts derive from the worker's submit record, completed boxes
-// read the worker's own submit, ticks land in the ticket file in this checkout
-// through the per-file lock, finish is the same merge, and the needs-you
-// alert shows a herdr notification. A resume reads the same three sources
-// the seam takes: Status done and Status parked come from the ticket files, a
-// running worker from its store record or its implement branch, and an old
-// merge sha from the run's ticket history. Parking reads the ticket file's
-// parked Status, discard is the same finish with merge=false on the user's
-// request, and follow-ups come from the worker's submit after Follow-ups:.
-// Extracted so tests drive the mapping through the seam with fake exec and
-// temp state.
-func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
-	paths := map[string]string{}
-	for path := range files {
-		if filepath.Dir(filepath.Clean(path)) == filepath.Clean(spec.Tickets) && strings.HasSuffix(path, ".md") {
-			paths[strings.TrimSuffix(filepath.Base(path), ".md")] = path
-		}
-	}
-	types := mustLoadAgentTypes(repo)
-	// submitSeq counts each ticket worker's submits: the submit record holds
-	// only the last one, so a new marker (anything but the turn flag, which
-	// the stop gate flips on its own) advances the count.
-	submitSeq := map[string]int{}
-	submitMark := map[string]string{}
-	return DriverWorld{
-		Files:      files,
-		MaxTickets: effectiveTicketCapForSpec(spec.Spec),
-		HasWorker: func(ticketID string) bool {
-			path := paths[ticketID]
-			if path == "" {
-				return false
-			}
-			if store, err := loadWorkersLocked(); err == nil {
-				if w, ok := store[WorkerID(path)]; ok {
-					// A worker whose pane died can no longer act: a resumed run
-					// starts it again, and spawn takes the id over, reusing the
-					// worktree and the work already on its branch.
-					return !paneDead(spawnExec, w.Pane, w.Started)
-				}
-			}
-			// No record but a worktree on disk is a worker whose pane was pruned:
-			// finish removes the worktree of a merged or discarded one. Start it
-			// again; spawn reuses the worktree and the work on its branch.
-			if _, err := os.Stat(worktreePath(repo, WorkerID(path))); err == nil {
-				return false
-			}
-			res, err := spawnExec("git", []string{"rev-parse", "--verify", "implement/" + WorkerID(path)}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
-			return err == nil && res.Code == 0
-		},
-		MergedSHA: func(ticketID string) string {
-			entries, err := loadHistory(specSlug(spec.Spec))
-			if err != nil {
-				return ""
-			}
-			sha := ""
-			for _, h := range entries {
-				if h.Outcome != outcomeMerged || filepath.Base(h.Ticket) != ticketID+".md" {
-					continue
-				}
-				sha = h.SHA
-			}
-			return sha
-		},
-		StartWorker: func(tk DriverTicket) error {
-			_, err := spawnAgents(spawnExec, repo, types, []spawnRequest{{Type: "worker", Ticket: tk.Path}})
-			return err
-		},
-		Tip: func(ticketID string) string {
-			res, err := spawnExec("git", []string{"rev-parse", "implement/" + WorkerID(paths[ticketID])}, ExecOpts{Cwd: repo, Timeout: 30 * time.Second})
-			if err != nil || res.Code != 0 {
-				return ""
-			}
-			return strings.TrimSpace(res.Stdout)
-		},
-		Reviews: func(ticketID string) map[string]DriverReview {
-			out := map[string]DriverReview{}
-			for typ, r := range reviewersOf(worktreePath(repo, WorkerID(paths[ticketID]))) {
-				out[typ] = DriverReview{Verdict: r.Verdict, At: r.VerdictAt}
-			}
-			return out
-		},
-		RequiredFor: func(ticketID string) []string {
-			store, err := loadWorkersLocked()
-			if err != nil {
-				return nil
-			}
-			w, ok := store[WorkerID(paths[ticketID])]
-			if !ok {
-				return nil
-			}
-			return requiredReviewers(&w)
-		},
-		Tell: func(ticketID, text string) error {
-			id := WorkerID(paths[ticketID])
-			st, ok, err := ReadAgentState(id)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return fmt.Errorf("unknown agent %q", id)
-			}
-			if st.Pane == "" {
-				return fmt.Errorf("agent %s has no pane to deliver to", id)
-			}
-			return Nudge(tellExec, st.Pane, text)
-		},
-		Submits: func(ticketID string) int {
-			s, ok, err := ReadAgentSubmit(WorkerID(paths[ticketID]))
-			if err != nil || !ok {
-				return submitSeq[ticketID]
-			}
-			mark := s.At + "\x00" + s.Status + "\x00" + s.Report + "\x00" + s.Summary
-			if s.Stopped {
-				mark += "\x00stopped"
-			}
-			if mark != submitMark[ticketID] {
-				submitMark[ticketID] = mark
-				submitSeq[ticketID]++
-			}
-			return submitSeq[ticketID]
-		},
-		Working: func(ticketID string) bool {
-			st, ok, err := ReadAgentState(WorkerID(paths[ticketID]))
-			if err != nil || !ok || st.Pane == "" {
-				return false
-			}
-			reply, err := herdrJSON(tellExec, []string{"pane", "get", st.Pane}, 15*time.Second)
-			return err == nil && reply.Result.Pane.AgentStatus == "working"
-		},
-		Transcript: func(ticketID string) string {
-			id := WorkerID(paths[ticketID])
-			st, ok, err := ReadAgentState(id)
-			if err != nil || !ok {
-				return ""
-			}
-			path := TranscriptSource("", st.SessionID, id, "")
-			if path == "" {
-				return ""
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return ""
-			}
-			return string(raw)
-		},
-		Finish: func(ticketID string) (DriverFinish, error) {
-			res, err := Finish(finishExec, WorkerID(paths[ticketID]), true)
-			if err != nil {
-				return DriverFinish{}, err
-			}
-			return DriverFinish{Merged: res.Merged, SHA: res.SHA, Detail: res.Detail}, nil
-		},
-		Completed: func(ticketID string) []string {
-			path, ok := paths[ticketID]
-			if !ok {
-				return nil
-			}
-			s, ok, err := ReadAgentSubmit(WorkerID(path))
-			if err != nil || !ok {
-				return nil
-			}
-			return s.Completed
-		},
-		// Parked reads the ticket file's own Status line from disk, so the
-		// user's p action takes effect on the next pass. The driver is the
-		// only writer the run needs; a later pane owns the key that writes
-		// the parked status.
-		Parked: func(ticketID string) bool {
-			path, ok := paths[ticketID]
-			if !ok {
-				return false
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return false
-			}
-			return driverFileParked(string(raw))
-		},
-		TickCheckboxes: func(ticketID string, boxes []string) ([]string, error) {
-			path, ok := paths[ticketID]
-			if !ok {
-				return boxes, nil
-			}
-			return tickDriverTicketFile(path, boxes)
-		},
-		// herdr notification show <title> [--body TEXT], per herdr
-		// notification --help.
-		Notify: func(ticketID, message string) error {
-			res, err := notifyExec(herdrBin(), []string{"notification", "show", "el: ticket " + ticketID + " needs you", "--body", message}, ExecOpts{Timeout: 30 * time.Second})
-			if err != nil {
-				return err
-			}
-			if res.Code != 0 {
-				return fmt.Errorf("herdr notification show %s failed: %s", ticketID, firstLine(res.Stderr, res.Stdout))
-			}
-			return nil
-		},
-		// Discard is the user's op, never the driver's: the same finish
-		// with merge=false the finish tool runs, dropping the worker and
-		// its worktree and leaving the ticket file untouched.
-		Discard: func(ticketID string) error {
-			path, ok := paths[ticketID]
-			if !ok {
-				return fmt.Errorf("unknown ticket %q", ticketID)
-			}
-			_, err := Finish(finishExec, WorkerID(path), false)
-			return err
-		},
-		// Discarded sees the user's discard: the ticket's worker record is
-		// gone and its run history ends in a discard. A pruned pane leaves a
-		// cancelled entry and keeps its worktree for a respawn, so only a
-		// discarded last entry counts. With no history the missing record
-		// still reads discarded, the way earlier runs recorded none. Merged
-		// tickets read gone too, but the loop only asks about started
-		// unmerged tickets and the report only marks unmerged ones, so a
-		// merge never reads discarded.
-		Discarded: func(ticketID string) bool {
-			path, ok := paths[ticketID]
-			if !ok {
-				return false
-			}
-			id := WorkerID(path)
-			store, err := loadWorkersLocked()
-			if err != nil {
-				return false
-			}
-			if _, ok = store[id]; ok {
-				return false
-			}
-			hist, err := loadHistory(specSlug(spec.Spec))
-			if err != nil || len(hist) == 0 {
-				return err == nil
-			}
-			found := false
-			outcome := ""
-			for _, h := range hist {
-				if h.Worker == id || h.Ticket == path {
-					outcome, found = h.Outcome, true
-				}
-			}
-			if !found {
-				return true
-			}
-			return outcome == outcomeDiscarded
-		},
-		// Followups reads the worker's last submit and returns the text it
-		// named after Follow-ups:, verbatim for the report.
-		Followups: func(ticketID string) string {
-			path, ok := paths[ticketID]
-			if !ok {
-				return ""
-			}
-			s, ok, err := ReadAgentSubmit(WorkerID(path))
-			if err != nil || !ok {
-				return ""
-			}
-			if text := followupsOf(s.Summary); text != "" {
-				return text
-			}
-			return followupsOf(s.Report)
-		},
-		// WorkerPane reads the worker's herdr pane from its agent state, so
-		// the run pane jumps to the worker. Unknown or stateless workers
-		// leave the pane empty and the jump nowhere.
-		WorkerPane: func(ticketID string) string {
-			path, ok := paths[ticketID]
-			if !ok {
-				return ""
-			}
-			st, ok, err := ReadAgentState(WorkerID(path))
-			if err != nil || !ok {
-				return ""
-			}
-			return st.Pane
-		},
-		Sleep: time.Sleep,
-	}
-}
-
 // ReadDriverFiles reads every ticket file under the spec's tickets directory
-// into the map the driver runs against. Exported for the run pane, which
-// builds the same live world in its own process.
+// into the map the driver runs against. Exported for the web Daemon, which
+// builds its Run world from the same files.
 func ReadDriverFiles(spec SpecRun) (map[string]string, error) {
 	return readDriverFiles(spec)
 }
 
-// LiveDriverWorld wires the live operations behind the driver seam for a
-// caller outside this package: the run pane builds it, sets Run to its
-// shared state, and runs the loop. Sleep already waits between polls; the
-// pane polls the shared state on its own tick.
-func LiveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverWorld {
-	return liveDriverWorld(spec, repo, files)
-}
-
 // driverFileParked reports whether a ticket file parks its ticket: its
 // header Status line reads parked. Only the header field counts, the way
-// tickTicket only ticks the header field. Named apart from the resume-state
-// constant, which shares the ticketParked word.
+// tickTicket only ticks the header field.
 func driverFileParked(raw string) bool {
 	for _, line := range strings.Split(raw, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -1392,21 +1050,6 @@ func driverFileParked(raw string) bool {
 		}
 	}
 	return false
-}
-
-// followupsOf returns the follow-ups a submit named after Follow-ups:,
-// verbatim. Empty when the submit names none: no marker, nothing after it,
-// or nothing but none. Like the Blocked by line, none means no follow-ups.
-func followupsOf(text string) string {
-	i := strings.Index(text, "Follow-ups:")
-	if i < 0 {
-		return ""
-	}
-	note := strings.TrimSpace(text[i+len("Follow-ups:"):])
-	if note == "" || strings.EqualFold(note, "none") || strings.EqualFold(note, "nothing") {
-		return ""
-	}
-	return note
 }
 
 // readDriverFiles reads every ticket file under the spec's tickets directory
@@ -1823,8 +1466,8 @@ func tickDriverTicketFile(path string, boxes []string) ([]string, error) {
 
 // TickDriverTicketFile ticks exactly the named boxes in the ticket file at
 // path and leaves the edit uncommitted. Exported for the web driver, which
-// ticks Worker progress the same way the CLI driver does: the driver stays
-// the only ticket-file writer during a run.
+// ticks worker progress through it: the driver stays the only ticket-file
+// writer during a run.
 func TickDriverTicketFile(path string, boxes []string) ([]string, error) {
 	return tickDriverTicketFile(path, boxes)
 }
@@ -1874,4 +1517,236 @@ func checkboxText(line string) (text string, checked bool, ok bool) {
 	default:
 		return "", false, false
 	}
+}
+
+// WorkerID turns a ticket path into a branch-safe identifier:
+// `/repo/.scratch/x/issues/07-some-thing.md` -> `07-some-thing`
+func WorkerID(ticket string) string {
+	base := filepath.Base(ticket)
+	base = strings.TrimSuffix(base, ".md")
+
+	var b strings.Builder
+	for _, r := range base {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	id := strings.Trim(b.String(), "-")
+	if id == "" {
+		return "worker"
+	}
+	return id
+}
+
+// checkWorktreeClean refuses a merge when the worktree holds uncommitted
+// changes, which would be lost with the worktree. dirtyAdvice names what to
+// do instead and is appended after a semicolon; empty leaves the bare reason.
+func checkWorktreeClean(run Exec, worktree, dirtyAdvice string) (string, error) {
+	res, err := run("git", []string{"status", "--porcelain"}, ExecOpts{Cwd: worktree})
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(res.Stdout) != "" {
+		detail := "the worktree has uncommitted changes, which would be lost"
+		if dirtyAdvice != "" {
+			detail += "; " + dirtyAdvice
+		}
+		return detail, nil
+	}
+	return "", nil
+}
+
+// MergeCheckedBranch runs the git half of a worker finish: the dirty-worktree
+// check, a rebase of branch onto onto (aborted on conflict), the checkout
+// check against head (skipped when head is empty, the detached case) and the
+// fast-forward-only merge. Exported for the web driver, which merges a
+// submitted done the same way. sha is the merged tip; kept holds the refusal
+// text when the branch is kept and the worker stays alive; err is a hard git
+// failure.
+func MergeCheckedBranch(run Exec, repo, worktree, branch, onto, head, dirtyAdvice string) (sha, kept string, err error) {
+	if kept, err := checkWorktreeClean(run, worktree, dirtyAdvice); kept != "" || err != nil {
+		return "", kept, err
+	}
+
+	// Rebase onto the target as it stands now, so the fast-forward below
+	// lands on it.
+	if res, err := run("git", []string{"rebase", onto}, ExecOpts{Cwd: worktree}); err != nil {
+		return "", "", err
+	} else if res.Code != 0 {
+		// Name the conflicts, then abort: the worker that is sent back to
+		// resolve them starts from its own clean branch, not a half rebase.
+		files := ""
+		if u, err := run("git", []string{"diff", "--name-only", "--diff-filter=U"}, ExecOpts{Cwd: worktree}); err == nil {
+			files = strings.Join(strings.Fields(u.Stdout), ", ")
+		}
+		_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: worktree})
+		detail := "rebase onto " + onto + " conflicted"
+		if files != "" {
+			detail += " in " + files
+		} else {
+			detail += ": " + gitFullText(res.Stderr, "rebase failed")
+		}
+		return "", detail + "; the rebase was aborted, the branch is unchanged", nil
+	}
+
+	// The fast-forward lands on whatever the repo has checked out, so that
+	// must be the worker's target.
+	if head != "" {
+		if res, err := run("git", []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, ExecOpts{Cwd: repo}); err != nil {
+			return "", "", err
+		} else if on := strings.TrimSpace(res.Stdout); on != head {
+			return "", fmt.Sprintf("the repo is on %q, not the worker's target %q; switch it back and finish again", on, head), nil
+		}
+	}
+
+	// The integration checkout may hold uncommitted work of its own. That is
+	// fine unless it overlaps what the merge would change, in which case git
+	// would refuse halfway with its own error. Refuse up front instead,
+	// naming the files, so the caller knows to commit or stash them.
+	// -uall lists untracked files individually: the default collapses a
+	// wholly-untracked directory to `dir/`, which never matches an
+	// incoming `dir/file` the merge would overwrite.
+	if res, err := run("git", []string{"status", "--porcelain", "-uall"}, ExecOpts{Cwd: repo}); err == nil && res.Code == 0 {
+		if dirty := porcelainFiles(res.Stdout); len(dirty) > 0 {
+			if diff, err := run("git", []string{"diff", "--name-only", onto + "..." + branch}, ExecOpts{Cwd: repo}); err == nil && diff.Code == 0 {
+				incoming := map[string]bool{}
+				for _, f := range strings.Fields(diff.Stdout) {
+					incoming[strings.Trim(strings.TrimSpace(f), `"`)] = true
+				}
+				var overlap []string
+				for _, f := range dirty {
+					if incoming[f] {
+						overlap = append(overlap, f)
+					}
+				}
+				if len(overlap) > 0 {
+					sort.Strings(overlap)
+					return "", fmt.Sprintf("the integration checkout has uncommitted changes overlapping the incoming change in %s; commit or stash them and finish again", strings.Join(overlap, ", ")), nil
+				}
+			}
+		}
+	}
+
+	if res, err := run("git", []string{"merge", "--ff-only", branch}, ExecOpts{Cwd: repo}); err != nil {
+		return "", "", err
+	} else if res.Code != 0 {
+		return "", gitFullText(res.Stderr, "merge failed"), nil
+	}
+
+	if res, err := run("git", []string{"rev-parse", branch}, ExecOpts{Cwd: repo}); err == nil {
+		sha = strings.TrimSpace(res.Stdout)
+	}
+	return sha, "", nil
+}
+
+// MarkDriverTicketDone marks the ticket file at path done: its status reads
+// done and every checkbox ticks, through the same per-file lock as the
+// checkbox tick. The commit is the caller's. Exported for the web driver,
+// which completes tickets the same way.
+func MarkDriverTicketDone(path string) (bool, error) {
+	mu := driverTickLock(path)
+	mu.Lock()
+	defer mu.Unlock()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	done, ok := tickTicket(string(raw))
+	if !ok {
+		return false, fmt.Errorf("ticket %s has no status line", path)
+	}
+	if done == string(raw) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, []byte(done), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// tickTicket returns the ticket with its status done and its boxes ticked. ok
+// is false when the file holds no status line, so prose and fixtures never
+// gain one here. Only the header field counts: a "Status:" mentioned in the
+// body is left alone.
+func tickTicket(raw string) (done string, ok bool) {
+	var out []string
+	seen := false
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Status:") || strings.HasPrefix(trimmed, "**Status:") {
+			seen = true
+			if i := strings.Index(line, "Status:"); i >= 0 {
+				// Keep the markup between the key and the value (`**Status:** x`
+				// stays bold); only the value itself becomes done.
+				rest := line[i+len("Status:"):]
+				j := 0
+				for j < len(rest) && (rest[j] == '*' || rest[j] == ' ' || rest[j] == '\t') {
+					j++
+				}
+				sep := strings.TrimRight(rest[:j], " \t") + " "
+				line = line[:i+len("Status:")] + sep + "done"
+			}
+		}
+		line = strings.ReplaceAll(line, "[ ]", "[x]")
+		out = append(out, line)
+	}
+	if !seen {
+		return "", false
+	}
+	return strings.Join(out, "\n"), true
+}
+
+// ticketStatusValues returns every Status header value in file order: done,
+// parked, or whatever the file holds. Only header fields count, the way
+// tickTicket writes them.
+func ticketStatusValues(raw string) []string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Status:") && !strings.HasPrefix(trimmed, "**Status:") {
+			continue
+		}
+		if i := strings.Index(line, "Status:"); i >= 0 {
+			out = append(out, strings.TrimSpace(strings.Trim(line[i+len("Status:"):], " *\t")))
+		}
+	}
+	return out
+}
+
+// porcelainFiles lists the paths `git status --porcelain` reports as dirty, in
+// the repo-relative form `git diff --name-only` uses, so the merge can compare
+// the two. Renames contribute both sides: either overlapping blocks the merge.
+func porcelainFiles(stdout string) []string {
+	var out []string
+	for _, line := range strings.Split(stdout, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if path == "" {
+			continue
+		}
+		if strings.Contains(path, " -> ") {
+			for _, p := range strings.Split(path, " -> ") {
+				if p = strings.Trim(strings.TrimSpace(p), `"`); p != "" {
+					out = append(out, p)
+				}
+			}
+			continue
+		}
+		out = append(out, strings.Trim(path, `"`))
+	}
+	return out
+}
+
+// gitFullText passes git's own error text through whole, never truncated, so a
+// refusal says why. Empty text falls back, so the reply still says something.
+func gitFullText(text, fallback string) string {
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		return trimmed
+	}
+	return fallback
 }

@@ -39,27 +39,27 @@ func TestRoleToolsWithMCPServesRenamedFakeTools(t *testing.T) {
 		mcpfake.Config{Tools: []mcpfake.ToolDef{{Name: "search_repos", Description: "search"}}},
 		map[string]any{
 			"rename": map[string]string{"search_repos": "gh_search"},
-			"roles":  map[string]any{"review": map[string]string{"placement": "main"}},
+			"roles":  map[string]any{"scout": map[string]string{"placement": "main"}},
 		})
 	s := tools.EffectiveSettings(t.TempDir())
 	reg := tools.NewRegistry(s.MCPServers)
 	t.Cleanup(reg.Close)
 	listed := MCPSnapshot(reg)
 
-	main, execute, err := ResolvedToolsWithMCP("review", listed)
+	main, execute, err := ResolvedToolsWithMCP("scout", listed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !containsName(toolNames(main), "gh_search") {
-		t.Fatalf("review main = %v, want gh_search promoted to main", toolNames(main))
+		t.Fatalf("scout main = %v, want gh_search promoted to main", toolNames(main))
 	}
 
-	main, execute, err = ResolvedToolsWithMCP("work", listed)
+	main, execute, err = ResolvedToolsWithMCP("web", listed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if containsName(toolNames(main), "gh_search") || !containsName(toolNames(execute), "gh_search") {
-		t.Fatalf("work must keep gh_search behind execute: main=%v execute=%v", toolNames(main), toolNames(execute))
+		t.Fatalf("web must keep gh_search behind execute: main=%v execute=%v", toolNames(main), toolNames(execute))
 	}
 }
 

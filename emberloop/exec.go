@@ -10,12 +10,9 @@ import (
 	"time"
 )
 
-// Exec is the seam every operation in this package runs through.
-//
-// The SDK exposes process execution only as a host call, which is unavailable
-// outside a running pig session. Routing every command through this one
-// function type is what lets the tests drive the real herdr and git binaries
-// from a plain `go test`.
+// Exec is the seam every operation in this package runs through. Routing
+// every command through this one function type is what lets the tests drive
+// the real binaries from a plain `go test`.
 type Exec func(cmd string, args []string, opts ExecOpts) (Result, error)
 
 type ExecOpts struct {

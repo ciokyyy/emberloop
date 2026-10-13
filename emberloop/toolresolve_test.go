@@ -96,7 +96,7 @@ func sorted(in []string) []string {
 // Without settings every base tool serves in the main list and nothing hides
 // behind execute.
 func TestResolveDefaultsToMain(t *testing.T) {
-	main, execute, _ := resolveWith("work", tools.Settings{}, nil)
+	main, execute, _ := resolveWith("web", tools.Settings{}, nil)
 	want := []string{"read", "bash", "find", "spawn", "finish", "tell", "submit"}
 	if !equalNames(main, want) {
 		t.Fatalf("main = %v, want %v", main, want)
@@ -109,7 +109,7 @@ func TestResolveDefaultsToMain(t *testing.T) {
 // A globally disabled tool is absent from both the main list and execute.
 func TestResolveDisabledToolIsAbsentEverywhere(t *testing.T) {
 	s := tools.Settings{Tools: map[string]tools.ToolSetting{"bash": {Enabled: disabled()}}}
-	main, execute, _ := resolveWith("work", s, nil)
+	main, execute, _ := resolveWith("web", s, nil)
 	for _, got := range append(main, execute...) {
 		if got == "bash" {
 			t.Fatalf("disabled bash still served: main=%v execute=%v", main, execute)
@@ -128,7 +128,7 @@ func TestResolvePerRoleDisable(t *testing.T) {
 			t.Fatalf("bash still served for scout: %v", main)
 		}
 	}
-	main, _, _ = resolveWith("work", s, nil)
+	main, _, _ = resolveWith("web", s, nil)
 	found := false
 	for _, got := range main {
 		if got == "bash" {
@@ -146,7 +146,7 @@ func TestResolveRenameAppliesInBothLists(t *testing.T) {
 		"bash": {Rename: "sh"},
 		"find": {Rename: "grep", Placement: tools.PlacementExecute},
 	}}
-	main, execute, _ := resolveWith("work", s, nil)
+	main, execute, _ := resolveWith("web", s, nil)
 	if !equalNames(sorted(main), []string{"finish", "read", "sh", "spawn", "submit", "tell"}) {
 		t.Fatalf("main = %v, want bash as sh and no find", main)
 	}
@@ -160,7 +160,7 @@ func TestResolveExecutePlacementHidesFromMain(t *testing.T) {
 	s := tools.Settings{Tools: map[string]tools.ToolSetting{
 		"bash": {Placement: tools.PlacementExecute},
 	}}
-	main, execute, _ := resolveWith("work", s, nil)
+	main, execute, _ := resolveWith("web", s, nil)
 	for _, got := range main {
 		if got == "bash" {
 			t.Fatalf("execute-placed bash still in main: %v", main)
@@ -201,7 +201,7 @@ func TestResolveUnknownToolNamesWarnOnce(t *testing.T) {
 	var warns []string
 	warn := func(m string) { warns = append(warns, m) }
 	base := fakeTools("read", "submit")
-	for _, role := range []string{"work", "review", "scout"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "scout"} {
 		main, _ := resolveRoleTools(role, base, nil, s, warn)
 		for _, got := range toolNames(main) {
 			if got == "frobnicate" {
@@ -209,7 +209,7 @@ func TestResolveUnknownToolNamesWarnOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(warns) != 3 {
+	if len(warns) != 4 {
 		t.Fatalf("warns = %v, want one report per resolution", warns)
 	}
 	for _, w := range warns {
@@ -243,9 +243,9 @@ func TestResolveNeverWidensARole(t *testing.T) {
 	s := tools.Settings{Tools: map[string]tools.ToolSetting{"bash": {Enabled: enabled()}}}
 	base := fakeTools("read", "find")
 	var warns []string
-	main, _ := resolveRoleTools("review", base, nil, s, func(m string) { warns = append(warns, m) })
+	main, _ := resolveRoleTools("scout", base, nil, s, func(m string) { warns = append(warns, m) })
 	if !equalNames(toolNames(main), []string{"read", "find"}) {
-		t.Fatalf("settings widened review with bash: %v", toolNames(main))
+		t.Fatalf("settings widened scout with bash: %v", toolNames(main))
 	}
 	if len(warns) != 0 {
 		t.Fatalf("a known-but-unlisted tool must stay silent, got %v", warns)
@@ -265,7 +265,7 @@ func TestResolveMCPIncludeExcludeAndRename(t *testing.T) {
 			Rename:  map[string]string{"search_repositories": "gh_search"},
 		},
 	}}
-	main, execute, _ := resolveWith("work", s, mcp)
+	main, execute, _ := resolveWith("web", s, mcp)
 	if len(main) != 7 {
 		t.Fatalf("no MCP tool defaults to main: main=%v", main)
 	}
@@ -280,13 +280,13 @@ func TestResolveMCPPerRolePlacementAndDisable(t *testing.T) {
 	mcp := map[string][]tools.Tool{"github": fakeTools("search_repositories")}
 	s := tools.Settings{MCPServers: map[string]tools.MCPServerSetting{
 		"github": {Roles: map[string]tools.MCPServerRoleOverride{
-			"review": {Placement: tools.PlacementMain},
-			"scout":  {Enabled: disabled()},
+			"web":   {Placement: tools.PlacementMain},
+			"scout": {Enabled: disabled()},
 		}},
 	}}
-	main, execute, _ := resolveWith("review", s, mcp)
+	main, execute, _ := resolveWith("web", s, mcp)
 	if !containsName(main, "search_repositories") {
-		t.Fatalf("review must see the promoted tool in main: main=%v execute=%v", main, execute)
+		t.Fatalf("web must see the promoted tool in main: main=%v execute=%v", main, execute)
 	}
 	main, execute, _ = resolveWith("scout", s, mcp)
 	for _, got := range append(main, execute...) {
@@ -294,9 +294,9 @@ func TestResolveMCPPerRolePlacementAndDisable(t *testing.T) {
 			t.Fatalf("scout disable ignored: main=%v execute=%v", main, execute)
 		}
 	}
-	main, execute, _ = resolveWith("work", s, mcp)
+	main, execute, _ = resolveWith("run-worker", s, mcp)
 	if containsName(main, "search_repositories") || !containsName(execute, "search_repositories") {
-		t.Fatalf("work must keep the default execute placement: main=%v execute=%v", main, execute)
+		t.Fatalf("run-worker must keep the default execute placement: main=%v execute=%v", main, execute)
 	}
 }
 
@@ -304,7 +304,7 @@ func TestResolveMCPPerRolePlacementAndDisable(t *testing.T) {
 // the name and the collision warns.
 func TestResolveRenameCollisionKeepsTheFirst(t *testing.T) {
 	s := tools.Settings{Tools: map[string]tools.ToolSetting{"bash": {Rename: "read"}}}
-	main, _, warns := resolveWith("work", s, nil)
+	main, _, warns := resolveWith("web", s, nil)
 	count := 0
 	for _, got := range main {
 		if got == "read" {
@@ -345,7 +345,7 @@ func containsName(names []string, want string) bool {
 // through.
 func TestRoleToolsHonoursDisabledAndRenamed(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"bash":{"enabled":false},"read":{"rename":"rd"}}}`)
-	served, err := RoleTools("work")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,14 +362,14 @@ func TestRoleToolsHonoursDisabledAndRenamed(t *testing.T) {
 // the execute bucket the future stub generator reads.
 func TestRoleToolsHidesExecutePlacedTools(t *testing.T) {
 	writeSettingsFile(t, `{"tools":{"bash":{"placement":"execute"}}}`)
-	served, err := RoleTools("work")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if containsName(toolNames(served), "bash") {
 		t.Fatalf("execute-placed bash still served: %v", toolNames(served))
 	}
-	_, execute, err := ResolvedTools("work")
+	_, execute, err := ResolvedTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestRoleToolsHonoursTheProjectLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_PROJECT_SETTINGS", project)
-	served, err := RoleTools("work")
+	served, err := RoleTools("web")
 	if err != nil {
 		t.Fatal(err)
 	}

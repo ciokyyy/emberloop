@@ -49,11 +49,11 @@ func readPathErr(t *testing.T, rd tools.Tool, path string) error {
 	return err
 }
 
-// Ticket 18: a refused oversized read names bash for a role that has it.
+// A refused oversized read names bash for a role that has it.
 func TestReadOversizeNamesBashForBashRoles(t *testing.T) {
 	hermeticSettings(t)
 	path := oversizedFile(t)
-	for _, role := range []string{"work", "plan", "full"} {
+	for _, role := range []string{"web", "web-worker", "run-worker", "full"} {
 		err := readPathErr(t, servedRead(t, role), path)
 		if err == nil {
 			t.Errorf("%s read rendered a file over the limit", role)
@@ -63,20 +63,14 @@ func TestReadOversizeNamesBashForBashRoles(t *testing.T) {
 			t.Errorf("%s oversize refusal must name bash, got %q", role, err)
 		}
 	}
-	t.Setenv("EL_AGENT_TYPE", "worker")
-	t.Setenv("EL_AGENT_ID", "w1")
-	if err := readPathErr(t, servedRead(t, "agent"), path); err == nil ||
-		!strings.Contains(err.Error(), "with bash") {
-		t.Errorf("a worker agent oversize refusal must name bash, got %v", err)
-	}
 }
 
-// Ticket 18: a refused oversized read names tools.grep in execute or read
-// with offset and limit for a role with no bash, never bash.
+// A refused oversized read names tools.grep in execute or read with offset
+// and limit for the scout role with no bash, never bash.
 func TestReadOversizeNamesGrepForRolesWithoutBash(t *testing.T) {
 	hermeticSettings(t)
 	path := oversizedFile(t)
-	for _, role := range []string{"implement", "review", "scout"} {
+	for _, role := range []string{"scout"} {
 		err := readPathErr(t, servedRead(t, role), path)
 		if err == nil {
 			t.Errorf("%s read rendered a file over the limit", role)
@@ -91,12 +85,5 @@ func TestReadOversizeNamesGrepForRolesWithoutBash(t *testing.T) {
 		if strings.Contains(msg, "bash") {
 			t.Errorf("%s has no bash, so its refusal must not name it, got %q", role, msg)
 		}
-	}
-	t.Setenv("EL_AGENT_TYPE", "scout")
-	t.Setenv("EL_AGENT_ID", "s1")
-	if err := readPathErr(t, servedRead(t, "agent"), path); err == nil ||
-		!strings.Contains(err.Error(), "tools.grep") ||
-		strings.Contains(err.Error(), "bash") {
-		t.Errorf("a scout agent oversize refusal must name tools.grep and not bash, got %v", err)
 	}
 }

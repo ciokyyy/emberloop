@@ -11,12 +11,50 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"example.com/emberloop/tools"
 )
 
-// Archive layout (ticket 05; the stats indexer reads this).
+// withFileLock runs fn while holding a file lock named key. el's sessions
+// run in separate el-mcp processes, so an in-process mutex cannot serialize
+// what they do to a shared file; a file lock holds across all of them.
+func withFileLock(key string, fn func() error) error {
+	dir := filepath.Join(filepath.Dir(statePath), "locks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, lockName(key)+".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+// lockName turns a key into a file name safe on any filesystem.
+func lockName(key string) string {
+	var b strings.Builder
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "lock"
+	}
+	return b.String()
+}
+
+// Archive layout.
 //
 // All paths are siblings of the worker store, under el's state directory
 // (the directory holding workers.json):
@@ -46,15 +84,12 @@ import (
 //	                                     from the offset and cuts a torn tail
 //	                                     back instead of re-copying it.
 //	archive/<run>/<agent>/usage.jsonl    NOT HERE: the per-agent usage log is
-//	                                     a sibling of the archive, placed by
-//	                                     ticket 03 (`UsageLogPath`:
-//	                                     <state>/usage/<agent-id>.jsonl).
-//	archive/<run>/<agent>/memory.jsonl   written by ticket 06: memory samples.
+//	                                     a sibling of the archive, under
+//	                                     <state>/usage/<agent-id>.jsonl.
+//	archive/<run>/<agent>/memory.jsonl   memory samples.
 //
 // <run> is the spec slug (specSlug of EL_SPEC), or "adhoc" for a session
-// with no spec. <agent> is EL_AGENT_ID, sanitised for the filesystem the
-// way launch files are. Nothing is ever deleted automatically; `el
-// stats prune` (ticket 07) removes runs and the blobs nothing references.
+// with no spec. <agent> is EL_AGENT_ID, sanitised for the filesystem.
 
 // blobDir holds one file per distinct content, beside the worker store.
 func blobDir() string { return filepath.Join(filepath.Dir(statePath), "blobs") }
@@ -62,13 +97,30 @@ func blobDir() string { return filepath.Join(filepath.Dir(statePath), "blobs") }
 // archiveRoot holds one directory per run, beside the worker store.
 func archiveRoot() string { return filepath.Join(filepath.Dir(statePath), "archive") }
 
-// ArchiveSize is the bytes the archive and blob store hold on disk, for the
-// dashboard's Settings tab. Missing directories read as zero; sizes are best
-// effort the way prune's are.
+// dirSize is the bytes the tree under root holds. Missing directories read
+// as zero.
+func dirSize(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total
+}
+
+// ArchiveSize is the bytes the archive and blob store hold on disk. Missing
+// directories read as zero; sizes are best effort.
 func ArchiveSize() int64 { return dirSize(archiveRoot()) + dirSize(blobDir()) }
 
-// ArchiveAgentDir is the archive directory of one agent's session, for the
-// stats indexer and pruner to read as plain files.
+// ArchiveAgentDir is the archive directory of one agent's session, kept as
+// plain files.
 func ArchiveAgentDir(run, agent string) string {
 	return filepath.Join(archiveRoot(), sanitizeArchiveName(run), sanitizeArchiveName(agent))
 }
@@ -153,9 +205,23 @@ func RunSlugForSpec(spec string) string {
 	return "adhoc"
 }
 
+// systemPrompt is the rule set every el session carries. The tools are
+// el's own; background exists because a blocking bash call on a dev server
+// never returns. The skill sentence names the one address the read tool serves
+// the library under, so an open session can load a skill the user names.
+var systemPrompt = "Your file and shell tools are el's: read, find, edit, write, bash, background. " +
+	"Never start a dev server, watcher or log tail with bash: it blocks until timeout. Use background(action=start) and read or stop it later. " +
+	"For facts about this repo, spawn a scout when you have one: spawn(agents=[{type: \"scout\", prompt: \"...\"}]). Scouts report facts only; decisions stay with you and the user. " +
+	"Skills are listed by reading el://" + skillsNamespace + "; when the user asks for one by name " +
+	"(grill, research, wayfinder, tdd, to-spec), read the matching skill and follow it exactly. " +
+	"Upkeep of el itself is documented under el://" + docsNamespace + " (update, verify, webui): when the user asks to update, rebuild or verify el, or to manage the web UI Daemon, read the page first. " +
+	"When a spawn starts agents, end your turn: one notice with every result arrives when the last agent of that call has submitted. Never poll with sleep or bash while agents run." +
+	" A spawned agent yields right after submit: end the turn at once, with no text." +
+	" " + voiceRegister
+
 // SystemPrompt is the rule set every el session carries, stored once in the
 // blob store at session start so its cost can be counted. It is the same
-// prompt the harness commands append to.
+// prompt the Daemon's backends serve to every session.
 func SystemPrompt() string { return systemPrompt }
 
 // ToolDefsJSON marshals the tool definitions served for a role, in the shape

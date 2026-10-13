@@ -165,101 +165,13 @@ func joinTemplateArgs(args []string) string {
 	return out
 }
 
-// gitReviewBaseTemplate is the reviewRepo base built once: init + identity
-// config + a.go ("package a\n") committed as "base" on main. reviewRepo
-// copies it instead of init/config/write/add/commit per test; the base tree
-// is byte-identical to the old per-test base, only built once.
-var (
-	gitReviewBaseTemplateDir string
-	gitReviewBaseTemplateErr error
-	gitReviewBaseTemplateSHA string
-)
-
-func gitReviewBaseTemplate(t *testing.T) (dir, sha string) {
-	t.Helper()
-	// Tests in this package run sequentially, so a plain double-check
-	// builds the base once without a lock; a second concurrent build
-	// would only waste a temp dir, never corrupt shared state.
-	if gitReviewBaseTemplateDir == "" && gitReviewBaseTemplateErr == nil {
-		buildGitReviewBaseTemplate(t)
-	}
-	if gitReviewBaseTemplateErr != nil {
-		t.Fatalf("build git review base: %v", gitReviewBaseTemplateErr)
-	}
-	return gitReviewBaseTemplateDir, gitReviewBaseTemplateSHA
-}
-
-func buildGitReviewBaseTemplate(t *testing.T) {
-	t.Helper()
-	src := gitConfigTemplate(t)
-	dir, err := os.MkdirTemp("", "el-git-review-base-*")
-	if err != nil {
-		gitReviewBaseTemplateErr = err
-		return
-	}
-	copyGitTemplate(t, src, dir)
-	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
-		gitReviewBaseTemplateErr = err
-		return
-	}
-	cmd := exec.Command("git", "add", ".")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		gitReviewBaseTemplateErr = &templateGitError{args: []string{"add", "."}, out: string(out), err: err}
-		return
-	}
-	cmd = exec.Command("git", "commit", "-qm", "base")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		gitReviewBaseTemplateErr = &templateGitError{args: []string{"commit", "-qm", "base"}, out: string(out), err: err}
-		return
-	}
-	sha := ""
-	if raw, err := os.ReadFile(filepath.Join(dir, ".git", "refs", "heads", "main")); err == nil {
-		sha = trimSHA(string(raw))
-	} else {
-		// Packed refs (an eager gc): fall back to one rev-parse spawn.
-		cmd := exec.Command("git", "rev-parse", "HEAD")
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			gitReviewBaseTemplateErr = &templateGitError{args: []string{"rev-parse", "HEAD"}, out: string(out), err: err}
-			return
-		}
-		sha = trimSHA(string(out))
-	}
-	gitReviewBaseTemplateDir = dir
-	gitReviewBaseTemplateSHA = sha
-}
-
-func trimSHA(s string) string {
-	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r' || s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
-// templatedReviewRepo copies the shared review base (init+config+a.go@main)
-// into a fresh temp dir and returns it with its base SHA, read from the ref
-// file instead of a `git rev-parse` spawn. Identical tree and SHA shape to
-// the old per-test init/write/add/commit/rev-parse sequence.
-func templatedReviewRepo(t *testing.T) (repo, base string) {
-	t.Helper()
-	src, sha := gitReviewBaseTemplate(t)
-	dst := t.TempDir()
-	copyGitTemplate(t, src, dst)
-	return dst, sha
-}
-
 // fileBaseTemplate builds (once) a repo from the config skeleton plus one
 // committed file, and copies it per test. The committed tree is
 // byte-identical to what the callers used to init/write/add/commit
 // themselves; only the build moves once per run. Test-only.
 var (
-	readmeBaseTemplateDir string
-	readmeBaseTemplateErr error
-	atxtBaseTemplateDir   string
-	atxtBaseTemplateErr   error
+	atxtBaseTemplateDir string
+	atxtBaseTemplateErr error
 )
 
 func buildFileBaseTemplate(t *testing.T, name, content string) string {
@@ -283,22 +195,6 @@ func buildFileBaseTemplate(t *testing.T, name, content string) string {
 	return dir
 }
 
-// templatedReadmeRepo copies the shared README-base repo (init+config with
-// README.md "base" committed on main). Identical to the per-test
-// init/config/write/add/commit sequence it replaces.
-func templatedReadmeRepo(t *testing.T) string {
-	t.Helper()
-	if readmeBaseTemplateDir == "" && readmeBaseTemplateErr == nil {
-		readmeBaseTemplateDir = buildFileBaseTemplate(t, "README.md", "base\n")
-	}
-	if readmeBaseTemplateErr != nil {
-		t.Fatalf("build readme base: %v", readmeBaseTemplateErr)
-	}
-	dst := t.TempDir()
-	copyGitTemplate(t, readmeBaseTemplateDir, dst)
-	return dst
-}
-
 // templatedAtxtRepo copies the shared a.txt-base repo (init+config with a.txt
 // "a" committed on main) for the driver merge tests.
 func templatedAtxtRepo(t *testing.T) string {
@@ -318,11 +214,18 @@ func templatedAtxtRepo(t *testing.T) string {
 // above. TestMain calls it after m.Run so a package run leaves nothing
 // behind; each removal best-efforts with owner-write first.
 func cleanupGitTemplates() {
-	for _, dir := range []string{gitConfigTemplateDir, gitReviewBaseTemplateDir, readmeBaseTemplateDir, atxtBaseTemplateDir} {
+	for _, dir := range []string{gitConfigTemplateDir, atxtBaseTemplateDir} {
 		if dir == "" {
 			continue
 		}
 		chmodTree(dir)
 		removeRetry(dir)
 	}
+}
+
+// TestMain cleans the shared git templates after the run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	cleanupGitTemplates()
+	os.Exit(code)
 }

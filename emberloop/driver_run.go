@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// DriverRowState is one ticket's state as the run pane shows it: queued
+// DriverRowState is one ticket's state as the Daemon shows it: queued
 // (never started), running (started, no reviewer verdict yet), in-review (a
 // verdict at the worker's tip but the gate still closed), merging (the gate
 // passed and finish is running), needs-you (the alert fired, retries
@@ -27,16 +27,15 @@ const (
 	DriverRowDiscarded DriverRowState = "discarded"
 )
 
-// DriverRow is one ticket's live row: its state, its worker and pane for the
-// jump, the reviewer verdicts at the current tip, when it entered this
-// state, and the last refusal text while it needs you.
+// DriverRow is one ticket's live row: its state, its worker, the reviewer
+// verdicts at the current tip, when it entered this state, and the last
+// refusal text while it needs you.
 type DriverRow struct {
 	ID          string
 	Path        string
 	Num         int
 	State       DriverRowState
 	Worker      string
-	Pane        string
 	Tip         string
 	Verdicts    map[string]DriverReview
 	Required    []string
@@ -44,10 +43,10 @@ type DriverRow struct {
 	LastRefusal string
 }
 
-// DriverRun is the in-memory run state the driver loop and the run pane
-// share: the loop publishes every pass, the pane reads snapshots. It holds
-// no file of its own; the tickets, worker records and git stay the only
-// persisted state.
+// DriverRun is the in-memory run state the driver loop shares with the
+// Daemon: the loop publishes every pass, the Daemon reads snapshots. It
+// holds no file of its own; the tickets, worker records and git stay the
+// only persisted state.
 type DriverRun struct {
 	mu    sync.Mutex
 	now   func() time.Time
@@ -64,7 +63,7 @@ func NewDriverRun(clock func() time.Time) *DriverRun {
 	return &DriverRun{now: clock, rows: map[string]DriverRow{}}
 }
 
-// Snapshot returns one row per ticket in start order. Copies, so the pane
+// Snapshot returns one row per ticket in start order. Copies, so the Daemon
 // never races the loop.
 func (r *DriverRun) Snapshot() []DriverRow {
 	if r == nil {

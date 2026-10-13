@@ -5,8 +5,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// firstLine is the first line of text, or fallback when text is blank: build
+// failures report one line, not a log.
+func firstLine(text, fallback string) string {
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		return strings.SplitN(trimmed, "\n", 2)[0]
+	}
+	return fallback
+}
 
 // `el update` (alias `el install`) is the only path that replaces the
 // installed el binaries (el, el-mcp and el-web; see update.go).
@@ -22,8 +32,8 @@ type InstallResult struct {
 	Warning string
 }
 
-// installExec runs the install's herdr and build commands, so tests drive it
-// with a fake multiplexer and builder.
+// installExec runs the install's build commands, so tests drive it with a
+// fake builder.
 var installExec Exec = OSExec
 
 // installDir is where the el binaries live. The install updates the
@@ -201,13 +211,6 @@ func swapInstalled(done []staged) error {
 		}
 	}
 	return nil
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
 }
 
 // runInstallDeps is the dependency step at the end of `el update`.

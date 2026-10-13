@@ -206,20 +206,3 @@ func storeLiveTranscript(stateDir, agentID, transcript string) {
 		_ = os.Remove(tmp)
 	}
 }
-
-// readLiveTranscript is the stored transcript for an agent when the file is
-// still there, else "".
-func readLiveTranscript(stateDir, agentID string) string {
-	if agentID == "" || strings.ContainsAny(agentID, `/\`) {
-		return ""
-	}
-	raw, err := os.ReadFile(liveTranscriptPath(stateDir, agentID))
-	if err != nil {
-		return ""
-	}
-	p := strings.TrimSpace(string(raw))
-	if _, err := os.Stat(p); err != nil {
-		return ""
-	}
-	return p
-}
