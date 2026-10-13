@@ -1,6 +1,6 @@
 # emberloop
 
-emberloop runs parallel implement-and-review loops for coding agents . An orchestrator session (pig or Claude Code) splits a spec into tickets, spawns one worker per ticket in its own git worktree, has two persistent reviewers judge each worker, and merges a ticket only after every required reviewer has passed at the ticket's current tip.
+Emberloop is a browser UI and local Daemon that runs coding-agent sessions and deterministic implement/review Runs. A Run splits a spec into tickets, runs one worker per ticket in its own git worktree and branch, has persistent reviewers judge each worker, and merges a ticket only after every required reviewer has passed at the ticket's current tip.
 
 <p align="center">
   <picture>
@@ -49,14 +49,7 @@ Flags skip the UI:
 
 ## Use
 
-Start an orchestrator and hand it a spec:
-
-```bash
-el --pig          # or --claude
-emberloop implement specs/my-feature.md
-```
-
-Or drive runs from the browser UI (see [Emberloop](#emberloop)).
+Start the Daemon and open it in a browser (see [Emberloop](#emberloop)). Runs start from the UI: pick a spec, and the driver works every ticket to merged, parked or discarded.
 
 Other commands:
 
@@ -65,15 +58,16 @@ Other commands:
 | `el settings` | read and change role slots, models, tools and MCP servers |
 | `el deps` | check and install system dependencies (python3, rg, git, bwrap, graph binary) |
 | `el update` (`el install`) | rebuild the UI unless unchanged, rebuild the binaries from the checkout |
-| `el context <session-id>` | print one session's context numbers |
+| `el logs` | print the prod Daemon journal |
+| `el restart` | restart the prod Daemon |
 
 ## How a run works
 
-The orchestrator reads a spec, spawns workers, and waits for notices. Each worker implements one ticket in `.emberloop-worktrees/<ticket>` on branch `implement/<ticket>` and submits `done` or `blocked`. At most three tickets run at once by default (`max_tickets`); extra tickets wait until a slot frees. Subagents are uncapped: reviewers and scouts spawn freely.
+The driver reads a spec, starts workers, and keeps every other ticket running while one waits. Each worker implements one ticket in `.el-worktrees/<ticket>` on branch `implement/<ticket>` and submits `done` or `blocked`. At most three tickets run at once by default (`max_tickets`); extra tickets wait until a slot frees. Subagents are uncapped: reviewers and scouts spawn freely.
 
-Two reviewers, one for the spec and one for the repository's standards, keep their context across passes. They can run the repository's named checks from `.emberloop/check`. Findings go back to the same worker with `tell`, and the loop repeats until both reviewers pass.
+Two reviewers, one for the spec and one for the repository's standards, keep their context across passes. They can run the repository's named checks from `.emberloop/check`. Findings go back to the same worker, and the loop repeats until every required reviewer passes.
 
-`finish` is the merge step. It refuses unless every required reviewer passed at the current tip, so a stale pass does not count. It then rebases the worker branch onto the target and merges it with `git merge --ff-only`. A dirty worktree, a missing pass, or a rebase conflict keeps the worker alive instead of merging.
+A merge refuses unless every required reviewer passed at the current tip, so a stale pass does not count. It then rebases the worker branch onto the target and merges it with `git merge --ff-only`. A dirty worktree, a missing pass, or a rebase conflict keeps the worker alive instead of merging.
 
 <p align="center">
   <picture>
@@ -102,7 +96,7 @@ Two reviewers, one for the spec and one for the repository's standards, keep the
 
 | Directory | Contents |
 |---|---|
-| `emberloop/` | the main Go module: sessions, spawn and grid, reviewers, gate and merge, tools, MCP server, state database |
+| `emberloop/` | the el library behind the Daemon: tool roles, Run driver, session archive and usage, operator CLI |
 | `emberloop-web/` | the browser UI and Daemon module: local Go Daemon plus embedded UI, loopback only |
 | `pig-antigravity-auth/` | a pig extension that adds the `google-antigravity` model provider |
 | `installer/` | the installer that `install.sh` runs |
@@ -144,6 +138,6 @@ The check runs `go vet` and the tests for `emberloop/`, `installer/` and `emberl
 | `~/.emberloop/settings.json` | settings; `EL_SETTINGS` overrides the path |
 | `~/.emberloop/skills` | the skill library behind `el://` addresses |
 | `~/.pig/state/emberloop` | agent records, usage, archives |
-| `.emberloop-worktrees/` | one git worktree per ticket |
+| `.el-worktrees/` | one git worktree per ticket |
 
 All environment variables use the `EL_` prefix.

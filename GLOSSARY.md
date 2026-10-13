@@ -1,6 +1,6 @@
 # Emberloop
 
-A browser UI and local daemon that run coding-agent sessions and show them live. It is a separate harness from the herdr-based emberloop loop.
+A browser UI and local daemon that run coding-agent sessions and deterministic implement/review Runs, and show them live.
 
 ## Language
 

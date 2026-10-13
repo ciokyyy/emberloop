@@ -1,16 +1,13 @@
 # AGENTS.md — emberloop
 
-Project preamble: emberloop is a harness extension for running parallel agent
-implement/review loops. Pig and claude sessions spawn workers in git
-worktrees, judge them with persistent reviewers, and merge through a gate
-(`finish`). The main Go package is `emberloop/`; `emberloop-web/` is the browser UI and Daemon module; `pig-antigravity-auth/` is a separate pig
+Project preamble: emberloop is a browser UI and local Daemon (`emberloop-web/`) that runs coding-agent sessions and deterministic implement/review Runs. `emberloop/` is the el library behind it: the tool roles the el MCP server serves, the Run driver, the session archive and usage tailer, and the operator CLI with its update path; `pig-antigravity-auth/` is a separate pig
 extension; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
 live
 probes that need running agents; `.scratch/archive/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
 `CLAUDE.md`, which imports this file; Daemon claude Sessions load no
 CLAUDE.md and get a system-prompt pointer to this file instead. The repo check is `.emberloop/check`
-(`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../emberloop-tui && go vet ./... && go test ./... && cd ../installer && go vet ./... && go test ./... && cd ../emberloop-web && go vet ./... && go test ./...`).
+(`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./... && cd ../emberloop-web && go vet ./... && go test ./...`).
 
 ## DOX contract
 

@@ -7,7 +7,7 @@ The web UI is a local Go Daemon with the UI embedded in the binary. `el update` 
 | | Prod | Dev |
 |---|---|---|
 | URL | http://127.0.0.1:8787, and from other tailnet devices http://100.94.50.96:8787 | http://127.0.0.1:7941 |
-| Run by | systemd user unit `emberloop-web` | `scripts/web-dev.sh` (foreground, in a background pane) |
+| Run by | systemd user unit `emberloop-web` | `scripts/web-dev.sh` in the foreground |
 | Binary | `~/.local/bin/el-web` | `go run` from the checkout |
 | State | `~/.local/share/pig` | `~/.local/share/pig-dev` (`EL_WEB_DEV_STATE` overrides) |
 
@@ -69,12 +69,12 @@ settings is unchanged; only the login is shared.
 - Status: `systemctl --user status emberloop-web`
 - Restart: `el restart` (`--dev` for port 7941, `--wait` to block until the Daemon is back; never `--wait` inside a Daemon Session). It POSTs `/api/restart` with the machine token (`EL_WEB_TOKEN`, else the `daemon.token` file of the state dir; `pig-dev` for `--dev`); `systemctl --user reload emberloop-web` (SIGUSR1) does the same. This is the only restart an agent runs. The Daemon pauses every running Run and marks it `resumeOnRestart`, stops each Run Worker and Reviewer right after its current tool call finishes (at once when no tool runs; their queued messages are saved, nothing re-prompts them), waits up to `-restart-drain` (default 5m) for the other Sessions to finish their turns, closes agent processes, and re-executes itself. The new Daemon resumes the marked Runs on its own, with the same Worker and Reviewer Sessions in the same worktrees; a Session whose turn the restart cut short gets a continue prompt at once. A Run still running on disk after a kill or crash resumes the same way; a Run paused by hand stays paused. A Daemon that boots 4 times within 5 minutes stops resuming Runs on its own (see `restart.log`); resume them by hand once the crash is fixed. Idle Sessions reload on the next prompt. `el restart` prints the pending request and what still blocks the drain (`GET /api/restart` answers the same state); when the drain expires the restart is forced regardless of idle, and a repeat past drain plus a minute re-arms a stuck request. Every step is logged timestamped to stderr and `<state-dir>/enderbloom/restart.log`, so an exec failure stays visible there.
 - Never run `systemctl restart|stop`, `kill` or a manual `el-web` launch against the prod Daemon, least of all from a Session inside it: the restart drops your own agent process and cuts Run Workers mid-turn (they resume on the next Daemon, but `el restart` drains first and loses less).
-- Logs: `el logs` (`-n N`, `-f`, `--since TIME`, `--grep PATTERN`); it wraps `journalctl --user -u emberloop-web`. The dev Daemon has no journal: read its pane.
+- Logs: `el logs` (`-n N`, `-f`, `--since TIME`, `--grep PATTERN`); it wraps `journalctl --user -u emberloop-web`. The dev Daemon has no journal: read its output where you started it.
 - The unit file is `~/.config/systemd/user/emberloop-web.service`. It runs `el-web -addr 127.0.0.1:8787` with `Restart=always`. Linger is on, so it starts at boot.
 
 ## Dev loop
 
-- Start: `scripts/web-dev.sh` through the background tool, never with bash. Rebuild the UI first (`npx vite build` in `emberloop-web/web`), then restart the pane, because `go run` embeds `web/dist` at compile time.
+- Start: `scripts/web-dev.sh` through the background tool, never with bash. Rebuild the UI first (`npx vite build` in `emberloop-web/web`), then restart it, because `go run` embeds `web/dist` at compile time.
 - Browser suite: `cd emberloop-web/web && npm run test:e2e`. It starts its own throwaway Daemon and needs no key.
 - Component tests: `cd emberloop-web/web && npx vitest run`. Go tests: `cd emberloop-web && go test ./...`.
 
