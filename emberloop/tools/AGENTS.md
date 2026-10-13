@@ -63,7 +63,7 @@ validation where emberloop's built-ins win), `rename.go` (serve a tool under a n
 runner read-only roles use: read-only root, no network, bridge bind,
 self-test, `el deps` error), `mcpclient.go` (the stdio JSON-RPC client
 and the per-process server registry: one entry per server over either
-transport, behind the same resolution), `mcphttp.go` (the Streamable-HTTP
+transport, behind the same resolution; `Snapshot` lists the servers in parallel, so el-mcp's startup costs the slowest server, not the sum), `mcphttp.go` (the Streamable-HTTP
 client: session ids, JSON or SSE replies, one OAuth retry on 401),
 `mcpoauth.go` (the OAuth flow: discovery, dynamic registration, PKCE browser
 approval, refresh, the per-user token store, reauth-needed), `graph.go` (the
@@ -121,6 +121,10 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   with 401 use the `oauth` browser flow, whose tokens live per server under
   the user's home (`EL_MCP_TOKEN_DIR` in tests), never in settings. A dead
   credential is a reauth-needed error naming the token file, never fatal.
+  Only a call or `el settings mcp-server <name> login` opens the browser
+  approval; a listing never does, so a server without a token fails fast with
+  that hint instead of stalling every session start. A host with no browser
+  prints the URL and keeps waiting for the callback.
 - `check` shares its timeout (3 minutes), 60-line tail and status strings
   between the tool and the harness spawn-time run; the map's `default`, or
   its first name when no default exists, is what the spawn run executes.

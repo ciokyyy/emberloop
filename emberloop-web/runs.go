@@ -41,9 +41,10 @@ func (d *Daemon) handleSpecs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"specs": entries})
 }
 
-// discoverSpecs scans a repo directory for spec files (files named spec.md)
-// and resolves each through core spec resolution, which also finds the
-// issues directory beside it. A directory with no spec returns an empty list.
+// discoverSpecs scans a repo directory for spec files (files named spec.md,
+// plus local spec-*.md plans such as docs/plans/spec-01-voice.md) and resolves
+// each through core spec resolution, which also finds the issues directory
+// beside it. A directory with no spec returns an empty list.
 func discoverSpecs(repo string) ([]specEntry, error) {
 	info, err := os.Stat(repo)
 	if err != nil {
@@ -70,7 +71,7 @@ func discoverSpecs(repo string) ([]specEntry, error) {
 				}
 				continue
 			}
-			if name == "spec.md" && depth+1 <= specScanDepth {
+			if el.IsSpecFileName(name) && depth+1 <= specScanDepth {
 				candidates = append(candidates, filepath.Join(dir, name))
 			}
 		}

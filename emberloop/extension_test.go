@@ -317,3 +317,14 @@ func TestBriefDirectsExecute(t *testing.T) {
 		t.Errorf("brief must carry the execute direction exactly once, found %d:\n%s", got, text)
 	}
 }
+
+// The prompt caps tickets, not workers: subagents are uncapped.
+func TestImplementPromptCapsTicketsNotWorkers(t *testing.T) {
+	got := implementPrompt(testRun)
+	if !strings.Contains(got, "tickets run at once") {
+		t.Errorf("the prompt must cap concurrent tickets:\n%s", got)
+	}
+	if strings.Contains(got, "workers run at once") || strings.Contains(got, "queue and start") {
+		t.Errorf("the prompt must not cap workers or queue spawns:\n%s", got)
+	}
+}

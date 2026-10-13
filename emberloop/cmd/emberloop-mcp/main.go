@@ -64,6 +64,14 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "el-mcp:", err)
 		return 2
 	}
+	// A harness that cannot tell when this server is ready (pig connects its
+	// MCP servers in the background) names a file; the listing is done, so
+	// the file says tools are about to be served.
+	if ready := os.Getenv("EL_READY_FILE"); ready != "" {
+		if err := os.WriteFile(ready, []byte("ready\n"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "el-mcp: ready file:", err)
+		}
+	}
 	// The memory sampler records this session's harness process tree every 5
 	// seconds into the agent's archive log, whether or not the TUI is open.
 	// It ends with this process, which is the session's end.

@@ -251,7 +251,7 @@ func titlesEnabled() bool {
 
 // sessionTitlesSetting is the session_titles settings key alone (default on),
 // which the settings page edits; titlesFromEnv says the environment overrides
-// it, the same locked-field pattern as max_workers.
+// it, the same locked-field pattern as max_tickets.
 func sessionTitlesSetting() bool {
 	all, err := readSettingsMap()
 	if err != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -15,7 +16,7 @@ import (
 	"example.com/emberloop/tools/systemone"
 )
 
-const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max-workers <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>|strip-symbols <nerd|unicode|ascii>|strip-separator <powerline|powerline-thin|rounded|slash|pipe|none>]
+const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max-tickets <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>|strip-symbols <nerd|unicode|ascii>|strip-separator <powerline|powerline-thin|rounded|slash|pipe|none>]
        el settings models [--refresh] [--harness h]
        el settings role <slot> harness|model|effort <value>
        el settings search provider|mode <value>
@@ -24,6 +25,7 @@ const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max
        el settings mcp-server <name> command|args|url|placement|summary|include|exclude <value>
        el settings mcp-server <name> env|headers <KEY=VALUE>
        el settings mcp-server <name> rename <ORIG=NEW>
+       el settings mcp-server <name> login
        el settings mcp-server <name> oauth callback-port|client-name|metadata-url|scopes <value>
        el settings mcp-server <name> role <role> enabled|placement <value>
        el settings mcp-server remove <name>`
@@ -67,15 +69,15 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 			return fmt.Errorf("threshold %q is not a number above zero\n%s", argv[1], settingsUsage)
 		}
 		s.Threshold = v
-	case "max-workers":
+	case "max-tickets", "max-workers":
 		if len(argv) < 2 {
-			return fmt.Errorf("max-workers needs a number\n%s", settingsUsage)
+			return fmt.Errorf("max-tickets needs a number\n%s", settingsUsage)
 		}
 		v, err := strconv.Atoi(argv[1])
 		if err != nil || v <= 0 {
-			return fmt.Errorf("max-workers %q is not a whole number above zero\n%s", argv[1], settingsUsage)
+			return fmt.Errorf("max-tickets %q is not a whole number above zero\n%s", argv[1], settingsUsage)
 		}
-		s.MaxWorkers = v
+		s.MaxTickets = v
 	case "compress-threshold":
 		if err := setCompressThreshold(&s, argv[1:]); err != nil {
 			return err
@@ -133,6 +135,9 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 			return err
 		}
 	case "mcp-server":
+		if len(argv) == 3 && argv[2] == "login" {
+			return loginMCPServer(s, argv[1], out)
+		}
 		n, err := setMCPServer(&s, argv[1:])
 		if err != nil {
 			return err
@@ -148,6 +153,28 @@ func runSettings(argv []string, out io.Writer, models modelSource) error {
 	}
 	fmt.Fprint(out, note)
 	printSettings(out, tools.EffectiveSettings(projectRoot()))
+	return nil
+}
+
+// loginMCPServer runs the OAuth browser approval for one url server and
+// stores its token, waiting up to the approval window. Settings stay unchanged.
+func loginMCPServer(s tools.Settings, name string, out io.Writer) error {
+	cfg, ok := tools.EffectiveSettings(projectRoot()).MCPServers[name]
+	if !ok {
+		cfg, ok = s.MCPServers[name]
+	}
+	if !ok {
+		return fmt.Errorf("unknown mcp server %q\n%s", name, settingsUsage)
+	}
+	reg := tools.NewRegistry(map[string]tools.MCPServerSetting{name: cfg})
+	defer reg.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), tools.MCPLoginTimeout)
+	defer cancel()
+	fmt.Fprintf(out, "approving %s: open the URL printed or opened in a browser; waiting up to %s\n", name, tools.MCPLoginTimeout)
+	if err := reg.Login(ctx, name); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s: connected, token stored\n", name)
 	return nil
 }
 
@@ -1011,7 +1038,7 @@ func printSettings(out io.Writer, s tools.Settings) {
 	fmt.Fprintf(out, "settings: %s\n", tools.SettingsPath())
 	fmt.Fprintf(out, "decision-model: %s (%s)\n", orDefault(s.DecisionModel, systemone.JevModelPinned), s.SourceOf("decision_model"))
 	fmt.Fprintf(out, "threshold: %g (%s)\n", orDefault(s.Threshold, defaultThreshold), s.SourceOf("threshold"))
-	fmt.Fprintf(out, "max-workers: %d (%s)\n", s.EffectiveMaxWorkers(), maxWorkersSource(s))
+	fmt.Fprintf(out, "max-tickets: %d (%s)\n", s.EffectiveMaxTickets(), maxTicketsSource(s))
 	printContextSettings(out, s)
 	fmt.Fprintf(out, "search: provider %s (%s), mode %s (%s)\n",
 		s.EffectiveSearchProvider(), s.SourceOf("search.provider"),
@@ -1251,18 +1278,18 @@ func foldPlacement(ovKey, ov, entryKey, entry, fallback string, s tools.Settings
 	return fallback, "default"
 }
 
-// maxWorkersSource is where the worker cap came from. The env wins when set,
+// maxTicketsSource is where the ticket cap came from. The env wins when set,
 // then the project file, then the global file. A missing or non-positive
 // value stays the default, the way decode treats it: the value and the name
 // it prints must agree. A just-saved value reads as the file's even though
 // the loaded source map still says default, the way a role field's source
 // follows its value.
-func maxWorkersSource(s tools.Settings) string {
-	switch s.SourceOf("max_workers") {
+func maxTicketsSource(s tools.Settings) string {
+	switch s.SourceOf("max_tickets") {
 	case "env", "project":
-		return s.SourceOf("max_workers")
+		return s.SourceOf("max_tickets")
 	}
-	if s.MaxWorkers > 0 {
+	if s.MaxTickets > 0 {
 		return "file"
 	}
 	return "default"

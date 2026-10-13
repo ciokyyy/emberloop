@@ -133,6 +133,14 @@ type SessionMeta struct {
 	// failure. Non-empty means the Session is blocked: its messages queue until
 	// Retry succeeds or the block is dismissed.
 	CompressBlock string `json:"compressBlock,omitempty"`
+	// RestartStopped marks a Run Worker or Reviewer the Daemon stopped at a
+	// restart, right after its current tool call finished. The next Daemon
+	// continues it in the same Session and worktree and clears the mark.
+	RestartStopped bool `json:"restartStopped,omitempty"`
+	// Carry holds the messages that sat in the Daemon queue when the restart
+	// stopped the Session, one "- " bullet each. They reach the Session in its
+	// continue prompt.
+	Carry string `json:"carry,omitempty"`
 	// Dirs are the owner's harness config dirs for the current start. The
 	// Daemon sets them from Owner on every create, resume and Handoff, and
 	// they are never persisted.

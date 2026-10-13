@@ -23,6 +23,7 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", settings)
+	t.Setenv("EL_MAX_TICKETS", "")
 	t.Setenv("EL_MAX_WORKERS", "")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -32,8 +33,8 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 
 type settingsResp struct {
 	Roles             map[string]roleSetting `json:"roles"`
-	MaxWorkers        int                    `json:"max_workers"`
-	MaxWorkersFromEnv bool                   `json:"max_workers_from_env"`
+	MaxTickets        int                    `json:"max_tickets"`
+	MaxTicketsFromEnv bool                   `json:"max_tickets_from_env"`
 }
 
 func getSettingsView(t *testing.T, base string) (settingsResp, int) {
@@ -73,40 +74,57 @@ func putSettingsBody(t *testing.T, base, body string) (settingsResp, int) {
 	return out, resp.StatusCode
 }
 
-// The settings read returns max_workers and whether the environment
+// The settings read returns max_tickets and whether the environment
 // overrides it.
-func TestSettingsReadReturnsMaxWorkersAndEnvFlag(t *testing.T) {
-	srv, _ := settingsServer(t, `{"max_workers": 5, "roles": {}}`)
+func TestSettingsReadReturnsMaxTicketsAndEnvFlag(t *testing.T) {
+	srv, _ := settingsServer(t, `{"max_tickets": 5, "roles": {}}`)
 
 	out, code := getSettingsView(t, srv.URL)
 	if code != http.StatusOK {
 		t.Fatalf("settings status = %d, want 200", code)
 	}
-	if out.MaxWorkers != 5 || out.MaxWorkersFromEnv {
-		t.Fatalf("settings = %+v, want max_workers 5 with no env override", out)
+	if out.MaxTickets != 5 || out.MaxTicketsFromEnv {
+		t.Fatalf("settings = %+v, want max_tickets 5 with no env override", out)
 	}
 
-	t.Setenv("EL_MAX_WORKERS", "2")
+	t.Setenv("EL_MAX_TICKETS", "2")
 	out, _ = getSettingsView(t, srv.URL)
-	if out.MaxWorkers != 2 || !out.MaxWorkersFromEnv {
-		t.Fatalf("settings under env = %+v, want max_workers 2 from env", out)
+	if out.MaxTickets != 2 || !out.MaxTicketsFromEnv {
+		t.Fatalf("settings under env = %+v, want max_tickets 2 from env", out)
 	}
 }
 
-// The settings write validates and saves max_workers without losing roles.
-func TestSettingsWriteValidatesAndSavesMaxWorkers(t *testing.T) {
-	srv, settings := settingsServer(t, `{"max_workers": 2, "roles": {"worker": {"harness": "pig", "model": "auto"}}, "tools": {"bash": {}}}`)
+// An old file's max_workers still reads as the ticket cap.
+func TestSettingsReadFallsBackToOldMaxWorkers(t *testing.T) {
+	srv, _ := settingsServer(t, `{"max_workers": 6, "roles": {}}`)
 
-	out, code := putSettingsBody(t, srv.URL, `{"max_workers": 4}`)
+	out, code := getSettingsView(t, srv.URL)
+	if code != http.StatusOK {
+		t.Fatalf("settings status = %d, want 200", code)
+	}
+	if out.MaxTickets != 6 || out.MaxTicketsFromEnv {
+		t.Fatalf("settings = %+v, want max_tickets 6 from the old key", out)
+	}
+}
+
+// The settings write validates and saves max_tickets without losing roles,
+// and never writes the old key again.
+func TestSettingsWriteValidatesAndSavesMaxTickets(t *testing.T) {
+	srv, settings := settingsServer(t, `{"max_tickets": 2, "roles": {"worker": {"harness": "pig", "model": "auto"}}, "tools": {"bash": {}}}`)
+
+	out, code := putSettingsBody(t, srv.URL, `{"max_tickets": 4}`)
 	if code != http.StatusOK {
 		t.Fatalf("write status = %d, want 200", code)
 	}
-	if out.MaxWorkers != 4 {
-		t.Fatalf("write max_workers = %d, want 4", out.MaxWorkers)
+	if out.MaxTickets != 4 {
+		t.Fatalf("write max_tickets = %d, want 4", out.MaxTickets)
 	}
 	raw, err := os.ReadFile(settings)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "max_workers") {
+		t.Fatalf("the old key must never be written again: %s", raw)
 	}
 	// The file keeps roles and unknown fields next to the new cap.
 	var kept struct {
@@ -117,7 +135,7 @@ func TestSettingsWriteValidatesAndSavesMaxWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if kept.Roles["worker"].Model != "auto" {
-		t.Fatalf("roles after max_workers-only write = %+v, want the worker role kept", kept.Roles)
+		t.Fatalf("roles after max_tickets-only write = %+v, want the worker role kept", kept.Roles)
 	}
 	if _, ok := kept.Tools["bash"]; !ok {
 		t.Fatalf("tools after write missing: %s", raw)
@@ -131,11 +149,11 @@ func TestSettingsWriteValidatesAndSavesMaxWorkers(t *testing.T) {
 	if out.Roles["worker"].Model != "auto" || out.Roles["scout"].Model != "auto" {
 		t.Fatalf("roles after merge = %+v, want worker kept and scout added", out.Roles)
 	}
-	if out.MaxWorkers != 4 {
-		t.Fatalf("max_workers after roles-only write = %d, want 4", out.MaxWorkers)
+	if out.MaxTickets != 4 {
+		t.Fatalf("max_tickets after roles-only write = %d, want 4", out.MaxTickets)
 	}
 
-	for _, bad := range []string{`{"max_workers": 0}`, `{"max_workers": -2}`, `{"max_workers": "soon"}`} {
+	for _, bad := range []string{`{"max_tickets": 0}`, `{"max_tickets": -2}`, `{"max_tickets": "soon"}`} {
 		_, code := putSettingsBody(t, srv.URL, bad)
 		if code != http.StatusBadRequest {
 			t.Fatalf("write %s status = %d, want 400", bad, code)
@@ -143,17 +161,38 @@ func TestSettingsWriteValidatesAndSavesMaxWorkers(t *testing.T) {
 	}
 	raw, _ = os.ReadFile(settings)
 	var still struct {
-		MaxWorkers int `json:"max_workers"`
+		MaxTickets int `json:"max_tickets"`
 	}
 	_ = json.Unmarshal(raw, &still)
-	if still.MaxWorkers != 4 {
-		t.Fatalf("max_workers after rejected writes = %d, want 4 kept", still.MaxWorkers)
+	if still.MaxTickets != 4 {
+		t.Fatalf("max_tickets after rejected writes = %d, want 4 kept", still.MaxTickets)
 	}
 }
 
-// A write changes the live cap; over-cap behaviour is unchanged.
-func TestSettingsWriteChangesLiveCap(t *testing.T) {
-	srv, _ := settingsServer(t, `{"max_workers": 1, "roles": {}}`)
+// The deprecated max_workers key still writes, saved under max_tickets.
+func TestSettingsWriteAcceptsOldMaxWorkersAlias(t *testing.T) {
+	srv, settings := settingsServer(t, `{"roles": {}}`)
+
+	out, code := putSettingsBody(t, srv.URL, `{"max_workers": 3}`)
+	if code != http.StatusOK {
+		t.Fatalf("write status = %d, want 200", code)
+	}
+	if out.MaxTickets != 3 {
+		t.Fatalf("alias write max_tickets = %d, want 3", out.MaxTickets)
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "max_workers") {
+		t.Fatalf("the old key must never be written again: %s", raw)
+	}
+}
+
+// Sessions are uncapped: writes to max_tickets change the Run ticket cap,
+// never whether a Session starts.
+func TestSettingsWriteDoesNotCapSessions(t *testing.T) {
+	srv, _ := settingsServer(t, `{"max_tickets": 1, "roles": {}}`)
 	workDir := tempDir(t)
 
 	_ = createSession(t, srv.URL, "fake", "fake-model", workDir)
@@ -163,11 +202,11 @@ func TestSettingsWriteChangesLiveCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("over-cap create status = %d, want 429", resp.StatusCode)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("second create status = %d, want 201: sessions are uncapped", resp.StatusCode)
 	}
 
-	if _, code := putSettingsBody(t, srv.URL, `{"max_workers": 2}`); code != http.StatusOK {
+	if _, code := putSettingsBody(t, srv.URL, `{"max_tickets": 1}`); code != http.StatusOK {
 		t.Fatalf("write status = %d, want 200", code)
 	}
 	resp, err = http.Post(srv.URL+"/api/sessions", "application/json", bytes.NewReader(body))
@@ -176,56 +215,34 @@ func TestSettingsWriteChangesLiveCap(t *testing.T) {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create after raising the cap status = %d, want 201", resp.StatusCode)
-	}
-
-	// Lowering the cap refuses new Sessions again with the same message.
-	if _, code := putSettingsBody(t, srv.URL, `{"max_workers": 1}`); code != http.StatusOK {
-		t.Fatalf("write status = %d, want 200", code)
-	}
-	resp, err = http.Post(srv.URL+"/api/sessions", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("over-cap create after lowering status = %d, want 429", resp.StatusCode)
-	}
-	var out struct {
-		Error string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.Error, "max_workers") {
-		t.Fatalf("over-cap error = %q, want it to name max_workers", out.Error)
+		t.Fatalf("third create status = %d, want 201: sessions are uncapped", resp.StatusCode)
 	}
 }
 
 // The environment variable still wins: the read says so, and a write saves
 // the file without moving the live cap.
 func TestSettingsEnvOverrideWinsOverWrite(t *testing.T) {
-	srv, settings := settingsServer(t, `{"max_workers": 5, "roles": {}}`)
-	t.Setenv("EL_MAX_WORKERS", "1")
+	srv, settings := settingsServer(t, `{"max_tickets": 5, "roles": {}}`)
+	t.Setenv("EL_MAX_TICKETS", "1")
 
-	out, code := putSettingsBody(t, srv.URL, `{"max_workers": 3}`)
+	out, code := putSettingsBody(t, srv.URL, `{"max_tickets": 3}`)
 	if code != http.StatusOK {
 		t.Fatalf("write status = %d, want 200", code)
 	}
-	if out.MaxWorkers != 1 || !out.MaxWorkersFromEnv {
+	if out.MaxTickets != 1 || !out.MaxTicketsFromEnv {
 		t.Fatalf("write under env = %+v, want the live cap 1 from env", out)
 	}
 	raw, _ := os.ReadFile(settings)
 	var saved struct {
-		MaxWorkers int `json:"max_workers"`
+		MaxTickets int `json:"max_tickets"`
 	}
 	_ = json.Unmarshal(raw, &saved)
-	if saved.MaxWorkers != 3 {
-		t.Fatalf("saved max_workers = %d, want 3 kept for when the env is unset", saved.MaxWorkers)
+	if saved.MaxTickets != 3 {
+		t.Fatalf("saved max_tickets = %d, want 3 kept for when the env is unset", saved.MaxTickets)
 	}
 
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	if got := d.MaxRunning(); got != 1 {
+	if got := d.MaxTickets(); got != 1 {
 		t.Fatalf("live cap under env = %d, want 1", got)
 	}
 }

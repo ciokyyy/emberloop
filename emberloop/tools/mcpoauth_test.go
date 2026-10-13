@@ -101,6 +101,9 @@ func TestMCPOAuthFirstCallApprovesAndRetries(t *testing.T) {
 		URL:   fake.MCPURL,
 		OAuth: &MCPOAuthSetting{ClientName: "el-test", Scopes: []string{"read"}},
 	}, approveViaFake(t))
+	if err := reg.Login(context.Background(), "didww"); err != nil {
+		t.Fatal(err)
+	}
 	got, err := reg.Tools(context.Background(), "didww")
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +187,9 @@ func TestMCPOAuthRefreshesExpiredToken(t *testing.T) {
 	reg, h := oauthRegistry(t, "didww", MCPServerSetting{
 		URL: fake.MCPURL, OAuth: &MCPOAuthSetting{},
 	}, approveViaFake(t))
+	if err := reg.Login(context.Background(), "didww"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := reg.Tools(context.Background(), "didww"); err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +231,9 @@ func TestMCPOAuthRevokedYieldsReauthNeeded(t *testing.T) {
 	reg, h := oauthRegistry(t, "didww", MCPServerSetting{
 		URL: fake.MCPURL, OAuth: &MCPOAuthSetting{},
 	}, approveViaFake(t))
+	if err := reg.Login(context.Background(), "didww"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := reg.Tools(context.Background(), "didww"); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +266,7 @@ func TestMCPOAuthRetry401YieldsReauthNeeded(t *testing.T) {
 	reg, _ := oauthRegistry(t, "didww", MCPServerSetting{
 		URL: fake.MCPURL, OAuth: &MCPOAuthSetting{},
 	}, approveViaFake(t))
-	_, err := reg.Tools(context.Background(), "didww")
+	err := reg.Login(context.Background(), "didww")
 	if err == nil {
 		t.Fatal("a retry that still 401s must fail")
 	}
@@ -308,6 +317,9 @@ func TestMCPOAuthMetadataOverride(t *testing.T) {
 		URL:   fake.MCPURL,
 		OAuth: &MCPOAuthSetting{MetadataURL: fake.Server.URL + "/.well-known/oauth-authorization-server"},
 	}, approveViaFake(t))
+	if err := reg.Login(context.Background(), "didww"); err != nil {
+		t.Fatal(err)
+	}
 	got, err := reg.Tools(context.Background(), "didww")
 	if err != nil {
 		t.Fatalf("override discovery: %v", err)
@@ -461,4 +473,26 @@ func TestMCPSettingsHTTPSchemaMerges(t *testing.T) {
 // asReauthNeeded reports whether err chains to a reauth-needed error.
 func asReauthNeeded(err error, target **ReauthNeededError) bool {
 	return errors.As(err, target)
+}
+
+// A listing has no human to wait for: with no stored token it fails at once
+// with the login hint and never opens the approval flow.
+func TestMCPOAuthListingNeverApproves(t *testing.T) {
+	oauthEnv(t)
+	fake := mcpfake.NewHTTPFake(t, mcpfake.HTTPConfig{
+		Tools:              []mcpfake.ToolDef{{Name: "search"}},
+		RequireIssuedToken: true,
+	})
+	reg, _ := oauthRegistry(t, "didww", MCPServerSetting{
+		URL: fake.MCPURL, OAuth: &MCPOAuthSetting{},
+	}, func(context.Context, string) (string, error) {
+		return "", fmt.Errorf("a listing must not open the browser")
+	})
+	_, err := reg.Tools(context.Background(), "didww")
+	if err == nil || !strings.Contains(err.Error(), "el settings mcp-server didww login") {
+		t.Fatalf("error = %v, want the login hint", err)
+	}
+	if len(fake.Authorizes()) != 0 {
+		t.Fatalf("authorizes = %d, want none", len(fake.Authorizes()))
+	}
 }

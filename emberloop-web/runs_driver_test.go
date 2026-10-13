@@ -491,15 +491,16 @@ func TestRunStartsTicketsInBlockerOrder(t *testing.T) {
 	}
 }
 
-// Slice 3: independent Tickets still start one at a time under a cap of one.
-func TestRunRespectsLiveSessionCap(t *testing.T) {
+// Slice 3: independent Tickets still start one at a time under a ticket cap
+// of one.
+func TestRunRespectsMaxTickets(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	})
 	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
-	d.SetMaxRunning(1)
+	d.SetMaxTickets(1)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
@@ -670,6 +671,17 @@ func TestRunDirtyWorktreeKeepsWorkerAlive(t *testing.T) {
 		if tk.State != "merged" {
 			t.Fatalf("ticket %s state = %q, want merged", tk.ID, tk.State)
 		}
+	}
+	// The merged Worker's Session ended before its worktree went: a live agent
+	// process must never lose its cwd (its next tool call would fail getwd).
+	d.mu.Lock()
+	status := d.sessions[sess].meta.Status
+	d.mu.Unlock()
+	if status != "ended" {
+		t.Fatalf("merged worker status = %q, want ended before its worktree is removed", status)
+	}
+	if _, err := os.Stat(worktree); !os.IsNotExist(err) {
+		t.Fatalf("merged worktree still exists: %v", err)
 	}
 }
 
@@ -1530,4 +1542,103 @@ func testPollInterval() time.Duration {
 		return time.Duration(v) * time.Millisecond
 	}
 	return 100 * time.Millisecond
+}
+
+// A spec file's max_tickets caps concurrent tickets for a web-started Run:
+// with three ready tickets and max_tickets: 2 under a larger global, at most
+// two workers ever start at once, and all three still merge.
+func TestRunHonorsSpecMaxTickets(t *testing.T) {
+	t.Parallel()
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
+		"03-third.md":  "# 03: Third\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] gamma\n",
+	})
+	raw, err := os.ReadFile(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capped := "---\nmax_tickets: 2\n---\n\n" + string(raw)
+	if err := os.WriteFile(spec, []byte(capped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, repo, "add", "-A")
+	testGit(t, repo, "commit", "-m", "spec cap")
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetMaxTickets(5)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	// WorkerSession stays set after a merge, so only unmerged tickets with
+	// a session count toward concurrency.
+	maxStarted := 0
+	countStarted := func(r runJSON) int {
+		started := 0
+		for _, tk := range r.Tickets {
+			if tk.WorkerSession != "" && tk.State != "merged" {
+				started++
+			}
+		}
+		if started > maxStarted {
+			maxStarted = started
+		}
+		return started
+	}
+	complete := func(r runJSON, id string) {
+		for _, tk := range r.Tickets {
+			if tk.ID == id {
+				commitTicketWork(t, repo, id)
+				submitSession(t, srv.URL, tk.WorkerSession, "done", nil)
+			}
+		}
+		passReviewers(t, srv.URL, r.ID, id)
+	}
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return countStarted(r) == 2
+	}, "two workers started under the spec cap")
+	// The third ticket waits while two run.
+	first := ""
+	for _, tk := range r.Tickets {
+		if tk.WorkerSession != "" && first == "" {
+			first = tk.ID
+		}
+	}
+	complete(r, first)
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		countStarted(r)
+		for _, tk := range r.Tickets {
+			if tk.ID == first && tk.State == "merged" {
+				return true
+			}
+		}
+		return false
+	}, "first ticket merged")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		started := 0
+		for _, tk := range r.Tickets {
+			if tk.WorkerSession != "" {
+				started++
+			}
+		}
+		return started == 3
+	}, "third ticket started after the merge")
+	for _, tk := range r.Tickets {
+		if tk.State != "merged" {
+			complete(r, tk.ID)
+		}
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		countStarted(r)
+		return r.Status == "done"
+	}, "run done")
+	for _, tk := range r.Tickets {
+		if tk.State != "merged" {
+			t.Fatalf("ticket %s state = %q, want merged", tk.ID, tk.State)
+		}
+	}
+	if maxStarted > 2 {
+		t.Errorf("max concurrent tickets = %d, want at most the spec's 2", maxStarted)
+	}
 }

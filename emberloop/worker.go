@@ -1035,12 +1035,6 @@ func finishWorker(run Exec, id string, merge, record bool) (*FinishResult, error
 	if lockErr != nil {
 		return nil, lockErr
 	}
-	// A freed slot starts the next queued worker, if any. Only a real finish
-	// (recorded) drains: rollbacks free slots too, but the next real finish
-	// picks those up, and draining from a rollback would nest drains.
-	if record && out != nil && !out.Kept {
-		drainWorkerQueue(run)
-	}
 	return out, nil
 }
 

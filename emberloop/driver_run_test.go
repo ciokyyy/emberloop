@@ -20,7 +20,7 @@ func TestDriverRunPublishesRowsForEveryState(t *testing.T) {
 		"03-third.md":  ticketDoc("01-first"),
 	})
 	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "tip-" + id }
 	world.Reviews = func(id string) map[string]DriverReview {
@@ -87,7 +87,7 @@ func TestDriverRunMarksRunningAndQueued(t *testing.T) {
 		"02-blocked.md": ticketDoc("01-first"),
 	})
 	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "" }
 	world.Reviews = func(id string) map[string]DriverReview { return nil }
@@ -126,7 +126,7 @@ func TestDriverRunMarksNeedsYouWithTheRefusal(t *testing.T) {
 		"01-first.md": ticketDoc("None"),
 	})
 	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
@@ -177,7 +177,7 @@ func TestDriverRunMarksMergingWhileFinishRuns(t *testing.T) {
 		"01-first.md": ticketDoc("None"),
 	})
 	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
@@ -218,7 +218,7 @@ func TestDriverRunMarksParkedAndDiscarded(t *testing.T) {
 		"03-gone.md":   ticketDoc("None"),
 	})
 	world.Now = func() time.Time { return now }
-	world.MaxWorkers = 3
+	world.MaxTickets = 3
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Parked = func(id string) bool { return id == "02-parked" }
 	world.Discarded = func(id string) bool { return id == "03-gone" }
@@ -272,7 +272,7 @@ func TestDriverRunRedatesSinceOnStateChange(t *testing.T) {
 		}
 		return later
 	}
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {

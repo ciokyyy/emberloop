@@ -15,7 +15,7 @@ func TestDriverNudgesAWorkerIdleThreeMinutesWithNoSubmit(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -73,7 +73,7 @@ func TestDriverWorkerActivityResetsTheStallTimer(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -128,7 +128,7 @@ func TestDriverNudgeRepeatsEveryFiveMinutesAndThirdRaisesAlert(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -213,7 +213,7 @@ func TestDriverStallKeepsTheReviewerSpawnErrorFromTheTranscript(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -275,7 +275,7 @@ func TestDriverSubmittingWorkerIsNotNudged(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -360,7 +360,7 @@ func TestDriverFailedNudgeIsRecordedNotFatal(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -424,7 +424,7 @@ func TestDriverWithoutSubmitCountNothingIsNudged(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -471,7 +471,7 @@ func TestDriverBusyWorkerIsNotNudged(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }

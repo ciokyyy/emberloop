@@ -97,6 +97,11 @@ func (c *mcpHTTPClient) setOAuthHook(hook func(ctx context.Context, authURL stri
 	}
 }
 
+// authParentKey carries the context a handshake was started under;
+// noBrowserKey marks a listing that must not open the browser.
+type authParentKey struct{}
+type noBrowserKey struct{}
+
 // ensureStarted runs the initialize handshake when no session is open.
 // Concurrent callers wait on the in-flight handshake instead of starting
 // twice. A failure leaves the client unstarted, so the next use retries.
@@ -139,6 +144,9 @@ func (c *mcpHTTPClient) handshake(ctx context.Context) error {
 	c.mu.Lock()
 	initTimeout := c.initTimeout
 	c.mu.Unlock()
+	// A browser approval inside initialize waits on a human, so it runs on
+	// the caller's context, not the init deadline that would cut it off.
+	ctx = context.WithValue(ctx, authParentKey{}, ctx)
 	ctx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
 	var res struct {
@@ -372,7 +380,12 @@ func (c *mcpHTTPClient) maybeAuthRetry(ctx context.Context, err error, res *http
 	hook := c.oauthHook
 	c.mu.Unlock()
 	flows := &oauthFlows{server: c.oauth.server, mcpURL: c.oauth.mcpURL, setting: c.oauth.setting, getCode: hook}
-	bearer, ferr := flows.bearerFor401(ctx, auth.challenge)
+	_, flows.noBrowser = ctx.Value(noBrowserKey{}).(bool)
+	flowCtx := ctx
+	if p, ok := ctx.Value(authParentKey{}).(context.Context); ok {
+		flowCtx = p
+	}
+	bearer, ferr := flows.bearerFor401(flowCtx, auth.challenge)
 	if ferr != nil {
 		return fmt.Errorf("mcp server %q: %s failed: %w", c.name, method, ferr)
 	}
@@ -430,6 +443,7 @@ func (c *mcpHTTPClient) postNotification(ctx context.Context, method string, par
 // ListTools returns the server's tools, opening the session on first use.
 // The answer is cached for the session, the way the stdio client caches.
 func (c *mcpHTTPClient) ListTools(ctx context.Context) ([]remoteTool, error) {
+	ctx = context.WithValue(ctx, noBrowserKey{}, true)
 	if err := c.ensureStarted(ctx); err != nil {
 		return nil, err
 	}

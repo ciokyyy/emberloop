@@ -53,7 +53,7 @@
   let inheritedChains = $state({});
   let chainBaseline = {};
   let chainAliases = {};
-  let maxWorkers = $state('3');
+  let maxTickets = $state('3');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
   let compress = $state({ auto: 'on', threshold: '80', tokens: '300000', cooldown: '5', instructions: '', model: 'none' });
@@ -76,7 +76,7 @@
     const fallback = role.settingRoles.map((name) => roles[name]).find((setting) => setting?.model);
     return fallback?.model ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }] : [];
   }
-  const snapshot = () => JSON.stringify({ roles, chains, maxWorkers, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
+  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -123,8 +123,8 @@
       inheritedChains = nextInheritedChains;
       chainBaseline = cloneChains(nextChains);
       chainAliases = nextChainAliases;
-      maxWorkers = body.max_workers != null ? String(body.max_workers) : '3';
-      locked = !!body.max_workers_from_env;
+      maxTickets = body.max_tickets != null ? String(body.max_tickets) : '3';
+      locked = !!body.max_tickets_from_env;
       const t = body.roles?.['pig-title'];
       pigTitle = t?.harness === 'pig' && t?.model ? t.model : 'none';
       sessionTitles = body.session_titles === false ? 'off' : 'on';
@@ -240,7 +240,7 @@
       const editedChainRoles = new Set(CHAIN_ROLES.filter(({ id }) => Object.prototype.hasOwnProperty.call(chainPayload, id)).map(({ id }) => id));
       const payload = { roles: { ...configured, 'pig-title': pigTitleRole } };
       if (Object.keys(chainPayload).length) payload.chains = chainPayload;
-      if (!locked) payload.max_workers = Number(maxWorkers);
+      if (!locked) payload.max_tickets = Number(maxTickets);
       if (!titlesLocked) payload.session_titles = sessionTitles === 'on';
       payload.compress = {
         auto_compress: compress.auto === 'on',
@@ -263,8 +263,8 @@
         if (jev.apiKey) payload.jev.api_key = jev.apiKey;
       }
       const savedBody = await putSettings(payload);
-      maxWorkers = savedBody.max_workers != null ? String(savedBody.max_workers) : maxWorkers;
-      locked = !!savedBody.max_workers_from_env;
+      maxTickets = savedBody.max_tickets != null ? String(savedBody.max_tickets) : maxTickets;
+      locked = !!savedBody.max_tickets_from_env;
       compressNote = savedBody.compress_note ?? '';
       deciderNote = savedBody.decider_note ?? '';
       jev = { baseURL: savedBody.jev?.base_url ?? jev.baseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
@@ -291,7 +291,7 @@
   function revert() {
     const prev = JSON.parse(saved);
     roles = prev.roles;
-    maxWorkers = prev.maxWorkers;
+    maxTickets = prev.maxTickets;
     pigTitle = prev.pigTitle;
     sessionTitles = prev.sessionTitles;
     compress = prev.compress;
@@ -325,21 +325,21 @@
         <section class="animate-rise flex flex-col gap-2">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Concurrency</h2>
-            <p class="text-xs text-muted-foreground">How many Sessions run at once. Chat and Runs share the one cap.</p>
+            <p class="text-xs text-muted-foreground">How many Run tickets run at once. Chat sessions and subagents are uncapped.</p>
           </div>
           <div class="flex flex-col gap-2 rounded-2xl border bg-card p-4">
             <FloatingInput
-              id="max-workers"
-              label="Maximum workers"
+              id="max-tickets"
+              label="Maximum tickets"
               type="number"
               min="1"
               step="1"
               class="max-w-56"
-              bind:value={maxWorkers}
+              bind:value={maxTickets}
               disabled={locked}
             />
             {#if locked}
-              <p class="text-xs text-muted-foreground">Set by the EL_MAX_WORKERS environment variable. Unset it to edit here.</p>
+              <p class="text-xs text-muted-foreground">Set by the EL_MAX_TICKETS environment variable. Unset it to edit here.</p>
             {:else}
               <p class="text-xs text-muted-foreground">Applies immediately, no restart.</p>
             {/if}

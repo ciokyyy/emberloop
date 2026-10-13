@@ -125,28 +125,41 @@ func (d *Daemon) daemonRoleFor(name string) (string, string) {
 	return lookupRole(d.settingsRoles(), name)
 }
 
-// envMaxWorkers reports the EL_MAX_WORKERS override when it sets a
-// positive cap. The environment wins over the settings file.
-func envMaxWorkers() (int, bool) {
-	w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS")))
-	if err != nil || w <= 0 {
-		return 0, false
+// envMaxTickets reports the EL_MAX_TICKETS override when it sets a
+// positive cap. The environment wins over the settings file. EL_MAX_WORKERS
+// still works as a fallback when EL_MAX_TICKETS is unset, so old
+// environments keep working; it is never written anywhere.
+func envMaxTickets() (int, bool) {
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_TICKETS"))); err == nil && w > 0 {
+		return w, true
 	}
-	return w, true
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS"))); err == nil && w > 0 {
+		return w, true
+	}
+	return 0, false
+}
+
+// firstSetTicketCap prefers the renamed key: max_tickets wins when both
+// arrive, max_workers is only the deprecated alias. Nil when neither does.
+func firstSetTicketCap(primary, alias *int) *int {
+	if primary != nil {
+		return primary
+	}
+	return alias
 }
 
 // settingsView is the GET and PUT shape: roles, per-role Run skills and
 // per-role chains next to the live cap and whether the environment overrides
 // the file, so the UI can lock the field.
 func settingsView() map[string]any {
-	_, fromEnv := envMaxWorkers()
+	_, fromEnv := envMaxTickets()
 	decider := readDeciderSettings()
 	return map[string]any{
 		"roles":                   readRoles(),
 		"run_skills":              readRunSkillsRaw(),
 		"chains":                  readChains(),
-		"max_workers":             maxRunningFromSettings(),
-		"max_workers_from_env":    fromEnv,
+		"max_tickets":             maxTicketsFromSettings(),
+		"max_tickets_from_env":    fromEnv,
 		"session_titles":          sessionTitlesSetting(),
 		"session_titles_from_env": titlesFromEnv(),
 		"compress":                readCompressSettings(),
@@ -168,6 +181,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Roles         map[string]roleSetting  `json:"roles"`
 			RunSkills     json.RawMessage         `json:"run_skills"`
 			Chains        map[string][]chainEntry `json:"chains"`
+			MaxTickets    *int                    `json:"max_tickets"`
 			MaxWorkers    *int                    `json:"max_workers"`
 			SessionTitles *bool                   `json:"session_titles"`
 			SignupEnabled *bool                   `json:"signup_enabled"`
@@ -216,8 +230,12 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
+		if body.MaxTickets != nil && *body.MaxTickets <= 0 {
+			http.Error(w, "max_tickets must be a whole number above zero", http.StatusBadRequest)
+			return
+		}
 		if body.MaxWorkers != nil && *body.MaxWorkers <= 0 {
-			http.Error(w, "max_workers must be a whole number above zero", http.StatusBadRequest)
+			http.Error(w, "max_tickets must be a whole number above zero", http.StatusBadRequest)
 			return
 		}
 		if runSkillsSet {
@@ -281,9 +299,11 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			raw, _ := json.Marshal(merged)
 			all["chains"] = raw
 		}
-		if body.MaxWorkers != nil {
-			raw, _ := json.Marshal(*body.MaxWorkers)
-			all["max_workers"] = raw
+		// max_tickets wins when both arrive; the old key is only a
+		// deprecated alias and is never written back.
+		if tickets := firstSetTicketCap(body.MaxTickets, body.MaxWorkers); tickets != nil {
+			raw, _ := json.Marshal(*tickets)
+			all["max_tickets"] = raw
 		}
 		if body.SessionTitles != nil {
 			raw, _ := json.Marshal(*body.SessionTitles)

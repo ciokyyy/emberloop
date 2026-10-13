@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Seam (pre-agreed by the ticket): spawn and the worker-cap queue through a
+// Seam (pre-agreed by the ticket): spawn through a
 // fake herdr, asserting launches, the worker store, history and parent
 // notices. A pane herdr answers pane_not_found for is dead; any other herdr
 // error counts the worker as alive.
@@ -51,12 +51,12 @@ func (d *deadPaneExec) run(cmd string, args []string, opts ExecOpts) (Result, er
 	return d.g.run(cmd, args, opts)
 }
 
-// A worker whose pane herdr no longer knows does not count against the cap:
-// with a cap of one and a dead first worker, the next spawn starts instead
-// of queuing.
-func TestWorkerCapIgnoresADeadPane(t *testing.T) {
+// Spawns are uncapped, and the pre-launch prune cancels a worker whose
+// pane herdr no longer knows: with a dead first worker, the next spawn
+// still starts, and the dead record is gone.
+func TestNextSpawnStartsDespiteADeadPane(t *testing.T) {
 	spawnTestState(t)
-	resolverSettings(t, `{"max_workers":1}`)
+	resolverSettings(t, `{"max_tickets":1}`)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
@@ -92,7 +92,7 @@ func TestWorkerCapIgnoresADeadPane(t *testing.T) {
 		t.Fatalf("spawn second: %v", err)
 	}
 	if strings.Contains(out, "queued") {
-		t.Fatalf("a dead-pane worker must not hold the cap, got:\n%s", out)
+		t.Fatalf("spawns are uncapped, got:\n%s", out)
 	}
 	ex.mu.Lock()
 	launched := ex.launched
@@ -100,15 +100,22 @@ func TestWorkerCapIgnoresADeadPane(t *testing.T) {
 	if launched != 2 {
 		t.Fatalf("launched %d workers, want 2: the second must start", launched)
 	}
+	if _, err := recall("dead-b"); err != nil {
+		t.Errorf("dead-b must be running: %v", err)
+	}
+	if _, err := recall("dead-a"); err == nil {
+		t.Error("the pruned worker must leave workers.json")
+	}
 }
 
-// A live worker still holds its slot, and a worker herdr errors on any other
-// way than pane_not_found counts as alive too: the next spawn queues.
-func TestWorkerCapKeepsLiveAndErroredPanes(t *testing.T) {
+// Live workers never block new spawns, whatever herdr reports for their
+// panes: an errored pane (anything but pane_not_found) still counts as alive
+// and keeps its record, yet the next spawn starts anyway.
+func TestLiveWorkersDoNotBlockNewSpawns(t *testing.T) {
 	for _, name := range []string{"live", "errored"} {
 		t.Run(name, func(t *testing.T) {
 			spawnTestState(t)
-			resolverSettings(t, `{"max_workers":1}`)
+			resolverSettings(t, `{"max_tickets":1}`)
 			g := newFakeGrid()
 			t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 			t.Setenv("HERDR_WORKSPACE_ID", "w1")
@@ -142,11 +149,22 @@ func TestWorkerCapKeepsLiveAndErroredPanes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("spawn second: %v", err)
 			}
-			if !strings.Contains(out, "cap-b queued") {
-				t.Fatalf("a live worker must hold the cap, got:\n%s", out)
+			if strings.Contains(out, "queued") {
+				t.Fatalf("spawns are uncapped, got:\n%s", out)
 			}
-			if got := queuedIDs(); len(got) != 1 || got[0] != "cap-b" {
-				t.Fatalf("queued = %v, want [cap-b]", got)
+			ex.mu.Lock()
+			launched := ex.launched
+			ex.mu.Unlock()
+			if launched != 2 {
+				t.Fatalf("launched %d workers, want 2: the second must start", launched)
+			}
+			if _, err := recall("cap-b"); err != nil {
+				t.Errorf("cap-b must be running: %v", err)
+			}
+			if name == "errored" {
+				if _, err := recall("cap-a"); err != nil {
+					t.Errorf("an errored pane still counts as alive, but cap-a is gone: %v", err)
+				}
 			}
 		})
 	}
@@ -322,11 +340,12 @@ func TestRespawnReusesCancelledWorktreeAndBranch(t *testing.T) {
 	}
 }
 
-// The drain runs after the prune: a queued worker starts in the slot a
-// hand-closed pane freed, as after a normal finish.
-func TestDrainStartsQueuedWorkerAfterThePrune(t *testing.T) {
+// The pre-launch prune runs before every spawn: a respawn of a ticket whose
+// pane was closed by hand starts fresh, reusing the worktree, while the
+// cancelled record is gone.
+func TestRespawnOfPrunedTicketStartsFresh(t *testing.T) {
 	spawnTestState(t)
-	resolverSettings(t, `{"max_workers":1}`)
+	resolverSettings(t, `{"max_tickets":1}`)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
@@ -335,11 +354,8 @@ func TestDrainStartsQueuedWorkerAfterThePrune(t *testing.T) {
 	spawnExec = ex.run
 	repo := t.TempDir()
 	first := filepath.Join(repo, "q-a.md")
-	second := filepath.Join(repo, "q-b.md")
-	for _, ticket := range []string{first, second} {
-		if err := os.WriteFile(ticket, []byte("# "+ticket+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(first, []byte("# "+first+"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	spawn, _ := spawnToolForRole(t, "implement")
 	if _, err := spawn(repo, map[string]any{"agents": []any{
@@ -347,97 +363,24 @@ func TestDrainStartsQueuedWorkerAfterThePrune(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("spawn first: %v", err)
 	}
-	if _, err := spawn(repo, map[string]any{"agents": []any{
-		map[string]any{"type": "worker", "ticket": second},
-	}}); err != nil {
-		t.Fatalf("spawn second: %v", err)
-	}
-	if got := queuedIDs(); len(got) != 1 || got[0] != "q-b" {
-		t.Fatalf("queued = %v, want [q-b]", got)
-	}
 	w, err := recall("q-a")
 	if err != nil {
 		t.Fatalf("recall q-a: %v", err)
 	}
 	ex.dead[w.Pane] = true
-	drainWorkerQueue(ex.run)
-	if got := queuedIDs(); len(got) != 0 {
-		t.Fatalf("queued = %v, want empty after the drain", got)
+	if _, err := spawn(repo, map[string]any{"agents": []any{
+		map[string]any{"type": "worker", "ticket": first},
+	}}); err != nil {
+		t.Fatalf("spawn respawn: %v", err)
 	}
 	ex.mu.Lock()
 	launched := ex.launched
 	ex.mu.Unlock()
 	if launched != 2 {
-		t.Fatalf("launched %d workers, want 2: the queued worker must start", launched)
+		t.Fatalf("launched %d workers, want 2: the respawn must start", launched)
 	}
-	if _, err := recall("q-b"); err != nil {
-		t.Errorf("q-b must be running after the drain: %v", err)
-	}
-	if _, err := recall("q-a"); err == nil {
-		t.Error("the cancelled worker must leave workers.json")
-	}
-}
-
-// Queue entries for tickets already done or already running are dropped by
-// the drain instead of launching.
-func TestDrainDropsStaleQueueEntries(t *testing.T) {
-	spawnTestState(t)
-	resolverSettings(t, `{"max_workers":3}`)
-	g := newFakeGrid()
-	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
-	ex := &deadPaneExec{g: g, dead: map[string]bool{}, errPane: map[string]bool{}}
-	spawnExec = ex.run
-	repo := t.TempDir()
-	live := filepath.Join(repo, "s-live.md")
-	done := filepath.Join(repo, "s-done.md")
-	running := filepath.Join(repo, "s-running.md")
-	fresh := filepath.Join(repo, "s-fresh.md")
-	for _, ticket := range []string{live, running, fresh} {
-		if err := os.WriteFile(ticket, []byte("# "+ticket+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(done, []byte("# s-done\n\nStatus: done\n\n- [x] done\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	spawn, _ := spawnToolForRole(t, "implement")
-	if _, err := spawn(repo, map[string]any{"agents": []any{
-		map[string]any{"type": "worker", "ticket": live},
-	}}); err != nil {
-		t.Fatalf("spawn live: %v", err)
-	}
-	if _, err := spawn(repo, map[string]any{"agents": []any{
-		map[string]any{"type": "worker", "ticket": running},
-	}}); err != nil {
-		t.Fatalf("spawn running: %v", err)
-	}
-	for _, e := range []queuedWorker{
-		{ID: "s-done", Type: "worker", Ticket: done, Repo: repo, Harness: "pig"},
-		{ID: "s-running", Type: "worker", Ticket: running, Repo: repo, Harness: "pig"},
-		{ID: "s-fresh", Type: "worker", Ticket: fresh, Repo: repo, Harness: "pig"},
-	} {
-		if err := queueWorker(e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	drainWorkerQueue(ex.run)
-	if got := queuedIDs(); len(got) != 0 {
-		t.Fatalf("queued = %v, want empty: stale entries drop and one slot starts one worker", got)
-	}
-	store, err := loadWorkersLocked()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := store["s-fresh"]; !ok {
-		t.Errorf("s-fresh must be running after the drain, store holds %v", keys(store))
-	}
-	ex.mu.Lock()
-	launched := ex.launched
-	ex.mu.Unlock()
-	if launched != 3 {
-		t.Fatalf("launched %d workers, want 3: only the fresh entry must launch", launched)
+	if _, err := recall("q-a"); err != nil {
+		t.Errorf("q-a must be running after the respawn: %v", err)
 	}
 }
 

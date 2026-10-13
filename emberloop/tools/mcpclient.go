@@ -699,20 +699,47 @@ func (r *Registry) Tools(ctx context.Context, server string) ([]Tool, error) {
 	}
 }
 
-// Snapshot lists every configured server, in sorted order. A server that
-// fails contributes an error naming it and no tools; the rest still serve.
+// Login opens an HTTP server's session with the browser approval allowed:
+// it waits for the human, stores the token, and returns. A server that
+// needs no approval just connects.
+func (r *Registry) Login(ctx context.Context, server string) error {
+	r.mu.Lock()
+	h, ok := r.httpClients[server]
+	r.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("mcp server %q: login needs an HTTP (url) server", server)
+	}
+	return h.ensureStarted(ctx)
+}
+
+// Snapshot lists every configured server. The servers start and answer in
+// parallel, so the listing costs the slowest server, not the sum (a cold npx
+// child and a graph index each cost seconds). Errors keep sorted server
+// order. A server that fails contributes an error naming it and no tools;
+// the rest still serve.
 func (r *Registry) Snapshot(ctx context.Context) (map[string][]Tool, []error) {
+	servers := r.Servers()
+	tools := make([][]Tool, len(servers))
+	errs := make([]error, len(servers))
+	var wg sync.WaitGroup
+	for i, server := range servers {
+		wg.Add(1)
+		go func(i int, server string) {
+			defer wg.Done()
+			tools[i], errs[i] = r.Tools(ctx, server)
+		}(i, server)
+	}
+	wg.Wait()
 	listed := map[string][]Tool{}
-	var errs []error
-	for _, server := range r.Servers() {
-		ts, err := r.Tools(ctx, server)
-		if err != nil {
-			errs = append(errs, err)
+	var failed []error
+	for i, server := range servers {
+		if errs[i] != nil {
+			failed = append(failed, errs[i])
 			continue
 		}
-		listed[server] = ts
+		listed[server] = tools[i]
 	}
-	return listed, errs
+	return listed, failed
 }
 
 // Close kills every server child and drops every HTTP session. A registry is

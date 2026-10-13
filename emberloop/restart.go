@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	prodDaemonURL = "http://127.0.0.1:7940"
+	prodDaemonURL = "http://127.0.0.1:8787"
 	devDaemonURL  = "http://127.0.0.1:7941"
 )
 

@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"example.com/emberloop/tools"
 )
 
 // DriverReview is one reviewer type's verdict as the driver sees it: the
@@ -56,9 +54,9 @@ type DriverWorld struct {
 	// StartWorker starts one ticket's worker. The graph check runs before any
 	// worker would start, so check mode never calls it.
 	StartWorker func(DriverTicket) error
-	// MaxWorkers caps how many workers run at once. Zero means three, the
-	// same default as the worker cap.
-	MaxWorkers int
+	// MaxTickets caps how many tickets run at once. Zero means three, the
+	// same default as the ticket cap.
+	MaxTickets int
 	// HasWorker reports whether a ticket already has a worker: its record in
 	// the worker store, or its implement branch in git. A resumed run never
 	// starts a second worker for such a ticket. Nil means no ticket has one.
@@ -213,7 +211,7 @@ type DriverStall struct {
 // parse, an id that names no ticket, or a dependency cycle fails before any
 // worker starts. A check world (no Finish) stops at the order. A run world
 // also runs the happy-path loop: tickets start in ticket-number order up to
-// MaxWorkers once their blockers have merged, and finish runs only after
+// MaxTickets once their blockers have merged, and finish runs only after
 // every required reviewer type passed at the worker's current tip. A resumed
 // run seeds its state from the world: Status done tickets are already merged
 // (their sha from MergedSHA), Status parked tickets sit out, and tickets with
@@ -315,11 +313,11 @@ func driverBackoffDelay(step int) time.Duration {
 // never gives up on its own. A resumed run seeds its state from the world
 // first: Status done tickets are already merged, Status parked tickets sit out
 // while keeping their workers, and tickets with a worker are already started
-// and hold their MaxWorkers slot.
+// and hold their MaxTickets slot.
 func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []string, map[string][]string, map[string]DriverStall, string, error) {
-	maxRun := world.MaxWorkers
-	if maxRun <= 0 {
-		maxRun = 3
+	maxTickets := world.MaxTickets
+	if maxTickets <= 0 {
+		maxTickets = 3
 	}
 	merged := map[string]bool{}
 	started := map[string]bool{}
@@ -506,7 +504,7 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 			return true
 		}
 		startedNew := false
-		for running < maxRun {
+		for running < maxTickets {
 			next := -1
 			for i, tk := range order {
 				if ready(tk) && (next < 0 || tk.Num < order[next].Num || (tk.Num == order[next].Num && tk.ID < order[next].ID)) {
@@ -1032,7 +1030,7 @@ func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	res, err := RunDriver(spec, DriverWorld{Files: files})
+	res, err := RunDriver(spec, DriverWorld{Files: files, MaxTickets: effectiveTicketCapForSpec(spec.Spec)})
 	if err != nil {
 		return err
 	}
@@ -1044,7 +1042,7 @@ func RunDriverCheck(spec SpecRun, stdout io.Writer) error {
 
 // RunDriverLive runs the whole spec through the live operations: the same
 // worker spawn, reviewer verdicts and finish the LLM orchestrator uses, with
-// the worker cap from settings. It prints the plain final report: merged
+// the ticket cap from settings. It prints the plain final report: merged
 // tickets with their sha, unmerged tickets with their last refusal, and the
 // workers' follow-ups verbatim. The repo is already on the integration
 // branch, and uncommitted edits in its checkout are left alone: the merge
@@ -1112,7 +1110,7 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 	submitMark := map[string]string{}
 	return DriverWorld{
 		Files:      files,
-		MaxWorkers: tools.LoadSettings().EffectiveMaxWorkers(),
+		MaxTickets: effectiveTicketCapForSpec(spec.Spec),
 		HasWorker: func(ticketID string) bool {
 			path := paths[ticketID]
 			if path == "" {
@@ -1295,25 +1293,19 @@ func liveDriverWorld(spec SpecRun, repo string, files map[string]string) DriverW
 			return err
 		},
 		// Discarded sees the user's discard: the ticket's worker record is
-		// gone and its run history ends in a discard. A queued ticket has no
-		// record yet but is waiting for a slot, never discarded, so the queue
-		// is checked first. A pruned pane leaves a cancelled entry and keeps
-		// its worktree for a respawn, so only a discarded last entry counts.
-		// With no history the missing record still reads discarded, the way
-		// earlier runs recorded none. Merged tickets read gone too, but the
-		// loop only asks about started unmerged tickets and the report only
-		// marks unmerged ones, so a merge never reads discarded.
+		// gone and its run history ends in a discard. A pruned pane leaves a
+		// cancelled entry and keeps its worktree for a respawn, so only a
+		// discarded last entry counts. With no history the missing record
+		// still reads discarded, the way earlier runs recorded none. Merged
+		// tickets read gone too, but the loop only asks about started
+		// unmerged tickets and the report only marks unmerged ones, so a
+		// merge never reads discarded.
 		Discarded: func(ticketID string) bool {
 			path, ok := paths[ticketID]
 			if !ok {
 				return false
 			}
 			id := WorkerID(path)
-			for _, e := range loadWorkerQueue() {
-				if e.ID == id {
-					return false
-				}
-			}
 			store, err := loadWorkersLocked()
 			if err != nil {
 				return false
@@ -1446,6 +1438,9 @@ func readDriverTickets(spec SpecRun, files map[string]string) (map[string]*Drive
 	var paths []string
 	for path := range files {
 		if filepath.Dir(filepath.Clean(path)) != dir || !strings.HasSuffix(path, ".md") {
+			continue
+		}
+		if path == spec.Spec || IsSpecFileName(path) {
 			continue
 		}
 		paths = append(paths, path)

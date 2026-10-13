@@ -300,7 +300,7 @@ type runFake struct {
 
 // runWorld builds a spec plus a run world over constant tips with both
 // reviewers passed at the tip, merging each ticket as sha-<id>.
-func runWorld(t *testing.T, docs map[string]string, maxWorkers int) (SpecRun, DriverWorld, *runFake) {
+func runWorld(t *testing.T, docs map[string]string, maxTickets int) (SpecRun, DriverWorld, *runFake) {
 	t.Helper()
 	spec, world, _ := driverWorld(t, docs)
 	fake := &runFake{tips: map[string]string{}, reviews: map[string]map[string]DriverReview{}, shas: map[string]string{}}
@@ -314,7 +314,7 @@ func runWorld(t *testing.T, docs map[string]string, maxWorkers int) (SpecRun, Dr
 		}
 		fake.shas[id] = "sha-" + id
 	}
-	world.MaxWorkers = maxWorkers
+	world.MaxTickets = maxTickets
 	world.StartWorker = func(tk DriverTicket) error {
 		fake.started = append(fake.started, tk.ID)
 		fake.active++
@@ -343,8 +343,8 @@ func indexOfID(ids []string, want string) int {
 }
 
 // A chain with a fan-out merges in dependency order and never exceeds
-// max_workers: 04 starts only after 02 and 03 merged, and at most two
-// workers run at once when the cap is two.
+// max_tickets: 04 starts only after 02 and 03 merged, and at most two
+// tickets run at once when the cap is two.
 func TestDriverMergesChainAndFanoutInDependencyOrderWithinCap(t *testing.T) {
 	spec, world, fake := runWorld(t, map[string]string{
 		"01-first.md":  ticketDoc("None"),
@@ -378,6 +378,53 @@ func TestDriverMergesChainAndFanoutInDependencyOrderWithinCap(t *testing.T) {
 				t.Errorf("04-fourth started at %d but %s finished at %d: started=%v finished=%v", start04, dep, fin, fake.started, fake.finished)
 			}
 		}
+	}
+}
+
+// A spec file's max_tickets caps concurrent tickets in the driver: with
+// three ready tickets and max_tickets: 2 under a global five, at most two
+// ever run at once, and all three still merge.
+func TestDriverHonorsSpecMaxTickets(t *testing.T) {
+	resolverSettings(t, `{"max_tickets":5}`)
+	spec, world, fake := runWorld(t, map[string]string{
+		"01-first.md":  ticketDoc("None"),
+		"02-second.md": ticketDoc("None"),
+		"03-third.md":  ticketDoc("None"),
+	}, 5)
+	if err := os.WriteFile(spec.Spec, []byte("---\nmax_tickets: 2\n---\n\n# Spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	world.MaxTickets = effectiveTicketCapForSpec(spec.Spec)
+	res, err := RunDriver(spec, world)
+	if err != nil {
+		t.Fatalf("RunDriver: %v", err)
+	}
+	if len(res.Merged) != 3 {
+		t.Fatalf("merged = %v, want all 3 tickets", res.Merged)
+	}
+	if fake.maxSeen > 2 {
+		t.Errorf("max concurrent tickets = %d, want at most the spec's 2", fake.maxSeen)
+	}
+}
+
+// The live world carries the spec's max_tickets into the driver: a capped
+// spec lowers the global ticket cap, a spec without the key keeps it.
+func TestLiveDriverWorldHonorsSpecMaxTickets(t *testing.T) {
+	resolverSettings(t, `{"max_tickets":5}`)
+	dir := t.TempDir()
+	capped := filepath.Join(dir, "spec.md")
+	if err := os.WriteFile(capped, []byte("---\nmax_tickets: 2\n---\n\n# Spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ticket := filepath.Join(dir, "01-first.md")
+	files := map[string]string{ticket: ticketDoc("None")}
+	spec := SpecRun{Spec: capped, Tickets: dir, Branch: "spec/cap-test"}
+	if got := liveDriverWorld(spec, t.TempDir(), files).MaxTickets; got != 2 {
+		t.Errorf("capped world MaxTickets = %d, want 2", got)
+	}
+	plain := SpecRun{Spec: filepath.Join(dir, "missing-spec.md"), Tickets: dir, Branch: "spec/cap-test"}
+	if got := liveDriverWorld(plain, t.TempDir(), files).MaxTickets; got != 5 {
+		t.Errorf("plain world MaxTickets = %d, want the global 5", got)
 	}
 }
 
@@ -424,7 +471,7 @@ func TestDriverTreatsAPostPassChangeAsUnreviewed(t *testing.T) {
 	})
 	tips := []string{"t1", "t2", "t2", "t2", "t2", "t2"}
 	calls, lastTip := 0, ""
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	var finishedAt []string
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string {
@@ -490,7 +537,7 @@ func TestDriverLiveWorldMapsTipsReviewsAndRequiredTypes(t *testing.T) {
 		return Result{Code: 1, Stderr: "unexpected call"}, nil
 	}
 	world := liveDriverWorld(spec, repo, files)
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Sleep = nil
 	var started []string
 	world.StartWorker = func(tk DriverTicket) error {
@@ -576,7 +623,7 @@ func TestDriverReportCarriesARefusedFinishText(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
@@ -624,7 +671,7 @@ func TestDriverRefusalReachesWorkerAndRefinishMergesAfterSubmit(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	tip := "tip-1"
 	world.Tip = func(id string) string { return tip }
 	world.Reviews = func(id string) map[string]DriverReview {
@@ -680,7 +727,7 @@ func TestDriverWaitsForTheWorkerSubmitBeforeFinishingAgain(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -732,7 +779,7 @@ func TestDriverEachRefusalKindLoopsUntilTheWorldLetsItMerge(t *testing.T) {
 			spec, world, _ := driverWorld(t, map[string]string{
 				"01-first.md": ticketDoc("None"),
 			})
-			world.MaxWorkers = 1
+			world.MaxTickets = 1
 			tip := "tip-1"
 			world.Tip = func(id string) string { return tip }
 			world.Reviews = func(id string) map[string]DriverReview {
@@ -781,7 +828,7 @@ func TestDriverHandlesAFifthRefusalLikeTheFirst(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -887,7 +934,7 @@ func TestDriverTellWithoutSubmitsTellsOnceAndHolds(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1202,7 +1249,7 @@ func TestDriverResumeSkipsMergedAndFinishesRest(t *testing.T) {
 
 // A ticket that already has a worker gets no second worker: 01-first is
 // running, so it never starts again, but its pass at the tip still finishes
-// it, freeing the MaxWorkers slot for 02-second.
+// it, freeing the MaxTickets slot for 02-second.
 func TestDriverResumeStartsNoSecondWorkerForRunning(t *testing.T) {
 	spec, world, fake := runWorld(t, map[string]string{
 		"01-first.md":  ticketDoc("None"),
@@ -1300,7 +1347,7 @@ func TestDriverThreeIdenticalRefusalsRaiseNeedsYouOnce(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1361,7 +1408,7 @@ func TestDriverTwoIdenticalRefusalsDoNotRaiseNeedsYou(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1412,7 +1459,7 @@ func TestDriverIdleWorkerRaisesNeedsYouAndStillMerges(t *testing.T) {
 		"01-slow.md": ticketDoc("None"),
 		"02-fast.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 2
+	world.MaxTickets = 2
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -1479,7 +1526,7 @@ func TestDriverNeedsYouRetriesWithGrowingDelay(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -1541,7 +1588,7 @@ func TestDriverOtherTicketsRunWhileOneNeedsYou(t *testing.T) {
 		"01-stuck.md": ticketDoc("None"),
 		"02-quick.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 2
+	world.MaxTickets = 2
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1629,7 +1676,7 @@ func TestDriverFailedNotificationKeepsTheRunGoing(t *testing.T) {
 		"01-stuck.md": ticketDoc("None"),
 		"02-quick.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 2
+	world.MaxTickets = 2
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1680,7 +1727,7 @@ func TestDriverNotificationRetriesUntilItSucceeds(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1733,7 +1780,7 @@ func TestDriverNotificationRetriesWaitOutTheBackoff(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	start := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	now := start
 	world.Now = func() time.Time { return now }
@@ -1792,7 +1839,7 @@ func TestDriverMergeDropsAPendingNotifyFailure(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1918,7 +1965,7 @@ func TestDriverNeverDiscardsOnItsOwn(t *testing.T) {
 		"01-first.md":  ticketDoc("None"),
 		"02-parked.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 2
+	world.MaxTickets = 2
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -1995,7 +2042,7 @@ func TestDriverParkedTicketKeepsItsLastRefusal(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.Tip = func(id string) string { return "tip" }
 	world.Reviews = func(id string) map[string]DriverReview {
 		return map[string]DriverReview{
@@ -2229,25 +2276,6 @@ func TestDriverLiveWorldReadsFollowUpsNoneAsEmpty(t *testing.T) {
 	}
 }
 
-// A queued ticket is not a discard: spawn queues over the cap with no worker
-// record, so the driver must keep waiting for it instead of dropping it.
-func TestDriverLiveWorldQueuedTicketDoesNotReadDiscarded(t *testing.T) {
-	oldState := statePath
-	statePath = filepath.Join(t.TempDir(), "workers.json")
-	t.Cleanup(func() { statePath = oldState })
-	dir := t.TempDir()
-	ticket := filepath.Join(dir, "01-first.md")
-	files := map[string]string{ticket: ticketDoc("None")}
-	spec := SpecRun{Spec: filepath.Join(dir, "spec.md"), Tickets: dir, Branch: "spec/driver-live-queued"}
-	world := liveDriverWorld(spec, t.TempDir(), files)
-	if err := queueWorker(queuedWorker{ID: WorkerID(ticket), Type: "worker", Ticket: ticket, Repo: t.TempDir()}); err != nil {
-		t.Fatal(err)
-	}
-	if world.Discarded("01-first") {
-		t.Errorf("queued ticket reads discarded; a queued worker has no record yet")
-	}
-}
-
 // History tells a discard from a pruned pane: a cancelled entry keeps its
 // worktree for a respawn, only a discarded entry reads discarded.
 func TestDriverLiveWorldCancelledHistoryDoesNotReadDiscarded(t *testing.T) {
@@ -2281,7 +2309,7 @@ func TestDriverTellsASubmittedWorkerWhoseReviewPassesAreStale(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md": ticketDoc("None"),
 	})
-	world.MaxWorkers = 1
+	world.MaxTickets = 1
 	world.StartWorker = func(tk DriverTicket) error { return nil }
 	world.Tip = func(id string) string { return "t2" }
 	world.Reviews = func(id string) map[string]DriverReview {

@@ -385,7 +385,6 @@ func TestInvariant_PrivateNotesNeverLeak(t *testing.T) {
 func TestInvariant_RecallOnlyRolesHaveNoRemember(t *testing.T) {
 	t.Parallel()
 	d, base, parent, _ := rememberDaemon(t)
-	d.maxRunning = 10
 	runPrompt(t, base, parent, "parent task uses tabs everywhere")
 	worker := spawnOne(t, base, parent, "worker job")
 	waitStatus(t, base, worker, "idle", 10*time.Second)

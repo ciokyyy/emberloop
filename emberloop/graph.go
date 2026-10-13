@@ -190,7 +190,7 @@ func graphResolveProjectName(ctx context.Context, abs, slug string) string {
 
 // graphIndexWorktreeAsync indexes the worktree in the background once Spawn
 // has created it. Failures are logged and forgotten. The host is always the
-// session's el-mcp process (the spawn tool and the worker-queue drain both
+// session's el-mcp process (the spawn tool launches through it
 // run inside it), which outlives the index, so the goroutine is never cut
 // short by an exiting CLI.
 func graphIndexWorktreeAsync(worktree string) {

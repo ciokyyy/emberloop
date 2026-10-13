@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 )
 
 // HelperTestName is the test every test binary that spawns the fake defines:
@@ -56,6 +57,9 @@ type Config struct {
 	Calls map[string]Result `json:"calls,omitempty"`
 	// HangOn never answers one method: "initialize", "list" or "call".
 	HangOn string `json:"hang_on,omitempty"`
+	// ListDelayMS sleeps this long before answering tools/list, so a test
+	// can tell a parallel listing from a serial one.
+	ListDelayMS int `json:"list_delay_ms,omitempty"`
 	// ExitOn exits the process on "start", "initialize" or "call".
 	ExitOn   string `json:"exit_on,omitempty"`
 	ExitCode int    `json:"exit_code,omitempty"`
@@ -169,6 +173,9 @@ func run(cfg Config) {
 		case "tools/list":
 			if cfg.HangOn == "list" {
 				hang()
+			}
+			if cfg.ListDelayMS > 0 {
+				time.Sleep(time.Duration(cfg.ListDelayMS) * time.Millisecond)
 			}
 			listed := make([]map[string]any, 0, len(cfg.Tools))
 			for _, tl := range cfg.Tools {

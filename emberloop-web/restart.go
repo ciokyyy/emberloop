@@ -31,8 +31,10 @@ func (d *Daemon) Shutdown() {
 	}
 	var all []live
 	d.mu.Lock()
+	d.shuttingDown = true
 	for id, s := range d.sessions {
 		if s.live {
+			d.markShutdownInterruptedLocked(id)
 			s.live = false
 			all = append(all, live{id, d.backendForLocked(s.meta.Harness)})
 		}
@@ -133,6 +135,7 @@ func (d *Daemon) pauseRunsForRestartLocked() {
 		d.persistRun(rs)
 		d.broadcastRunLocked(rs)
 	}
+	d.armRestartStopsLocked()
 }
 
 // CancelRestart drops a request whose exec failed and resumes the Runs it
@@ -140,9 +143,11 @@ func (d *Daemon) pauseRunsForRestartLocked() {
 func (d *Daemon) CancelRestart() {
 	d.mu.Lock()
 	d.restartReq = false
+	d.shuttingDown = false
+	d.stopRestart = nil
 	d.mu.Unlock()
 	d.LogRestart("restart cancelled after exec failure, resuming runs")
-	d.ResumeAfterRestart()
+	d.resumeMarkedRuns()
 }
 
 // RestartRequested reports whether a graceful restart is pending.
@@ -224,6 +229,17 @@ func (d *Daemon) LogRestart(format string, args ...any) {
 // ResumeAfterRestart resumes every paused Run saved with ResumeOnRestart.
 // The binary calls it once its Backends are registered.
 func (d *Daemon) ResumeAfterRestart() {
+	if d.bootLoopTripped() {
+		d.logBootLoop()
+		return
+	}
+	d.resumeMarkedRuns()
+}
+
+// resumeMarkedRuns resumes every paused Run marked ResumeOnRestart. A boot
+// goes through ResumeAfterRestart (the boot-loop guard); a cancelled restart
+// in the same process calls this directly.
+func (d *Daemon) resumeMarkedRuns() {
 	d.mu.Lock()
 	var ids []string
 	for id, rs := range d.runs {
@@ -235,6 +251,7 @@ func (d *Daemon) ResumeAfterRestart() {
 	for _, id := range ids {
 		if _, code, msg := d.resumeRunCore(id); code != 0 {
 			fmt.Fprintf(os.Stderr, "el-web: resume run %s after restart: %d %s\n", id, code, msg)
+			continue
 		}
 	}
 }

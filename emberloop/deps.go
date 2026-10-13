@@ -394,7 +394,9 @@ func (c DepsConfig) probeBwrap() (string, error) {
 }
 
 // graphAssetName names the upstream release tarball for the platform, e.g.
-// codebase-memory-mcp-linux-amd64.tar.gz. Upstream ships tarballs (and .mcpb
+// codebase-memory-mcp-linux-amd64-portable.tar.gz. Linux takes the portable
+// build: the plain one links the release builder's glibc and fails on older
+// hosts. Upstream ships tarballs (and .mcpb
 // bundles); the checksums live in one checksums.txt beside them.
 func graphAssetName(goos, goarch string) (string, error) {
 	switch goos {
@@ -407,7 +409,11 @@ func graphAssetName(goos, goarch string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported platform %s/%s", goos, goarch)
 	}
-	return fmt.Sprintf("%s-%s-%s.tar.gz", GraphBinaryName, goos, goarch), nil
+	suffix := ""
+	if goos == "linux" {
+		suffix = "-portable"
+	}
+	return fmt.Sprintf("%s-%s-%s%s.tar.gz", GraphBinaryName, goos, goarch, suffix), nil
 }
 
 // resolveGraph finds the graph binary in the bin dir, on PATH, or at
@@ -546,9 +552,9 @@ func extractGraphBinary(tarball []byte) ([]byte, error) {
 		if filepath.Base(hdr.Name) != GraphBinaryName {
 			continue
 		}
-		bin, err := io.ReadAll(io.LimitReader(tr, 200<<20))
+		bin, err := readCapped(tr, maxGraphBinary, "graph binary")
 		if err != nil {
-			return nil, fmt.Errorf("release tarball is corrupt: %v", err)
+			return nil, err
 		}
 		if len(bin) == 0 {
 			return nil, fmt.Errorf("release tarball holds an empty %s", GraphBinaryName)
@@ -567,7 +573,26 @@ func fetchURL(client *http.Client, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %s", resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 100<<20))
+	return readCapped(resp.Body, maxGraphDownload, url)
+}
+
+// Size bounds for the graph release. A reader over the bound is an error: a
+// silent cut writes a truncated binary that segfaults on its first run.
+const (
+	maxGraphBinary   = 1 << 30
+	maxGraphDownload = 512 << 20
+)
+
+// readCapped reads r whole, failing when it holds more than max bytes.
+func readCapped(r io.Reader, max int64, what string) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %v", what, err)
+	}
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("%s is larger than %d MiB; refusing a truncated copy", what, max>>20)
+	}
+	return b, nil
 }
 
 // probeGraphMCP proves the graph binary answers an MCP initialize.

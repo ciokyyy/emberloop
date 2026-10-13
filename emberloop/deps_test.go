@@ -143,8 +143,8 @@ func depsFakeRelease(t *testing.T, payload []byte, wrong bool) string {
 	}
 	var sums strings.Builder
 	for _, asset := range []string{
-		GraphBinaryName + "-linux-amd64.tar.gz",
-		GraphBinaryName + "-linux-arm64.tar.gz",
+		GraphBinaryName + "-linux-amd64-portable.tar.gz",
+		GraphBinaryName + "-linux-arm64-portable.tar.gz",
 		GraphBinaryName + "-darwin-amd64.tar.gz",
 		GraphBinaryName + "-darwin-arm64.tar.gz",
 	} {

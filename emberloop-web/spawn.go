@@ -126,14 +126,7 @@ func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAge
 		d.mu.Unlock()
 		return "", nil, http.StatusBadRequest, "unknown deliver (want group or each)"
 	}
-	// Reserve every child slot before starting any: over the cap the whole
-	// call is refused and no half Group is left behind.
-	max := d.maxRunningLocked()
-	if d.liveCountLocked()+d.starting+len(agents) > max {
-		running := d.liveCountLocked()
-		d.mu.Unlock()
-		return "", nil, http.StatusTooManyRequests, capMessage(running, max)
-	}
+	// Subagents are uncapped: every child starts, whatever runs already.
 	harness, model, workDir := parent.meta.Harness, parent.meta.Model, parent.meta.WorkDir
 	owner := parent.meta.Owner
 	d.mu.Unlock()

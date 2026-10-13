@@ -90,8 +90,8 @@ type Daemon struct {
 	presence presence
 	push     *pushStore
 	claude   *ClaudeBackend
-	// maxRunning overrides the max_workers setting when positive.
-	maxRunning int
+	// maxTickets overrides the max_tickets setting when positive.
+	maxTickets int
 	// starting counts Sessions reserving a running slot while their
 	// backend handle builds before publish.
 	starting int
@@ -132,6 +132,12 @@ type Daemon struct {
 	restartReq   bool
 	restartAt    time.Time
 	restartDrain time.Duration
+	// shuttingDown is set once Shutdown starts closing Sessions: a turn error
+	// from a closing process is a restart, not a failure (restart.go).
+	shuttingDown bool
+	// stopRestart marks the Run Worker and Reviewer Sessions a restart
+	// request stops at their next tool-call boundary (runs_restart_resume.go).
+	stopRestart map[string]bool
 	// clock is the Daemon clock seam: idle quiet time and the runs driver read
 	// it; nil reads time.Now (idle.go).
 	clock func() time.Time
@@ -455,12 +461,6 @@ func (d *Daemon) removeSession(id string) {
 	_ = os.RemoveAll(d.sessionDir(id))
 }
 
-// capMessage refuses a start over the concurrency cap. It names the setting
-// the cap came from so the message tells the user where to raise it.
-func capMessage(running, max int) string {
-	return fmt.Sprintf("session cap reached: %d running (max %d from max_workers); end a Session or wait for one to go idle", running, max)
-}
-
 // startError is a Session start refusal carrying its HTTP status. asJSON
 // marks the {"error"} envelope; otherwise the message goes out as plain text.
 type startError struct {
@@ -491,15 +491,9 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		return nil, &startError{code: http.StatusInternalServerError, msg: err.Error(), asJSON: true}
 	}
 	meta.Dirs = dirs
-	// The cap counts Sessions holding an agent process. Over it the
-	// start is refused with a clear message.
+	// Sessions are uncapped: only concurrent Run tickets are limited, by the
+	// driver. starting still counts the reservation for the idle check.
 	d.mu.Lock()
-	max := d.maxRunningLocked()
-	if d.liveCountLocked() >= max {
-		running := d.liveCountLocked()
-		d.mu.Unlock()
-		return nil, &startError{code: http.StatusTooManyRequests, msg: capMessage(running, max), asJSON: true}
-	}
 	if meta.Harness != "claude" {
 		d.starting++
 	}
@@ -648,6 +642,15 @@ func (d *Daemon) finishTurn(id string) {
 			d.mu.Unlock()
 			return
 		}
+		if len(s.pending) > 0 && d.stopRestart[id] && s.meta.RestartStopped {
+			// A restart stopped this turn: nothing drains into a new turn.
+			// The queue rides in the Session record to the next Daemon.
+			for _, m := range s.pending {
+				s.meta.Carry += "- " + m.text + "\n"
+			}
+			s.pending = nil
+			d.persistMeta(s.meta)
+		}
 		if len(s.pending) > 0 {
 			// A Steer still held when the turn ends had no tool call to
 			// follow: it arrives as a Follow-up.
@@ -726,6 +729,7 @@ func (d *Daemon) appendEvent(id, kind, text, status string) Event {
 	// Stop-after-submit reacts to the stored Event without the lock: every
 	// Backend turn, tool call and submit route funnels through here.
 	d.maybeStopAfterSubmit(id, e)
+	d.maybeStopForRestart(id, e)
 	return e
 }
 
@@ -769,6 +773,11 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 	// SDK session) must never reopen the Session.
 	if kind == "status" && s.meta.Status == "ended" {
 		status = "ended"
+	}
+	// A turn that errors because Shutdown closed its process did not fail:
+	// the next Daemon continues it (runs_restart_resume.go).
+	if kind == "status" && status == "failed" && d.shuttingDown {
+		status, text = "idle", restartInterruptedText
 	}
 	e := Event{
 		Version:   1,
@@ -918,12 +927,6 @@ func (d *Daemon) resumeReleased(id string) (int, string) {
 	cur, ok := d.sessions[id]
 	resume := ok && !cur.live && cur.meta.Status != "ended"
 	if resume {
-		if d.liveCountLocked() >= d.maxRunningLocked() {
-			running, max := d.liveCountLocked(), d.maxRunningLocked()
-			d.mu.Unlock()
-			clear()
-			return http.StatusTooManyRequests, capMessage(running, max)
-		}
 		d.starting++
 		meta = cur.meta
 	}

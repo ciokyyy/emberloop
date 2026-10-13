@@ -350,3 +350,111 @@ func TestRunResumePreservesStartedAndUnstartedTicketPauses(t *testing.T) {
 		t.Fatalf("explicit Ticket Resume kept unstarted Ticket paused: state %q", got)
 	}
 }
+
+func TestResumeSkipsMergedTicketPausedRoles(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	rs := &runState{
+		ID:             "run1",
+		Status:         runStatusPaused,
+		Merged:         map[string]string{"01-done": "abc"},
+		Repo:           tempDir(t),
+		Branches:       map[string]string{"01-done": "implement/01-done"},
+		Worktrees:      map[string]string{"01-done": filepath.Join(tempDir(t), "gone")},
+		PausedRoles:    map[string]map[string]bool{"01-done": {reviewerSpecType: true}},
+		RunPausedRoles: map[string]map[string]bool{"01-done": {reviewerSpecType: true}},
+		TicketPaused:   map[string]bool{"01-done": true},
+	}
+	d.mu.Lock()
+	d.runs["run1"] = rs
+	d.markRunRolePausedByRunLocked(rs, "01-done", reviewerStandardsType)
+	d.mu.Unlock()
+	if err := d.resumePausedRunRoles("run1", ""); err != nil {
+		t.Fatalf("resumePausedRunRoles with merged Ticket = %v, want nil", err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(rs.PausedRoles) != 0 || len(rs.RunPausedRoles) != 0 || len(rs.TicketPaused) != 0 {
+		t.Fatalf("stale marks left: %v %v %v", rs.PausedRoles, rs.RunPausedRoles, rs.TicketPaused)
+	}
+}
+
+func TestFinishWorkerAnswersMergedTicketWithoutWorktree(t *testing.T) {
+	t.Parallel()
+	repo, _ := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	gone := filepath.Join(tempDir(t), "gone")
+	rs := &runState{
+		ID:          "run1",
+		Status:      runStatusRunning,
+		Repo:        repo,
+		SpecBranch:  "spec/x",
+		Merged:      map[string]string{"01-first": "abc"},
+		Branches:    map[string]string{"01-first": "implement/01-first"},
+		Worktrees:   map[string]string{"01-first": gone},
+		Sessions:    map[string]string{},
+		PausedRoles: map[string]map[string]bool{},
+		notify:      make(chan struct{}),
+	}
+	d.mu.Lock()
+	d.runs["run1"] = rs
+	d.mu.Unlock()
+	fin, err := d.runFinishWorker("run1", "01-first")
+	if err != nil || !fin.Merged || fin.SHA != "abc" {
+		t.Fatalf("Finish of merged Ticket = %+v, %v; want merged abc", fin, err)
+	}
+
+	// Merge landed on the spec branch but the record never saved.
+	head, err := runGit(repo, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head = strings.TrimSpace(head)
+	for _, b := range []string{"implement/02-second", "spec/x"} {
+		if _, err := runGit(repo, "branch", b, head); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.mu.Lock()
+	rs.Merged = map[string]string{}
+	rs.Branches["02-second"] = "implement/02-second"
+	rs.Worktrees["02-second"] = gone
+	d.mu.Unlock()
+	fin, err = d.runFinishWorker("run1", "02-second")
+	if err != nil || !fin.Merged || fin.SHA != head {
+		t.Fatalf("Finish with gone worktree and tip in spec = %+v, %v; want merged %s", fin, err, head)
+	}
+}
+
+func TestCleanTipSHATrimsAppendedProse(t *testing.T) {
+	t.Parallel()
+	sha := "9f23f230118efc0c55039ab616c66d21ec6be429"
+	cases := map[string]string{
+		sha:                              sha,
+		" " + sha + "\n":                 sha,
+		sha + ". Commit scope clean: ok": sha,
+		sha + " (docs only)":             sha,
+		strings.ToUpper(sha):             sha,
+		"abc123":                         "abc123",
+		sha + "ff":                       sha + "ff",
+		"not a sha at all":               "not a sha at all",
+	}
+	for in, want := range cases {
+		if got := cleanTipSHA(in); got != want {
+			t.Errorf("cleanTipSHA(%q) = %q, want %q", in, got, want)
+		}
+	}
+	rs := &runState{
+		Reviews:    map[string]map[string]storedReview{"t": {"reviewer-spec": {Verdict: "pass", At: sha + ". Commit scope clean"}}},
+		ReviewTips: map[string]map[string]string{"t": {"reviewer-spec": sha + ". x"}},
+	}
+	repairStoredReviewTips(rs)
+	if got := rs.Reviews["t"]["reviewer-spec"].At; got != sha {
+		t.Fatalf("repaired At = %q, want %q", got, sha)
+	}
+	if got := rs.ReviewTips["t"]["reviewer-spec"]; got != sha {
+		t.Fatalf("repaired ReviewTips = %q, want %q", got, sha)
+	}
+}

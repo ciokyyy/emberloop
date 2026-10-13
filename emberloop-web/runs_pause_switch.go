@@ -159,6 +159,11 @@ func errorsJoin(current, next error) error {
 }
 
 func (d *Daemon) markRunRolePausedLocked(rs *runState, ticketID, role string) {
+	// A merged Ticket has no worktree and no live roles; a mark would make
+	// Resume start roles in a directory that is gone.
+	if rs.Merged[ticketID] != "" {
+		return
+	}
 	if rs.PausedRoles == nil {
 		rs.PausedRoles = map[string]map[string]bool{}
 	}
@@ -169,6 +174,9 @@ func (d *Daemon) markRunRolePausedLocked(rs *runState, ticketID, role string) {
 }
 
 func (d *Daemon) markRunRolePausedByRunLocked(rs *runState, ticketID, role string) {
+	if rs.Merged[ticketID] != "" {
+		return
+	}
 	d.markRunRolePausedLocked(rs, ticketID, role)
 	if rs.RunPausedRoles == nil {
 		rs.RunPausedRoles = map[string]map[string]bool{}
@@ -420,6 +428,14 @@ func (d *Daemon) resumePausedRunRoles(runID, onlyTicket string) error {
 	}
 	tickets := make([]string, 0, len(rs.PausedRoles))
 	for ticketID := range rs.PausedRoles {
+		if rs.Merged[ticketID] != "" {
+			// Stale mark on a merged Ticket: nothing to resume.
+			for role := range rs.PausedRoles[ticketID] {
+				clearPausedRunRoleLocked(rs, ticketID, role)
+			}
+			delete(rs.TicketPaused, ticketID)
+			continue
+		}
 		if onlyTicket != "" && onlyTicket == ticketID {
 			tickets = append(tickets, ticketID)
 		} else if onlyTicket == "" && !rs.TicketPauseHolds[ticketID] && len(rs.RunPausedRoles[ticketID]) > 0 {

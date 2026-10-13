@@ -47,6 +47,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("HOME", home)
 	os.Setenv("EL_SETTINGS", filepath.Join(home, "settings.json"))
 	os.Unsetenv("EL_MAX_WORKERS")
+	os.Unsetenv("EL_MAX_TICKETS")
 	os.Unsetenv("EL_WEB_PARENT")
 	os.Unsetenv("EL_WEB_DAEMON_URL")
 	os.Setenv("EL_SESSION_TITLES", "0")

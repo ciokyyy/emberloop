@@ -399,6 +399,29 @@ func TestMCPRegistrySnapshotSkipsFailedServers(t *testing.T) {
 	}
 }
 
+// A snapshot lists the servers in parallel: four servers that each take 400ms
+// to list cost about one delay, not four.
+func TestMCPRegistrySnapshotListsServersInParallel(t *testing.T) {
+	cfgs := map[string]MCPServerSetting{}
+	for _, name := range []string{"a", "b", "c", "d"} {
+		command, args, env := mcpfake.Helper(t, mcpfake.Config{
+			Tools: []mcpfake.ToolDef{{Name: name + "_tool"}}, ListDelayMS: 400,
+		})
+		cfgs[name] = MCPServerSetting{Command: command, Args: args, Env: env}
+	}
+	reg := NewRegistry(cfgs)
+	t.Cleanup(reg.Close)
+	start := time.Now()
+	listed, errs := reg.Snapshot(context.Background())
+	elapsed := time.Since(start)
+	if len(errs) != 0 || len(listed) != 4 {
+		t.Fatalf("listed %d servers, errs = %v", len(listed), errs)
+	}
+	if elapsed > 1200*time.Millisecond {
+		t.Fatalf("snapshot took %s, want about one 400ms delay: servers list serially", elapsed)
+	}
+}
+
 // A call the caller abandons fails without touching the server: nothing
 // waits on the child, it stays running, and the client stays usable.
 func TestMCPCallCancelledByCallerLeavesServerRunning(t *testing.T) {

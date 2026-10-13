@@ -64,7 +64,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	for _, k := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "EL_AGENT_ID", "EL_AGENT_TYPE"} {
+	for _, k := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "EL_AGENT_ID", "EL_AGENT_TYPE", "EL_MAX_TICKETS", "EL_MAX_WORKERS"} {
 		os.Unsetenv(k)
 	}
 	os.Setenv("HERDR_BIN_PATH", stub)

@@ -36,6 +36,9 @@ import (
 // wait ends here instead of hanging the session.
 const mcpOAuthApproveTimeout = 10 * time.Minute
 
+// MCPLoginTimeout bounds `el settings mcp-server <name> login`.
+const MCPLoginTimeout = mcpOAuthApproveTimeout + time.Minute
+
 // mcpOAuthBodyLimit bounds an OAuth endpoint's reply: metadata and tokens
 // are small, and a compromised endpoint must not fill memory.
 const mcpOAuthBodyLimit = 1 << 20
@@ -51,6 +54,15 @@ type ReauthNeededError struct {
 
 func (e *ReauthNeededError) Error() string {
 	return fmt.Sprintf("mcp server %q: OAuth token expired or revoked; remove %s and retry to approve again", e.Server, e.TokenFile)
+}
+
+// NeedsLoginError is a server that wants a browser approval while nobody is
+// there to give it. A listing reports it at once instead of stalling the
+// start of every session; `el settings mcp-server <name> login` approves.
+type NeedsLoginError struct{ Server string }
+
+func (e *NeedsLoginError) Error() string {
+	return fmt.Sprintf("mcp server %q: needs OAuth approval; run: el settings mcp-server %s login", e.Server, e.Server)
 }
 
 // oauthStored is one server's credential on disk.
@@ -144,6 +156,9 @@ type oauthFlows struct {
 	mcpURL  string
 	setting *MCPOAuthSetting
 	getCode func(ctx context.Context, authURL string) (string, error)
+	// noBrowser refuses the browser approval: a startup listing has no human
+	// to wait for, and a refresh with a stored token still works.
+	noBrowser bool
 }
 
 // oauthMeta is the authorization server's discovery document: the three
@@ -627,8 +642,11 @@ func (o *oauthFlows) browserFlow(ctx context.Context, meta *oauthMeta) (string, 
 	get := o.getCode
 	if get == nil {
 		get = func(ctx context.Context, authURL string) (string, error) {
+			// No browser here (a headless host) is not fatal: the URL goes to
+			// stderr and the listener keeps waiting, so the callback can be
+			// fetched from another shell on this host.
 			if err := openBrowser(authURL); err != nil {
-				return "", fmt.Errorf("mcp server %q: %w", o.server, err)
+				fmt.Fprintf(os.Stderr, "mcp server %q: %v\n", o.server, err)
 			}
 			return waitOAuthCode(ctx, o.server, ln, state)
 		}
@@ -690,6 +708,9 @@ func (o *oauthFlows) bearerFor401(ctx context.Context, challenge string) (string
 	if t != nil && (t.TokenEndpoint != "" && t.TokenEndpoint != meta.TokenEndpoint) {
 		// The settings moved under a live token: re-register from scratch.
 		_ = os.Remove(mcpTokenPath(o.server))
+	}
+	if o.noBrowser {
+		return "", &NeedsLoginError{Server: o.server}
 	}
 	return o.browserFlow(ctx, meta)
 }

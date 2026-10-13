@@ -1,6 +1,6 @@
 // el starts an agent session: pig or claude, with el's tools over MCP.
 //
-//	el settings [decision-model <id>|threshold <n>|max-workers <n>]  read and save settings
+//	el settings [decision-model <id>|threshold <n>|max-tickets <n>]  read and save settings
 //	el settings models [--refresh] [--harness h]    list a harness's models
 //	el settings role <slot> harness|model|effort <value>   set a launch slot
 //	el settings tool <name> ... | mcp-server <name> ...    tune tools and MCP servers

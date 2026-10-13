@@ -53,8 +53,20 @@ func watchForUpdate(d *web.Daemon, exe string, every time.Duration) {
 			seen = now
 			continue
 		}
+		if d.RestartRequested() {
+			continue
+		}
 		// No quiet time: restart waits for work it would cut, not for quiet.
 		if !d.Idle(0) {
+			// Running tickets never make the Daemon idle, so they must not
+			// hold an update back: the graceful restart pauses the Runs, stops
+			// their Workers and Reviewers after the current tool call, and
+			// the next Daemon continues them in the same Sessions. Other busy
+			// Sessions are not Run work: they keep the old wait for idle.
+			if d.HasRunningRuns() {
+				d.LogRestart("binary changed with Runs running, requesting a graceful restart")
+				d.RequestRestart()
+			}
 			continue
 		}
 		d.LogRestart("binary changed and idle, restarting")

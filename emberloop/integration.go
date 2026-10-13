@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+
+	"example.com/emberloop/tools"
 )
 
 // SpecRun is what `el implement <spec>` works from: the spec, where its
@@ -47,6 +50,71 @@ func ResolveSpec(arg string) (SpecRun, error) {
 		tickets = filepath.Join(dir, "issues")
 	}
 	return SpecRun{Spec: spec, Tickets: tickets, Branch: "spec/" + specSlug(spec)}, nil
+}
+
+// IsSpecFileName reports whether a markdown file name is a spec file rather
+// than a ticket: the classic spec.md or a local spec-*.md plan (for example
+// docs/plans/spec-01-voice.md). Ticket scans skip these, so a spec that lives
+// beside its tickets never parses as one.
+func IsSpecFileName(name string) bool {
+	base := filepath.Base(name)
+	return base == "spec.md" || (strings.HasPrefix(base, "spec-") && strings.HasSuffix(base, ".md"))
+}
+
+// SpecMaxTickets reads a spec file's per-spec ticket cap from its frontmatter
+// max_tickets key (max_agents is the pre-rename alias). It reports false when
+// the file cannot be read, has no frontmatter, or sets no positive cap, so
+// specs without the key run under the global cap.
+func SpecMaxTickets(specPath string) (int, bool) {
+	raw, err := os.ReadFile(specPath)
+	if err != nil {
+		return 0, false
+	}
+	head, _, err := splitFrontmatter(string(raw))
+	if err != nil {
+		return 0, false
+	}
+	fields, err := parseFields(head)
+	if err != nil {
+		return 0, false
+	}
+	v, ok := fields.scalar("max_tickets")
+	if !ok {
+		v, ok = fields.scalar("max_agents")
+	}
+	if !ok {
+		return 0, false
+	}
+	m, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || m <= 0 {
+		return 0, false
+	}
+	return m, true
+}
+
+// MaxTicketsForSpec is the ticket cap in force for one spec run: the global
+// cap, lowered by the spec file's own max_tickets frontmatter when it sets
+// one. A spec cap never raises the global one, and an empty spec leaves it
+// untouched. The web Daemon passes its own global; the CLI passes the
+// settings file's.
+func MaxTicketsForSpec(spec string, global int) int {
+	if global <= 0 {
+		global = tools.DefaultMaxTickets
+	}
+	if spec == "" {
+		return global
+	}
+	if m, ok := SpecMaxTickets(spec); ok && m < global {
+		return m
+	}
+	return global
+}
+
+// effectiveTicketCapForSpec is the ticket cap in force for one CLI spec run:
+// the settings file's global, lowered by the spec file's own max_tickets
+// frontmatter when it sets one.
+func effectiveTicketCapForSpec(spec string) int {
+	return MaxTicketsForSpec(spec, tools.LoadSettings().EffectiveMaxTickets())
 }
 
 // specSlug names the run after the spec: the directory of a spec.md, or the

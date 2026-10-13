@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -744,7 +745,9 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "harness and model are required", http.StatusBadRequest)
 		return
 	}
-	max := d.MaxRunning()
+	// The Run runs at most the spec's max_tickets when it sets one below
+	// the global ticket cap; subagents inside its tickets are uncapped.
+	max := el.MaxTicketsForSpec(specRun.Spec, d.MaxTickets())
 	d.mu.Lock()
 	for _, rs := range d.runs {
 		if rs.Spec == specRun.Spec && (rs.Status == runStatusRunning || rs.Status == runStatusNeedsYou) {
@@ -905,11 +908,11 @@ func (d *Daemon) driveRun(id string, world el.DriverWorld) {
 
 func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) el.DriverWorld {
 	if max <= 0 {
-		max = defaultMaxRunning
+		max = defaultMaxTickets
 	}
 	return el.DriverWorld{
 		Files:      files,
-		MaxWorkers: max,
+		MaxTickets: max,
 		// The Daemon spawns the Reviewers after a done submit, so a stalled
 		// Worker is told to finish, never to spawn its own reviewers.
 		StallNudge: webStallNudge,
@@ -2988,6 +2991,12 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		d.mu.Unlock()
 		return el.DriverFinish{}, nil
 	}
+	if sha := rs.Merged[ticketID]; sha != "" {
+		// Already merged: its worktree is gone. A driver re-seeded after a
+		// restart can still ask to finish it; answer from the record.
+		d.mu.Unlock()
+		return el.DriverFinish{Merged: true, SHA: sha}, nil
+	}
 	repo, branch, worktree, target, _, path := rs.Repo, rs.Branches[ticketID], rs.Worktrees[ticketID], rs.Targets[ticketID], rs.Bases[ticketID], ticketPath(rs, ticketID)
 	specBranch := rs.SpecBranch
 	submitStatus := ""
@@ -2999,6 +3008,25 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	d.mu.Unlock()
 	if branch == "" || worktree == "" {
 		return el.DriverFinish{}, fmt.Errorf("ticket %s has no worker", ticketID)
+	}
+	if specBranch != "" {
+		if _, statErr := os.Stat(worktree); os.IsNotExist(statErr) {
+			// The worktree went but the merge was never recorded: the
+			// Daemon died between the worktree removal and the record. The
+			// work counts as merged when the spec branch holds the tip.
+			if tip, terr := runGit(repo, "rev-parse", branch); terr == nil && tip != "" {
+				if in, aerr := isAncestorRef(repo, tip, specBranch); aerr == nil && in {
+					d.mu.Lock()
+					if rs, ok := d.runs[runID]; ok {
+						rs.Merged[ticketID] = tip
+						d.persistRun(rs)
+						d.broadcastRunLocked(rs)
+					}
+					d.mu.Unlock()
+					return el.DriverFinish{Merged: true, SHA: tip}, nil
+				}
+			}
+		}
 	}
 	if pendingChainSubmit {
 		// A failed Worker invalidates its old done submit until the replacement
@@ -3151,6 +3179,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		if kept != "" {
 			return el.DriverFinish{Merged: false, Detail: kept}, nil
 		}
+		d.endMergedWorker(runID, ticketID)
 		if _, err := runGit(repo, "worktree", "remove", "--force", worktree); err != nil {
 			return el.DriverFinish{}, err
 		}
@@ -3201,6 +3230,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 			return el.DriverFinish{}, err
 		}
 	}
+	d.endMergedWorker(runID, ticketID)
 	if _, err := runGit(repo, "worktree", "remove", "--force", worktree); err != nil {
 		return el.DriverFinish{}, err
 	}
@@ -3218,6 +3248,24 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	}
 	d.mu.Unlock()
 	return el.DriverFinish{Merged: true, SHA: sha}, nil
+}
+
+// endMergedWorker ends a merged Ticket's Worker Session before its worktree
+// goes. The Worker's agent process runs in that worktree: removing the
+// directory under a live process makes its next tool call fail with
+// "getwd: no such file or directory" (the model sees `error in parsing
+// "tool.json"`), which reads as a broken submit even though the merge worked.
+// The Session record and transcript stay.
+func (d *Daemon) endMergedWorker(runID, ticketID string) {
+	d.mu.Lock()
+	id := ""
+	if rs, ok := d.runs[runID]; ok {
+		id = rs.Sessions[ticketID]
+	}
+	d.mu.Unlock()
+	if id != "" {
+		_, _ = d.endSession(id)
+	}
 }
 
 // isAncestorRef reports whether ancestor contains ref in repo: git
@@ -4238,7 +4286,7 @@ func (d *Daemon) handleWorkerBlockedSubmit(w http.ResponseWriter, r *http.Reques
 // Callers hold no lock.
 func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id string, sub ReviewerSubmit) {
 	sub.Verdict = strings.ToLower(strings.TrimSpace(sub.Verdict))
-	sub.Tip = strings.TrimSpace(sub.Tip)
+	sub.Tip = cleanTipSHA(sub.Tip)
 	for i := range sub.Findings {
 		sub.Findings[i].Severity = strings.ToLower(strings.TrimSpace(sub.Findings[i].Severity))
 	}
@@ -4348,8 +4396,9 @@ func (d *Daemon) persistRun(rs *runState) {
 	_ = os.Rename(name, d.runFile(rs.ID))
 }
 
-// loadRuns restores saved Runs as paused: the driver does not restart
-// without the user, so nothing spends tokens after a Daemon restart.
+// loadRuns restores saved Runs as paused. A Run that was running is marked
+// ResumeOnRestart, so ResumeAfterRestart resumes it; any other paused Run
+// waits for the user, so nothing else spends tokens after a Daemon restart.
 func (d *Daemon) loadRuns() {
 	root := filepath.Join(d.stateDir, "enderbloom", "runs")
 	entries, err := os.ReadDir(root)
@@ -4370,7 +4419,13 @@ func (d *Daemon) loadRuns() {
 		}
 		if rs.Status == runStatusRunning {
 			rs.Status = runStatusPaused
+			// A Run still running on disk was cut off without a graceful
+			// pause (a kill, a crash, a reboot): the next Daemon resumes it
+			// on its own, the same as after `el restart`. A Run the user
+			// paused by hand never reaches here as running.
+			rs.ResumeOnRestart = true
 		}
+		repairStoredReviewTips(&rs)
 		if rs.Sessions == nil {
 			rs.Sessions = map[string]string{}
 		}
@@ -4627,7 +4682,7 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 			}
 		}
 	}
-	max := d.MaxRunning()
+	max := el.MaxTicketsForSpec(spec, d.MaxTickets())
 	d.mu.Lock()
 	rs, ok = d.runs[id]
 	if !ok {
@@ -4679,6 +4734,10 @@ func (d *Daemon) resumeRunCore(id string) (any, int, string) {
 	if startDriver {
 		go d.driveRun(rs.ID, world)
 	}
+	// Same Session, same worktree: Sessions whose turn a restart cut short
+	// get a continue prompt now, on every resume path. The sends resume agent
+	// processes (seconds each), so they must not hold the caller.
+	go d.continueInterruptedRunSessions(id)
 	return out, 0, ""
 }
 
@@ -4920,4 +4979,37 @@ func runHasPausedOpenTicketLocked(rs *runState) bool {
 		}
 	}
 	return false
+}
+
+var leadingTipSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}($|[^0-9a-zA-Z])`)
+
+// cleanTipSHA trims a submitted tip to its leading full SHA when a model
+// appended prose to it ("9f23…429. Commit scope clean"). Anything else, short
+// or odd values included, comes back trimmed and otherwise unchanged. A tip
+// with trailing text never equals the branch tip, so the verdict would sit
+// stale and the gate would wait forever with no error.
+func cleanTipSHA(tip string) string {
+	tip = strings.TrimSpace(tip)
+	if leadingTipSHA.MatchString(tip) {
+		return strings.ToLower(tip[:40])
+	}
+	return tip
+}
+
+// repairStoredReviewTips cleans tips already saved with trailing text, so a
+// Run stuck behind such a verdict recovers on load.
+func repairStoredReviewTips(rs *runState) {
+	for _, byType := range rs.Reviews {
+		for typ, r := range byType {
+			if c := cleanTipSHA(r.At); c != r.At {
+				r.At = c
+				byType[typ] = r
+			}
+		}
+	}
+	for _, byType := range rs.ReviewTips {
+		for typ, tip := range byType {
+			byType[typ] = cleanTipSHA(tip)
+		}
+	}
 }

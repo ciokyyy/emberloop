@@ -98,62 +98,59 @@ func (b *probeBackend) counts() (creates, closes, releases, resumes int) {
 	return b.creates, b.closes, b.releases, b.resumes
 }
 
-// Starting a Session over the cap is refused with a clear message.
-func TestSessionCapRefusedOverMax(t *testing.T) {
+// Sessions are uncapped: starting past the old cap succeeds, since only
+// concurrent Run tickets are limited.
+func TestSessionsStartUncapped(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), newProbeBackend())
-	d.SetMaxRunning(1)
+	d.SetMaxTickets(1)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	_ = createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
-
-	body, _ := json.Marshal(map[string]string{"harness": "fake", "model": "fake-model", "workDir": tempDir(t)})
-	resp, err := http.Post(srv.URL+"/api/sessions", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("over-cap create status = %d, want 429", resp.StatusCode)
-	}
-	var out struct {
-		Error string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.Error, "cap") || !strings.Contains(out.Error, "max_workers") {
-		t.Fatalf("over-cap error = %q, want cap message naming max_workers", out.Error)
-	}
+	_ = createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 }
 
-// The cap reads the global max_workers setting: env wins, then the settings
-// file, then the built-in default.
-func TestMaxRunningReadsGlobalSetting(t *testing.T) {
+// The ticket cap reads the global max_tickets setting: env wins, then the
+// settings file, then the built-in default. The pre-rename max_workers key
+// and EL_MAX_WORKERS env still work as fallbacks.
+func TestMaxTicketsReadsGlobalSetting(t *testing.T) {
 	dir := tempDir(t)
 	t.Setenv("HOME", dir)
+	t.Setenv("EL_MAX_TICKETS", "")
 	t.Setenv("EL_MAX_WORKERS", "")
 	t.Setenv("EL_SETTINGS", "")
-	if got := maxRunningFromSettings(); got != 3 {
+	if got := maxTicketsFromSettings(); got != 3 {
 		t.Fatalf("default cap = %d, want 3", got)
 	}
-	t.Setenv("EL_MAX_WORKERS", "7")
-	if got := maxRunningFromSettings(); got != 7 {
+	t.Setenv("EL_MAX_TICKETS", "7")
+	if got := maxTicketsFromSettings(); got != 7 {
 		t.Fatalf("env cap = %d, want 7", got)
 	}
+	t.Setenv("EL_MAX_TICKETS", "")
+	t.Setenv("EL_MAX_WORKERS", "9")
+	if got := maxTicketsFromSettings(); got != 9 {
+		t.Fatalf("old env cap = %d, want 9", got)
+	}
 	t.Setenv("EL_MAX_WORKERS", "")
-	settings := `{"max_workers": 5}`
+	settings := `{"max_tickets": 5}`
 	if err := os.WriteFile(dir+"/settings.json", []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_SETTINGS", dir+"/settings.json")
-	if got := maxRunningFromSettings(); got != 5 {
+	if got := maxTicketsFromSettings(); got != 5 {
 		t.Fatalf("file cap = %d, want 5", got)
 	}
-	t.Setenv("EL_MAX_WORKERS", "2")
-	if got := maxRunningFromSettings(); got != 2 {
+	t.Setenv("EL_MAX_TICKETS", "2")
+	if got := maxTicketsFromSettings(); got != 2 {
 		t.Fatalf("env-over-file cap = %d, want 2", got)
+	}
+	t.Setenv("EL_MAX_TICKETS", "")
+	if err := os.WriteFile(dir+"/settings.json", []byte(`{"max_workers": 6}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := maxTicketsFromSettings(); got != 6 {
+		t.Fatalf("old file key cap = %d, want 6", got)
 	}
 }
 

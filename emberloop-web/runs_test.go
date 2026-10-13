@@ -98,6 +98,30 @@ func TestListSpecsSkipsArchive(t *testing.T) {
 	}
 }
 
+// Local spec-*.md plans under docs/plans are listed with their title, and
+// sibling specs never count as tickets of each other.
+func TestListSpecsFindsLocalPlansSpecs(t *testing.T) {
+	t.Parallel()
+	repo := tempDir(t)
+	writeFile(t, repo, "docs/plans/spec-05-demo.md", "# Spec 05: Demo\n")
+	writeFile(t, repo, "docs/plans/spec-06-other.md", "# Spec 06: Other\n")
+	got, err := discoverSpecs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("specs = %+v, want two local plans", got)
+	}
+	if got[0].Title != "Spec 05: Demo" || got[1].Title != "Spec 06: Other" {
+		t.Fatalf("specs = %+v, want both plans with titles", got)
+	}
+	for _, e := range got {
+		if e.Tickets != 0 {
+			t.Errorf("%s tickets = %d, want 0: sibling specs are not tickets", e.Spec, e.Tickets)
+		}
+	}
+}
+
 func writeFile(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := root + "/" + name

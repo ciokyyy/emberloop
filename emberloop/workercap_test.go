@@ -7,12 +7,18 @@ import (
 	"testing"
 )
 
-// A spawn of more workers than the cap starts the cap, reports the rest as
-// queued, and starts them as earlier ones finish (spec stories 36 and 44).
-func TestWorkerCapQueuesBeyondCapAndDrainsOnFinish(t *testing.T) {
+// Spawns are uncapped: the ticket cap limits concurrent tickets in the
+// driver, never the workers a spawn starts. Even with the global ticket cap
+// at one and the spec's max_tickets at one, one spawn call starts every
+// worker and reports none as queued.
+func TestSpawnLaunchesEveryWorkerUncapped(t *testing.T) {
 	spawnTestState(t)
-	// Cap of two: the third worker of one call must queue.
-	resolverSettings(t, `{"max_workers":2}`)
+	resolverSettings(t, `{"max_tickets":1}`)
+	spec := filepath.Join(t.TempDir(), "spec.md")
+	if err := os.WriteFile(spec, []byte("---\nmax_tickets: 1\n---\n\n# Spec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_SPEC", spec)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")
@@ -39,53 +45,29 @@ func TestWorkerCapQueuesBeyondCapAndDrainsOnFinish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	if ex.launched != 2 {
-		t.Fatalf("launched %d workers, want the cap of 2", ex.launched)
+	if ex.launched != 3 {
+		t.Fatalf("launched %d workers, want all 3: spawns are uncapped", ex.launched)
 	}
-	if !strings.Contains(out, "cap-c queued") {
-		t.Errorf("the result must report the queued worker, got:\n%s", out)
-	}
-	if got := queuedIDs(); len(got) != 1 || got[0] != "cap-c" {
-		t.Fatalf("queued = %v, want [cap-c]", got)
+	if strings.Contains(out, "queued") {
+		t.Errorf("the result must report no queued worker, got:\n%s", out)
 	}
 	store, err := loadWorkersLocked()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(store) != 2 {
-		t.Fatalf("store holds %d workers, want the cap of 2", len(store))
-	}
-
-	// Finishing one starts the queued worker in its place.
-	if _, err := Finish(ex.run, "cap-a", false); err != nil {
-		t.Fatalf("finish cap-a: %v", err)
-	}
-	if ex.launched != 3 {
-		t.Fatalf("launched %d workers after a finish, want 3: the queued worker must start", ex.launched)
-	}
-	if got := queuedIDs(); len(got) != 0 {
-		t.Fatalf("queued = %v, want empty after the drain", got)
-	}
-	store, err = loadWorkersLocked()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(store) != 2 {
-		t.Fatalf("store holds %d workers after drain, want 2", len(store))
-	}
-	if _, ok := store["cap-c"]; !ok {
-		t.Errorf("cap-c must be running after the drain, store holds %v", keys(store))
+	if len(store) != 3 {
+		t.Fatalf("store holds %d workers, want 3", len(store))
 	}
 }
 
-// The cap defaults to three when nothing is stored.
-func TestWorkerCapDefaultsToThree(t *testing.T) {
+// The ticket cap defaults to three when nothing is stored.
+func TestTicketCapDefaultsToThree(t *testing.T) {
 	resolverSettings(t, "")
-	if got := effectiveWorkerCap(); got != 3 {
+	if got := effectiveTicketCapForSpec(""); got != 3 {
 		t.Fatalf("effective cap = %d, want 3", got)
 	}
-	resolverSettings(t, `{"max_workers":5}`)
-	if got := effectiveWorkerCap(); got != 5 {
+	resolverSettings(t, `{"max_tickets":5}`)
+	if got := effectiveTicketCapForSpec(""); got != 5 {
 		t.Fatalf("effective cap = %d, want 5", got)
 	}
 }
@@ -98,60 +80,12 @@ func keys(store map[string]Worker) []string {
 	return out
 }
 
-// A concurrent finish may drain an entry this call queued and start it before
-// the call fails: rollback then tears the started worker down instead of
-// leaving it running orphaned with an id the parent never learned.
-func TestFailedSpawnTearsDownAConcurrentlyDrainedWorker(t *testing.T) {
-	spawnTestState(t)
-	resolverSettings(t, `{"max_workers":1}`)
-	g := newFakeGrid()
-	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
-	t.Setenv("HERDR_WORKSPACE_ID", "w1")
-	t.Setenv("EL_HERDR_REPORT", "/fake/herdr-report")
-	ex := &worktreeExec{g: g}
-	spawnExec = ex.run
-	repo := t.TempDir()
-	ticket := filepath.Join(repo, "race-c.md")
-	if err := os.WriteFile(ticket, []byte("# race-c\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	types := mustLoadAgentTypes(repo)
-	// The call queued race-c; before it failed, a concurrent finish drained
-	// the entry and started the worker, so the store holds it but the queue
-	// is already empty.
-	if err := queueWorker(queuedWorker{ID: "race-c", Type: "worker", Ticket: ticket, Repo: repo, Harness: "pig"}); err != nil {
-		t.Fatal(err)
-	}
-	store, err := loadWorkersLocked()
-	if err != nil {
-		t.Fatal(err)
-	}
-	store["race-c"] = Worker{ID: "race-c", Ticket: ticket, Repo: repo, Branch: "implement/race-c", Harness: "pig"}
-	if err := withFileLock("workers", func() error { return save(store) }); err != nil {
-		t.Fatal(err)
-	}
-	dequeueWorkers([]string{"race-c"})
-	// Rollback of the failed call must not leave the started worker behind.
-	closeSpawned(ex.run, []*spawnedAgent{{ID: "race-c", Type: types["worker"], Worktree: true, Queued: true}})
-	rest, err := loadWorkersLocked()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := rest["race-c"]; ok {
-		t.Fatalf("race-c is still running after rollback, store holds %v", keys(rest))
-	}
-	if got := queuedIDs(); len(got) != 0 {
-		t.Fatalf("queued = %v, want empty", got)
-	}
-}
-
 // Each worker of one spawn call is its own group, so its result reaches the
 // parent when it submits and the parent can merge it at once, instead of every
-// worker waiting for the slowest of the call. A queued worker's group is its
-// own too, written with the others.
+// worker waiting for the slowest of the call.
 func TestEachWorkerOfOneSpawnIsItsOwnGroup(t *testing.T) {
 	spawnTestState(t)
-	resolverSettings(t, `{"max_workers":2}`)
+	resolverSettings(t, `{"max_tickets":1}`)
 	g := newFakeGrid()
 	t.Setenv("HERDR_TAB_ID", g.tabs[0].tab)
 	t.Setenv("HERDR_WORKSPACE_ID", "w1")

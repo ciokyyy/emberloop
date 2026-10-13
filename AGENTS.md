@@ -59,6 +59,7 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/emberplugins/AGENTS.md` — the spec and ticket area for Emberplugins (runtime-added pages, jobs and servers in `emberloop-web`)
 - `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
-- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
+- `.scratch/settings-redesign/AGENTS.md` — the design reference (static mock) for the Settings redesign in `emberloop-web`
+- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK

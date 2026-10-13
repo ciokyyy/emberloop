@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MichaelKinsy/PiG/ai"
 )
@@ -42,6 +43,9 @@ type PigACPBackend struct {
 	socks        map[string]string
 	pendingSocks map[string]string
 	sockGen      int
+	// readyFiles maps a Session to the file its el MCP server writes when its
+	// tool listing is ready (see waitMCPReady). Guarded by sockMu.
+	readyFiles map[string]string
 }
 
 // Title names a Session through the pig SDK, as the SDK Backend does.
@@ -103,6 +107,7 @@ func (b *PigACPBackend) CreateSession(meta SessionMeta, emit func(kind, text, st
 	if err := b.StartSession(meta); err != nil {
 		return err
 	}
+	b.waitMCPReady(meta.ID)
 	b.claimSock(meta.ID, sock)
 	if err := b.applyPigEffort(meta.ID, meta.Effort); err != nil {
 		b.DropSession(meta.ID)
@@ -121,6 +126,7 @@ func (b *PigACPBackend) ResumeSession(meta SessionMeta, emit func(kind, text, st
 	if err := b.ClaudeBackend.ResumeSession(meta, emit); err != nil {
 		return err
 	}
+	b.waitMCPReady(meta.ID)
 	b.claimSock(meta.ID, sock)
 	if err := b.applyPigEffort(meta.ID, meta.Effort); err != nil {
 		b.DropSession(meta.ID)
@@ -175,6 +181,7 @@ func (b *PigACPBackend) StartHandle(meta SessionMeta, emit func(kind, text, stat
 		_ = conn.Close()
 		return "", nil, err
 	}
+	b.waitMCPReady(meta.ID)
 	fresh := &claudeState{conn: conn, acpID: acpID, ready: make(chan struct{})}
 	fresh.signalReady()
 	if ts, ok := conn.(acpThoughtLevelSetter); ok && meta.Effort != "" {
@@ -480,6 +487,16 @@ func (b *PigACPBackend) prepareAgentDir(sessionID, role string, dirs ownerDirs) 
 	if err != nil {
 		return "", err
 	}
+	// The el server writes this file once its tool listing is ready. Clear a
+	// stale one first, and record the path for waitMCPReady.
+	ready := b.readyFile(sessionID)
+	_ = os.Remove(ready)
+	b.sockMu.Lock()
+	if b.readyFiles == nil {
+		b.readyFiles = map[string]string{}
+	}
+	b.readyFiles[sessionID] = ready
+	b.sockMu.Unlock()
 	if err := os.WriteFile(filepath.Join(agent, "mcp.json"), mcp, 0o600); err != nil {
 		return "", err
 	}
@@ -571,6 +588,7 @@ func (b *PigACPBackend) mergedMCP(sessionID, role string) ([]byte, error) {
 		for _, kv := range sv.Env {
 			env[kv[0]] = kv[1]
 		}
+		env["EL_READY_FILE"] = b.readyFile(sessionID)
 		out[sv.Name] = map[string]any{
 			"command":  sv.Command,
 			"args":     sv.Args,
@@ -580,4 +598,38 @@ func (b *PigACPBackend) mergedMCP(sessionID, role string) ([]byte, error) {
 		}
 	}
 	return json.MarshalIndent(map[string]any{"mcpServers": out}, "", "  ")
+}
+
+// readyFile is the path the Session's el server writes when its tool listing
+// is ready.
+func (b *PigACPBackend) readyFile(sessionID string) string {
+	return filepath.Join(b.agentDir(sessionID), "mcp-ready")
+}
+
+// mcpReadyWait bounds waitMCPReady: a slow or broken MCP server costs a
+// start this long at most, never a hang.
+const mcpReadyWait = 90 * time.Second
+
+// waitMCPReady blocks until the Session's el server reports its tools ready,
+// or mcpReadyWait passes. pig connects its MCP servers in the background
+// after the adapter answers session/new, so a prompt sent at once can reach
+// the model with no tools at all ("(none)"), which makes the model report it
+// cannot work. The el server answers pig only after its listing is done and
+// writes the ready file just before; once that exists, pig's connect is
+// quick. Only a Session whose agent dir this Backend prepared waits.
+func (b *PigACPBackend) waitMCPReady(sessionID string) {
+	b.sockMu.Lock()
+	path, ok := b.readyFiles[sessionID]
+	delete(b.readyFiles, sessionID)
+	b.sockMu.Unlock()
+	if !ok {
+		return
+	}
+	deadline := time.Now().Add(mcpReadyWait)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }

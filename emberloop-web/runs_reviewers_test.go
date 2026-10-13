@@ -293,9 +293,9 @@ func TestReviewerSessionsUseRolesWithFallback(t *testing.T) {
 	}
 }
 
-// A Reviewer Session starts through the shared live-Session cap: a full cap
-// refuses it, and freeing the cap lets the retry in.
-func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
+// Reviewer Sessions are uncapped like every other Session: the reviewer
+// starts with another live Session around, and no retry is needed.
+func TestReviewersStartUncapped(t *testing.T) {
 	t.Parallel()
 	repo, _ := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
@@ -305,7 +305,7 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 	testGit(t, repo, "worktree", "add", "-b", branch, worktree, "HEAD")
 	t.Cleanup(func() { testGit(t, repo, "worktree", "remove", "--force", worktree) })
 	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
-	d.SetMaxRunning(1)
+	d.SetMaxTickets(1)
 	d.mu.Lock()
 	d.sessions["holder"] = &session{meta: SessionMeta{ID: "holder", Harness: "fake", Model: "m", Status: "idle", Owner: "owner-1"}, live: true, notify: make(chan struct{})}
 	d.runs["r-cap"] = &runState{
@@ -320,24 +320,14 @@ func TestReviewersCountAgainstLiveSessionCap(t *testing.T) {
 		ReviewTips: map[string]map[string]string{}, Reprompted: map[string]int{},
 	}
 	d.mu.Unlock()
-	if err := d.runStartReviewer("r-cap", "01-first", "reviewer-spec", "deadbeef"); err == nil || !strings.Contains(err.Error(), "cap") {
-		t.Fatalf("runStartReviewer err = %v, want the cap refusal", err)
-	}
-	d.mu.Lock()
-	delete(d.sessions, "holder")
-	if sess := d.runs["r-cap"].Reviewers["01-first"]["reviewer-spec"]; sess != "" {
-		d.mu.Unlock()
-		t.Fatalf("reviewer session = %q, want none while capped", sess)
-	}
-	d.mu.Unlock()
 	if err := d.runStartReviewer("r-cap", "01-first", "reviewer-spec", "deadbeef"); err != nil {
-		t.Fatalf("runStartReviewer retry = %v, want the reviewer in", err)
+		t.Fatalf("runStartReviewer = %v, want the reviewer in", err)
 	}
 	d.mu.Lock()
 	sess := d.runs["r-cap"].Reviewers["01-first"]["reviewer-spec"]
 	d.mu.Unlock()
 	if sess == "" {
-		t.Fatalf("no reviewer session after the cap freed, want one")
+		t.Fatalf("no reviewer session, want one")
 	}
 }
 

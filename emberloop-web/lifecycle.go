@@ -4,21 +4,21 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 )
 
-// defaultMaxRunning caps concurrent running Sessions when no setting exists.
-// It matches the el global default for max_workers.
-const defaultMaxRunning = 3
+// defaultMaxTickets caps concurrent Run tickets when no setting exists.
+// It matches the el global default for max_tickets.
+const defaultMaxTickets = 3
 
-// maxRunningFromSettings reads the existing global max_workers setting: the
-// EL_MAX_WORKERS env wins, then the global settings file (or
+// maxTicketsFromSettings reads the existing global max_tickets setting: the
+// EL_MAX_TICKETS env wins, then the global settings file (or
 // EL_SETTINGS when set, for tests and second profiles), then the old
-// state-dir file, then the built-in default.
-func maxRunningFromSettings() int {
-	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS"))); err == nil && w > 0 {
+// state-dir file, then the built-in default. The pre-rename max_workers key
+// and EL_MAX_WORKERS env still work as fallbacks when the new ones are
+// absent, so existing settings keep working; they are never written.
+func maxTicketsFromSettings() int {
+	if w, ok := envMaxTickets(); ok {
 		return w
 	}
 	for _, p := range settingsPaths() {
@@ -27,13 +27,19 @@ func maxRunningFromSettings() int {
 			continue
 		}
 		var s struct {
+			MaxTickets int `json:"max_tickets"`
 			MaxWorkers int `json:"max_workers"`
 		}
-		if err := json.Unmarshal(raw, &s); err == nil && s.MaxWorkers > 0 {
-			return s.MaxWorkers
+		if err := json.Unmarshal(raw, &s); err == nil {
+			if s.MaxTickets > 0 {
+				return s.MaxTickets
+			}
+			if s.MaxWorkers > 0 {
+				return s.MaxWorkers
+			}
 		}
 	}
-	return defaultMaxRunning
+	return defaultMaxTickets
 }
 
 func settingsPaths() []string {
@@ -50,12 +56,13 @@ func settingsPaths() []string {
 	}
 }
 
-// SetMaxRunning overrides the max_workers setting, for tests.
-func (d *Daemon) SetMaxRunning(n int) {
+// SetMaxTickets overrides the max_tickets setting, for tests.
+func (d *Daemon) SetMaxTickets(n int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.maxRunning = n
+	d.maxTickets = n
 }
+
 // SetPollInterval caps this Daemon's Run driver sleep, for tests. Call it
 // before serving: the write happens before the server's goroutines start,
 // so no lock is needed. Zero keeps the production default.
@@ -72,29 +79,18 @@ func (d *Daemon) pollIntervalOrDefault() time.Duration {
 	return runPollInterval
 }
 
-// MaxRunning is the concurrency cap in force: the override, or the global
-// max_workers setting.
-func (d *Daemon) MaxRunning() int {
+// MaxTickets is the Run ticket concurrency in force: the override, or the
+// global max_tickets setting. Sessions themselves are uncapped; only
+// concurrent Run tickets are limited.
+func (d *Daemon) MaxTickets() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.maxRunningLocked()
+	return d.maxTicketsLocked()
 }
 
-func (d *Daemon) maxRunningLocked() int {
-	if d.maxRunning > 0 {
-		return d.maxRunning
+func (d *Daemon) maxTicketsLocked() int {
+	if d.maxTickets > 0 {
+		return d.maxTickets
 	}
-	return maxRunningFromSettings()
-}
-
-// liveCountLocked counts Sessions holding an agent process: live and not
-// ended. Callers hold d.mu.
-func (d *Daemon) liveCountLocked() int {
-	n := 0
-	for _, s := range d.sessions {
-		if s.live && s.meta.Status != "ended" {
-			n++
-		}
-	}
-	return n + d.starting
+	return maxTicketsFromSettings()
 }

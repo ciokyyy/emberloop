@@ -1,7 +1,6 @@
 package el
 
 import (
-	"example.com/emberloop/tools"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -206,14 +205,14 @@ func renderFinish(r *FinishResult) string {
 // the thinking; the adapter only maps its vocabulary onto el's tools and
 // drops what el already does (review per ticket, the integration branch).
 func implementPrompt(run SpecRun) string {
-	maxWorkers := tools.LoadSettings().EffectiveMaxWorkers()
+	maxTickets := effectiveTicketCapForSpec(run.Spec)
 	return fmt.Sprintf(`Implement the spec at %s. Its tickets are under %s.
 
 Read %s and follow it, with these el adaptations:
 
 - The integration branch is %s. It already exists and is checked out; never switch away from it.
 - An implementer subagent is spawn(agents=[{type: "worker", ticket: <path>}]). The worker gets its own worktree from the integration tip, the skills, and the spec; tell it nothing else. Spawn returns at once with the agents still running, for every type.
-- At most %d workers run at once; further workers from one spawn queue and start as earlier ones finish.
+- At most %d tickets run at once; spawn one worker per ticket and merge each as it lands. Subagents are uncapped: spawn reviewers and scouts freely, inside tickets or out.
 - An exploration subagent is spawn(agents=[{type: "scout", prompt: "..."}]). Ask several at once when they are independent; their results arrive together.
 - After spawn, end your turn; the result arrives as a system notice. The results of one spawn call arrive as a single notice once every agent of that call has submitted. Waiting for it only spends tokens.
 - The merger subagent is finish(agent=<worker id>): it rebases the worker onto the integration tip and fast-forwards. There is no merger agent.
@@ -222,7 +221,7 @@ Read %s and follow it, with these el adaptations:
 - You never run code. You may edit and write only the paths listed under "orchestrator_paths" in .emberloop/settings.json; any other path is refused. Use that only to keep the spec and notes current: finish marks a merged worker's ticket done itself. Never touch source files, and leave the edits uncommitted.
 
 When nothing more is ready, report the integration branch, each merged ticket with its sha, every worker left unmerged and why, and the follow-ups workers listed.`,
-		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch, maxWorkers)
+		run.Spec, run.Tickets, skillAddress("implement-spec"), run.Branch, maxTickets)
 }
 
 func str(params map[string]any, key string) string {

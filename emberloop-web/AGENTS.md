@@ -12,7 +12,9 @@ Owns `emberloop-web/`. It may import el core packages through the
 `replace example.com/emberloop => ../emberloop` in `go.mod`; the module builds
 only beside a sibling `emberloop/` checkout, and core never imports it. No
 herdr. Ticket files are preview input; only the Run driver writes them, ticking
-boxes and marking Tickets done.
+boxes and marking Tickets done. Runs start at most max_tickets concurrent
+tickets (a spec's max_tickets frontmatter lowers it for that Run); Sessions
+and subagents are uncapped.
 
 ## Test seams
 
@@ -34,7 +36,20 @@ boxes and marking Tickets done.
   `runs_overlap_test.go` and `runs_stopsubmit_test.go` cover Run seams.
   Stop-after-submit ends a Run Worker or Reviewer turn on its accepted
   terminal submit (`runs_stopsubmit.go`, opt out per Run with
-  `noStopAfterSubmit`).
+  `noStopAfterSubmit`). A merged Ticket's Worker Session ends before its
+  worktree is removed (`endMergedWorker`): a live agent process never loses its
+  cwd. `runs_restart_resume.go` and `runs_restart_resume_test.go`: a Run found
+  running on disk (kill, crash) resumes on the next Daemon like `el restart`
+  (`ResumeOnRestart`), and Worker and Reviewer Sessions whose turn a restart
+  cut short continue in the same Session and worktree on a continue prompt;
+  a restart request stops each paused Run's Worker and Reviewer after its
+  current tool call (`armRestartStopsLocked`, `RestartStopped`, queued messages
+  in `Carry`), the update watcher requests that restart when Runs run, and 4
+  boots in 5 minutes stop automatic resume (`bootLoopTripped`);
+  `pigacp.go` waits for the el server's ready file (`EL_READY_FILE`,
+  `waitMCPReady`) before a pig start returns, so the first prompt has tools;
+  Shutdown marks open turns `restart: turn interrupted` and maps their close
+  errors to idle, never failed.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go` and `grok_handoff_test.go`.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are

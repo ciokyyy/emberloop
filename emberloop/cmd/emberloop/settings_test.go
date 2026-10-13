@@ -559,42 +559,73 @@ func TestSettingsRefreshesOnceForAnEffortOnAFreeTextModel(t *testing.T) {
 	}
 }
 
-// The worker cap is readable and settable through the settings command and
-// file, defaulting to three (spec story 44).
-func TestSettingsSavesMaxWorkers(t *testing.T) {
+// The ticket cap is readable and settable through the settings command and
+// file, defaulting to three. max-workers stays a deprecated alias that saves
+// under the new key, and an old file's max_workers still reads.
+func TestSettingsSavesMaxTickets(t *testing.T) {
 	settingsFile(t)
 	var out bytes.Buffer
-	if err := runSettings([]string{"max-workers", "5"}, &out, noModels); err != nil {
+	if err := runSettings([]string{"max-tickets", "5"}, &out, noModels); err != nil {
 		t.Fatal(err)
 	}
-	if got := tools.LoadSettings().MaxWorkers; got != 5 {
-		t.Fatalf("saved max-workers is %d, want 5", got)
+	if got := tools.LoadSettings().MaxTickets; got != 5 {
+		t.Fatalf("saved max-tickets is %d, want 5", got)
 	}
-	if !strings.Contains(out.String(), "max-workers: 5 (file)") {
+	if !strings.Contains(out.String(), "max-tickets: 5 (file)") {
 		t.Fatalf("output %q does not confirm the new cap with its source", out.String())
 	}
 }
 
-func TestSettingsRejectsBadMaxWorkers(t *testing.T) {
+func TestSettingsMaxWorkersAliasSavesMaxTickets(t *testing.T) {
 	p := settingsFile(t)
 	var out bytes.Buffer
-	for _, bad := range []string{"soon", "0", "-2"} {
-		if err := runSettings([]string{"max-workers", bad}, &out, noModels); err == nil {
-			t.Fatalf("max-workers %q should be an error", bad)
-		}
+	if err := runSettings([]string{"max-workers", "4"}, &out, noModels); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Fatal("a rejected max-workers must not be saved")
+	if got := tools.LoadSettings().MaxTickets; got != 4 {
+		t.Fatalf("alias-saved max-tickets is %d, want 4", got)
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "max_workers") {
+		t.Fatalf("the old key must never be written again: %s", raw)
 	}
 }
 
-func TestSettingsPrintsMaxWorkersDefault(t *testing.T) {
+func TestSettingsReadsOldMaxWorkersFile(t *testing.T) {
+	p := settingsFile(t)
+	write(t, p, `{"max_workers":6}`)
+	var out bytes.Buffer
+	if err := runSettings(nil, &out, noModels); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "max-tickets: 6 (file)") {
+		t.Fatalf("output %q does not read the old key as the ticket cap", out.String())
+	}
+}
+
+func TestSettingsRejectsBadMaxTickets(t *testing.T) {
+	p := settingsFile(t)
+	var out bytes.Buffer
+	for _, bad := range []string{"soon", "0", "-2"} {
+		if err := runSettings([]string{"max-tickets", bad}, &out, noModels); err == nil {
+			t.Fatalf("max-tickets %q should be an error", bad)
+		}
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("a rejected max-tickets must not be saved")
+	}
+}
+
+func TestSettingsPrintsMaxTicketsDefault(t *testing.T) {
 	settingsFile(t)
 	var out bytes.Buffer
 	if err := runSettings(nil, &out, noModels); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "max-workers: 3 (default)") {
+	if !strings.Contains(out.String(), "max-tickets: 3 (default)") {
 		t.Fatalf("output %q does not show the default cap of three", out.String())
 	}
 }
@@ -785,9 +816,9 @@ func TestSettingsPrintsEmptyToolsAndServers(t *testing.T) {
 // sections alike.
 func TestSettingsPrintsProjectSources(t *testing.T) {
 	p := settingsFile(t)
-	write(t, p, `{"max_workers":5,"roles":{"scout":{"model":"global-m"}}}`)
+	write(t, p, `{"max_tickets":5,"roles":{"scout":{"model":"global-m"}}}`)
 	project := filepath.Join(t.TempDir(), "project.json")
-	write(t, project, `{"max_workers":7,"roles":{"scout":{"model":"project-m"}},"tools":{"bash":{"roles":{"scout":{"enabled":false}}}}}`)
+	write(t, project, `{"max_tickets":7,"roles":{"scout":{"model":"project-m"}},"tools":{"bash":{"roles":{"scout":{"enabled":false}}}}}`)
 	t.Setenv("EL_PROJECT_SETTINGS", project)
 	var out bytes.Buffer
 	if err := runSettings(nil, &out, noModels); err != nil {
@@ -795,7 +826,7 @@ func TestSettingsPrintsProjectSources(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"max-workers: 7 (project)",
+		"max-tickets: 7 (project)",
 		"scout: harness pig (default), model project-m (project)",
 		"scout: enabled false (project)",
 	} {

@@ -20,6 +20,10 @@ _Avoid_: API key, service token
 One conversation between a user and one agent, with a harness, a model and a working directory. Persisted as an event log.
 _Avoid_: Chat, thread, run
 
+**Project**:
+A registered directory that Sessions and Runs belong to. A Session started in a Project uses the Project's path as its working directory. The UI scopes its sidebar, dashboard and URLs by Project.
+_Avoid_: Workspace, folder, repo
+
 **Backend**:
 The adapter that drives one harness behind the Daemon's `Agent` interface: claude and grok through ACP, pig through ACP or its Go SDK.
 _Avoid_: Driver, provider, adapter

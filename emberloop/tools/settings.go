@@ -37,8 +37,8 @@ const DefaultThreshold = 0.20
 // stored in the overflow store instead of entering context: about 8KB.
 const DefaultOverflowThresholdBytes = 8 * 1024
 
-// DefaultMaxWorkers caps how many workers run at once when nothing is stored.
-const DefaultMaxWorkers = 3
+// DefaultMaxTickets caps how many Run tickets run at once when nothing is stored.
+const DefaultMaxTickets = 3
 
 // DefaultCompressThreshold is the context size in tokens past which a
 // session compresses when nothing is stored: the ticket's 200k.
@@ -227,8 +227,10 @@ type Settings struct {
 	// ponytail: 0.20 is the value old el measured against jev-1.13; a different
 	// decisions model may need its own, so re-measure before trusting it.
 	Threshold float64 `json:"threshold,omitempty"`
-	// MaxWorkers caps how many workers run at once. Zero means the default.
-	MaxWorkers int `json:"max_workers,omitempty"`
+	// MaxTickets caps how many Run tickets run at once. Zero means the default.
+	// A stored max_workers value reads as this when max_tickets is absent, so
+	// old files keep working; saves only ever write max_tickets.
+	MaxTickets int `json:"max_tickets,omitempty"`
 	// Overflow tunes the overflow store. Nil means the defaults; a set
 	// ThresholdBytes of zero means the default too. A pointer, so an unset
 	// overflow stays out of the saved file entirely.
@@ -372,13 +374,26 @@ func (s Settings) SourceOf(key string) string {
 	return "default"
 }
 
-// EffectiveMaxWorkers is the worker cap in force: the stored value, or three
+// EffectiveMaxTickets is the ticket cap in force: the stored value, or three
 // when nothing valid is stored.
-func (s Settings) EffectiveMaxWorkers() int {
-	if s.MaxWorkers > 0 {
-		return s.MaxWorkers
+func (s Settings) EffectiveMaxTickets() int {
+	if s.MaxTickets > 0 {
+		return s.MaxTickets
 	}
-	return DefaultMaxWorkers
+	return DefaultMaxTickets
+}
+
+// getenvMaxTickets reports the ticket cap from the environment: EL_MAX_TICKETS
+// wins, EL_MAX_WORKERS is the pre-rename fallback. False when neither sets a
+// positive cap.
+func getenvMaxTickets() (int, bool) {
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_TICKETS"))); err == nil && w > 0 {
+		return w, true
+	}
+	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS"))); err == nil && w > 0 {
+		return w, true
+	}
+	return 0, false
 }
 
 // EffectiveOverflowThresholdBytes is the output size in bytes above which a
@@ -786,8 +801,10 @@ func oldSettingsPath() string {
 // LoadSettings reads the file; a missing or unreadable file is the defaults.
 // When EL_SETTINGS is unset and the new file is absent, the old state-dir
 // file is read instead. EL_DECISION_MODEL, EL_FIND_THRESHOLD,
-// EL_MAX_WORKERS, EL_SEARCH_PROVIDER, EL_SEARCH_MODE and
-// EL_OVERFLOW_THRESHOLD_BYTES win over the file.
+// EL_MAX_TICKETS, EL_SEARCH_PROVIDER, EL_SEARCH_MODE and
+// EL_OVERFLOW_THRESHOLD_BYTES win over the file. EL_MAX_WORKERS still works
+// as a fallback when EL_MAX_TICKETS is unset, so old environments keep
+// working; it is never written anywhere.
 func LoadSettings() Settings {
 	var s Settings
 	if raw, err := os.ReadFile(SettingsPath()); err == nil {
@@ -807,9 +824,9 @@ func LoadSettings() Settings {
 		s.Threshold = t
 		s.setSource("threshold", "env")
 	}
-	if w, err := strconv.Atoi(strings.TrimSpace(os.Getenv("EL_MAX_WORKERS"))); err == nil && w > 0 {
-		s.MaxWorkers = w
-		s.setSource("max_workers", "env")
+	if w, ok := getenvMaxTickets(); ok {
+		s.MaxTickets = w
+		s.setSource("max_tickets", "env")
 	}
 	if p := strings.ToLower(strings.TrimSpace(os.Getenv("EL_SEARCH_PROVIDER"))); validSearchProvider(p) {
 		s.searchSetting().Provider = p
@@ -830,6 +847,23 @@ func LoadSettings() Settings {
 	return s
 }
 
+// fallbackMaxWorkersTicketCap reads the pre-rename max_workers key when the
+// file sets no max_tickets, so existing settings keep their cap. Zero when
+// absent or invalid, the way an unset cap reads.
+func fallbackMaxWorkersTicketCap(fields map[string]json.RawMessage) int {
+	for k, v := range fields {
+		if strings.ToLower(k) != "max_workers" {
+			continue
+		}
+		var w int
+		if err := json.Unmarshal(v, &w); err != nil || w <= 0 {
+			return 0
+		}
+		return w
+	}
+	return 0
+}
+
 // decodeSettings parses one settings file. Garbage is the defaults; the known
 // keys fill the struct and the rest are kept for the next save.
 func decodeSettings(raw []byte) Settings {
@@ -848,7 +882,7 @@ func decodeSettings(raw []byte) Settings {
 		switch strings.ToLower(k) {
 		case "roles":
 			s.roleExtra = unknownRoleFields(v)
-		case "decision_model", "threshold", "max_workers":
+		case "decision_model", "threshold", "max_tickets", "max_workers":
 		case "search":
 			s.searchExtra = unknownSearchFields(v)
 		case "overflow":
@@ -886,8 +920,13 @@ func decodeSettings(raw []byte) Settings {
 	if s.Threshold != 0 {
 		s.src["threshold"] = "file"
 	}
-	if s.MaxWorkers != 0 {
-		s.src["max_workers"] = "file"
+	if s.MaxTickets != 0 {
+		s.src["max_tickets"] = "file"
+	} else if w := fallbackMaxWorkersTicketCap(fields); w > 0 {
+		// One-time read of the old key: an existing file keeps its cap under
+		// the new name. Never written back: the old key is known, not extra.
+		s.MaxTickets = w
+		s.src["max_tickets"] = "file"
 	}
 	if s.Overflow != nil && s.Overflow.ThresholdBytes != 0 {
 		s.src["overflow.threshold_bytes"] = "file"
@@ -1528,9 +1567,9 @@ func MergeSettings(global, project Settings) Settings {
 		out.Threshold = project.Threshold
 		out.src["threshold"] = "project"
 	}
-	if project.MaxWorkers != 0 && out.src["max_workers"] != "env" {
-		out.MaxWorkers = project.MaxWorkers
-		out.src["max_workers"] = "project"
+	if project.MaxTickets != 0 && out.src["max_tickets"] != "env" {
+		out.MaxTickets = project.MaxTickets
+		out.src["max_tickets"] = "project"
 	}
 	if project.Overflow != nil && project.Overflow.ThresholdBytes != 0 && out.src["overflow.threshold_bytes"] != "env" {
 		if out.Overflow == nil {

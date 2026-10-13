@@ -6,7 +6,7 @@ The web UI is a local Go Daemon with the UI embedded in the binary. `el update` 
 
 | | Prod | Dev |
 |---|---|---|
-| URL | http://127.0.0.1:7940, and from other tailnet devices http://100.94.50.96:7940 | http://127.0.0.1:7941 |
+| URL | http://127.0.0.1:8787, and from other tailnet devices http://100.94.50.96:8787 | http://127.0.0.1:7941 |
 | Run by | systemd user unit `emberloop-web` | `scripts/web-dev.sh` (foreground, in a background pane) |
 | Binary | `~/.local/bin/el-web` | `go run` from the checkout |
 | State | `~/.local/share/pig` | `~/.local/share/pig-dev` (`EL_WEB_DEV_STATE` overrides) |
@@ -22,9 +22,9 @@ the UI unless its source is unchanged, rebuilds `el-web` with version stamps
 into `~/.local/bin/el-web`, keeps the previous set, and rolls back to it when
 the new binary fails its health check.
 
-Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and the Daemon is idle (no turn running, nothing queued, no Run driving), it closes live agent processes and re-executes itself with the same pid and address. Idle Sessions reload on the next prompt.
+Do nothing else. The Daemon checks its own binary every minute (`-restart-check`). When the file changed and the Daemon is idle (no turn running, nothing queued, no Run driving), it closes live agent processes and re-executes itself with the same pid and address. When Runs are running, the Daemon does not wait for them: it takes the graceful restart below, so an update never waits on tickets and the Runs carry on after it. Idle Sessions reload on the next prompt.
 
-Check it: `curl -s -H "Authorization: Bearer $(cat ~/.local/share/pig/enderbloom/daemon.token)" http://127.0.0.1:7940/api/health` must print `{"ok":true}`, and `el-web --version` names the build. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds a browser runs; a stale browser offers `update available — reload`.
+Check it: `curl -s -H "Authorization: Bearer $(cat ~/.local/share/pig/enderbloom/daemon.token)" http://127.0.0.1:8787/api/health` must print `{"ok":true}`, and `el-web --version` names the build. The UI's bottom-right stamp (`ui <hash> · be <commit>`) names the builds a browser runs; a stale browser offers `update available — reload`.
 
 If you run inside a Session of this Daemon, the restart drops your own agent process once the turn ends. The next prompt reloads the Session. Tell the user before you update.
 
@@ -67,10 +67,10 @@ settings is unchanged; only the login is shared.
 ## Service control
 
 - Status: `systemctl --user status emberloop-web`
-- Restart: `el restart` (`--dev` for port 7941, `--wait` to block until the Daemon is back; never `--wait` inside a Daemon Session). It POSTs `/api/restart` with the machine token (`EL_WEB_TOKEN`, else the `daemon.token` file of the state dir; `pig-dev` for `--dev`); `systemctl --user reload emberloop-web` (SIGUSR1) does the same. This is the only restart an agent runs. The Daemon pauses every running Run and marks it `resumeOnRestart`, waits up to `-restart-drain` (default 5m) for Sessions to finish their turns, closes agent processes, and re-executes itself. The new Daemon resumes the marked Runs on its own; a Run paused by hand stays paused. Idle Sessions reload on the next prompt. `el restart` prints the pending request and what still blocks the drain (`GET /api/restart` answers the same state); when the drain expires the restart is forced regardless of idle, and a repeat past drain plus a minute re-arms a stuck request. Every step is logged timestamped to stderr and `<state-dir>/enderbloom/restart.log`, so an exec failure stays visible there.
-- Never run `systemctl restart|stop`, `kill` or a manual `el-web` launch against the prod Daemon, least of all from a Session inside it: the restart drops your own agent process and cuts Run Workers mid-turn.
+- Restart: `el restart` (`--dev` for port 7941, `--wait` to block until the Daemon is back; never `--wait` inside a Daemon Session). It POSTs `/api/restart` with the machine token (`EL_WEB_TOKEN`, else the `daemon.token` file of the state dir; `pig-dev` for `--dev`); `systemctl --user reload emberloop-web` (SIGUSR1) does the same. This is the only restart an agent runs. The Daemon pauses every running Run and marks it `resumeOnRestart`, stops each Run Worker and Reviewer right after its current tool call finishes (at once when no tool runs; their queued messages are saved, nothing re-prompts them), waits up to `-restart-drain` (default 5m) for the other Sessions to finish their turns, closes agent processes, and re-executes itself. The new Daemon resumes the marked Runs on its own, with the same Worker and Reviewer Sessions in the same worktrees; a Session whose turn the restart cut short gets a continue prompt at once. A Run still running on disk after a kill or crash resumes the same way; a Run paused by hand stays paused. A Daemon that boots 4 times within 5 minutes stops resuming Runs on its own (see `restart.log`); resume them by hand once the crash is fixed. Idle Sessions reload on the next prompt. `el restart` prints the pending request and what still blocks the drain (`GET /api/restart` answers the same state); when the drain expires the restart is forced regardless of idle, and a repeat past drain plus a minute re-arms a stuck request. Every step is logged timestamped to stderr and `<state-dir>/enderbloom/restart.log`, so an exec failure stays visible there.
+- Never run `systemctl restart|stop`, `kill` or a manual `el-web` launch against the prod Daemon, least of all from a Session inside it: the restart drops your own agent process and cuts Run Workers mid-turn (they resume on the next Daemon, but `el restart` drains first and loses less).
 - Logs: `el logs` (`-n N`, `-f`, `--since TIME`, `--grep PATTERN`); it wraps `journalctl --user -u emberloop-web`. The dev Daemon has no journal: read its pane.
-- The unit file is `~/.config/systemd/user/emberloop-web.service`. It runs `el-web -addr 127.0.0.1:7940` with `Restart=always`. Linger is on, so it starts at boot.
+- The unit file is `~/.config/systemd/user/emberloop-web.service`. It runs `el-web -addr 127.0.0.1:8787` with `Restart=always`. Linger is on, so it starts at boot.
 
 ## Dev loop
 
@@ -100,17 +100,17 @@ Never commit as part of an update.
 
 ## Reach it from other devices (Tailscale)
 
-The prod unit runs `el-web -addr 127.0.0.1:7940 -tailnet -allow-host cachy-cioky,cachy-cioky.tailef9ae.ts.net`.
+The prod unit runs `el-web -addr 127.0.0.1:8787 -tailnet -allow-host cachy-cioky,cachy-cioky.tailef9ae.ts.net`.
 
-- `127.0.0.1` alone is reachable only from this machine. `-tailnet` adds a second listener on this machine's Tailscale IPv4 (100.64.0.0/10) at the same port, so any device on the tailnet opens `http://<tailscale-ip>:7940` (`tailscale ip -4` prints it).
+- `127.0.0.1` alone is reachable only from this machine. `-tailnet` adds a second listener on this machine's Tailscale IPv4 (100.64.0.0/10) at the same port, so any device on the tailnet opens `http://<tailscale-ip>:8787` (`tailscale ip -4` prints it).
 - Nothing listens on `0.0.0.0` or the LAN. The Daemon refuses a bind that is not loopback or a Tailscale address, and rejects any request whose `Host` or `Origin` is not loopback, a Tailscale IP, or on `-allow-host`.
 - Login is per account (see Accounts and API auth), but the tailnet is still the perimeter: anyone on the tailnet can reach the sign-in page, and signup stays open until the admin turns `signup_enabled` off. Never bind it to `0.0.0.0` or expose it with Funnel.
 - The listener retries every 10 seconds, so it comes up even when Tailscale starts after the Daemon.
-- HTTPS alternative: `sudo tailscale serve --bg --https=7940 http://127.0.0.1:7940`, then use the `-allow-host` name. Needs root once.
+- HTTPS alternative: `sudo tailscale serve --bg --https=8787 http://127.0.0.1:8787`, then use the `-allow-host` name. Needs root once.
 
 ### Slow over Tailscale
 
-- The Daemon gzips text assets (html, js, css, svg, json, wasm) when the client sends `Accept-Encoding: gzip`, and serves `assets/*` with `Cache-Control: public, max-age=31536000, immutable` (Vite hashes the names). `index.html` is `no-cache`. Check: `curl -sI -H 'Accept-Encoding: gzip' http://127.0.0.1:7940/assets/<file>.js` shows `Content-Encoding: gzip`.
+- The Daemon gzips text assets (html, js, css, svg, json, wasm) when the client sends `Accept-Encoding: gzip`, and serves `assets/*` with `Cache-Control: public, max-age=31536000, immutable` (Vite hashes the names). `index.html` is `no-cache`. Check: `curl -sI -H 'Accept-Encoding: gzip' http://127.0.0.1:8787/assets/<file>.js` shows `Content-Encoding: gzip`.
 - Check the path first: `tailscale status` and `tailscale ping <peer>` must say `direct`, not `relay`. Relayed (DERP) paths are slow. Mobile data often cannot go direct (CGNAT): enable UPnP/NAT-PMP on the router, keep IPv6 on, or run a Tailscale peer relay on a tailnet device with a public endpoint.
 - `tailscale netcheck` shows UDP, port mapping and DERP latency. Prefer ethernet over wifi on the host.
 - MagicDNS names can fail on this host; open the Daemon by Tailscale IP.
@@ -132,6 +132,6 @@ Compress makes a Session's context smaller by Handoff restart on every Backend: 
 
 Settings page, section "Notifications": the Turn on button subscribes this browser. The Daemon pushes when a root chat turn finishes or fails. Subscriptions and the VAPID key live in `<state-dir>/enderbloom/push/`. `web/public/sw.js` shows the notification, so a UI update that touches it needs the normal update steps above.
 
-- Browsers allow push only in a secure context: https, or http on localhost. A plain `http://<tailscale-ip>:7940` is not secure, so the button stays disabled there with a note. Use the HTTPS alternative under "Reach it from other devices" and open `https://<name>.ts.net:7940`.
+- Browsers allow push only in a secure context: https, or http on localhost. A plain `http://<tailscale-ip>:8787` is not secure, so the button stays disabled there with a note. Use the HTTPS alternative under "Reach it from other devices" and open `https://<name>.ts.net:8787`.
 - The Daemon needs outbound internet to reach the browser push service (FCM, Mozilla, Apple). The phone needs its own internet.
 - Subscribe once per browser. A 404 or 410 from the push service drops the subscription.

@@ -39,9 +39,10 @@ owns its `_test.go` and the behaviour below):
   step), `deps.go` (the `el deps` installer), `docs.go` (install copies
   the checkout's `docs/agent/*.md` into the `docs` namespace, read as
   `el://docs/<page>`; the system prompt names it)
-- Spawning and layout: `spawn.go`, `spawngroup.go` (one grouped notice per
+- Spawning and layout: `spawn.go` (every spawn launches; no cap, no queue),
+  `spawngroup.go` (one grouped notice per
   spawn call), `worker.go` (brief, worktree, lifecycle),
-  `workerqueue.go` (worker-cap queue and drain), `grid.go`, `tile.go`,
+  `grid.go`, `tile.go`,
   `panename.go` (herdr pane names per agent type; the header strip ticket
   reads the same mapping for its name chip), `background.go`,
   `orchestrate.go` (the spawn/finish/tell orchestration tools)
@@ -51,7 +52,9 @@ owns its `_test.go` and the behaviour below):
   `RunDriver` takes the spec and an injected world of ticket files, fake ops,
   a fake clock and a notify hook. A world without `Finish` only checks the
   ticket graph and prints the start order for `--driver --check`. A world with
-  it runs the happy-path loop: tickets start in number order up to `MaxWorkers`
+  it runs the happy-path loop: tickets start in number order up to `MaxTickets`
+  (a spec file's `max_tickets` frontmatter, alias `max_agents`, can only lower
+  that cap for its own run; subagents are uncapped),
   once their blockers merged, `finish` runs only after every required reviewer
   type passed at the worker's current tip, a refused `finish` is told to the
   worker unchanged and retried after its next submit with no attempt limit
@@ -113,7 +116,7 @@ owns its `_test.go` and the behaviour below):
 - Tools served to agents: `tools/` (child doc); agent-visible shell surface
   is `background.go`, `exec.go`
 - Transport: `mcp/` (child doc); binaries are `cmd/emberloop/main.go` (harness
-  CLI) and `cmd/emberloop-mcp/main.go` (tool server); `tui.go` execs the installed
+  CLI) and `cmd/emberloop-mcp/main.go` (tool server; writes the file named by `EL_READY_FILE` once its tool listing is done, for harnesses that cannot see readiness); `tui.go` execs the installed
   `el-tui` dashboard for the `tui` subcommand
 - Agent data: `agentstate.go` (per-agent record: pane, session, compressed
   count, top-level role and cwd for compress restart, mid-compress claim with

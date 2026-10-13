@@ -284,28 +284,29 @@ func TestSpawnEmitsParentNotifications(t *testing.T) {
 	waitParentIdle(t, srv.URL, parent)
 }
 
-// Over the cap the whole spawn call is refused with no half Group.
-func TestSpawnOverCapRefusesWithoutHalfGroup(t *testing.T) {
+// Subagents are uncapped: a spawn starts every child past the old cap, and
+// the Group records them all.
+func TestSpawnStartsEveryChildUncapped(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	d.SetMaxRunning(1)
+	d.SetMaxTickets(1)
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	code, _ := postSpawn(t, srv.URL, parent, map[string]any{
-		"agents": []map[string]any{{"prompt": "job A"}},
+		"agents": []map[string]any{{"prompt": "job A"}, {"prompt": "job B"}},
 	})
-	if code != http.StatusTooManyRequests {
-		t.Fatalf("spawn status = %d, want 429", code)
+	if code != http.StatusCreated {
+		t.Fatalf("spawn status = %d, want 201: subagents are uncapped", code)
 	}
-	if n := len(getSessions(t, srv.URL)); n != 1 {
-		t.Fatalf("sessions = %d, want parent alone", n)
+	if n := len(getSessions(t, srv.URL)); n != 3 {
+		t.Fatalf("sessions = %d, want parent plus two children", n)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(d.groups) != 0 {
-		t.Fatalf("groups = %d, want none", len(d.groups))
+	if len(d.groups) != 1 {
+		t.Fatalf("groups = %d, want one", len(d.groups))
 	}
 }
 

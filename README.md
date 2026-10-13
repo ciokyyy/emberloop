@@ -69,7 +69,7 @@ Other commands:
 
 ## How a run works
 
-The orchestrator reads a spec, spawns workers, and waits for notices. Each worker implements one ticket in `.emberloop-worktrees/<ticket>` on branch `implement/<ticket>` and submits `done` or `blocked`. At most three workers run at once by default (`max_workers`); extra tickets queue until a slot frees.
+The orchestrator reads a spec, spawns workers, and waits for notices. Each worker implements one ticket in `.emberloop-worktrees/<ticket>` on branch `implement/<ticket>` and submits `done` or `blocked`. At most three tickets run at once by default (`max_tickets`); extra tickets wait until a slot frees. Subagents are uncapped: reviewers and scouts spawn freely.
 
 Two reviewers, one for the spec and one for the repository's standards, keep their context across passes. They can run the repository's named checks from `.emberloop/check`. Findings go back to the same worker with `tell`, and the loop repeats until both reviewers pass.
 
