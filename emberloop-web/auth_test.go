@@ -360,6 +360,10 @@ func TestSetUserPasswordRefusesUnknownUserAndShortPassword(t *testing.T) {
 // creates the admin, later calls log in as the same account.
 func authedHandler(t testing.TB, d *Daemon) http.Handler {
 	t.Helper()
+	// Run drivers persist state on every pass: stop them at test end so no
+	// pass resurrects the test's removed TempDir (see stopRunsForTest). A
+	// Daemon with no Runs returns at once.
+	t.Cleanup(d.stopRunsForTest)
 	// Most Run tests use a synthetic repo and replace the final-gate hooks
 	// below; focused gate tests set the hooks first to assert their behavior.
 	if d.runFinalBuild == nil {

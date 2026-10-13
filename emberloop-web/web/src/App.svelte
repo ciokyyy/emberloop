@@ -12,6 +12,7 @@
   import GitPanel from './lib/GitPanel.svelte';
   import CompressDialog from './lib/CompressDialog.svelte';
   import CompressBanner from './lib/CompressBanner.svelte';
+  import DiskBanner from './lib/DiskBanner.svelte';
   import Composer from './lib/Composer.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
   import RunsView from './lib/RunsView.svelte';
@@ -29,7 +30,7 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit, listRuns } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit, listRuns, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
@@ -81,6 +82,14 @@
     if (currentId === id && meta) meta = { ...meta, compressBlock: '' };
   }
   let git = $state(null);
+  let disk = $state(null);
+  async function refreshDisk() {
+    try {
+      disk = await getDisk();
+    } catch {
+      disk = null;
+    }
+  }
   const PREF_KEY = 'eb.pref';
   const pref = JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}');
   let draftHarness = $state(pref.harness ?? 'claude');
@@ -646,6 +655,8 @@
   watch('sessions', () => refresh());
   watch('runs', () => refreshRuns());
   watch('users', () => refreshPeople());
+  watch('disk', () => refreshDisk());
+  refreshDisk();
   loadProjects();
   // Sign-out unmounts App: close the live stream and drop its watchers.
   onDestroy(stopLive);
@@ -826,6 +837,8 @@
         {/if}
       </div>
     </header>
+
+    <DiskBanner status={disk} />
 
     {#if loadError}
       <p role="alert" class="mx-3 rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive sm:mx-4">{loadError}</p>

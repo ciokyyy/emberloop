@@ -53,7 +53,58 @@ func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
 	t.Helper()
 	d := NewDaemon(stateDir, backend)
 	d.SetPollInterval(testPollInterval())
+	t.Cleanup(d.stopRunsForTest)
 	return d
+}
+
+// stopRunsForTest halts every Run driver at test end so no pass persists
+// state after the test's TempDir cleanup: a still-driving Run writes its
+// file on every pass (see Sleep in webDriverWorld) and would resurrect its
+// removed state dir faster than any removal retry. Discarding every Ticket
+// lets the driver conclude at its next pass; parked gates are opened so a
+// paused Run wakes and sees the discards. The wait also covers Session
+// turns (a straggler's event appends persist): bounded, and never fails the
+// test. Spawn Groups are not waited on: a group that outlives its test has
+// a lost member and never delivers, so it cannot resurrect anything.
+func (d *Daemon) stopRunsForTest() {
+	d.mu.Lock()
+	for _, rs := range d.runs {
+		if rs.Discarded == nil {
+			rs.Discarded = map[string]bool{}
+		}
+		for _, tk := range rs.Tickets {
+			rs.Discarded[tk.ID] = true
+		}
+		if rs.unpause != nil {
+			close(rs.unpause)
+			rs.unpause = nil
+		}
+	}
+	d.mu.Unlock()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		d.mu.Lock()
+		busy := false
+		for _, rs := range d.runs {
+			if rs.driving {
+				busy = true
+				break
+			}
+		}
+		if !busy {
+			for _, s := range d.sessions {
+				if s.active > 0 || s.busy {
+					busy = true
+					break
+				}
+			}
+		}
+		d.mu.Unlock()
+		if !busy || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // runTestSlots caps how many Run tests (driver goroutines, git subprocesses,

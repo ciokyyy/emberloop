@@ -313,3 +313,16 @@ func templatedAtxtRepo(t *testing.T) string {
 	copyGitTemplate(t, atxtBaseTemplateDir, dst)
 	return dst
 }
+
+// cleanupGitTemplates removes the process-shared git template dirs built
+// above. TestMain calls it after m.Run so a package run leaves nothing
+// behind; each removal best-efforts with owner-write first.
+func cleanupGitTemplates() {
+	for _, dir := range []string{gitConfigTemplateDir, gitReviewBaseTemplateDir, readmeBaseTemplateDir, atxtBaseTemplateDir} {
+		if dir == "" {
+			continue
+		}
+		chmodTree(dir)
+		removeRetry(dir)
+	}
+}

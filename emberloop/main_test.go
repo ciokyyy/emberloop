@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // livePaneProcs answers a herdr pane process-info for a pane with a child
@@ -52,7 +54,57 @@ func liveDeliverReply(cmd string, args []string) Result {
 // variables are cleared, and HERDR_BIN_PATH names a stand-in that answers every
 // call as herdr answers a pane it does not know. A test that needs herdr
 // injects its own Exec.
+func chmodTree(root string) {
+	for _, pass := range [2]bool{false, true} {
+		_ = pass
+		break
+	}
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.Mode().Perm()&0o200 == 0 {
+			_ = os.Chmod(p, info.Mode().Perm()|0o200)
+		}
+		return nil
+	})
+}
+
+func removeRetry(root string) {
+	chmodTree(root)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := os.RemoveAll(root); err == nil {
+			if _, statErr := os.Stat(root); os.IsNotExist(statErr) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func isHelperChild() bool {
+	if os.Getenv("EL_CONCURRENCY_MODE") != "" {
+		return true
+	}
+	for _, a := range os.Args {
+		if strings.Contains(a, "HelperProcess") {
+			return true
+		}
+	}
+	return false
+}
+
 func TestMain(m *testing.M) {
+	// Helper children (the test binary re-executed for concurrency and MCP
+	// fakes) inherit the parent's HERDR_BIN_PATH and state; they make no
+	// stub dir of their own, so a child killed by its parent leaks nothing.
+	if isHelperChild() {
+		os.Exit(m.Run())
+	}
 	dir, err := os.MkdirTemp("", "el-test-herdr")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -78,6 +130,12 @@ func TestMain(m *testing.M) {
 	// The pause between a message and its Enter is real time; tests skip it.
 	submitSettle = 0
 	code := m.Run()
-	os.RemoveAll(dir)
+	chmodTree(dir)
+	removeRetry(dir)
+	cleanupGitTemplates()
+	if gridIsolation != "" {
+		chmodTree(gridIsolation)
+		removeRetry(gridIsolation)
+	}
 	os.Exit(code)
 }

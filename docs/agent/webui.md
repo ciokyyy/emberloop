@@ -135,3 +135,13 @@ Settings page, section "Notifications": the Turn on button subscribes this brows
 - Browsers allow push only in a secure context: https, or http on localhost. A plain `http://<tailscale-ip>:8787` is not secure, so the button stays disabled there with a note. Use the HTTPS alternative under "Reach it from other devices" and open `https://<name>.ts.net:8787`.
 - The Daemon needs outbound internet to reach the browser push service (FCM, Mozilla, Apple). The phone needs its own internet.
 - Subscribe once per browser. A 404 or 410 from the push service drops the subscription.
+
+## Disk hygiene
+
+Parallel Runs leave bulk behind (Go build cache, stale temp dirs, abandoned worktrees), so a Daemon janitor trims them every 10 minutes and the Daemon refuses new work when the disk is nearly full.
+
+- Go cache cap: global setting `disk_go_cache_cap_gb` (default 8 GiB, 0 disables trimming), admin-only in Settings under Concurrency. Past the cap the janitor deletes cache files oldest-mtime-first until under 80% of the cap, never touching files younger than 10 minutes.
+- Temp sweep: entries in `os.TempDir()` starting with `go-build`, `el-web-test-` or `el-test-` and older than 6h are removed.
+- Worktree reap: `.el-worktrees/<name>` dirs of finished (done/abandoned) Runs older than 24h go through `git worktree remove --force` + `prune`, only when Run state names no Session using them and no Worker/Reviewer check runs in that repo.
+- Guard: free space below 10% or 5 GiB (whichever is larger) refuses new Sessions, Runs, Tickets and worktrees with 507 and names what the janitor can free; below 20% it pushes one warning per 6h and the header shows a one-line banner.
+- `GET /api/disk` (admin only) answers `{freeBytes, totalBytes, cacheBytes, low, critical, last}` with the last janitor result; `GET /api/health` stays exactly `{"ok":true}`.

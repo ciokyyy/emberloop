@@ -178,6 +178,11 @@ type Daemon struct {
 	mineActive int
 	mineWG     sync.WaitGroup
 	mineWait   time.Duration
+	// Disk hygiene (disk.go): last janitor result and last low-disk warn,
+	// guarded by diskMu so the janitor goroutine and /api/disk race no one.
+	diskMu       sync.Mutex
+	diskLast     janitorResult
+	diskWarnedAt time.Time
 }
 
 type session struct {
@@ -368,6 +373,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/quota/refresh", d.handleQuotaRefresh)
 	mux.HandleFunc("/api/version", d.handleVersion)
 	mux.HandleFunc("/api/health", d.handleHealth)
+	mux.HandleFunc("/api/disk", d.handleDisk)
 	mux.HandleFunc("/api/restart", d.handleRestart)
 	mux.HandleFunc("/api/auth/signup", d.handleSignup)
 	mux.HandleFunc("/api/auth/login", d.handleLogin)

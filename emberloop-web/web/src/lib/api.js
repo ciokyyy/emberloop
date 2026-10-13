@@ -142,6 +142,8 @@ export const getModels = (harness, current = '') =>
 
 export const getSettings = () => fetch(url('/api/settings')).then(json);
 
+export const getDisk = () => fetch(url('/api/disk')).then(json);
+
 export const putSettings = (body) =>
   fetch(url('/api/settings'), {
     method: 'PUT',

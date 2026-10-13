@@ -25,6 +25,11 @@ and subagents are uncapped.
   `submitgate_test.go`.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
+- Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git
+  seam, `disk_go_cache_cap_gb` setting, `/api/disk`, start guards) with
+  `disk_test.go`; temp-leak guards in `tempdir_test.go` over the
+  `testsupport` helper (`TempDir` with chmod+retry and a TestMain-drained
+  leak list).
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
   `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
   check, selective re-review, scope warning), `runs_persist_test.go`,

@@ -2,12 +2,16 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"example.com/emberloop-web/testsupport"
 )
 
 // sharedTempRoots holds process-shared template dirs (run repo templates)
@@ -39,13 +43,33 @@ func registerSharedTemp(dir string) {
 // PIG_TEST_FAUX is on for the whole package for the same reason; tests that
 // need other pig scenario or key variables keep their own t.Setenv and stay
 // serial.
+// isHelperChild reports a re-executed test binary serving as an ACP adapter
+// fake (see spawnHelperConn): it inherits the parent's HOME and EL_SETTINGS
+// and makes no home dir of its own, so a child the parent kills leaks
+// nothing. Env is left untouched: the parent arranged it per test.
+func isHelperChild() bool {
+	if os.Getenv("GO_TEST_ACP_ADAPTER") != "" {
+		return true
+	}
+	for _, a := range os.Args {
+		if strings.Contains(a, "TestHelperACPAdapter") {
+			return true
+		}
+	}
+	return false
+}
+
 func TestMain(m *testing.M) {
+	if isHelperChild() {
+		os.Exit(m.Run())
+	}
 	home, err := os.MkdirTemp("", "el-web-test-home-")
 	if err != nil {
 		panic(err)
 	}
 	os.Setenv("HOME", home)
 	os.Setenv("EL_SETTINGS", filepath.Join(home, "settings.json"))
+	os.Setenv("EL_TITLES_DIR", filepath.Join(home, "el-titles"))
 	os.Unsetenv("EL_MAX_WORKERS")
 	os.Unsetenv("EL_MAX_TICKETS")
 	os.Unsetenv("EL_WEB_PARENT")
@@ -73,9 +97,15 @@ func TestMain(m *testing.M) {
 	sharedTempRoots = nil
 	sharedTempMu.Unlock()
 	for _, dir := range roots {
-		os.RemoveAll(dir)
+		testsupport.RemoveDir(dir)
 	}
-	os.RemoveAll(home)
+	left := testsupport.CleanupLeaks()
+	ok, bad, _ := testsupport.Report()
+	os.Stderr.WriteString(fmt.Sprintf("el-web: tempdir cleanups ok=%d failed=%d leaked=%d\n", ok, bad, len(left)))
+	for _, dir := range left {
+		os.Stderr.WriteString("el-web: leaked temp dir: " + dir + "\n")
+	}
+	testsupport.RemoveDir(home)
 	os.Exit(code)
 }
 

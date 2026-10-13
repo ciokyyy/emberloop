@@ -150,7 +150,13 @@ func (d *Daemon) setTitle(id, title string) {
 
 // titleWorkDir is the fixed directory every claude title session runs in, so
 // the adapter's session files land under one project instead of the user's.
+// EL_TITLES_DIR overrides it for tests, so title tests never touch the
+// shared temp dir.
 func titleWorkDir() string {
+	if v := strings.TrimSpace(os.Getenv("EL_TITLES_DIR")); v != "" {
+		_ = os.MkdirAll(v, 0o700)
+		return v
+	}
 	dir := filepath.Join(os.TempDir(), "el-titles")
 	_ = os.MkdirAll(dir, 0o700)
 	return dir

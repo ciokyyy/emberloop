@@ -54,6 +54,7 @@
   let chainBaseline = {};
   let chainAliases = {};
   let maxTickets = $state('3');
+  let diskCap = $state('8');
   let pigTitle = $state('none');
   let sessionTitles = $state('on');
   let compress = $state({ auto: 'on', threshold: '80', tokens: '300000', cooldown: '5', instructions: '', model: 'none' });
@@ -76,7 +77,7 @@
     const fallback = role.settingRoles.map((name) => roles[name]).find((setting) => setting?.model);
     return fallback?.model ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }] : [];
   }
-  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
+  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
   const dirty = $derived(snapshot() !== saved);
 
   async function models(harness) {
@@ -124,6 +125,7 @@
       chainBaseline = cloneChains(nextChains);
       chainAliases = nextChainAliases;
       maxTickets = body.max_tickets != null ? String(body.max_tickets) : '3';
+      diskCap = body.disk_go_cache_cap_gb != null ? String(body.disk_go_cache_cap_gb) : '8';
       locked = !!body.max_tickets_from_env;
       const t = body.roles?.['pig-title'];
       pigTitle = t?.harness === 'pig' && t?.model ? t.model : 'none';
@@ -241,6 +243,7 @@
       const payload = { roles: { ...configured, 'pig-title': pigTitleRole } };
       if (Object.keys(chainPayload).length) payload.chains = chainPayload;
       if (!locked) payload.max_tickets = Number(maxTickets);
+      if (admin) payload.disk_go_cache_cap_gb = Number(diskCap);
       if (!titlesLocked) payload.session_titles = sessionTitles === 'on';
       payload.compress = {
         auto_compress: compress.auto === 'on',
@@ -264,6 +267,7 @@
       }
       const savedBody = await putSettings(payload);
       maxTickets = savedBody.max_tickets != null ? String(savedBody.max_tickets) : maxTickets;
+      if (savedBody.disk_go_cache_cap_gb != null) diskCap = String(savedBody.disk_go_cache_cap_gb);
       locked = !!savedBody.max_tickets_from_env;
       compressNote = savedBody.compress_note ?? '';
       deciderNote = savedBody.decider_note ?? '';
@@ -342,6 +346,18 @@
               <p class="text-xs text-muted-foreground">Set by the EL_MAX_TICKETS environment variable. Unset it to edit here.</p>
             {:else}
               <p class="text-xs text-muted-foreground">Applies immediately, no restart.</p>
+            {/if}
+            {#if admin}
+              <FloatingInput
+                id="disk-cap"
+                label="Go build cache cap (GiB, 0 disables trimming)"
+                type="number"
+                min="0"
+                step="1"
+                class="max-w-56"
+                bind:value={diskCap}
+              />
+              <p class="text-xs text-muted-foreground">The janitor trims the cache past this size, oldest first. 0 turns trimming off.</p>
             {/if}
           </div>
         </section>

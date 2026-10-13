@@ -678,6 +678,10 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if blocked, msg := d.diskBlocked(); blocked {
+		http.Error(w, msg, http.StatusInsufficientStorage)
+		return
+	}
 	var req struct {
 		Spec              string `json:"spec"`
 		Repo              string `json:"repo"`
@@ -4836,6 +4840,10 @@ func (d *Daemon) steerTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 // and steers the optional text to the worker. The driver keeps polling on
 // its 500ms cadence, so the retry runs at once.
 func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketID string) {
+	if blocked, msg := d.diskBlocked(); blocked {
+		http.Error(w, msg, http.StatusInsufficientStorage)
+		return
+	}
 	var req struct {
 		Text string `json:"text"`
 	}

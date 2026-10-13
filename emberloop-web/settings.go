@@ -168,6 +168,7 @@ func settingsView() map[string]any {
 		"decider":                 decider,
 		"decider_note":            deciderNote(decider),
 		"jev":                     readJevSettings(),
+		"disk_go_cache_cap_gb":    diskGoCacheCapGB(),
 	}
 }
 
@@ -178,16 +179,17 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		defer d.live.publish("settings")
 		var body struct {
-			Roles         map[string]roleSetting  `json:"roles"`
-			RunSkills     json.RawMessage         `json:"run_skills"`
-			Chains        map[string][]chainEntry `json:"chains"`
-			MaxTickets    *int                    `json:"max_tickets"`
-			MaxWorkers    *int                    `json:"max_workers"`
-			SessionTitles *bool                   `json:"session_titles"`
-			SignupEnabled *bool                   `json:"signup_enabled"`
-			Compress      *compressPatch          `json:"compress"`
-			Decider       *deciderPatch           `json:"decider"`
-			Jev           *jevPatch               `json:"jev"`
+			Roles            map[string]roleSetting  `json:"roles"`
+			RunSkills        json.RawMessage         `json:"run_skills"`
+			Chains           map[string][]chainEntry `json:"chains"`
+			MaxTickets       *int                    `json:"max_tickets"`
+			MaxWorkers       *int                    `json:"max_workers"`
+			SessionTitles    *bool                   `json:"session_titles"`
+			SignupEnabled    *bool                   `json:"signup_enabled"`
+			DiskGoCacheCapGB *int64                  `json:"disk_go_cache_cap_gb"`
+			Compress         *compressPatch          `json:"compress"`
+			Decider          *deciderPatch           `json:"decider"`
+			Jev              *jevPatch               `json:"jev"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -211,10 +213,11 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		// run_skills is host-global prompt text: it is injected verbatim into
 		// every Run's Worker and Reviewer first prompts, including other
-		// Users' Runs, so like signup, decider and jev it writes admin-only.
-		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet {
+		// Users' Runs, so like signup, decider, jev and the disk cap it
+		// writes admin-only.
+		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet || body.DiskGoCacheCapGB != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
-				http.Error(w, "only the admin can change signup, decider, jev and run_skills settings", http.StatusForbidden)
+				http.Error(w, "only the admin can change signup, decider, jev, run_skills and disk_go_cache_cap_gb settings", http.StatusForbidden)
 				return
 			}
 		}
@@ -236,6 +239,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.MaxWorkers != nil && *body.MaxWorkers <= 0 {
 			http.Error(w, "max_tickets must be a whole number above zero", http.StatusBadRequest)
+			return
+		}
+		if body.DiskGoCacheCapGB != nil && *body.DiskGoCacheCapGB < 0 {
+			http.Error(w, "disk_go_cache_cap_gb must be zero or above", http.StatusBadRequest)
 			return
 		}
 		if runSkillsSet {
@@ -312,6 +319,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.SignupEnabled != nil {
 			raw, _ := json.Marshal(*body.SignupEnabled)
 			all["signup_enabled"] = raw
+		}
+		if body.DiskGoCacheCapGB != nil {
+			raw, _ := json.Marshal(*body.DiskGoCacheCapGB)
+			all["disk_go_cache_cap_gb"] = raw
 		}
 		if runSkillsSet {
 			merged := readRunSkillsRaw()
