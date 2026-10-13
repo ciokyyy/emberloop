@@ -917,7 +917,11 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 		conn, acpID = st.conn, st.acpID
 		perr = sendOnce(conn, acpID)
 	}
-	if isAdapterClosedErr(perr) && attempts >= maxACPPromptAttempts {
+	if isAdapterClosedErr(perr) && !strings.Contains(perr.Error(), "reconnect failed") && b.promptHandleClosed(sessionID, conn) {
+		// Last send failed because the Session closed deliberately.
+		return
+	}
+	if isAdapterClosedErr(perr) && attempts >= maxACPPromptAttempts && !strings.Contains(perr.Error(), "reconnect failed") {
 		perr = fmt.Errorf("adapter closed during prompt; gave up after %d attempts: %v", attempts, perr)
 	}
 	tracker.closeOpen(tap)
