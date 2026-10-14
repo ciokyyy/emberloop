@@ -51,7 +51,7 @@ func quotaEnv(t *testing.T, stub *quotaStub) string {
 	restore := SetUsageEndpointsForTest(srv.URL+"/zen/go/v1/usage", srv.URL, srv.URL+"/token")
 	t.Cleanup(restore)
 	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"opencode-go":{"key":"k1"},"google-antigravity":{"refresh":"r1","projectId":"p1"}}`), 0o600); err != nil {
+	if err := os.WriteFile(auth, []byte(`{"opencode-go":{"type":"api_key","key":"k1"},"google-antigravity":{"type":"oauth","access":"agy-access","refresh":"r1","expires":1893456000000,"projectId":"p1"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("EL_PIG_AUTH", auth)
@@ -79,8 +79,8 @@ func TestQuotaSnapshotNotConfigured(t *testing.T) {
 	t.Setenv("HOME", dir)
 	now := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
 	got := QuotaSnapshot(dir, now, nil)
-	if len(got) != 4 {
-		t.Fatalf("providers = %d, want 4", len(got))
+	if len(got) != 5 {
+		t.Fatalf("providers = %d, want 5", len(got))
 	}
 	for _, p := range got {
 		if p.State != QuotaNotConfigured {
@@ -92,6 +92,10 @@ func TestQuotaSnapshotNotConfigured(t *testing.T) {
 		if (p.Key == usageKeyAgyGem || p.Key == usageKeyAgy3P) && !strings.Contains(p.Hint, "~/.el/agy-oauth.json") {
 			t.Errorf("%s hint = %q, want the missing Antigravity client path", p.Key, p.Hint)
 		}
+		if p.Key == usageKeyChatGPT && !strings.Contains(p.Hint, "openai-codex") {
+			t.Errorf("ChatGPT Plus hint = %q, want missing pig login named", p.Hint)
+		}
+
 	}
 }
 
@@ -221,6 +225,12 @@ func TestQuotaStaleFallbackKeepsCache(t *testing.T) {
 		t.Fatal(errs)
 	}
 	before := QuotaSnapshot(dir, now, nil)
+	var opencodeUpdatedAt int64
+	for _, provider := range before {
+		if provider.Key == usageKeyOpencode {
+			opencodeUpdatedAt = provider.UpdatedAt
+		}
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
@@ -245,8 +255,8 @@ func TestQuotaStaleFallbackKeepsCache(t *testing.T) {
 	if len(card.Windows) == 0 || card.Windows[0].Pct != 50 {
 		t.Errorf("failed card dropped the stale cache: %+v", card)
 	}
-	if card.UpdatedAt != before[1].UpdatedAt {
-		t.Errorf("failed fetch moved updated_at: %+v", card)
+	if card.UpdatedAt != opencodeUpdatedAt {
+		t.Errorf("failed fetch moved updated_at from %d to %d", opencodeUpdatedAt, card.UpdatedAt)
 	}
 }
 
@@ -295,7 +305,7 @@ func TestQuotaAgyGroups(t *testing.T) {
 	if !ok || tp.State != QuotaOK || len(tp.Windows) != 2 || tp.Windows[0].Label != "5-hour" || tp.Windows[0].Pct != 10 || tp.Windows[1].Label != "Weekly" || tp.Windows[1].Pct != 60 {
 		t.Errorf("3p card = %+v", tp)
 	}
-	if !QuotaKeyValid("") || !QuotaKeyValid(usageKeyClaude) || QuotaKeyValid("nope") {
+	if !QuotaKeyValid("") || !QuotaKeyValid(usageKeyClaude) || !QuotaKeyValid(usageKeyChatGPT) || QuotaKeyValid("nope") {
 		t.Error("QuotaKeyValid misclassifies keys")
 	}
 }

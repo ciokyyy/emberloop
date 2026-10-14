@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +23,8 @@ import (
 	"time"
 
 	"example.com/emberloop-web/el/statedb"
+	"github.com/MichaelKinsy/PiG/ai"
+	"github.com/MichaelKinsy/PiG/coding"
 )
 
 // UsageSet is the windows the strip shows for one account, in display
@@ -34,6 +37,7 @@ type UsageSet struct {
 // Usage keys name one cached account view.
 const (
 	usageKeyClaude   = "claude"
+	usageKeyChatGPT  = "openai-codex"
 	usageKeyOpencode = "opencode-go"
 	usageKeyAgyGem   = "agy-gemini"
 	usageKeyAgy3P    = "agy-3p"
@@ -42,10 +46,10 @@ const (
 // usageRefreshEvery is how stale a cache may be before a poller refetches.
 const usageRefreshEvery = 90 * time.Second
 
-// Endpoints and clients are variables so tests can aim them at a local
-// server.
+// Endpoints and clients are variables so tests can aim them at local servers.
 var (
 	opencodeUsageURL = "https://opencode.ai/zen/go/v1/usage"
+	chatGPTUsageURL  = "https://chatgpt.com/backend-api/wham/usage"
 	agyBaseURL       = "https://daily-cloudcode-pa.googleapis.com"
 	googleTokenURL   = "https://oauth2.googleapis.com/token"
 	usageHTTP        = &http.Client{Timeout: 20 * time.Second}
@@ -196,6 +200,15 @@ func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, forc
 		return nil
 	}
 	switch key {
+	case usageKeyChatGPT:
+		w, err := fetchChatGPTPlusUsage(ctx, now)
+		if err != nil {
+			return err
+		}
+		if len(w) == 0 {
+			return nil
+		}
+		return writeUsageCache(stateDir, key, w, now)
 	case usageKeyOpencode:
 		w, err := fetchOpencodeUsage(ctx)
 		if err != nil {
@@ -224,6 +237,126 @@ type pigAuth struct {
 		Refresh string `json:"refresh"`
 		Project string `json:"projectId"`
 	} `json:"google-antigravity"`
+}
+
+func pigAuthPath() string {
+	if path := os.Getenv("EL_PIG_AUTH"); path != "" {
+		return path
+	}
+	agentDirEnv := "PIG_CODING_AGENT_DIR"
+	if os.Getenv("PIG_USE_PI_DIRS") == "1" {
+		agentDirEnv = "PI_CODING_AGENT_DIR"
+	}
+	agentDir := os.Getenv(agentDirEnv)
+	if agentDir == "" {
+		agentDir = coding.DefaultAgentDir()
+	} else if agentDir == "~" || strings.HasPrefix(agentDir, "~/") {
+		home, _ := os.UserHomeDir()
+		agentDir = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(agentDir, "~"), string(filepath.Separator)))
+	}
+	return filepath.Join(agentDir, "auth.json")
+}
+
+// readPigCredential reads one credential through PiG's read-only auth store.
+// The store neither creates a missing auth.json nor refreshes OAuth tokens.
+func readPigCredential(provider string) (*ai.Credential, error) {
+	return ai.NewReadOnlyAuthStorage(pigAuthPath()).Read(context.Background(), provider)
+}
+
+func readChatGPTPlusCredential() (ai.Credential, bool, error) {
+	credential, err := readPigCredential(usageKeyChatGPT)
+	if err != nil {
+		return ai.Credential{}, false, err
+	}
+	if credential == nil || credential.Type != ai.CredentialOAuth || credential.Access == "" {
+		return ai.Credential{}, false, nil
+	}
+	if credential.AccountID == "" {
+		credential.AccountID = ai.CodexAccountID(credential.Access)
+	}
+	if credential.AccountID == "" {
+		return ai.Credential{}, false, nil
+	}
+	return *credential, true, nil
+}
+
+func chatGPTPlusExpired(now time.Time) bool {
+	credential, configured, err := readChatGPTPlusCredential()
+	return err == nil && configured && credential.HasExpires() && credential.ExpiresMillis() <= float64(now.UnixMilli())
+}
+
+func chatGPTPlusConfigured(_ string, _ time.Time) bool {
+	_, configured, err := readChatGPTPlusCredential()
+	return err == nil && configured
+}
+
+func chatGPTPlusNotConfiguredHint(string) string {
+	return "Missing pig openai-codex login. Connect ChatGPT in Providers."
+}
+
+const chatGPTPlusExpiredHint = "ChatGPT login expired. Reconnect in Providers."
+
+func fetchChatGPTPlusUsage(ctx context.Context, now time.Time) ([]UsageWindow, error) {
+	credential, configured, err := readChatGPTPlusCredential()
+	if err != nil {
+		return nil, err
+	}
+	if !configured {
+		return nil, nil
+	}
+	if credential.HasExpires() && credential.ExpiresMillis() <= float64(now.UnixMilli()) {
+		return nil, &quotaFailure{state: QuotaExpired, hint: chatGPTPlusExpiredHint}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, chatGPTUsageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+credential.Access)
+	request.Header.Set("ChatGPT-Account-Id", credential.AccountID)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "el")
+	response, err := usageHTTP.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized {
+		return nil, &quotaFailure{state: QuotaExpired, hint: chatGPTPlusExpiredHint}
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ChatGPT usage request returned %s", response.Status)
+	}
+	type window struct {
+		UsedPercent *float64 `json:"used_percent"`
+		ResetAt     *int64   `json:"reset_at"`
+	}
+	var result struct {
+		RateLimit struct {
+			PrimaryWindow   *window `json:"primary_window"`
+			SecondaryWindow *window `json:"secondary_window"`
+		} `json:"rate_limit"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode ChatGPT usage response: %w", err)
+	}
+	windows := make([]UsageWindow, 0, 2)
+	for _, item := range []struct {
+		label  string
+		window *window
+	}{
+		{label: "5-hour", window: result.RateLimit.PrimaryWindow},
+		{label: "Weekly", window: result.RateLimit.SecondaryWindow},
+	} {
+		if item.window == nil || item.window.UsedPercent == nil || item.window.ResetAt == nil {
+			continue
+		}
+		pct := math.Max(0, math.Min(100, *item.window.UsedPercent))
+		windows = append(windows, UsageWindow{Label: item.label, Pct: int(math.Round(pct)), ResetsAt: *item.window.ResetAt})
+	}
+	if len(windows) != 2 {
+		return nil, fmt.Errorf("ChatGPT usage response is missing a rate-limit window")
+	}
+	return windows, nil
 }
 
 func readPigAuth() (pigAuth, error) {
@@ -399,4 +532,11 @@ func sortWindows(ws []UsageWindow) {
 			ws[j], ws[j-1] = ws[j-1], ws[j]
 		}
 	}
+}
+
+// SetChatGPTUsageEndpointForTest aims the Codex usage fetcher at a local stub.
+func SetChatGPTUsageEndpointForTest(endpoint string) func() {
+	old := chatGPTUsageURL
+	chatGPTUsageURL = endpoint
+	return func() { chatGPTUsageURL = old }
 }

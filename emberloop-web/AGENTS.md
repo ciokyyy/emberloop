@@ -23,13 +23,12 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
-- Quota HTTP seam: `quota.go` serves the shared cache immediately on GET and
-  refreshes independent providers concurrently in the background, publishing
-  each provider's result as it completes and retaining errors for cached
-  reads; manual POST is synchronous, skips the 90s age guard and applies a
-  10s minimum interval per upstream provider. `quota_test.go` covers cached
-  reads, blocked-provider isolation, background failure isolation, the manual
-  refresh interval and shared per-key lock.
+- Quota HTTP seam: `quota.go` serves the shared cache at once on GET and
+  refreshes independent providers concurrently, publishing each completion;
+  manual POST skips the 90s age guard and enforces a 10s per-provider minimum.
+  ChatGPT Plus uses pig's `openai-codex` login read-only and never refreshes it.
+  `quota_test.go` covers cached reads, provider isolation, refresh cooldowns,
+  shared locks and ChatGPT's HTTP headers, windows, missing and expired states.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both

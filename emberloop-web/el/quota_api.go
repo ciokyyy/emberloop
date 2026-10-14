@@ -62,6 +62,8 @@ type quotaSource interface {
 type usageQuotaSource struct {
 	key, label, plan, fetchKey string
 	configuredFn               func(string, time.Time) bool
+	expiredFn                  func(string, time.Time) bool
+	expiredHint                string
 	hintFn                     func(string) string
 	cachePathFn                func(string) string
 }
@@ -108,6 +110,11 @@ func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr erro
 	if errors.As(fetchErr, &failure) && failure.state == QuotaExpired {
 		p.State = QuotaExpired
 		p.Hint = failure.hint
+		return p
+	}
+	if s.expiredFn != nil && s.expiredFn(stateDir, now) {
+		p.State = QuotaExpired
+		p.Hint = s.expiredHint
 		return p
 	}
 	if !s.Configured(stateDir, now) {
@@ -163,6 +170,16 @@ var quotaSources = []quotaSource{
 			return "Claude quota needs a host Claude login or a Claude Code statusline report."
 		},
 		cachePathFn: claudeUsagePath,
+	},
+	usageQuotaSource{
+		key: usageKeyChatGPT, label: "ChatGPT Plus", plan: "Plus", fetchKey: usageKeyChatGPT,
+		configuredFn: chatGPTPlusConfigured,
+		expiredFn: func(_ string, now time.Time) bool {
+			return chatGPTPlusExpired(now)
+		},
+		expiredHint: chatGPTPlusExpiredHint,
+		hintFn:      chatGPTPlusNotConfiguredHint,
+		cachePathFn: func(stateDir string) string { return usageCachePath(stateDir, usageKeyChatGPT) },
 	},
 	usageQuotaSource{
 		key: usageKeyOpencode, label: "OpenCode-Go", plan: "Go", fetchKey: usageKeyOpencode,

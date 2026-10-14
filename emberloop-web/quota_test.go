@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,37 +24,60 @@ import (
 
 // quotaStubState is the mutable stub behaviour.
 type quotaStubState struct {
-	mu              sync.Mutex
-	opencodePct     int
-	opencodeErr     bool
-	opencodeCalls   int
-	agyErr          bool
-	agyCalls        int
-	calls           int
-	opencodeStarted chan struct{}
-	opencodeBlock   <-chan struct{}
-	agyStarted      chan struct{}
-	agyBlock        <-chan struct{}
-	refreshDone     chan struct{}
+	mu                   sync.Mutex
+	opencodePct          int
+	opencodeErr          bool
+	opencodeCalls        int
+	agyErr               bool
+	agyCalls             int
+	chatGPTStatus        int
+	chatGPTCalls         int
+	chatGPTMethod        string
+	chatGPTAuthorization string
+	chatGPTAccountID     string
+	tokenCalls           int
+	calls                int
+	opencodeStarted      chan struct{}
+	opencodeBlock        <-chan struct{}
+	agyStarted           chan struct{}
+	agyBlock             <-chan struct{}
+	refreshDone          chan struct{}
 }
 
 func (s *quotaStubState) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isChatGPT := strings.HasSuffix(r.URL.Path, "/backend-api/wham/usage")
 		isOpencode := strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage")
 		isAgy := strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary")
 		s.mu.Lock()
 		s.calls++
+		if isChatGPT {
+			s.chatGPTCalls++
+			s.chatGPTMethod = r.Method
+			s.chatGPTAuthorization = r.Header.Get("Authorization")
+			s.chatGPTAccountID = r.Header.Get("ChatGPT-Account-Id")
+		}
 		if isOpencode {
 			s.opencodeCalls++
 		}
 		if isAgy {
 			s.agyCalls++
 		}
+		if strings.HasSuffix(r.URL.Path, "/token") {
+			s.tokenCalls++
+		}
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
+		chatGPTStatus := s.chatGPTStatus
 		opencodeStarted, opencodeBlock := s.opencodeStarted, s.opencodeBlock
 		agyStarted, agyBlock, refreshDone := s.agyStarted, s.agyBlock, s.refreshDone
 		s.mu.Unlock()
 		switch {
+		case isChatGPT:
+			if chatGPTStatus != 0 && chatGPTStatus != http.StatusOK {
+				http.Error(w, "ChatGPT request failed", chatGPTStatus)
+				return
+			}
+			w.Write([]byte(`{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":4,"limit_window_seconds":18000,"reset_at":1893456000},"secondary_window":{"used_percent":4,"limit_window_seconds":604800,"reset_at":1893996000}},"credits":{"has_credits":false}}`))
 		case isOpencode:
 			if opencodeStarted != nil {
 				select {
@@ -71,7 +95,7 @@ func (s *quotaStubState) handler() http.Handler {
 			w.Write([]byte(`{"usage":{"rolling":{"percent":` + quotaItoa(opencodePct) + `,"resetsAt":"2030-01-01T00:00:00Z"},"weekly":{"percent":30,"resetsAt":"2030-02-01T00:00:00Z"},"monthly":{"percent":19,"resetsAt":"2030-03-01T00:00:00Z"}}}`))
 		case strings.HasSuffix(r.URL.Path, "/token"):
 			w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
-		case strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary"):
+		case isAgy:
 			if agyStarted != nil {
 				select {
 				case agyStarted <- struct{}{}:
@@ -251,6 +275,8 @@ func quotaEnvWithDaemon(t *testing.T, stub *quotaStubState, auth string) (base, 
 	t.Cleanup(srv.Close)
 	restore := el.SetUsageEndpointsForTest(srv.URL+"/zen/go/v1/usage", srv.URL, srv.URL+"/token")
 	t.Cleanup(restore)
+	restoreChatGPT := el.SetChatGPTUsageEndpointForTest(srv.URL + "/backend-api/wham/usage")
+	t.Cleanup(restoreChatGPT)
 	stateDir = tempDir(t)
 	t.Setenv("EL_STATE_DIR", stateDir)
 	if auth != "" {
@@ -337,7 +363,9 @@ func measureQuotaEndpoint(t *testing.T, base string) time.Duration {
 	return time.Since(start)
 }
 
-const quotaAuth = `{"opencode-go":{"key":"k1"},"google-antigravity":{"refresh":"r1","projectId":"p1"}}`
+const quotaChatGPTKey = "openai-codex"
+
+const quotaAuth = `{"opencode-go":{"type":"api_key","key":"k1"},"google-antigravity":{"type":"oauth","access":"agy-access","refresh":"r1","expires":1893456000000,"projectId":"p1"}}`
 
 func writeClaudeFile(t *testing.T, dir string, fiveHour, sevenDay int) {
 	t.Helper()
@@ -518,10 +546,10 @@ func TestQuotaGetAllProviders(t *testing.T) {
 		t.Fatalf("initial refresh status = %d", code)
 	}
 	cards := getQuota(t, base)
-	if len(cards) != 4 {
-		t.Fatalf("providers = %d, want 4", len(cards))
+	if len(cards) != 5 {
+		t.Fatalf("providers = %d, want 5", len(cards))
 	}
-	wantKeys := []string{"claude", "opencode-go", "agy-gemini", "agy-3p"}
+	wantKeys := []string{"claude", "openai-codex", "opencode-go", "agy-gemini", "agy-3p"}
 	for i, k := range wantKeys {
 		if cards[i].Key != k {
 			t.Errorf("card %d key = %q, want %q", i, cards[i].Key, k)
@@ -531,6 +559,10 @@ func TestQuotaGetAllProviders(t *testing.T) {
 	cl := m["claude"]
 	if cl.Label != "Claude" || cl.State != "ok" || len(cl.Windows) != 2 || cl.Windows[0].Label != "5-hour" || cl.Windows[0].Pct != 10 || cl.Windows[1].Label != "Weekly" || cl.Windows[1].Pct != 40 {
 		t.Errorf("claude card = %+v", cl)
+	}
+	chatGPT := m[quotaChatGPTKey]
+	if chatGPT.Label != "ChatGPT Plus" || chatGPT.Plan != "Plus" || chatGPT.State != "not_configured" || len(chatGPT.Windows) != 0 {
+		t.Errorf("ChatGPT Plus card = %+v, want an unconfigured card without windows", chatGPT)
 	}
 	oc := m["opencode-go"]
 	if oc.Label != "OpenCode-Go" || oc.State != "ok" || oc.Plan != "Go" || len(oc.Windows) != 3 || oc.Windows[0].Label != "5-hour" || oc.Windows[0].Pct != 12 || oc.Windows[1].Label != "Weekly" || oc.Windows[2].Label != "Monthly" {
@@ -545,12 +577,137 @@ func TestQuotaGetAllProviders(t *testing.T) {
 		t.Errorf("3p card = %+v", tp)
 	}
 	for _, c := range cards {
-		if c.UpdatedAt == 0 {
+		if c.Key != quotaChatGPTKey && c.UpdatedAt == 0 {
 			t.Errorf("%s updated_at = 0, want the cache mtime", c.Key)
+		}
+		if c.Key == quotaChatGPTKey && c.UpdatedAt != 0 {
+			t.Errorf("unconfigured ChatGPT updated_at = %d, want 0", c.UpdatedAt)
 		}
 		if c.Error != "" {
 			t.Errorf("%s error = %q, want empty", c.Key, c.Error)
 		}
+	}
+}
+
+func quotaChatGPTAuth(expiresAt int64) string {
+	return `{"openai-codex":{"type":"oauth","access":"test-access-token","refresh":"test-refresh-token","expires":` + strconv.FormatInt(expiresAt, 10) + `,"accountId":"acct-test"}}`
+}
+
+func TestQuotaChatGPTPlusUsesPigLoginReadOnly(t *testing.T) {
+	stub := &quotaStubState{}
+	base, stateDir := quotaEnv(t, stub, quotaChatGPTAuth(time.Now().Add(time.Hour).UnixMilli()))
+	authPath := os.Getenv("EL_PIG_AUTH")
+	authBefore, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoBefore, err := os.Stat(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, cards := postQuotaRefresh(t, base, quotaChatGPTKey)
+	if status != http.StatusOK {
+		t.Fatalf("ChatGPT refresh status = %d", status)
+	}
+	card := quotaByKey(t, cards)[quotaChatGPTKey]
+	if card.Label != "ChatGPT Plus" || card.Plan != "Plus" || card.State != "ok" || card.Error != "" || len(card.Windows) != 2 {
+		t.Fatalf("ChatGPT card = %+v, want Plus with two ok windows", card)
+	}
+	if first := card.Windows[0]; first.Label != "5-hour" || first.Pct != 4 || first.Resets != 1893456000 {
+		t.Errorf("ChatGPT primary window = %+v, want 5-hour at 4%%", first)
+	}
+	if second := card.Windows[1]; second.Label != "Weekly" || second.Pct != 4 || second.Resets != 1893996000 {
+		t.Errorf("ChatGPT secondary window = %+v, want Weekly at 4%%", second)
+	}
+	if card.Windows[0].Detail != "" || card.Windows[1].Detail != "" {
+		t.Errorf("ChatGPT windows should not expose extra credits: %+v", card.Windows)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "usage-openai-codex.json")); err != nil {
+		t.Errorf("ChatGPT usage cache was not written: %v", err)
+	}
+
+	stub.mu.Lock()
+	calls, method, authorization, accountID, tokenCalls := stub.chatGPTCalls, stub.chatGPTMethod, stub.chatGPTAuthorization, stub.chatGPTAccountID, stub.tokenCalls
+	stub.mu.Unlock()
+	if calls != 1 || method != http.MethodGet {
+		t.Errorf("ChatGPT usage calls = %d method %q, want one GET", calls, method)
+	}
+	if authorization != "Bearer test-access-token" || accountID != "acct-test" {
+		t.Errorf("ChatGPT request headers = authorization %q account %q", authorization, accountID)
+	}
+	if tokenCalls != 0 {
+		t.Errorf("ChatGPT refresh contacted a token endpoint %d times", tokenCalls)
+	}
+	authAfter, err := os.ReadFile(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	infoAfter, err := os.Stat(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(authBefore, authAfter) || !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+		t.Error("ChatGPT quota refresh modified pig auth.json")
+	}
+}
+
+func TestQuotaChatGPTMissingLoginIsNotConfigured(t *testing.T) {
+	stub := &quotaStubState{}
+	base, _, d := quotaEnvWithDaemon(t, stub, "")
+	missingAuthPath := os.Getenv("EL_PIG_AUTH")
+	cards := quotaByKey(t, getQuota(t, base))
+	d.quotaRefreshWG.Wait()
+	card := cards[quotaChatGPTKey]
+	if card.State != "not_configured" || card.Error != "" || card.Hint == "" {
+		t.Fatalf("ChatGPT card without a login = %+v, want not_configured and a hint", card)
+	}
+	if _, err := os.Stat(missingAuthPath); !os.IsNotExist(err) {
+		t.Errorf("read-only ChatGPT login lookup created auth.json: stat err = %v", err)
+	}
+	stub.mu.Lock()
+	calls := stub.chatGPTCalls
+	stub.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("missing ChatGPT login made %d upstream requests", calls)
+	}
+}
+
+func TestQuotaChatGPTExpiredLoginKeepsCachedWindows(t *testing.T) {
+	stub := &quotaStubState{}
+	base, stateDir, d := quotaEnvWithDaemon(t, stub, quotaChatGPTAuth(time.Now().Add(-time.Hour).UnixMilli()))
+	cache := `{"fetched_at":1,"windows":[{"label":"5-hour","pct":4,"resets_at":1893456000},{"label":"Weekly","pct":4,"resets_at":1893996000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-openai-codex.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cards := quotaByKey(t, getQuota(t, base))
+	d.quotaRefreshWG.Wait()
+	card := cards[quotaChatGPTKey]
+	if card.State != "expired" || card.Hint == "" || card.Error != "" || len(card.Windows) != 2 || card.Windows[0].Pct != 4 || card.Windows[1].Pct != 4 {
+		t.Fatalf("expired ChatGPT card = %+v, want expired with cached windows", card)
+	}
+	stub.mu.Lock()
+	calls := stub.chatGPTCalls
+	stub.mu.Unlock()
+	if calls != 0 {
+		t.Errorf("expired ChatGPT token made %d upstream requests", calls)
+	}
+}
+
+func TestQuotaChatGPTUnauthorizedMarksExpiredAndKeepsCache(t *testing.T) {
+	stub := &quotaStubState{chatGPTStatus: http.StatusUnauthorized}
+	base, stateDir := quotaEnv(t, stub, quotaChatGPTAuth(time.Now().Add(time.Hour).UnixMilli()))
+	cache := `{"fetched_at":1,"windows":[{"label":"5-hour","pct":4,"resets_at":1893456000},{"label":"Weekly","pct":4,"resets_at":1893996000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-openai-codex.json"), []byte(cache), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, cards := postQuotaRefresh(t, base, quotaChatGPTKey)
+	if status != http.StatusOK {
+		t.Fatalf("ChatGPT refresh status = %d", status)
+	}
+	card := quotaByKey(t, cards)[quotaChatGPTKey]
+	if card.State != "expired" || card.Hint == "" || card.Error != "" || len(card.Windows) != 2 || card.Windows[0].Pct != 4 || card.Windows[1].Pct != 4 {
+		t.Fatalf("unauthorized ChatGPT card = %+v, want expired with retained windows", card)
 	}
 }
 

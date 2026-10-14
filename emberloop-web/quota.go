@@ -66,7 +66,7 @@ func (d *Daemon) handleQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 func quotaErrorKeys(key string) []string {
 	switch key {
 	case "":
-		return []string{"claude", "opencode-go", "agy-gemini", "agy-3p"}
+		return []string{"claude", "openai-codex", "opencode-go", "agy-gemini", "agy-3p"}
 	case "agy-gemini", "agy-3p":
 		return []string{"agy-gemini", "agy-3p"}
 	default:

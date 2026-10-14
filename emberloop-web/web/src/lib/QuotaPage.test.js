@@ -21,14 +21,17 @@ function providerCards() {
       ],
     },
     {
-      key: 'chatgpt',
-      label: 'ChatGPT',
+      key: 'openai-codex',
+      label: 'ChatGPT Plus',
       plan: 'Plus',
       source: 'pig login',
       state: 'expired',
       hint: 'ChatGPT login expired. Reconnect in Providers.',
       updated_at: NOW / 1000 - 3 * 3600,
-      windows: [{ label: '5h', pct: 4, resets_at: secs(4 * 3600) }],
+      windows: [
+        { label: '5-hour', pct: 4, resets_at: secs(4 * 3600) },
+        { label: 'Weekly', pct: 4, resets_at: secs(6 * 86400) },
+      ],
     },
     {
       key: 'opencode-go',
@@ -136,7 +139,7 @@ describe('QuotaPage cards', () => {
     stubFetch();
     const { container } = render(QuotaPage);
     const cards = await screen.findAllByTestId('quota-card');
-    expect(cards.map((card) => card.dataset.key)).toEqual(['claude', 'chatgpt', 'opencode-go', 'agy-gemini', 'agy-3p', 'openrouter']);
+    expect(cards.map((card) => card.dataset.key)).toEqual(['claude', 'openai-codex', 'opencode-go', 'agy-gemini', 'agy-3p', 'openrouter']);
 
     const claude = container.querySelector('[data-key="claude"]');
     expect(within(claude).getByTestId('quota-plan').textContent).toBe('Pro');
@@ -191,13 +194,13 @@ describe('QuotaPage cards', () => {
     stubFetch();
     const { container } = render(QuotaPage);
     const cards = await screen.findAllByTestId('quota-card');
-    const expired = container.querySelector('[data-key="chatgpt"]');
+    const expired = container.querySelector('[data-key="openai-codex"]');
     expect(within(expired).getByTestId('quota-state').textContent).toContain('login expired');
     expect(within(expired).getByTestId('quota-updated').textContent).toBe('last read 3h ago');
     expect(within(expired).getByTestId('quota-expired-callout').textContent).toContain('ChatGPT login expired');
     expect(within(expired).getByTestId('quota-hint').textContent).toBe('ChatGPT login expired. Reconnect in Providers.');
     expect(within(expired).getByTestId('quota-windows').className).toContain('opacity-50');
-    expect(within(expired).getByText('4%')).toBeTruthy();
+    expect(within(expired).getAllByText('4%')).toHaveLength(2);
     expect(within(expired).getByRole('link', { name: 'Reconnect in Providers' }).getAttribute('href')).toBe('/providers');
   });
 
@@ -245,7 +248,7 @@ describe('QuotaPage refresh', () => {
     stubFetch();
     render(QuotaPage);
     await screen.findAllByTestId('quota-card');
-    for (const label of ['Claude', 'ChatGPT', 'OpenCode-Go', 'Antigravity Gemini', 'Antigravity 3P', 'OpenRouter']) {
+    for (const label of ['Claude', 'ChatGPT Plus', 'OpenCode-Go', 'Antigravity Gemini', 'Antigravity 3P', 'OpenRouter']) {
       expect(screen.getByRole('button', { name: `Refresh ${label}` })).toBeTruthy();
     }
   });
