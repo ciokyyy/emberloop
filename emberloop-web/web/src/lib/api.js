@@ -494,6 +494,26 @@ export const sendClaudeLoginCode = (id, code) =>
 export const cancelClaudeLogin = (id) =>
   fetch(url(`/api/providers/claude/login/${encodeURIComponent(id)}`), { method: 'DELETE' }).then(json);
 
+// Antigravity's provider-owned OAuth flow is hosted as a short-lived Daemon
+// login. The callback is posted once and status stays secret-free.
+const antigravityConnectURL = '/api/providers/google-antigravity/connect';
+
+export const startAntigravityLogin = () =>
+  fetch(url(antigravityConnectURL), { method: 'POST' }).then(json);
+
+export const getAntigravityLogin = (id) =>
+  fetch(url(`${antigravityConnectURL}/${encodeURIComponent(id)}`)).then(json);
+
+export const submitAntigravityLogin = (id, value) =>
+  fetch(url(`${antigravityConnectURL}/${encodeURIComponent(id)}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  }).then(json);
+
+export const cancelAntigravityLogin = (id) =>
+  fetch(url(`${antigravityConnectURL}/${encodeURIComponent(id)}`), { method: 'DELETE' }).then(json);
+
 // The Daemon's build identity for the version badge. version.js wraps this
 // with its never-throws fetch.
 export const getVersion = () => fetch(url('/api/version')).then(json);

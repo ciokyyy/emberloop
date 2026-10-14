@@ -3,6 +3,7 @@ module example.com/emberloop-web
 go 1.26.0
 
 require (
+	example.com/pig-antigravity-auth v0.0.0
 	github.com/MichaelKinsy/PiG v0.4.0
 	github.com/creack/pty v1.1.9
 	github.com/gofrs/flock v0.13.0
@@ -62,3 +63,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+replace example.com/pig-antigravity-auth => ../pig-antigravity-auth

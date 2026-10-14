@@ -15,6 +15,9 @@ model selection lives in `emberloop-web/el/models.go`.
 
 ## Local Contracts
 
+- The exported `LoginWithCallbacks` hosts this same OAuth flow in the Daemon;
+  invalid callback input reports an error and re-prompts against the same PKCE
+  challenge. The SDK extension login adapts its prompts to this shared flow.
 - Unofficial client, outside Google's terms of service; account suspension
   is a known risk, stated in the package doc.
 

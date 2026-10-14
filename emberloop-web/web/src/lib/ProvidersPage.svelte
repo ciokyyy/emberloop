@@ -5,8 +5,10 @@
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
   import {
+    cancelAntigravityLogin,
     cancelChatGPTDeviceCodeLogin,
     cancelClaudeLogin,
+    getAntigravityLogin,
     getChatGPTDeviceCodeLogin,
     getClaudeLogin,
     getProviders,
@@ -14,8 +16,10 @@
     removeProviderKey,
     sendClaudeLoginCode,
     setProviderKey,
+    startAntigravityLogin as startAntigravityLoginRequest,
     startChatGPTDeviceCodeLogin,
     startClaudeLogin,
+    submitAntigravityLogin,
   } from './api.js';
 
   let { admin = false } = $props();
@@ -37,12 +41,16 @@
   let loginError = $state('');
   let claudeLoginTimer;
   let refreshedClaudeLogin = '';
+  let antigravityLogin = $state(null);
+  let antigravityCallback = $state('');
+  let antigravityBusy = $state(false);
+  let connectPollTimer;
 
   const groups = [
     {
       id: 'subscription_logins',
       title: 'Subscription logins',
-      hint: 'Pig subscription logins are listed here. Claude is managed by Claude Code, not pig.',
+      hint: 'Connect ChatGPT or Antigravity here. Claude is managed by Claude Code, not pig; other subscription logins are read-only.',
       icon: Check,
     },
     {
@@ -58,7 +66,6 @@
       icon: Terminal,
     },
   ];
-
   function chatGPTLoginActive(login) {
     return login?.status === 'starting' || login?.status === 'waiting';
   }
@@ -126,6 +133,72 @@
     } finally {
       busy = { ...busy, [provider.id]: false };
     }
+  }
+
+  async function pollAntigravityLogin(id) {
+    if (antigravityLogin?.id !== id) return;
+    try {
+      const next = await getAntigravityLogin(id);
+      if (antigravityLogin?.id !== id) return;
+      antigravityLogin = { ...antigravityLogin, ...next };
+      if (next.state === 'complete') {
+        antigravityCallback = '';
+        void Promise.allSettled([refreshQuota('agy-gemini'), refreshQuota('agy-3p')]);
+        await load();
+        if (antigravityLogin?.id === id) antigravityLogin = null;
+        return;
+      }
+      if (next.state === 'error' || next.state === 'cancelled') return;
+    } catch (error) {
+      rowErrors = { ...rowErrors, 'google-antigravity': error?.message || 'Could not check Antigravity login.' };
+    }
+    if (antigravityLogin?.id === id) {
+      connectPollTimer = setTimeout(() => void pollAntigravityLogin(id), 500);
+    }
+  }
+
+  async function connectAntigravity() {
+    if (!admin || antigravityBusy) return;
+    const previous = antigravityLogin?.id;
+    clearTimeout(connectPollTimer);
+    antigravityBusy = true;
+    rowErrors = { ...rowErrors, 'google-antigravity': '' };
+    try {
+      if (previous) await cancelAntigravityLogin(previous).catch(() => {});
+      antigravityCallback = '';
+      antigravityLogin = await startAntigravityLoginRequest();
+      void pollAntigravityLogin(antigravityLogin.id);
+    } catch (error) {
+      rowErrors = { ...rowErrors, 'google-antigravity': error?.message || 'Could not start Antigravity login.' };
+    } finally {
+      antigravityBusy = false;
+    }
+  }
+
+  async function submitAntigravityCallback(event) {
+    event.preventDefault();
+    const id = antigravityLogin?.id;
+    const value = String(antigravityCallback ?? '').trim();
+    const callbackInput = Boolean(antigravityLogin?.url || antigravityLogin?.prompt?.toLowerCase().includes('callback'));
+    if (!id || !value || antigravityBusy) return;
+    antigravityBusy = true;
+    rowErrors = { ...rowErrors, 'google-antigravity': '' };
+    try {
+      await submitAntigravityLogin(id, value);
+      if (!callbackInput) antigravityCallback = '';
+    } catch (error) {
+      rowErrors = { ...rowErrors, 'google-antigravity': error?.message || 'Could not submit the Antigravity callback.' };
+    } finally {
+      antigravityBusy = false;
+    }
+  }
+
+  async function closeAntigravityLogin() {
+    const id = antigravityLogin?.id;
+    clearTimeout(connectPollTimer);
+    antigravityLogin = null;
+    antigravityCallback = '';
+    if (id) await cancelAntigravityLogin(id).catch(() => {});
   }
 
   async function copyCommand(provider) {
@@ -207,11 +280,15 @@
     clearTimeout(copyTimer);
     clearTimeout(claudeLoginTimer);
     stopChatGPTLoginPolling();
+    clearTimeout(connectPollTimer);
     if (admin && chatGPTLoginActive(chatGPTLogin)) {
       void cancelChatGPTDeviceCodeLogin(chatGPTLogin.id).catch(() => {});
     }
     if (admin && claudeLogin?.state === 'running') {
       void cancelClaudeLogin(claudeLogin.id).catch(() => {});
+    }
+    if (admin && antigravityLogin?.id && !['complete', 'error', 'cancelled'].includes(antigravityLogin.state)) {
+      void cancelAntigravityLogin(antigravityLogin.id).catch(() => {});
     }
   });
 
@@ -413,6 +490,16 @@
                             <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
                           {/if}
                         </div>
+                      {:else if provider.connectable}
+                        <div class="flex flex-wrap items-center gap-2 sm:ml-auto max-md:w-full max-md:[&>*]:flex-1">
+                          {#if admin}
+                            <Button variant="outline" disabled={antigravityBusy} aria-busy={antigravityBusy} onclick={connectAntigravity}>
+                              <Check />{antigravityLogin?.state === 'error' ? 'Try again' : antigravityLogin ? 'Restart login' : 'Connect'}
+                            </Button>
+                          {:else}
+                            <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
+                          {/if}
+                        </div>
                       {:else if !admin && !provider.command && !provider.cliHint}
                         <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
                       {/if}
@@ -502,6 +589,34 @@
                         <div class="flex flex-wrap gap-2 max-md:[&>*]:flex-1">
                           <Button type="submit" disabled={busy[provider.id]} aria-busy={Boolean(busy[provider.id])}><KeyRound />Save key</Button>
                           <Button variant="ghost" onclick={() => cancelEdit(provider)} disabled={busy[provider.id]}><X />Cancel</Button>
+                        </div>
+                      </form>
+                    {:else if provider.connectable && admin && antigravityLogin}
+                      <form class="mt-3 grid gap-3 rounded-xl border bg-background p-3" data-testid="antigravity-connect-panel" onsubmit={submitAntigravityCallback}>
+                        {#if antigravityLogin.url}
+                          <a class="w-fit text-sm font-medium underline underline-offset-4" href={antigravityLogin.url} target="_blank" rel="noopener noreferrer">Open Google sign-in</a>
+                        {/if}
+                        {#if antigravityLogin.instructions}<p class="text-xs text-muted-foreground">{antigravityLogin.instructions}</p>{/if}
+                        {#if antigravityLogin.progress}<p class="text-xs text-muted-foreground" role="status">{antigravityLogin.progress}</p>{/if}
+                        {#if antigravityLogin.prompt}<p class="text-xs text-muted-foreground">{antigravityLogin.prompt}</p>{/if}
+                        {#if antigravityLogin.url || antigravityLogin.prompt}
+                          <Input
+                            name="antigravity-callback"
+                            type={antigravityLogin.prompt?.toLowerCase().includes('client secret') ? 'password' : 'text'}
+                            autocomplete={antigravityLogin.prompt?.toLowerCase().includes('client secret') ? 'new-password' : 'off'}
+                            spellcheck="false"
+                            placeholder={antigravityLogin.url ? 'Paste callback URL or code' : 'Enter the requested value'}
+                            aria-label={antigravityLogin.url ? 'Antigravity callback URL or code' : antigravityLogin.prompt}
+                            bind:value={antigravityCallback}
+                          />
+                        {/if}
+                        {#if antigravityLogin.error}<p role="alert" class="text-xs text-destructive">{antigravityLogin.error}</p>{/if}
+                        {#if rowErrors[provider.id]}<p role="alert" class="text-xs text-destructive">{rowErrors[provider.id]}</p>{/if}
+                        <div class="flex flex-wrap gap-2 max-md:[&>*]:flex-1">
+                          {#if antigravityLogin.prompt && !['complete', 'error', 'cancelled'].includes(antigravityLogin.state)}
+                            <Button type="submit" disabled={antigravityBusy || !antigravityCallback.trim()} aria-busy={antigravityBusy}>{antigravityLogin.url ? 'Submit callback' : 'Continue'}</Button>
+                          {/if}
+                          <Button variant="ghost" onclick={closeAntigravityLogin} disabled={antigravityBusy}><X />Cancel</Button>
                         </div>
                       </form>
                     {:else if rowErrors[provider.id]}

@@ -19,6 +19,7 @@ const (
 	providerSubscriptionLogins = "subscription_logins"
 	providerAPIKeys            = "api_keys"
 	providerCLIOnly            = "cli_only"
+	antigravityProviderID      = "google-antigravity"
 )
 
 // These are the API-key providers managed by the Providers page. The rest of
@@ -33,9 +34,10 @@ var providerKeyIDs = map[string]struct{}{
 }
 
 var providerNameOverrides = map[string]string{
-	"openai-codex": "ChatGPT Plus",
-	"opencode-go":  "OpenCode-Go",
-	"google":       "Gemini API (direct)",
+	"openai-codex":        "ChatGPT Plus",
+	"opencode-go":         "OpenCode-Go",
+	"google":              "Gemini API (direct)",
+	antigravityProviderID: "Google Antigravity",
 }
 
 type providerView struct {
@@ -47,6 +49,7 @@ type providerView struct {
 	SourceLabel string `json:"sourceLabel"`
 	KeySet      bool   `json:"keySet"`
 	KeyEditable bool   `json:"keyEditable"`
+	Connectable bool   `json:"connectable,omitempty"`
 	Command     string `json:"command,omitempty"`
 	CLIHint     string `json:"cliHint,omitempty"`
 }
@@ -232,7 +235,34 @@ func (d *Daemon) handleProviders(w http.ResponseWriter, r *http.Request) {
 		providers = append(providers, view)
 	}
 	providers = append(providers, d.claudeHostProviderView())
+	antigravity, err := antigravityProviderView(ctx, store)
+	if err != nil {
+		antigravity.Source = "unavailable"
+		antigravity.SourceLabel = "Status unavailable"
+	}
+	providers = append(providers, antigravity)
 	writeJSON(w, http.StatusOK, map[string]any{"providers": providers})
+}
+
+func antigravityProviderView(ctx context.Context, store ai.CredentialStore) (providerView, error) {
+	view := providerView{
+		ID:          antigravityProviderID,
+		Name:        providerName(antigravityProviderID),
+		Group:       providerSubscriptionLogins,
+		Source:      "none",
+		SourceLabel: "Not connected",
+		Connectable: true,
+	}
+	credential, exists, err := ai.ReadRawCredential(ctx, store, antigravityProviderID)
+	if err != nil {
+		return view, err
+	}
+	if exists && credential.Type == ai.CredentialOAuth && strings.TrimSpace(credential.Refresh) != "" {
+		view.Connected = true
+		view.Source = "oauth"
+		view.SourceLabel = "OAuth login"
+	}
+	return view, nil
 }
 
 func (d *Daemon) handleProviderKey(w http.ResponseWriter, r *http.Request) {
