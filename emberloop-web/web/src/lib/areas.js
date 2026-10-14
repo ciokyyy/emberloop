@@ -5,6 +5,6 @@ export const areas = [
   { id: 'chat', label: 'Chat', short: 'Chat', path: '/', icon: MessageSquare },
   { id: 'runs', label: 'Specs and Runs', short: 'Runs', path: '/runs', icon: Layers },
   { id: 'memory', label: 'Memory', short: 'Memory', path: '/memory', icon: Brain },
-  { id: 'quota', label: 'Quota', short: 'Quota', path: '/quota', icon: Gauge },
+  { id: 'quota', label: 'Quota and Providers', short: 'Quota', path: '/quota', icon: Gauge },
   { id: 'settings', label: 'Settings', short: 'Settings', path: '/settings', icon: Settings },
 ];

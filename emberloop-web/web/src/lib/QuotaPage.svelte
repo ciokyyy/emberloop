@@ -16,7 +16,8 @@
   } from '@lucide/svelte';
   import Button, { buttonVariants } from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
-  import { getQuota, refreshQuota } from './api.js';
+  import { refreshQuota } from './api.js';
+  import { quotaStore } from './quotaStore.js';
   import {
     hasPercent,
     quotaHint,
@@ -52,14 +53,12 @@
   const hasBusyCard = () => Object.values(busy).some(Boolean);
 
   function apply(body) {
-    if (!Array.isArray(body?.providers)) return;
-    providers = body.providers;
-    now = Date.now();
+    if (quotaStore.set(body)) now = Date.now();
   }
 
   async function load() {
     try {
-      apply(await getQuota());
+      await quotaStore.load();
     } catch (e) {
       error = e.message || 'Could not load quota.';
     } finally {
@@ -86,9 +85,16 @@
   }
 
   onMount(() => {
+    const unsubscribe = quotaStore.subscribe((value) => {
+      providers = value;
+      now = Date.now();
+    });
     void load();
     const timer = setInterval(() => (now = Date.now()), 30_000);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      unsubscribe();
+    };
   });
 </script>
 

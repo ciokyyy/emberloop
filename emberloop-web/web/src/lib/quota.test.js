@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   hasPercent,
+  highestPercent,
   quotaHint,
   quotaPlan,
   quotaSource,
@@ -104,5 +105,14 @@ describe('provider presentation', () => {
   it('keeps cached error data in the stale presentation', () => {
     expect(quotaState({ state: 'error', windows: [{ label: '5h', pct: 22 }] })).toBe('stale');
     expect(quotaState({ state: 'error', windows: [] })).toBe('error');
+  });
+});
+
+describe('highestPercent', () => {
+  it('uses only the maximum valid pct across provider windows', () => {
+    expect(highestPercent({ windows: [{ pct: 36 }, { pct: 94 }, { pct: null, detail: '$99' }] })).toBe(94);
+    expect(highestPercent({ windows: [{ pct: 0 }, { detail: '100 credits' }] })).toBe(0);
+    expect(highestPercent({ windows: [{ pct: null, detail: '$99' }, { pct: 'invalid' }] })).toBeNull();
+    expect(highestPercent({ windows: [] })).toBeNull();
   });
 });

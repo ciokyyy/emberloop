@@ -21,6 +21,7 @@
   import ContextMeter from './lib/ContextMeter.svelte';
   import VersionBadge from './lib/VersionBadge.svelte';
   import Rail from './lib/Rail.svelte';
+  import QuotaSidebar from './lib/QuotaSidebar.svelte';
   import RunsSidebar from './lib/RunsSidebar.svelte';
   import DrawerNav from './lib/DrawerNav.svelte';
   import { areas } from './lib/areas.js';
@@ -733,7 +734,7 @@
 </script>
 
 {#snippet rail2(inDrawer = false)}
-  {#if view !== 'quota' && view !== 'memory'}
+  {#if view !== 'memory'}
   <div class="animate-rise flex min-h-0 flex-1 flex-col gap-3">
     {#if view === 'runs'}
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Specs and Runs</h1></div>
@@ -745,6 +746,8 @@
           <button type="button" class="rounded-xl px-2.5 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => jumpSetting(t)}>{t}</button>
         {/each}
       </nav>
+    {:else if view === 'quota'}
+      <QuotaSidebar onNavigate={navigate} />
     {:else}
       {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
@@ -784,7 +787,7 @@
 
 <div class="flex h-dvh">
   <Rail view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : view === 'memory' ? 'memory' : 'chat'} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : id === 'memory' ? '/memory' : '/settings')} />
-  <aside data-testid="sidebar" inert={sideCollapsed || view === 'quota' || view === 'memory'} aria-hidden={sideCollapsed || view === 'quota' || view === 'memory'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'quota' || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
+  <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
     <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3" aria-hidden={sideCollapsed}>
       {#key view}
         {@render rail2(false)}
@@ -927,7 +930,7 @@
   </div>
 </div>
 
-<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota' : view === 'memory' ? 'Memory' : 'Sessions'}>
+<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota and Providers' : view === 'memory' ? 'Memory' : 'Sessions'}>
   <div class="flex shrink-0 items-center gap-2" data-testid="drawer-head">
     {#if user}
       <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>

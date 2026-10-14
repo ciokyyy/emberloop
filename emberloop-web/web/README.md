@@ -11,14 +11,15 @@ rendering anywhere, so the same build wraps in Tauri later unchanged.
 Follow these for every UI change.
 
  - Shell: `Rail.svelte` is the narrow icon rail (Chat, Specs and Runs, Memory,
-   Quota, Settings) with the second-sidebar collapse toggle in its header
-   (Ctrl/⌘+B, persisted); a contextual second sidebar fills the next column
-   (`RunsSidebar.svelte` owns Runs spec discovery: repo directory, spec list,
-   Find specs form, preview pick). The sidebar collapses to the rail on
-   desktop (width transition on `--ease-smooth`) and becomes an off-canvas
-   drawer on `<md` screens (top-bar menu button, closes on navigate, safe-area
-   padding). The main area owns the Run itself (preview table, Start, live
-   table/graph). Tokens live in `src/app.css`; never hardcode colors.
+   Quota and Providers, Settings) with the second-sidebar collapse toggle in
+   its header (Ctrl/⌘+B, persisted); a contextual second sidebar fills the
+   next column. `RunsSidebar.svelte` owns Runs spec discovery;
+   `QuotaSidebar.svelte` owns the Quota entry and Live status list. Quota is
+   global (no Project switcher) and keeps the sidebar available on desktop,
+   respecting an explicit user collapse; it renders the same content in the
+   phone drawer. The drawer is off-canvas on `<md` screens (top-bar menu button,
+   closes on navigate, safe-area padding). Tokens live in `src/app.css`; never
+   hardcode colors.
 - shadcn-svelte everywhere: every interactive control (button, combobox,
   select, dialog, input, badge, ...) comes from `src/lib/ui/`, built on bits-ui.
   Never use a raw `<select>`, `<dialog>` or unstyled `<input>`. Add a missing
@@ -60,7 +61,7 @@ Same-origin by default. To point the static build at another Daemon:
 
  - `src/Root.svelte` — sign-in gate: probes `GET /api/auth/me`; signed out shows `AuthScreen`, signed in mounts `App` with the User; sign out and any 401 from a non-auth route return to sign-in; an unreachable Daemon offers Try again
  - `src/lib/AuthScreen.svelte`, `src/lib/authForm.js` — sign-in, create-account and first-admin screen on `ui/` primitives; `authForm.js` holds the mode, copy and error-line helpers
-- `src/App.svelte` — layout, rail-1 icon rail (`Rail.svelte`) plus a contextual rail-2 sidebar (collapses to the rail on desktop via the rail-header toggle and Ctrl/⌘+B, persisted as `eb.sidebar-collapsed`; the same content renders in the phone drawer), Session tail loading (`?tail=6`, `?at=`) with load-earlier prepend, SSE stream with reconnect, pending prompt cards that the echoed prompt Event replaces with no second entrance animation (`noAnim` swap), queued-message panel with clear, route-driven chat/settings/runs switch, Session-not-found state (composer/meter overlay stays unmounted there), the Git toggle (`#git-toggle`, `GitPanel`) closing on Escape with focus back on the toggle, version badge mount, turn-done/failed and sudo-request sounds off the stream, service worker cue plus exact-path navigate handling. Stream flushes coalesce chunks to one apply per ~80ms window (structural Events flush at once) over the cached grouping below
+ - `src/App.svelte` — layout, rail-1 icon rail (`Rail.svelte`) plus a contextual rail-2 sidebar (persistently collapsible, with Quota's shared status list and same content in the phone drawer), Session tail loading (`?tail=6`, `?at=`) with load-earlier prepend, SSE stream with reconnect, pending prompt cards that the echoed prompt Event replaces with no second entrance animation (`noAnim` swap), queued-message panel with clear, route-driven chat/settings/runs/Quota/Memory switch, Session-not-found state (composer/meter overlay stays unmounted there), the Git toggle (`#git-toggle`, `GitPanel`) closing on Escape with focus back on the toggle, version badge mount, turn-done/failed and sudo-request sounds off the stream, service worker cue plus exact-path navigate handling. Stream flushes coalesce chunks to one apply per ~80ms window (structural Events flush at once) over the cached grouping below
  - `App.svelte` sidebar footer: the signed-in User and Sign out (desktop rail 2 and the drawer); the `user` and `onSignOut` props come from `Root.svelte`; unmount calls `stopLive`
 - `App.svelte` Session header: `created by <User>` from `meta.owner`, read through the people store. The sidebar feeds `OwnerGroups` from `sessions`, `runs`, `projects` and the account list (refreshed on the `users` topic).
 - `src/lib/router.js` — pure route parse/build (`/s/<id>` with `?at=`, `/runs[/<runId>[/<ticketId>]]`, `/settings`, `/quota`, `/memory`, `/` as last-viewed `eb.last` else newest); `App.svelte` owns pushState/popstate around it
@@ -102,7 +103,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/ContextMeter.svelte` — composer-footer context ring: model name plus used/window/percent from `latestUsage(events)`; always renders once a Session is open (read-only with no Compress button on scout, ended and unresumable Sessions), row never wraps (`whitespace-nowrap`, window hidden below `sm`)
 - `src/lib/ProfileSettings.svelte` (`api.js` profile calls) — the Profile editor: live lines with add, edit and retire, the pending proposal queue with approve and reject, versions with restore; every approval writes a `profile_updated` Event
 - `src/lib/MemoryPage.svelte` (`api.js` memory calls, `memory.js` normalizers) — the Memory page on `/memory`: engine status chip, stats (queue size, approval latency, last nightly run and ledger), Rules and observations list plus FTS5 search with a Promote button per Rule, the rule queue with quotes, source Sessions, approve, edit, reject and per-Session plus selected batch approve, the promotion approval queue with diffs, the reused Profile editor with versions, the ledger tail, and the purge section with the typed PURGE confirmation and the removed-counts report; loads once, buttons fetch again
-- `src/lib/QuotaPage.svelte`, `src/lib/quota.js` — the read-only `/quota` page, provider cards with percent bars, word-form windows and reset countdowns, stale/expired/not-connected states, OpenRouter's text-only spend row, and threshold/age/label helpers; manual refresh keeps cached values visible, marks every affected card busy, and relies on the Daemon's per-provider 10s minimum interval
+- `src/lib/QuotaPage.svelte`, `src/lib/QuotaSidebar.svelte`, `src/lib/quotaStore.js` and `src/lib/quota.js` — the read-only `/quota` page with provider cards (percent bars, word-form windows, reset countdowns, stale/expired/not-connected states and OpenRouter's text-only spend row); manual refresh keeps cached values visible, marks affected cards busy and respects the Daemon's per-provider minimum interval. The contextual sidebar shares a replaceable provider store and shows one highest-`pct` status per provider with a neutral marker when absent; initial values come from `GET /api/quota`, and the store accepts an update source for live delivery. `quota.js` owns the threshold, age and label helpers.
 - `src/lib/memory.js` — pure Memory page helpers: row normalizers that accept Go-case and lowercase keys, proposal parsing with the old remember-shape upgrade, per-Session queue grouping, purge counts and summaries, latency labels
 - `src/lib/PromotionQueue.svelte` (`api.js` promotion calls) — the promotion approval queue embedded in the Memory page: each item shows its target path and diff preview with approve and reject; approving writes the worktree file and leaves it uncommitted for review
 - `SettingsPage.svelte` Accounts section, admin only: the `Allow sign-up` switch saves `signup_enabled` with the rest of the Save bar; other Users never see or send the key
@@ -136,7 +137,7 @@ and paused Backend/model pickers, branch actions and SSE (`RunsView.test.js`); g
 rendering (`runsGraph.test.js`, `RunsGraph.test.js`); Ticket state, review rounds,
 Dispositions, gate, actions and SSE (`ticketPage.test.js`, `TicketPage.test.js`);
 Settings max_tickets, validation, locked fields, ordered per-role Chains, inherited
-role fallbacks and alias-preserving saves, compression thresholds incl. the absolute token cap (`SettingsPage.test.js`); Quota thresholds, countdowns, labels, states, secondary details and refresh behavior (`quota.test.js`, `QuotaPage.test.js`); ContextMeter read-only render, nowrap row and phone-hidden window (`ContextMeter.test.js`); low-disk banner render (`DiskBanner.test.js`); plus install, sound, version, Session, Memory, auth,
+role fallbacks and alias-preserving saves, compression thresholds incl. the absolute token cap (`SettingsPage.test.js`); Quota thresholds, countdowns, labels, states, secondary details, shared-store updates and the sidebar's highest-percent status rows (`quota.test.js`, `quotaStore.test.js`, `QuotaSidebar.test.js`, `QuotaPage.test.js`); ContextMeter read-only render, nowrap row and phone-hidden window (`ContextMeter.test.js`); low-disk banner render (`DiskBanner.test.js`); plus install, sound, version, Session, Memory, auth,
 routing, Composer and navigation tests in their matching `*.test.js` files.
 Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (`stopLive`), plus the App footer, session-not-found overlay gate and Git Escape (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
 

@@ -57,6 +57,16 @@ export function hasPercent(pct) {
   return pct !== null && pct !== undefined && pct !== '' && Number.isFinite(Number(pct));
 }
 
+// Highest provider window percent for the Live status list. Secondary detail
+// values (credits, dollars or spend) never participate in this comparison.
+export function highestPercent(provider) {
+  const percentages = (provider?.windows ?? [])
+    .map((window) => window?.pct)
+    .filter(hasPercent)
+    .map(Number);
+  return percentages.length ? Math.max(...percentages) : null;
+}
+
 export function wordLabel(label) {
   const raw = String(label ?? '').trim();
   const key = raw.toLowerCase().replace(/[_-]+/g, ' ');

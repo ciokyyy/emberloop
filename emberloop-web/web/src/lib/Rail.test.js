@@ -19,10 +19,10 @@ describe('rail collapse toggle', () => {
     expect(getByRole('button', { name: 'Expand sidebar' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('offers a Quota area', () => {
+  it('offers the Quota and Providers area label', () => {
     const onSelect = vi.fn();
     const { getByRole } = render(Rail, { props: { view: 'chat', onSelect } });
-    const btn = getByRole('button', { name: 'Quota' });
+    const btn = getByRole('button', { name: 'Quota and Providers' });
     btn.click();
     expect(onSelect).toHaveBeenCalledWith('quota');
   });

@@ -180,23 +180,45 @@ describe('Sidebar collapse', () => {
 });
 
 describe('Quota navigation', () => {
-  it('opens the Quota view from the rail and fetches it once', async () => {
+  it('shows the global Quota sidebar and shares status data without collapsing desktop', async () => {
     history.replaceState(null, '', '/');
     localStorage.clear();
     vi.stubGlobal('EventSource', class { close() {} });
     const calls = [];
+    const providers = [
+      { key: 'claude', label: 'Claude', windows: [{ label: '5-hour', pct: 36 }, { label: 'Weekly', pct: 8 }] },
+      { key: 'openrouter', label: 'OpenRouter', windows: [{ label: 'Credits', pct: 94 }, { label: 'Spend this week', pct: null, detail: '$2.37' }] },
+      { key: 'agy-gemini', label: 'Antigravity Gemini', windows: [{ label: '5-hour', pct: null }] },
+    ];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (u) => {
         calls.push(String(u));
-        if (String(u).includes('/api/quota')) return { ok: true, json: async () => ({ providers: [] }) };
+        if (String(u).includes('/api/quota')) return { ok: true, json: async () => ({ providers }) };
         return { ok: true, json: async () => [] };
       }),
     );
     const { container } = render(App);
-    await fireEvent.click(await within(container).findByLabelText('Quota'));
+    await fireEvent.click(await within(container).findByLabelText('Quota and Providers'));
     expect(await within(container).findByTestId('quota-page')).toBeTruthy();
-    expect(calls.filter((u) => u.includes('/api/quota')).length).toBe(1);
+    await within(container).findAllByTestId('quota-card');
+    const sidebar = within(container).getByTestId('sidebar');
+    expect(sidebar.className).toContain('w-64');
+    const quotaSidebar = within(sidebar).getByTestId('quota-sidebar');
+    expect(within(quotaSidebar).getByRole('heading', { name: 'Quota and Providers' })).toBeTruthy();
+    expect(within(quotaSidebar).getByRole('heading', { name: 'Live status' })).toBeTruthy();
+    const rows = await within(quotaSidebar).findAllByTestId('quota-status-row');
+    expect(rows.map((row) => row.textContent.replace(/\s+/g, ' ').trim())).toEqual([
+      'Claude 36%',
+      'OpenRouter 94%',
+      'Antigravity Gemini —',
+    ]);
+    expect(within(container).getAllByText('94%')).toHaveLength(2);
+    await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
+    const drawer = await screen.findByTestId('drawer-scroll');
+    const drawerQuotaSidebar = within(drawer).getByTestId('quota-sidebar');
+    expect(within(drawerQuotaSidebar).getAllByTestId('quota-status-row')).toHaveLength(3);
+    expect(calls.filter((u) => u === '/api/quota' || u.endsWith('/api/quota')).length).toBe(1);
   });
 });
 
