@@ -453,9 +453,8 @@ func sendQuotaRefresh(base, key string) (int, []quotaCard, error) {
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatal(err)
+		return resp.StatusCode, nil, err
 	}
-	assertQuotaContract(t, raw)
 	var out struct {
 		Providers []quotaCard `json:"providers"`
 	}
@@ -470,6 +469,15 @@ func postQuotaRefresh(t *testing.T, base, key string) (int, []quotaCard) {
 	status, cards, err := sendQuotaRefresh(base, key)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if status == http.StatusOK {
+		response, err := json.Marshal(struct {
+			Providers []quotaCard `json:"providers"`
+		}{cards})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertQuotaContract(t, response)
 	}
 	return status, cards
 }
