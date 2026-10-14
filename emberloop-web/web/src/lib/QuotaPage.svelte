@@ -89,7 +89,13 @@
       now = Date.now();
     });
     void load();
-    return unsubscribe;
+    // This clock only rerenders age and reset labels; quota values come from
+    // the live topic or an explicit refresh, never from timer-driven fetches.
+    const clock = setInterval(() => (now = Date.now()), 1_000);
+    return () => {
+      clearInterval(clock);
+      unsubscribe();
+    };
   });
 </script>
 

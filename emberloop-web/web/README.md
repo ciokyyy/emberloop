@@ -109,8 +109,9 @@ Same-origin by default. To point the static build at another Daemon:
   sidebar and phone drawer share `quotaStore`: its first subscriber opens one
   `topic=quota` stream, which patches cards and status rows from full provider
   lists; the last subscriber leaving closes it. The page reads the cache once
-  through `GET /api/quota` and has no polling or countdown timer; updates arrive
-  from live events or an explicit refresh. The sidebar shows one
+  through `GET /api/quota` and never polls quota values; its one-second local
+  clock only advances cache-age and reset labels. Values change from live
+  events or an explicit refresh. The sidebar shows one
   highest-`pct` status per provider with a neutral marker when absent. Either
   view starts the Daemon's guarded refresher while subscribed; `quota.js` owns
   the threshold, age and label helpers.
