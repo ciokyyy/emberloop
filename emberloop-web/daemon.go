@@ -79,6 +79,9 @@ type Daemon struct {
 	// dirs are seeded from them (harnessdirs.go); no harness starts on them.
 	hostClaudeDir string
 	hostPigDir    string
+	// providerLoginMu protects short-lived browser OAuth login sessions.
+	providerLoginMu sync.Mutex
+	chatGPTLogins   map[string]*chatGPTDeviceLogin
 	// dirsMu serializes owner dir seeding across concurrent starts.
 	dirsMu sync.Mutex
 	// users are the accounts under stateDir. machineToken is the bearer that
@@ -408,6 +411,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/quota", d.handleQuota)
 	mux.HandleFunc("/api/quota/refresh", d.handleQuotaRefresh)
 	mux.HandleFunc("/api/providers", d.handleProviders)
+	mux.HandleFunc(chatGPTDeviceCodePath, d.handleChatGPTDeviceCodeStart)
+	mux.HandleFunc(chatGPTDeviceCodePath+"/", d.handleChatGPTDeviceCodeSession)
 	mux.HandleFunc("/api/providers/", d.handleProviderKey)
 	mux.HandleFunc("/api/version", d.handleVersion)
 	mux.HandleFunc("/api/health", d.handleHealth)

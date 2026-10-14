@@ -465,6 +465,17 @@ export const setProviderKey = (provider, key) =>
 export const removeProviderKey = (provider) =>
   fetch(url(`/api/providers/${encodeURIComponent(provider)}/key`), { method: 'DELETE' }).then(json);
 
+// ChatGPT's device-code login is kept in a short-lived Daemon session. The
+// browser polls its status and deletes it when the admin cancels.
+export const startChatGPTDeviceCodeLogin = () =>
+  fetch(url('/api/providers/openai-codex/device-code'), { method: 'POST' }).then(json);
+
+export const getChatGPTDeviceCodeLogin = (id) =>
+  fetch(url(`/api/providers/openai-codex/device-code/${encodeURIComponent(id)}`)).then(json);
+
+export const cancelChatGPTDeviceCodeLogin = (id) =>
+  fetch(url(`/api/providers/openai-codex/device-code/${encodeURIComponent(id)}`), { method: 'DELETE' }).then(json);
+
 // The Daemon's build identity for the version badge. version.js wraps this
 // with its never-throws fetch.
 export const getVersion = () => fetch(url('/api/version')).then(json);

@@ -147,6 +147,51 @@ describe('ProvidersPage', () => {
     expect(within(cliRow).getByRole('button', { name: 'Copy xAI command' })).toBeTruthy();
   });
 
+  it('shows the ChatGPT device code and link and lets the admin cancel', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (input, options = {}) => {
+      const url = String(input);
+      const method = options.method ?? 'GET';
+      calls.push({ url, method });
+      if (url === '/api/providers') return { ok: true, json: async () => ({ providers: providerRows() }) };
+      if (url === '/api/providers/openai-codex/device-code' && method === 'POST') {
+        return { ok: true, json: async () => ({ login: { id: 'login-1', status: 'starting' } }) };
+      }
+      if (url.endsWith('/device-code/login-1') && method === 'GET') {
+        return {
+          ok: true,
+          json: async () => ({
+            login: {
+              id: 'login-1',
+              status: 'waiting',
+              userCode: 'WXYZ-7',
+              verificationUrl: 'https://auth.openai.com/codex/device',
+              expiresAt: 1893456000000,
+            },
+          }),
+        };
+      }
+      if (url.endsWith('/device-code/login-1') && method === 'DELETE') {
+        return { ok: true, json: async () => ({ login: { id: 'login-1', status: 'canceled' } }) };
+      }
+      throw new Error(`unexpected request: ${method} ${url}`);
+    }));
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const chatGPT = container.querySelector('[data-provider="openai-codex"]');
+    await fireEvent.click(within(chatGPT).getByRole('button', { name: 'Reconnect ChatGPT' }));
+
+    await screen.findByTestId('chatgpt-user-code');
+    const panel = await screen.findByTestId('chatgpt-device-login');
+    expect(panel.dataset.status).toBe('waiting');
+    expect(within(panel).getByTestId('chatgpt-user-code').textContent).toBe('WXYZ-7');
+    expect(within(panel).getByRole('link', { name: 'https://auth.openai.com/codex/device' }).getAttribute('href')).toBe('https://auth.openai.com/codex/device');
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Cancel login' }));
+    expect(await screen.findByText('ChatGPT login canceled.')).toBeTruthy();
+    expect(calls).toContainEqual({ url: '/api/providers/openai-codex/device-code', method: 'POST' });
+    expect(calls).toContainEqual({ url: '/api/providers/openai-codex/device-code/login-1', method: 'DELETE' });
+  });
+
   it('keeps provider rows and key controls phone-friendly', async () => {
     stubProviders();
     const { container } = render(ProvidersPage, { props: { admin: true } });

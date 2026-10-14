@@ -4,7 +4,14 @@
   import Badge from './ui/badge.svelte';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
-  import { getProviders, removeProviderKey, setProviderKey } from './api.js';
+  import {
+    cancelChatGPTDeviceCodeLogin,
+    getChatGPTDeviceCodeLogin,
+    getProviders,
+    removeProviderKey,
+    setProviderKey,
+    startChatGPTDeviceCodeLogin,
+  } from './api.js';
 
   let { admin = false } = $props();
   let providers = $state([]);
@@ -16,6 +23,9 @@
   let rowErrors = $state({});
   let copied = $state('');
   let copyTimer;
+  let chatGPTLogin = $state(null);
+  let chatGPTPollTimer;
+  let chatGPTPollInFlight = false;
 
   const groups = [
     {
@@ -37,7 +47,15 @@
       icon: Terminal,
     },
   ];
-  onDestroy(() => clearTimeout(copyTimer));
+
+  function chatGPTLoginActive(login) {
+    return login?.status === 'starting' || login?.status === 'waiting';
+  }
+
+  function stopChatGPTLoginPolling() {
+    clearTimeout(chatGPTPollTimer);
+    chatGPTPollTimer = undefined;
+  }
 
   async function load() {
     try {
@@ -112,6 +130,75 @@
       copied = '';
     }
   }
+
+  async function pollChatGPTLogin(id) {
+    if (chatGPTPollInFlight || chatGPTLogin?.id !== id) return;
+    chatGPTPollInFlight = true;
+    try {
+      const body = await getChatGPTDeviceCodeLogin(id);
+      if (chatGPTLogin?.id !== id || !body?.login) return;
+      chatGPTLogin = body.login;
+      if (chatGPTLogin.status === 'complete') {
+        stopChatGPTLoginPolling();
+        await load();
+      } else if (!chatGPTLoginActive(chatGPTLogin)) {
+        stopChatGPTLoginPolling();
+      }
+    } catch (error) {
+      rowErrors = { ...rowErrors, 'openai-codex': error?.message || 'Could not check ChatGPT login.' };
+    } finally {
+      chatGPTPollInFlight = false;
+      scheduleChatGPTLoginPoll(id);
+    }
+  }
+
+  function scheduleChatGPTLoginPoll(id) {
+    stopChatGPTLoginPolling();
+    if (chatGPTLogin?.id === id && chatGPTLoginActive(chatGPTLogin)) {
+      chatGPTPollTimer = setTimeout(() => void pollChatGPTLogin(id), 1000);
+    }
+  }
+
+  async function startChatGPTLogin() {
+    if (!admin || busy['openai-codex']) return;
+    stopChatGPTLoginPolling();
+    chatGPTLogin = null;
+    busy = { ...busy, 'openai-codex': true };
+    rowErrors = { ...rowErrors, 'openai-codex': '' };
+    try {
+      const body = await startChatGPTDeviceCodeLogin();
+      chatGPTLogin = body?.login ?? null;
+      if (chatGPTLogin?.id) void pollChatGPTLogin(chatGPTLogin.id);
+    } catch (error) {
+      rowErrors = { ...rowErrors, 'openai-codex': error?.message || 'Could not start ChatGPT login.' };
+    } finally {
+      busy = { ...busy, 'openai-codex': false };
+    }
+  }
+
+  async function cancelChatGPTLogin() {
+    if (!admin || !chatGPTLoginActive(chatGPTLogin)) return;
+    const id = chatGPTLogin.id;
+    stopChatGPTLoginPolling();
+    busy = { ...busy, 'openai-codex': true };
+    try {
+      const body = await cancelChatGPTDeviceCodeLogin(id);
+      if (chatGPTLogin?.id === id && body?.login) chatGPTLogin = body.login;
+    } catch (error) {
+      rowErrors = { ...rowErrors, 'openai-codex': error?.message || 'Could not cancel ChatGPT login.' };
+      scheduleChatGPTLoginPoll(id);
+    } finally {
+      busy = { ...busy, 'openai-codex': false };
+    }
+  }
+
+  onDestroy(() => {
+    clearTimeout(copyTimer);
+    stopChatGPTLoginPolling();
+    if (admin && chatGPTLoginActive(chatGPTLogin)) {
+      void cancelChatGPTDeviceCodeLogin(chatGPTLogin.id).catch(() => {});
+    }
+  });
 
   onMount(() => {
     void load();
@@ -195,6 +282,16 @@
                             <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
                           {/if}
                         </div>
+                      {:else if provider.id === 'openai-codex'}
+                        <div class="flex items-center gap-2 sm:ml-auto max-md:w-full">
+                          {#if admin}
+                            <Button variant="outline" size="sm" disabled={busy['openai-codex']} aria-busy={Boolean(busy['openai-codex'])} onclick={startChatGPTLogin}>
+                              <Check />{provider.connected ? 'Reconnect ChatGPT' : 'Connect ChatGPT'}
+                            </Button>
+                          {:else}
+                            <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
+                          {/if}
+                        </div>
                       {:else if provider.command}
                         <div class="flex min-w-0 items-center gap-2 sm:ml-auto max-md:w-full">
                           <code class="min-w-0 flex-1 truncate rounded-lg bg-muted px-2.5 py-2 font-mono text-xs text-muted-foreground">{provider.command}</code>
@@ -206,6 +303,30 @@
                         <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
                       {/if}
                     </div>
+
+                    {#if provider.id === 'openai-codex' && chatGPTLogin}
+                      <div class="mt-3 grid gap-3 rounded-xl border bg-background p-3" data-testid="chatgpt-device-login" data-status={chatGPTLogin.status}>
+                        {#if chatGPTLogin.status === 'starting'}
+                          <p class="text-sm text-muted-foreground" role="status">Starting ChatGPT device-code login…</p>
+                        {:else if chatGPTLogin.status === 'waiting'}
+                          <p class="text-sm">Open the verification page on any device, then enter this code:</p>
+                          <a class="w-fit text-sm text-primary underline underline-offset-4" href={chatGPTLogin.verificationUrl} target="_blank" rel="noopener noreferrer">{chatGPTLogin.verificationUrl}</a>
+                          <code class="w-fit rounded-lg bg-muted px-3 py-2 font-mono text-lg font-semibold tracking-wider" data-testid="chatgpt-user-code">{chatGPTLogin.userCode}</code>
+                          <div class="flex flex-wrap items-center gap-2 max-md:[&>*]:flex-1">
+                            <p class="flex-1 text-xs text-muted-foreground" role="status">Waiting for approval…</p>
+                            <Button variant="ghost" disabled={busy['openai-codex']} onclick={cancelChatGPTLogin}><X />Cancel login</Button>
+                          </div>
+                        {:else if chatGPTLogin.status === 'complete'}
+                          <p class="text-sm text-muted-foreground" role="status">ChatGPT connected. The ChatGPT Quota card is refreshing.</p>
+                        {:else if chatGPTLogin.status === 'expired'}
+                          <p class="text-sm text-muted-foreground" role="status">The device code expired. Start a new login to connect ChatGPT.</p>
+                        {:else if chatGPTLogin.status === 'canceled'}
+                          <p class="text-sm text-muted-foreground" role="status">ChatGPT login canceled.</p>
+                        {:else}
+                          <p class="text-sm text-destructive" role="alert">{chatGPTLogin.error || 'ChatGPT login failed. Try again.'}</p>
+                        {/if}
+                      </div>
+                    {/if}
 
                     {#if editingID === provider.id && admin}
                       <form class="mt-3 grid gap-3 rounded-xl border bg-background p-3" data-testid="provider-key-form" onsubmit={(event) => saveKey(event, provider)}>

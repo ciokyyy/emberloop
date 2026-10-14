@@ -22,6 +22,7 @@ const restartLogName = "restart.log"
 // wait for turn-end scans is bounded: a hung scan is logged and left behind,
 // never wedging the restart past the drain.
 func (d *Daemon) Shutdown() {
+	d.cancelChatGPTDeviceLogins()
 	if wait := d.mineWaitOrDefault(); !d.waitMiningTimeout(wait) {
 		d.LogRestart("shutdown: mining still running after %s, continuing without it", wait)
 	}

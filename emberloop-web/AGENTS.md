@@ -49,10 +49,16 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Provider API and auth: `providers.go` serves `GET /api/providers` from the
   pig SDK catalog and read-only auth checks; responses include status/source
   metadata and stored-key flags only. Admin-only `PUT`/`DELETE
-  /api/providers/<id>/key` write through `AuthStorage.Set`/`Delete` to the host
-  pig `auth.json`. Only OpenRouter, OpenCode-Go, Gemini direct, DeepSeek and
-  OpenAI keys are browser-editable. `providers_test.go` covers catalog/status
-  sources, secret redaction, writes and authorization with a temporary pig dir.
+  /api/providers/<id>/key` write API keys to pig `auth.json` without returning
+  them. ChatGPT uses one device-code login per Daemon, expiring after 15 minutes:
+  `POST /api/providers/openai-codex/device-code` starts pig's SDK flow; `GET`
+  and `DELETE /api/providers/openai-codex/device-code/<id>` poll its code/link/
+  status or cancel it. Success stores OAuth credentials in pig `auth.json` and
+  forces a ChatGPT quota refresh; shutdown cancels active logins. Terminal
+  status is retained for five minutes. `provider_device_code_test.go` covers
+  success, expiry, cancel and authorization against local stubs;
+  `providers_test.go` covers catalog/status sources, secret redaction, API-key
+  writes and authorization with a temporary pig dir.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both
