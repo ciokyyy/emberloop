@@ -1193,13 +1193,12 @@ func TestQuotaOpenRouterCreditsAndKeySpendAtHTTPSeam(t *testing.T) {
 
 func TestQuotaOpenRouterMissingKeyIsNotConfigured(t *testing.T) {
 	stub := &quotaStubState{}
-	base, _, d := quotaEnvWithDaemon(t, stub, "")
+	base, _, _ := quotaEnvWithDaemon(t, stub, "")
 	cards := quotaByKey(t, getQuota(t, base))
 	card := cards["openrouter"]
 	if card.State != "not_configured" || card.Error != "" || !strings.Contains(card.Hint, "openrouter.key") {
 		t.Fatalf("OpenRouter missing key = %+v, want not_configured without an error", card)
 	}
-	d.quotaRefreshWG.Wait()
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
 	if stub.openrouterCredits != 0 || stub.openrouterKey != 0 {
