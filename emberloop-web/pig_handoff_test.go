@@ -217,11 +217,15 @@ func TestPigACPCompressesByHandoff(t *testing.T) {
 	if view := sessionView(t, srv2.URL, id); !view.Resumable {
 		t.Fatalf("resumable = false after Handoff restart, note %q", view.ResumeNote)
 	}
-	sendPrompt(t, srv2.URL, id, "third")
-	after := readSSE(t, srv2.URL, id, lastSeqOf(sessionEvents(t, srv2.URL, id))-4, 4, 5*time.Second)
+	// Wait for the post-restart turn to end before reading: the reply lands
+	// after the prompt's working status, so reading a fixed window right
+	// after the send can return only the pre-reply Events under load.
+	seq := sendPrompt(t, srv2.URL, id, "third")
+	waitTurnEnd(t, srv2.URL, id, seq)
+	after := sessionEvents(t, srv2.URL, id)
 	found := false
 	for _, e := range after {
-		if e.Kind == "assistant_chunk" && e.Text == "real answer" {
+		if e.Seq > seq && e.Kind == "assistant_chunk" && e.Text == "real answer" {
 			found = true
 		}
 	}
