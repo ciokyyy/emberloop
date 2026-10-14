@@ -78,6 +78,49 @@ describe('Non-blocking boot', () => {
     runs.resolve({ runs: [] });
     await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
   });
+  it('refreshes Sessions changed while away before resolving the home route', async () => {
+    history.replaceState(null, '', '/');
+    localStorage.clear();
+    const refreshedSessions = deferred();
+    let sessionReads = 0;
+    const newSession = { id: 's2', harness: 'fake', model: 'fake-model', title: 'Fresh Session', status: 'idle' };
+    const fetchMock = vi.fn((url) => {
+      const path = String(url);
+      if (path === '/api/sessions') {
+        sessionReads += 1;
+        if (sessionReads === 1) return Promise.resolve(response([]));
+        if (sessionReads === 2) return refreshedSessions.promise.then(response);
+        return Promise.resolve(response([newSession]));
+      }
+      if (path.startsWith('/api/sessions/s2')) {
+        return Promise.resolve(response({ session: newSession, events: [], resumable: true, hasMore: false, firstSeq: 0 }));
+      }
+      if (path.endsWith('/api/runs')) return Promise.resolve(response({ runs: [] }));
+      if (path.endsWith('/api/specs')) return Promise.resolve(response({ specs: [] }));
+      if (path.includes('/queue')) return Promise.resolve(response({ queue: [] }));
+      return Promise.resolve(response([]));
+    });
+    const EventSource = fakeEvents();
+    vi.stubGlobal('EventSource', EventSource);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(App);
+    await vi.waitFor(() => expect(sessionReads).toBe(1));
+    await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
+    await fireEvent.click(within(container).getByLabelText('Specs and Runs'));
+    const normalStream = EventSource.instances.find((stream) => !stream.url.includes('topic=quota'));
+    normalStream.onmessage({ data: 'sessions' });
+    expect(sessionReads).toBe(1);
+
+    await fireEvent.click(within(container).getByLabelText('Chat'));
+    await vi.waitFor(() => expect(sessionReads).toBe(2));
+    expect(within(container).getByTestId('header-title').textContent).toContain('No Session');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/sessions/s2'))).toBe(false);
+
+    refreshedSessions.resolve([newSession]);
+    await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('Fresh Session'));
+  });
+
   it('keeps a direct Session open when the Session list races ahead of its detail', async () => {
     history.replaceState(null, '', '/s/s1');
     localStorage.clear();

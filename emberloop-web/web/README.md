@@ -57,8 +57,10 @@ Same-origin by default. To point the static build at another Daemon:
    loads Sessions and shared Run summaries in the background, showing
    `Loading Sessions…`; `/runs` loads summaries in `RunsSidebar` and shows
    `Loading Runs…`; `/quota` loads through `QuotaPage` without either list.
+   Session events while another area is open mark the list stale; returning
+   home refreshes it before selecting last/newest.
    Same 40-Run × 8-Ticket Vitest fixture, 5 trials after 2 warmups: cold boot
-   p50 to the Runs sidebar shell is 54.6ms and to all rows is 212.6ms. Ticket
+   p50 to the Runs sidebar shell is 41.5ms and to all rows is 195.9ms. Ticket
    17's post-summary p50 was 170.3/369.7ms; its pre-implementation baseline
    was 516.2/610.7ms.
  - `App.svelte` sidebar footer: the signed-in User and Sign out (desktop rail 2 and the drawer); the `user` and `onSignOut` props come from `Root.svelte`; unmount calls `stopLive`

@@ -115,7 +115,9 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `/quota` skips Session and Run list fetches; `/runs` loads summaries through
   `RunsSidebar`. Home loads Sessions asynchronously and resolves last/newest
   only after the list arrives; the chat sidebar shows `Loading Sessions…`.
-  `App.test.js` covers delayed lists and route-owned loading states.
+  Session events while another area is open mark the list stale; returning
+  home refreshes it before selecting last/newest. `App.test.js` covers delayed
+  lists, route-owned loading states and this return-to-home refresh.
 
 ## Adapter retry
 

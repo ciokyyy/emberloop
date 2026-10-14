@@ -45,6 +45,8 @@
 
   let sessions = $state([]);
   let sessionsLoaded = $state(false);
+  let sessionsDirty = false;
+  let sessionsRevision = 0;
   let currentId = $state(null);
   let meta = $state(null);
   let events = $state([]);
@@ -309,7 +311,7 @@
       view = 'chat';
       return;
     }
-    if (!sessionsLoaded) {
+    if (!sessionsLoaded || sessionsDirty) {
       view = 'chat';
       if (!homeRouteLoading) {
         homeRouteLoading = true;
@@ -426,12 +428,15 @@
   }
 
   async function refresh() {
+    const revision = sessionsRevision;
     try {
       sessions = await listSessions();
+      sessionsDirty = sessionsRevision !== revision;
       sessionsLoaded = true;
       // A deleted Session never opens something random: flag it instead.
       if (currentId && meta?.id === currentId && !sessionMissing && !sessions.some((s) => s.id === currentId)) sessionMissing = true;
     } catch {
+      sessionsDirty = false;
       sessionsLoaded = true;
       loadError = 'Daemon unreachable. Start it and reload.';
     }
@@ -675,11 +680,15 @@
     }
   }
 
-  // The sidebar follows the Daemon: new, spawned, finished and ended Sessions
-  // appear without a reload. The router owns the initial open, so refresh
-  // never auto-opens here.
+  // Session changes while another area is open mark the sidebar data stale;
+  // home refreshes before resolving the last/newest Session.
   watch('sessions', (topic) => {
-    if (view !== 'chat' || (topic === 'hello' && !sessionsLoaded)) return;
+    if (topic === 'hello' && !sessionsLoaded) return;
+    sessionsRevision += 1;
+    if (view !== 'chat') {
+      sessionsDirty = true;
+      return;
+    }
     void refresh();
   });
   watch('users', () => refreshPeople());
