@@ -25,6 +25,7 @@
   const sounds = soundPlayer();
   let prevRun = null;
   function applyRun(next) {
+    if (next?.tickets) runError = '';
     run = next;
     // A deep-linked Run seeds the sidebar spec picker from its own
     // repo/spec.
@@ -79,6 +80,7 @@
 
   let run = $state(null);
   let runError = $state('');
+  let runLoading = $state(false);
   let starting = $state(false);
   let acting = $state(false);
   let confirmAbandon = $state(false);
@@ -121,6 +123,7 @@
       openToken++;
       closeRunStream();
       run = null;
+      runLoading = false;
       runError = '';
       runStreamDown = false;
       prevRun = null;
@@ -128,16 +131,18 @@
   });
 
   async function refreshRun(token) {
-    if (!run?.id) return;
+    if (!run?.id) return false;
     const id = run.id;
     try {
       const body = await getRun(id);
-      if (disposed || (token !== undefined && token !== openToken)) return;
-      if (run?.id !== id) return;
+      if (disposed || (token !== undefined && token !== openToken)) return false;
+      if (run?.id !== id) return false;
       applyRun(body.run ?? body);
       if (liveDone(run)) closeRunStream();
+      return true;
     } catch {
-      // The view keeps the last snapshot; the SSE stream brings the next one.
+      // The view keeps its loading state; the caller reports a failed detail read.
+      return false;
     }
   }
 
@@ -152,9 +157,12 @@
     runStreamDown = false;
     run = { id };
     runError = '';
-    await refreshRun(token);
+    runLoading = true;
+    const loaded = await refreshRun(token);
     if (disposed || token !== openToken) return;
     if (run?.id !== id) return;
+    runLoading = false;
+    if (!loaded && !run?.tickets) runError = 'Could not load Run details.';
     subscribeRun(id, token);
   }
 
@@ -283,6 +291,7 @@
     closeRunStream();
     run = null;
     runError = '';
+    runLoading = false;
     runStreamDown = false;
     confirmAbandon = false;
     prevRun = null;
@@ -306,6 +315,7 @@
       closeRunStream();
       run = null;
       runError = '';
+      runLoading = false;
       runStreamDown = false;
       return;
     }
@@ -436,7 +446,10 @@
   {#if runError}
     <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{runError}</p>
   {/if}
-  {#if run}
+  {#if runLoading && run?.id && !run.tickets}
+    <p role="status" class="rounded-xl border px-4 py-2 text-sm text-muted-foreground" data-testid="run-loading">Loading Run details…</p>
+  {/if}
+  {#if run?.tickets}
       {#if runStreamDown}
         <p role="status" class="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm text-muted-foreground" data-testid="run-reconnecting">
           <span class="size-1.5 animate-pulse rounded-full bg-amber-400"></span>Reconnecting to live updates…

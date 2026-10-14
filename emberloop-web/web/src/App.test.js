@@ -275,3 +275,37 @@ describe('Account footer', () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Run summaries in the Session sidebar', () => {
+  afterEach(() => cleanup());
+
+  it('uses summary counts and Project ids without fetching Run details', async () => {
+    history.replaceState(null, '', '/');
+    localStorage.clear();
+    vi.stubGlobal('EventSource', class { close() {} });
+    const fetchMock = vi.fn(async (url) => ({
+      ok: true,
+      json: async () => {
+        const path = String(url);
+        if (path.endsWith('/api/runs')) {
+          return {
+            runs: [{
+              id: 'run-summary', spec: '/repo/.scratch/demo/spec.md', status: 'needs-you',
+              repo: '/repo/subdir', projectId: 'project-1', owner: 'u1', updatedAt: '2026-10-14T10:00:00Z',
+              counts: { total: 2, merged: 0, needsYou: 1 },
+            }],
+          };
+        }
+        if (path.endsWith('/api/projects')) return [{ id: 'project-1', name: 'Demo', path: '/repo' }];
+        if (path.endsWith('/api/users')) return [{ id: 'u1', username: 'alice', admin: true, online: true }];
+        return [];
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(App, { props: { user: { id: 'u1', username: 'alice', admin: true } } });
+    const runRow = await within(container).findByRole('button', { name: /demo.*Run/i });
+    expect(runRow.className).toContain('border-amber-500/30');
+		expect(runRow.closest('section[aria-label="Demo"]')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => /\/api\/runs\/[^/]+$/.test(String(url)))).toBe(false);
+  });
+});

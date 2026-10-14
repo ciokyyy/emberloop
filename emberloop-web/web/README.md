@@ -10,16 +10,7 @@ rendering anywhere, so the same build wraps in Tauri later unchanged.
 
 Follow these for every UI change.
 
- - Shell: `Rail.svelte` is the narrow icon rail (Chat, Specs and Runs, Memory,
-   Quota and Providers, Settings) with the second-sidebar collapse toggle in
-   its header (Ctrl/⌘+B, persisted); a contextual second sidebar fills the
-   next column. `RunsSidebar.svelte` owns Runs spec discovery;
-   `QuotaSidebar.svelte` owns the Quota entry and Live status list. Quota is
-   global (no Project switcher) and keeps the sidebar available on desktop,
-   respecting an explicit user collapse; it renders the same content in the
-   phone drawer. The drawer is off-canvas on `<md` screens (top-bar menu button,
-   closes on navigate, safe-area padding). Tokens live in `src/app.css`; never
-   hardcode colors.
+- Shell: `Rail.svelte` is the narrow icon rail (Chat, Specs and Runs, Memory, Quota and Providers, Settings) with the second-sidebar collapse toggle in its header (Ctrl/⌘+B, persisted); a contextual second sidebar fills the next column. `RunsSidebar.svelte` owns Runs spec discovery and renders the summary-only Run list from `GET /api/runs`; deep links seed the picker from summaries. `QuotaSidebar.svelte` owns the Quota entry and Live status list. Quota is global (no Project switcher) and keeps its sidebar available on desktop, respecting an explicit user collapse. The Runs sidebar collapses to the rail on desktop (width transition on `--ease-smooth`) and becomes an off-canvas drawer on `<md` screens (top-bar menu button, closes on navigate, safe-area padding); Quota renders the same content in the phone drawer. The Runs main area owns the preview, Start and selected Run detail (`GET /api/runs/<id>`) with its live Ticket table/graph. Tokens live in `src/app.css`; never hardcode colors.
 - shadcn-svelte everywhere: every interactive control (button, combobox,
   select, dialog, input, badge, ...) comes from `src/lib/ui/`, built on bits-ui.
   Never use a raw `<select>`, `<dialog>` or unstyled `<input>`. Add a missing
@@ -63,12 +54,12 @@ Same-origin by default. To point the static build at another Daemon:
  - `src/lib/AuthScreen.svelte`, `src/lib/authForm.js` — sign-in, create-account and first-admin screen on `ui/` primitives; `authForm.js` holds the mode, copy and error-line helpers
  - `src/App.svelte` — layout, rail-1 icon rail (`Rail.svelte`) plus a contextual rail-2 sidebar (persistently collapsible, with Quota's shared status list and same content in the phone drawer), Session tail loading (`?tail=6`, `?at=`) with load-earlier prepend, SSE stream with reconnect, pending prompt cards that the echoed prompt Event replaces with no second entrance animation (`noAnim` swap), queued-message panel with clear, route-driven chat/settings/runs/Quota/Memory switch, Session-not-found state (composer/meter overlay stays unmounted there), the Git toggle (`#git-toggle`, `GitPanel`) closing on Escape with focus back on the toggle, version badge mount, turn-done/failed and sudo-request sounds off the stream, service worker cue plus exact-path navigate handling. Stream flushes coalesce chunks to one apply per ~80ms window (structural Events flush at once) over the cached grouping below
  - `App.svelte` sidebar footer: the signed-in User and Sign out (desktop rail 2 and the drawer); the `user` and `onSignOut` props come from `Root.svelte`; unmount calls `stopLive`
-- `App.svelte` Session header: `created by <User>` from `meta.owner`, read through the people store. The sidebar feeds `OwnerGroups` from `sessions`, `runs`, `projects` and the account list (refreshed on the `users` topic).
+- `App.svelte` Session header: `created by <User>` from `meta.owner`, read through the people store. The sidebar feeds `OwnerGroups` from `sessions`, summary-only Runs (owner, Project id and aggregate needs-you count), `projects` and the account list (refreshed on the `users` topic).
 - `src/lib/router.js` — pure route parse/build (`/s/<id>` with `?at=`, `/runs[/<runId>[/<ticketId>]]`, `/settings`, `/quota`, `/memory`, `/` as last-viewed `eb.last` else newest); `App.svelte` owns pushState/popstate around it
 - `src/lib/QuotaPage.svelte`, `src/lib/quota.js` — quota cards consume the Daemon's percent-used windows, word labels, plan/detail and state fields; the UI never derives percentages from money.
 - `src/lib/DraftBar.svelte` — harness, model and effort pickers for a new chat draft (effort for claude and pig)
  - `src/lib/Transcript.svelte`, `src/lib/transcript.js` — TanStack-virtualized transcript (throttled dynamic measurement at ~5Hz or >32px deltas, overscan, `content-visibility:auto` rows, instant `scroll-behavior` on the scroller so the time-based glide loop runs alone, stick-to-bottom unless scrolled up, jump-to-latest) with a load-earlier sentinel (auto-load on scroll up, scroll-anchored, spinner, stops at `hasMore=false`); pure stick/anchor/seq helpers in `transcript.js`
-- `src/lib/api.js` — Daemon client (configurable base URL), incl. Session snapshot paging params (`getSession(id, { tail, before, turns, at })`), settings read/write, spec list, ticket preview, Run start/get and Run SSE stream, per-ticket steer/retry/park/discard/pause/resume/switch, Run pause/resume/switch/rebase/abandon actions, build version read, disk status read (`getDisk`), prompt image ids, Session image upload/list/serve, and the Memory page calls (`getRules`, `getObservations`, `getRulesQueue`, `decideRuleQueue`, `batchRuleQueue`, `getRuleQueueStats`, `getMemoryLedger`, `getMemoryStatus`, `purgeMemory` alongside the profile calls)
+- `src/lib/api.js` — Daemon client (configurable base URL), incl. Session snapshot paging params (`getSession(id, { tail, before, turns, at })`), settings read/write, spec list and ticket preview, summary-only `listRuns`, full-detail `getRun` for an opened Run, Run start and SSE stream, per-ticket steer/retry/park/discard/pause/resume/switch, Run pause/resume/switch/rebase/abandon actions, build version read, disk status read (`getDisk`), prompt image ids, Session image upload/list/serve, and the Memory page calls (`getRules`, `getObservations`, `getRulesQueue`, `decideRuleQueue`, `batchRuleQueue`, `getRuleQueueStats`, `getMemoryLedger`, `getMemoryStatus`, `purgeMemory` alongside the profile calls)
 - `src/lib/api.js` auth calls (`getAuthState`, `getMe`, `login`, `signup`, `logout`) and the `UNAUTHORIZED` window event that any 401 from a non-auth route fires
 - `src/lib/live.js` — the one EventSource channel: `watch(topic, fn)` per topic; `stopLive` closes it and drops the watchers on sign-out
 - `src/lib/version.js` — the bundle's own build hash, the Daemon version fetch, the stale predicate, the badge line and the clipboard copy
@@ -130,17 +121,13 @@ render (`ToolStrip.test.js`), composer mode resolvers (`composer.test.js`),
 mounted Composer badge and send behavior (`Composer.test.js`), harness
 model filtering (`harnesses.test.js`), the virtualized picker open/filter/pick,
 keyboard, empty state and windowing (`ui/combobox.test.js`), Card rendering per kind
-plus the echoed-prompt no-animation swap and the live thinking gate (`Card.test.js`), Runs spec-discovery
-form, list and pick plus the Run list picker (newest first, counts, navigate)
-and needs-you strip (`RunsSidebar.test.js`), RunsView preview/start, graph/list, active
-Chain entries, per-Ticket/Run pause, Switch scope across Worker/Reviewer Chains, resume
-and paused Backend/model pickers, branch actions and SSE (`RunsView.test.js`); graph state/layout/Chain summaries and
+plus the echoed-prompt no-animation swap and the live thinking gate (`Card.test.js`), Runs spec discovery plus summary-only list ordering, counts, deep-link seeding and needs-you navigation (`RunsSidebar.test.js`), RunsView preview/start, detail-on-open loading, graph/list, active Chain entries, per-Ticket/Run pause, Switch scope across Worker/Reviewer Chains, resume and paused Backend/model pickers, branch actions and SSE (`RunsView.test.js`); graph state/layout/Chain summaries and
 rendering (`runsGraph.test.js`, `RunsGraph.test.js`); Ticket state, review rounds,
 Dispositions, gate, actions and SSE (`ticketPage.test.js`, `TicketPage.test.js`);
 Settings max_tickets, validation, locked fields, ordered per-role Chains, inherited
 role fallbacks and alias-preserving saves, compression thresholds incl. the absolute token cap (`SettingsPage.test.js`); quota thresholds, countdowns, word labels, percent-first bars, cache age, card states, secondary details, per-card/refresh-all behavior, shared-store updates and the sidebar's highest-percent status rows (`quota.test.js`, `quotaStore.test.js`, `QuotaSidebar.test.js`, `QuotaPage.test.js`); ContextMeter read-only render, nowrap row and phone-hidden window (`ContextMeter.test.js`); low-disk banner render (`DiskBanner.test.js`); plus install, sound, version, Session, Memory, auth,
 routing, Composer and navigation tests in their matching `*.test.js` files.
-Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (`stopLive`), plus the App footer, session-not-found overlay gate and Git Escape (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
+Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (`stopLive`), plus the App's summary-backed Run sidebar, footer, session-not-found overlay gate and Git Escape (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
 
 ## Routes
 

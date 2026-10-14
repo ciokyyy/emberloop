@@ -51,6 +51,35 @@ describe('RunsView preview and live run', () => {
     expect(await within(container).findByText(/pick a spec from the sidebar/i)).toBeTruthy();
   });
 
+  it('loads full Run detail only after a Run route opens', async () => {
+    let resolveDetail;
+    const detailResponse = new Promise((resolve) => { resolveDetail = resolve; });
+    const fetchMock = vi.fn(async (url) => ({
+      ok: true,
+      json: async () => {
+        const path = String(url);
+        if (path.endsWith('/api/runs/run-1')) return detailResponse;
+        if (path.includes('/api/specs/preview')) return preview;
+        if (path.includes('/api/specs')) return { specs: [specRow] };
+        return { runs: [] };
+      },
+    }));
+    stubRuns(fetchMock);
+    const { container } = render(RunsView, { props: { workDir: '/repo', runId: 'run-1' } });
+    expect(await within(container).findByTestId('run-loading')).toBeTruthy();
+    expect(within(container).queryByTestId('runs-graph')).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/runs/run-1'))).toBe(true);
+
+    resolveDetail({
+      run: {
+        id: 'run-1', spec: specRow.spec, repo: '/repo', status: 'running',
+        tickets: [{ id: '01-first', num: 1, title: 'First detail', state: 'queued', body: 'acceptance detail' }],
+      },
+    });
+    expect(await within(container).findByTestId('runs-graph')).toBeTruthy();
+    expect(within(container).queryByTestId('run-loading')).toBeNull();
+  });
+
   it('surfaces an unparsable Blocked by line as a row error', async () => {
     seedPreview([{ id: '02-bad', num: 2, title: 'Bad', blockers: [], done: 0, total: 1, error: 'cannot parse Blocked by line' }]);
     stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));

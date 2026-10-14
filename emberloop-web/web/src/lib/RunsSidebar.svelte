@@ -6,7 +6,7 @@
   import { onMount, onDestroy } from 'svelte';
   import Button from './ui/button.svelte';
   import FloatingInput from './ui/floating-input.svelte';
-  import { listRuns, getRun } from './api.js';
+  import { listRuns } from './api.js';
   import { watch } from './live.js';
   import {
     discovery,
@@ -26,7 +26,7 @@
   async function load() {
     try {
       const body = await listRuns();
-      runs = [...(body.runs ?? [])].sort((a, b) => String(b.createdAt ?? b.id).localeCompare(String(a.createdAt ?? a.id)));
+      runs = [...(body.runs ?? [])].sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')));
     } catch {
       // Keep the last list; the next live change refetches.
     } finally {
@@ -34,16 +34,16 @@
     }
   }
 
-  // A ticket page route mounts no RunsView, so nothing seeds the picker
-  // there: load the Run once and seed the repo and spec list from it.
+  // A deep link seeds the picker from the list summary. The full Run and its
+  // Ticket bodies are fetched by the main view only when that Run opens.
   let seededFor = '';
   $effect(() => {
     const id = runId;
     if (!id || seededFor === id) return;
+    const summary = runs.find((run) => run.id === id);
+    if (!summary) return;
     seededFor = id;
-    getRun(id)
-      .then((body) => ensureDiscoveryContext(body.run ?? body))
-      .catch(() => {});
+    void ensureDiscoveryContext(summary);
   });
 
   // A newly selected Session re-defaults the repo directory.
@@ -53,33 +53,31 @@
 
   onMount(() => {
     initDiscoveryRepo(workDir);
-    // A cold deep link (/runs/<runId>) seeds the picker from the Run
-    // instead: RunsView's ensureDiscoveryContext fills it once the Run
-    // loads, so skip the blank load here.
+    // A cold deep link waits for the list summary to seed the picker.
     if (!runId && discovery.repo && !discovery.specs.length && !discovery.selected) void loadDiscovery();
     load();
     stop = watch('runs', load);
   });
   onDestroy(() => stop?.());
 
-  const needsYou = $derived(
-    runs.flatMap((r) => (r.tickets ?? []).filter((t) => t.needsYou && t.state !== 'discarded' && t.state !== 'parked' && t.state !== 'merged').map((t) => ({ run: r, ticket: t }))),
-  );
-
+  const needsYouRuns = $derived(runs.filter((run) => run.counts?.needsYou > 0));
+  const needsYouCount = $derived(runs.reduce((count, run) => count + (run.counts?.needsYou ?? 0), 0));
   const dot = (status) => (status === 'done' ? 'bg-green-500' : status === 'failed' ? 'bg-red-500' : status === 'paused' ? 'bg-amber-500' : 'bg-blue-400 animate-pulse');
-  const merged = (r) => (r.tickets ?? []).filter((t) => t.state === 'merged').length;
+  const specLabel = (run) => String(run.spec ?? run.id).split('/').filter(Boolean).at(-2) || run.id;
+  const merged = (run) => run.counts?.merged ?? 0;
+  const total = (run) => run.counts?.total ?? 0;
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col gap-3" data-testid="runs-sidebar">
-  {#if needsYou.length}
+  {#if needsYouCount}
     <div class="animate-rise flex flex-col gap-1 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-2" data-testid="needs-you-strip">
-      <span class="px-2 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-300">Needs you ({needsYou.length})</span>
-      {#each needsYou as n (n.run.id + n.ticket.id)}
+      <span class="px-2 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-300">Needs you ({needsYouCount})</span>
+      {#each needsYouRuns as run (run.id)}
         <button
           type="button"
           class="truncate rounded-lg px-2 py-1 text-left text-sm transition-colors hover:bg-amber-500/15"
-          onclick={() => onNavigate(`/runs/${encodeURIComponent(n.run.id)}/${encodeURIComponent(n.ticket.id)}`)}
-        >{n.ticket.num ? `${n.ticket.num} ` : ''}{n.ticket.title}</button>
+          onclick={() => onNavigate(`/runs/${encodeURIComponent(run.id)}`)}
+        >{specLabel(run)} · {run.counts.needsYou} Ticket{run.counts.needsYou === 1 ? '' : 's'} need attention</button>
       {/each}
     </div>
   {/if}
@@ -132,8 +130,8 @@
           class="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent {r.id === runId ? 'bg-accent' : ''}"
         >
           <span class="size-2 shrink-0 rounded-full {dot(r.status)}"></span>
-          <span class="min-w-0 flex-1 truncate">{r.title || String(r.spec ?? r.id).split('/').slice(-2, -1)[0] || r.id}</span>
-          <span class="shrink-0 text-xs tabular-nums text-muted-foreground">{merged(r)}/{(r.tickets ?? []).length}</span>
+          <span class="min-w-0 flex-1 truncate">{specLabel(r)}</span>
+          <span class="shrink-0 text-xs tabular-nums text-muted-foreground">{merged(r)}/{total(r)}</span>
         </button>
       </li>
     {:else}

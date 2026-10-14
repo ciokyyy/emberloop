@@ -41,6 +41,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `disk_test.go`; temp-leak guards in `tempdir_test.go` over the
   `testsupport` helper (`TempDir` with chmod+retry and a TestMain-drained
   leak list; `el/` keeps its own guard in `el/tempdir_guard_test.go`).
+- Run collection API: `GET /api/runs` returns git-free summaries (`id`, `spec`,
+  `status`, `counts`, `repo`, `projectId`, `updatedAt`, plus `owner` for the
+  account sidebar); `GET /api/runs/<id>` returns the detailed Ticket snapshot.
+  `runs_test.go` covers both HTTP shapes and a bounded 40-Run, 8-Ticket list.
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
   `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
   check, selective re-review, scope warning), `runs_persist_test.go`,

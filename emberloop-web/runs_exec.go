@@ -41,6 +41,24 @@ type staticTicket struct {
 	Blockers []string `json:"blockers"`
 	Path     string   `json:"path"`
 }
+type runSummaryCounts struct {
+	Total    int `json:"total"`
+	Merged   int `json:"merged"`
+	NeedsYou int `json:"needsYou"`
+}
+
+// runSummary is the small Run-list view. Ticket content and per-Ticket state
+// stay on the detail endpoint so listing Runs never starts git subprocesses.
+type runSummary struct {
+	ID        string           `json:"id"`
+	Spec      string           `json:"spec"`
+	Status    string           `json:"status"`
+	Counts    runSummaryCounts `json:"counts"`
+	Repo      string           `json:"repo"`
+	ProjectID string           `json:"projectId"`
+	UpdatedAt time.Time        `json:"updatedAt"`
+	Owner     string           `json:"owner"`
+}
 
 // submitRec is one Session's submits: how many arrived, the last
 // status, its completed checkbox line texts and submit summary (workers;
@@ -146,6 +164,7 @@ type runState struct {
 	Model           string                             `json:"model"`
 	Effort          string                             `json:"effort,omitempty"`
 	CreatedAt       time.Time                          `json:"createdAt"`
+	UpdatedAt       time.Time                          `json:"updatedAt,omitempty"`
 	Error           string                             `json:"error,omitempty"`
 	FinalMergeFiles []string                           `json:"finalMergeFiles,omitempty"`
 	Owner           string                             `json:"owner,omitempty"`
@@ -597,14 +616,17 @@ func (d *Daemon) handleRuns(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		d.mu.Unlock()
-		runs := make([]map[string]any, 0, len(states))
+		runs := make([]*runSummary, 0, len(states))
 		for _, rs := range states {
-			if out := d.runJSON(rs); out != nil {
-				runs = append(runs, out)
+			if summary := d.runSummary(rs); summary != nil {
+				runs = append(runs, summary)
 			}
 		}
 		sort.Slice(runs, func(i, j int) bool {
-			return runs[i]["id"].(string) < runs[j]["id"].(string)
+			if runs[i].UpdatedAt.Equal(runs[j].UpdatedAt) {
+				return runs[i].ID < runs[j].ID
+			}
+			return runs[i].UpdatedAt.After(runs[j].UpdatedAt)
 		})
 		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 	case "POST":
@@ -3828,6 +3850,96 @@ func runSpecBehind(repo, branch string) any {
 	return behind
 }
 
+// runSummary calculates compact Ticket counts from the in-memory rows. It
+// deliberately avoids runJSON: the list seam must never read Ticket files or
+// run git to calculate a master distance.
+func (d *Daemon) runSummary(rs *runState) *runSummary {
+	if rs == nil {
+		return nil
+	}
+	d.mu.Lock()
+	current, ok := d.runs[rs.ID]
+	if !ok {
+		d.mu.Unlock()
+		return nil
+	}
+	rows := runTicketRowsLocked(current)
+	counts := runSummaryCounts{Total: len(current.Tickets)}
+	for _, ticket := range current.Tickets {
+		state, _, _, _, needsYou := runTicketStateLocked(current, ticket, rows)
+		if state == "merged" {
+			counts.Merged++
+		}
+		if (state == runStatusNeedsYou || needsYou != "") && state != "merged" && state != "discarded" && state != "parked" {
+			counts.NeedsYou++
+		}
+	}
+	updatedAt := current.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = current.CreatedAt
+	}
+	repo := current.Repo
+	summary := &runSummary{
+		ID: current.ID, Spec: current.Spec, Status: current.Status,
+		Counts: counts, Repo: repo, UpdatedAt: updatedAt, Owner: current.Owner,
+	}
+	d.mu.Unlock()
+	summary.ProjectID = d.projectIDForPath(repo)
+	return summary
+}
+
+// runTicketRowsLocked snapshots the driver rows while d.mu is held.
+func runTicketRowsLocked(rs *runState) map[string]el.DriverRow {
+	rows := map[string]el.DriverRow{}
+	if rs.Driver != nil {
+		for _, row := range rs.Driver.Snapshot() {
+			rows[row.ID] = row
+		}
+	}
+	return rows
+}
+
+// runTicketStateLocked applies the same priority rules to live and saved
+// rows for both compact summaries and the detailed Run snapshot. Callers hold
+// d.mu.
+func runTicketStateLocked(rs *runState, t staticTicket, rows map[string]el.DriverRow) (state, lastRefusal, tip string, stateSince time.Time, needsYou string) {
+	state = "queued"
+	if row, ok := rows[t.ID]; ok {
+		state = string(row.State)
+		lastRefusal = row.LastRefusal
+		tip = row.Tip
+		stateSince = row.Since
+	} else if saved, ok := rs.Rows[t.ID]; ok {
+		state = saved.State
+		lastRefusal = saved.LastRefusal
+		tip = saved.Tip
+		stateSince = saved.Since
+	} else if rs.Status == runStatusPaused {
+		state = runStatusPaused
+	}
+	// The driver row may still say merging after the merge landed.
+	if rs.Merged[t.ID] != "" {
+		state = "merged"
+	}
+	if state == "parked" && !rs.Parked[t.ID] && rs.NeedsYouReason[t.ID] == "" && rs.StartBlocked[t.ID] == "" && len(rs.baseChecking) > 0 {
+		state = "queued"
+	}
+	needsYou = rs.NeedsYouReason[t.ID]
+	if needsYou != "" && state != "merged" && state != "discarded" && state != runStatusNeedsYou && (state != "parked" || !rs.Parked[t.ID]) {
+		state = runStatusNeedsYou
+	}
+	if state != "merged" {
+		if rs.Discarded[t.ID] {
+			state = "discarded"
+		} else if rs.TicketPaused[t.ID] {
+			state = runStatusPaused
+		} else if rs.Parked[t.ID] {
+			state = "parked"
+		}
+	}
+	return
+}
+
 // runJSON calculates the master distance without holding d.mu, then
 // re-reads and renders the current Run state under the lock.
 func (d *Daemon) runJSON(rs *runState) map[string]any {
@@ -3861,60 +3973,10 @@ func (d *Daemon) runJSON(rs *runState) map[string]any {
 // refusal, ticket body/boxes, branch, tip, state time, needs-you reason,
 // follow-ups, agents, gate and append-only rounds.
 func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
-	rows := map[string]el.DriverRow{}
-	if rs.Driver != nil {
-		for _, row := range rs.Driver.Snapshot() {
-			rows[row.ID] = row
-		}
-	}
+	rows := runTicketRowsLocked(rs)
 	tickets := make([]map[string]any, 0, len(rs.Tickets))
 	for _, t := range rs.Tickets {
-		state := "queued"
-		lastRefusal := ""
-		tip := ""
-		var stateSince time.Time
-		if row, ok := rows[t.ID]; ok {
-			state = string(row.State)
-			lastRefusal = row.LastRefusal
-			tip = row.Tip
-			stateSince = row.Since
-		} else if saved, ok := rs.Rows[t.ID]; ok {
-			// No live Driver (reloaded or finished on another boot): show
-			// the row the last pass wrote.
-			state = saved.State
-			lastRefusal = saved.LastRefusal
-			tip = saved.Tip
-			stateSince = saved.Since
-		} else if rs.Status == runStatusPaused {
-			state = runStatusPaused
-		}
-		// The driver publishes rows once per pass, after any new starts, so
-		// its row can still read merging while the merge already landed and
-		// the freed slot started the next Ticket. The recorded merge wins.
-		if rs.Merged[t.ID] != "" {
-			state = "merged"
-		}
-		// A Ticket waiting on a background base check reads parked to the
-		// driver; with no park, Needs-you or block of its own it is queued.
-		if state == "parked" && !rs.Parked[t.ID] && rs.NeedsYouReason[t.ID] == "" && rs.StartBlocked[t.ID] == "" && len(rs.baseChecking) > 0 {
-			state = "queued"
-		}
-		needsYou := rs.NeedsYouReason[t.ID]
-		if needsYou != "" && state != "merged" && state != "discarded" && state != "needs-you" && (state != "parked" || !rs.Parked[t.ID]) {
-			// A base-red gate uses the driver's parked state to block a start;
-			// expose its Needs-you reason unless the User explicitly parked it.
-			state = "needs-you"
-		}
-		// User actions override the last driver row immediately.
-		if state != "merged" {
-			if rs.Discarded[t.ID] {
-				state = "discarded"
-			} else if rs.TicketPaused[t.ID] {
-				state = runStatusPaused
-			} else if rs.Parked[t.ID] {
-				state = "parked"
-			}
-		}
+		state, lastRefusal, tip, stateSince, needsYou := runTicketStateLocked(rs, t, rows)
 		blockers := t.Blockers
 		if blockers == nil {
 			blockers = []string{}
@@ -4010,6 +4072,7 @@ func (d *Daemon) ticketAgentsLocked(rs *runState, ticketID string) []ticketAgent
 
 // broadcastRunLocked wakes the Run's SSE streams; callers hold d.mu.
 func (d *Daemon) broadcastRunLocked(rs *runState) {
+	rs.UpdatedAt = time.Now().UTC()
 	d.live.publish("runs", "run:"+rs.ID)
 	notify := rs.notify
 	rs.notify = make(chan struct{})
@@ -4544,6 +4607,7 @@ func (d *Daemon) runFile(id string) string {
 
 // persistRun saves one Run beside the group files; callers hold d.mu.
 func (d *Daemon) persistRun(rs *runState) {
+	rs.UpdatedAt = time.Now().UTC()
 	defer d.live.publish("runs", "run:"+rs.ID)
 	dir := filepath.Join(d.stateDir, "enderbloom", "runs")
 	_ = os.MkdirAll(dir, 0o755)
@@ -4585,6 +4649,14 @@ func (d *Daemon) loadRuns() {
 		var rs runState
 		if err := json.Unmarshal(raw, &rs); err != nil || rs.ID == "" {
 			continue
+		}
+		if rs.UpdatedAt.IsZero() {
+			if info, err := en.Info(); err == nil {
+				rs.UpdatedAt = info.ModTime().UTC()
+			}
+			if rs.UpdatedAt.IsZero() {
+				rs.UpdatedAt = rs.CreatedAt
+			}
 		}
 		if rs.Status == runStatusRunning {
 			rs.Status = runStatusPaused

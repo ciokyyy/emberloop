@@ -197,8 +197,12 @@ func TestPauseStopsNewStartsAndResumeContinues(t *testing.T) {
 	for _, cand := range runs {
 		if cand.ID == run.ID {
 			found = true
-			if cand.Status != "done" || len(cand.Tickets) != 3 {
-				t.Fatalf("listed run = %+v, want done with 3 tickets", cand)
+			if cand.Status != "done" {
+				t.Fatalf("listed run = %+v, want done summary", cand)
+			}
+			detail := getRun(t, srv.URL, cand.ID)
+			if len(detail.Tickets) != 3 {
+				t.Fatalf("run detail tickets = %d, want 3", len(detail.Tickets))
 			}
 		}
 	}

@@ -75,38 +75,39 @@ describe('RunsSidebar run list', () => {
         id: 'run-old',
         spec: '/repo/.scratch/demo/spec.md',
         status: 'done',
-        createdAt: '2026-10-08T10:00:00Z',
-        tickets: [{ id: '01-first', state: 'merged' }],
+        repo: '/repo',
+        projectId: 'project-1',
+        owner: 'user-1',
+        updatedAt: '2026-10-08T10:00:00Z',
+        counts: { total: 1, merged: 1, needsYou: 0 },
       },
       {
         id: 'run-new',
         spec: '/repo/.scratch/demo/spec.md',
-        status: 'running',
-        createdAt: '2026-10-09T10:00:00Z',
-        tickets: [
-          { id: '01-first', state: 'needs-you', needsYou: 'same refusal ×3', num: 1, title: 'First' },
-          { id: '02-second', state: 'running', num: 2, title: 'Second' },
-        ],
+        status: 'needs-you',
+        repo: '/repo',
+        projectId: 'project-1',
+        owner: 'user-1',
+        updatedAt: '2026-10-09T10:00:00Z',
+        counts: { total: 2, merged: 0, needsYou: 1 },
       },
     ],
   };
-
   function stubRuns() {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (u) => ({
-        ok: true,
-        json: async () => {
-          if (String(u).includes('/api/specs/preview')) return preview;
-          if (String(u).includes('/api/specs')) return { specs: [] };
-          return runsBody;
-        },
-      })),
-    );
+    const fetchMock = vi.fn(async (u) => ({
+      ok: true,
+      json: async () => {
+        if (String(u).includes('/api/specs/preview')) return preview;
+        if (String(u).includes('/api/specs')) return { specs: [{ spec: preview.spec, title: preview.title, tickets: 2 }] };
+        return runsBody;
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
   }
 
   it('lists runs newest first with merged counts and navigates on pick', async () => {
-    stubRuns();
+    const fetchMock = stubRuns();
     const onNavigate = vi.fn();
     const { container } = render(RunsSidebar, { props: { workDir: '/repo', onNavigate } });
     const items = await within(container).findAllByRole('button', { name: /0\/2|1\/1/ });
@@ -114,17 +115,27 @@ describe('RunsSidebar run list', () => {
     // Newest run first: 0/2 before 1/1.
     expect(items[0].textContent).toMatch(/0\/2/);
     expect(items[1].textContent).toMatch(/1\/1/);
+    expect(fetchMock.mock.calls.some(([url]) => /\/api\/runs\/[^/]+$/.test(String(url)))).toBe(false);
     await fireEvent.click(items[0]);
     expect(onNavigate).toHaveBeenCalledWith('/runs/run-new');
   });
 
-  it('strips needs-you tickets out to their ticket pages', async () => {
+  it('seeds a deep link from the Run summary without fetching ticket detail', async () => {
+    const fetchMock = stubRuns();
+    const { container } = render(RunsSidebar, { props: { workDir: '', runId: 'run-new' } });
+    await vi.waitFor(() => expect(discovery.selected).toBe(preview.spec));
+    expect(discovery.repo).toBe('/repo');
+    expect(within(container).getByRole('button', { name: /Demo spec/ })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => /\/api\/runs\/[^/]+$/.test(String(url)))).toBe(false);
+  });
+
+  it('shows needs-you counts from summaries and navigates to Run detail', async () => {
     stubRuns();
     const onNavigate = vi.fn();
     const { container } = render(RunsSidebar, { props: { workDir: '/repo', onNavigate } });
     const strip = await within(container).findByTestId('needs-you-strip');
     expect(strip.textContent).toMatch(/needs you \(1\)/i);
-    await fireEvent.click(within(strip).getByRole('button', { name: /first/i }));
-    expect(onNavigate).toHaveBeenCalledWith('/runs/run-new/01-first');
+    await fireEvent.click(within(strip).getByRole('button', { name: /1 ticket need attention/i }));
+    expect(onNavigate).toHaveBeenCalledWith('/runs/run-new');
   });
 });
