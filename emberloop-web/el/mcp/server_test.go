@@ -110,22 +110,18 @@ func (s slowTool) Execute(context.Context, string, json.RawMessage) (string, err
 }
 
 // Two calls asked at once must run at once: the server answers a slow call in
-// its own goroutine so a second call does not queue behind it.
-func TestTwoSlowCallsFinishInAboutOneCallsTime(t *testing.T) {
+// its own goroutine so a second call does not queue behind it. Peak overlap
+// proves this without a wall-clock threshold that varies with host load.
+func TestTwoSlowCallsRunConcurrently(t *testing.T) {
 	const delay = 300 * time.Millisecond
 	var live, peak int32
 	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"slow"}}`
 	call2 := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow"}}`
 
-	start := time.Now()
 	serve(t, []tools.Tool{slowTool{delay: delay, live: &live, peak: &peak}}, call, call2)
-	elapsed := time.Since(start)
 
 	if peak != 2 {
 		t.Errorf("peak concurrency was %d, want 2: the calls ran in series", peak)
-	}
-	if elapsed > 2*delay {
-		t.Errorf("two %s calls took %s: they ran in series", delay, elapsed)
 	}
 }
 
