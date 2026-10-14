@@ -60,8 +60,8 @@ func TestProvidersKeepsCatalogWhenAuthFileIsUnreadable(t *testing.T) {
 	h := d.Handler()
 	admin := signedIn(t, h, "admin")
 	providers, _ := decodeProviderList(t, h, admin)
-	if len(providers) != len(ai.ListProviders()) {
-		t.Fatalf("provider count = %d after credential read error, SDK catalog has %d", len(providers), len(ai.ListProviders()))
+	if len(providers) != len(ai.ListProviders())+1 {
+		t.Fatalf("provider count = %d after credential read error, SDK catalog has %d plus Claude", len(providers), len(ai.ListProviders()))
 	}
 	if got := findProvider(t, providers, "openai"); got.Source != "unavailable" || got.SourceLabel != "Status unavailable" {
 		t.Fatalf("unreadable provider status = %+v, want unavailable row", got)
@@ -98,13 +98,16 @@ func TestProvidersListsPigCatalogAndRedactsCredentials(t *testing.T) {
 	}
 
 	providers, rec := decodeProviderList(t, h, admin)
-	if len(providers) != len(ai.ListProviders()) {
-		t.Fatalf("provider count = %d, SDK catalog has %d", len(providers), len(ai.ListProviders()))
+	if len(providers) != len(ai.ListProviders())+1 {
+		t.Fatalf("provider count = %d, SDK catalog has %d plus Claude", len(providers), len(ai.ListProviders()))
 	}
 	for i, id := range ai.ListProviders() {
 		if providers[i].ID != id {
 			t.Errorf("provider[%d].ID = %q, SDK order has %q", i, providers[i].ID, id)
 		}
+	}
+	if got := providers[len(ai.ListProviders())]; got.ID != "claude" || got.Name != "Claude" || got.Group != providerSubscriptionLogins {
+		t.Errorf("Claude row = %+v, want a host-login row", got)
 	}
 
 	stored := findProvider(t, providers, "openrouter")

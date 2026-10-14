@@ -476,6 +476,24 @@ export const getChatGPTDeviceCodeLogin = (id) =>
 export const cancelChatGPTDeviceCodeLogin = (id) =>
   fetch(url(`/api/providers/openai-codex/device-code/${encodeURIComponent(id)}`), { method: 'DELETE' }).then(json);
 
+// Claude's host login runs in a short-lived PTY owned by the Daemon. The
+// browser reads terminal output and sends pasted codes without using pig auth.
+export const startClaudeLogin = () =>
+  fetch(url('/api/providers/claude/login'), { method: 'POST' }).then(json);
+
+export const getClaudeLogin = (id) =>
+  fetch(url(`/api/providers/claude/login/${encodeURIComponent(id)}`)).then(json);
+
+export const sendClaudeLoginCode = (id, code) =>
+  fetch(url(`/api/providers/claude/login/${encodeURIComponent(id)}/code`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  }).then(json);
+
+export const cancelClaudeLogin = (id) =>
+  fetch(url(`/api/providers/claude/login/${encodeURIComponent(id)}`), { method: 'DELETE' }).then(json);
+
 // The Daemon's build identity for the version badge. version.js wraps this
 // with its never-throws fetch.
 export const getVersion = () => fetch(url('/api/version')).then(json);

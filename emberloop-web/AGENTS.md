@@ -47,18 +47,22 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   their repo path. `dashboard_test.go` covers HTTP grouping, status filtering,
   nested ownership and home-directory Sessions.
 - Provider API and auth: `providers.go` serves `GET /api/providers` from the
-  pig SDK catalog and read-only auth checks; responses include status/source
-  metadata and stored-key flags only. Admin-only `PUT`/`DELETE
-  /api/providers/<id>/key` write API keys to pig `auth.json` without returning
-  them. ChatGPT uses one device-code login per Daemon, expiring after 15 minutes:
-  `POST /api/providers/openai-codex/device-code` starts pig's SDK flow; `GET`
-  and `DELETE /api/providers/openai-codex/device-code/<id>` poll its code/link/
-  status or cancel it. Success stores OAuth credentials in pig `auth.json` and
-  forces a ChatGPT quota refresh; shutdown cancels active logins. Terminal
-  status is retained for five minutes. `provider_device_code_test.go` covers
-  success, expiry, cancel and authorization against local stubs;
-  `providers_test.go` covers catalog/status sources, secret redaction, API-key
-  writes and authorization with a temporary pig dir.
+  pig SDK catalog plus a synthetic Claude row backed by host Claude Code
+  credentials; responses include status/source metadata and stored-key flags,
+  never secret values. Admin-only `PUT`/`DELETE /api/providers/<id>/key` writes
+  API keys to pig `auth.json`. ChatGPT uses one device-code login per Daemon,
+  expiring after 15 minutes: `POST /api/providers/openai-codex/device-code`
+  starts pig's SDK flow; `GET` and `DELETE /api/providers/openai-codex/device-code/<id>`
+  poll its code/link/status or cancel it. Success stores OAuth credentials in
+  pig `auth.json` and forces a ChatGPT quota refresh. Claude uses one admin-only
+  `claude auth login` PTY at a time and accepts code retries while it remains
+  running; Claude Code alone writes its login in the host config directory,
+  never pig. Shutdown cancels both login flows. ChatGPT status is retained for
+  five minutes. `provider_device_code_test.go` covers ChatGPT success, expiry,
+  cancel and authorization against local stubs; `providers_test.go` covers
+  catalog/status sources, secret redaction, API-key writes and authorization;
+  `claude_login_test.go` covers PTY success, invalid code, retry, process exit,
+  authorization and pig-auth separation.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both

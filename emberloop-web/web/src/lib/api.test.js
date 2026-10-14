@@ -142,3 +142,25 @@ describe('promotions client', () => {
     expect(JSON.parse(seen.opts.body)).toEqual({ rule_id: 'r1', target: '' });
   });
 });
+
+describe('Claude login client', () => {
+  it('starts, reads, submits a code to, and cancels the host PTY session', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body ? JSON.parse(options.body) : null });
+      return reply(200, '{"id":"login-1","state":"running","output":"Visit https://claude.ai"}');
+    }));
+
+    expect((await api.startClaudeLogin()).id).toBe('login-1');
+    expect((await api.getClaudeLogin('login-1')).state).toBe('running');
+    await api.sendClaudeLoginCode('login-1', 'pasted-code');
+    await api.cancelClaudeLogin('login-1');
+
+    expect(calls).toEqual([
+      { url: '/api/providers/claude/login', method: 'POST', body: null },
+      { url: '/api/providers/claude/login/login-1', method: 'GET', body: null },
+      { url: '/api/providers/claude/login/login-1/code', method: 'POST', body: { code: 'pasted-code' } },
+      { url: '/api/providers/claude/login/login-1', method: 'DELETE', body: null },
+    ]);
+  });
+});

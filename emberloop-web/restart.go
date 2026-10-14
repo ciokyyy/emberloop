@@ -23,6 +23,7 @@ const restartLogName = "restart.log"
 // never wedging the restart past the drain.
 func (d *Daemon) Shutdown() {
 	d.cancelChatGPTDeviceLogins()
+	d.stopClaudeLogin()
 	if wait := d.mineWaitOrDefault(); !d.waitMiningTimeout(wait) {
 		d.LogRestart("shutdown: mining still running after %s, continuing without it", wait)
 	}

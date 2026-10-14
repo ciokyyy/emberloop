@@ -131,6 +131,54 @@ func providerAuthSource(check *ai.AuthCheck, storedKey bool) (string, string) {
 	}
 }
 
+// claudeHostProviderView reports only whether the host Claude Code login is
+// present. The credential bytes never enter a provider response or pig storage.
+func (d *Daemon) claudeHostProviderView() providerView {
+	view := providerView{
+		ID: "claude", Name: "Claude", Group: providerSubscriptionLogins,
+		Source: "none", SourceLabel: "Not connected",
+	}
+	dir := d.hostClaudeDir
+	if dir == "" {
+		dir = claudeHostDir()
+	}
+	data, err := os.ReadFile(filepath.Join(dir, claudeAuthFile))
+	if os.IsNotExist(err) {
+		return view
+	}
+	if err != nil {
+		view.Source, view.SourceLabel = "unavailable", "Status unavailable"
+		return view
+	}
+	var credentials struct {
+		OAuth *struct {
+			AccessToken string `json:"accessToken"`
+			ExpiresAt   int64  `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &credentials) != nil {
+		view.Source, view.SourceLabel = "unavailable", "Status unavailable"
+		return view
+	}
+	if credentials.OAuth == nil || strings.TrimSpace(credentials.OAuth.AccessToken) == "" {
+		return view
+	}
+	if expires := credentials.OAuth.ExpiresAt; expires != 0 {
+		now := d.now()
+		expired := expires <= now.Unix()
+		if expires >= 1e11 {
+			expired = expires <= now.UnixMilli()
+		}
+		if expired {
+			view.Source, view.SourceLabel = "expired", "Claude Code login expired"
+			return view
+		}
+	}
+	view.Connected = true
+	view.Source, view.SourceLabel = "host_claude", "Claude Code login"
+	return view
+}
+
 func (d *Daemon) handleProviders(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -145,7 +193,7 @@ func (d *Daemon) handleProviders(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), providerListTimeout)
 	defer cancel()
 	store := ai.NewReadOnlyAuthStorage(d.providerAuthPath())
-	providers := make([]providerView, 0, len(ai.ListProviders()))
+	providers := make([]providerView, 0, len(ai.ListProviders())+1)
 	for _, id := range ai.ListProviders() {
 		auth, err := ai.BuiltinProviderAuth(id)
 		if err != nil {
@@ -158,6 +206,7 @@ func (d *Daemon) handleProviders(w http.ResponseWriter, r *http.Request) {
 		}
 		providers = append(providers, view)
 	}
+	providers = append(providers, d.claudeHostProviderView())
 	writeJSON(w, http.StatusOK, map[string]any{"providers": providers})
 }
 

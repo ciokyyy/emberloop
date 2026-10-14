@@ -17,6 +17,16 @@ function providerRows() {
       keyEditable: false,
     },
     {
+      id: 'claude',
+      name: 'Claude',
+      group: 'subscription_logins',
+      connected: false,
+      source: 'none',
+      sourceLabel: 'Not connected',
+      keySet: false,
+      keyEditable: false,
+    },
+    {
       id: 'openrouter',
       name: 'OpenRouter',
       group: 'api_keys',
@@ -42,11 +52,28 @@ function providerRows() {
 
 function stubProviders() {
   let rows = providerRows();
+  let loginState = 'running';
   const calls = [];
   const fetchMock = vi.fn(async (input, options = {}) => {
     const url = String(input);
     const method = options.method ?? 'GET';
     calls.push({ url, method, body: options.body ? JSON.parse(options.body) : null });
+    if (url === '/api/providers/claude/login' && method === 'POST') {
+      return { ok: true, json: async () => ({ id: 'login-1', state: 'running', output: '\u001b[31mVisit https://claude.ai/oauth/authorize?code=abc\u001b[0m\nPaste code:' }) };
+    }
+    if (url === '/api/providers/claude/login/login-1/code' && method === 'POST') {
+      loginState = 'succeeded';
+      rows = rows.map((row) => row.id === 'claude'
+        ? { ...row, connected: true, source: 'host_claude', sourceLabel: 'Claude Code login' }
+        : row);
+      return { ok: true, json: async () => ({ ok: true }) };
+    }
+    if (url === '/api/providers/claude/login/login-1' && method === 'GET') {
+      return { ok: true, json: async () => ({ id: 'login-1', state: loginState, output: '\u001b[32mVisit https://claude.ai/oauth/authorize?code=abc\u001b[0m\nLogin successful' }) };
+    }
+    if (url === '/api/quota/refresh' && method === 'POST') {
+      return { ok: true, json: async () => ({ providers: [] }) };
+    }
     if (method === 'PUT') {
       rows = rows.map((row) => row.id === 'openrouter'
         ? { ...row, connected: true, source: 'stored_key', sourceLabel: 'Stored key', keySet: true }
@@ -79,7 +106,7 @@ describe('ProvidersPage', () => {
     expect(screen.getByTestId('providers-loading')).toBeTruthy();
     expect(screen.queryByTestId('provider-row')).toBeNull();
     resolveFetch({ ok: true, json: async () => ({ providers: providerRows() }) });
-    expect(await screen.findAllByTestId('provider-row')).toHaveLength(3);
+    expect(await screen.findAllByTestId('provider-row')).toHaveLength(4);
     expect(screen.queryByTestId('providers-loading')).toBeNull();
   });
 
@@ -103,6 +130,37 @@ describe('ProvidersPage', () => {
     expect(within(container.querySelector('[data-provider="openrouter"]')).getByTestId('provider-source').textContent).toContain('API key set');
     await screen.findAllByTestId('provider-row');
     expect(container.textContent).not.toContain(secret);
+  });
+
+  it('connects Claude through the host PTY, sends the pasted code, and refreshes its quota', async () => {
+    const calls = stubProviders();
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const claudeRow = container.querySelector('[data-provider="claude"]');
+
+    await fireEvent.click(within(claudeRow).getByRole('button', { name: 'Connect' }));
+    expect(await within(claudeRow).findByTestId('claude-login-panel')).toBeTruthy();
+    expect(within(claudeRow).getByRole('link', { name: 'Open Claude sign-in page' }).getAttribute('href'))
+      .toBe('https://claude.ai/oauth/authorize?code=abc');
+    expect(within(claudeRow).getByTestId('claude-login-output').textContent).not.toContain('\u001b');
+
+    const codeInput = within(claudeRow).getByLabelText('Claude login code');
+    expect(codeInput.type).toBe('password');
+    await fireEvent.input(codeInput, { target: { value: 'paste-me-123' } });
+    await fireEvent.click(within(claudeRow).getByRole('button', { name: 'Send code' }));
+
+    expect(await within(claudeRow).findByTestId('claude-login-success')).toBeTruthy();
+    expect(calls.find((call) => call.url.endsWith('/code'))).toMatchObject({
+      url: '/api/providers/claude/login/login-1/code',
+      method: 'POST',
+      body: { code: 'paste-me-123' },
+    });
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/quota/refresh')).toBe(true));
+    expect(calls.find((call) => call.url === '/api/quota/refresh')).toMatchObject({
+      method: 'POST',
+      body: { key: 'claude' },
+    });
+    await waitFor(() => expect(within(claudeRow).getByTestId('provider-status').textContent).toBe('Connected'));
   });
 
   it('lets admins set and remove a key while only reading the set flag back', async () => {

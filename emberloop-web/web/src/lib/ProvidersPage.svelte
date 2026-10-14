@@ -6,11 +6,16 @@
   import Input from './ui/input.svelte';
   import {
     cancelChatGPTDeviceCodeLogin,
+    cancelClaudeLogin,
     getChatGPTDeviceCodeLogin,
+    getClaudeLogin,
     getProviders,
+    refreshQuota,
     removeProviderKey,
+    sendClaudeLoginCode,
     setProviderKey,
     startChatGPTDeviceCodeLogin,
+    startClaudeLogin,
   } from './api.js';
 
   let { admin = false } = $props();
@@ -26,12 +31,18 @@
   let chatGPTLogin = $state(null);
   let chatGPTPollTimer;
   let chatGPTPollInFlight = false;
+  let claudeLogin = $state(null);
+  let loginCode = $state('');
+  let loginBusy = $state(false);
+  let loginError = $state('');
+  let claudeLoginTimer;
+  let refreshedClaudeLogin = '';
 
   const groups = [
     {
       id: 'subscription_logins',
       title: 'Subscription logins',
-      hint: 'Pig OAuth and subscription providers. Their connection status is read-only here.',
+      hint: 'Pig subscription logins are listed here. Claude is managed by Claude Code, not pig.',
       icon: Check,
     },
     {
@@ -194,11 +205,111 @@
 
   onDestroy(() => {
     clearTimeout(copyTimer);
+    clearTimeout(claudeLoginTimer);
     stopChatGPTLoginPolling();
     if (admin && chatGPTLoginActive(chatGPTLogin)) {
       void cancelChatGPTDeviceCodeLogin(chatGPTLogin.id).catch(() => {});
     }
+    if (admin && claudeLogin?.state === 'running') {
+      void cancelClaudeLogin(claudeLogin.id).catch(() => {});
+    }
   });
+
+  function cleanClaudeOutput(output) {
+    return String(output ?? '').replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g, '');
+  }
+
+  function claudeLoginURL(output) {
+    const candidate = cleanClaudeOutput(output).match(/https:\/\/[^\s"'<>]+/)?.[0]?.replace(/[),.;]+$/, '');
+    if (!candidate) return '';
+    try {
+      return new URL(candidate).protocol === 'https:' ? candidate : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function scheduleClaudeLoginPoll() {
+    clearTimeout(claudeLoginTimer);
+    claudeLoginTimer = setTimeout(() => void pollClaudeLogin(), 500);
+  }
+
+  function finishClaudeLogin(session) {
+    if (session?.state !== 'succeeded' || refreshedClaudeLogin === session.id) return;
+    refreshedClaudeLogin = session.id;
+    loginCode = '';
+    void load();
+    void refreshQuota('claude').catch(() => {});
+  }
+
+  async function pollClaudeLogin() {
+    const active = claudeLogin;
+    if (!active?.id || active.state !== 'running') return;
+    try {
+      const latest = await getClaudeLogin(active.id);
+      if (claudeLogin?.id !== latest.id) return;
+      claudeLogin = latest;
+      if (latest.state === 'running') scheduleClaudeLoginPoll();
+      else finishClaudeLogin(latest);
+    } catch (error) {
+      if (claudeLogin?.id === active.id) {
+        claudeLogin = { ...active, state: 'failed', error: error?.message || 'Could not read Claude login status.' };
+      }
+    }
+  }
+
+  async function startClaudeLoginFlow(provider) {
+    if (!admin || loginBusy || claudeLogin?.state === 'running') return;
+    loginBusy = true;
+    loginError = '';
+    rowErrors = { ...rowErrors, [provider.id]: '' };
+    try {
+      claudeLogin = await startClaudeLogin();
+      loginCode = '';
+      if (claudeLogin.state === 'running') scheduleClaudeLoginPoll();
+      else finishClaudeLogin(claudeLogin);
+    } catch (error) {
+      rowErrors = { ...rowErrors, [provider.id]: error?.message || 'Could not start Claude login.' };
+    } finally {
+      loginBusy = false;
+    }
+  }
+
+  async function submitClaudeLoginCode(event) {
+    event.preventDefault();
+    const code = String(loginCode ?? '').trim();
+    if (!code) {
+      loginError = 'Paste the code from Claude.';
+      return;
+    }
+    loginBusy = true;
+    loginError = '';
+    try {
+      await sendClaudeLoginCode(claudeLogin.id, code);
+      loginCode = '';
+      await pollClaudeLogin();
+    } catch (error) {
+      loginError = error?.message || 'Could not send the Claude login code.';
+    } finally {
+      loginBusy = false;
+    }
+  }
+
+  async function cancelClaudeLoginFlow() {
+    if (!claudeLogin?.id || loginBusy) return;
+    clearTimeout(claudeLoginTimer);
+    loginBusy = true;
+    loginError = '';
+    try {
+      await cancelClaudeLogin(claudeLogin.id);
+      claudeLogin = { ...claudeLogin, state: 'canceled', error: 'Claude login canceled.' };
+      loginCode = '';
+    } catch (error) {
+      loginError = error?.message || 'Could not cancel Claude login.';
+    } finally {
+      loginBusy = false;
+    }
+  }
 
   onMount(() => {
     void load();
@@ -215,7 +326,7 @@
           <Badge variant="outline">Global</Badge>
           {#if admin}<Badge variant="outline">Admin managed</Badge>{/if}
         </div>
-        <p class="text-sm text-muted-foreground">Pig provider status for this host. API keys are stored in pig <code class="font-mono">auth.json</code>; the key itself is never shown after saving.</p>
+        <p class="text-sm text-muted-foreground">Provider status for this host. Pig API keys are stored in <code class="font-mono">auth.json</code>; Claude Code keeps its login in the host <code class="font-mono">~/.claude</code>.</p>
       </header>
 
       {#if !admin}
@@ -267,7 +378,17 @@
                           {#if provider.keySet}<span class="ml-1" data-testid="provider-key-set">· API key set</span>{/if}
                         </p>
                       </div>
-                      {#if provider.keyEditable}
+                      {#if provider.id === 'claude'}
+                        <div class="flex flex-wrap items-center gap-2 sm:ml-auto max-md:w-full max-md:[&>*]:flex-1">
+                          {#if admin}
+                            <Button variant="outline" size="sm" disabled={loginBusy || claudeLogin?.state === 'running'} aria-busy={loginBusy} onclick={() => startClaudeLoginFlow(provider)}>
+                              <Terminal />{claudeLogin?.state === 'running' ? 'Login running' : provider.connected ? 'Reconnect' : 'Connect'}
+                            </Button>
+                          {:else}
+                            <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
+                          {/if}
+                        </div>
+                      {:else if provider.keyEditable}
                         <div class="flex flex-wrap items-center gap-2 sm:ml-auto max-md:w-full max-md:[&>*]:flex-1">
                           {#if admin}
                             <Button variant="outline" size="sm" disabled={busy[provider.id]} aria-busy={Boolean(busy[provider.id])} onclick={() => beginEdit(provider)}>
@@ -303,6 +424,40 @@
                         <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
                       {/if}
                     </div>
+
+                    {#if provider.id === 'claude' && admin && claudeLogin?.id}
+                      {@const authorizationURL = claudeLoginURL(claudeLogin.output)}
+                      <div class="mt-3 grid gap-3 rounded-xl border bg-background p-3" data-testid="claude-login-panel" aria-live="polite">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <p class="text-sm font-medium" data-testid="claude-login-state">Claude login {claudeLogin.state}</p>
+                          {#if authorizationURL}
+                            <a class="text-sm text-primary underline underline-offset-4" href={authorizationURL} target="_blank" rel="noopener noreferrer">Open Claude sign-in page</a>
+                          {/if}
+                        </div>
+                        <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 font-mono text-xs" data-testid="claude-login-output">{cleanClaudeOutput(claudeLogin.output) || 'Waiting for Claude Code…'}</pre>
+                        {#if claudeLogin.error}<p role="alert" class="text-xs text-destructive">{claudeLogin.error}</p>{/if}
+                        {#if loginError}<p role="alert" class="text-xs text-destructive">{loginError}</p>{/if}
+                        {#if claudeLogin.state === 'running'}
+                          <form class="grid gap-3" data-testid="claude-login-form" onsubmit={submitClaudeLoginCode}>
+                            <Input
+                              name="claude-login-code"
+                              type="password"
+                              autocomplete="off"
+                              spellcheck="false"
+                              placeholder="Paste the code from Claude"
+                              aria-label="Claude login code"
+                              bind:value={loginCode}
+                            />
+                            <div class="flex flex-wrap gap-2 max-md:[&>*]:flex-1">
+                              <Button type="submit" disabled={loginBusy} aria-busy={loginBusy}><Check />Send code</Button>
+                              <Button variant="ghost" type="button" onclick={cancelClaudeLoginFlow} disabled={loginBusy}><X />Cancel login</Button>
+                            </div>
+                          </form>
+                        {:else if claudeLogin.state === 'succeeded'}
+                          <p class="text-sm text-muted-foreground" data-testid="claude-login-success">Claude is connected. Quota refreshed.</p>
+                        {/if}
+                      </div>
+                    {/if}
 
                     {#if provider.id === 'openai-codex' && chatGPTLogin}
                       <div class="mt-3 grid gap-3 rounded-xl border bg-background p-3" data-testid="chatgpt-device-login" data-status={chatGPTLogin.status}>
