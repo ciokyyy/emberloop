@@ -106,12 +106,18 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fast driver into concluded runs. Same-tip hold, patch-identical reuse,
   retry-after-refusal, failed-run resume and fake-clock idle tests stay
   serial: their counts and waits flake under parallel git load.
-- `stopRunsForTest` runs once per Daemon (`runsStopped`; `runTestDaemon` and
-  `authedHandler` both register it), interrupts busy Sessions every poll, and
-  stops waiting on a Session still busy after 50 polls. Fake turns last about
-  5ms, so tests wait for a turn's end with `waitTurnEnd` (an idle status after
-  the prompt's seq), never working-then-idle polls. A test that jumps the fake
-  clock first waits for the Worker's first turn to end.
+- `stopRunsForTest` is registered per Daemon (`runsStopped`; `runTestDaemon`
+  and `authedHandler` both register it). Every critical section defers its
+  unlock; recovered cleanup panics are reported with `t.Errorf`, and its
+  bounded wait never fails a test itself. `runTestDaemon` acquires the Run-test
+  slot before registering shutdown; `initRunRepo` also acquires it for tests
+  that do not start a Daemon. The slot's unconditional cleanup is registered
+  on first acquisition, so it runs after every later cleanup. The helper
+  interrupts busy Sessions every poll and stops waiting on a Session still
+  busy after 50 polls. Fake turns last about 5ms, so tests wait for a turn's
+  end with `waitTurnEnd` (an idle status after the prompt's seq), never
+  working-then-idle polls. A test that jumps the fake clock first waits for
+  the Worker's first turn to end.
 - A Session exists before its first prompt lands: tests read a transcript only
   after `firstPromptWhere` sees a prompt. A test that forces a Run's status
   after a pause first waits for the driver to exit (`driving` false) or park

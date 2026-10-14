@@ -51,9 +51,12 @@ func testGit(t *testing.T, dir string, args ...string) string {
 // NewDaemon (see runs_pause_switch_test.go).
 func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
 	t.Helper()
+	// Acquire the slot before registering any Daemon cleanup, even when a test
+	// starts its Daemon before calling initRunRepo.
+	holdRunTestSlot(t)
 	d := NewDaemon(stateDir, backend)
 	d.SetPollInterval(testPollInterval())
-	t.Cleanup(d.stopRunsForTest)
+	t.Cleanup(func() { d.stopRunsForTest(t) })
 	return d
 }
 
@@ -68,65 +71,160 @@ func runTestDaemon(t *testing.T, stateDir string, backend Backend) *Daemon {
 // a lost member and never delivers, so it cannot resurrect anything.
 // A Run test registers this cleanup twice (runTestDaemon and authedHandler),
 // so runsStopped makes the second call a no-op instead of paying the wait again.
-func (d *Daemon) stopRunsForTest() {
+// Every critical section defers the unlock, and any panic is reported to the
+// test, so cleanup cannot strand d.mu.
+func (d *Daemon) stopRunsForTest(t testing.TB) {
+	d.stopRunsForTestWithReporter(func(format string, args ...any) {
+		t.Errorf(format, args...)
+	})
+}
+
+func (d *Daemon) stopRunsForTestWithReporter(report func(string, ...any)) {
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			report("stopRunsForTest panicked: %v", panicValue)
+		}
+	}()
 	if _, loaded := runsStopped.LoadOrStore(d, true); loaded {
 		return
 	}
-	d.mu.Lock()
-	for _, rs := range d.runs {
-		if rs.Discarded == nil {
-			rs.Discarded = map[string]bool{}
+	func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for _, rs := range d.runs {
+			if rs.Discarded == nil {
+				rs.Discarded = map[string]bool{}
+			}
+			for _, tk := range rs.Tickets {
+				rs.Discarded[tk.ID] = true
+			}
+			closeUnpauseLocked(rs)
+			rs.unpause = nil
 		}
-		for _, tk := range rs.Tickets {
-			rs.Discarded[tk.ID] = true
-		}
-		closeUnpauseLocked(rs)
-		rs.unpause = nil
-	}
-	d.mu.Unlock()
+	}()
 	const stuckPolls = 50
 	polls := map[string]int{}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		d.mu.Lock()
 		busy := false
-		for _, rs := range d.runs {
-			if rs.driving {
-				busy = true
-				break
-			}
-		}
-		// End any turn still running, every poll. A scripted fake Delay on a
-		// turn no submit ever stopped — the second Reviewer, say — would
-		// otherwise hold its Session busy for the whole delay, and a turn the
-		// driver starts after one interrupt would do the same.
-		// A Session still busy after stuckPolls interrupts has a turn that
-		// ignores them (a test parked it on purpose): stop waiting on it
-		// instead of burning the whole deadline.
 		type busySession struct{ id, harness string }
 		var stop []busySession
-		for id, s := range d.sessions {
-			if s.active > 0 || s.busy {
-				if polls[id]++; polls[id] > stuckPolls {
-					continue
+		func() {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			for _, rs := range d.runs {
+				if rs.driving {
+					busy = true
+					break
 				}
-				busy = true
-				stop = append(stop, busySession{id, s.meta.Harness})
 			}
-		}
-		d.mu.Unlock()
+			// End any turn still running, every poll. A scripted fake Delay on a
+			// turn no submit ever stopped — the second Reviewer, say — would
+			// otherwise hold its Session busy for the whole delay, and a turn the
+			// driver starts after one interrupt would do the same.
+			// A Session still busy after stuckPolls interrupts has a turn that
+			// ignores them (a test parked it on purpose): stop waiting on it
+			// instead of burning the whole deadline.
+			for id, s := range d.sessions {
+				if s.active > 0 || s.busy {
+					if polls[id]++; polls[id] > stuckPolls {
+						continue
+					}
+					busy = true
+					stop = append(stop, busySession{id, s.meta.Harness})
+				}
+			}
+		}()
 		if !busy || time.Now().After(deadline) {
 			return
 		}
 		for _, b := range stop {
-			d.mu.Lock()
-			ib, _ := d.backendForLocked(b.harness).(interruptBackend)
-			d.mu.Unlock()
+			var ib interruptBackend
+			func() {
+				d.mu.Lock()
+				defer d.mu.Unlock()
+				ib, _ = d.backendForLocked(b.harness).(interruptBackend)
+			}()
 			if ib != nil {
 				ib.Interrupt(b.id)
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// runPanickingRunTest executes the cleanup path of a Run subtest whose body
+// panics, recovering only so the parent can assert on the post-cleanup state.
+func runPanickingRunTest(t *testing.T, daemon **Daemon) {
+	t.Helper()
+	if !t.Run("run-body-panics", func(t *testing.T) {
+		holdRunTestSlot(t)
+		*daemon = runTestDaemon(t, tempDir(t), NewFakeBackend())
+		defer func() {
+			if got := recover(); got != "intentional Run test panic" {
+				t.Errorf("recovered panic = %v, want intentional Run test panic", got)
+			}
+		}()
+
+		panic("intentional Run test panic")
+	}) {
+		t.Error("panicking Run test subtest failed")
+	}
+}
+
+func TestRunTestCleanupSurvivesBodyPanic(t *testing.T) {
+	oldSlots := runTestSlots
+	runTestSlots = make(chan struct{}, 1)
+	defer func() { runTestSlots = oldSlots }()
+	var d *Daemon
+	runPanickingRunTest(t, &d)
+	if d == nil {
+		t.Fatal("panicking Run test did not create its Daemon")
+	}
+	if !d.mu.TryLock() {
+		t.Fatal("Daemon mutex remains locked after Run test cleanup")
+	}
+	d.mu.Unlock()
+	if got := len(runTestSlots); got != 0 {
+		t.Fatalf("Run test slot count after panic cleanup = %d, want 0", got)
+	}
+	if !t.Run("next-run-test-takes-slot", func(t *testing.T) {
+		holdRunTestSlot(t)
+		if got := len(runTestSlots); got != 1 {
+			t.Errorf("next Run test holds %d slots, want 1", got)
+		}
+	}) {
+		t.Fatal("next Run test could not take the released slot")
+	}
+	if got := len(runTestSlots); got != 0 {
+		t.Fatalf("Run test slot count after next test = %d, want 0", got)
+	}
+}
+
+func TestStopRunsForTestReportsPanicAndUnlocks(t *testing.T) {
+	d := &Daemon{runs: map[string]*runState{"nil-run": nil}}
+	var reports []string
+	d.stopRunsForTestWithReporter(func(format string, args ...any) {
+		reports = append(reports, fmt.Sprintf(format, args...))
+	})
+	if len(reports) != 1 || !strings.Contains(reports[0], "invalid memory address or nil pointer dereference") {
+		t.Fatalf("cleanup panic reports = %q, want recovered nil-pointer panic", reports)
+	}
+	if !d.mu.TryLock() {
+		t.Fatal("Daemon mutex remains locked after recovered cleanup panic")
+	}
+	d.mu.Unlock()
+}
+
+func TestCloseUnpauseLockedIsIdempotent(t *testing.T) {
+	gate := make(chan struct{})
+	rs := &runState{unpause: gate}
+	closeUnpauseLocked(rs)
+	closeUnpauseLocked(rs)
+	select {
+	case <-gate:
+	default:
+		t.Fatal("unpause gate remains open after close")
 	}
 }
 
@@ -156,6 +254,8 @@ func holdRunTestSlot(t *testing.T) {
 		return
 	}
 	runTestSlots <- struct{}{}
+	// Registered before the test sets up any other cleanup, so the slot is
+	// always released last, even if a later cleanup or the test body panics.
 	t.Cleanup(func() {
 		runTestHeld.Delete(t.Name())
 		<-runTestSlots

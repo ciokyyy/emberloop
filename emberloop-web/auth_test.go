@@ -363,7 +363,7 @@ func authedHandler(t testing.TB, d *Daemon) http.Handler {
 	// Run drivers persist state on every pass: stop them at test end so no
 	// pass resurrects the test's removed TempDir (see stopRunsForTest). A
 	// Daemon with no Runs returns at once.
-	t.Cleanup(d.stopRunsForTest)
+	t.Cleanup(func() { d.stopRunsForTest(t) })
 	// Most Run tests use a synthetic repo and replace the final-gate hooks
 	// below; focused gate tests set the hooks first to assert their behavior.
 	if d.runFinalBuild == nil {

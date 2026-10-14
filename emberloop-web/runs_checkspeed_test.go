@@ -72,6 +72,7 @@ func TestBaseCheckReusesGreenTipCheck(t *testing.T) {
 // tip share it instead of running their own.
 func TestBaseCheckRunsOnceInBackground(t *testing.T) {
 	t.Parallel()
+	holdRunTestSlot(t)
 	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	release := make(chan struct{})
 	var checks atomic.Int32
