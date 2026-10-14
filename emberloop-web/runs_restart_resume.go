@@ -173,38 +173,71 @@ func (d *Daemon) armRestartStopsLocked() {
 }
 
 // maybeStopForRestart fires an armed restart stop when a tool call finishes
-// and no other tool call is in flight. Callers hold no lock.
+// and no other tool call is in flight. A working status also retries a stop
+// that raced ahead of the Backend starting its turn. Callers hold no lock.
 func (d *Daemon) maybeStopForRestart(id string, e Event) {
-	if e.Kind != "tool_call_updated" || !toolCallDone(e.Text) {
+	toolFinished := e.Kind == "tool_call_updated" && toolCallDone(e.Text)
+	turnStarted := e.Kind == "status" && e.Status == "working"
+	if !toolFinished && !turnStarted {
 		return
 	}
 	d.mu.Lock()
 	s := d.sessions[id]
-	fire := d.stopRestart[id] && s != nil && s.busy && len(s.openTools) == 0 && !s.meta.RestartStopped
+	eligible := d.stopRestart[id] && s != nil && s.busy && len(s.openTools) == 0
+	if eligible && s.restartStopAttempt && s.meta.RestartStopped {
+		// Remember a Backend boundary observed while Interrupt was in flight;
+		// the first Interrupt may have arrived before the adapter turn existed.
+		s.restartStopRetry = true
+	}
+	fire := eligible && !s.restartStopAttempt && !s.meta.RestartStopped
 	d.mu.Unlock()
 	if fire {
 		go d.fireRestartStop(id)
 	}
 }
 
-// fireRestartStop interrupts one armed Session at a tool-call boundary. It
-// marks the Session RestartStopped first (the next Daemon continues it) and
-// sets gateSkip, so the submit gate does not remind a turn that ended without
-// a submit. A Session that already stopped or ended is left alone.
+// fireRestartStop interrupts one armed Session at a safe boundary. It marks
+// the Session RestartStopped first so finishTurn carries queued messages
+// instead of starting another turn. If the Backend has not started the turn
+// yet, it rolls that marker back and retries at the next working/tool edge.
 func (d *Daemon) fireRestartStop(id string) {
 	d.mu.Lock()
 	s := d.sessions[id]
-	if s == nil || !d.stopRestart[id] || !s.busy || s.meta.Status == "ended" || s.meta.RestartStopped || len(s.openTools) > 0 {
+	if s == nil || !d.stopRestart[id] || !s.busy || s.meta.Status == "ended" || s.meta.RestartStopped || s.restartStopAttempt || len(s.openTools) > 0 {
 		d.mu.Unlock()
 		return
 	}
+	previousGateSkip := s.gateSkip
+	s.restartStopAttempt = true
+	s.restartStopRetry = false
 	s.meta.RestartStopped = true
 	s.gateSkip = true
 	d.persistMeta(s.meta)
 	ib, _ := d.backendForLocked(s.meta.Harness).(interruptBackend)
 	d.mu.Unlock()
-	if ib != nil {
-		ib.Interrupt(id)
+
+	interrupted := ib != nil && ib.Interrupt(id)
+
+	d.mu.Lock()
+	s = d.sessions[id]
+	retry := false
+	if s != nil {
+		s.restartStopAttempt = false
+		if interrupted {
+			s.restartStopRetry = false
+		} else {
+			if s.meta.RestartStopped {
+				s.meta.RestartStopped = false
+				s.gateSkip = previousGateSkip
+				d.persistMeta(s.meta)
+			}
+			retry = d.stopRestart[id] && s.restartStopRetry && s.busy && len(s.openTools) == 0 && s.meta.Status != "ended"
+			s.restartStopRetry = false
+		}
+	}
+	d.mu.Unlock()
+	if retry {
+		go d.fireRestartStop(id)
 	}
 }
 

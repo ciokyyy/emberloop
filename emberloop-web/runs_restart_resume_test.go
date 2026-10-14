@@ -7,9 +7,34 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type restartStartGateBackend struct {
+	*FakeBackend
+	entered          chan struct{}
+	release          chan struct{}
+	interruptResults chan bool
+	once             sync.Once
+}
+
+func (b *restartStartGateBackend) OnPrompt(id, text string, appendEvent func(kind, text, status string)) {
+	b.entered <- struct{}{}
+	<-b.release
+	b.FakeBackend.OnPrompt(id, text, appendEvent)
+}
+
+func (b *restartStartGateBackend) Interrupt(id string) bool {
+	stopped := b.FakeBackend.Interrupt(id)
+	b.interruptResults <- stopped
+	return stopped
+}
+
+func (b *restartStartGateBackend) releasePrompt() {
+	b.once.Do(func() { close(b.release) })
+}
 
 // rewriteJSONFile loads a JSON object file, lets edit change it, and writes it
 // back: the way a test stages the disk state a killed Daemon leaves behind.
@@ -163,7 +188,14 @@ func TestRestartStopsRunWorkerTurnAndNextDaemonContinuesIt(t *testing.T) {
 	stateDir := tempDir(t)
 	fb := NewFakeBackend()
 	fb.SetDelay(30 * time.Second)
-	d := runTestDaemon(t, stateDir, fb)
+	backend := &restartStartGateBackend{
+		FakeBackend:      fb,
+		entered:          make(chan struct{}, 1),
+		release:          make(chan struct{}),
+		interruptResults: make(chan bool, 8),
+	}
+	defer backend.releasePrompt()
+	d := runTestDaemon(t, stateDir, backend)
 	srv := httptest.NewServer(authedHandler(t, d))
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -171,18 +203,10 @@ func TestRestartStopsRunWorkerTurnAndNextDaemonContinuesIt(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "01-first started")
 	first := ticketByID(r, "01-first").WorkerSession
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		d.mu.Lock()
-		busy := d.sessions[first].busy
-		d.mu.Unlock()
-		if busy {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("worker turn never started")
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-backend.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker Backend turn never started")
 	}
 	if code, out := postMode(t, srv.URL, first, "followup", "queued finding"); code != http.StatusAccepted {
 		t.Fatalf("followup = %d %v", code, out)
@@ -193,10 +217,28 @@ func TestRestartStopsRunWorkerTurnAndNextDaemonContinuesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	deadline = time.Now().Add(5 * time.Second)
+	select {
+	case interrupted := <-backend.interruptResults:
+		if interrupted {
+			t.Fatal("restart interrupted a Backend turn before it was started")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("restart did not attempt to stop the not-yet-started Backend turn")
+	}
+	backend.releasePrompt()
+	deadline := time.Now().Add(5 * time.Second)
 	for fb.InterruptCount(first) == 0 || !d.Idle(0) {
 		if time.Now().After(deadline) {
-			t.Fatalf("worker turn not stopped: interrupts=%d state=%+v", fb.InterruptCount(first), d.RestartState())
+			d.mu.Lock()
+			s := d.sessions[first]
+			busy, active, openTools, pending, status, stopped := false, 0, 0, 0, "", false
+			if s != nil {
+				busy, active, openTools, pending = s.busy, s.active, len(s.openTools), len(s.pending)
+				status, stopped = s.meta.Status, s.meta.RestartStopped
+			}
+			stopArmed := d.stopRestart[first]
+			d.mu.Unlock()
+			t.Fatalf("worker turn not stopped: interrupts=%d session={busy:%v active:%d openTools:%d pending:%d status:%q restartStopped:%v} stopArmed=%v restart=%+v", fb.InterruptCount(first), busy, active, openTools, pending, status, stopped, stopArmed, d.RestartState())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

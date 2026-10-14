@@ -221,6 +221,10 @@ type session struct {
 	// gate takes it as a deliberate stop, not a missing submit, so no
 	// reminder follows it. The gate consumes it.
 	gateSkip bool
+	// restartStopAttempt and restartStopRetry coordinate a restart interrupt
+	// with a Backend turn that may not have started when the Session became busy.
+	restartStopAttempt bool
+	restartStopRetry   bool
 	// resuming marks a resume in flight. A second send on a released
 	// Session gets 409 instead of double-resuming past the cap.
 	// releasing marks a release in flight. Sends answer 409 while it
