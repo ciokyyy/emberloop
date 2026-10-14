@@ -4,9 +4,9 @@
 
 **Blocked by:** 04-cached-quota-read (both change the same quota read path)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A blocked upstream stub for one provider does not delay the other cards (HTTP-seam test with temp state dir)
-- [ ] A failing upstream for one provider leaves the other cards intact in `ok` state
-- [ ] The shared per-key lock still serializes concurrent refreshers into one upstream request
-- [ ] Go tests at the HTTP seam with local stubs; repo check passes
+- [x] A blocked upstream stub for one provider does not delay the other cards (HTTP-seam test with temp state dir)
+- [x] A failing upstream for one provider leaves the other cards intact in `ok` state
+- [x] The shared per-key lock still serializes concurrent refreshers into one upstream request
+- [x] Go tests at the HTTP seam with local stubs; repo check passes
