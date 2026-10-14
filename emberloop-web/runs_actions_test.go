@@ -394,6 +394,25 @@ func TestStallNudgesEscalateToNeedsYou(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	taskPrompt := firstPromptWhere(t, srv.URL, worker, func(Event) bool { return true })
+	waitTurnEnd(t, srv.URL, worker, taskPrompt.Seq)
+	// The idle Event precedes runTurn's cleanup. Do not jump the fake clock
+	// until the Worker has fully settled, or the next pass can date its activity
+	// at the jumped time and postpone the stall nudge indefinitely.
+	settleDeadline := time.Now().Add(10 * time.Second)
+	for {
+		d.mu.Lock()
+		s := d.sessions[worker]
+		settled := s != nil && !s.busy && s.active == 0
+		d.mu.Unlock()
+		if settled {
+			break
+		}
+		if time.Now().After(settleDeadline) {
+			t.Fatal("worker first turn did not settle")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	arun := getActionRun(t, srv.URL, run.ID)
 	worktree := filepath.Join(repo, ".el-worktrees", strings.TrimPrefix(actionTicketByID(arun, "01-first").Branch, "implement/"))
 
