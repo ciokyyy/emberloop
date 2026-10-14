@@ -178,9 +178,17 @@ func TestTipCheckRedReturnsToWorkerWithoutReviewerTurn(t *testing.T) {
 	// branch before its first snapshot.
 	t1 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
 
-	transcript := sessTranscript(getSession(t, srv.URL, worker))
-	if !strings.Contains(transcript, "repo check is red") || !strings.Contains(transcript, "TestTipRed") {
-		t.Fatalf("worker transcript lacks the red-tip return:\n%s", transcript)
+	var transcript string
+	transcriptDeadline := time.Now().Add(5 * time.Second)
+	for {
+		transcript = sessTranscript(getSession(t, srv.URL, worker))
+		if strings.Contains(transcript, "repo check is red") && strings.Contains(transcript, "TestTipRed") {
+			break
+		}
+		if time.Now().After(transcriptDeadline) {
+			t.Fatalf("worker transcript lacks the red-tip return after 5s:\n%s", transcript)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	// No Reviewer turn is spent on the red tip.
 	time.Sleep(2 * time.Second)
