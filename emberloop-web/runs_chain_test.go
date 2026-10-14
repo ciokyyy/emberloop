@@ -617,6 +617,12 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 	})
 	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
+	fake.CreateFailure = func(meta SessionMeta) error {
+		if meta.Reviewer == reviewerSpecType && meta.Harness == "pig" {
+			return errors.New("quota exceeded")
+		}
+		return nil
+	}
 	d := runTestDaemon(t, tempDir(t), fake)
 	d.SetSettingsPath(settingsPath)
 	srv := newRunTestServer(t, d)
@@ -627,12 +633,6 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "Worker")
 	worker := ticketByID(r, "01-first").WorkerSession
-	fake.CreateFailure = func(meta SessionMeta) error {
-		if meta.Reviewer == reviewerSpecType && meta.Harness == "pig" {
-			return errors.New("quota exceeded")
-		}
-		return nil
-	}
 	commitTicketWork(t, repo, "01-first")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
