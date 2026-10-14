@@ -287,7 +287,7 @@ describe('QuotaPage refresh', () => {
     expect(btn.disabled).toBe(true);
     expect(btn.getAttribute('aria-busy')).toBe('true');
     const cardButtons = container.querySelectorAll('[data-testid="quota-card"] button[aria-label^="Refresh "]');
-    expect(cardButtons).toHaveLength(5);
+    expect(cardButtons).toHaveLength(6);
     for (const cardButton of cardButtons) {
       expect(cardButton.disabled).toBe(true);
       expect(cardButton.getAttribute('aria-busy')).toBe('true');
