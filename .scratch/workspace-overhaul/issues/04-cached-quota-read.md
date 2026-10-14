@@ -4,12 +4,12 @@
 
 **Blocked by:** 03-suite-time-target-and-check-timeout (Part 7 goes first)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `GET /api/quota` answers from the cache before a slow upstream stub finishes
-- [ ] Time-bounded Go test at the HTTP seam (temp state dir, blocking upstream stub) asserts the cached read answers under 200ms
-- [ ] Baseline response time of the current endpoint is measured BEFORE any code change, then the new time after; both recorded in this ticket
-- [ ] Existing quota HTTP-seam tests still pass; repo check passes
+- [x] `GET /api/quota` answers from the cache before a slow upstream stub finishes
+- [x] Time-bounded Go test at the HTTP seam (temp state dir, blocking upstream stub) asserts the cached read answers under 200ms
+- [x] Baseline response time of the current endpoint is measured BEFORE any code change, then the new time after; both recorded in this ticket
+- [x] Existing quota HTTP-seam tests still pass; repo check passes
 
 ## Response-time measurements
 
