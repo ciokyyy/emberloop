@@ -114,6 +114,9 @@ func TestProvidersListsPigCatalogAndRedactsCredentials(t *testing.T) {
 	if !stored.Connected || stored.Source != "stored_key" || !stored.KeySet || !stored.KeyEditable || stored.Group != providerAPIKeys {
 		t.Errorf("openrouter status = %+v, want stored editable key", stored)
 	}
+	if stored.Command != "pig login openrouter" {
+		t.Errorf("openrouter command = %q, want CLI OAuth command alongside its API-key form", stored.Command)
+	}
 	env := findProvider(t, providers, "deepseek")
 	if !env.Connected || env.Source != "environment" || env.SourceLabel != "DEEPSEEK_API_KEY" || env.KeySet {
 		t.Errorf("deepseek status = %+v, want environment source without stored-key flag", env)
@@ -125,6 +128,15 @@ func TestProvidersListsPigCatalogAndRedactsCredentials(t *testing.T) {
 	none := findProvider(t, providers, "xai")
 	if none.Connected || none.Source != "none" || none.Group != providerSubscriptionLogins {
 		t.Errorf("xai status = %+v, want unconfigured subscription provider", none)
+	}
+	if none.Command != "pig login xai" || none.CLIHint != "" {
+		t.Errorf("xai row = %+v, want exact CLI login guidance for OAuth without a browser flow", none)
+	}
+	for _, id := range []string{"amazon-bedrock", "google-vertex", "cloudflare-ai-gateway", "cloudflare-workers-ai"} {
+		cloud := findProvider(t, providers, id)
+		if cloud.Command != "" || cloud.CLIHint != "configure via CLI" {
+			t.Errorf("%s row = %+v, want configure via CLI without a pig login command", id, cloud)
+		}
 	}
 	if got := findProvider(t, providers, "google"); got.Name != "Gemini API (direct)" || got.Group != providerAPIKeys || !got.KeyEditable {
 		t.Errorf("google row = %+v, want direct Gemini API-key row", got)

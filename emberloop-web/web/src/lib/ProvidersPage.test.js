@@ -35,6 +35,62 @@ function providerRows() {
       sourceLabel: 'Stored key',
       keySet: true,
       keyEditable: true,
+      command: 'pig login openrouter',
+    },
+    {
+      id: 'anthropic',
+      name: 'Anthropic',
+      group: 'subscription_logins',
+      connected: false,
+      source: 'none',
+      sourceLabel: 'Not connected',
+      keySet: false,
+      keyEditable: false,
+      command: 'pig login anthropic',
+    },
+    {
+      id: 'amazon-bedrock',
+      name: 'Amazon Bedrock',
+      group: 'cli_only',
+      connected: false,
+      source: 'none',
+      sourceLabel: 'Not connected',
+      keySet: false,
+      keyEditable: false,
+      cliHint: 'configure via CLI',
+    },
+    {
+      id: 'google-vertex',
+      name: 'Google Vertex',
+      group: 'cli_only',
+      connected: false,
+      source: 'none',
+      sourceLabel: 'Not connected',
+      keySet: false,
+      keyEditable: false,
+      cliHint: 'configure via CLI',
+    },
+    {
+      id: 'cloudflare-ai-gateway',
+      name: 'Cloudflare AI Gateway',
+      group: 'cli_only',
+      connected: false,
+      source: 'none',
+      sourceLabel: 'Not connected',
+      keySet: false,
+      keyEditable: false,
+      cliHint: 'configure via CLI',
+    },
+    {
+      id: 'cloudflare-workers-ai',
+      name: 'Cloudflare Workers AI',
+      group: 'cli_only',
+      connected: false,
+      source: 'none',
+      sourceLabel: 'Not connected',
+      keySet: false,
+      keyEditable: false,
+      cliHint: 'configure via CLI',
     },
     {
       id: 'xai',
@@ -103,10 +159,9 @@ describe('ProvidersPage', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; })));
     render(ProvidersPage, { props: { admin: true } });
 
-    expect(screen.getByTestId('providers-loading')).toBeTruthy();
     expect(screen.queryByTestId('provider-row')).toBeNull();
     resolveFetch({ ok: true, json: async () => ({ providers: providerRows() }) });
-    expect(await screen.findAllByTestId('provider-row')).toHaveLength(4);
+    expect(await screen.findAllByTestId('provider-row')).toHaveLength(9);
     expect(screen.queryByTestId('providers-loading')).toBeNull();
   });
 
@@ -130,6 +185,33 @@ describe('ProvidersPage', () => {
     expect(within(container.querySelector('[data-provider="openrouter"]')).getByTestId('provider-source').textContent).toContain('API key set');
     await screen.findAllByTestId('provider-row');
     expect(container.textContent).not.toContain(secret);
+  });
+  it('copies CLI-only OAuth commands and names cloud-auth CLI configuration', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    stubProviders();
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+
+    const oauthRow = container.querySelector('[data-provider="anthropic"]');
+    const cloudProviderIDs = [
+      'amazon-bedrock',
+      'google-vertex',
+      'cloudflare-ai-gateway',
+      'cloudflare-workers-ai',
+    ];
+    for (const id of cloudProviderIDs) {
+      const cloudRow = container.querySelector(`[data-provider="${id}"]`);
+      expect(within(cloudRow).getByTestId('provider-cli-guidance').textContent).toBe('configure via CLI');
+      expect(within(cloudRow).queryByRole('button', { name: /copy/i })).toBeNull();
+    }
+    expect(within(oauthRow).getByText('pig login anthropic')).toBeTruthy();
+    await fireEvent.click(within(oauthRow).getByRole('button', { name: 'Copy Anthropic command' }));
+    const openrouterRow = container.querySelector('[data-provider="openrouter"]');
+    expect(within(openrouterRow).getByText('pig login openrouter')).toBeTruthy();
+    await fireEvent.click(within(openrouterRow).getByRole('button', { name: 'Copy OpenRouter command' }));
+    expect(writeText).toHaveBeenCalledWith('pig login openrouter');
+    expect(writeText).toHaveBeenCalledWith('pig login anthropic');
   });
 
   it('connects Claude through the host PTY, sends the pasted code, and refreshes its quota', async () => {

@@ -48,6 +48,33 @@ type providerView struct {
 	KeySet      bool   `json:"keySet"`
 	KeyEditable bool   `json:"keyEditable"`
 	Command     string `json:"command,omitempty"`
+	CLIHint     string `json:"cliHint,omitempty"`
+}
+
+var cloudAuthProviderIDs = map[string]struct{}{
+	"amazon-bedrock":        {},
+	"google-vertex":         {},
+	"cloudflare-ai-gateway": {},
+	"cloudflare-workers-ai": {},
+}
+
+// browserOAuthProviderIDs have a browser-managed connection flow. Other OAuth
+// providers remain available through the exact pig CLI command.
+var browserOAuthProviderIDs = map[string]struct{}{
+	"openai-codex": {},
+}
+
+func providerCLIAction(id string, auth ai.ProviderAuth, group string) (command, hint string) {
+	if _, cloudAuth := cloudAuthProviderIDs[id]; cloudAuth {
+		return "", "configure via CLI"
+	}
+	if _, browserFlow := browserOAuthProviderIDs[id]; browserFlow {
+		return "", ""
+	}
+	if auth.OAuth != nil || group == providerCLIOnly {
+		return "pig login " + id, ""
+	}
+	return "", ""
 }
 
 func (d *Daemon) providerAuthPath() string {
@@ -95,9 +122,7 @@ func providerAuthView(ctx context.Context, store ai.CredentialStore, id string, 
 		SourceLabel: "Not connected",
 		KeyEditable: editable,
 	}
-	if view.Group == providerCLIOnly {
-		view.Command = "pig login " + id
-	}
+	view.Command, view.CLIHint = providerCLIAction(id, auth, view.Group)
 
 	credential, hasCredential, err := ai.ReadRawCredential(ctx, store, id)
 	if err != nil {

@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -32,9 +33,10 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 }
 
 type settingsResp struct {
-	Roles             map[string]roleSetting `json:"roles"`
-	MaxTickets        int                    `json:"max_tickets"`
-	MaxTicketsFromEnv bool                   `json:"max_tickets_from_env"`
+	Roles                map[string]roleSetting `json:"roles"`
+	MaxTickets           int                    `json:"max_tickets"`
+	MaxTicketsFromEnv    bool                   `json:"max_tickets_from_env"`
+	OAuthRedirectBaseURL string                 `json:"oauth_redirect_base_url"`
 }
 
 func getSettingsView(t *testing.T, base string) (settingsResp, int) {
@@ -292,5 +294,119 @@ func TestSettingsTitleRoleAndSwitch(t *testing.T) {
 	resp.Body.Close()
 	if !view.SessionTitlesFromEnv {
 		t.Fatal("env override not reported")
+	}
+}
+
+func TestSettingsOAuthRedirectBaseDefaultsEmptyAndPersists(t *testing.T) {
+	srv, settings := settingsServer(t, `{"roles":{}}`)
+	view, status := getSettingsView(t, srv.URL)
+	if status != http.StatusOK || view.OAuthRedirectBaseURL != "" {
+		t.Fatalf("default redirect base = %q (status %d), want empty", view.OAuthRedirectBaseURL, status)
+	}
+
+	view, status = putSettingsBody(t, srv.URL, `{"oauth_redirect_base_url":"https://ember.example.ts.net/oauth/"}`)
+	if status != http.StatusOK || view.OAuthRedirectBaseURL != "https://ember.example.ts.net/oauth" {
+		t.Fatalf("saved redirect base = %q (status %d), want normalized HTTPS base", view.OAuthRedirectBaseURL, status)
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := json.Unmarshal(saved[oauthRedirectBaseURLSettingKey], &stored); err != nil || stored != view.OAuthRedirectBaseURL {
+		t.Fatalf("settings file redirect base = %q, %v", stored, err)
+	}
+
+	for _, bad := range []string{
+		`{"oauth_redirect_base_url":"http://example.com"}`,
+		`{"oauth_redirect_base_url":"https://user:pass@example.com"}`,
+		`{"oauth_redirect_base_url":"https://example.com/callback#code"}`,
+		`{"oauth_redirect_base_url":"https://example.com/callback?code=secret"}`,
+	} {
+		if _, status := putSettingsBody(t, srv.URL, bad); status != http.StatusBadRequest {
+			t.Errorf("invalid redirect base %s status = %d, want 400", bad, status)
+		}
+	}
+
+	view, status = putSettingsBody(t, srv.URL, `{"oauth_redirect_base_url":""}`)
+	if status != http.StatusOK || view.OAuthRedirectBaseURL != "" {
+		t.Fatalf("cleared redirect base = %q (status %d), want empty", view.OAuthRedirectBaseURL, status)
+	}
+}
+
+func TestSettingsOAuthRedirectBaseWriteIsAdminOnly(t *testing.T) {
+	settings := filepath.Join(tempDir(t), "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"roles":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_SETTINGS", settings)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	h := d.Handler()
+	_ = signedIn(t, h, "admin")
+	member := signedIn(t, h, "member")
+
+	rec := authDo(t, h, http.MethodPut, "/api/settings", `{"oauth_redirect_base_url":"https://ember.example.ts.net"}`, member)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin redirect base write = %d: %s, want 403", rec.Code, rec.Body.String())
+	}
+	if got := oauthRedirectBaseURLSetting(); got != "" {
+		t.Fatalf("redirect base after non-admin write = %q, want empty", got)
+	}
+}
+
+func TestBrowserOAuthRedirectBaseRequiresProviderProbe(t *testing.T) {
+	settings := filepath.Join(tempDir(t), "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"oauth_redirect_base_url":"https://ember.example.ts.net"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
+	probeCalls := 0
+	probe := func(_ context.Context, providerID, base string) (bool, error) {
+		probeCalls++
+		if providerID != "openrouter" || base != "https://ember.example.ts.net" {
+			t.Errorf("probe args = %q, %q", providerID, base)
+		}
+		return true, nil
+	}
+	if err := os.WriteFile(settings, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", probe); got != "" || probeCalls != 0 {
+		t.Fatalf("unset redirect base = %q after %d probe calls, want empty and no probe", got, probeCalls)
+	}
+	if err := os.WriteFile(settings, []byte(`{"oauth_redirect_base_url":"https://ember.example.ts.net"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", probe); got != "https://ember.example.ts.net" {
+		t.Fatalf("accepted redirect base = %q", got)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("accepted provider probe calls = %d, want 1", probeCalls)
+	}
+
+	rejected := func(context.Context, string, string) (bool, error) { return false, nil }
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", rejected); got != "" {
+		t.Fatalf("rejected provider redirect base = %q, want empty", got)
+	}
+	failed := func(context.Context, string, string) (bool, error) { return false, os.ErrPermission }
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", failed); got != "" {
+		t.Fatalf("failed provider probe redirect base = %q, want empty", got)
+	}
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "amazon-bedrock", probe); got != "" {
+		t.Fatalf("non-OAuth provider redirect base = %q, want empty", got)
+	}
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openai-codex", probe); got != "" {
+		t.Fatalf("device-code provider redirect base = %q, want empty", got)
+	}
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "xai", probe); got != "" {
+		t.Fatalf("device-code OAuth provider redirect base = %q, want empty", got)
+	}
+	if probeCalls != 1 {
+		t.Fatalf("probe calls after rejected/ineligible providers = %d, want 1", probeCalls)
 	}
 }

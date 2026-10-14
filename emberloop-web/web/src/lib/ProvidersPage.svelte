@@ -413,15 +413,18 @@
                             <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
                           {/if}
                         </div>
-                      {:else if provider.command}
+                      {:else if !admin && !provider.command && !provider.cliHint}
+                        <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
+                      {/if}
+                      {#if provider.command}
                         <div class="flex min-w-0 items-center gap-2 sm:ml-auto max-md:w-full">
                           <code class="min-w-0 flex-1 truncate rounded-lg bg-muted px-2.5 py-2 font-mono text-xs text-muted-foreground">{provider.command}</code>
                           <Button variant="ghost" size="icon-sm" class="shrink-0" aria-label={`Copy ${provider.name} command`} title="Copy command" onclick={() => copyCommand(provider)}>
                             {#if copied === provider.id}<Check />{:else}<Copy />{/if}
                           </Button>
                         </div>
-                      {:else if !admin}
-                        <Badge variant="outline" class="max-md:min-h-11 max-md:justify-center"><LockKeyhole class="size-3.5" />Admin only</Badge>
+                      {:else if provider.cliHint}
+                        <p class="text-xs text-muted-foreground sm:ml-auto" data-testid="provider-cli-guidance">{provider.cliHint}</p>
                       {/if}
                     </div>
 

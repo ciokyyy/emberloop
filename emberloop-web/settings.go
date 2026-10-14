@@ -169,6 +169,7 @@ func settingsView() map[string]any {
 		"decider_note":            deciderNote(decider),
 		"jev":                     readJevSettings(),
 		"disk_go_cache_cap_gb":    diskGoCacheCapGB(),
+		"oauth_redirect_base_url": oauthRedirectBaseURLSetting(),
 	}
 }
 
@@ -179,17 +180,18 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		defer d.live.publish("settings")
 		var body struct {
-			Roles            map[string]roleSetting  `json:"roles"`
-			RunSkills        json.RawMessage         `json:"run_skills"`
-			Chains           map[string][]chainEntry `json:"chains"`
-			MaxTickets       *int                    `json:"max_tickets"`
-			MaxWorkers       *int                    `json:"max_workers"`
-			SessionTitles    *bool                   `json:"session_titles"`
-			SignupEnabled    *bool                   `json:"signup_enabled"`
-			DiskGoCacheCapGB *int64                  `json:"disk_go_cache_cap_gb"`
-			Compress         *compressPatch          `json:"compress"`
-			Decider          *deciderPatch           `json:"decider"`
-			Jev              *jevPatch               `json:"jev"`
+			OAuthRedirectBaseURL *string                 `json:"oauth_redirect_base_url"`
+			Roles                map[string]roleSetting  `json:"roles"`
+			RunSkills            json.RawMessage         `json:"run_skills"`
+			Chains               map[string][]chainEntry `json:"chains"`
+			MaxTickets           *int                    `json:"max_tickets"`
+			MaxWorkers           *int                    `json:"max_workers"`
+			SessionTitles        *bool                   `json:"session_titles"`
+			SignupEnabled        *bool                   `json:"signup_enabled"`
+			DiskGoCacheCapGB     *int64                  `json:"disk_go_cache_cap_gb"`
+			Compress             *compressPatch          `json:"compress"`
+			Decider              *deciderPatch           `json:"decider"`
+			Jev                  *jevPatch               `json:"jev"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -215,9 +217,11 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// every Run's Worker and Reviewer first prompts, including other
 		// Users' Runs, so like signup, decider, jev and the disk cap it
 		// writes admin-only.
-		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet || body.DiskGoCacheCapGB != nil {
+		// The redirect base is a host-global OAuth setting, so it follows the
+		// same admin-only write rule as other host-global settings.
+		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet || body.DiskGoCacheCapGB != nil || body.OAuthRedirectBaseURL != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
-				http.Error(w, "only the admin can change signup, decider, jev, run_skills and disk_go_cache_cap_gb settings", http.StatusForbidden)
+				http.Error(w, "only the admin can change signup, decider, jev, run_skills, disk_go_cache_cap_gb and oauth_redirect_base_url settings", http.StatusForbidden)
 				return
 			}
 		}
@@ -244,6 +248,14 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.DiskGoCacheCapGB != nil && *body.DiskGoCacheCapGB < 0 {
 			http.Error(w, "disk_go_cache_cap_gb must be zero or above", http.StatusBadRequest)
 			return
+		}
+		if body.OAuthRedirectBaseURL != nil {
+			normalized, err := normalizeOAuthRedirectBaseURL(*body.OAuthRedirectBaseURL)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			*body.OAuthRedirectBaseURL = normalized
 		}
 		if runSkillsSet {
 			if msg := validateRunSkills(runSkills); msg != "" {
@@ -324,6 +336,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			raw, _ := json.Marshal(*body.DiskGoCacheCapGB)
 			all["disk_go_cache_cap_gb"] = raw
 		}
+		if body.OAuthRedirectBaseURL != nil {
+			raw, _ := json.Marshal(*body.OAuthRedirectBaseURL)
+			all[oauthRedirectBaseURLSettingKey] = raw
+		}
 		if runSkillsSet {
 			merged := readRunSkillsRaw()
 			for role, list := range runSkills {
@@ -379,4 +395,27 @@ func signupEnabledSetting() bool {
 		return false
 	}
 	return on
+}
+
+// oauthRedirectBaseURLSetting returns an empty value when the key is absent,
+// malformed, or unsafe. The setting is opt-in and a browser OAuth flow still
+// has to pass its provider-specific redirect probe before using it.
+func oauthRedirectBaseURLSetting() string {
+	all, err := readSettingsMap()
+	if err != nil {
+		return ""
+	}
+	raw, ok := all[oauthRedirectBaseURLSettingKey]
+	if !ok {
+		return ""
+	}
+	var configured string
+	if err := json.Unmarshal(raw, &configured); err != nil {
+		return ""
+	}
+	base, err := normalizeOAuthRedirectBaseURL(configured)
+	if err != nil {
+		return ""
+	}
+	return base
 }
