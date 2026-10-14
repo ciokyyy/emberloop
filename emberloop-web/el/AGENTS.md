@@ -40,9 +40,10 @@ durable boundaries with their own docs. File map (non-test file owns its
   statusline command `el claude-status` and its usage windows),
   `usage_providers.go` (the opencode and Antigravity usage pollers, one
   fetch per 90 s per account, cached as `usage-<key>.json` in the state
-  dir), `quota_api.go` (the Quota-tab snapshot over the same cache: per-card
-  state, concurrent dispatch to independent provider refreshes, and completion
-  callbacks; `usage_providers.go` owns fetching and the shared per-key lock),
+  dir; owns provider fetching and the shared per-key lock), `quota_api.go`
+  (the Quota-tab snapshot over the shared cache: per-card state, concurrent
+  provider refreshes and completion callbacks; `QuotaFetchKeys` returns the
+  distinct upstreams a card refresh can call),
   `compress_prompt.go` (the Handoff summarizer prompt, its section list
   `HandoffSections` that emberloop-web uses, and the handoff sanity check),
   `context_window.go` (model window table; settings override via

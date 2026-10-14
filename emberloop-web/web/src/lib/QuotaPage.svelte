@@ -147,10 +147,10 @@
                   class="shrink-0"
                   aria-label={`Refresh ${p.label}`}
                   disabled={busy[p.key] || refreshingAll}
-                  aria-busy={Boolean(busy[p.key])}
+                  aria-busy={Boolean(busy[p.key] || refreshingAll)}
                   onclick={() => runRefresh(p.key)}
                 >
-                  <RefreshCw class={busy[p.key] ? 'animate-spin' : ''} />
+                  <RefreshCw class={busy[p.key] || refreshingAll ? 'animate-spin' : ''} />
                 </Button>
               </div>
 

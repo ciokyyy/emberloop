@@ -70,6 +70,28 @@ func QuotaKeyValid(key string) bool {
 	return ok
 }
 
+// QuotaFetchKeys returns the distinct upstream providers selected by a card
+// key, or every fetchable provider when key is empty. Claude is read from its
+// local status file and therefore has no upstream fetch key.
+func QuotaFetchKeys(key string) []string {
+	if key == "" {
+		seen := make(map[string]bool)
+		var keys []string
+		for _, card := range quotaCards {
+			if card.fetchKey != "" && !seen[card.fetchKey] {
+				seen[card.fetchKey] = true
+				keys = append(keys, card.fetchKey)
+			}
+		}
+		return keys
+	}
+	card, ok := quotaCard(key)
+	if !ok || card.fetchKey == "" {
+		return nil
+	}
+	return []string{card.fetchKey}
+}
+
 // quotaCachePath is the file whose mtime is the card's updated_at.
 func quotaCachePath(stateDir, key string) string {
 	if key == usageKeyClaude {
@@ -115,9 +137,9 @@ func quotaConfigured(stateDir, key string, now time.Time) bool {
 // refresh); without it the guard applies (page load). A failure keeps the old
 // cache: the snapshot still serves stale windows with the error text.
 //
-// force carries no cooldown on purpose: a manual refresh must fetch really
-// fresh data (spec story 14), and the per-key flock still serializes
-// concurrent refreshers into one upstream request.
+// force carries no cooldown at this layer; the Daemon's manual refresh
+// endpoint reserves its per-provider interval before calling here. The
+// per-key flock also serializes concurrent refreshers into one upstream call.
 func RefreshQuota(ctx context.Context, stateDir, key string, now time.Time, force bool) map[string]error {
 	return RefreshQuotaWithCallback(ctx, stateDir, key, now, force, nil)
 }
@@ -131,18 +153,7 @@ func RefreshQuotaWithCallback(ctx context.Context, stateDir, key string, now tim
 	if force {
 		refresh = RefreshUsageForce
 	}
-	fetchKeys := []string{}
-	if key == "" {
-		seen := map[string]bool{}
-		for _, c := range quotaCards {
-			if c.fetchKey != "" && !seen[c.fetchKey] {
-				seen[c.fetchKey] = true
-				fetchKeys = append(fetchKeys, c.fetchKey)
-			}
-		}
-	} else if c, ok := quotaCard(key); ok && c.fetchKey != "" {
-		fetchKeys = append(fetchKeys, c.fetchKey)
-	}
+	fetchKeys := QuotaFetchKeys(key)
 
 	// Each fetch key owns an independent cache file and flock. Run them in
 	// parallel so a slow provider cannot hold up another provider's cache.

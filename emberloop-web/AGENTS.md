@@ -26,9 +26,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Quota HTTP seam: `quota.go` serves the shared cache immediately on GET and
   refreshes independent providers concurrently in the background, publishing
   each provider's result as it completes and retaining errors for cached
-  reads; manual POST refresh stays synchronous. `quota_test.go` covers cached
-  reads, blocked-provider isolation, background failure isolation, and the
-  shared per-key lock.
+  reads; manual POST is synchronous, skips the 90s age guard and applies a
+  10s minimum interval per upstream provider. `quota_test.go` covers cached
+  reads, blocked-provider isolation, background failure isolation, the manual
+  refresh interval and shared per-key lock.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git

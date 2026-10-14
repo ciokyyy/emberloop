@@ -28,6 +28,7 @@ type quotaStubState struct {
 	opencodeErr     bool
 	opencodeCalls   int
 	agyErr          bool
+	agyCalls        int
 	calls           int
 	opencodeStarted chan struct{}
 	opencodeBlock   <-chan struct{}
@@ -39,10 +40,14 @@ type quotaStubState struct {
 func (s *quotaStubState) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		isOpencode := strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage")
+		isAgy := strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary")
 		s.mu.Lock()
 		s.calls++
 		if isOpencode {
 			s.opencodeCalls++
+		}
+		if isAgy {
+			s.agyCalls++
 		}
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
 		opencodeStarted, opencodeBlock := s.opencodeStarted, s.opencodeBlock
@@ -440,7 +445,9 @@ func TestQuotaNotConfigured(t *testing.T) {
 
 func TestQuotaFailedFetchKeepsStaleCache(t *testing.T) {
 	stub := &quotaStubState{opencodePct: 50}
-	base, _ := quotaEnv(t, stub, quotaAuth)
+	base, _, d := quotaEnvWithDaemon(t, stub, quotaAuth)
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	d.clock = func() time.Time { return now }
 	code, seededCards := postQuotaRefresh(t, base, "<empty>")
 	if code != http.StatusOK {
 		t.Fatalf("initial refresh status = %d", code)
@@ -452,7 +459,8 @@ func TestQuotaFailedFetchKeepsStaleCache(t *testing.T) {
 	stub.mu.Lock()
 	stub.opencodeErr = true
 	stub.mu.Unlock()
-	// Forced past the guard so the failure is really attempted.
+	// Wait out the manual cooldown so the failing upstream is really attempted.
+	now = now.Add(quotaManualRefreshMinInterval)
 	_, cards := postQuotaRefresh(t, base, "opencode-go")
 	got := quotaByKey(t, cards)["opencode-go"]
 	if got.State != "error" || got.Error == "" {
@@ -474,7 +482,9 @@ func TestQuotaFailedFetchKeepsStaleCache(t *testing.T) {
 
 func TestQuotaRefreshForcesPastGuard(t *testing.T) {
 	stub := &quotaStubState{opencodePct: 12}
-	base, _ := quotaEnv(t, stub, quotaAuth)
+	base, _, d := quotaEnvWithDaemon(t, stub, quotaAuth)
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	d.clock = func() time.Time { return now }
 	code, cards := postQuotaRefresh(t, base, "opencode-go")
 	if code != http.StatusOK {
 		t.Fatalf("initial refresh status = %d", code)
@@ -489,12 +499,113 @@ func TestQuotaRefreshForcesPastGuard(t *testing.T) {
 	if got := quotaByKey(t, getQuota(t, base))["opencode-go"]; got.Windows[0].Pct != 12 {
 		t.Fatalf("GET refetched inside the guard: %+v", got)
 	}
+	d.quotaRefreshWG.Wait()
+	now = now.Add(quotaManualRefreshMinInterval)
 	code, cards = postQuotaRefresh(t, base, "opencode-go")
 	if code != http.StatusOK {
 		t.Fatalf("refresh status = %d", code)
 	}
 	if got := quotaByKey(t, cards)["opencode-go"]; got.State != "ok" || got.Windows[0].Pct != 77 {
 		t.Errorf("forced card = %+v, want ok at 77", got)
+	}
+}
+
+func TestQuotaManualRefreshMinimumIntervalPerProvider(t *testing.T) {
+	stub := &quotaStubState{opencodePct: 12}
+	base, _, d := quotaEnvWithDaemon(t, stub, quotaAuth)
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	d.clock = func() time.Time { return now }
+
+	if code, cards := postQuotaRefresh(t, base, "opencode-go"); code != http.StatusOK || quotaByKey(t, cards)["opencode-go"].Windows[0].Pct != 12 {
+		t.Fatalf("initial refresh: status %d, opencode-go %+v", code, quotaByKey(t, cards)["opencode-go"])
+	}
+	stub.mu.Lock()
+	stub.opencodePct = 77
+	stub.mu.Unlock()
+
+	// A repeat within the default interval returns the last value without
+	// reaching upstream, while another provider in refresh-all still refreshes.
+	if code, cards := postQuotaRefresh(t, base, "opencode-go"); code != http.StatusOK || quotaByKey(t, cards)["opencode-go"].Windows[0].Pct != 12 {
+		t.Errorf("rapid repeat: status %d, opencode-go %+v", code, quotaByKey(t, cards)["opencode-go"])
+	}
+	stub.mu.Lock()
+	opencodeCalls := stub.opencodeCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 1 {
+		t.Fatalf("rapid repeated refresh made %d OpenCode-Go calls, want 1", opencodeCalls)
+	}
+
+	if code, cards := postQuotaRefresh(t, base, "<empty>"); code != http.StatusOK {
+		t.Fatalf("refresh-all status = %d", code)
+	} else if got := quotaByKey(t, cards); got["opencode-go"].Windows[0].Pct != 12 || got["agy-gemini"].State != "ok" {
+		t.Errorf("partial refresh-all cards = %+v, want cached OpenCode-Go and refreshed Antigravity", got)
+	}
+	// The two Antigravity cards share one provider cooldown.
+	if code, _ := postQuotaRefresh(t, base, "agy-3p"); code != http.StatusOK {
+		t.Fatalf("Antigravity alias refresh status = %d", code)
+	}
+	stub.mu.Lock()
+	opencodeCalls, agyCalls := stub.opencodeCalls, stub.agyCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 1 || agyCalls != 1 {
+		t.Fatalf("refresh-all cooldown counts: OpenCode-Go %d, Antigravity %d; want 1 each", opencodeCalls, agyCalls)
+	}
+
+	// At the interval boundary both providers may be refreshed again.
+	now = now.Add(quotaManualRefreshMinInterval)
+	code, cards := postQuotaRefresh(t, base, "<empty>")
+	if code != http.StatusOK {
+		t.Fatalf("refresh-all after cooldown status = %d", code)
+	}
+	if got := quotaByKey(t, cards)["opencode-go"]; got.State != "ok" || got.Windows[0].Pct != 77 {
+		t.Errorf("OpenCode-Go after cooldown = %+v, want fresh 77%%", got)
+	}
+	stub.mu.Lock()
+	opencodeCalls, agyCalls = stub.opencodeCalls, stub.agyCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 2 || agyCalls != 2 {
+		t.Errorf("refresh-all after cooldown counts: OpenCode-Go %d, Antigravity %d; want 2 each", opencodeCalls, agyCalls)
+	}
+}
+
+func TestQuotaManualRefreshFailureStillStartsCooldown(t *testing.T) {
+	stub := &quotaStubState{opencodeErr: true}
+	base, _, d := quotaEnvWithDaemon(t, stub, quotaAuth)
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	d.clock = func() time.Time { return now }
+
+	code, cards := postQuotaRefresh(t, base, "opencode-go")
+	if code != http.StatusOK || quotaByKey(t, cards)["opencode-go"].State != "error" {
+		t.Fatalf("first failed refresh: status %d, card %+v", code, quotaByKey(t, cards)["opencode-go"])
+	}
+	stub.mu.Lock()
+	stub.opencodeErr = false
+	stub.opencodePct = 77
+	stub.mu.Unlock()
+	code, cards = postQuotaRefresh(t, base, "opencode-go")
+	if code != http.StatusOK || quotaByKey(t, cards)["opencode-go"].State != "error" {
+		t.Errorf("rapid retry after failure: status %d, card %+v", code, quotaByKey(t, cards)["opencode-go"])
+	}
+	stub.mu.Lock()
+	opencodeCalls := stub.opencodeCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 1 {
+		t.Fatalf("rapid retry after failure made %d upstream calls, want 1", opencodeCalls)
+	}
+
+	now = now.Add(quotaManualRefreshMinInterval)
+	code, cards = postQuotaRefresh(t, base, "opencode-go")
+	if code != http.StatusOK {
+		t.Fatalf("refresh after cooldown status = %d", code)
+	}
+	if got := quotaByKey(t, cards)["opencode-go"]; got.State != "ok" || got.Windows[0].Pct != 77 {
+		t.Errorf("refresh after cooldown = %+v, want fresh 77%%", got)
+	}
+	stub.mu.Lock()
+	opencodeCalls = stub.opencodeCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 2 {
+		t.Errorf("refresh after cooldown made %d upstream calls, want 2", opencodeCalls)
 	}
 }
 

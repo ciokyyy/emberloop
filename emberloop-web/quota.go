@@ -4,20 +4,24 @@ package web
 // immediately and starts guarded provider refreshes concurrently in the
 // background, publishing each result as it completes. POST /api/quota/refresh
 // with an optional key forces a fresh synchronous fetch past the 90s age
-// guard. Both share the header panes' cache files and per-key lock through el,
-// so N viewers cause one upstream request. Failures retain stale cache values.
+// guard, subject to a 10s per-provider manual cooldown. Both share the header
+// panes' cache files and per-key lock through el. Failures retain stale values.
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	el "example.com/emberloop-web/el"
 )
 
 // quotaTimeout bounds both background cache refreshes and manual refreshes.
-const quotaTimeout = 25 * time.Second
+const (
+	quotaTimeout                  = 25 * time.Second
+	quotaManualRefreshMinInterval = 10 * time.Second
+)
 
 // quotaStateDir is the shared quota cache: the empty el default, the same
 // dir the header panes read, never the Daemon's own session dir.
@@ -99,6 +103,39 @@ func (d *Daemon) quotaErrorSnapshot() map[string]error {
 	return errs
 }
 
+// admitManualQuotaRefreshes reserves one provider's manual refresh interval
+// before starting the fetch, so even repeated failures cannot hammer upstream.
+func (d *Daemon) admitManualQuotaRefreshes(fetchKeys []string, now time.Time) []string {
+	d.quotaMu.Lock()
+	defer d.quotaMu.Unlock()
+	if d.quotaManualRefreshAt == nil {
+		d.quotaManualRefreshAt = make(map[string]time.Time)
+	}
+	var admitted []string
+	for _, key := range fetchKeys {
+		if last, ok := d.quotaManualRefreshAt[key]; ok && now.Before(last.Add(quotaManualRefreshMinInterval)) {
+			continue
+		}
+		d.quotaManualRefreshAt[key] = now
+		admitted = append(admitted, key)
+	}
+	return admitted
+}
+
+// refreshQuotaFetchKeys runs an admitted refresh-all subset concurrently;
+// one recently refreshed provider must not suppress the others.
+func (d *Daemon) refreshQuotaFetchKeys(ctx context.Context, fetchKeys []string, now time.Time) {
+	var wg sync.WaitGroup
+	wg.Add(len(fetchKeys))
+	for _, key := range fetchKeys {
+		go func(key string) {
+			defer wg.Done()
+			d.refreshQuota(ctx, key, now, true)
+		}(key)
+	}
+	wg.Wait()
+}
+
 // refreshQuota records each provider's outcome as it completes, before
 // returning the aggregate errors for the synchronous refresh response.
 func (d *Daemon) refreshQuota(ctx context.Context, key string, now time.Time, force bool) map[string]error {
@@ -110,11 +147,11 @@ func (d *Daemon) refreshQuota(ctx context.Context, key string, now time.Time, fo
 }
 
 // serveQuota answers GET from the current cache and refreshes it in the
-// background. The forced path keeps POST /api/quota/refresh synchronous so
-// manual refresh callers receive the updated card list.
+// background. Manual POST stays synchronous, skips the age guard, and reserves
+// the 10s interval independently for each upstream provider.
 func (d *Daemon) serveQuota(w http.ResponseWriter, r *http.Request, key string, force bool) {
 	if !force {
-		now := time.Now()
+		now := d.now()
 		providers := el.QuotaSnapshot(quotaStateDir, now, d.quotaErrorSnapshot())
 		d.quotaRefreshWG.Add(1)
 		writeJSON(w, http.StatusOK, quotaResponse{Providers: providers})
@@ -122,13 +159,23 @@ func (d *Daemon) serveQuota(w http.ResponseWriter, r *http.Request, key string, 
 			defer d.quotaRefreshWG.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), quotaTimeout)
 			defer cancel()
-			d.refreshQuota(ctx, key, time.Now(), false)
+			d.refreshQuota(ctx, key, d.now(), false)
 		}()
 		return
 	}
 
+	now := d.now()
+	fetchKeys := el.QuotaFetchKeys(key)
 	ctx, cancel := context.WithTimeout(r.Context(), quotaTimeout)
 	defer cancel()
-	d.refreshQuota(ctx, key, time.Now(), true)
-	writeJSON(w, http.StatusOK, quotaResponse{Providers: el.QuotaSnapshot(quotaStateDir, time.Now(), d.quotaErrorSnapshot())})
+	if key == "" {
+		admitted := d.admitManualQuotaRefreshes(fetchKeys, now)
+		d.refreshQuotaFetchKeys(ctx, admitted, now)
+	} else if len(fetchKeys) == 0 {
+		// Local-only providers such as Claude have no upstream cooldown.
+		d.refreshQuota(ctx, key, now, true)
+	} else if admitted := d.admitManualQuotaRefreshes(fetchKeys, now); len(admitted) > 0 {
+		d.refreshQuota(ctx, key, now, true)
+	}
+	writeJSON(w, http.StatusOK, quotaResponse{Providers: el.QuotaSnapshot(quotaStateDir, d.now(), d.quotaErrorSnapshot())})
 }

@@ -201,20 +201,29 @@ describe('QuotaPage refresh', () => {
     await waitFor(() => expect(btn.disabled).toBe(false));
   });
 
-  it('shows refresh-all busy state and preserves card values until it completes', async () => {
+  it('shows refresh-all busy state on every card and preserves values until it completes', async () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
     stubFetch({ gate });
-    render(QuotaPage);
+    const { container } = render(QuotaPage);
     expect(await screen.findByText('36%')).toBeTruthy();
     const btn = screen.getByRole('button', { name: 'Refresh all' });
     fireEvent.click(btn);
     await tick();
     expect(btn.disabled).toBe(true);
     expect(btn.getAttribute('aria-busy')).toBe('true');
+    const cardButtons = container.querySelectorAll('[data-testid="quota-card"] button[aria-label^="Refresh "]');
+    expect(cardButtons).toHaveLength(5);
+    for (const cardButton of cardButtons) {
+      expect(cardButton.disabled).toBe(true);
+      expect(cardButton.getAttribute('aria-busy')).toBe('true');
+    }
     expect(screen.getByText('36%')).toBeTruthy();
     release();
     await waitFor(() => expect(btn.disabled).toBe(false));
+    for (const cardButton of cardButtons) {
+      expect(cardButton.getAttribute('aria-busy')).toBe('false');
+    }
   });
 });
 
