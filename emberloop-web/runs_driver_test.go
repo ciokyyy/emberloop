@@ -366,10 +366,13 @@ func runTestSlotHolderNames(holders *sync.Map) string {
 func watchRunTestDeadline(t *testing.T, deadline time.Time, clock runTestClock) {
 	t.Helper()
 	state := &runTestDeadlineState{doneCh: make(chan struct{})}
-	t.Cleanup(state.finish)
-	watchRunTestDeadlineUntil(t.Name(), deadline, clock, state, func(message string) {
+	watcherDone := watchRunTestDeadlineUntil(t.Name(), deadline, clock, state, func(message string) {
 		fmt.Fprintln(os.Stderr, message)
-		panic(message)
+		t.Errorf("%s", message)
+	})
+	t.Cleanup(func() {
+		state.finish()
+		<-watcherDone
 	})
 }
 
