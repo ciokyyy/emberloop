@@ -4,7 +4,7 @@
 
 **Blocked by:** 03-suite-time-target-and-check-timeout (Part 7 goes first)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] `GET /api/runs`, Run-list render and cold boot are measured BEFORE any change; the numbers are recorded in this ticket
   Baseline (before implementation): `GET /api/runs` p50 2.53s (5 timed requests after 2 warmups) for a fixture of 40 Runs × 8 Tickets; Vitest/jsdom list render 226.4ms for 40 Runs; cold boot to the Runs sidebar shell 516.2ms and to all 40 rows 610.7ms. The UI measurements use the same 40-Run, 8-Ticket fixture.
