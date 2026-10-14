@@ -4,9 +4,9 @@
 
 **Blocked by:** 06-percent-contract
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Reads the `openai-codex` login from pig's auth store read-only (never refreshes it) and calls the usage endpoint with the account id header
-- [ ] Maps the primary window to 5-hour and the secondary window to Weekly (`used_percent`, `reset_at`); reproduces the observed shape (5-hour 4%, Weekly 4%, no extra credits)
-- [ ] Missing login yields `not_configured`; expired login yields `expired`
-- [ ] Go tests at the HTTP seam with a local stub and temp state dir; repo check passes
+- [x] Reads the `openai-codex` login from pig's auth store read-only (never refreshes it) and calls the usage endpoint with the account id header
+- [x] Maps the primary window to 5-hour and the secondary window to Weekly (`used_percent`, `reset_at`); reproduces the observed shape (5-hour 4%, Weekly 4%, no extra credits)
+- [x] Missing login yields `not_configured`; expired login yields `expired`
+- [x] Go tests at the HTTP seam with a local stub and temp state dir; repo check passes
