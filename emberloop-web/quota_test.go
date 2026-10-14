@@ -423,8 +423,8 @@ func TestQuotaGetReportsBackgroundRefreshError(t *testing.T) {
 	d.quotaRefreshWG.Wait()
 	got := quotaByKey(t, getQuota(t, base))["opencode-go"]
 	d.quotaRefreshWG.Wait()
-	if got.State != "error" || got.Error == "" || len(got.Windows) != 1 || got.Windows[0].Pct != 41 {
-		t.Fatalf("GET after failed background refresh = %+v, want error and stale cached windows", got)
+	if got.State != "stale" || got.Error == "" || len(got.Windows) != 1 || got.Windows[0].Pct != 41 {
+		t.Fatalf("GET after failed background refresh = %+v, want stale state, error text and retained windows", got)
 	}
 }
 
