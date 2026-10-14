@@ -1,11 +1,11 @@
 package web
 
 // Quota API for the browser UI's Quota tab: GET /api/quota returns the cache
-// immediately and starts a guarded refresh in the background. POST
-// /api/quota/refresh with an optional key forces a fresh synchronous fetch
-// past the 90s age guard. Both share the header panes' cache files and per-key
-// lock through el, so N viewers cause one upstream request. Fetch failures
-// keep the stale cache with error text; the page itself never fails.
+// immediately and starts guarded provider refreshes concurrently in the
+// background, publishing each result as it completes. POST /api/quota/refresh
+// with an optional key forces a fresh synchronous fetch past the 90s age
+// guard. Both share the header panes' cache files and per-key lock through el,
+// so N viewers cause one upstream request. Failures retain stale cache values.
 
 import (
 	"context"
@@ -99,6 +99,16 @@ func (d *Daemon) quotaErrorSnapshot() map[string]error {
 	return errs
 }
 
+// refreshQuota records each provider's outcome as it completes, before
+// returning the aggregate errors for the synchronous refresh response.
+func (d *Daemon) refreshQuota(ctx context.Context, key string, now time.Time, force bool) map[string]error {
+	errs := el.RefreshQuotaWithCallback(ctx, quotaStateDir, key, now, force, func(fetchKey string, fetchErrs map[string]error) {
+		d.rememberQuotaErrors(fetchKey, fetchErrs)
+	})
+	d.rememberQuotaErrors(key, errs)
+	return errs
+}
+
 // serveQuota answers GET from the current cache and refreshes it in the
 // background. The forced path keeps POST /api/quota/refresh synchronous so
 // manual refresh callers receive the updated card list.
@@ -112,15 +122,13 @@ func (d *Daemon) serveQuota(w http.ResponseWriter, r *http.Request, key string, 
 			defer d.quotaRefreshWG.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), quotaTimeout)
 			defer cancel()
-			errs := el.RefreshQuota(ctx, quotaStateDir, key, time.Now(), false)
-			d.rememberQuotaErrors(key, errs)
+			d.refreshQuota(ctx, key, time.Now(), false)
 		}()
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), quotaTimeout)
 	defer cancel()
-	errs := el.RefreshQuota(ctx, quotaStateDir, key, time.Now(), true)
-	d.rememberQuotaErrors(key, errs)
+	d.refreshQuota(ctx, key, time.Now(), true)
 	writeJSON(w, http.StatusOK, quotaResponse{Providers: el.QuotaSnapshot(quotaStateDir, time.Now(), d.quotaErrorSnapshot())})
 }

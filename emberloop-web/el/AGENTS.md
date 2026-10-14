@@ -41,8 +41,8 @@ durable boundaries with their own docs. File map (non-test file owns its
   `usage_providers.go` (the opencode and Antigravity usage pollers, one
   fetch per 90 s per account, cached as `usage-<key>.json` in the state
   dir), `quota_api.go` (the Quota-tab snapshot over the same cache: per-card
-  state and concurrent dispatch to independent provider refreshes;
-  `usage_providers.go` owns fetching and the shared per-key lock),
+  state, concurrent dispatch to independent provider refreshes, and completion
+  callbacks; `usage_providers.go` owns fetching and the shared per-key lock),
   `compress_prompt.go` (the Handoff summarizer prompt, its section list
   `HandoffSections` that emberloop-web uses, and the handoff sanity check),
   `context_window.go` (model window table; settings override via

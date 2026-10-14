@@ -119,6 +119,14 @@ func quotaConfigured(stateDir, key string, now time.Time) bool {
 // fresh data (spec story 14), and the per-key flock still serializes
 // concurrent refreshers into one upstream request.
 func RefreshQuota(ctx context.Context, stateDir, key string, now time.Time, force bool) map[string]error {
+	return RefreshQuotaWithCallback(ctx, stateDir, key, now, force, nil)
+}
+
+// RefreshQuotaWithCallback is RefreshQuota with a completion callback invoked
+// concurrently as each distinct provider fetch finishes. The callback receives
+// the fetch key and errors for its cards, allowing callers to publish a fast
+// provider's result without waiting for slower providers in the same refresh.
+func RefreshQuotaWithCallback(ctx context.Context, stateDir, key string, now time.Time, force bool, onFetchComplete func(string, map[string]error)) map[string]error {
 	refresh := RefreshUsage
 	if force {
 		refresh = RefreshUsageForce
@@ -144,20 +152,32 @@ func RefreshQuota(ctx context.Context, stateDir, key string, now time.Time, forc
 	for i, fk := range fetchKeys {
 		go func(i int, fk string) {
 			defer wg.Done()
-			errsByFetchKey[i] = refresh(ctx, stateDir, fk, now)
+			fetchErr := refresh(ctx, stateDir, fk, now)
+			errsByFetchKey[i] = fetchErr
+			if onFetchComplete != nil {
+				onFetchComplete(fk, quotaFetchErrors(fk, fetchErr))
+			}
 		}(i, fk)
 	}
 	wg.Wait()
 
 	errs := map[string]error{}
-	for i, err := range errsByFetchKey {
-		if err == nil {
-			continue
+	for i, fetchErr := range errsByFetchKey {
+		for cardKey, err := range quotaFetchErrors(fetchKeys[i], fetchErr) {
+			errs[cardKey] = err
 		}
-		for _, c := range quotaCards {
-			if c.fetchKey == fetchKeys[i] {
-				errs[c.key] = err
-			}
+	}
+	return errs
+}
+
+func quotaFetchErrors(fetchKey string, err error) map[string]error {
+	if err == nil {
+		return nil
+	}
+	errs := map[string]error{}
+	for _, c := range quotaCards {
+		if c.fetchKey == fetchKey {
+			errs[c.key] = err
 		}
 	}
 	return errs

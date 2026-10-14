@@ -31,6 +31,8 @@ type quotaStubState struct {
 	calls           int
 	opencodeStarted chan struct{}
 	opencodeBlock   <-chan struct{}
+	agyStarted      chan struct{}
+	agyBlock        <-chan struct{}
 	refreshDone     chan struct{}
 }
 
@@ -43,7 +45,8 @@ func (s *quotaStubState) handler() http.Handler {
 			s.opencodeCalls++
 		}
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
-		opencodeStarted, opencodeBlock, refreshDone := s.opencodeStarted, s.opencodeBlock, s.refreshDone
+		opencodeStarted, opencodeBlock := s.opencodeStarted, s.opencodeBlock
+		agyStarted, agyBlock, refreshDone := s.agyStarted, s.agyBlock, s.refreshDone
 		s.mu.Unlock()
 		switch {
 		case isOpencode:
@@ -64,6 +67,15 @@ func (s *quotaStubState) handler() http.Handler {
 		case strings.HasSuffix(r.URL.Path, "/token"):
 			w.Write([]byte(`{"access_token":"tok","expires_in":3600}`))
 		case strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary"):
+			if agyStarted != nil {
+				select {
+				case agyStarted <- struct{}{}:
+				default:
+				}
+			}
+			if agyBlock != nil {
+				<-agyBlock
+			}
 			if agyErr {
 				http.Error(w, "boom", http.StatusInternalServerError)
 				return
@@ -644,6 +656,50 @@ func TestQuotaRefreshFailureIsIsolatedToOneProvider(t *testing.T) {
 		if card := m[key]; card.State != "ok" || len(card.Windows) != 2 {
 			t.Errorf("%s after OpenCode-Go failure = %+v, want intact ok card", key, card)
 		}
+	}
+}
+
+func TestQuotaBackgroundGetPublishesFailureBeforeAnotherProviderFinishes(t *testing.T) {
+	agyBlocked := make(chan struct{})
+	agyStarted := make(chan struct{}, 1)
+	stub := &quotaStubState{opencodeErr: true, agyStarted: agyStarted, agyBlock: agyBlocked}
+	base, stateDir, _ := quotaEnvWithDaemon(t, stub, quotaAuth)
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(agyBlocked) }) }
+	t.Cleanup(unblock)
+	staleCache := `{"fetched_at":1,"windows":[{"label":"5h","pct":21,"resets_at":1893456000}]}`
+	for _, key := range []string{"agy-gemini", "agy-3p"} {
+		if err := os.WriteFile(filepath.Join(stateDir, "usage-"+key+".json"), []byte(staleCache), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	initial := quotaByKey(t, getQuota(t, base))
+	if initial["agy-gemini"].State != "ok" || initial["agy-3p"].State != "ok" {
+		t.Fatalf("initial Antigravity cards = %+v, want cached ok values", initial)
+	}
+	select {
+	case <-agyStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not reach the blocked Antigravity stub")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		cards := quotaByKey(t, getQuota(t, base))
+		opencode := cards["opencode-go"]
+		if opencode.State == "error" && opencode.Error != "" && opencode.Error != "no cached usage yet" {
+			for _, key := range []string{"agy-gemini", "agy-3p"} {
+				if card := cards[key]; card.State != "ok" || len(card.Windows) != 1 || card.Windows[0].Pct != 21 {
+					t.Errorf("%s while its refresh is blocked = %+v, want retained ok cache", key, card)
+				}
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fast OpenCode-Go failure was not published while Antigravity was blocked: %+v", cards)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
