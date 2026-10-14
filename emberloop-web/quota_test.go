@@ -1,7 +1,7 @@
 package web
 
 // Quota API seam: GET /api/quota and POST /api/quota/refresh against local
-// HTTP stubs for Claude, ChatGPT Plus, OpenCode-Go and Antigravity,
+// HTTP stubs for Claude, ChatGPT Plus, OpenCode-Go, OpenRouter and Antigravity,
 // with temp credential and state dirs so tests never read host logins
 // or touch real upstreams.
 
@@ -32,6 +32,9 @@ type quotaStubState struct {
 	opencodeCalls        int
 	agyErr               bool
 	agyCalls             int
+	openrouterCredits    int
+	openrouterKey        int
+	openrouterAuth       []string
 	chatGPTStatus        int
 	chatGPTCalls         int
 	chatGPTMethod        string
@@ -60,6 +63,8 @@ func (s *quotaStubState) handler() http.Handler {
 		isOpencode := strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage")
 		isAgy := strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary")
 		isClaude := strings.HasSuffix(r.URL.Path, "/api/oauth/usage")
+		isOpenRouterCredits := strings.HasSuffix(r.URL.Path, "/api/v1/credits")
+		isOpenRouterKey := strings.HasSuffix(r.URL.Path, "/api/v1/key")
 		s.mu.Lock()
 		s.calls++
 		if isChatGPT {
@@ -84,6 +89,14 @@ func (s *quotaStubState) handler() http.Handler {
 			s.claudeUserAgent = r.Header.Get("User-Agent")
 			s.claudeBeta = r.Header.Get("anthropic-beta")
 		}
+		if isOpenRouterCredits {
+			s.openrouterCredits++
+			s.openrouterAuth = append(s.openrouterAuth, r.Header.Get("Authorization"))
+		}
+		if isOpenRouterKey {
+			s.openrouterKey++
+			s.openrouterAuth = append(s.openrouterAuth, r.Header.Get("Authorization"))
+		}
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
 		chatGPTStatus := s.chatGPTStatus
 		claudeStatus, claudeRetryAfter, claudeBody := s.claudeStatus, s.claudeRetryAfter, s.claudeBody
@@ -91,6 +104,10 @@ func (s *quotaStubState) handler() http.Handler {
 		agyStarted, agyBlock, refreshDone := s.agyStarted, s.agyBlock, s.refreshDone
 		s.mu.Unlock()
 		switch {
+		case isOpenRouterCredits:
+			w.Write([]byte(`{"data":{"total_credits":63,"total_usage":59.16}}`))
+		case isOpenRouterKey:
+			w.Write([]byte(`{"data":{"usage_daily":0.91,"usage_weekly":2.37,"usage_monthly":5.70}}`))
 		case isChatGPT:
 			if chatGPTStatus != 0 && chatGPTStatus != http.StatusOK {
 				http.Error(w, "ChatGPT request failed", chatGPTStatus)
@@ -272,7 +289,7 @@ func assertQuotaContract(t *testing.T, body []byte) {
 			}
 			var window struct {
 				Label string `json:"label"`
-				Pct   int    `json:"pct"`
+				Pct   *int   `json:"pct"`
 			}
 			if err := json.Unmarshal(windowFields["label"], &window.Label); err != nil {
 				t.Errorf("%s window label: %v", card.Key, err)
@@ -282,11 +299,17 @@ func assertQuotaContract(t *testing.T, body []byte) {
 				t.Errorf("%s window percent: %v", card.Key, err)
 				continue
 			}
-			if window.Pct < 0 || window.Pct > 100 {
-				t.Errorf("%s %q percent = %d, outside 0-100", card.Key, window.Label, window.Pct)
-			}
 			if window.Label == "5h" || window.Label == "wk" || window.Label == "mo" {
 				t.Errorf("%s uses short quota label %q", card.Key, window.Label)
+			}
+			if window.Pct == nil {
+				if card.Key != "openrouter" || window.Label != "Spend this week" {
+					t.Errorf("%s %q unexpectedly has no percent", card.Key, window.Label)
+				}
+				continue
+			}
+			if *window.Pct < 0 || *window.Pct > 100 {
+				t.Errorf("%s %q percent = %d, outside 0-100", card.Key, window.Label, *window.Pct)
 			}
 		}
 	}
@@ -308,6 +331,8 @@ func quotaEnvWithDaemon(t *testing.T, stub *quotaStubState, auth string) (base, 
 	t.Cleanup(restore)
 	restoreChatGPT := el.SetChatGPTUsageEndpointForTest(srv.URL + "/backend-api/wham/usage")
 	t.Cleanup(restoreChatGPT)
+	openRouterRestore := el.SetOpenRouterEndpointsForTest(srv.URL+"/api/v1/credits", srv.URL+"/api/v1/key")
+	t.Cleanup(openRouterRestore)
 	t.Setenv("HOME", tempDir(t))
 	stateDir = tempDir(t)
 	t.Setenv("EL_STATE_DIR", stateDir)
@@ -399,6 +424,8 @@ func measureQuotaEndpoint(t *testing.T, base string) time.Duration {
 const quotaChatGPTKey = "openai-codex"
 
 const quotaAuth = `{"opencode-go":{"type":"api_key","key":"k1"},"google-antigravity":{"type":"oauth","access":"agy-access","refresh":"r1","expires":1893456000000,"projectId":"p1"}}`
+
+const quotaOpenRouterAuth = `{"openrouter":{"type":"api_key","key":"or-test-key"}}`
 
 func writeClaudeFile(t *testing.T, dir string, fiveHour, sevenDay int) {
 	t.Helper()
@@ -754,10 +781,10 @@ func TestQuotaGetAllProviders(t *testing.T) {
 		t.Fatalf("initial refresh status = %d", code)
 	}
 	cards := getQuota(t, base)
-	if len(cards) != 5 {
-		t.Fatalf("providers = %d, want 5", len(cards))
+	if len(cards) != 6 {
+		t.Fatalf("providers = %d, want 6", len(cards))
 	}
-	wantKeys := []string{"claude", "openai-codex", "opencode-go", "agy-gemini", "agy-3p"}
+	wantKeys := []string{"claude", "openai-codex", "opencode-go", "agy-gemini", "agy-3p", "openrouter"}
 	for i, k := range wantKeys {
 		if cards[i].Key != k {
 			t.Errorf("card %d key = %q, want %q", i, cards[i].Key, k)
@@ -772,6 +799,10 @@ func TestQuotaGetAllProviders(t *testing.T) {
 	if chatGPT.Label != "ChatGPT Plus" || chatGPT.Plan != "Plus" || chatGPT.State != "not_configured" || len(chatGPT.Windows) != 0 {
 		t.Errorf("ChatGPT Plus card = %+v, want an unconfigured card without windows", chatGPT)
 	}
+	openrouter := m["openrouter"]
+	if openrouter.State != "not_configured" || openrouter.UpdatedAt != 0 || openrouter.Error != "" || !strings.Contains(openrouter.Hint, "openrouter.key") {
+		t.Errorf("OpenRouter without a pig key = %+v, want not_configured with a key hint", openrouter)
+	}
 	oc := m["opencode-go"]
 	if oc.Label != "OpenCode-Go" || oc.State != "ok" || oc.Plan != "Go" || len(oc.Windows) != 3 || oc.Windows[0].Label != "5-hour" || oc.Windows[0].Pct != 12 || oc.Windows[1].Label != "Weekly" || oc.Windows[2].Label != "Monthly" {
 		t.Errorf("opencode card = %+v", oc)
@@ -785,11 +816,11 @@ func TestQuotaGetAllProviders(t *testing.T) {
 		t.Errorf("3p card = %+v", tp)
 	}
 	for _, c := range cards {
-		if c.Key != quotaChatGPTKey && c.UpdatedAt == 0 {
+		if c.Key != quotaChatGPTKey && c.Key != "openrouter" && c.UpdatedAt == 0 {
 			t.Errorf("%s updated_at = 0, want the cache mtime", c.Key)
 		}
-		if c.Key == quotaChatGPTKey && c.UpdatedAt != 0 {
-			t.Errorf("unconfigured ChatGPT updated_at = %d, want 0", c.UpdatedAt)
+		if (c.Key == quotaChatGPTKey || c.Key == "openrouter") && c.UpdatedAt != 0 {
+			t.Errorf("unconfigured %s updated_at = %d, want 0", c.Key, c.UpdatedAt)
 		}
 		if c.Error != "" {
 			t.Errorf("%s error = %q, want empty", c.Key, c.Error)
@@ -919,6 +950,74 @@ func TestQuotaChatGPTUnauthorizedMarksExpiredAndKeepsCache(t *testing.T) {
 	}
 }
 
+func TestQuotaOpenRouterCreditsAndKeySpendAtHTTPSeam(t *testing.T) {
+	stub := &quotaStubState{}
+	base, stateDir := quotaEnv(t, stub, quotaOpenRouterAuth)
+	status, cards, raw, err := sendQuotaRefresh(base, "openrouter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("OpenRouter refresh status = %d", status)
+	}
+	assertQuotaContract(t, raw)
+	if strings.Contains(string(raw), "or-test-key") {
+		t.Fatal("quota response exposed the pig OpenRouter key")
+	}
+	card := quotaByKey(t, cards)["openrouter"]
+	if card.State != "ok" || card.Label != "OpenRouter" || card.Plan != "Credits" || len(card.Windows) != 2 {
+		t.Fatalf("OpenRouter card = %+v", card)
+	}
+	if got := card.Windows[0]; got.Label != "Credits" || got.Pct != 94 || got.Detail != "$59.16 of $63.00 · $3.84 left" {
+		t.Errorf("OpenRouter credits window = %+v", got)
+	}
+	if got := card.Windows[1]; got.Label != "Spend this week" || got.Detail != "$2.37 · today $0.91 · month $5.70" {
+		t.Errorf("OpenRouter spend window = %+v", got)
+	}
+	var rawCard struct {
+		Providers []struct {
+			Key     string `json:"key"`
+			Windows []struct {
+				Pct *int `json:"pct"`
+			} `json:"windows"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &rawCard); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range rawCard.Providers {
+		if provider.Key == "openrouter" && (len(provider.Windows) != 2 || provider.Windows[1].Pct != nil) {
+			t.Errorf("OpenRouter spend window should be text-only: %+v", provider.Windows)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "usage-openrouter.json")); err != nil {
+		t.Errorf("OpenRouter cache missing from temp state dir: %v", err)
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.openrouterCredits != 1 || stub.openrouterKey != 1 {
+		t.Errorf("OpenRouter calls: credits=%d key=%d, want one each", stub.openrouterCredits, stub.openrouterKey)
+	}
+	if len(stub.openrouterAuth) != 2 || stub.openrouterAuth[0] != "Bearer or-test-key" || stub.openrouterAuth[1] != "Bearer or-test-key" {
+		t.Errorf("OpenRouter Authorization headers = %v", stub.openrouterAuth)
+	}
+}
+
+func TestQuotaOpenRouterMissingKeyIsNotConfigured(t *testing.T) {
+	stub := &quotaStubState{}
+	base, _, d := quotaEnvWithDaemon(t, stub, "")
+	cards := quotaByKey(t, getQuota(t, base))
+	card := cards["openrouter"]
+	if card.State != "not_configured" || card.Error != "" || !strings.Contains(card.Hint, "openrouter.key") {
+		t.Fatalf("OpenRouter missing key = %+v, want not_configured without an error", card)
+	}
+	d.quotaRefreshWG.Wait()
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if stub.openrouterCredits != 0 || stub.openrouterKey != 0 {
+		t.Errorf("missing OpenRouter key made upstream calls: credits=%d key=%d", stub.openrouterCredits, stub.openrouterKey)
+	}
+}
 func TestQuotaNotConfigured(t *testing.T) {
 	stub := &quotaStubState{}
 	base, _ := quotaEnv(t, stub, "")

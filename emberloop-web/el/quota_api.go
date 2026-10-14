@@ -22,10 +22,11 @@ const (
 	QuotaError         = "error"
 )
 
-// QuotaWindow is one comparable account limit: percent used and its reset.
+// QuotaWindow is one comparable account limit: an optional percent and reset.
+// Text-only secondary values have no percent bar.
 type QuotaWindow struct {
 	Label    string `json:"label"`
-	Pct      int    `json:"pct"`
+	Pct      *int   `json:"pct"`
 	ResetsAt int64  `json:"resets_at"`
 	Detail   string `json:"detail,omitempty"`
 }
@@ -218,6 +219,15 @@ var quotaSources = []quotaSource{
 		hintFn:       antigravityQuotaNotConfiguredHint,
 		cachePathFn:  func(stateDir string, _ time.Time) string { return usageCachePath(stateDir, usageKeyAgy3P) },
 	},
+	usageQuotaSource{
+		key: usageKeyOpenrouter, label: "OpenRouter", plan: "Credits", fetchKey: usageKeyOpenrouter,
+		configuredFn: func(string, time.Time) bool {
+			auth, err := readPigAuth()
+			return err == nil && auth.OpenRouter.Key != ""
+		},
+		hintFn:      func(string) string { return "Missing OpenRouter key in pig auth.json (openrouter.key)." },
+		cachePathFn: func(stateDir string, _ time.Time) string { return usageCachePath(stateDir, usageKeyOpenrouter) },
+	},
 }
 
 // QuotaFetchKeys returns the distinct upstreams selected by a card key, or
@@ -288,16 +298,21 @@ func quotaWindowLabel(label string) string {
 func quotaWindows(windows []UsageWindow) []QuotaWindow {
 	out := make([]QuotaWindow, 0, len(windows))
 	for _, window := range windows {
-		pct := window.Pct
-		if pct < 0 {
-			pct = 0
-		} else if pct > 100 {
-			pct = 100
+		var pct *int
+		if !window.NoPercent {
+			value := window.Pct
+			if value < 0 {
+				value = 0
+			} else if value > 100 {
+				value = 100
+			}
+			pct = &value
 		}
 		out = append(out, QuotaWindow{
 			Label:    quotaWindowLabel(window.Label),
 			Pct:      pct,
 			ResetsAt: window.ResetsAt,
+			Detail:   window.Detail,
 		})
 	}
 	return out
@@ -329,11 +344,15 @@ func RefreshQuota(ctx context.Context, stateDir, key string, now time.Time, forc
 
 // RefreshQuotaWithCallback reports each independent fetch as it completes so
 // the Daemon can publish one provider's result without waiting for another.
+// Unconfigured sources are not fetched; their snapshots remain not_configured.
 func RefreshQuotaWithCallback(ctx context.Context, stateDir, key string, now time.Time, force bool, onFetchComplete func(string, map[string]error)) map[string]error {
 	sources := make([]quotaSource, 0, len(quotaSources))
 	seen := map[string]bool{}
 	for _, source := range quotaSources {
 		if key != "" && source.Key() != key {
+			continue
+		}
+		if !source.Configured(stateDir, now) {
 			continue
 		}
 		fetchKey := source.FetchKey()
@@ -414,5 +433,15 @@ func SetUsageEndpointsForTest(opencodeURL, agyBase, tokenURL string) func() {
 		claudeVersionMu.Lock()
 		claudeVersionLookup, claudeVersionValue = oldVersionLookup, oldVersionValue
 		claudeVersionMu.Unlock()
+	}
+}
+
+// SetOpenRouterEndpointsForTest aims the credits and current-key requests at
+// local HTTP stubs. It returns a restore func.
+func SetOpenRouterEndpointsForTest(creditsURL, keyURL string) func() {
+	oldCredits, oldKey := openrouterCreditsURL, openrouterKeyURL
+	openrouterCreditsURL, openrouterKeyURL = creditsURL, keyURL
+	return func() {
+		openrouterCreditsURL, openrouterKeyURL = oldCredits, oldKey
 	}
 }

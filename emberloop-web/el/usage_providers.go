@@ -2,9 +2,8 @@ package el
 
 // Usage windows for quota cards and the strip's right side. Claude's terminal
 // strip keeps using the push-based statusline file; browser quota reads its
-// host OAuth usage endpoint without refreshing credentials. OpenCode-Go and
-// Antigravity also have no push channel, so their pollers share
-// `usage-<key>.json` caches and per-key locks across viewers.
+// host OAuth usage endpoint without refreshing credentials. OpenCode-Go,
+// OpenRouter and Antigravity pollers share usage caches and per-key locks.
 
 import (
 	"context"
@@ -38,11 +37,12 @@ type UsageSet struct {
 
 // Usage keys name one cached account view.
 const (
-	usageKeyClaude   = "claude"
-	usageKeyChatGPT  = "openai-codex"
-	usageKeyOpencode = "opencode-go"
-	usageKeyAgyGem   = "agy-gemini"
-	usageKeyAgy3P    = "agy-3p"
+	usageKeyClaude     = "claude"
+	usageKeyChatGPT    = "openai-codex"
+	usageKeyOpencode   = "opencode-go"
+	usageKeyOpenrouter = "openrouter"
+	usageKeyAgyGem     = "agy-gemini"
+	usageKeyAgy3P      = "agy-3p"
 )
 
 // usageRefreshEvery is how stale a cache may be before a poller refetches.
@@ -50,12 +50,14 @@ const usageRefreshEvery = 90 * time.Second
 
 // Endpoints and clients are variables so tests can aim them at local servers.
 var (
-	opencodeUsageURL = "https://opencode.ai/zen/go/v1/usage"
-	chatGPTUsageURL  = "https://chatgpt.com/backend-api/wham/usage"
-	agyBaseURL       = "https://daily-cloudcode-pa.googleapis.com"
-	googleTokenURL   = "https://oauth2.googleapis.com/token"
-	claudeUsageURL   = "https://api.anthropic.com/api/oauth/usage"
-	usageHTTP        = &http.Client{Timeout: 20 * time.Second}
+	opencodeUsageURL     = "https://opencode.ai/zen/go/v1/usage"
+	chatGPTUsageURL      = "https://chatgpt.com/backend-api/wham/usage"
+	openrouterCreditsURL = "https://openrouter.ai/api/v1/credits"
+	openrouterKeyURL     = "https://openrouter.ai/api/v1/key"
+	agyBaseURL           = "https://daily-cloudcode-pa.googleapis.com"
+	googleTokenURL       = "https://oauth2.googleapis.com/token"
+	claudeUsageURL       = "https://api.anthropic.com/api/oauth/usage"
+	usageHTTP            = &http.Client{Timeout: 20 * time.Second}
 )
 
 const (
@@ -414,6 +416,12 @@ func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, forc
 			return err
 		}
 		return writeUsageCache(stateDir, key, w, now)
+	case usageKeyOpenrouter:
+		windows, err := fetchOpenRouterUsage(ctx)
+		if err != nil {
+			return err
+		}
+		return writeUsageCache(stateDir, key, windows, now)
 	case usageKeyAgyGem, usageKeyAgy3P:
 		gem, tp, err := fetchAgyUsage(ctx)
 		if err != nil {
@@ -623,6 +631,9 @@ type pigAuth struct {
 	OpencodeGo struct {
 		Key string `json:"key"`
 	} `json:"opencode-go"`
+	OpenRouter struct {
+		Key string `json:"key"`
+	} `json:"openrouter"`
 	Antigravity struct {
 		Refresh string `json:"refresh"`
 		Project string `json:"projectId"`
@@ -813,6 +824,52 @@ func fetchOpencodeUsage(ctx context.Context) ([]UsageWindow, error) {
 		return nil, fmt.Errorf("opencode usage response has no windows")
 	}
 	return out, nil
+}
+
+// fetchOpenRouterUsage combines account credits with usage for the current
+// pig API key. The credit window drives the percent bar; spend is secondary text.
+func fetchOpenRouterUsage(ctx context.Context) ([]UsageWindow, error) {
+	auth, err := readPigAuth()
+	if err != nil || auth.OpenRouter.Key == "" {
+		return nil, fmt.Errorf("no openrouter key in pig's auth file")
+	}
+	header := map[string]string{"Authorization": "Bearer " + auth.OpenRouter.Key}
+	var credits struct {
+		Data struct {
+			TotalCredits float64 `json:"total_credits"`
+			TotalUsage   float64 `json:"total_usage"`
+		} `json:"data"`
+	}
+	if err := getJSON(ctx, http.MethodGet, openrouterCreditsURL, header, nil, &credits); err != nil {
+		return nil, err
+	}
+	if credits.Data.TotalCredits <= 0 {
+		return nil, fmt.Errorf("openrouter credits response has no total credits")
+	}
+	var keyUsage struct {
+		Data struct {
+			Daily   float64 `json:"usage_daily"`
+			Weekly  float64 `json:"usage_weekly"`
+			Monthly float64 `json:"usage_monthly"`
+		} `json:"data"`
+	}
+	if err := getJSON(ctx, http.MethodGet, openrouterKeyURL, header, nil, &keyUsage); err != nil {
+		return nil, err
+	}
+	used, total := credits.Data.TotalUsage, credits.Data.TotalCredits
+	left := total - used
+	return []UsageWindow{
+		{
+			Label:  "Credits",
+			Pct:    int(used/total*100 + 0.5),
+			Detail: fmt.Sprintf("$%.2f of $%.2f · $%.2f left", used, total, left),
+		},
+		{
+			Label:     "Spend this week",
+			Detail:    fmt.Sprintf("$%.2f · today $%.2f · month $%.2f", keyUsage.Data.Weekly, keyUsage.Data.Daily, keyUsage.Data.Monthly),
+			NoPercent: true,
+		},
+	}, nil
 }
 
 func parseResetTime(s string) int64 {

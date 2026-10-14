@@ -21,11 +21,14 @@ import (
 )
 
 // UsageWindow is one rate-limit window: percent used and when it resets
-// (unix seconds).
+// (unix seconds). A text-only secondary window can carry a detail without a
+// percent bar.
 type UsageWindow struct {
-	Label    string `json:"label,omitempty"`
-	Pct      int    `json:"pct"`
-	ResetsAt int64  `json:"resets_at"`
+	Label     string `json:"label,omitempty"`
+	Pct       int    `json:"pct"`
+	ResetsAt  int64  `json:"resets_at"`
+	Detail    string `json:"detail,omitempty"`
+	NoPercent bool   `json:"no_percent,omitempty"`
 }
 
 // ClaudeUsage is the account's two windows. Has is false until claude has
