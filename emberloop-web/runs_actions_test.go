@@ -109,18 +109,18 @@ func workerPromptTexts(t *testing.T, base, sessionID string) []string {
 	return out
 }
 
-func waitPromptContaining(t *testing.T, base, sessionID, substr string, n int, what string) {
+func waitPromptContaining(t *testing.T, base, sessionID, substr string, n int, what string) Event {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		found := 0
-		for _, text := range workerPromptTexts(t, base, sessionID) {
-			if strings.Contains(text, substr) {
+		for _, e := range transcriptOf(t, base, sessionID) {
+			if e.Kind == "prompt" && strings.Contains(e.Text, substr) {
 				found++
+				if found >= n {
+					return e
+				}
 			}
-		}
-		if found >= n {
-			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s: %d prompts contain %q, want %d", what, found, substr, n)
@@ -502,6 +502,8 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	firstPrompt := firstPromptWhere(t, srv.URL, worker, func(Event) bool { return true })
+	waitTurnEnd(t, srv.URL, worker, firstPrompt.Seq)
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	commitTicketFile(t, worktree, "conflict.txt", "worker\n", "worker change")
 	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
@@ -513,7 +515,8 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 
 	for n := 1; n <= 3; n++ {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
-		waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
+		refusalPrompt := waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
+		waitTurnEnd(t, srv.URL, worker, refusalPrompt.Seq)
 	}
 	waitActionState(t, srv.URL, run.ID, "01-first", "needs-you", "refusal needs-you")
 
@@ -525,7 +528,8 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 		t.Fatalf("needsYou in retry response = %q, want cleared", got.NeedsYou)
 	}
 	// The retry's steer reached the worker.
-	waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")
+	retryPrompt := waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")
+	waitTurnEnd(t, srv.URL, worker, retryPrompt.Seq)
 
 	// A branch reset onto the moved spec, plus a new commit, merges: the
 	// rebase lands and the reviewers judge the new tip.

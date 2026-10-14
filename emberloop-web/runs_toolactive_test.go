@@ -51,9 +51,12 @@ func TestIdleAlertWaitsForInflightToolCall(t *testing.T) {
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return ticketByID(r, "01-first").WorkerSession != ""
-	}, "worker started")
+		tk := ticketByID(r, "01-first")
+		return tk.WorkerSession != "" && tk.State != "queued"
+	}, "worker's first driver pass")
 	worker := ticketByID(r, "01-first").WorkerSession
+	firstPrompt := firstPromptWhere(t, srv.URL, worker, func(Event) bool { return true })
+	waitTurnEnd(t, srv.URL, worker, firstPrompt.Seq)
 
 	d.appendEvent(worker, "tool_call_started", bashToolText("call_1", "running"), "")
 	clock.advance(11 * time.Minute)
@@ -81,8 +84,8 @@ func TestIdleAlertWaitsForInflightToolCall(t *testing.T) {
 	pauseTestRun(t, srv.URL, run.ID)
 }
 
-// The in-flight grace ends at the cap: a tool call open for over thirty
-// minutes no longer counts as activity and the idle alert fires.
+// The in-flight grace ends at the cap; after the subsequent idle threshold,
+// a tool call left open indefinitely no longer suppresses the idle alert.
 func TestInflightToolCapExpires(t *testing.T) {
 	// Serial: the fake-clock idle wait times out under parallel git load.
 	repo, spec := initRunRepo(t, singleIdleTicket())
@@ -94,12 +97,25 @@ func TestInflightToolCapExpires(t *testing.T) {
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
 	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return ticketByID(r, "01-first").WorkerSession != ""
-	}, "worker started")
+		tk := ticketByID(r, "01-first")
+		return tk.WorkerSession != "" && tk.State != "queued"
+	}, "worker's first driver pass")
 	worker := ticketByID(r, "01-first").WorkerSession
-
+	firstPrompt := firstPromptWhere(t, srv.URL, worker, func(Event) bool { return true })
+	waitTurnEnd(t, srv.URL, worker, firstPrompt.Seq)
 	d.appendEvent(worker, "tool_call_started", bashToolText("call_1", "running"), "")
-	clock.advance(runToolActiveCap + time.Minute)
+	// Let the driver observe the tool while it is still within its activity
+	// cap. Once it expires, the idle alert needs ten more minutes without work.
+	clock.advance(runToolActiveCap - time.Minute)
+	quietUntil := time.Now().Add(3 * time.Second)
+	for time.Now().Before(quietUntil) {
+		got := actionTicketByID(getActionRun(t, srv.URL, run.ID), "01-first")
+		if got.State == "needs-you" && strings.Contains(got.NeedsYou, "no worker activity for 10 minutes") {
+			t.Fatalf("idle needs-you fired before the tool cap: state=%q reason=%q", got.State, got.NeedsYou)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	clock.advance(12 * time.Minute)
 	got := waitTicketCond(t, srv.URL, run.ID, "01-first", func(tk actionTicket) bool {
 		return tk.State == "needs-you" && strings.Contains(tk.NeedsYou, "no worker activity for 10 minutes")
 	}, "idle needs-you past the tool cap")
