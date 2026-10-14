@@ -4,9 +4,9 @@
 
 **Blocked by:** 03-suite-time-target-and-check-timeout (Part 7 goes first; builds to the spec response contract with a mocked live channel)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Second sidebar shows the "Quota and Providers" title, the Quota entry and the Live status list (tone dot, name, top percent per provider, driven only by `pct`)
-- [ ] The list reads its provider data from one shared client store with a replaceable source; this ticket feeds it from the existing fetch and a mocked channel, and ticket 15 connects it to the live topic
-- [ ] The sidebar stays open on desktop while Quota is the active area
-- [ ] Vitest covers the status list and the sidebar behaviour; repo check and `npm test` pass
+- [x] Second sidebar shows the "Quota and Providers" title, the Quota entry and the Live status list (tone dot, name, top percent per provider, driven only by `pct`)
+- [x] The list reads its provider data from one shared client store with a replaceable source; this ticket feeds it from the existing fetch and a mocked channel, and ticket 15 connects it to the live topic
+- [x] The sidebar stays open on desktop while Quota is the active area
+- [x] Vitest covers the status list and the sidebar behaviour; repo check and `npm test` pass
