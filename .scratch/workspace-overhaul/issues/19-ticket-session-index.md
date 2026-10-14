@@ -4,9 +4,9 @@
 
 **Blocked by:** 17-runs-list-summaries (both change the Runs list path)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Attaching a Session to a Ticket records it in an index
-- [ ] The Runs list and detail read Ticket Sessions from the index; no per-Ticket scan of all Sessions remains
-- [ ] The index survives a Daemon restart (rebuilt from disk or persisted)
-- [ ] Go tests cover the index through the Runs HTTP seam; repo check passes
+- [x] Attaching a Session to a Ticket records it in an index
+- [x] The Runs list and detail read Ticket Sessions from the index; no per-Ticket scan of all Sessions remains
+- [x] The index survives a Daemon restart (rebuilt from disk or persisted)
+- [x] Go tests cover the index through the Runs HTTP seam; repo check passes
