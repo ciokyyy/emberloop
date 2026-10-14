@@ -4,9 +4,9 @@
 
 **Blocked by:** 17-runs-list-summaries (both change the Runs list path)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `git` results per Run and per Ticket come from a short TTL cache
-- [ ] A Run event invalidates that Run's entries
-- [ ] Go tests cover a cache hit, TTL expiry and invalidation by a Run event
-- [ ] Repo check passes
+- [x] `git` results per Run and per Ticket come from a short TTL cache
+- [x] A Run event invalidates that Run's entries
+- [x] Go tests cover a cache hit, TTL expiry and invalidation by a Run event
+- [x] Repo check passes
