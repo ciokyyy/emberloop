@@ -258,7 +258,7 @@ Project scope
 
 Draft project pick
 
-- Trigger: the first prompt sent from a draft with no Project, before the Session starts. The Daemon asks jev (OpenRouter `systemone`, model `typesafe/jev-1.13`, client `emberloop/tools/systemone/systemone.go`, key from `systemone.APIKey()`) one `noul` question per Project plus one "none" question, in one call. No new key setting is needed.
+- Trigger: the first prompt sent from a draft with no Project, before the Session starts. The Daemon asks jev (OpenRouter `systemone`, model `typesafe/jev-1.13`, client `emberloop-web/el/tools/systemone/systemone.go`, key from `systemone.APIKey()`) one `noul` question per Project plus one "none" question, in one call. No new key setting is needed.
 - Wording per Project: name plus its one-line gist. Measured on 25 prompts and 4 Projects: names only 64% top-1; name plus path 64%; name plus gist 92% top-1 with 0% false picks on "none" prompts. Paths add nothing.
 - Gate: accept only if top probability is at least 0.5 and the lead over the second is at least 0.2. Measured: 100% correct on 80% coverage. Misses fall to "none", which is the safe direction; below the gate no banner appears. Latency is about 300ms per call, so the banner can appear before the first turn.
 - `memory.ValidateQuestions` allows only the five miner questions, so a project-pick question needs its own question type or a direct wire call. Thresholds are valid for `typesafe/jev-1.13` and must be re-measured if the model changes.

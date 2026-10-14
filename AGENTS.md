@@ -50,7 +50,7 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/project-init/AGENTS.md` — the spec and ticket area for project init and validate
 - `.scratch/quota-tab/AGENTS.md` — the spec and ticket area for the quota tab (account quota page in `emberloop-web`)
 - `.scratch/projects-providers-settings/AGENTS.md` — the spec area for Speed, Providers, Project scope, the draft Project pick and the Settings redesign (spec only; no tickets yet)
-- `.scratch/workspace-overhaul/AGENTS.md` — the combined spec of the 2026-10-13 grilling Session (Quota, Speed, Providers, Project scope, draft Project pick, Settings redesign, stall-proof Run tests; spec only)
+- `.scratch/workspace-overhaul/AGENTS.md` — the combined spec of the 2026-10-13 grilling Session (Quota, Speed, Providers, Project scope, draft Project pick, Settings redesign, stall-proof Run tests; tickets for Parts 2 to 7, Quota stays in quota-tab)
 - `.scratch/web-v1/AGENTS.md` — the spec and ticket area for web v1 in `emberloop-web` (Handoff compress, Users, Memory with Profile, Rules and Deciders)
 - `.scratch/run-upgrade/AGENTS.md` — the spec and ticket area for the Run upgrade (Reviewer submit tool, Chains and Switch, spec branches, hygiene guards, `find` graph hits)
 - `.scratch/emberplugins/AGENTS.md` — the spec and ticket area for Emberplugins (runtime-added pages, jobs and servers in `emberloop-web`)
