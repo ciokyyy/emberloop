@@ -4,12 +4,12 @@
 
 **Blocked by:** 07-claude-poller, 08-chatgpt-plus-card
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One probe script per behaviour under the live-probe scripts area, documented in its module doc
-- [ ] Each probe touches only read-only quota endpoints; no login is refreshed, rewritten or deleted
-- [ ] Each probe run once; outcome recorded in this ticket
-- [ ] Never wired into the repo check
+- [x] One probe script per behaviour under the live-probe scripts area, documented in its module doc
+- [x] Each probe touches only read-only quota endpoints; no login is refreshed, rewritten or deleted
+- [x] Each probe run once; outcome recorded in this ticket
+- [x] Never wired into the repo check
 
 ## Probe run outcomes (2026-10-14)
 
