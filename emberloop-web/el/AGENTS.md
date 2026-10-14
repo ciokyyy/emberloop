@@ -102,14 +102,14 @@ durable boundaries with their own docs. File map (non-test file owns its
 ## Work Guidance
 
 - Build and test from the module root (`emberloop-web/`): `go build ./...`,
-  `go vet ./...`, and `go test -timeout 15m -skip TestLive ./...`. Never run a live test and
+  `go vet ./...`, `go test -skip TestLive ./...`. Never run a live test and
   never start `el`, `pig`, or `claude` from inside the work.
 - Behavioural change needs a test through the tool or command, not
   internals; expected values come from the spec or a worked example.
 
 ## Verification
 
-`.emberloop/check` (`cd emberloop-web && go vet ./... && go test -timeout 15m -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
+`.emberloop/check` (`cd emberloop-web && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
 
 ## Child DOX Index
 
