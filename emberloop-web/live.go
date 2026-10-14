@@ -1,28 +1,36 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
 
 // liveHub is the one realtime channel of the Daemon. Every state change
 // publishes the name of the topic it touched; GET /api/live fans those names
-// out over a single SSE stream. A message carries no data: the client refetches
-// the topic's normal GET endpoint, so each payload keeps one definition.
+// out over a single SSE stream. State topics normally carry no data and the
+// client refetches their normal GET endpoint. Topics may opt into a payload
+// when refetching would defeat the purpose of a live update (quota).
 //
 // Topics: "sessions" (the list), "session:<id>" (one Session's meta and
 // queue), "runs" (the list), "run:<id>" (one Run), "settings", "users" (the
-// User list and who is online).
+// User list and who is online), and "quota" (the provider list).
 // Transcript Events keep their own append-only stream; they are a log, not
 // state.
-type liveHub struct {
-	mu   sync.Mutex
-	subs map[chan string]struct{}
+type liveMessage struct {
+	topic   string
+	payload []byte
 }
 
-func newLiveHub() *liveHub { return &liveHub{subs: map[chan string]struct{}{}} }
+type liveHub struct {
+	mu   sync.Mutex
+	subs map[chan liveMessage]struct{}
+}
+
+func newLiveHub() *liveHub { return &liveHub{subs: map[chan liveMessage]struct{}{}} }
 
 // publish tells every subscriber the topics changed. It never blocks: a
 // subscriber with a full buffer already has a refetch pending for the same
@@ -34,27 +42,60 @@ func (h *liveHub) publish(topics ...string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.subs {
-		for _, t := range topics {
+		for _, topic := range topics {
 			select {
-			case ch <- t:
+			case ch <- liveMessage{topic: topic}:
 			default:
 			}
 		}
 	}
 }
 
-func (h *liveHub) subscribe() chan string {
-	ch := make(chan string, 256)
+// publishPayload publishes a topic with a JSON provider-list payload. The
+// bytes are copied so the caller can safely reuse its buffer.
+func (h *liveHub) publishPayload(topic string, payload []byte) {
+	if h == nil || !json.Valid(payload) {
+		return
+	}
+	message := liveMessage{topic: topic, payload: append([]byte(nil), payload...)}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.subs {
+		select {
+		case ch <- message:
+		default:
+		}
+	}
+}
+
+func (h *liveHub) subscribe() chan liveMessage {
+	ch := make(chan liveMessage, 256)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
 	return ch
 }
 
-func (h *liveHub) unsubscribe(ch chan string) {
+func (h *liveHub) unsubscribe(ch chan liveMessage) {
 	h.mu.Lock()
 	delete(h.subs, ch)
 	h.mu.Unlock()
+}
+
+func quotaTopicRequested(r *http.Request) bool {
+	for _, topic := range r.URL.Query()["topic"] {
+		if topic == "quota" {
+			return true
+		}
+	}
+	for _, topics := range r.URL.Query()["topics"] {
+		for _, topic := range strings.Split(topics, ",") {
+			if strings.TrimSpace(topic) == "quota" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // presence counts the live channels each User holds open. A User is online
@@ -102,7 +143,8 @@ func (p *presence) online(userID string) bool {
 }
 
 // handleLive serves GET /api/live. A new connection first gets a "hello"
-// message, which tells the client to refetch everything it shows.
+// message, which tells the client to refetch everything it shows. Quota
+// subscribers opt in with ?topic=quota; only then does its refresher run.
 func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -115,6 +157,10 @@ func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 	}
 	ch := d.live.subscribe()
 	defer d.live.unsubscribe(ch)
+	if quotaTopicRequested(r) {
+		stopQuota := d.subscribeQuotaRefresher()
+		defer stopQuota()
+	}
 	// A signed-in User with an open channel is online. The machine token is no User.
 	if who, ok := d.requesterOf(r); ok && who.user != nil {
 		uid := who.user.ID
@@ -138,8 +184,12 @@ func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": heartbeat\n\n")
 			flush()
-		case topic := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", topic)
+		case message := <-ch:
+			if len(message.payload) != 0 {
+				fmt.Fprintf(w, "data: {\"topic\":%q,\"providers\":%s}\n\n", message.topic, message.payload)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", message.topic)
+			}
 			flush()
 		}
 	}

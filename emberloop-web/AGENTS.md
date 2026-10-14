@@ -23,19 +23,23 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
-- Quota HTTP seam: `quota.go` serves the shared cache at once on GET and
-  refreshes independent providers concurrently, publishing each completion;
-  manual POST skips the 90s age guard and enforces a 10s per-provider minimum.
-  ChatGPT Plus uses pig's `openai-codex` login read-only and never refreshes it.
+- Quota HTTP/live seam: `quota.go` serves the shared cache immediately on GET;
+  one `/api/live?topic=quota` subscriber starts the guarded refresher, which
+  refreshes configured providers concurrently, and the last departure cancels
+  it. Its first non-forced pass retains the 90s/provider age guard; changed
+  provider lists publish only to quota streams. Header panes share cache files
+  and per-key locks; manual POST skips the age guard and enforces a 10s/provider
+  minimum. ChatGPT Plus uses pig's read-only `openai-codex` login.
   `el/usage_providers.go` polls Claude's host OAuth read-only with a separate
   90s cache and persisted `Retry-After` backoff; it never refreshes or writes
-  `~/.claude/.credentials.json`, starts a harness or sends a prompt. Statusline
-  data is the fallback only when host OAuth is absent; the terminal header
-  remains unchanged. OpenRouter reads pig's `openrouter.key`, combines credits
-  and current-key spend in the Credits window detail, and caches its percent
-  bar plus secondary text. Provider-agnostic refreshes skip unconfigured sources.
-  `quota_test.go` covers cache reads, provider isolation, cooldowns, ChatGPT and
-  Claude behavior, and OpenRouter's credits/key endpoints against local stubs.
+  credentials, starts a harness or sends a prompt. Statusline data is the
+  fallback only when host OAuth is absent; the terminal header remains
+  unchanged. OpenRouter reads pig's `openrouter.key`, combines credits and
+  current-key spend in the Credits detail, and caches its percent bar plus
+  secondary text. Unconfigured sources are skipped. `quota_test.go` covers
+  cache reads, live payloads/gating/coalescing, provider isolation, cooldowns,
+  shared locks, ChatGPT and Claude behavior, and OpenRouter endpoints against
+  local stubs.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both

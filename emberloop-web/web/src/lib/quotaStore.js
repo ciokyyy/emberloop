@@ -1,14 +1,17 @@
 // Shared browser-side quota state. Both the Quota page and its contextual
-// sidebar read this store, so one initial request feeds both views. The source
-// can also provide pushed updates; the default source is fetch-only until the
-// quota live topic is connected.
+// sidebar read this store, so one initial request feeds both views. While a
+// store listener exists, the quota live topic pushes complete provider lists.
 import { get, writable } from 'svelte/store';
 import { getQuota } from './api.js';
+import { watch } from './live.js';
 
 const noop = () => {};
 const defaultSource = {
   fetch: getQuota,
-  subscribe: () => noop,
+  subscribe: (publish) => watch('quota', (topic, message) => {
+    if (topic === 'quota') publish(message);
+    else if (topic === 'hello') return getQuota().then(publish);
+  }),
 };
 
 function providerList(body) {

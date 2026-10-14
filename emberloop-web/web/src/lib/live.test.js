@@ -24,4 +24,19 @@ describe('live channel', () => {
     watch('sessions', () => {});
     expect(opened).toHaveBeenCalledTimes(2);
   });
+
+  it('sends watched topics and forwards quota provider payloads', () => {
+    let stream;
+    vi.stubGlobal('EventSource', class {
+      constructor(url) { this.url = url; stream = this; }
+      close() {}
+    });
+    const update = vi.fn();
+    const stop = watch('quota', update);
+    expect(stream.url).toContain('topic=quota');
+    const message = { topic: 'quota', providers: [{ key: 'claude' }] };
+    stream.onmessage({ data: JSON.stringify(message) });
+    expect(update).toHaveBeenCalledWith('quota', message);
+    stop();
+  });
 });

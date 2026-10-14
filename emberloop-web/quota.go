@@ -1,13 +1,14 @@
 package web
 
-// Quota API for the browser UI's Quota tab: GET /api/quota returns the cache
-// immediately and starts guarded provider refreshes concurrently in the
-// background, publishing each result as it completes. POST /api/quota/refresh
-// with an optional key forces a fresh synchronous fetch past the 90s age
-// guard, subject to a 10s per-provider manual cooldown. Both share the header
-// panes' cache files and per-key lock through el. Failures retain stale values.
+// Quota API for the browser UI's Quota tab: GET /api/quota returns the shared
+// cache only. A subscriber to the live quota topic starts the guarded
+// background refresher and receives changed provider lists. POST
+// /api/quota/refresh remains synchronous, skips the 90s age guard, and applies
+// a 10s per-provider manual cooldown. Both paths share the header panes' cache
+// files and per-key lock through el. Failures retain stale values.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -17,10 +18,12 @@ import (
 	el "example.com/emberloop-web/el"
 )
 
-// quotaTimeout bounds both background cache refreshes and manual refreshes.
+// quotaTimeout bounds provider fetches. Refresh checks run more often than
+// the shared 90s cache guard so each source is fetched as soon as it is due.
 const (
 	quotaTimeout                  = 25 * time.Second
 	quotaManualRefreshMinInterval = 10 * time.Second
+	quotaRefreshCheckInterval     = 15 * time.Second
 )
 
 // quotaStateDir is the shared quota cache: the empty el default, the same
@@ -137,30 +140,127 @@ func (d *Daemon) refreshQuotaFetchKeys(ctx context.Context, fetchKeys []string, 
 }
 
 // refreshQuota records each provider's outcome as it completes, before
-// returning the aggregate errors for the synchronous refresh response.
+// returning aggregate errors, and publishes the provider list only if its
+// public snapshot changed.
 func (d *Daemon) refreshQuota(ctx context.Context, key string, now time.Time, force bool) map[string]error {
 	errs := el.RefreshQuotaWithCallback(ctx, quotaStateDir, key, now, force, func(fetchKey string, fetchErrs map[string]error) {
 		d.rememberQuotaErrors(fetchKey, fetchErrs)
+		d.publishQuotaIfChanged()
 	})
 	d.rememberQuotaErrors(key, errs)
+	d.publishQuotaIfChanged()
 	return errs
 }
 
-// serveQuota answers GET from the current cache and refreshes it in the
-// background. Manual POST stays synchronous, skips the age guard, and reserves
-// the 10s interval independently for each upstream provider.
+func (d *Daemon) quotaProviders() []el.QuotaProvider {
+	return el.QuotaSnapshot(quotaStateDir, d.now(), d.quotaErrorSnapshot())
+}
+
+// seedQuotaLiveSnapshot establishes the baseline so the first background pass
+// only publishes a genuine change from the cache served to the page.
+func (d *Daemon) seedQuotaLiveSnapshot() {
+	payload, err := json.Marshal(d.quotaProviders())
+	if err != nil {
+		return
+	}
+	d.quotaMu.Lock()
+	d.quotaPublishedJSON = payload
+	d.quotaPublishedReady = true
+	d.quotaMu.Unlock()
+}
+
+func (d *Daemon) hasQuotaSubscribers() bool {
+	d.quotaLiveMu.Lock()
+	defer d.quotaLiveMu.Unlock()
+	return d.quotaLiveSubscribers > 0
+}
+
+func (d *Daemon) publishQuotaIfChanged() {
+	payload, err := json.Marshal(d.quotaProviders())
+	if err != nil {
+		return
+	}
+	d.quotaMu.Lock()
+	if !d.quotaPublishedReady {
+		d.quotaPublishedJSON = payload
+		d.quotaPublishedReady = true
+		d.quotaMu.Unlock()
+		return
+	}
+	changed := !bytes.Equal(d.quotaPublishedJSON, payload)
+	if changed {
+		d.quotaPublishedJSON = append(d.quotaPublishedJSON[:0], payload...)
+	}
+	d.quotaMu.Unlock()
+	if changed && d.hasQuotaSubscribers() {
+		d.live.publishPayload("quota", payload)
+	}
+}
+
+// subscribeQuotaRefresher keeps one shared refresher alive while any live
+// quota consumer is connected. Its immediate pass reads cache first and the
+// existing provider locks and 90s age guard decide whether upstream work is due.
+func (d *Daemon) subscribeQuotaRefresher() func() {
+	d.quotaLiveMu.Lock()
+	if d.quotaLiveSubscribers == 0 {
+		d.seedQuotaLiveSnapshot()
+		ctx, cancel := context.WithCancel(context.Background())
+		d.quotaLiveCancel = cancel
+		d.quotaLiveWG.Add(1)
+		go func() {
+			defer d.quotaLiveWG.Done()
+			d.runQuotaRefresher(ctx)
+		}()
+	}
+	d.quotaLiveSubscribers++
+	d.quotaLiveMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			d.quotaLiveMu.Lock()
+			d.quotaLiveSubscribers--
+			if d.quotaLiveSubscribers == 0 {
+				cancel := d.quotaLiveCancel
+				d.quotaLiveCancel = nil
+				if cancel != nil {
+					cancel()
+				}
+			}
+			d.quotaLiveMu.Unlock()
+		})
+	}
+}
+
+func (d *Daemon) runQuotaRefresher(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	d.refreshQuotaWithTimeout(ctx, "")
+	ticker := time.NewTicker(quotaRefreshCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.refreshQuotaWithTimeout(ctx, "")
+		}
+	}
+}
+
+func (d *Daemon) refreshQuotaWithTimeout(parent context.Context, key string) {
+	ctx, cancel := context.WithTimeout(parent, quotaTimeout)
+	defer cancel()
+	d.refreshQuota(ctx, key, d.now(), false)
+}
+
+// serveQuota answers GET from the shared cache only. The live-topic subscriber
+// owns background refreshes; a manual POST stays synchronous, skips the age
+// guard and reserves the 10s interval independently per upstream provider.
 func (d *Daemon) serveQuota(w http.ResponseWriter, r *http.Request, key string, force bool) {
 	if !force {
-		now := d.now()
-		providers := el.QuotaSnapshot(quotaStateDir, now, d.quotaErrorSnapshot())
-		d.quotaRefreshWG.Add(1)
-		writeJSON(w, http.StatusOK, quotaResponse{Providers: providers})
-		go func() {
-			defer d.quotaRefreshWG.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), quotaTimeout)
-			defer cancel()
-			d.refreshQuota(ctx, key, d.now(), false)
-		}()
+		writeJSON(w, http.StatusOK, quotaResponse{Providers: d.quotaProviders()})
 		return
 	}
 

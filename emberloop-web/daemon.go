@@ -62,12 +62,19 @@ type Daemon struct {
 	// sttKeyFn overrides the OpenRouter key lookup (tests).
 	sttKeyFn func(context.Context) string
 	stateDir string
-	// quotaMu guards background errors and the last manual refresh time per
-	// provider; quotaRefreshWG lets HTTP-seam tests wait for detached refreshes.
+	// quotaMu guards refresh errors, the manual cooldown and the last quota
+	// snapshot published to live subscribers.
 	quotaMu              sync.RWMutex
 	quotaErrors          map[string]error
 	quotaManualRefreshAt map[string]time.Time
-	quotaRefreshWG       sync.WaitGroup
+	quotaPublishedJSON   []byte
+	quotaPublishedReady  bool
+	// quotaLiveMu starts one background refresher for the first quota-topic
+	// subscriber and cancels it when the last subscriber leaves.
+	quotaLiveMu          sync.Mutex
+	quotaLiveSubscribers int
+	quotaLiveCancel      context.CancelFunc
+	quotaLiveWG          sync.WaitGroup
 	// hostClaudeDir and hostPigDir are the host's own harness dirs. Owner
 	// dirs are seeded from them (harnessdirs.go); no harness starts on them.
 	hostClaudeDir string

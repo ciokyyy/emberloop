@@ -6,9 +6,11 @@ package web
 // or touch real upstreams.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	el "example.com/emberloop-web/el"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,8 +22,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	el "example.com/emberloop-web/el"
 )
 
 // quotaStubState is the mutable stub behaviour.
@@ -30,6 +30,9 @@ type quotaStubState struct {
 	opencodePct          int
 	opencodeErr          bool
 	opencodeCalls        int
+	opencodeStarted      chan struct{}
+	opencodeCanceled     chan struct{}
+	opencodeBlock        <-chan struct{}
 	agyErr               bool
 	agyCalls             int
 	openrouterCredits    int
@@ -50,8 +53,6 @@ type quotaStubState struct {
 	claudeAuthorization  string
 	claudeUserAgent      string
 	claudeBeta           string
-	opencodeStarted      chan struct{}
-	opencodeBlock        <-chan struct{}
 	agyStarted           chan struct{}
 	agyBlock             <-chan struct{}
 	refreshDone          chan struct{}
@@ -100,7 +101,7 @@ func (s *quotaStubState) handler() http.Handler {
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
 		chatGPTStatus := s.chatGPTStatus
 		claudeStatus, claudeRetryAfter, claudeBody := s.claudeStatus, s.claudeRetryAfter, s.claudeBody
-		opencodeStarted, opencodeBlock := s.opencodeStarted, s.opencodeBlock
+		opencodeStarted, opencodeBlock, opencodeCanceled := s.opencodeStarted, s.opencodeBlock, s.opencodeCanceled
 		agyStarted, agyBlock, refreshDone := s.agyStarted, s.agyBlock, s.refreshDone
 		s.mu.Unlock()
 		switch {
@@ -135,8 +136,21 @@ func (s *quotaStubState) handler() http.Handler {
 				}
 			}
 			if opencodeBlock != nil {
-				<-opencodeBlock
+				select {
+				case <-opencodeBlock:
+				case <-r.Context().Done():
+					if opencodeCanceled != nil {
+						select {
+						case opencodeCanceled <- struct{}{}:
+						default:
+						}
+					}
+					return
+				}
 			}
+			s.mu.Lock()
+			opencodePct, opencodeErr = s.opencodePct, s.opencodeErr
+			s.mu.Unlock()
 			if opencodeErr {
 				http.Error(w, "boom", http.StatusInternalServerError)
 				return
@@ -152,7 +166,11 @@ func (s *quotaStubState) handler() http.Handler {
 				}
 			}
 			if agyBlock != nil {
-				<-agyBlock
+				select {
+				case <-agyBlock:
+				case <-r.Context().Done():
+					return
+				}
 			}
 			if agyErr {
 				http.Error(w, "boom", http.StatusInternalServerError)
@@ -351,7 +369,7 @@ func quotaEnvWithDaemon(t *testing.T, stub *quotaStubState, auth string) (base, 
 	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
 	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
 	d = NewDaemon(tempDir(t), NewFakeBackend())
-	t.Cleanup(d.quotaRefreshWG.Wait)
+	t.Cleanup(d.quotaLiveWG.Wait)
 	api := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(api.Close)
 	return api.URL, stateDir, d
@@ -396,7 +414,6 @@ func TestQuotaEndpointTiming(t *testing.T) {
 	api := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(api.Close)
 	after := measureQuotaEndpoint(t, api.URL)
-	d.quotaRefreshWG.Wait()
 	t.Logf("quota GET timing: synchronous baseline %s; cached background read %s", before, after)
 	if before < 200*time.Millisecond {
 		t.Fatalf("synchronous baseline took %s, want at least 200ms with the delayed upstream", before)
@@ -637,20 +654,79 @@ func getQuota(t *testing.T, base string) []quotaCard {
 	return out.Providers
 }
 
-func TestQuotaGetReturnsCachedDataBeforeBlockedRefresh(t *testing.T) {
-	blocked := make(chan struct{})
-	started := make(chan struct{}, 1)
-	done := make(chan struct{})
-	stub := &quotaStubState{
-		opencodePct:     72,
-		opencodeStarted: started,
-		opencodeBlock:   blocked,
-		refreshDone:     done,
+func openQuotaLive(t *testing.T, base string) (*http.Response, context.CancelFunc, *bufio.Reader) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/live?topic=quota", nil)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
 	}
-	base, stateDir := quotaEnv(t, stub, quotaAuth)
-	var unblockOnce sync.Once
-	unblock := func() { unblockOnce.Do(func() { close(blocked) }) }
-	t.Cleanup(unblock)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(resp.Body)
+	line, err := reader.ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, "data: hello") {
+		cancel()
+		resp.Body.Close()
+		t.Fatalf("first live message = %q, %v; want data: hello", line, err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		resp.Body.Close()
+	})
+	return resp, cancel, reader
+}
+
+func readLiveData(t *testing.T, reader *bufio.Reader, timeout time.Duration) string {
+	t.Helper()
+	type result struct {
+		data string
+		err  error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		var data strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				resultCh <- result{err: err}
+				return
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if line == "" {
+				if data.Len() > 0 {
+					resultCh <- result{data: data.String()}
+					return
+				}
+				continue
+			}
+			if value, ok := strings.CutPrefix(line, "data:"); ok {
+				if data.Len() > 0 {
+					data.WriteByte('\n')
+				}
+				data.WriteString(strings.TrimSpace(value))
+			}
+		}
+	}()
+	select {
+	case got := <-resultCh:
+		if got.err != nil {
+			t.Fatalf("read live event: %v", got.err)
+		}
+		return got.data
+	case <-time.After(timeout):
+		t.Fatalf("timed out waiting for a live event after %s", timeout)
+		return ""
+	}
+}
+
+func TestQuotaGetReturnsCacheWithoutUpstreamCallsWhenUnsubscribed(t *testing.T) {
+	stub := &quotaStubState{opencodePct: 72}
+	base, stateDir, _ := quotaEnvWithDaemon(t, stub, quotaAuth)
 	cache := `{"fetched_at":1,"windows":[{"label":"5h","pct":41,"resets_at":1893456000}]}`
 	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(cache), 0o644); err != nil {
 		t.Fatal(err)
@@ -670,52 +746,140 @@ func TestQuotaGetReturnsCachedDataBeforeBlockedRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	elapsed := time.Since(start)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/quota status = %d", resp.StatusCode)
 	}
-	if elapsed >= 200*time.Millisecond {
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
 		t.Fatalf("cached GET /api/quota took %s, want under 200ms", elapsed)
 	}
 	cached := quotaByKey(t, out.Providers)["opencode-go"]
 	if cached.State != "ok" || len(cached.Windows) != 1 || cached.Windows[0].Pct != 41 || cached.UpdatedAt == 0 {
 		t.Fatalf("GET did not return the cached quota card: %+v", cached)
 	}
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("background quota refresh did not reach the upstream stub")
+	stub.mu.Lock()
+	calls := stub.calls
+	stub.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("GET with no quota subscriber made %d upstream calls, want zero", calls)
 	}
-	// The upstream remains blocked until after the cache response has arrived.
-	unblock()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("background quota refresh did not finish after unblocking the stub")
-	}
-	t.Logf("cached GET /api/quota returned in %s while the upstream was blocked", elapsed)
 }
 
-func TestQuotaGetReportsBackgroundRefreshError(t *testing.T) {
-	stub := &quotaStubState{opencodeErr: true}
+func quotaLiveSubscriberCount(d *Daemon) int {
+	d.quotaLiveMu.Lock()
+	defer d.quotaLiveMu.Unlock()
+	return d.quotaLiveSubscribers
+}
+
+func waitQuotaLiveSubscribers(t *testing.T, d *Daemon, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for quotaLiveSubscriberCount(d) != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("quota live subscribers = %d, want %d", quotaLiveSubscriberCount(d), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestQuotaRefresherIsSubscriberGatedAndShared(t *testing.T) {
+	blocked := make(chan struct{})
+	started := make(chan struct{}, 1)
+	canceled := make(chan struct{}, 1)
+	stub := &quotaStubState{
+		opencodePct:      72,
+		opencodeStarted:  started,
+		opencodeCanceled: canceled,
+		opencodeBlock:    blocked,
+	}
 	base, stateDir, d := quotaEnvWithDaemon(t, stub, quotaAuth)
 	cache := `{"fetched_at":1,"windows":[{"label":"5h","pct":41,"resets_at":1893456000}]}`
 	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(cache), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	_ = getQuota(t, base)
+	stub.mu.Lock()
+	if stub.calls != 0 {
+		stub.mu.Unlock()
+		t.Fatalf("cache read with no subscribers made upstream calls: %d", stub.calls)
+	}
+	stub.mu.Unlock()
 
-	first := quotaByKey(t, getQuota(t, base))["opencode-go"]
-	if first.State != "ok" || len(first.Windows) != 1 || first.Windows[0].Pct != 41 {
-		t.Fatalf("initial cached card = %+v", first)
+	first, stopFirst, _ := openQuotaLive(t, base)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("quota refresher did not start for a live subscriber")
 	}
-	// Wait until the detached failed refresh has recorded its error before
-	// checking what a subsequent cache read exposes.
-	d.quotaRefreshWG.Wait()
-	got := quotaByKey(t, getQuota(t, base))["opencode-go"]
-	d.quotaRefreshWG.Wait()
-	if got.State != "stale" || got.Error == "" || len(got.Windows) != 1 || got.Windows[0].Pct != 41 {
-		t.Fatalf("GET after failed background refresh = %+v, want stale state, error text and retained windows", got)
+	second, stopSecond, _ := openQuotaLive(t, base)
+	waitQuotaLiveSubscribers(t, d, 2)
+	stopFirst()
+	first.Body.Close()
+	waitQuotaLiveSubscribers(t, d, 1)
+	select {
+	case <-canceled:
+		t.Fatal("refresher stopped while another quota subscriber remained")
+	case <-time.After(50 * time.Millisecond):
 	}
+
+	stopSecond()
+	second.Body.Close()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("last quota subscriber left but its upstream request was not canceled")
+	}
+	waitQuotaLiveSubscribers(t, d, 0)
+	stub.mu.Lock()
+	calls := stub.opencodeCalls
+	stub.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("two quota viewers started %d OpenCode-Go fetches, want one", calls)
+	}
+}
+
+func TestQuotaLiveTopicPublishesChangedProviderList(t *testing.T) {
+	blocked := make(chan struct{})
+	started := make(chan struct{}, 1)
+	stub := &quotaStubState{opencodePct: 41, opencodeStarted: started, opencodeBlock: blocked}
+	base, stateDir, _ := quotaEnvWithDaemon(t, stub, quotaAuth)
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(blocked) }) }
+	t.Cleanup(unblock)
+	cache := `{"fetched_at":1,"windows":[{"label":"5h","pct":41,"resets_at":1893456000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(cache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, reader := openQuotaLive(t, base)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("quota subscriber did not start its background refresh")
+	}
+	stub.mu.Lock()
+	stub.opencodePct = 66
+	stub.mu.Unlock()
+	unblock()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var message struct {
+			Topic     string      `json:"topic"`
+			Providers []quotaCard `json:"providers"`
+		}
+		if err := json.Unmarshal([]byte(readLiveData(t, reader, time.Until(deadline))), &message); err != nil {
+			continue // state-only topics, such as users, stay plain strings
+		}
+		if message.Topic != "quota" {
+			continue
+		}
+		if len(message.Providers) < 5 {
+			t.Fatalf("quota live payload has %d providers, want the full provider list", len(message.Providers))
+		}
+		if card := quotaByKey(t, message.Providers)["opencode-go"]; card.State == "ok" && len(card.Windows) > 0 && card.Windows[0].Pct == 66 {
+			return
+		}
+	}
+	t.Fatal("quota live topic never carried the changed provider list")
 }
 
 type quotaPostResult struct {
@@ -896,10 +1060,9 @@ func TestQuotaChatGPTPlusUsesPigLoginReadOnly(t *testing.T) {
 
 func TestQuotaChatGPTMissingLoginIsNotConfigured(t *testing.T) {
 	stub := &quotaStubState{}
-	base, _, d := quotaEnvWithDaemon(t, stub, "")
+	base, _, _ := quotaEnvWithDaemon(t, stub, "")
 	missingAuthPath := os.Getenv("EL_PIG_AUTH")
 	cards := quotaByKey(t, getQuota(t, base))
-	d.quotaRefreshWG.Wait()
 	card := cards[quotaChatGPTKey]
 	if card.State != "not_configured" || card.Error != "" || card.Hint == "" {
 		t.Fatalf("ChatGPT card without a login = %+v, want not_configured and a hint", card)
@@ -917,13 +1080,12 @@ func TestQuotaChatGPTMissingLoginIsNotConfigured(t *testing.T) {
 
 func TestQuotaChatGPTExpiredLoginKeepsCachedWindows(t *testing.T) {
 	stub := &quotaStubState{}
-	base, stateDir, d := quotaEnvWithDaemon(t, stub, quotaChatGPTAuth(time.Now().Add(-time.Hour).UnixMilli()))
+	base, stateDir, _ := quotaEnvWithDaemon(t, stub, quotaChatGPTAuth(time.Now().Add(-time.Hour).UnixMilli()))
 	cache := `{"fetched_at":1,"windows":[{"label":"5-hour","pct":4,"resets_at":1893456000},{"label":"Weekly","pct":4,"resets_at":1893996000}]}`
 	if err := os.WriteFile(filepath.Join(stateDir, "usage-openai-codex.json"), []byte(cache), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cards := quotaByKey(t, getQuota(t, base))
-	d.quotaRefreshWG.Wait()
 	card := cards[quotaChatGPTKey]
 	if card.State != "expired" || card.Hint == "" || card.Error != "" || len(card.Windows) != 2 || card.Windows[0].Pct != 4 || card.Windows[1].Pct != 4 {
 		t.Fatalf("expired ChatGPT card = %+v, want expired with cached windows", card)
@@ -1071,7 +1233,6 @@ func TestQuotaRefreshForcesPastGuard(t *testing.T) {
 	if got := quotaByKey(t, getQuota(t, base))["opencode-go"]; got.Windows[0].Pct != 12 {
 		t.Fatalf("GET refetched inside the guard: %+v", got)
 	}
-	d.quotaRefreshWG.Wait()
 	now = now.Add(quotaManualRefreshMinInterval)
 	code, cards = postQuotaRefresh(t, base, "opencode-go")
 	if code != http.StatusOK {
@@ -1343,7 +1504,7 @@ func TestQuotaRefreshFailureIsIsolatedToOneProvider(t *testing.T) {
 	}
 }
 
-func TestQuotaBackgroundGetPublishesFailureBeforeAnotherProviderFinishes(t *testing.T) {
+func TestQuotaLivePublishesFastProviderFailureWhileAnotherProviderIsBlocked(t *testing.T) {
 	agyBlocked := make(chan struct{})
 	agyStarted := make(chan struct{}, 1)
 	stub := &quotaStubState{opencodeErr: true, agyStarted: agyStarted, agyBlock: agyBlocked}
@@ -1357,22 +1518,28 @@ func TestQuotaBackgroundGetPublishesFailureBeforeAnotherProviderFinishes(t *test
 			t.Fatal(err)
 		}
 	}
-
-	initial := quotaByKey(t, getQuota(t, base))
-	if initial["agy-gemini"].State != "ok" || initial["agy-3p"].State != "ok" {
-		t.Fatalf("initial Antigravity cards = %+v, want cached ok values", initial)
+	opencodeCache := `{"fetched_at":1,"windows":[{"label":"5h","pct":45,"resets_at":1893456000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(opencodeCache), 0o644); err != nil {
+		t.Fatal(err)
 	}
+	_, _, reader := openQuotaLive(t, base)
 	select {
 	case <-agyStarted:
 	case <-time.After(time.Second):
-		t.Fatal("background refresh did not reach the blocked Antigravity stub")
+		t.Fatal("quota refresher did not reach the blocked Antigravity stub")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		cards := quotaByKey(t, getQuota(t, base))
-		opencode := cards["opencode-go"]
-		if opencode.State == "error" && opencode.Error != "" && opencode.Error != "no cached usage yet" {
+	for time.Now().Before(deadline) {
+		var message struct {
+			Topic     string      `json:"topic"`
+			Providers []quotaCard `json:"providers"`
+		}
+		if err := json.Unmarshal([]byte(readLiveData(t, reader, time.Until(deadline))), &message); err != nil || message.Topic != "quota" {
+			continue
+		}
+		cards := quotaByKey(t, message.Providers)
+		if opencode := cards["opencode-go"]; opencode.State == "stale" && opencode.Error != "" {
 			for _, key := range []string{"agy-gemini", "agy-3p"} {
 				if card := cards[key]; card.State != "ok" || len(card.Windows) != 1 || card.Windows[0].Pct != 21 {
 					t.Errorf("%s while its refresh is blocked = %+v, want retained ok cache", key, card)
@@ -1380,11 +1547,8 @@ func TestQuotaBackgroundGetPublishesFailureBeforeAnotherProviderFinishes(t *test
 			}
 			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("fast OpenCode-Go failure was not published while Antigravity was blocked: %+v", cards)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	t.Fatal("fast OpenCode-Go failure was not published while Antigravity was blocked")
 }
 
 func TestQuotaConcurrentRefreshersShareProviderLock(t *testing.T) {
