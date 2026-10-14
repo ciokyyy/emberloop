@@ -60,4 +60,17 @@ describe('QuotaSidebar', () => {
     });
     expect(within(row).getByTestId('quota-status-dot').className).toContain('bg-red-500');
   });
+  it('shows Providers in the same sidebar and marks its route active', async () => {
+    const { store } = sourceWith([]);
+    const onNavigate = vi.fn();
+    render(QuotaSidebar, { props: { store, current: 'providers', onNavigate } });
+    const nav = screen.getByRole('navigation', { name: 'Quota and Providers navigation' });
+    const providers = within(nav).getByRole('link', { name: 'Providers' });
+    expect(providers.getAttribute('href')).toBe('/providers');
+    expect(providers.getAttribute('aria-current')).toBe('page');
+    expect(within(nav).getByRole('link', { name: 'Quota' }).getAttribute('aria-current')).toBeNull();
+    await fireEvent.click(providers);
+    expect(onNavigate).toHaveBeenCalledWith('/providers');
+  });
+
 });

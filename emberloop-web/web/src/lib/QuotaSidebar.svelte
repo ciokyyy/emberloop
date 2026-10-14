@@ -1,10 +1,10 @@
 <script>
   import { onMount } from 'svelte';
-  import { Gauge } from '@lucide/svelte';
+  import { Gauge, Plug } from '@lucide/svelte';
   import { highestPercent, thresholdClass } from './quota.js';
   import { quotaStore } from './quotaStore.js';
 
-  let { onNavigate = () => {}, store = quotaStore, inDrawer = false } = $props();
+  let { onNavigate = () => {}, store = quotaStore, inDrawer = false, current = 'quota' } = $props();
   let providers = $state([]);
 
   const DOT = { calm: 'bg-green-500', warm: 'bg-amber-500', hot: 'bg-red-500' };
@@ -16,11 +16,12 @@
     return unsubscribe;
   });
 
-  function openQuota(event) {
+  function openPath(event, path) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    onNavigate('/quota');
+    onNavigate(path);
   }
+
 </script>
 
 <div class="animate-rise flex min-h-0 flex-1 flex-col gap-3" data-testid="quota-sidebar">
@@ -31,12 +32,21 @@
     <div class="flex flex-col gap-0.5">
       <a
         href="/quota"
-        aria-current="page"
-        onclick={openQuota}
-        class="flex items-center gap-2.5 rounded-xl bg-accent px-2.5 py-2 text-sm text-foreground max-md:min-h-11"
+        aria-current={current === 'quota' ? 'page' : undefined}
+        onclick={(event) => openPath(event, '/quota')}
+        class={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm max-md:min-h-11 ${current === 'quota' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}
       >
         <Gauge class="size-4 shrink-0" aria-hidden="true" />
         <span class="min-w-0 flex-1 truncate">Quota</span>
+      </a>
+      <a
+        href="/providers"
+        aria-current={current === 'providers' ? 'page' : undefined}
+        onclick={(event) => openPath(event, '/providers')}
+        class={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm max-md:min-h-11 ${current === 'providers' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}
+      >
+        <Plug class="size-4 shrink-0" aria-hidden="true" />
+        <span class="min-w-0 flex-1 truncate">Providers</span>
       </a>
     </div>
 

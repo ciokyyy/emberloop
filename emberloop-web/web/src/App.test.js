@@ -25,6 +25,38 @@ describe('Runs navigation', () => {
     expect(await within(container).findByText(/repo directory/i)).toBeTruthy();
   });
 });
+
+describe('Providers route', () => {
+  it('opens /providers inside the Quota sidebar area and navigates back to Quota', async () => {
+    history.replaceState(null, '', '/providers');
+    vi.stubGlobal('EventSource', class {
+      constructor() {}
+      close() {}
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const path = String(input);
+      if (path.endsWith('/api/providers')) return { ok: true, json: async () => ({ providers: [] }) };
+      if (path.endsWith('/api/quota')) return { ok: true, json: async () => ({ providers: [] }) };
+      if (path.endsWith('/api/users')) return { ok: true, json: async () => [] };
+      return { ok: true, json: async () => [] };
+    }));
+    const { container } = render(App, { props: { user: { username: 'admin', admin: true } } });
+    try {
+      expect(await within(container).findByRole('heading', { name: 'Providers' })).toBeTruthy();
+      const nav = within(container).getByRole('navigation', { name: 'Quota and Providers navigation' });
+      const providerLink = within(nav).getByRole('link', { name: 'Providers' });
+      expect(providerLink.getAttribute('aria-current')).toBe('page');
+      await fireEvent.click(within(nav).getByRole('link', { name: 'Quota' }));
+      expect(await within(container).findByRole('heading', { name: 'Quota' })).toBeTruthy();
+      expect(window.location.pathname).toBe('/quota');
+    } finally {
+      cleanup();
+      stopLive();
+      vi.unstubAllGlobals();
+      history.replaceState(null, '', '/');
+    }
+  });
+});
 describe('Non-blocking boot', () => {
   beforeEach(() => cleanup());
   afterEach(() => {

@@ -407,6 +407,8 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/projects/", d.handleProjectSub)
 	mux.HandleFunc("/api/quota", d.handleQuota)
 	mux.HandleFunc("/api/quota/refresh", d.handleQuotaRefresh)
+	mux.HandleFunc("/api/providers", d.handleProviders)
+	mux.HandleFunc("/api/providers/", d.handleProviderKey)
 	mux.HandleFunc("/api/version", d.handleVersion)
 	mux.HandleFunc("/api/health", d.handleHealth)
 	mux.HandleFunc("/api/disk", d.handleDisk)

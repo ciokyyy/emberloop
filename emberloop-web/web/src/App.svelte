@@ -17,6 +17,7 @@
   import SettingsPage from './lib/SettingsPage.svelte';
   import RunsView from './lib/RunsView.svelte';
   import QuotaPage from './lib/QuotaPage.svelte';
+  import ProvidersPage from './lib/ProvidersPage.svelte';
   import MemoryPage from './lib/MemoryPage.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
   import VersionBadge from './lib/VersionBadge.svelte';
@@ -113,8 +114,10 @@
     ['runs', 'run', 'ticket'].includes(initialRoute.name) ? 'runs' :
       initialRoute.name === 'settings' ? 'settings' :
         initialRoute.name === 'quota' ? 'quota' :
-          initialRoute.name === 'memory' ? 'memory' : 'chat',
+          initialRoute.name === 'providers' ? 'providers' :
+            initialRoute.name === 'memory' ? 'memory' : 'chat',
   );
+  const areaView = $derived(view === 'providers' ? 'quota' : view);
   $effect(() => {
     // Keep the shared Run-list request alive while moving between its two
     // consumers; global pages should not load summaries they never display.
@@ -284,6 +287,11 @@
     }
     if (r.name === 'quota') {
       view = 'quota';
+      menuOpen = false;
+      return;
+    }
+    if (r.name === 'providers') {
+      view = 'providers';
       menuOpen = false;
       return;
     }
@@ -779,8 +787,8 @@
           <button type="button" class="rounded-xl px-2.5 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => jumpSetting(t)}>{t}</button>
         {/each}
       </nav>
-    {:else if view === 'quota'}
-      <QuotaSidebar onNavigate={navigate} inDrawer={inDrawer} />
+    {:else if view === 'quota' || view === 'providers'}
+      <QuotaSidebar onNavigate={navigate} inDrawer={inDrawer} current={view} />
     {:else}
       {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
@@ -823,7 +831,7 @@
 {/snippet}
 
 <div class="flex h-dvh">
-  <Rail view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : view === 'memory' ? 'memory' : 'chat'} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : id === 'memory' ? '/memory' : '/settings')} />
+  <Rail view={areaView} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : id === 'memory' ? '/memory' : '/settings')} />
   <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
     <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3" aria-hidden={sideCollapsed}>
       {#key view}
@@ -843,6 +851,11 @@
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
       <QuotaPage onBack={() => navigate('/')} />
+    {:else if view === 'providers'}
+      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Quota and Providers menu"><Menu /></Button>
+      </header>
+      <ProvidersPage admin={!!user?.admin} />
     {:else if view === 'memory'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
@@ -967,7 +980,7 @@
   </div>
 </div>
 
-<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' ? 'Quota and Providers' : view === 'memory' ? 'Memory' : 'Sessions'}>
+<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' || view === 'providers' ? 'Quota and Providers' : view === 'memory' ? 'Memory' : 'Sessions'}>
   <div class="flex shrink-0 items-center gap-2" data-testid="drawer-head">
     {#if user}
       <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
@@ -987,7 +1000,7 @@
       {@render rail2(true)}
     {/key}
   </div>
-  <DrawerNav view={view === 'runs' ? 'runs' : view === 'settings' ? 'settings' : view === 'quota' ? 'quota' : view === 'memory' ? 'memory' : 'chat'} onSelect={(id) => navigate(areas.find((a) => a.id === id)?.path ?? '/')} />
+  <DrawerNav view={areaView} onSelect={(id) => navigate(areas.find((a) => a.id === id)?.path ?? '/')} />
   <VersionBadge inline />
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />

@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { parsePath, buildPath, sameRoute } from './router.js';
 
 describe('parsePath', () => {
-  it('parses the home, settings and runs paths', () => {
+  it('parses the home, settings, runs and global pages', () => {
     expect(parsePath('/')).toEqual({ name: 'home' });
     expect(parsePath('')).toEqual({ name: 'home' });
     expect(parsePath('/settings')).toEqual({ name: 'settings' });
     expect(parsePath('/quota')).toEqual({ name: 'quota' });
+    expect(parsePath('/providers')).toEqual({ name: 'providers' });
     expect(parsePath('/memory')).toEqual({ name: 'memory' });
     expect(parsePath('/runs')).toEqual({ name: 'runs' });
     expect(parsePath('/runs/')).toEqual({ name: 'runs' });
@@ -26,6 +27,7 @@ describe('parsePath', () => {
     expect(parsePath('/s').name).toBe('unknown');
     expect(parsePath('/s/').name).toBe('unknown');
     expect(parsePath('/runs/a/b/c').name).toBe('unknown');
+    expect(parsePath('/providers/unknown').name).toBe('unknown');
   });
 });
 
@@ -40,6 +42,7 @@ describe('buildPath', () => {
       { name: 'ticket', runId: 'r1', ticketId: 't2' },
       { name: 'settings' },
       { name: 'quota' },
+      { name: 'providers' },
       { name: 'memory' },
     ];
     for (const r of routes) {
@@ -67,9 +70,9 @@ describe('popstate handling', () => {
   it('re-parses the URL on back/forward so the view follows history', () => {
     // The App popstate listener is `() => applyRoute(location)`; the
     // contract here is that every history entry parses back to its route.
-    const entries = ['/s/a?at=4', '/runs/r1/t2', '/settings', '/'];
+    const entries = ['/s/a?at=4', '/runs/r1/t2', '/settings', '/providers', '/'];
     const names = entries.map((e) => parsePath(e).name);
-    expect(names).toEqual(['session', 'ticket', 'settings', 'home']);
+    expect(names).toEqual(['session', 'ticket', 'settings', 'providers', 'home']);
     expect(parsePath(entries[0])).toMatchObject({ id: 'a', at: 4 });
   });
 });

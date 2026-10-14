@@ -451,6 +451,20 @@ export const refreshQuota = (key = '') =>
     body: JSON.stringify(key ? { key } : {}),
   }).then(json);
 
+// Provider status never returns credentials. API-key writes travel once in the
+// request body; responses contain only success metadata.
+export const getProviders = () => fetch(url('/api/providers')).then(json);
+
+export const setProviderKey = (provider, key) =>
+  fetch(url(`/api/providers/${encodeURIComponent(provider)}/key`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  }).then(json);
+
+export const removeProviderKey = (provider) =>
+  fetch(url(`/api/providers/${encodeURIComponent(provider)}/key`), { method: 'DELETE' }).then(json);
+
 // The Daemon's build identity for the version badge. version.js wraps this
 // with its never-throws fetch.
 export const getVersion = () => fetch(url('/api/version')).then(json);

@@ -46,6 +46,13 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   uses the built-in `none` scope; Runs resolve to the deepest Project containing
   their repo path. `dashboard_test.go` covers HTTP grouping, status filtering,
   nested ownership and home-directory Sessions.
+- Provider API and auth: `providers.go` serves `GET /api/providers` from the
+  pig SDK catalog and read-only auth checks; responses include status/source
+  metadata and stored-key flags only. Admin-only `PUT`/`DELETE
+  /api/providers/<id>/key` write through `AuthStorage.Set`/`Delete` to the host
+  pig `auth.json`. Only OpenRouter, OpenCode-Go, Gemini direct, DeepSeek and
+  OpenAI keys are browser-editable. `providers_test.go` covers catalog/status
+  sources, secret redaction, writes and authorization with a temporary pig dir.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both
@@ -117,12 +124,14 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   mapped in `web/README.md`.
 
 - Browser boot: `App.svelte` routes from the URL before list reads finish.
-  `/quota` skips Session and Run list fetches; `/runs` loads summaries through
+  `/quota` loads its cache and `/providers` loads the SDK provider status without
+  waiting for Session or Run lists; `/runs` loads summaries through
   `RunsSidebar`. Home loads Sessions asynchronously and resolves last/newest
   only after the list arrives; the chat sidebar shows `Loading Sessions…`.
   Session events while another area is open mark the list stale; returning
   home refreshes it before selecting last/newest. `App.test.js` covers delayed
-  lists, route-owned loading states and this return-to-home refresh.
+  lists, route-owned loading states, provider navigation and this return-to-home
+  refresh.
 
 ## Adapter retry
 
