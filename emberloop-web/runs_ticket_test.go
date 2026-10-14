@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -426,8 +427,20 @@ func TestHeldPassNoRerun(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	fb := NewFakeBackend()
+	reviewerGate := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseReviewers := func() { releaseOnce.Do(func() { close(reviewerGate) }) }
+	fb.ReplyFunc = func(_, prompt string) (string, bool) {
+		if containsReviewPrompt(prompt) {
+			<-reviewerGate
+			return "VERDICT: pass", true
+		}
+		return "", false
+	}
+	d := runTestDaemon(t, tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
+	t.Cleanup(releaseReviewers)
 	defer srv.Close()
 
 	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
@@ -442,6 +455,7 @@ func TestHeldPassNoRerun(t *testing.T) {
 	// in the race between a pass and this setup.
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	writeFile(t, worktree, "dirty.txt", "uncommitted\n")
+	releaseReviewers()
 	passReviewers(t, srv.URL, run.ID, "01-first")
 	deadline := time.Now().Add(15 * time.Second)
 	for {
