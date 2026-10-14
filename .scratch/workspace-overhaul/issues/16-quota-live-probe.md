@@ -10,3 +10,10 @@
 - [ ] Each probe touches only read-only quota endpoints; no login is refreshed, rewritten or deleted
 - [ ] Each probe run once; outcome recorded in this ticket
 - [ ] Never wired into the repo check
+
+## Probe run outcomes (2026-10-14)
+
+- Claude: `EL_LIVE_CLAUDE_QUOTA=1 scripts/claude-quota-live-probe.sh` ran once. The poller returned `state=expired`, `plan=Pro`, with no windows. The host login's `expiresAt` was already past, so the poller correctly made no upstream request; the login file was unchanged. Live endpoint confirmation needs a valid host Claude login and was not attempted by refreshing it.
+- ChatGPT Plus: `EL_LIVE_CHATGPT_QUOTA=1 scripts/chatgpt-quota-live-probe.sh` ran once and the real usage request returned `state=ok`, `plan=Plus`: 5-hour 72% (`resets_at=1791999569`) and Weekly 28% (`resets_at=1792487763`). The pig login file was unchanged.
+
+Both probes used an isolated temporary Daemon and quota cache; neither login was refreshed, rewritten or deleted.

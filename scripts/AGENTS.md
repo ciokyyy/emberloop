@@ -20,6 +20,14 @@ switches and resumes a paused Ticket with real Backend/model settings;
 `run-upgrade-two-specs-probe.sh` starts two simultaneous Runs on separate spec
 branches. They share `run-upgrade-probe-lib.sh` for an isolated Daemon,
 temporary repo and cleanup.
+Quota live probes exercise Claude and ChatGPT Plus separately through an
+isolated local Daemon: `claude-quota-live-probe.sh` reads the host Claude
+OAuth login and `chatgpt-quota-live-probe.sh` reads pig's `openai-codex`
+login. Each requires its provider's explicit `EL_LIVE_*_QUOTA=1` gate,
+prints only the normalized plan/windows/percent/reset values, and keeps the
+Daemon state and quota cache in a temporary directory. The upstream calls
+are read-only usage GETs; neither probe refreshes or writes a login.
+
 Plus one offline measurement: `explore-replay.sh` replays web-v1 exploration
 patterns and prints baseline vs guided call counts (no agents, no network).
 `web-dev.sh` runs the dev Daemon in the foreground. Each script names its
@@ -32,10 +40,9 @@ another package is owned there.
 
 ## Local Contracts
 
-- Scripts run only by hand; live probes need live sessions with temp
-  directories for state, while `explore-replay.sh` needs only bash (no agents,
-  no network). No script is part of an automated check and none runs inside
-  ticket work.
+- Scripts run only by hand; live probes use temporary state. Agent probes
+  need live sessions, while quota probes need the real provider login; no
+  script is part of an automated check and none runs inside ticket work.
 
 ## Work Guidance
 
