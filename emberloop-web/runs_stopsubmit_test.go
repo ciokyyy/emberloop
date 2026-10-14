@@ -214,7 +214,8 @@ func TestStopAfterSubmitReviewerPass(t *testing.T) {
 	if err := d.runTellSession(rev, "one more look"); err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, srv.URL, rev, "idle", 10*time.Second)
+	prompt := firstPromptWhere(t, srv.URL, rev, func(e Event) bool { return e.Text == "one more look" })
+	waitTurnEnd(t, srv.URL, rev, prompt.Seq)
 	if !strings.Contains(sessTranscript(getSession(t, srv.URL, rev)), "fake reply to: one more look") {
 		t.Fatalf("reviewer transcript misses the follow-up reply")
 	}
