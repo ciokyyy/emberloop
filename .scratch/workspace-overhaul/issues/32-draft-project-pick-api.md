@@ -4,11 +4,11 @@
 
 **Blocked by:** 29-project-gist
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The draft's first prompt returns a suggested Project or none, before the Session starts
-- [ ] Wording per Project is name plus gist; paths are not sent
-- [ ] The gate applies: accept, below top, below margin and "none" all behave as specified
-- [ ] No OpenRouter key means no suggestion and today's draft behavior
-- [ ] Go tests with a stubbed `systemone` endpoint cover the gate, the wording and no key; the gated live probe `jev_projectpick_live_test.go` stays out of the check
-- [ ] Repo check passes
+- [x] The draft's first prompt returns a suggested Project or none, before the Session starts
+- [x] Wording per Project is name plus gist; paths are not sent
+- [x] The gate applies: accept, below top, below margin and "none" all behave as specified
+- [x] No OpenRouter key means no suggestion and today's draft behavior
+- [x] Go tests with a stubbed `systemone` endpoint cover the gate, the wording and no key; the gated live probe `jev_projectpick_live_test.go` stays out of the check
+- [x] Repo check passes
