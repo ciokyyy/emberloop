@@ -91,14 +91,30 @@ afterEach(() => {
 });
 
 describe('QuotaPage cards', () => {
-  it('renders the redesigned read-only header and a two-column card grid', async () => {
+  it('renders the redesigned read-only header and a two-column-at-md card grid', async () => {
     stubFetch();
-    const { container } = render(QuotaPage);
+    render(QuotaPage);
     expect(await screen.findByRole('heading', { name: 'Quota' })).toBeTruthy();
     expect(screen.getByText('Read-only')).toBeTruthy();
     expect(screen.getByText('Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeTruthy();
-    expect(container.querySelector('.grid.gap-4.sm\\:grid-cols-2')).toBeTruthy();
+    const grid = screen.getByTestId('quota-card-grid');
+    expect(grid.classList.contains('md:grid-cols-2')).toBe(true);
+    expect([...grid.classList].some((name) => name.startsWith('sm:grid-cols-'))).toBe(false);
+  });
+  it('gives quota controls a 44px phone target', async () => {
+    stubFetch();
+    const { container } = render(QuotaPage);
+    await screen.findAllByTestId('quota-card');
+    const controls = [...container.querySelectorAll('button, a[href="/providers"]')];
+    expect(controls.length).toBeGreaterThan(1);
+    for (const control of controls) {
+      expect(
+        control.classList.contains('max-md:h-11') ||
+        control.classList.contains('max-md:size-11') ||
+        control.classList.contains('max-md:min-h-11'),
+      ).toBe(true);
+    }
   });
 
   it('renders percent-first cards, word labels, plan badges, sources and countdowns', async () => {

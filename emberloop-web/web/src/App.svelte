@@ -747,7 +747,7 @@
         {/each}
       </nav>
     {:else if view === 'quota'}
-      <QuotaSidebar onNavigate={navigate} />
+      <QuotaSidebar onNavigate={navigate} inDrawer={inDrawer} />
     {:else}
       {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">

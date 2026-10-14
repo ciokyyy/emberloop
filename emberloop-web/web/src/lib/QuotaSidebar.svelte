@@ -4,7 +4,7 @@
   import { highestPercent, thresholdClass } from './quota.js';
   import { quotaStore } from './quotaStore.js';
 
-  let { onNavigate = () => {}, store = quotaStore } = $props();
+  let { onNavigate = () => {}, store = quotaStore, inDrawer = false } = $props();
   let providers = $state([]);
 
   const DOT = { calm: 'bg-green-500', warm: 'bg-amber-500', hot: 'bg-red-500' };
@@ -27,7 +27,7 @@
   <div class="px-2 pt-1.5 pb-1">
     <h1 class="text-base font-semibold tracking-tight">Quota and Providers</h1>
   </div>
-  <nav class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto" aria-label="Quota and Providers navigation">
+  <nav class={`flex min-h-0 flex-1 flex-col gap-3 ${inDrawer ? 'overflow-visible' : 'overflow-auto'}`} aria-label="Quota and Providers navigation">
     <div class="flex flex-col gap-0.5">
       <a
         href="/quota"

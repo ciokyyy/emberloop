@@ -118,13 +118,13 @@
       {/if}
 
       {#if loading}
-        <div class="grid gap-4 sm:grid-cols-2" aria-label="Loading quota">
+        <div class="grid gap-4 md:grid-cols-2" aria-label="Loading quota" data-testid="quota-card-grid">
           {#each [0, 1, 2, 3, 4] as i (i)}
             <div class="h-40 animate-pulse rounded-2xl border bg-card"></div>
           {/each}
         </div>
       {:else}
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div class="grid gap-4 md:grid-cols-2" data-testid="quota-card-grid">
           {#each providers as p (p.key)}
             {@const state = quotaState(p)}
             {@const ProviderIcon = cardIcon(p.key)}
@@ -170,9 +170,9 @@
                   <div class="mt-3 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-300" data-testid="quota-expired-callout">
                     <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                     {#if p.key === 'claude'}
-                      <span>Host login expired, so quota cannot refresh. Run <code class="font-mono">claude auth login</code> or <a class="underline" href="/providers">reconnect in Providers</a>.</span>
+                      <span>Host login expired, so quota cannot refresh. Run <code class="font-mono">claude auth login</code> or <a class="inline-flex items-center underline max-md:min-h-11" href="/providers">reconnect in Providers</a>.</span>
                     {:else}
-                      <span>{p.label} login expired, so quota cannot refresh. <a class="underline" href="/providers">Reconnect in Providers</a>.</span>
+                      <span>{p.label} login expired, so quota cannot refresh. <a class="inline-flex items-center underline max-md:min-h-11" href="/providers">Reconnect in Providers</a>.</span>
                     {/if}
                   </div>
                 {/if}

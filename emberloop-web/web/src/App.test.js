@@ -99,6 +99,7 @@ describe('Sidebar collapse', () => {
     await within(container).findByTestId('sidebar');
     await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
     expect(await screen.findAllByLabelText('Filter chats')).toHaveLength(2);
+    expect(screen.getAllByLabelText('Filter chats').every((input) => input.classList.contains('text-base'))).toBe(true);
     await fireEvent.click(screen.getAllByText('Fix sidebar')[0]);
     expect(await screen.findAllByLabelText('Filter chats')).toHaveLength(1);
   });
@@ -217,7 +218,16 @@ describe('Quota navigation', () => {
     await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
     const drawer = await screen.findByTestId('drawer-scroll');
     const drawerQuotaSidebar = within(drawer).getByTestId('quota-sidebar');
-    expect(within(drawerQuotaSidebar).getAllByTestId('quota-status-row')).toHaveLength(3);
+    const drawerRows = within(drawerQuotaSidebar).getAllByTestId('quota-status-row');
+    expect(drawerRows.map((row) => row.textContent.replace(/\s+/g, ' ').trim())).toEqual(rows.map((row) => row.textContent.replace(/\s+/g, ' ').trim()));
+    expect(drawer.className).toContain('overflow-y-auto');
+    const drawerNav = within(drawerQuotaSidebar).getByRole('navigation', { name: 'Quota and Providers navigation' });
+    expect(drawerNav.className).toContain('overflow-visible');
+    expect(drawerNav.className).not.toContain('overflow-auto');
+    expect(within(drawerNav).getByRole('link', { name: 'Quota' }).className).toContain('max-md:min-h-11');
+    const areaTabs = screen.getByTestId('drawer-nav');
+    for (const tab of within(areaTabs).getAllByRole('button')) expect(tab.className).toContain('min-h-14');
+    expect(screen.getByRole('button', { name: 'Close menu' }).className).toContain('max-md:size-11');
     expect(calls.filter((u) => u === '/api/quota' || u.endsWith('/api/quota')).length).toBe(1);
   });
 });
