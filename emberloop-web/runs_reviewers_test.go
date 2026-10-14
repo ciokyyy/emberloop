@@ -156,7 +156,12 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 	})
 	fb := NewFakeBackend()
 	var mu sync.Mutex
-	specCalls := 0
+	specCalls, standardsCalls := 0, 0
+	rereviewStarted := make(chan string, 2)
+	releaseRereview := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRereview) }) }
+	t.Cleanup(release)
 	fb.ReplyFunc = func(id, text string) (string, bool) {
 		if !strings.Contains(text, "Review ticket") && !strings.Contains(text, "RESPOND IN FORMAT") {
 			return "", false
@@ -169,8 +174,21 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 			if n == 1 {
 				return "VERDICT: changes\nwork.go:1 blocker: handle nil", true
 			}
+			if n == 2 {
+				rereviewStarted <- "reviewer-spec"
+				<-releaseRereview
+			}
+			return "VERDICT: pass", true
 		}
 		if strings.Contains(text, "reviewer-standards") {
+			mu.Lock()
+			standardsCalls++
+			n := standardsCalls
+			mu.Unlock()
+			if n == 2 {
+				rereviewStarted <- "reviewer-standards"
+				<-releaseRereview
+			}
 			return "VERDICT: pass\nstyle.go:2 minor: align", true
 		}
 		return "VERDICT: pass", true
@@ -235,15 +253,23 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 	if blocker == nil || blocker.Disposition == nil || blocker.Disposition.Ticket != "11" || minor == nil || minor.Blocking || minor.Disposition != nil {
 		t.Fatalf("stored findings = %+v, want deferred blocker and optional undisposed minor", storedRound.SentFindings)
 	}
-	// A new commit leaves older verdicts behind; while the re-prompt for
-	// the new tip is out the Ticket is under review, not refused, so no
-	// new Tell reaches the Worker.
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return ticketByID(r, "01-first").LastRefusal == ""
-	}, "under review after the new commit")
-	if got := ticketByID(r, "01-first"); got.Verdicts["reviewer-standards"].Fresh {
-		t.Fatalf("standards verdict = %+v, want stale after the new commit", got.Verdicts["reviewer-standards"])
+	// Hold both new-tip reviewer turns until the test observes the stale
+	// verdicts and verifies that no second finding Tell reached the Worker.
+	started := map[string]bool{}
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for len(started) < 2 {
+		select {
+		case typ := <-rereviewStarted:
+			started[typ] = true
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for both reviewers to start the new-tip review: %v", started)
+		}
 	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		tk := ticketByID(r, "01-first")
+		return tk.LastRefusal == "" && !tk.Verdicts["reviewer-standards"].Fresh && tk.State != "merged"
+	}, "stale verdicts under review after the new commit")
 	sess = getSession(t, srv.URL, worker)
 	if strings.Contains(sessTranscript(sess), "not at the tip") {
 		t.Fatalf("worker transcript carries a stale refusal, want no second Tell while under review")
@@ -253,6 +279,7 @@ func TestReviewFindingsReachWorkerAndReworkMerges(t *testing.T) {
 			t.Fatalf("reviewer %s session changed, want the persistent one", typ)
 		}
 	}
+	release()
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return r.Status == "done"
 	}, "run done after both pass at the new tip")
