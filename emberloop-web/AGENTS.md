@@ -41,6 +41,11 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   cache reads, live payloads/gating/coalescing, provider isolation, cooldowns,
   shared locks, ChatGPT and Claude behavior, and OpenRouter endpoints against
   local stubs.
+- Dashboard payload: `GET /api/dashboard` returns working or attention-needed
+  Sessions and running/needs-you Runs grouped by Project id. Unassigned work
+  uses the built-in `none` scope; Runs resolve to the deepest Project containing
+  their repo path. `dashboard_test.go` covers HTTP grouping, status filtering,
+  nested ownership and home-directory Sessions.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both

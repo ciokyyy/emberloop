@@ -399,6 +399,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions/", d.handleSessionSub)
 	mux.HandleFunc("/api/specs", d.handleSpecs)
 	mux.HandleFunc("/api/specs/preview", d.handleSpecPreview)
+	mux.HandleFunc("/api/dashboard", d.handleDashboard)
 	mux.HandleFunc("/api/runs", d.handleRuns)
 	mux.HandleFunc("/api/runs/", d.handleRunSub)
 	mux.HandleFunc("/api/projects/suggest", d.handleProjectPick)
