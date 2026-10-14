@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // UsageRecord is one line in an agent's usage log: the raw per-request token

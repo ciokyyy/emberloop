@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // quotaTimeout bounds the whole read: fetches never hold the response past

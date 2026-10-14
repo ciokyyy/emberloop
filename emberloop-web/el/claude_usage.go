@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // UsageWindow is one rate-limit window: percent used and when it resets

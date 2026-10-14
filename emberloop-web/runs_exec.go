@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // Run statuses: a Run stays needs-you when a checkpoint rebase or final

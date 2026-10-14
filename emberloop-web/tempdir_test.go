@@ -115,10 +115,11 @@ func checkTempDirSource(filename, src string) []string {
 
 // TestNoTempDir enforces the TempDir guard: no test file in this module may
 // call the banned temporary-directory method (comments excluded — the
-// parser drops them). Daemon goroutines can write after the test returns,
-// so the standard cleanup flakes with "directory not empty"; tempDir and
-// testsupport.TempDir retry removal instead. Add the wrapper at the call
-// site, never an exception.
+// parser drops them), except under el/, which keeps its own tempdir guard
+// (el/tempdir_guard_test.go) over the Exec seam's fake-exec policy. Daemon
+// goroutines can write after the test returns, so the standard cleanup
+// flakes with "directory not empty"; tempDir and testsupport.TempDir retry
+// removal instead. Add the wrapper at the call site, never an exception.
 func TestNoTempDir(t *testing.T) {
 	t.Parallel()
 	var files []string
@@ -128,7 +129,7 @@ func TestNoTempDir(t *testing.T) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case "testdata", "node_modules", "dist":
+			case "testdata", "node_modules", "dist", "el":
 				return filepath.SkipDir
 			}
 			return nil

@@ -12,17 +12,14 @@ import (
 	"time"
 )
 
-// updateTestState extends the install fixture with the web module: the UI
-// source the update hashes and builds, empty docs and skills dirs so the
-// docs refresh touches nothing real, and a passing health probe.
+// updateTestState extends the install fixture with the UI source the update
+// hashes and builds, empty docs and skills dirs so the docs refresh touches
+// nothing real, and a passing health probe.
 func updateTestState(t *testing.T) (dir, src, webDir string) {
 	t.Helper()
 	dir = installTestState(t)
 	src = os.Getenv("EL_SOURCE_DIR")
-	if err := os.MkdirAll(filepath.Join(src, "..", "emberloop-web"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	webDir = filepath.Join(src, "..", "emberloop-web", "web")
+	webDir = filepath.Join(src, "web")
 	fixture := map[string]string{
 		"src/main.js":    "console.log('app');\n",
 		"src/lib/api.js": "export const x = 1;\n",
@@ -241,8 +238,8 @@ func TestUpdateStampsEveryBinary(t *testing.T) {
 		return b.String()
 	}()
 	for _, want := range []string{
-		"-X example.com/emberloop.Version=dev",
-		"-X example.com/emberloop.Commit=abc1234",
+		"-X example.com/emberloop-web/el.Version=dev",
+		"-X example.com/emberloop-web/el.Commit=abc1234",
 		"-X example.com/emberloop-web.UIHash=" + h,
 	} {
 		if !strings.Contains(joined, want) {

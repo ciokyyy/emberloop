@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // httpRegistry builds a registry with one HTTP server and closes it when

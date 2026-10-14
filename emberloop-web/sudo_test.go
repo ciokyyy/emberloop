@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 func postJSON(t *testing.T, url string, body any) (int, map[string]any) {

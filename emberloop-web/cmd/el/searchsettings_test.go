@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // Seam: settings search command — search.provider and search.mode are

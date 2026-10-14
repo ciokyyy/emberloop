@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"example.com/emberloop/statedb"
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el/statedb"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 // readFindRows returns the agent's find rows from the state database, in row

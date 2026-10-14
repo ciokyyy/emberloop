@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // postRunAction posts to a Run action (pause, resume) and returns the Run

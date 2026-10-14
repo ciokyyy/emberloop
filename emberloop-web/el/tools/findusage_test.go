@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/statedb"
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el/statedb"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 // usageJudge answers every question with usage, the way the live endpoint

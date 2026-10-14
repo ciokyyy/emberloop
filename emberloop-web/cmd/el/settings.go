@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"example.com/emberloop"
-	"example.com/emberloop/tools"
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el"
+	"example.com/emberloop-web/el/tools"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 const settingsUsage = `usage: el settings [decision-model <id>|threshold <n>|max-tickets <n>|compress-threshold [[harness] <n>]|compress-model <harness> <model>|auto-compress <on|off>|compress-cooldown <n>|window <model> <n>|strip-rows <1|2>|strip-frame <on|off>|strip-rule <on|off>|strip-symbols <nerd|unicode|ascii>|strip-separator <powerline|powerline-thin|rounded|slash|pipe|none>]

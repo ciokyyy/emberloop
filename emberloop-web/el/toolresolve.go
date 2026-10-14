@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // cwd is the working directory tools resolve against: the process's own,

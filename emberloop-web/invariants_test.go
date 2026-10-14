@@ -27,7 +27,9 @@ var invariantTables = []string{"observations", "rules", "queue", "profile_versio
 
 // TestInvariant_NoDeleteOutsidePurge pins "Never delete": every DELETE outside
 // the human purge aborts with "use purge", and no non-test Go file outside the
-// purge and schema owns a DELETE.
+// purge and schema owns a DELETE. el/ is out of scope: its statedb is a
+// separate store (usage, search cache, overflow) with its own documented
+// purge and per-session delete contract, not the memory bank's Never-delete.
 func TestInvariant_NoDeleteOutsidePurge(t *testing.T) {
 	t.Parallel()
 	// Static: no DELETE FROM outside purge.go and schema.go.
@@ -35,7 +37,13 @@ func TestInvariant_NoDeleteOutsidePurge(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() {
+			if d.Name() == "el" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		if path == filepath.Join("memory", "purge.go") || path == filepath.Join("memory", "schema.go") {
@@ -705,10 +713,12 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 	}
 	// Static: the redactor wrappers exist as code for every egress role the
 	// spec names (distill LLM, Decider, Jev API), and each Daemon call site
-	// invokes one. Comment text never counts: the stripper drops // and
-	// /* */ comments before matching, and every match requires the call
-	// paren, so a prose mention like recall_inject.go's "memory.ForDecider
-	// before any model call" cannot satisfy the check.
+	// invokes one. el/ is out of scope: its find-cascade client
+	// (el/tools/systemone) sends code excerpts, never memory-bank rows, so the
+	// memory-egress redactor does not apply to it. Comment text never counts:
+	// the stripper drops // and /* */ comments before matching, and every
+	// match requires the call paren, so a prose mention like recall_inject.go's
+	// "memory.ForDecider before any model call" cannot satisfy the check.
 	stripGoComments := func(s string) string {
 		for {
 			start := strings.Index(s, "/*")
@@ -765,7 +775,13 @@ func TestInvariant_RedactorOnEveryEgress(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if dEnt.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+		if dEnt.IsDir() {
+			if dEnt.Name() == "el" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		code := codeOf(path)

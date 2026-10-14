@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // ClaudeAdapterPackage pins the ACP adapter. Ticket 01 ruled out any

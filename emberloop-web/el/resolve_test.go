@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 func TestResolveSpecAcceptsFileDirAndIssuesDir(t *testing.T) {

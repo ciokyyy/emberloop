@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 
-	"example.com/emberloop"
+	"example.com/emberloop-web/el"
 )
 
 func main() {

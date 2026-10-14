@@ -3,7 +3,7 @@ package el
 // DOX index test (ticket 16): the AGENTS.md tree cannot rot silently.
 // Every AGENTS.md must be listed in its parent doc's Child DOX Index, and
 // every child a parent lists must exist. Index paths are repo-relative and
-// backtick-quoted, e.g. `emberloop/tools/AGENTS.md`.
+// backtick-quoted, e.g. `emberloop-web/el/tools/AGENTS.md`.
 
 import (
 	"os"
@@ -137,7 +137,7 @@ func doxTreeProblems(root string) []string {
 }
 
 // doxRepoRoot finds the checkout root from a package directory: the first
-// ancestor holding an emberloop subdirectory (the main Go package).
+// ancestor holding an emberloop-web subdirectory (the one Go module).
 func doxRepoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -145,12 +145,12 @@ func doxRepoRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "emberloop")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "emberloop-web")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatal("no emberloop directory found above " + dir)
+			t.Fatal("no emberloop-web directory found above " + dir)
 		}
 		dir = parent
 	}

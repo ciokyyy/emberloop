@@ -9,7 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools/mcpfake"
 	"fmt"
 	"io"
 	"net"

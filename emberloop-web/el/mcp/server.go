@@ -15,7 +15,7 @@ import (
 	"os"
 	"sync"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // staleNotice is the line a server adds to a tool reply when the installed

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // MCPSnapshot lists every configured MCP server behind reg for one

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // resolveExecuteWithFake resolves role against one fake MCP server and

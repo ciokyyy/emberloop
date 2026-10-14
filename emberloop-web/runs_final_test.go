@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 func prepareFinalGateRun(t *testing.T, tickets map[string]string) (string, string, string, *Daemon, string) {

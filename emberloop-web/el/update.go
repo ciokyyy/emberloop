@@ -39,19 +39,18 @@ type UpdateResult struct {
 }
 
 // updateTargets are the binaries one update replaces, each built from its
-// package in its module under the source checkout: dir is the module's
+// package in the one module under the source checkout: dir is the module's
 // directory relative to the main module ("" for the main module itself),
-// pkg the package within it. The web Daemon is a sibling
-// module, so its build runs in ../emberloop-web.
+// pkg the package within it. All three build in the main module now.
 // web marks the Daemon: it alone carries the UI hash stamp, naming the UI
 // build embedded in it.
 var updateTargets = []struct {
 	name, pkg, dir string
 	web            bool
 }{
-	{"el", "./cmd/emberloop", "", false},
-	{"el-mcp", "./cmd/emberloop-mcp", "", false},
-	{"el-web", "./cmd/emberloop-web", "../emberloop-web", true},
+	{"el", "./cmd/el", "", false},
+	{"el-mcp", "./cmd/el-mcp", "", false},
+	{"el-web", "./cmd/emberloop-web", "", true},
 }
 
 // updateNames lists every binary the update owns, previous copies included.
@@ -92,8 +91,8 @@ func ldflagsFor(target struct {
 	name, pkg, dir string
 	web            bool
 }, version, commit, uiHash string) string {
-	flags := "-X example.com/emberloop.Version=" + version +
-		" -X example.com/emberloop.Commit=" + commit
+	flags := "-X example.com/emberloop-web/el.Version=" + version +
+		" -X example.com/emberloop-web/el.Commit=" + commit
 	if target.web && uiHash != "" {
 		flags += " -X example.com/emberloop-web.UIHash=" + uiHash
 	}
@@ -169,10 +168,10 @@ func UpdateBinaries(run Exec, opts UpdateOptions) (UpdateResult, error) {
 	return res, nil
 }
 
-// webSourceDir is the web UI source the update builds: web/ beside the el
+// webSourceDir is the web UI source the update builds: web/ inside the
 // module the update builds from.
 func webSourceDir() string {
-	return filepath.Join(installSourceDir(), "..", "emberloop-web", "web")
+	return filepath.Join(installSourceDir(), "web")
 }
 
 // uiHashPath is where the update records the web source hash of the last

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // fakeBash returns a fixed output so the hint wrapper is tested alone.

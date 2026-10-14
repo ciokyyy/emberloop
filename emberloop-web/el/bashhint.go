@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // overflowMarker starts every stored-output summary tools.MaybeOverflow returns.

@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"example.com/emberloop/statedb"
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el/statedb"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 // This file owns find's usage attribution: one row per decision-model call

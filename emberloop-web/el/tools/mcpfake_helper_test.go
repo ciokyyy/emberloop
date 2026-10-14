@@ -3,7 +3,7 @@ package tools
 import (
 	"testing"
 
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // TestMcpFakeHelperProcess is the fake MCP server's entry point: mcpfake

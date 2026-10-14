@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 // TestLiveJevProjectPick measures which project-description wording best picks

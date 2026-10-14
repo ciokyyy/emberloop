@@ -8,13 +8,13 @@ grok Sessions behind one `Backend` interface. See
 
 ## Ownership
 
-Owns `emberloop-web/`. It may import el core packages through the
-`replace example.com/emberloop => ../emberloop` in `go.mod`; the module builds
-only beside a sibling `emberloop/` checkout, and core never imports it. No
-herdr. Ticket files are preview input; only the Run driver writes them, ticking
-boxes and marking Tickets done. Runs start at most max_tickets concurrent
-tickets (a spec's max_tickets frontmatter lowers it for that Run); Sessions
-and subagents are uncapped.
+Owns `emberloop-web/` as one Go module: the Daemon and browser UI, `el/`
+(the el library with its own doc), and `cmd/` with the three entry points
+(`el`, `el-mcp`, `el-web`). The el library never imports the Daemon package;
+the Daemon-side packages import el. No herdr. Ticket files are preview input;
+only the Run driver writes them, ticking boxes and marking Tickets done.
+Runs start at most max_tickets concurrent tickets (a spec's max_tickets
+frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 
 ## Test seams
 
@@ -29,7 +29,7 @@ and subagents are uncapped.
   seam, `disk_go_cache_cap_gb` setting, `/api/disk`, start guards) with
   `disk_test.go`; temp-leak guards in `tempdir_test.go` over the
   `testsupport` helper (`TempDir` with chmod+retry and a TestMain-drained
-  leak list).
+  leak list; `el/` keeps its own guard in `el/tempdir_guard_test.go`).
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
   `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
   check, selective re-review, scope warning), `runs_persist_test.go`,
@@ -120,6 +120,7 @@ and subagents are uncapped.
 
 ## Child DOX Index
 
+- `emberloop-web/el/AGENTS.md` — the el library, its file map, and its Go workflow; indexes tools, MCP server, state database, and test data
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary

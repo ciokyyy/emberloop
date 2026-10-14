@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // servedRead finds the served read tool for a role, failing the test when the

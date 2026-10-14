@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // `settings strip-rows` sets the header height; anything but 1 or 2 is an

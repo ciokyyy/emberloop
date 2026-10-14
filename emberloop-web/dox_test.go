@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // ensureAgentsMD creates a root AGENTS.md only when the directory holds none,

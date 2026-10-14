@@ -1,16 +1,16 @@
-# AGENTS.md — emberloop/mcp
+# AGENTS.md — emberloop-web/el/mcp
 
 ## Purpose
 
 The MCP transport: serves `tools.Tool` values over stdio JSON-RPC so any
 MCP-speaking harness gets the same tools. Files are `server.go` (protocol,
 role gate) and its test; the binary entry point is
-`emberloop/cmd/emberloop-mcp/main.go`.
+`emberloop-web/cmd/el-mcp/main.go`.
 
 ## Ownership
 
-Owns this directory and the `emberloop/cmd/emberloop-mcp` entry point. Tool
-behaviour itself is owned by `emberloop/tools/`.
+Owns this directory. Tool behaviour itself is owned by
+`emberloop-web/el/tools/`.
 
 ## Local Contracts
 

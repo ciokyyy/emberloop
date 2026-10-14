@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // TestMcpFakeHelperProcess serves the fake in this binary when re-executed

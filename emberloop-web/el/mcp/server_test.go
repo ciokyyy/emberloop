@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop"
-	"example.com/emberloop/mcp"
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el"
+	"example.com/emberloop-web/el/mcp"
+	"example.com/emberloop-web/el/tools"
 )
 
 // serve pipes requests through a live server and returns the replies in order.

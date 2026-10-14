@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // ctx_search rides with read: every role that can read serves it, so stored

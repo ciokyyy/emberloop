@@ -18,9 +18,9 @@ import (
 	"os"
 	"strings"
 
-	"example.com/emberloop"
-	"example.com/emberloop/mcp"
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el"
+	"example.com/emberloop-web/el/mcp"
+	"example.com/emberloop-web/el/tools"
 )
 
 func main() {

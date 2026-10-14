@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // openCtxDB opens the state database for overflow reads. Both tools here are

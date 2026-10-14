@@ -1,4 +1,4 @@
-# AGENTS.md — emberloop/statedb
+# AGENTS.md — emberloop-web/el/statedb
 
 ## Purpose
 

@@ -49,8 +49,8 @@ func installDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".local", "bin")
 }
 
-// installSourceDir is the checkout the install builds from: the el
-// module directory — run `el install` from the el source — or
+// installSourceDir is the checkout the install builds from: the module
+// directory — run `el install` from the module source — or
 // EL_SOURCE_DIR when set, which is what tests use.
 func installSourceDir() string {
 	if dir := os.Getenv("EL_SOURCE_DIR"); dir != "" {
@@ -69,8 +69,8 @@ type buildTarget struct{ name, pkg, dir string }
 
 // installTargets are the binaries one install replaces.
 var installTargets = []buildTarget{
-	{"el", "./cmd/emberloop", ""},
-	{"el-mcp", "./cmd/emberloop-mcp", ""},
+	{"el", "./cmd/el", ""},
+	{"el-mcp", "./cmd/el-mcp", ""},
 }
 
 // buildTargets builds every target to a temp file with the same ldflags

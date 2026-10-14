@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // Seam: overflow threshold setting — the store boundary honours

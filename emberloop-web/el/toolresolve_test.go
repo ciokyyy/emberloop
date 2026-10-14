@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // hermeticSettings points both settings layers at missing temp files, so a

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // Seam 1 (ticket 05): blob store — the system prompt, tool definitions and

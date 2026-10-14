@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // second identical search answers from the 15-minute database cache, fresh

@@ -1,4 +1,4 @@
-# AGENTS.md — emberloop/testdata
+# AGENTS.md — emberloop-web/el/testdata
 
 ## Purpose
 

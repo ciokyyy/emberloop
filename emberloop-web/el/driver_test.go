@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // The driver seam is RunDriver over an injected world: the spec plus ticket

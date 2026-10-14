@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // Sudo requests: a bash command that invokes sudo never runs on its own. The

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // Seam 1: usage parsers — one transcript line in, zero or more normalized

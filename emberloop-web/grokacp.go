@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // grokDefaultModel is the model the Grok CLI offers when `grok models` cannot

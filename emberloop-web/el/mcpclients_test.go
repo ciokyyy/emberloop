@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"example.com/emberloop/tools"
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // TestMcpFakeHelperProcess is the fake MCP server's entry point in this

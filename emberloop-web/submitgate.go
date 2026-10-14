@@ -3,7 +3,7 @@ package web
 import (
 	"strings"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // The Daemon side of the shared stop gate. While el.WebSubmitEnabled holds, a

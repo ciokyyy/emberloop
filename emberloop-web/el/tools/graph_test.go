@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // graphFakeEnv points the graph synthesis at a fake MCP server and returns

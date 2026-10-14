@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // Ticket 03: every Ticket worktree carries a local git identity and a

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // quotaStubState is the mutable stub behaviour.

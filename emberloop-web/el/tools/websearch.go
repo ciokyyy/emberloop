@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // Websearch: a provider-neutral web search tool (Brave, then Exa as fallback)

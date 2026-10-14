@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el/tools"
 )
 
 // oversizeBashClause is the clause the read tool's oversized-file refusal

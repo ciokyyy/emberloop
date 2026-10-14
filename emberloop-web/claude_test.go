@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // stubConn is the fake ACP adapter: canned updates, captured params, no

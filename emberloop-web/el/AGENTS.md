@@ -1,4 +1,4 @@
-# AGENTS.md — emberloop (main Go package)
+# AGENTS.md — emberloop-web/el (main Go package)
 
 ## Purpose
 
@@ -6,13 +6,14 @@ The el library behind the Emberloop Daemon: the tool roles the single el MCP
 server serves, the deterministic Run driver over ticket files, the spec and
 ticket views, the session archive and usage tailer, the quota snapshot, and
 the operator CLI (`el`) with its update/install path. Builds and tests from
-this directory; the repo check runs here and covers this module including
-`tools/`, `mcp/`, and `cmd/`.
+the module root; the repo check covers this package including `tools/` and
+`mcp/`.
 
 ## Ownership
 
-Owns every `.go` file directly in this directory plus `cmd/` (the two
-entry points). `tools/`, `mcp/`, `statedb/`, and `testdata/` are separate
+Owns every `.go` file directly in this directory. The two entry points live
+in `../cmd/` (owned by `emberloop-web/AGENTS.md`). `tools/`, `mcp/`,
+`statedb/`, and `testdata/` are separate
 durable boundaries with their own docs. File map (non-test file owns its
 `_test.go` and the behaviour below):
 
@@ -62,10 +63,10 @@ durable boundaries with their own docs. File map (non-test file owns its
   resolved blockers and checkbox progress where one bad ticket fails only
   its own row)
 - Tools served to agents: `tools/` (child doc)
-- Transport: `mcp/` (child doc); binaries are `cmd/emberloop/main.go`
+- Transport: `mcp/` (child doc); binaries are `../cmd/el/main.go`
   (operator CLI: settings, update/install, restart, logs, deps, skills,
   version, claude-status, voice-reminder) and
-  `cmd/emberloop-mcp/main.go` (tool server; writes the file named by
+  `../cmd/el-mcp/main.go` (tool server; writes the file named by
   `EL_READY_FILE` once its tool listing is done, for harnesses that cannot
   see readiness)
 - Policy: `roles.go` (the web Daemon roles `web`, `web-worker`,
@@ -88,26 +89,26 @@ durable boundaries with their own docs. File map (non-test file owns its
 - Every operation runs through the `Exec` seam (`exec.go`) so tests use a
   fake exec and temp directories; no test touches the real home, a live
   agent or harness, or the network beyond loopback `httptest` servers.
-- A emberloop MCP server with no role refuses to start; the full tool set needs
+- An el MCP server with no role refuses to start; the full tool set needs
   an explicit full role.
 - The tree stays gofmt-clean; formatting is a check result, never a
   judgement call.
 
 ## Work Guidance
 
-- Build and test from this directory: `go build ./...`, `go vet ./...`,
-  `go test -skip TestLive ./...`. Never run a live test and never start
-  `el`, `pig`, or `claude` from inside the work.
+- Build and test from the module root (`emberloop-web/`): `go build ./...`,
+  `go vet ./...`, `go test -skip TestLive ./...`. Never run a live test and
+  never start `el`, `pig`, or `claude` from inside the work.
 - Behavioural change needs a test through the tool or command, not
   internals; expected values come from the spec or a worked example.
 
 ## Verification
 
-`.emberloop/check` (`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./... && cd ../emberloop-web && go vet ./... && go test ./...`).
+`.emberloop/check` (`cd emberloop-web && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
 
 ## Child DOX Index
 
-- `emberloop/tools/AGENTS.md` — the agent tools both hosts serve
-- `emberloop/mcp/AGENTS.md` — the MCP server transport over those tools
-- `emberloop/statedb/AGENTS.md` — the SQLite state database both hosts share
-- `emberloop/testdata/AGENTS.md` — captured fixtures tests parse
+- `emberloop-web/el/tools/AGENTS.md` — the agent tools both hosts serve
+- `emberloop-web/el/mcp/AGENTS.md` — the MCP server transport over those tools
+- `emberloop-web/el/statedb/AGENTS.md` — the SQLite state database both hosts share
+- `emberloop-web/el/testdata/AGENTS.md` — captured fixtures tests parse

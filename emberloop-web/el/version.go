@@ -9,7 +9,7 @@ import (
 // time; anything built by hand says so plainly and borrows what the
 // toolchain recorded, because a blank in a bug report is worse than "dev".
 //
-//	go build -ldflags "-X example.com/emberloop.Version=v1.2.3 -X example.com/emberloop.Commit=abc1234" ./cmd/emberloop
+//	go build -ldflags "-X example.com/emberloop-web/el.Version=v1.2.3 -X example.com/emberloop-web/el.Commit=abc1234" ./cmd/el
 var (
 	Version = "dev"
 	Commit  = ""

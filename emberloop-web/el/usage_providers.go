@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // UsageSet is the windows the strip shows for one account, in display

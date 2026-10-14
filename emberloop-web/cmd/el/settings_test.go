@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop"
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el"
+	"example.com/emberloop-web/el/tools"
+	"example.com/emberloop-web/testsupport"
 )
 
 // settingsFile points the settings store at a temp file and clears the env
@@ -18,9 +19,9 @@ import (
 // file's own values.
 func settingsFile(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "settings.json")
+	p := filepath.Join(testsupport.TempDir(t), "settings.json")
 	t.Setenv("EL_SETTINGS", p)
-	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(t.TempDir(), "missing.json"))
+	t.Setenv("EL_PROJECT_SETTINGS", filepath.Join(testsupport.TempDir(t), "missing.json"))
 	t.Setenv("EL_DECISION_MODEL", "")
 	t.Setenv("EL_FIND_THRESHOLD", "")
 	t.Setenv("EL_MAX_WORKERS", "")
@@ -817,7 +818,7 @@ func TestSettingsPrintsEmptyToolsAndServers(t *testing.T) {
 func TestSettingsPrintsProjectSources(t *testing.T) {
 	p := settingsFile(t)
 	write(t, p, `{"max_tickets":5,"roles":{"scout":{"model":"global-m"}}}`)
-	project := filepath.Join(t.TempDir(), "project.json")
+	project := filepath.Join(testsupport.TempDir(t), "project.json")
 	write(t, project, `{"max_tickets":7,"roles":{"scout":{"model":"project-m"}},"tools":{"bash":{"roles":{"scout":{"enabled":false}}}}}`)
 	t.Setenv("EL_PROJECT_SETTINGS", project)
 	var out bytes.Buffer

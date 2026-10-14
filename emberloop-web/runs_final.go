@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 type finalMergeOutcome struct {

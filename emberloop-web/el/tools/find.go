@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 // findTool is ported from el's apps/backend/tools/find.go: semantic grep

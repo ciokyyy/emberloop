@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"example.com/emberloop/tools/systemone"
+	"example.com/emberloop-web/el/tools/systemone"
 )
 
 type fixedJudge struct{ score float64 }

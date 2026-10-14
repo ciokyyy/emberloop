@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"example.com/emberloop/statedb"
+	"example.com/emberloop-web/el/statedb"
 )
 
 // Overflow head and tail: how many lines of a stored output the summary

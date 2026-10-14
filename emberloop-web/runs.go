@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // specEntry is one discovered spec: its spec file, title and ticket count.

@@ -10,8 +10,8 @@ import (
 // own agent docs, served as el://docs/<name>.
 const docsNamespace = "docs"
 
-// docsSourceDir is the checkout's agent docs: docs/agent beside the el
-// module the install builds from. EL_DOCS_DIR points it elsewhere.
+// docsSourceDir is the checkout's agent docs: docs/agent beside the module
+// the install builds from. EL_DOCS_DIR points it elsewhere.
 func docsSourceDir() string {
 	if dir := os.Getenv("EL_DOCS_DIR"); dir != "" {
 		return dir

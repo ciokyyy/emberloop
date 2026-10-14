@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"example.com/emberloop/tools/mcpfake"
+	"example.com/emberloop-web/el/tools/mcpfake"
 )
 
 // killProbe signals a pid the way a supervisor checks liveness: signal 0

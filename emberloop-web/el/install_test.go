@@ -19,13 +19,8 @@ func installTestState(t *testing.T) string {
 	t.Setenv("EL_INSTALL_DIR", dir)
 	src := t.TempDir()
 	t.Setenv("EL_SOURCE_DIR", src)
-	// The web module sits beside the main module in a real checkout; the
-	// builder fake asserts every build dir exists, so the fixture mirrors
-	// it. The health probe is stubbed to pass: tests drive the rollback by
+	// The health probe is stubbed to pass: tests drive the rollback by
 	// overriding it, and no test boots a real binary.
-	if err := os.MkdirAll(filepath.Join(src, "..", "emberloop-web"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	oldProbe := probeWebHealth
 	probeWebHealth = func(string) error { return nil }
 	t.Cleanup(func() { probeWebHealth = oldProbe })
@@ -77,9 +72,8 @@ func installPaneExec(t *testing.T, panes ...string) Exec {
 }
 
 // installBuildExec plays `go build` by writing a marker where -o points, so
-// the test sees what would be installed without a toolchain. Builds run in
-// the source checkout, or in the web sibling module under it for the
-// update's el-web target.
+// the test sees what would be installed without a toolchain. Every build
+// runs in the source checkout's one module.
 func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 	t.Helper()
 	return func(cmd string, args []string, o ExecOpts) (Result, error) {
@@ -93,8 +87,8 @@ func installBuildExec(t *testing.T, src string, panes ...string) Exec {
 			if out == "" {
 				return Result{Code: 1, Stderr: "no -o"}, nil
 			}
-			if o.Cwd != src && o.Cwd != filepath.Join(src, "..", "emberloop-web") {
-				t.Errorf("go build must run in the source checkout %q or the web sibling module under it, got %q", src, o.Cwd)
+			if o.Cwd != src {
+				t.Errorf("go build must run in the source checkout %q, got %q", src, o.Cwd)
 			}
 			if info, err := os.Stat(o.Cwd); err != nil || !info.IsDir() {
 				t.Errorf("go build must run in an existing checkout dir, got %q", o.Cwd)
@@ -123,10 +117,10 @@ func TestInstallWithNoLiveAgentInstalls(t *testing.T) {
 	if res.Dir != dir {
 		t.Errorf("install dir = %q, want %q", res.Dir, dir)
 	}
-	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/emberloop" {
+	if got := readInstallFile(t, dir, "el"); got != "built ./cmd/el" {
 		t.Errorf("el = %q, want the new build", got)
 	}
-	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/emberloop-mcp" {
+	if got := readInstallFile(t, dir, "el-mcp"); got != "built ./cmd/el-mcp" {
 		t.Errorf("el-mcp = %q, want the new build", got)
 	}
 }

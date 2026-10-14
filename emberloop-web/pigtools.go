@@ -7,8 +7,8 @@ import (
 	"github.com/MichaelKinsy/PiG/agent"
 	"github.com/MichaelKinsy/PiG/ai"
 
-	"example.com/emberloop"
-	"example.com/emberloop/tools"
+	"example.com/emberloop-web/el"
+	"example.com/emberloop-web/el/tools"
 )
 
 // elTool adapts one shared tools.Tool, the same value el-mcp

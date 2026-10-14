@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	el "example.com/emberloop"
+	el "example.com/emberloop-web/el"
 )
 
 // withSubmitGate runs one gate test with the submit tool and gate on. The
