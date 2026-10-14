@@ -60,6 +60,17 @@ func quotaEnv(t *testing.T, stub *quotaStub) string {
 	return t.TempDir()
 }
 
+func quotaSourceForTest(t *testing.T, key string) quotaSource {
+	t.Helper()
+	for _, source := range quotaSources {
+		if source.Key() == key {
+			return source
+		}
+	}
+	t.Fatalf("quota source %q is not registered", key)
+	return nil
+}
+
 func TestQuotaSnapshotNotConfigured(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("EL_PIG_AUTH", filepath.Join(dir, "missing.json"))
@@ -91,7 +102,7 @@ func TestQuotaNotConfiguredWithCachedValuesIsNotError(t *testing.T) {
 	if err := writeUsageCache(dir, usageKeyOpencode, []UsageWindow{{Label: "5h", Pct: 52}}, now); err != nil {
 		t.Fatal(err)
 	}
-	source := usageQuotaSource{key: usageKeyOpencode, label: "OpenCode-Go"}
+	source := quotaSourceForTest(t, usageKeyOpencode)
 	got := source.Snapshot(dir, now, context.DeadlineExceeded)
 	if got.State != QuotaNotConfigured || got.Error != "" || got.Hint == "" {
 		t.Fatalf("provider without login = %+v, want not_configured with hint and no error", got)
@@ -101,13 +112,49 @@ func TestQuotaNotConfiguredWithCachedValuesIsNotError(t *testing.T) {
 	}
 }
 
+func TestQuotaSourceOwnsProviderConfigurationAndCachePath(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	t.Setenv("EL_PIG_AUTH", filepath.Join(dir, "missing-auth.json"))
+	t.Setenv("EL_AGY_CLIENT_ID", "")
+	t.Setenv("EL_AGY_CLIENT_SECRET", "")
+	if err := writeUsageCache(dir, "chatgpt-plus", []UsageWindow{{Label: "5h", Pct: 37}}, now); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(dir, "chatgpt-cache.json")
+	if err := os.WriteFile(cachePath, []byte("provider cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cacheInfo, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := usageQuotaSource{
+		key:   "chatgpt-plus",
+		label: "ChatGPT Plus",
+		configuredFn: func(string, time.Time) bool {
+			return false
+		},
+		hintFn:      func(string) string { return "Missing ChatGPT login." },
+		cachePathFn: func(string) string { return cachePath },
+	}
+	got := source.Snapshot(dir, now, nil)
+	if got.State != QuotaNotConfigured || got.Error != "" || got.Hint != "Missing ChatGPT login." {
+		t.Fatalf("provider configuration = %+v, want provider-owned not_configured state and hint", got)
+	}
+	if got.UpdatedAt != cacheInfo.ModTime().Unix() || len(got.Windows) != 1 || got.Windows[0].Pct != 37 {
+		t.Errorf("provider cache = %+v, want custom cache mtime and retained percent window", got)
+	}
+}
+
 func TestQuotaExpiredRetainsLastValuesAndHint(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
 	if err := writeUsageCache(dir, usageKeyOpencode, []UsageWindow{{Label: "5h", Pct: 47, ResetsAt: now.Add(time.Hour).Unix()}}, now); err != nil {
 		t.Fatal(err)
 	}
-	source := usageQuotaSource{key: usageKeyOpencode, label: "OpenCode-Go", plan: "Go"}
+	source := quotaSourceForTest(t, usageKeyOpencode)
+
 	got := source.Snapshot(dir, now, &quotaFailure{state: QuotaExpired, hint: "Login expired. Sign in again."})
 	if got.State != QuotaExpired || got.Hint == "" || got.Error != "" {
 		t.Fatalf("expired provider = %+v", got)

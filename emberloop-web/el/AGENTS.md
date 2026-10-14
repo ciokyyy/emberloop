@@ -38,16 +38,16 @@ durable boundaries with their own docs. File map (non-test file owns its
   `usage.go` (transcript tailing into usage rows, served to el-mcp through
   `UsageTailFromEnv`/`RunUsageTail`/`TailUsageFile`), `claude_usage.go` (the
   statusline command `el claude-status` and its usage windows),
-  `usage_providers.go` (the opencode and Antigravity usage pollers, one
-  fetch per 90 s per account, cached as `usage-<key>.json` in the state
-  dir; owns provider fetching and the shared per-key lock), `quota_api.go`
-  (the browser Quota source registry: sources provide provider state,
-  fetch identity and fetch; snapshots normalize word-form labels and
-  0–100 percent-used windows, and concurrent refresh dispatch stays
-  provider-agnostic with completion callbacks; `QuotaFetchKeys` exposes
+  `usage_providers.go` (OpenCode and Antigravity pollers: one fetch per 90 s
+  per account, shared cache and per-key lock), `quota_api.go` (the
+  provider-source registry for browser Quota: sources own fetch,
+  configuration, missing-login hints and cache paths; snapshots normalize
+  word-form percent windows and assemble state; provider-agnostic refreshes
+  run concurrently with completion callbacks. `QuotaFetchKeys` exposes
   distinct upstreams for Daemon cooldown admission),
   `compress_prompt.go` (the Handoff summarizer prompt, its section list
   `HandoffSections` that emberloop-web uses, and the handoff sanity check),
+
   `context_window.go` (model window table; settings override via
   `context.windows` / `el settings window <model> <n>` beats table; unknown
   models get 200k default), `docs.go` (install copies the checkout's

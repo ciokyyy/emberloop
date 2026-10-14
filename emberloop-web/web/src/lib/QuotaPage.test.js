@@ -241,6 +241,15 @@ describe('QuotaPage refresh', () => {
     expect(post.body).toEqual({ key: 'claude' });
   });
 
+  it('offers per-card refresh for every provider', async () => {
+    stubFetch();
+    render(QuotaPage);
+    await screen.findAllByTestId('quota-card');
+    for (const label of ['Claude', 'ChatGPT', 'OpenCode-Go', 'Antigravity Gemini', 'Antigravity 3P', 'OpenRouter']) {
+      expect(screen.getByRole('button', { name: `Refresh ${label}` })).toBeTruthy();
+    }
+  });
+
   it('refreshes all with an empty body', async () => {
     const calls = stubFetch();
     render(QuotaPage);

@@ -44,13 +44,16 @@ type QuotaProvider struct {
 	Windows   []QuotaWindow `json:"windows"`
 }
 
-// quotaSource separates provider fetch/cache behavior from the quota
-// endpoint and refresher. A source may share a FetchKey with related cards
-// (the two Antigravity pools), while each card still returns its own snapshot.
+// quotaSource keeps provider-specific fetch, configuration, hint and cache
+// path behavior behind the shared snapshot, endpoint and refresher. Related
+// cards may share a FetchKey while returning their own snapshots.
 type quotaSource interface {
 	Key() string
 	FetchKey() string
 	Fetch(context.Context, string, time.Time, bool) error
+	Configured(string, time.Time) bool
+	NotConfiguredHint(string) string
+	CachePath(string) string
 	Snapshot(string, time.Time, error) QuotaProvider
 }
 
@@ -58,10 +61,31 @@ type quotaSource interface {
 // terminal header panes to the quota card contract.
 type usageQuotaSource struct {
 	key, label, plan, fetchKey string
+	configuredFn               func(string, time.Time) bool
+	hintFn                     func(string) string
+	cachePathFn                func(string) string
 }
 
 func (s usageQuotaSource) Key() string      { return s.key }
 func (s usageQuotaSource) FetchKey() string { return s.fetchKey }
+
+func (s usageQuotaSource) Configured(stateDir string, now time.Time) bool {
+	return s.configuredFn != nil && s.configuredFn(stateDir, now)
+}
+
+func (s usageQuotaSource) NotConfiguredHint(stateDir string) string {
+	if s.hintFn == nil {
+		return ""
+	}
+	return s.hintFn(stateDir)
+}
+
+func (s usageQuotaSource) CachePath(stateDir string) string {
+	if s.cachePathFn == nil {
+		return ""
+	}
+	return s.cachePathFn(stateDir)
+}
 
 func (s usageQuotaSource) Fetch(ctx context.Context, stateDir string, now time.Time, force bool) error {
 	if s.fetchKey == "" { // Claude's statusline file is the fallback source.
@@ -79,7 +103,7 @@ func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr erro
 		Key:       s.key,
 		Label:     s.label,
 		Plan:      s.plan,
-		UpdatedAt: quotaUpdatedAt(stateDir, s.key),
+		UpdatedAt: quotaUpdatedAt(s.CachePath(stateDir)),
 		Windows:   quotaWindows(set.Windows),
 	}
 	if p.Windows == nil {
@@ -92,9 +116,9 @@ func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr erro
 		p.Hint = failure.hint
 		return p
 	}
-	if !quotaConfigured(stateDir, s.key, now) {
+	if !s.Configured(stateDir, now) {
 		p.State = QuotaNotConfigured
-		p.Hint = quotaNotConfiguredHint(s.key)
+		p.Hint = s.NotConfiguredHint(stateDir)
 		return p
 	}
 	switch {
@@ -136,90 +160,89 @@ func (e *quotaFailure) Unwrap() error { return e.err }
 // quotaSources is the registry used by the cache snapshot, validation, and
 // refresher. Add a provider here without teaching those paths its fetch logic.
 var quotaSources = []quotaSource{
-	usageQuotaSource{key: usageKeyClaude, label: "Claude"},
-	usageQuotaSource{key: usageKeyOpencode, label: "OpenCode-Go", plan: "Go", fetchKey: usageKeyOpencode},
-	usageQuotaSource{key: usageKeyAgyGem, label: "Antigravity Gemini", plan: "Gemini", fetchKey: usageKeyAgyGem},
-	usageQuotaSource{key: usageKeyAgy3P, label: "Antigravity 3P", plan: "Claude + GPT-OSS", fetchKey: usageKeyAgyGem},
+	usageQuotaSource{
+		key: usageKeyClaude, label: "Claude",
+		configuredFn: func(stateDir string, now time.Time) bool {
+			return ReadClaudeUsage(stateDir, now).Has
+		},
+		hintFn: func(string) string {
+			return "Claude quota needs a host Claude login or a Claude Code statusline report."
+		},
+		cachePathFn: claudeUsagePath,
+	},
+	usageQuotaSource{
+		key: usageKeyOpencode, label: "OpenCode-Go", plan: "Go", fetchKey: usageKeyOpencode,
+		configuredFn: func(string, time.Time) bool {
+			auth, err := readPigAuth()
+			return err == nil && auth.OpencodeGo.Key != ""
+		},
+		hintFn:      func(string) string { return "Missing OpenCode-Go login in pig auth.json (opencode-go.key)." },
+		cachePathFn: func(stateDir string) string { return usageCachePath(stateDir, usageKeyOpencode) },
+	},
+	usageQuotaSource{
+		key: usageKeyAgyGem, label: "Antigravity Gemini", plan: "Gemini", fetchKey: usageKeyAgyGem,
+		configuredFn: antigravityQuotaConfigured,
+		hintFn:       antigravityQuotaNotConfiguredHint,
+		cachePathFn:  func(stateDir string) string { return usageCachePath(stateDir, usageKeyAgyGem) },
+	},
+	usageQuotaSource{
+		key: usageKeyAgy3P, label: "Antigravity 3P", plan: "Claude + GPT-OSS", fetchKey: usageKeyAgyGem,
+		configuredFn: antigravityQuotaConfigured,
+		hintFn:       antigravityQuotaNotConfiguredHint,
+		cachePathFn:  func(stateDir string) string { return usageCachePath(stateDir, usageKeyAgy3P) },
+	},
 }
 
-// QuotaFetchKeys returns the distinct upstream providers selected by a card
-// key, or every fetchable provider when key is empty. Claude is read from its
-// local status file and therefore has no upstream fetch key.
+// QuotaFetchKeys returns the distinct upstreams selected by a card key, or
+// every fetchable source when key is empty. Local-only sources have no key.
 func QuotaFetchKeys(key string) []string {
-	if key == "" {
-		seen := make(map[string]bool)
-		var keys []string
-		for _, card := range quotaCards {
-			if card.fetchKey != "" && !seen[card.fetchKey] {
-				seen[card.fetchKey] = true
-				keys = append(keys, card.fetchKey)
-			}
+	seen := make(map[string]bool)
+	var keys []string
+	for _, source := range quotaSources {
+		if key != "" && source.Key() != key {
+			continue
 		}
-		return keys
+		fetchKey := source.FetchKey()
+		if fetchKey == "" || seen[fetchKey] {
+			continue
+		}
+		seen[fetchKey] = true
+		keys = append(keys, fetchKey)
 	}
-	card, ok := quotaCard(key)
-	if !ok || card.fetchKey == "" {
-		return nil
-	}
-	return []string{card.fetchKey}
-}
-
-// quotaCachePath is the file whose mtime is the card's updated_at.
-func quotaCachePath(stateDir, key string) string {
-	if key == usageKeyClaude {
-		return claudeUsagePath(stateDir)
-	}
-	return usageCachePath(stateDir, key)
+	return keys
 }
 
 // quotaUpdatedAt is the cache file's mtime, 0 when never written.
-func quotaUpdatedAt(stateDir, key string) int64 {
-	fi, err := os.Stat(quotaCachePath(stateDir, key))
+func quotaUpdatedAt(path string) int64 {
+	fi, err := os.Stat(path)
 	if err != nil {
 		return 0
 	}
 	return fi.ModTime().Unix()
 }
 
-// quotaConfigured reports whether a provider has the local credentials needed
-// to fetch. Missing credentials are a normal not_configured state.
-func quotaConfigured(stateDir, key string, now time.Time) bool {
-	switch key {
-	case usageKeyClaude:
-		return ReadClaudeUsage(stateDir, now).Has
-	case usageKeyOpencode:
-		auth, err := readPigAuth()
-		return err == nil && auth.OpencodeGo.Key != ""
-	default:
-		auth, err := readPigAuth()
-		if err != nil || auth.Antigravity.Refresh == "" {
-			return false
-		}
-		_, _, err = agyClient()
-		return err == nil
+func antigravityQuotaConfigured(_ string, _ time.Time) bool {
+	auth, err := readPigAuth()
+	if err != nil || auth.Antigravity.Refresh == "" {
+		return false
 	}
+	_, _, err = agyClient()
+	return err == nil
 }
 
-func quotaNotConfiguredHint(key string) string {
-	switch key {
-	case usageKeyClaude:
-		return "Claude quota needs a host Claude login or a Claude Code statusline report."
-	case usageKeyOpencode:
-		return "Missing OpenCode-Go login in pig auth.json (opencode-go.key)."
-	default:
-		var missing []string
-		auth, err := readPigAuth()
-		if err != nil || auth.Antigravity.Refresh == "" {
-			missing = append(missing, "pig auth.json google-antigravity.refresh login")
-		}
-		if _, _, err := agyClient(); err != nil {
-			missing = append(missing, "~/.el/agy-oauth.json client credentials")
-		}
-		if len(missing) == 0 {
-			return "Antigravity login is not configured."
-		}
-		return "Missing " + strings.Join(missing, " and ") + "."
+func antigravityQuotaNotConfiguredHint(_ string) string {
+	var missing []string
+	auth, err := readPigAuth()
+	if err != nil || auth.Antigravity.Refresh == "" {
+		missing = append(missing, "pig auth.json google-antigravity.refresh login")
 	}
+	if _, _, err := agyClient(); err != nil {
+		missing = append(missing, "~/.el/agy-oauth.json client credentials")
+	}
+	if len(missing) == 0 {
+		return "Antigravity login is not configured."
+	}
+	return "Missing " + strings.Join(missing, " and ") + "."
 }
 
 func quotaWindowLabel(label string) string {
