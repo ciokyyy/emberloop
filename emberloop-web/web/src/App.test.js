@@ -345,3 +345,49 @@ describe('Run summaries in the Session sidebar', () => {
     expect(fetchMock.mock.calls.some(([url]) => /\/api\/runs\/[^/]+$/.test(String(url)))).toBe(false);
   });
 });
+
+describe('Coalesced Run summaries', () => {
+  it('shares the sidebar list request and coalesces Run-event bursts', async () => {
+    history.replaceState(null, '', '/runs');
+    localStorage.clear();
+    let stream;
+    class FakeEventSource {
+      constructor(url) {
+        this.url = url;
+        stream = this;
+      }
+      close() {}
+      emit(topic) {
+        this.onmessage?.({ data: topic });
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource);
+
+    const runSummary = {
+      id: 'shared-run', spec: '/repo/.scratch/shared/spec.md', status: 'running',
+      updatedAt: '2026-10-14T10:00:00Z', counts: { total: 1, merged: 0, needsYou: 0 },
+    };
+    const runListCalls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/api/runs')) {
+        runListCalls.push(path);
+        return { ok: true, json: async () => ({ runs: [runSummary] }) };
+      }
+      return { ok: true, json: async () => [] };
+    }));
+
+    const { container, unmount } = render(App);
+    const sidebar = await within(container).findByTestId('runs-sidebar');
+    expect(await within(sidebar).findByRole('button', { name: /shared.*0\/1/ })).toBeTruthy();
+    expect(runListCalls).toHaveLength(1);
+
+    stream.emit('runs');
+    stream.emit('runs');
+    stream.emit('runs');
+    await vi.waitFor(() => expect(runListCalls).toHaveLength(2));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(runListCalls).toHaveLength(2);
+    unmount();
+  });
+});

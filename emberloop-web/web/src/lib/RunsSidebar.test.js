@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, within, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, within, fireEvent, cleanup } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import RunsSidebar from './RunsSidebar.svelte';
 import { discovery, resetDiscovery } from './runsDiscovery.svelte.js';
@@ -31,6 +31,7 @@ beforeEach(() => {
   resetDiscovery();
   vi.unstubAllGlobals();
 });
+afterEach(() => cleanup());
 
 describe('RunsSidebar spec discovery', () => {
   it('shows a clear message when no spec is found', async () => {

@@ -6,8 +6,7 @@
   import { onMount, onDestroy } from 'svelte';
   import Button from './ui/button.svelte';
   import FloatingInput from './ui/floating-input.svelte';
-  import { listRuns } from './api.js';
-  import { watch } from './live.js';
+  import { runsStore } from './runsStore.js';
   import {
     discovery,
     ensureDiscoveryContext,
@@ -19,20 +18,12 @@
   let { workDir = '', runId = '', ticketId = '', onNavigate = () => {} } = $props();
 
   let runs = $state([]);
-  // False until the first list answers, so a cold load never reads "No Runs yet".
+  // False until the shared summary request answers, so a cold load never reads
+  // "No Runs yet".
   let loaded = $state(false);
-  let stop = null;
-
-  async function load() {
-    try {
-      const body = await listRuns();
-      runs = [...(body.runs ?? [])].sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')));
-    } catch {
-      // Keep the last list; the next live change refetches.
-    } finally {
-      loaded = true;
-    }
-  }
+  const stopRuns = runsStore.subscribe((items) => {
+    runs = [...items].sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')));
+  });
 
   // A deep link seeds the picker from the list summary. The full Run and its
   // Ticket bodies are fetched by the main view only when that Run opens.
@@ -55,11 +46,13 @@
     initDiscoveryRepo(workDir);
     // A cold deep link waits for the list summary to seed the picker.
     if (!runId && discovery.repo && !discovery.specs.length && !discovery.selected) void loadDiscovery();
-    load();
-    stop = watch('runs', load);
+    void runsStore.load().then(
+      () => { loaded = true; },
+      () => { loaded = true; },
+    );
   });
-  onDestroy(() => stop?.());
 
+  onDestroy(stopRuns);
   const needsYouRuns = $derived(runs.filter((run) => run.counts?.needsYou > 0));
   const needsYouCount = $derived(runs.reduce((count, run) => count + (run.counts?.needsYou ?? 0), 0));
   const dot = (status) => (status === 'done' ? 'bg-green-500' : status === 'failed' ? 'bg-red-500' : status === 'paused' ? 'bg-amber-500' : 'bg-blue-400 animate-pulse');

@@ -31,8 +31,9 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit, listRuns, getDisk } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
+  import { runsStore } from './lib/runsStore.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
   let { user = null, onSignOut = () => {} } = $props();
@@ -50,6 +51,8 @@
   let connected = $state(true);
   let projects = $state([]);
   let runs = $state([]);
+  const stopRuns = runsStore.subscribe((value) => { runs = value; });
+  onDestroy(stopRuns);
   let draftProjectId = $state(null);
   let addOpen = $state(false);
   let adding = $state(false);
@@ -404,14 +407,6 @@
     }
   }
 
-  async function refreshRuns() {
-    try {
-      runs = (await listRuns()).runs ?? [];
-    } catch {
-      // Keep the last good Run list.
-    }
-  }
-
   function closeStream() {
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = null;
@@ -654,7 +649,6 @@
   // appear without a reload. The router owns the initial open, so refresh
   // never auto-opens here.
   watch('sessions', () => refresh());
-  watch('runs', () => refreshRuns());
   watch('users', () => refreshPeople());
   watch('disk', () => refreshDisk());
   refreshDisk();
@@ -727,7 +721,6 @@
   // Boot from the URL: sessions first (home falls back to newest), then route.
   (async () => {
     void refreshPeople();
-    void refreshRuns();
     await refresh();
     await applyRoute(window.location.pathname + window.location.search);
   })();
