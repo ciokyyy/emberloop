@@ -338,6 +338,7 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 			}
 			rs.ReviewStarted[ticketID][role] = time.Now().UTC()
 		}
+		d.indexRunTicketSessionLocked(runID, ticketID, meta.ID)
 		if rs.ChainExhausted != nil {
 			delete(rs.ChainExhausted, ticketID)
 		}

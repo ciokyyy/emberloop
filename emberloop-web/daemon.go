@@ -127,6 +127,10 @@ type Daemon struct {
 	// (runs_stopsubmit.go). Memory only: a restart clears it and the turn
 	// simply runs on.
 	runs map[string]*runState
+	// runSessionIndex maps Run Tickets to their direct Sessions and descendants;
+	// runSessionOwners lets a newly attached child inherit its Ticket.
+	runSessionIndex  map[runTicketRef]map[string]struct{}
+	runSessionOwners map[string]runTicketRef
 	// runGitCache holds short-lived git results per Run and Ticket; Run events
 	// invalidate that Run's entries.
 	runGitCache runGitResultCache
@@ -307,19 +311,21 @@ type interruptBackend interface {
 // Loaded Sessions hold history only; a new prompt resumes them.
 func NewDaemon(stateDir string, backend Backend) *Daemon {
 	d := &Daemon{
-		stateDir:      stateDir,
-		hostClaudeDir: claudeHostDir(),
-		hostPigDir:    userPigAgentDir(),
-		backend:       backend,
-		live:          newLiveHub(),
-		push:          newPushStore(stateDir),
-		sessions:      map[string]*session{},
-		backends:      map[string]Backend{},
-		groups:        map[string]*spawnGroup{},
-		runs:          map[string]*runState{},
-		submits:       map[string]*submitRec{},
-		stopSubmit:    map[string]bool{},
-		restartCh:     make(chan struct{}, 1),
+		stateDir:         stateDir,
+		hostClaudeDir:    claudeHostDir(),
+		hostPigDir:       userPigAgentDir(),
+		backend:          backend,
+		live:             newLiveHub(),
+		push:             newPushStore(stateDir),
+		sessions:         map[string]*session{},
+		backends:         map[string]Backend{},
+		groups:           map[string]*spawnGroup{},
+		runs:             map[string]*runState{},
+		runSessionIndex:  map[runTicketRef]map[string]struct{}{},
+		runSessionOwners: map[string]runTicketRef{},
+		submits:          map[string]*submitRec{},
+		stopSubmit:       map[string]bool{},
+		restartCh:        make(chan struct{}, 1),
 	}
 	d.users = newUserStore(stateDir)
 	tok, err := newMachineToken(stateDir)
@@ -331,6 +337,9 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 	d.load()
 	d.loadGroups()
 	d.loadRuns()
+	d.mu.Lock()
+	d.rebuildRunSessionIndexLocked()
+	d.mu.Unlock()
 	d.loadProjects()
 	return d
 }
@@ -486,6 +495,7 @@ func validClaudeModel(model string) bool {
 func (d *Daemon) removeSession(id string) {
 	d.mu.Lock()
 	delete(d.sessions, id)
+	d.removeRunSessionIndexLocked(id)
 	d.mu.Unlock()
 	if d.claude != nil {
 		d.claude.DropSession(id)
@@ -558,6 +568,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject, injectOp: handleCreate}
 
 		d.persistMeta(meta)
+		d.indexRunChildSessionLocked(meta)
 		d.starting--
 		d.mu.Unlock()
 		// Seed the context meter now that the handle exists: the first turn's
@@ -573,6 +584,7 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	d.sessions[meta.ID] = &session{meta: meta, live: true, notify: make(chan struct{}), last: d.now(), inject: h.inject, injectOp: handleCreate}
 
 	d.persistMeta(meta)
+	d.indexRunChildSessionLocked(meta)
 	cb := d.claude
 	d.mu.Unlock()
 	if cb == nil {

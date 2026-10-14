@@ -174,35 +174,9 @@ func (d *Daemon) abandonRun(w http.ResponseWriter, r *http.Request, id string) {
 		}
 	}
 	specBranch, repo := rs.SpecBranch, rs.Repo
-	// Close every Run-owned Session, including Reviewer sessions and
-	// worker-spawned Subagents, before removing a worktree they may use.
-	owned := map[string]bool{}
-	for _, sessionID := range rs.Sessions {
-		if sessionID != "" {
-			owned[sessionID] = true
-		}
-	}
-	for _, reviewers := range rs.Reviewers {
-		for _, sessionID := range reviewers {
-			if sessionID != "" {
-				owned[sessionID] = true
-			}
-		}
-	}
-	for changed := true; changed; {
-		changed = false
-		for sessionID, session := range d.sessions {
-			if owned[session.meta.ParentID] && !owned[sessionID] {
-				owned[sessionID] = true
-				changed = true
-			}
-		}
-	}
-	sessions := make([]string, 0, len(owned))
-	for sessionID := range owned {
-		sessions = append(sessions, sessionID)
-	}
-	sort.Strings(sessions)
+	// Close every Run-owned Session, including Reviewers and descendants,
+	// from its Ticket index before removing any worktree.
+	sessions := runSessionIDsLocked(d, rs, "")
 	rs.Status = runStatusAbandoned
 	rs.Error = ""
 	closeUnpauseLocked(rs)

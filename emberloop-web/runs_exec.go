@@ -147,39 +147,41 @@ type savedRow struct {
 // per Ticket in its own worktree and branch, two persistent Reviewer
 // Sessions per Ticket once its Worker submits done, and the shared driver
 // rows the loop publishes every pass. Sessions maps ticket ids to Worker
-// Session ids, Reviewers ticket ids to reviewer type to Session id,
-// ReviewTips ticket ids to reviewer type to the latest tip the reviewer was
-// prompted on, ReviewPending ticket ids to reviewer type to the owed prompt
-// queue (oldest unanswered tip first), and Reviews ticket ids to reviewer
-// type to verdict; Submits lives on the Daemon so the submit route finds it
-// without a run. Rows keeps the last published driver row per Ticket in
-// the Run file, so the table survives a Daemon restart. Owner names the User
-// who started the Run; its Worker and Reviewer Sessions inherit it.
+// Session ids, Reviewers ticket ids to reviewer type to Session id, and
+// TicketSessions persists every directly attached or descendant Session by
+// Ticket. ReviewTips maps reviewer types to the latest prompted tip;
+// ReviewPending keeps owed tips in prompt order. Reviews stores verdicts;
+// Submits lives on the Daemon so the submit route finds it without a Run.
+// Rows keeps the last published driver row per Ticket across restarts. Owner
+// names the User who started the Run; its Worker and Reviewer Sessions inherit it.
 type runState struct {
-	ID              string                             `json:"id"`
-	Spec            string                             `json:"spec"`
-	Repo            string                             `json:"repo"`
-	Status          string                             `json:"status"`
-	Harness         string                             `json:"harness"`
-	Model           string                             `json:"model"`
-	Effort          string                             `json:"effort,omitempty"`
-	CreatedAt       time.Time                          `json:"createdAt"`
-	UpdatedAt       time.Time                          `json:"updatedAt,omitempty"`
-	Error           string                             `json:"error,omitempty"`
-	FinalMergeFiles []string                           `json:"finalMergeFiles,omitempty"`
-	Owner           string                             `json:"owner,omitempty"`
-	Tickets         []staticTicket                     `json:"tickets"`
-	Sessions        map[string]string                  `json:"sessions"`
-	Branches        map[string]string                  `json:"branches"`
-	Worktrees       map[string]string                  `json:"worktrees"`
-	Targets         map[string]string                  `json:"targets"`
-	Bases           map[string]string                  `json:"bases,omitempty"`
-	Merged          map[string]string                  `json:"merged,omitempty"`
-	Reviewers       map[string]map[string]string       `json:"reviewers,omitempty"`
-	Reviews         map[string]map[string]storedReview `json:"reviews,omitempty"`
-	ReviewTips      map[string]map[string]string       `json:"reviewTips,omitempty"`
-	ReviewPending   map[string]map[string][]string     `json:"reviewPending,omitempty"`
-	Reprompted      map[string]int                     `json:"reprompted,omitempty"`
+	ID              string            `json:"id"`
+	Spec            string            `json:"spec"`
+	Repo            string            `json:"repo"`
+	Status          string            `json:"status"`
+	Harness         string            `json:"harness"`
+	Model           string            `json:"model"`
+	Effort          string            `json:"effort,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt,omitempty"`
+	Error           string            `json:"error,omitempty"`
+	FinalMergeFiles []string          `json:"finalMergeFiles,omitempty"`
+	Owner           string            `json:"owner,omitempty"`
+	Tickets         []staticTicket    `json:"tickets"`
+	Sessions        map[string]string `json:"sessions"`
+	// TicketSessions is the persisted Ticket-to-Session index, including
+	// historical workers and child agents; requests never scan d.sessions.
+	TicketSessions map[string][]string                `json:"ticketSessions,omitempty"`
+	Branches       map[string]string                  `json:"branches"`
+	Worktrees      map[string]string                  `json:"worktrees"`
+	Targets        map[string]string                  `json:"targets"`
+	Bases          map[string]string                  `json:"bases,omitempty"`
+	Merged         map[string]string                  `json:"merged,omitempty"`
+	Reviewers      map[string]map[string]string       `json:"reviewers,omitempty"`
+	Reviews        map[string]map[string]storedReview `json:"reviews,omitempty"`
+	ReviewTips     map[string]map[string]string       `json:"reviewTips,omitempty"`
+	ReviewPending  map[string]map[string][]string     `json:"reviewPending,omitempty"`
+	Reprompted     map[string]int                     `json:"reprompted,omitempty"`
 	// SpecBranch is the Run's integration branch, created from master (master
 	// ref when present, else main) when absent and reused as it stands otherwise.
 	// Ticket branches finish into it; only the final repo-check gate moves master.
@@ -2530,6 +2532,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		delete(rs.ChainExhausted, ticketID)
 	}
 	rs.Reviewers[ticketID][reviewerType] = meta.ID
+	d.indexRunTicketSessionLocked(runID, ticketID, meta.ID)
 	if rs.ReviewTips == nil {
 		rs.ReviewTips = map[string]map[string]string{}
 	}
@@ -3079,6 +3082,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			}
 		}
 		rs.Sessions[tk.ID] = meta.ID
+		d.indexRunTicketSessionLocked(runID, tk.ID, meta.ID)
 		rs.Branches[tk.ID] = branch
 		rs.Worktrees[tk.ID] = worktree
 		rs.Targets[tk.ID] = target
@@ -4045,9 +4049,8 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 	}
 }
 
-// ticketAgentsLocked lists one ticket's sessions: its worker, both
-// reviewers and the scouts the worker spawned (ParentID the worker).
-// Callers hold d.mu.
+// ticketAgentsLocked lists one ticket's current Worker, Reviewers and direct
+// Worker scouts using the persisted Ticket-to-Session index. Callers hold d.mu.
 func (d *Daemon) ticketAgentsLocked(rs *runState, ticketID string) []ticketAgent {
 	out := []ticketAgent{}
 	worker := rs.Sessions[ticketID]
@@ -4057,25 +4060,30 @@ func (d *Daemon) ticketAgentsLocked(rs *runState, ticketID string) []ticketAgent
 		}
 		return meta.Title
 	}
-	if worker != "" {
-		if s, ok := d.sessions[worker]; ok {
-			out = append(out, ticketAgent{SessionID: worker, Role: "worker", Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
+	add := func(id, role string) {
+		if id == "" {
+			return
+		}
+		if s, ok := d.sessions[id]; ok {
+			out = append(out, ticketAgent{SessionID: id, Role: role, Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
 		}
 	}
+	add(worker, "worker")
+	reviewers := map[string]bool{}
 	for _, typ := range requiredReviewerTypes {
-		sess := rs.Reviewers[ticketID][typ]
-		if sess == "" {
+		sessionID := rs.Reviewers[ticketID][typ]
+		if sessionID != "" {
+			reviewers[sessionID] = true
+		}
+		add(sessionID, typ)
+	}
+	for _, id := range d.runTicketSessionIDsLocked(rs, ticketID) {
+		if id == worker || reviewers[id] {
 			continue
 		}
-		if s, ok := d.sessions[sess]; ok {
-			out = append(out, ticketAgent{SessionID: sess, Role: typ, Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
-		}
-	}
-	if worker != "" {
-		for _, s := range d.sessions {
-			if s.meta.ParentID == worker && s.meta.Scout {
-				out = append(out, ticketAgent{SessionID: s.meta.ID, Role: "scout", Harness: s.meta.Harness, Status: s.meta.Status, Name: agentName(s.meta)})
-			}
+		s := d.sessions[id]
+		if s != nil && s.meta.Scout && s.meta.ParentID == worker {
+			add(id, "scout")
 		}
 	}
 	return out

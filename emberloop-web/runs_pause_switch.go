@@ -201,34 +201,40 @@ func clearPausedRunRoleLocked(rs *runState, ticketID, role string) {
 	}
 }
 
-// runSessionIDsLocked returns the Run-owned Sessions in scope, including
+// runSessionIDsLocked returns the Run's indexed Sessions in scope, including
 // descendants such as scouts. Callers hold d.mu.
 func runSessionIDsLocked(d *Daemon, rs *runState, onlyTicket string) []string {
-	owned := map[string]bool{}
-	for ticketID, id := range rs.Sessions {
-		if onlyTicket == "" || ticketID == onlyTicket {
-			if id != "" {
-				owned[id] = true
+	if rs == nil {
+		return nil
+	}
+	ticketSet := map[string]struct{}{}
+	if onlyTicket != "" {
+		ticketSet[onlyTicket] = struct{}{}
+	} else {
+		for ticketID := range rs.Sessions {
+			ticketSet[ticketID] = struct{}{}
+		}
+		for ticketID := range rs.Reviewers {
+			ticketSet[ticketID] = struct{}{}
+		}
+		for ticketID := range rs.TicketSessions {
+			ticketSet[ticketID] = struct{}{}
+		}
+		for ref := range d.runSessionIndex {
+			if ref.runID == rs.ID {
+				ticketSet[ref.ticketID] = struct{}{}
 			}
 		}
 	}
-	for ticketID, roles := range rs.Reviewers {
-		if onlyTicket != "" && ticketID != onlyTicket {
-			continue
-		}
-		for _, id := range roles {
-			if id != "" {
-				owned[id] = true
-			}
-		}
+	tickets := make([]string, 0, len(ticketSet))
+	for ticketID := range ticketSet {
+		tickets = append(tickets, ticketID)
 	}
-	for changed := true; changed; {
-		changed = false
-		for id, sess := range d.sessions {
-			if owned[sess.meta.ParentID] && !owned[id] {
-				owned[id] = true
-				changed = true
-			}
+	sort.Strings(tickets)
+	owned := map[string]struct{}{}
+	for _, ticketID := range tickets {
+		for _, id := range runTicketOwnedSessionIDsLocked(d, rs, ticketID) {
+			owned[id] = struct{}{}
 		}
 	}
 	ids := make([]string, 0, len(owned))
@@ -249,19 +255,30 @@ func (d *Daemon) settleRunSessions(ids []string) ([]string, error) {
 		}
 		stopped[id] = true
 	}
-	// A Worker can create a child while its turn is settling. Re-scan after
-	// its parent settles so no agent remains active in the WIP worktree.
+	// A Worker can create a child while settling. Consult only the affected
+	// Ticket's index again so no Session scan grows with the Daemon history.
 	for {
 		d.mu.Lock()
-		var more []string
-		for id, sess := range d.sessions {
-			if !stopped[id] && stopped[sess.meta.ParentID] {
-				more = append(more, id)
+		moreSet := map[string]struct{}{}
+		for parentID := range stopped {
+			ref, ok := d.runSessionOwners[parentID]
+			if !ok {
+				continue
+			}
+			for id := range d.runSessionIndex[ref] {
+				sess := d.sessions[id]
+				if !stopped[id] && sess != nil && stopped[sess.meta.ParentID] {
+					moreSet[id] = struct{}{}
+				}
 			}
 		}
 		d.mu.Unlock()
-		if len(more) == 0 {
+		if len(moreSet) == 0 {
 			break
+		}
+		more := make([]string, 0, len(moreSet))
+		for id := range moreSet {
+			more = append(more, id)
 		}
 		sort.Strings(more)
 		for _, id := range more {
@@ -593,6 +610,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 		}
 		rs.ReviewStarted[ticketID][role] = time.Now().UTC()
 	}
+	d.indexRunTicketSessionLocked(runID, ticketID, meta.ID)
 	clearPausedRunRoleLocked(rs, ticketID, role)
 	d.persistRun(rs)
 	d.broadcastRunLocked(rs)
