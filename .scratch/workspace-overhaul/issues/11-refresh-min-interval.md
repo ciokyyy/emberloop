@@ -4,8 +4,8 @@
 
 **Blocked by:** 05-concurrent-fetch-isolation (both change the refresh path)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Manual refresh skips the age guard but enforces a minimum interval per provider (default 10s): rapid repeat clicks cause no further upstream calls (HTTP-seam test asserting stub call counts)
-- [ ] Per-key and refresh-all refreshes each report a busy state and keep showing last values until the fetch lands
-- [ ] Go tests at the refresh HTTP seam with temp state dir and local stubs; repo check passes
+- [x] Manual refresh skips the age guard but enforces a minimum interval per provider (default 10s): rapid repeat clicks cause no further upstream calls (HTTP-seam test asserting stub call counts)
+- [x] Per-key and refresh-all refreshes each report a busy state and keep showing last values until the fetch lands
+- [x] Go tests at the refresh HTTP seam with temp state dir and local stubs; repo check passes
