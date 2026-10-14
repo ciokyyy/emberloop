@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -355,58 +354,5 @@ func TestSettingsOAuthRedirectBaseWriteIsAdminOnly(t *testing.T) {
 	}
 	if got := oauthRedirectBaseURLSetting(); got != "" {
 		t.Fatalf("redirect base after non-admin write = %q, want empty", got)
-	}
-}
-
-func TestBrowserOAuthRedirectBaseRequiresProviderProbe(t *testing.T) {
-	settings := filepath.Join(tempDir(t), "settings.json")
-	if err := os.WriteFile(settings, []byte(`{"oauth_redirect_base_url":"https://ember.example.ts.net"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	d := NewDaemon(tempDir(t), NewFakeBackend())
-	d.SetSettingsPath(settings)
-	probeCalls := 0
-	probe := func(_ context.Context, providerID, base string) (bool, error) {
-		probeCalls++
-		if providerID != "openrouter" || base != "https://ember.example.ts.net" {
-			t.Errorf("probe args = %q, %q", providerID, base)
-		}
-		return true, nil
-	}
-	if err := os.WriteFile(settings, []byte(`{}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", probe); got != "" || probeCalls != 0 {
-		t.Fatalf("unset redirect base = %q after %d probe calls, want empty and no probe", got, probeCalls)
-	}
-	if err := os.WriteFile(settings, []byte(`{"oauth_redirect_base_url":"https://ember.example.ts.net"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", probe); got != "https://ember.example.ts.net" {
-		t.Fatalf("accepted redirect base = %q", got)
-	}
-	if probeCalls != 1 {
-		t.Fatalf("accepted provider probe calls = %d, want 1", probeCalls)
-	}
-
-	rejected := func(context.Context, string, string) (bool, error) { return false, nil }
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", rejected); got != "" {
-		t.Fatalf("rejected provider redirect base = %q, want empty", got)
-	}
-	failed := func(context.Context, string, string) (bool, error) { return false, os.ErrPermission }
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", failed); got != "" {
-		t.Fatalf("failed provider probe redirect base = %q, want empty", got)
-	}
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "amazon-bedrock", probe); got != "" {
-		t.Fatalf("non-OAuth provider redirect base = %q, want empty", got)
-	}
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openai-codex", probe); got != "" {
-		t.Fatalf("device-code provider redirect base = %q, want empty", got)
-	}
-	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "xai", probe); got != "" {
-		t.Fatalf("device-code OAuth provider redirect base = %q, want empty", got)
-	}
-	if probeCalls != 1 {
-		t.Fatalf("probe calls after rejected/ineligible providers = %d, want 1", probeCalls)
 	}
 }

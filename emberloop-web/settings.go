@@ -397,25 +397,12 @@ func signupEnabledSetting() bool {
 	return on
 }
 
-// oauthRedirectBaseURLSetting returns an empty value when the key is absent,
-// malformed, or unsafe. The setting is opt-in and a browser OAuth flow still
-// has to pass its provider-specific redirect probe before using it.
+// oauthRedirectBaseURLSetting reads the validated optional base shared by the
+// Settings view and any future browser OAuth flow.
 func oauthRedirectBaseURLSetting() string {
 	all, err := readSettingsMap()
 	if err != nil {
 		return ""
 	}
-	raw, ok := all[oauthRedirectBaseURLSettingKey]
-	if !ok {
-		return ""
-	}
-	var configured string
-	if err := json.Unmarshal(raw, &configured); err != nil {
-		return ""
-	}
-	base, err := normalizeOAuthRedirectBaseURL(configured)
-	if err != nil {
-		return ""
-	}
-	return base
+	return oauthRedirectBaseFromSettings(all)
 }

@@ -53,17 +53,18 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   expose the exact `pig login <provider>` command; Bedrock, Vertex and
   Cloudflare cloud-auth rows say `configure via CLI`. Admin-only `PUT`/`DELETE`
   `/api/providers/<id>/key` write API keys to pig `auth.json`.
-  `oauth_redirect_base_url` defaults to empty and is admin-write-only;
-  `provider_redirect.go` applies it to callback-server OAuth only after a
-  provider-specific probe accepts it. Probe errors, non-OAuth providers and
-  ChatGPT device-code login fail closed; no current Providers-page flow consumes
-  a configurable redirect.
+  `oauth_redirect_base_url` defaults to empty and is admin-write-only. Its
+  validation is in `provider_redirect.go`; use is deferred to Ticket 38 because
+  pig v0.4.0 cannot override callback URIs for both authorization and token
+  exchange. No production flow consumes the setting until that ticket adds a
+  provider flow and a real per-provider acceptance probe; device-code login is
+  excluded.
   ChatGPT uses one device-code login per Daemon, expiring after 15 minutes:
   `POST /api/providers/openai-codex/device-code` starts pig's SDK flow; `GET`
   and `DELETE /api/providers/openai-codex/device-code/<id>` poll its code/link/
   status or cancel it. Success stores OAuth credentials in pig `auth.json` and
-  forces a ChatGPT quota refresh. Claude uses one admin-only `claude auth login`
-  PTY at a time and accepts code retries while it remains running; Claude Code
+  forces a ChatGPT quota refresh; Claude uses one admin-only `claude auth login`
+  PTY at a time and accepts code retries while it remains running. Claude Code
   alone writes its login in the host config directory, never pig. Shutdown
   cancels both login flows; terminal status is retained for five minutes.
   `provider_device_code_test.go` covers ChatGPT success, expiry, cancel and
@@ -71,7 +72,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   invalid code, retry, process exit, authorization and pig-auth separation;
   `providers_test.go` covers catalog/status sources, CLI guidance, secret
   redaction, API-key writes and authorization; `settings_test.go` covers the
-  redirect-base default, persistence, validation and provider-probe gate.
+  redirect-base default, persistence and validation.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both
