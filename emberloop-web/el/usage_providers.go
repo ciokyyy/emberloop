@@ -127,9 +127,6 @@ func parseClaudeCodeVersionPath(path string) string {
 			}
 		}
 	}
-	if len(parts) > 0 {
-		return parseClaudeCodeVersionSegment(parts[len(parts)-1])
-	}
 	return ""
 }
 

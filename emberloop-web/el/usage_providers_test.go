@@ -247,7 +247,7 @@ func TestParseClaudeCodeVersionPathUsesClaudeVersionSegment(t *testing.T) {
 		"/opt/2.0.1/claude/versions/2.1.42/bin/claude":                    "2.1.42",
 		"/opt/2.0.1/node_modules/@anthropic-ai/claude-code/2.1.42/cli.js": "2.1.42",
 		"/opt/2.0.1/node_modules/@anthropic-ai/claude-code/cli.js":        "",
-		"/opt/2.0.1/2.1.42": "2.1.42",
+		"/opt/2.0.1/2.1.42": "",
 	} {
 		if got := parseClaudeCodeVersionPath(path); got != want {
 			t.Errorf("parseClaudeCodeVersionPath(%q) = %q, want %q", path, got, want)

@@ -195,7 +195,7 @@ var quotaSources = []quotaSource{
 		},
 		expiredHint: chatGPTPlusExpiredHint,
 		hintFn:      chatGPTPlusNotConfiguredHint,
-		cachePathFn: func(stateDir string) string { return usageCachePath(stateDir, usageKeyChatGPT) },
+		cachePathFn: func(stateDir string, _ time.Time) string { return usageCachePath(stateDir, usageKeyChatGPT) },
 	},
 	usageQuotaSource{
 		key: usageKeyOpencode, label: "OpenCode-Go", plan: "Go", fetchKey: usageKeyOpencode,
