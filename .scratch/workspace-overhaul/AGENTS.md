@@ -6,12 +6,12 @@ The spec and ticket area for the workspace overhaul agreed in the 2026-10-13 gri
 
 ## Ownership
 
-Owns `spec.md`, `ticket-map.md` and `issues/` here. The spec copies, and does not replace, `.scratch/quota-tab/spec.md` and `.scratch/projects-providers-settings/spec.md`; those stay unedited. Code changes land in `emberloop-web/`, owned by its docs.
+Owns `spec.md`, `ticket-map.md` and `issues/` here. The spec copies, and does not replace, `.scratch/quota-tab/spec.md` and `.scratch/projects-providers-settings/spec.md`; those stay unedited apart from the quota-tab ticket move. Code changes land in `emberloop-web/`, owned by its docs.
 
 ## Local Contracts
 
 - This spec decides conflicts with the two source specs, and between a ticket and itself.
-- Part 1 (Quota) has no tickets here: the quota-tab tickets cover it. Start a Run on this spec only after the quota-tab spec has merged to master.
+- Part 7 goes first: every ticket blocks on 03 directly or through its chain. Quota-tab tickets 03 to 16 moved here as Part 1; quota-tab keeps only its done tickets 01 and 02.
 - Ticket files carry status and checkboxes; only the driver or a merge into the integration branch moves them.
 
 ## Work Guidance

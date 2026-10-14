@@ -2,11 +2,11 @@
 
 ## Purpose
 
-The spec and ticket area for the quota tab: `spec.md` (the decisions every ticket implements), `issues/` (one file per ticket with scope, blockers, status and acceptance checkboxes) and `ticket-map.md` (blocker table and parallel waves; kept outside `issues/` because the Run driver reads every file there as a ticket).
+The spec and ticket history for the quota tab: `spec.md` (the original decisions), `issues/` (the done tickets 01 and 02) and `ticket-map.md`. Open quota work moved to `.scratch/workspace-overhaul/` (Part 1, tickets 04 to 16 there); start no new Run on this spec.
 
 ## Ownership
 
-Owns `spec.md`, `ticket-map.md` and `issues/` in this directory. Code changes from these tickets land in `emberloop/` and `emberloop-web/`, owned by their docs.
+Owns `spec.md`, `ticket-map.md` and `issues/` in this directory. Code changes land in `emberloop-web/`, owned by its docs.
 
 ## Local Contracts
 

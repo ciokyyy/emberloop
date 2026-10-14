@@ -2,7 +2,7 @@
 
 This spec combines everything agreed in the 2026-10-13 grilling Session into one document. It stands on its own: an agent can implement from it without reading the two source specs. The source specs stay as they are and are not edited:
 
-- `.scratch/quota-tab/spec.md` and its tickets `.scratch/quota-tab/issues/03-*` to `16-*` cover Part 1.
+- `.scratch/quota-tab/spec.md` covers Part 1. Its open tickets moved into this spec's `issues/` (04 to 16); quota-tab keeps its done tickets 01 and 02.
 - `.scratch/projects-providers-settings/spec.md` covers Parts 2 to 6.
 
 If a source spec and this document disagree, this document decides.
@@ -149,7 +149,7 @@ Five deliverables, built in this order after the Quota spec has merged (they sha
 4. **Draft project pick.** When the first prompt is sent from "No project", jev suggests a Project and a banner asks to confirm.
 5. **Settings redesign.** A hub with one page per concern, and one merged Agents page with a model chain per role.
 
-Design references: `.scratch/settings-redesign/mock/index.html` (served at `https://kobo-scintilla-workplace.tailef9ae.ts.net/settings-mock/`) for the shell, Settings hub, Agents, Providers and phone layout; `.scratch/quota-tab/spec.md` for Quota (done there, not repeated here); `.scratch/project-suggest/jev-prompt-experiment.md` for the jev measurements.
+Design references: `.scratch/settings-redesign/mock/index.html` (served at `https://kobo-scintilla-workplace.tailef9ae.ts.net/settings-mock/`) for the shell, Settings hub, Agents, Providers and phone layout; Part 1 above for Quota; `.scratch/project-suggest/jev-prompt-experiment.md` for the jev measurements.
 
 ### User Stories
 
@@ -293,7 +293,7 @@ Settings
 - Moving an already-started Session to another Project, and an agent tool that changes the working directory mid-Session (with `AGENTS.md` injection). Revisit after seeing how often the draft pick misses.
 - Per-User provider accounts; connecting pig's own Anthropic login as a second Claude row.
 - Running two specs in the same Project in parallel (to be grilled in a later session).
-- Quota page work (see `.scratch/quota-tab/spec.md`).
+- Quota page work (Part 1 of this spec).
 
 ### Further Notes
 
