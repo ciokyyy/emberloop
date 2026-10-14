@@ -131,16 +131,27 @@ type quotaCard struct {
 
 func assertQuotaContract(t *testing.T, body []byte) {
 	t.Helper()
-	var response struct {
-		Providers []json.RawMessage `json:"providers"`
-	}
-	if err := json.Unmarshal(body, &response); err != nil {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode quota response: %v", err)
 	}
-	if len(response.Providers) == 0 {
+	providersRaw, ok := envelope["providers"]
+	if !ok {
+		t.Fatal("quota response is missing providers")
+	}
+	for name := range envelope {
+		if name != "providers" {
+			t.Errorf("quota response has unexpected field %q", name)
+		}
+	}
+	var providers []json.RawMessage
+	if err := json.Unmarshal(providersRaw, &providers); err != nil {
+		t.Fatalf("decode quota providers: %v", err)
+	}
+	if len(providers) == 0 {
 		t.Fatal("quota response contains no providers")
 	}
-	for _, raw := range response.Providers {
+	for _, raw := range providers {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			t.Fatalf("decode provider fields: %v", err)
@@ -148,6 +159,12 @@ func assertQuotaContract(t *testing.T, body []byte) {
 		for _, name := range []string{"key", "label", "plan", "state", "updated_at", "error", "windows"} {
 			if _, ok := fields[name]; !ok {
 				t.Errorf("provider is missing %q: %s", name, raw)
+			}
+		}
+		allowedFields := map[string]bool{"key": true, "label": true, "plan": true, "state": true, "updated_at": true, "error": true, "hint": true, "windows": true}
+		for name := range fields {
+			if !allowedFields[name] {
+				t.Errorf("provider has unexpected field %q: %s", name, raw)
 			}
 		}
 		var card struct {
@@ -189,6 +206,13 @@ func assertQuotaContract(t *testing.T, body []byte) {
 			for _, name := range []string{"label", "pct", "resets_at"} {
 				if _, ok := windowFields[name]; !ok {
 					t.Errorf("%s window is missing %q: %v", card.Key, name, windowFields)
+				}
+			}
+			for name := range windowFields {
+				switch name {
+				case "label", "pct", "resets_at", "detail":
+				default:
+					t.Errorf("%s window has unexpected field %q: %v", card.Key, name, windowFields)
 				}
 			}
 			var window struct {
@@ -431,53 +455,48 @@ func TestQuotaGetReportsBackgroundRefreshError(t *testing.T) {
 type quotaPostResult struct {
 	status int
 	cards  []quotaCard
+	raw    []byte
 	err    error
 }
 
-func sendQuotaRefresh(base, key string) (int, []quotaCard, error) {
+func sendQuotaRefresh(base, key string) (int, []quotaCard, []byte, error) {
 	var body io.Reader
 	if key != "<empty>" {
 		raw, err := json.Marshal(map[string]string{"key": key})
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 		body = bytes.NewReader(raw)
 	}
 	resp, err := http.Post(base+"/api/quota/refresh", "application/json", body)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, nil, nil
+		return resp.StatusCode, nil, nil, nil
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, nil, nil, err
 	}
 	var out struct {
 		Providers []quotaCard `json:"providers"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, nil, raw, err
 	}
-	return resp.StatusCode, out.Providers, nil
+	return resp.StatusCode, out.Providers, raw, nil
 }
 
 func postQuotaRefresh(t *testing.T, base, key string) (int, []quotaCard) {
 	t.Helper()
-	status, cards, err := sendQuotaRefresh(base, key)
+	status, cards, raw, err := sendQuotaRefresh(base, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status == http.StatusOK {
-		response, err := json.Marshal(struct {
-			Providers []quotaCard `json:"providers"`
-		}{cards})
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertQuotaContract(t, response)
+		assertQuotaContract(t, raw)
 	}
 	return status, cards
 }
@@ -810,8 +829,8 @@ func TestQuotaRefreshAllDoesNotWaitForBlockedProviderToUpdateOtherCards(t *testi
 
 	result := make(chan quotaPostResult, 1)
 	go func() {
-		status, cards, err := sendQuotaRefresh(base, "<empty>")
-		result <- quotaPostResult{status: status, cards: cards, err: err}
+		status, cards, raw, err := sendQuotaRefresh(base, "<empty>")
+		result <- quotaPostResult{status: status, cards: cards, raw: raw, err: err}
 	}()
 	select {
 	case <-started:
@@ -849,6 +868,7 @@ func TestQuotaRefreshAllDoesNotWaitForBlockedProviderToUpdateOtherCards(t *testi
 		if got.err != nil || got.status != http.StatusOK {
 			t.Fatalf("refresh-all result = status %d, err %v", got.status, got.err)
 		}
+		assertQuotaContract(t, got.raw)
 		if card := quotaByKey(t, got.cards)["opencode-go"]; card.State != "ok" || card.Windows[0].Pct != 72 {
 			t.Errorf("completed OpenCode-Go card = %+v, want fresh value", card)
 		}
@@ -930,8 +950,8 @@ func TestQuotaConcurrentRefreshersShareProviderLock(t *testing.T) {
 
 	first := make(chan quotaPostResult, 1)
 	go func() {
-		status, cards, err := sendQuotaRefresh(base, "opencode-go")
-		first <- quotaPostResult{status: status, cards: cards, err: err}
+		status, cards, raw, err := sendQuotaRefresh(base, "opencode-go")
+		first <- quotaPostResult{status: status, cards: cards, raw: raw, err: err}
 	}()
 	select {
 	case <-started:
@@ -941,14 +961,15 @@ func TestQuotaConcurrentRefreshersShareProviderLock(t *testing.T) {
 
 	second := make(chan quotaPostResult, 1)
 	go func() {
-		status, cards, err := sendQuotaRefresh(base, "opencode-go")
-		second <- quotaPostResult{status: status, cards: cards, err: err}
+		status, cards, raw, err := sendQuotaRefresh(base, "opencode-go")
+		second <- quotaPostResult{status: status, cards: cards, raw: raw, err: err}
 	}()
 	select {
 	case got := <-second:
 		if got.err != nil || got.status != http.StatusOK {
 			t.Fatalf("second refresh = status %d, err %v", got.status, got.err)
 		}
+		assertQuotaContract(t, got.raw)
 	case <-time.After(time.Second):
 		t.Fatal("second refresh waited for the in-flight provider request")
 	}
@@ -965,6 +986,7 @@ func TestQuotaConcurrentRefreshersShareProviderLock(t *testing.T) {
 		if got.err != nil || got.status != http.StatusOK {
 			t.Fatalf("first refresh = status %d, err %v", got.status, got.err)
 		}
+		assertQuotaContract(t, got.raw)
 	case <-time.After(time.Second):
 		t.Fatal("first refresher did not finish after unblocking the upstream")
 	}
