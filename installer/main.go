@@ -40,7 +40,7 @@ func run() error {
 		wd, _ := os.Getwd()
 		*repo = filepath.Dir(wd)
 	}
-	if _, err := os.Stat(filepath.Join(*repo, "emberloop", "go.mod")); err != nil {
+	if _, err := os.Stat(filepath.Join(*repo, "emberloop-web", "go.mod")); err != nil {
 		return fmt.Errorf("%s is not the el repo root", *repo)
 	}
 	env := &Env{Repo: *repo, Home: home, BinDir: *binDir, DryRun: *dry}

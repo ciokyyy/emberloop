@@ -4,7 +4,7 @@
 # what came back. The read outputs differ in shape, so the diff names the winner.
 set -uo pipefail
 export PATH="$HOME/go/bin:$PATH"
-EL=/home/cioky/Projects/emberloop/emberloop
+EL=/home/cioky/Projects/emberloop/emberloop-web/el
 DIR=/tmp/el-verify
 FILE=$DIR/app.txt
 

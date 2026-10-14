@@ -14,13 +14,13 @@ A_BASE_CALLS=(
   "bash: rg -n VerifyToken --type go"
   "bash: rg -n -i 'verify.*token'"
   "bash: rg -n Token --glob '*.go' emberloop-web"
-  "bash: ls emberloop/tools"
+  "bash: ls emberloop-web/el/tools"
   "bash: ls emberloop-web"
   "bash: rg -n VerifyToken vendor"
-  "read: emberloop/tools/find.go"
+  "read: emberloop-web/el/tools/find.go"
   "bash: rg -n 'func Verify' --type go"
-  "bash: ls emberloop/tools/systemone"
-  "read: emberloop/tools/cascade.go"
+  "bash: ls emberloop-web/el/tools/systemone"
+  "read: emberloop-web/el/tools/cascade.go"
   "bash: rg -n VerifyToken go.sum"
 )
 # Guided: one find (jev/grep/graph, source-tagged) plus one execute batch

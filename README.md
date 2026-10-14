@@ -96,7 +96,7 @@ A merge refuses unless every required reviewer passed at the current tip, so a s
 
 | Directory | Contents |
 |---|---|
-| `emberloop/` | the el library behind the Daemon: tool roles, Run driver, session archive and usage, operator CLI |
+| `emberloop-web/el/` | the el library behind the Daemon: tool roles, Run driver, session archive and usage, operator CLI |
 | `emberloop-web/` | the browser UI and Daemon module: local Go Daemon plus embedded UI, loopback only |
 | `pig-antigravity-auth/` | a pig extension that adds the `google-antigravity` model provider |
 | `installer/` | the installer that `install.sh` runs |
@@ -128,7 +128,7 @@ ssh -L 8787:127.0.0.1:8787 user@server   # then open http://127.0.0.1:8787
 .emberloop/check
 ```
 
-The check runs `go vet` and the tests for `emberloop/`, `installer/` and `emberloop-web/`; live tests (`TestLive*`) are skipped. `AGENTS.md` files in each directory state the contract for that subtree; read the root file first.
+The check runs `go vet` and the tests for `emberloop-web/` (including `el/`) and `installer/`; live tests (`TestLive*`) are skipped. `AGENTS.md` files in each directory state the contract for that subtree; read the root file first.
 
 ## Files and environment
 

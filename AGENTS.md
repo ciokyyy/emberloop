@@ -1,13 +1,13 @@
 # AGENTS.md — emberloop
 
-Project preamble: emberloop is a browser UI and local Daemon (`emberloop-web/`) that runs coding-agent sessions and deterministic implement/review Runs. `emberloop/` is the el library behind it: the tool roles the el MCP server serves, the Run driver, the session archive and usage tailer, and the operator CLI with its update path; `pig-antigravity-auth/` is a separate pig
+Project preamble: emberloop is a browser UI and local Daemon (`emberloop-web/`, one Go module) that runs coding-agent sessions and deterministic implement/review Runs. `emberloop-web/el/` is the el library behind it: the tool roles the el MCP server serves, the Run driver, the session archive and usage tailer, and the operator CLI with its update path; `pig-antigravity-auth/` is a separate pig
 extension; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
 live
 probes that need running agents; `.scratch/archive/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
 `CLAUDE.md`, which imports this file; Daemon claude Sessions load no
 CLAUDE.md and get a system-prompt pointer to this file instead. The repo check is `.emberloop/check`
-(`cd emberloop && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./... && cd ../emberloop-web && go vet ./... && go test ./...`).
+(`cd emberloop-web && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
 
 ## DOX contract
 
@@ -39,11 +39,9 @@ CLAUDE.md and get a system-prompt pointer to this file instead. The repo check i
 Index paths are repo-relative. Every doc below is listed here or in the
 child it belongs to, and every entry must resolve to a file.
 
-- `emberloop/AGENTS.md` — the main Go package, its file map, and its Go
-  workflow; indexes tools, MCP server, agent types, state database, and test data
+- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login, the sign-in screen, owners and per-User harness config dirs); indexes the el library, memory, web source and Backend spikes
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
-- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login, the sign-in screen, owners and per-User harness config dirs)
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
 - `.scratch/archive/archived-herdr-report/AGENTS.md` — the archived herdr report extension (not built, not tested)
 - `.scratch/archive/archived-herdr-emberloop/AGENTS.md` — the archived herdr compress plugin (not built, not tested)

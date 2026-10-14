@@ -37,10 +37,10 @@ type Step struct {
 	Run  func(*Env) (string, error)
 }
 
-// binaries are the two programs built from the repo.
+// binaries are the two programs built from the repo's one module.
 var binaries = []struct{ name, dir, pkg string }{
-	{"el", "emberloop", "./cmd/emberloop"},
-	{"el-mcp", "emberloop", "./cmd/emberloop-mcp"},
+	{"el", "emberloop-web", "./cmd/el"},
+	{"el-mcp", "emberloop-web", "./cmd/el-mcp"},
 }
 
 // Steps lists the install steps for the given choices, in run order.

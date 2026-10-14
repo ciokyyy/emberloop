@@ -11,7 +11,7 @@ and `session.go` (account flow and request identity), `stream.go` and
 ## Ownership
 
 Owns this directory as a separate Go module. Provider scope only; harness
-model selection lives in `emberloop/models.go`.
+model selection lives in `emberloop-web/el/models.go`.
 
 ## Local Contracts
 
@@ -25,7 +25,7 @@ model selection lives in `emberloop/models.go`.
 
 ## Verification
 
- No check; the repo check covers `emberloop/` and `emberloop-tui/`.
+ No check; the repo check covers `emberloop-web/` and `installer/`.
 
 ## Child DOX Index
 
