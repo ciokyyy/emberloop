@@ -113,6 +113,25 @@ func TestAuthorizeURLAndCallback(t *testing.T) {
 	}
 }
 
+func TestSDKFlowDoesNotRetryInvalidCallback(t *testing.T) {
+	t.Setenv(envClientID, "test-id")
+	t.Setenv(envClientSecret, "test-secret")
+	prompts, infos := 0, 0
+	_, err := loginWithCallbacks(context.Background(), LoginCallbacks{
+		OnPrompt: func(string) (string, error) {
+			prompts++
+			return "http://localhost:51121/oauth-callback?code=bad&state=invalid", nil
+		},
+		OnInfo: func(string) { infos++ },
+	}, callbackFailureReturn)
+	if err == nil {
+		t.Fatal("invalid callback should return an error")
+	}
+	if prompts != 1 || infos != 0 {
+		t.Fatalf("SDK callback behavior: prompts=%d info=%d, want one prompt and no retry notice", prompts, infos)
+	}
+}
+
 func TestRefreshKeepsProjectAndRefreshToken(t *testing.T) {
 	t.Setenv(envClientID, "test-id")
 	t.Setenv(envClientSecret, "test-secret")

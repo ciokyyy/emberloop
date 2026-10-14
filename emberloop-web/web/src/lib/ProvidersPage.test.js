@@ -117,52 +117,64 @@ function providerRows() {
   ];
 }
 
+function antigravityLoginSnapshot(state, fields = {}) {
+  return Object.fromEntries(
+    Object.entries({ id: 'login-1', state, ...fields }).filter(([, value]) => value !== ''),
+  );
+}
+
 function stubProviders() {
   let rows = providerRows();
   let claudeLoginState = 'running';
   let antigravityLoginState;
+  let missingLogin = false;
   const calls = [];
   const connectURL = '/api/providers/google-antigravity/connect';
+  const url = 'https://accounts.google.com/o/oauth2/v2/auth';
+  const instructions = 'Sign in, then paste the localhost callback URL or code.';
   const fetchMock = vi.fn(async (input, options = {}) => {
-    const url = String(input);
+    const requestURL = String(input);
     const method = options.method ?? 'GET';
-    calls.push({ url, method, body: options.body ? JSON.parse(options.body) : null });
-    if (url === '/api/providers/claude/login' && method === 'POST') {
+    calls.push({ url: requestURL, method, body: options.body ? JSON.parse(options.body) : null });
+    if (requestURL === '/api/providers/claude/login' && method === 'POST') {
       return { ok: true, json: async () => ({ id: 'login-1', state: 'running', output: '\u001b[31mVisit https://claude.ai/oauth/authorize?code=abc\u001b[0m\nPaste code:' }) };
     }
-    if (url === '/api/providers/claude/login/login-1/code' && method === 'POST') {
+    if (requestURL === '/api/providers/claude/login/login-1/code' && method === 'POST') {
       claudeLoginState = 'succeeded';
       rows = rows.map((row) => row.id === 'claude'
         ? { ...row, connected: true, source: 'host_claude', sourceLabel: 'Claude Code login' }
         : row);
       return { ok: true, json: async () => ({ ok: true }) };
     }
-    if (url === '/api/providers/claude/login/login-1' && method === 'GET') {
+    if (requestURL === '/api/providers/claude/login/login-1' && method === 'GET') {
       return { ok: true, json: async () => ({ id: 'login-1', state: claudeLoginState, output: '\u001b[32mVisit https://claude.ai/oauth/authorize?code=abc\u001b[0m\nLogin successful' }) };
     }
-    if (url === '/api/quota/refresh' && method === 'POST') {
+    if (requestURL === '/api/quota/refresh' && method === 'POST') {
       return { ok: true, json: async () => ({ providers: [] }) };
     }
-    if (url === connectURL && method === 'POST') {
-      antigravityLoginState = {
-        id: 'login-1',
-        state: 'waiting',
-        url: 'https://accounts.google.com/o/oauth2/v2/auth',
-        instructions: 'Sign in, then paste the localhost callback URL or code.',
+    if (requestURL === connectURL && method === 'POST') {
+      antigravityLoginState = antigravityLoginSnapshot('waiting', {
+        url,
+        instructions,
         prompt: 'Paste the Antigravity OAuth callback URL or code:',
-      };
-      return { ok: true, json: async () => antigravityLoginState };
+      });
+      return { ok: true, json: async () => ({ ...antigravityLoginState }) };
     }
-    if (url.startsWith(`${connectURL}/`)) {
-      if (method === 'GET') return { ok: true, json: async () => antigravityLoginState };
+    if (requestURL.startsWith(`${connectURL}/`)) {
+      if (method === 'GET') {
+        if (missingLogin) return { ok: false, status: 404 };
+        return { ok: true, json: async () => ({ ...antigravityLoginState }) };
+      }
       if (method === 'POST') {
         if (options.body && JSON.parse(options.body).value === 'bad callback') {
-          antigravityLoginState = { ...antigravityLoginState, error: 'The callback URL or code is invalid.' };
+          antigravityLoginState = antigravityLoginSnapshot('waiting', {
+            url,
+            instructions,
+            prompt: 'Paste the Antigravity OAuth callback URL or code:',
+            error: 'The callback URL or code is invalid.',
+          });
         } else {
-          antigravityLoginState = { ...antigravityLoginState, state: 'complete', prompt: '', error: '' };
-          rows = rows.map((row) => row.id === 'google-antigravity'
-            ? { ...row, connected: true, source: 'oauth', sourceLabel: 'OAuth login' }
-            : row);
+          antigravityLoginState = antigravityLoginSnapshot('progress', { url, instructions });
         }
         return { ok: true, json: async () => ({ ok: true }) };
       }
@@ -183,7 +195,22 @@ function stubProviders() {
     return { ok: true, json: async () => ({ providers: rows }) };
   });
   vi.stubGlobal('fetch', fetchMock);
-  return calls;
+  return {
+    calls,
+    completeLogin() {
+      antigravityLoginState = antigravityLoginSnapshot('complete', {
+        url,
+        instructions,
+        progress: 'Project discovery complete.',
+      });
+      rows = rows.map((row) => row.id === 'google-antigravity'
+        ? { ...row, connected: true, source: 'oauth', sourceLabel: 'OAuth login' }
+        : row);
+    },
+    expireLogin() {
+      missingLogin = true;
+    },
+  };
 }
 
 afterEach(() => {
@@ -253,7 +280,7 @@ describe('ProvidersPage', () => {
   });
 
   it('connects Claude through the host PTY, sends the pasted code, and refreshes its quota', async () => {
-    const calls = stubProviders();
+    const { calls } = stubProviders();
     const { container } = render(ProvidersPage, { props: { admin: true } });
     await screen.findAllByTestId('provider-row');
     const claudeRow = container.querySelector('[data-provider="claude"]');
@@ -284,7 +311,7 @@ describe('ProvidersPage', () => {
   });
 
   it('connects Antigravity by link and keeps the callback panel open after bad input', async () => {
-    const calls = stubProviders();
+    const { calls, completeLogin } = stubProviders();
     const { container } = render(ProvidersPage, { props: { admin: true } });
     await screen.findAllByTestId('provider-row');
     const row = container.querySelector('[data-provider="google-antigravity"]');
@@ -302,6 +329,11 @@ describe('ProvidersPage', () => {
 
     await fireEvent.input(callback, { target: { value: 'valid-code' } });
     await fireEvent.click(within(panel).getByRole('button', { name: 'Submit callback' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Submit callback' })).toBeNull());
+    expect(screen.getByTestId('antigravity-connect-panel')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    completeLogin();
     await waitFor(() => expect(within(row).getByTestId('provider-status').textContent).toBe('Connected'));
     await waitFor(() => expect(screen.queryByTestId('antigravity-connect-panel')).toBeNull());
     await waitFor(() => expect(calls.filter((call) => call.url === '/api/quota/refresh')).toHaveLength(2));
@@ -310,8 +342,27 @@ describe('ProvidersPage', () => {
       { key: 'agy-3p' },
     ]);
   });
+
+  it('stops Antigravity polling when the login session expires', async () => {
+    const { calls, expireLogin } = stubProviders();
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const row = container.querySelector('[data-provider="google-antigravity"]');
+    await fireEvent.click(within(row).getByRole('button', { name: 'Connect' }));
+    await screen.findByTestId('antigravity-connect-panel');
+    expireLogin();
+
+    expect((await screen.findByRole('alert')).textContent).toContain('request failed: 404');
+    await waitFor(() => expect(screen.queryByTestId('antigravity-connect-panel')).toBeNull());
+    const getCount = () => calls.filter((call) =>
+      call.method === 'GET' && call.url.startsWith('/api/providers/google-antigravity/connect/'),
+    ).length;
+    const countAfterExpiry = getCount();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(getCount()).toBe(countAfterExpiry);
+  });
   it('lets admins set and remove a key while only reading the set flag back', async () => {
-    const calls = stubProviders();
+    const { calls } = stubProviders();
     const { container } = render(ProvidersPage, { props: { admin: true } });
     await screen.findAllByTestId('provider-row');
     const keyRow = container.querySelector('[data-provider="openrouter"]');

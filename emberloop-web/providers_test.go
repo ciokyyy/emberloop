@@ -430,6 +430,18 @@ func TestAntigravityConnectByPastedCallback(t *testing.T) {
 			if completed.State != "complete" {
 				t.Fatalf("Antigravity connect ended in state %+v", completed)
 			}
+			deleted := authDo(t, h, http.MethodDelete, path, "", admin)
+			if deleted.Code != http.StatusOK {
+				t.Fatalf("DELETE completed Antigravity login = %d: %s", deleted.Code, deleted.Body.String())
+			}
+			afterDelete := authDo(t, h, http.MethodGet, path, "", admin)
+			var afterDeleteState antigravityConnectSnapshot
+			if err := json.Unmarshal(afterDelete.Body.Bytes(), &afterDeleteState); err != nil {
+				t.Fatalf("decode Antigravity login after DELETE: %v", err)
+			}
+			if afterDelete.Code != http.StatusOK || afterDeleteState.State != "complete" {
+				t.Fatalf("DELETE changed completed Antigravity login: status=%d state=%q", afterDelete.Code, afterDeleteState.State)
+			}
 			if len(tokenCodes) == 0 || tokenCodes[len(tokenCodes)-1] != tc.wantCode {
 				t.Fatalf("token codes = %v, want last %q", tokenCodes, tc.wantCode)
 			}

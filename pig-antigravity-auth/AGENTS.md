@@ -10,14 +10,15 @@ and `session.go` (account flow and request identity), `stream.go` and
 
 ## Ownership
 
-Owns this directory as a separate Go module. Provider scope only; harness
+Owns this directory as a separate Go module, imported by `emberloop-web` for
+the Daemon's browser-hosted Antigravity login. Provider scope only; harness
 model selection lives in `emberloop-web/el/models.go`.
 
 ## Local Contracts
 
-- The exported `LoginWithCallbacks` hosts this same OAuth flow in the Daemon;
-  invalid callback input reports an error and re-prompts against the same PKCE
-  challenge. The SDK extension login adapts its prompts to this shared flow.
+- The Daemon's exported `LoginWithCallbacks` hosts browser paste login; invalid
+  callback input reports an error and re-prompts against the same PKCE challenge.
+  The pig SDK extension login keeps its one-shot prompt and error behavior.
 - Unofficial client, outside Google's terms of service; account suspension
   is a known risk, stated in the package doc.
 
@@ -28,7 +29,8 @@ model selection lives in `emberloop-web/el/models.go`.
 
 ## Verification
 
- No check; the repo check covers `emberloop-web/` and `installer/`.
+The repo check compiles this module through `emberloop-web` but does not run its
+module tests. Run `cd pig-antigravity-auth && go test ./...` for those tests.
 
 ## Child DOX Index
 

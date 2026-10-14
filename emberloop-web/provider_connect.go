@@ -68,6 +68,10 @@ func connectReady(view antigravityConnectSnapshot) bool {
 	return view.Prompt != "" || view.State == "complete" || view.State == "error" || view.State == "cancelled"
 }
 
+func antigravityConnectTerminal(state string) bool {
+	return state == "complete" || state == "error" || state == "cancelled"
+}
+
 func (s *antigravityConnectSession) waitReady(ctx context.Context) (antigravityConnectSnapshot, error) {
 	for {
 		view, changed := s.snapshot()
@@ -114,7 +118,7 @@ func (s *antigravityConnectSession) prompt(ctx context.Context, message string) 
 func (s *antigravityConnectSession) submit(value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.view.State == "complete" || s.view.State == "error" || s.view.State == "cancelled" {
+	if antigravityConnectTerminal(s.view.State) {
 		return errors.New("this Antigravity login is no longer active")
 	}
 	if s.input == nil || s.view.State != "waiting" {
@@ -136,15 +140,26 @@ func (s *antigravityConnectSession) submit(value string) error {
 }
 
 func (s *antigravityConnectSession) cancelFlow() {
-	s.cancel()
-	s.update(func(view *antigravityConnectSnapshot) {
-		view.State = "cancelled"
-		view.Prompt = ""
-	})
+	s.mu.Lock()
+	if antigravityConnectTerminal(s.view.State) {
+		s.mu.Unlock()
+		return
+	}
+	s.view.State = "cancelled"
+	s.view.Prompt = ""
+	cancel := s.cancel
+	changed := s.changed
+	s.changed = make(chan struct{})
+	close(changed)
+	s.mu.Unlock()
+	cancel()
 }
 
 func (s *antigravityConnectSession) finish(state, message string) {
 	s.update(func(view *antigravityConnectSnapshot) {
+		if antigravityConnectTerminal(view.State) {
+			return
+		}
 		view.State = state
 		view.Prompt = ""
 		view.Error = message

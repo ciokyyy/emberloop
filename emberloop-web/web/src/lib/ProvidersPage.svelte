@@ -45,6 +45,7 @@
   let antigravityCallback = $state('');
   let antigravityBusy = $state(false);
   let connectPollTimer;
+  let connectPollFailures = 0;
 
   const groups = [
     {
@@ -137,10 +138,13 @@
 
   async function pollAntigravityLogin(id) {
     if (antigravityLogin?.id !== id) return;
+    let delay = 500;
     try {
       const next = await getAntigravityLogin(id);
       if (antigravityLogin?.id !== id) return;
-      antigravityLogin = { ...antigravityLogin, ...next };
+      antigravityLogin = next;
+      connectPollFailures = 0;
+      rowErrors = { ...rowErrors, 'google-antigravity': '' };
       if (next.state === 'complete') {
         antigravityCallback = '';
         void Promise.allSettled([refreshQuota('agy-gemini'), refreshQuota('agy-3p')]);
@@ -150,10 +154,18 @@
       }
       if (next.state === 'error' || next.state === 'cancelled') return;
     } catch (error) {
+      if (antigravityLogin?.id !== id) return;
       rowErrors = { ...rowErrors, 'google-antigravity': error?.message || 'Could not check Antigravity login.' };
+      if (error?.status === 404) {
+        antigravityLogin = null;
+        return;
+      }
+      connectPollFailures += 1;
+      if (connectPollFailures >= 5) return;
+      delay = Math.min(500 * 2 ** connectPollFailures, 5000);
     }
     if (antigravityLogin?.id === id) {
-      connectPollTimer = setTimeout(() => void pollAntigravityLogin(id), 500);
+      connectPollTimer = setTimeout(() => void pollAntigravityLogin(id), delay);
     }
   }
 
@@ -161,6 +173,7 @@
     if (!admin || antigravityBusy) return;
     const previous = antigravityLogin?.id;
     clearTimeout(connectPollTimer);
+    connectPollFailures = 0;
     antigravityBusy = true;
     rowErrors = { ...rowErrors, 'google-antigravity': '' };
     try {
@@ -196,6 +209,7 @@
   async function closeAntigravityLogin() {
     const id = antigravityLogin?.id;
     clearTimeout(connectPollTimer);
+    connectPollFailures = 0;
     antigravityLogin = null;
     antigravityCallback = '';
     if (id) await cancelAntigravityLogin(id).catch(() => {});

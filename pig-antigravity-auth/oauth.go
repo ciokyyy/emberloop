@@ -21,8 +21,8 @@ import (
 
 // The client id and secret come from client.go, not from source.
 const (
-	redirectURI = "http://localhost:51121/oauth-callback"
-	authURL     = "https://accounts.google.com/o/oauth2/v2/auth"
+	redirectURI  = "http://localhost:51121/oauth-callback"
+	authURL      = "https://accounts.google.com/o/oauth2/v2/auth"
 
 	freeTier       = "free-tier"
 	onboardTimeout = 30 * time.Second
@@ -106,6 +106,7 @@ func parseCallback(input, defaultState string) (code, state string) {
 	}
 	return code, state
 }
+
 func parseLoginCallback(input, expectedState string) (code, verifier string, err error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -115,7 +116,6 @@ func parseLoginCallback(input, expectedState string) (code, verifier string, err
 	if parseErr != nil {
 		return "", "", errors.New("the callback URL or code is invalid")
 	}
-	state := expectedState
 	if u.Scheme != "" {
 		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return "", "", errors.New("the callback URL must be an HTTP or HTTPS URL")
@@ -124,16 +124,13 @@ func parseLoginCallback(input, expectedState string) (code, verifier string, err
 		if oauthErr := query.Get("error"); oauthErr != "" {
 			return "", "", fmt.Errorf("Google authorization was not completed: %s", oauthErr)
 		}
-		code, state = query.Get("code"), query.Get("state")
-		if code == "" || state == "" {
+		if query.Get("code") == "" || query.Get("state") == "" {
 			return "", "", errors.New("the callback URL must include code and state")
 		}
-	} else {
-		if strings.ContainsAny(input, " \t\r\n?#") {
-			return "", "", errors.New("paste a callback URL or a bare authorization code")
-		}
-		code = input
+	} else if strings.ContainsAny(input, " \t\r\n?#") {
+		return "", "", errors.New("paste a callback URL or a bare authorization code")
 	}
+	code, state := parseCallback(input, expectedState)
 	if state != expectedState {
 		return "", "", errors.New("the callback state does not match this login; start again")
 	}
@@ -364,7 +361,7 @@ func discoverProject(ctx context.Context, token string, progress func(string)) (
 	return "", errors.New("loadCodeAssist did not return a cloudaicompanionProject")
 }
 
-// ---- the SDK OAuth provider ----
+// ---- the sdk OAuth provider ----
 
 // LoginCallbacks let the Daemon host the extension's existing OAuth flow in a
 // browser without changing how the pig extension itself prompts users.
@@ -375,11 +372,22 @@ type LoginCallbacks struct {
 	OnInfo     func(string)
 }
 
-// LoginWithCallbacks runs the paste flow: show the consent URL, take a
+type callbackFailurePolicy uint8
+
+const (
+	callbackFailureReturn callbackFailurePolicy = iota
+	callbackFailureRetry
+)
+
+// LoginWithCallbacks runs the Daemon paste flow: show the consent URL, take a
 // callback URL or bare code, exchange it and resolve the Cloud Code Assist
 // project. Invalid callback input is reported and prompted again, preserving
 // the current PKCE challenge so browser clients can keep the panel open.
 func LoginWithCallbacks(ctx context.Context, cb LoginCallbacks) (sdk.OAuthCredentials, error) {
+	return loginWithCallbacks(ctx, cb, callbackFailureRetry)
+}
+
+func loginWithCallbacks(ctx context.Context, cb LoginCallbacks, failurePolicy callbackFailurePolicy) (sdk.OAuthCredentials, error) {
 	if cb.OnPrompt == nil {
 		return sdk.OAuthCredentials{}, errors.New("Antigravity login requires a prompt callback")
 	}
@@ -408,11 +416,31 @@ func LoginWithCallbacks(ctx context.Context, cb LoginCallbacks) (sdk.OAuthCreden
 		if err != nil {
 			return sdk.OAuthCredentials{}, err
 		}
-		code, verifier, err := parseLoginCallback(input, state)
-		if err == nil {
-			creds, err = exchangeCode(ctx, client, code, verifier)
+		var code, verifier string
+		if failurePolicy == callbackFailureRetry {
+			code, verifier, err = parseLoginCallback(input, state)
+		} else {
+			var callbackState string
+			code, callbackState = parseCallback(input, state)
+			verifier, err = verifierFromState(callbackState)
 		}
 		if err != nil {
+			if failurePolicy == callbackFailureReturn {
+				return sdk.OAuthCredentials{}, err
+			}
+			if ctx.Err() != nil {
+				return sdk.OAuthCredentials{}, ctx.Err()
+			}
+			if cb.OnInfo != nil {
+				cb.OnInfo(err.Error())
+			}
+			continue
+		}
+		creds, err = exchangeCode(ctx, client, code, verifier)
+		if err != nil {
+			if failurePolicy == callbackFailureReturn {
+				return sdk.OAuthCredentials{}, fmt.Errorf("antigravity oauth exchange failed: %w", err)
+			}
 			if ctx.Err() != nil {
 				return sdk.OAuthCredentials{}, ctx.Err()
 			}
@@ -431,12 +459,12 @@ func LoginWithCallbacks(ctx context.Context, cb LoginCallbacks) (sdk.OAuthCreden
 	return creds, nil
 }
 
-// login adapts the SDK's extension callbacks to the shared OAuth flow above.
+// login preserves the SDK extension's one-shot prompt and error behavior.
 func login(cb *sdk.OAuthLoginCallbacks) (sdk.OAuthCredentials, error) {
 	if cb == nil {
 		return sdk.OAuthCredentials{}, errors.New("Antigravity login callbacks are required")
 	}
-	return LoginWithCallbacks(context.Background(), LoginCallbacks{
+	return loginWithCallbacks(context.Background(), LoginCallbacks{
 		OnAuth: func(url, instructions string) {
 			cb.OnAuth(sdk.OAuthAuthInfo{URL: url, Instructions: instructions})
 		},
@@ -444,10 +472,7 @@ func login(cb *sdk.OAuthLoginCallbacks) (sdk.OAuthCredentials, error) {
 			return cb.OnPrompt(sdk.OAuthPrompt{Message: message})
 		},
 		OnProgress: cb.OnProgress,
-		OnInfo: func(message string) {
-			cb.OnProgress(message)
-		},
-	})
+	}, callbackFailureReturn)
 }
 
 // apiKey is what the host hands to streamSimple: the access token and project
