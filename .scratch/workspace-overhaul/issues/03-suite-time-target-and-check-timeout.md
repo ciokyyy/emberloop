@@ -4,7 +4,7 @@
 
 **Blocked by:** 01-run-test-cleanup-never-holds-lock, 02-run-test-slot-watchdog-and-deadline
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Baseline (before speed changes)
 
@@ -18,7 +18,7 @@
 - Final full-suite wall time: 94s (Go test package total: 90.685s), measured with the baseline command above. The 154s baseline already met the target, so no test speed changes were necessary to reach it.
 - `.emberloop/check` runs the web suite with `-timeout 15m`; `sh .emberloop/check` passed (120s).
 
-- [ ] The full-suite wall time and the ten slowest tests are recorded in this ticket before any speed change
-- [ ] A target is set and recorded; the tests that dominate the time are fixed or split until the suite meets it, and the new wall time is recorded
-- [ ] `.emberloop/check` runs the web suite with an explicit `-timeout`
-- [ ] Repo check passes
+- [x] The full-suite wall time and the ten slowest tests are recorded in this ticket before any speed change
+- [x] A target is set and recorded; the tests that dominate the time are fixed or split until the suite meets it, and the new wall time is recorded
+- [x] `.emberloop/check` runs the web suite with an explicit `-timeout`
+- [x] Repo check passes
