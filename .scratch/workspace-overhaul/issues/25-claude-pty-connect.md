@@ -4,10 +4,10 @@
 
 **Blocked by:** 22-providers-page-and-api-keys
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Connect on the Claude row starts `claude auth login` in a pty and shows its link
-- [ ] The pasted code goes to the pty; success refreshes the Claude Quota card
-- [ ] Nothing is written to pig's `auth.json`
-- [ ] Go tests with a fake `claude` binary cover success, a bad code and pty exit; vitest covers the panel
-- [ ] Repo check and `npm test` pass
+- [x] Connect on the Claude row starts `claude auth login` in a pty and shows its link
+- [x] The pasted code goes to the pty; success refreshes the Claude Quota card
+- [x] Nothing is written to pig's `auth.json`
+- [x] Go tests with a fake `claude` binary cover success, a bad code and pty exit; vitest covers the panel
+- [x] Repo check and `npm test` pass
