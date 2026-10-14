@@ -4,9 +4,9 @@
 
 **Blocked by:** 15-quota-live-patching, 20-coalesced-runs-refetch (all three change `App.svelte`; the Quota shell lands first)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Boot renders the first route without awaiting the Session and Run lists
-- [ ] Each view loads its own data and shows a loading state until it arrives
-- [ ] Vitest covers a boot that renders before the lists arrive
-- [ ] Cold boot time after the change is recorded beside the baseline from ticket 17; repo check and `npm test` pass
+- [x] Boot renders the first route without awaiting the Session and Run lists
+- [x] Each view loads its own data and shows a loading state until it arrives
+- [x] Vitest covers a boot that renders before the lists arrive
+- [x] Cold boot time after the change is recorded beside the baseline from ticket 17; repo check and `npm test` pass
