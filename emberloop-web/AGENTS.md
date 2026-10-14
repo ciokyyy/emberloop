@@ -63,9 +63,11 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   (`ResumeOnRestart`), and Worker and Reviewer Sessions whose turn a restart
   cut short continue in the same Session and worktree on a continue prompt;
   a restart request stops each paused Run's Worker and Reviewer after its
-  current tool call (`armRestartStopsLocked`, `RestartStopped`, queued messages
-  in `Carry`), the update watcher requests that restart when Runs run, and 4
-  boots in 5 minutes stop automatic resume (`bootLoopTripped`);
+  current tool call; if a Backend turn has not started, it rolls the stop
+  marker back and retries at the first working status or tool boundary
+  (`armRestartStopsLocked`, `restartStopAttempt`, `RestartStopped`, queued
+  messages in `Carry`), the update watcher requests that restart when Runs run,
+  and 4 boots in 5 minutes stop automatic resume (`bootLoopTripped`);
   `pigacp.go` waits for the el server's ready file (`EL_READY_FILE`,
   `waitMCPReady`) before a pig start returns, so the first prompt has tools;
   Shutdown marks open turns `restart: turn interrupted` and maps their close
