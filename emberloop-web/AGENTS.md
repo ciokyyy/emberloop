@@ -24,8 +24,9 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
 - Quota HTTP seam: `quota.go` serves the shared cache immediately on GET and
-  refreshes it in the background; manual POST refresh stays synchronous.
-  `quota_test.go` covers the cached read with a blocking upstream stub.
+  refreshes it in the background, retaining provider errors for later cached
+  reads; manual POST refresh stays synchronous. `quota_test.go` covers the
+  cached read with a blocking upstream stub and failed-refresh state.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git

@@ -6,7 +6,9 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -106,6 +108,11 @@ type quotaCard struct {
 // dirs, and serves the Daemon. auth is the pig auth file body; "" means no
 // auth file at all.
 func quotaEnv(t *testing.T, stub *quotaStubState, auth string) (base, stateDir string) {
+	base, stateDir, _ = quotaEnvWithDaemon(t, stub, auth)
+	return base, stateDir
+}
+
+func quotaEnvWithDaemon(t *testing.T, stub *quotaStubState, auth string) (base, stateDir string, d *Daemon) {
 	t.Helper()
 	srv := httptest.NewServer(stub.handler())
 	t.Cleanup(srv.Close)
@@ -124,10 +131,77 @@ func quotaEnv(t *testing.T, stub *quotaStubState, auth string) (base, stateDir s
 	}
 	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
 	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
+	d = NewDaemon(tempDir(t), NewFakeBackend())
+	t.Cleanup(d.quotaRefreshWG.Wait)
+	api := httptest.NewServer(authedHandler(t, d))
+	t.Cleanup(api.Close)
+	return api.URL, stateDir, d
+}
+
+func TestQuotaEndpointTiming(t *testing.T) {
+	stub := &quotaStubState{opencodePct: 12}
+	inner := stub.handler()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(upstream.Close)
+	restore := el.SetUsageEndpointsForTest(upstream.URL+"/zen/go/v1/usage", upstream.URL, upstream.URL+"/token")
+	t.Cleanup(restore)
+
+	stateDir := tempDir(t)
+	t.Setenv("EL_STATE_DIR", stateDir)
+	authPath := filepath.Join(tempDir(t), "auth.json")
+	if err := os.WriteFile(authPath, []byte(quotaAuth), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_PIG_AUTH", authPath)
+	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
+	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
+
+	legacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), quotaTimeout)
+		defer cancel()
+		now := time.Now()
+		errs := el.RefreshQuota(ctx, quotaStateDir, "", now, false)
+		writeJSON(w, http.StatusOK, quotaResponse{Providers: el.QuotaSnapshot(quotaStateDir, now, errs)})
+	}))
+	t.Cleanup(legacy.Close)
+	before := measureQuotaEndpoint(t, legacy.URL)
+
+	if err := os.Setenv("EL_STATE_DIR", tempDir(t)); err != nil {
+		t.Fatal(err)
+	}
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	api := httptest.NewServer(authedHandler(t, d))
 	t.Cleanup(api.Close)
-	return api.URL, stateDir
+	after := measureQuotaEndpoint(t, api.URL)
+	d.quotaRefreshWG.Wait()
+	t.Logf("quota GET timing: synchronous baseline %s; cached background read %s", before, after)
+	if before < 200*time.Millisecond {
+		t.Fatalf("synchronous baseline took %s, want at least 200ms with the delayed upstream", before)
+	}
+	if after >= 200*time.Millisecond {
+		t.Fatalf("cached GET took %s, want under 200ms", after)
+	}
+}
+
+func measureQuotaEndpoint(t *testing.T, base string) time.Duration {
+	t.Helper()
+	start := time.Now()
+	resp, err := http.Get(base + "/api/quota")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/quota status = %d", resp.StatusCode)
+	}
+	return time.Since(start)
 }
 
 const quotaAuth = `{"opencode-go":{"key":"k1"},"google-antigravity":{"refresh":"r1","projectId":"p1"}}`
@@ -216,6 +290,28 @@ func TestQuotaGetReturnsCachedDataBeforeBlockedRefresh(t *testing.T) {
 		t.Fatal("background quota refresh did not finish after unblocking the stub")
 	}
 	t.Logf("cached GET /api/quota returned in %s while the upstream was blocked", elapsed)
+}
+
+func TestQuotaGetReportsBackgroundRefreshError(t *testing.T) {
+	stub := &quotaStubState{opencodeErr: true}
+	base, stateDir, d := quotaEnvWithDaemon(t, stub, quotaAuth)
+	cache := `{"fetched_at":1,"windows":[{"label":"5h","pct":41,"resets_at":1893456000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(cache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	first := quotaByKey(t, getQuota(t, base))["opencode-go"]
+	if first.State != "ok" || len(first.Windows) != 1 || first.Windows[0].Pct != 41 {
+		t.Fatalf("initial cached card = %+v", first)
+	}
+	// Wait until the detached failed refresh has recorded its error before
+	// checking what a subsequent cache read exposes.
+	d.quotaRefreshWG.Wait()
+	got := quotaByKey(t, getQuota(t, base))["opencode-go"]
+	d.quotaRefreshWG.Wait()
+	if got.State != "error" || got.Error == "" || len(got.Windows) != 1 || got.Windows[0].Pct != 41 {
+		t.Fatalf("GET after failed background refresh = %+v, want error and stale cached windows", got)
+	}
 }
 
 func postQuotaRefresh(t *testing.T, base, key string) (int, []quotaCard) {
