@@ -21,8 +21,8 @@ import (
 
 // The client id and secret come from client.go, not from source.
 const (
-	redirectURI  = "http://localhost:51121/oauth-callback"
-	authURL      = "https://accounts.google.com/o/oauth2/v2/auth"
+	redirectURI = "http://localhost:51121/oauth-callback"
+	authURL     = "https://accounts.google.com/o/oauth2/v2/auth"
 
 	freeTier       = "free-tier"
 	onboardTimeout = 30 * time.Second
