@@ -94,6 +94,6 @@ func TestDashboardHTTPGroupsActiveSessionsAndRunsByProject(t *testing.T) {
 		}
 	}
 	assertDashboardGroup("project-nested", []string{"working-nested"}, []string{"running-nested"})
-	assertDashboardGroup("project-parent", []string{"needs-session", "failed-parent"}, []string{"needs-parent"})
+	assertDashboardGroup("project-parent", []string{"needs-session"}, []string{"needs-parent"})
 	assertDashboardGroup(dashboardNoneProjectID, []string{"home-session"}, []string{"unscoped-run"})
 }

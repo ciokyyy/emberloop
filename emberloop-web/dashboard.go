@@ -94,14 +94,8 @@ func (d *Daemon) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dashboardResponse{Groups: groups})
 }
 
-// dashboardSessionActive includes live turns and Sessions that need user
-// attention. Session failures are not idle history; capped and blocked states
-// also need action even if their status is otherwise idle.
+// dashboardSessionActive includes only a working Session or one explicitly
+// marked as needing the User's attention.
 func dashboardSessionActive(meta SessionMeta) bool {
-	switch meta.Status {
-	case "working", runStatusNeedsYou, "failed":
-		return true
-	default:
-		return meta.Capped || meta.CompressBlock != ""
-	}
+	return meta.Status == "working" || meta.Status == runStatusNeedsYou
 }
