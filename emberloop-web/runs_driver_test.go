@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -236,10 +237,41 @@ var runsStopped sync.Map
 // timing window and make order-sensitive assertions flake; a small cap keeps
 // the load predictable while the rest of the suite still runs in parallel.
 // A test takes one slot on its first initRunRepo and frees it at cleanup.
+const (
+	runTestSlotWatchdogAfter = 60 * time.Second
+	runTestDeadlineAfter     = 5 * time.Minute
+	runTestDeadlineGrace     = 10 * time.Second
+)
+
 var (
 	runTestSlots = make(chan struct{}, runTestParallelism())
 	runTestHeld  sync.Map
 )
+
+type runTestTimer interface {
+	Channel() <-chan time.Time
+	Stop() bool
+}
+
+type runTestClock interface {
+	Now() time.Time
+	NewTimer(time.Duration) runTestTimer
+}
+
+type realRunTestClock struct{}
+
+func (realRunTestClock) Now() time.Time { return time.Now() }
+
+func (realRunTestClock) NewTimer(d time.Duration) runTestTimer {
+	return realRunTestTimer{timer: time.NewTimer(d)}
+}
+
+type realRunTestTimer struct{ timer *time.Timer }
+
+func (t realRunTestTimer) Channel() <-chan time.Time { return t.timer.C }
+func (t realRunTestTimer) Stop() bool                { return t.timer.Stop() }
+
+var wallRunTestClock runTestClock = realRunTestClock{}
 
 func runTestParallelism() int {
 	if v, err := strconv.Atoi(os.Getenv("EL_TEST_RUN_PAR")); err == nil && v > 0 {
@@ -248,18 +280,273 @@ func runTestParallelism() int {
 	return 2
 }
 
+func runTestDeadlineFor(t *testing.T, clock runTestClock) time.Time {
+	deadline := clock.Now().Add(runTestDeadlineAfter)
+	if packageDeadline, ok := t.Deadline(); ok {
+		// Report before the package-wide timeout so the failing test name and
+		// stacks are visible before go test emits its own timeout dump.
+		packageDeadline = packageDeadline.Add(-runTestDeadlineGrace)
+		if packageDeadline.Before(deadline) {
+			deadline = packageDeadline
+		}
+	}
+	return deadline
+}
+
 func holdRunTestSlot(t *testing.T) {
 	t.Helper()
-	if _, loaded := runTestHeld.LoadOrStore(t.Name(), true); loaded {
+	name := t.Name()
+	if _, loaded := runTestHeld.Load(name); loaded {
 		return
 	}
-	runTestSlots <- struct{}{}
+	deadline := runTestDeadlineFor(t, wallRunTestClock)
+	if !acquireRunTestSlot(name, runTestSlots, &runTestHeld, deadline, wallRunTestClock,
+		func(message string) { t.Log(message) },
+		func(message string) { t.Fatalf("%s", message) },
+	) {
+		return
+	}
 	// Registered before the test sets up any other cleanup, so the slot is
 	// always released last, even if a later cleanup or the test body panics.
 	t.Cleanup(func() {
-		runTestHeld.Delete(t.Name())
+		runTestHeld.Delete(name)
 		<-runTestSlots
 	})
+	watchRunTestDeadline(t, deadline, wallRunTestClock)
+}
+
+func acquireRunTestSlot(name string, slots chan struct{}, holders *sync.Map, deadline time.Time, clock runTestClock, logf, failf func(string)) bool {
+	select {
+	case slots <- struct{}{}:
+		holders.Store(name, struct{}{})
+		return true
+	default:
+	}
+
+	watchdog := clock.NewTimer(runTestSlotWatchdogAfter)
+	defer watchdog.Stop()
+	deadlineTimer := clock.NewTimer(max(time.Duration(0), deadline.Sub(clock.Now())))
+	defer deadlineTimer.Stop()
+	select {
+	case slots <- struct{}{}:
+	case <-deadlineTimer.Channel():
+		failf(runTestDeadlineDiagnostic(name))
+		return false
+	case <-watchdog.Channel():
+		logf(fmt.Sprintf("Run test %q waited more than %s for a slot; slots held by: %s", name, runTestSlotWatchdogAfter, runTestSlotHolderNames(holders)))
+		select {
+		case slots <- struct{}{}:
+		case <-deadlineTimer.Channel():
+			failf(runTestDeadlineDiagnostic(name))
+			return false
+		}
+	}
+	holders.Store(name, struct{}{})
+	return true
+}
+
+func runTestSlotHolderNames(holders *sync.Map) string {
+	var names []string
+	holders.Range(func(key, _ any) bool {
+		if name, ok := key.(string); ok {
+			names = append(names, name)
+		}
+		return true
+	})
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
+}
+
+func watchRunTestDeadline(t *testing.T, deadline time.Time, clock runTestClock) {
+	t.Helper()
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	watchRunTestDeadlineUntil(t.Name(), deadline, clock, done, func(message string) {
+		t.Errorf("%s", message)
+	})
+}
+
+func watchRunTestDeadlineUntil(name string, deadline time.Time, clock runTestClock, done <-chan struct{}, report func(string)) {
+	timer := clock.NewTimer(max(time.Duration(0), deadline.Sub(clock.Now())))
+	go func() {
+		defer timer.Stop()
+		select {
+		case <-done:
+			return
+		case <-timer.Channel():
+			select {
+			case <-done:
+				return
+			default:
+			}
+			report(runTestDeadlineDiagnostic(name))
+		}
+	}()
+}
+
+func runTestDeadlineDiagnostic(name string) string {
+	return fmt.Sprintf("Run test %q exceeded its per-test deadline; goroutine dump:\n%s", name, runTestGoroutineDump())
+}
+
+func runTestGoroutineDump() string {
+	size := 1 << 20
+	for {
+		buf := make([]byte, size)
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return string(buf[:n])
+		}
+		size *= 2
+	}
+}
+
+type fakeRunTestClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	timers []*fakeRunTestTimer
+	added  chan time.Duration
+}
+
+type fakeRunTestTimer struct {
+	clock    *fakeRunTestClock
+	deadline time.Time
+	channel  chan time.Time
+	stopped  bool
+	fired    bool
+}
+
+func newFakeRunTestClock(now time.Time) *fakeRunTestClock {
+	return &fakeRunTestClock{now: now, added: make(chan time.Duration, 4)}
+}
+
+func (c *fakeRunTestClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeRunTestClock) NewTimer(d time.Duration) runTestTimer {
+	c.mu.Lock()
+	timer := &fakeRunTestTimer{clock: c, deadline: c.now.Add(d), channel: make(chan time.Time, 1)}
+	c.timers = append(c.timers, timer)
+	c.mu.Unlock()
+	c.added <- d
+	return timer
+}
+
+func (t *fakeRunTestTimer) Channel() <-chan time.Time { return t.channel }
+
+func (t *fakeRunTestTimer) Stop() bool {
+	t.clock.mu.Lock()
+	defer t.clock.mu.Unlock()
+	wasActive := !t.stopped && !t.fired
+	t.stopped = true
+	return wasActive
+}
+
+func (c *fakeRunTestClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	now := c.now
+	var ready []*fakeRunTestTimer
+	for _, timer := range c.timers {
+		if !timer.stopped && !timer.fired && !timer.deadline.After(now) {
+			timer.fired = true
+			ready = append(ready, timer)
+		}
+	}
+	c.mu.Unlock()
+	for _, timer := range ready {
+		timer.channel <- now
+	}
+}
+
+func TestRunTestSlotWatchdogNamesHoldersWithFakeClock(t *testing.T) {
+	clock := newFakeRunTestClock(time.Unix(0, 0))
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+	var holders sync.Map
+	holders.Store("TestHoldingRunTestSlot", struct{}{})
+	logged := make(chan string, 1)
+	failed := make(chan string, 1)
+	acquired := make(chan bool, 1)
+	go func() {
+		acquired <- acquireRunTestSlot("TestWaitingForRunTestSlot", slots, &holders, clock.Now().Add(time.Hour), clock,
+			func(message string) { logged <- message },
+			func(message string) { failed <- message },
+		)
+	}()
+	for _, want := range []time.Duration{runTestSlotWatchdogAfter, time.Hour} {
+		select {
+		case got := <-clock.added:
+			if got != want {
+				t.Fatalf("watchdog timer duration = %s, want %s", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("slot waiter did not create its fake-clock timers")
+		}
+	}
+	clock.Advance(runTestSlotWatchdogAfter)
+	var message string
+	select {
+	case message = <-logged:
+	case <-time.After(time.Second):
+		t.Fatal("slot watchdog did not log after advancing the fake clock")
+	}
+	if !strings.Contains(message, `Run test "TestWaitingForRunTestSlot"`) || !strings.HasSuffix(message, "slots held by: TestHoldingRunTestSlot") {
+		t.Fatalf("watchdog message = %q, want waiter and its current holder", message)
+	}
+	select {
+	case message := <-failed:
+		t.Fatalf("slot watchdog failed the test before its deadline: %s", message)
+	default:
+	}
+	// Release the simulated holder as its cleanup would, then ensure the
+	// waiter acquired the slot and is tracked as a holder only after acquire.
+	holders.Delete("TestHoldingRunTestSlot")
+	<-slots
+	select {
+	case ok := <-acquired:
+		if !ok {
+			t.Fatal("slot waiter failed before its deadline")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slot waiter stayed blocked after the holder released")
+	}
+	if got := runTestSlotHolderNames(&holders); got != "TestWaitingForRunTestSlot" {
+		t.Fatalf("tracked slot holders = %q, want only the acquired test", got)
+	}
+	<-slots
+}
+
+func TestRunTestDeadlineReportsNameAndGoroutineDump(t *testing.T) {
+	clock := newFakeRunTestClock(time.Unix(0, 0))
+	done := make(chan struct{})
+	reported := make(chan string, 1)
+	watchRunTestDeadlineUntil("TestStalledRunTest", clock.Now().Add(time.Minute), clock, done, func(message string) {
+		reported <- message
+	})
+	select {
+	case got := <-clock.added:
+		if got != time.Minute {
+			t.Fatalf("deadline timer duration = %s, want %s", got, time.Minute)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deadline watchdog did not create its fake timer")
+	}
+	clock.Advance(time.Minute)
+	select {
+	case message := <-reported:
+		if !strings.Contains(message, `Run test "TestStalledRunTest" exceeded its per-test deadline`) || !strings.Contains(message, "goroutine dump:") {
+			t.Fatalf("deadline report = %q, want test name and goroutine dump", message)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deadline watchdog did not report after advancing the fake clock")
+	}
+	close(done)
 }
 
 func initRunRepo(t *testing.T, tickets map[string]string) (repo, spec string) {

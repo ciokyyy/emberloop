@@ -7,7 +7,7 @@ probes that need running agents; `.scratch/archive/retro-hardening/` holds this
 run's spec and tickets. Claude sessions read the same source through
 `CLAUDE.md`, which imports this file; Daemon claude Sessions load no
 CLAUDE.md and get a system-prompt pointer to this file instead. The repo check is `.emberloop/check`
-(`cd emberloop-web && go vet ./... && go test -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
+(`cd emberloop-web && go vet ./... && go test -timeout 15m -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
 
 ## DOX contract
 

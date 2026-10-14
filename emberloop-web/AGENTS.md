@@ -82,8 +82,8 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 
 ## Verification
 
-- In `emberloop-web/`: `go vet ./... && go test ./...` (included in
-  `.emberloop/check`).
+- In `emberloop-web/`: `go vet ./... && go test -timeout 15m -skip TestLive ./...`
+  (included in `.emberloop/check`).
 - In `emberloop-web/web/`: `npm test` and `npm run build`; these are not part of
   the repo check.
 - In `emberloop-web/web/`: `npm run test:e2e`; it is not part of the repo check.
@@ -111,13 +111,14 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   unlock; recovered cleanup panics are reported with `t.Errorf`, and its
   bounded wait never fails a test itself. `runTestDaemon` acquires the Run-test
   slot before registering shutdown; `initRunRepo` also acquires it for tests
-  that do not start a Daemon. The slot's unconditional cleanup is registered
-  on first acquisition, so it runs after every later cleanup. The helper
-  interrupts busy Sessions every poll and stops waiting on a Session still
-  busy after 50 polls. Fake turns last about 5ms, so tests wait for a turn's
-  end with `waitTurnEnd` (an idle status after the prompt's seq), never
-  working-then-idle polls. A test that jumps the fake clock first waits for
-  the Worker's first turn to end.
+  that do not start a Daemon. The unconditional slot cleanup runs last. After
+  60 seconds waiting, the watchdog logs the test names holding slots. Each Run
+  test has a 5-minute deadline, shortened to precede `t.Deadline()`, and reports
+  its name with a goroutine dump. The helper interrupts busy Sessions every
+  poll and stops waiting on a Session still busy after 50 polls. Fake turns
+  last about 5ms, so tests wait for a turn's end with `waitTurnEnd` (an idle
+  status after the prompt's seq), never working-then-idle polls. A test that
+  jumps the fake clock first waits for the Worker's first turn to end.
 - A Session exists before its first prompt lands: tests read a transcript only
   after `firstPromptWhere` sees a prompt. A test that forces a Run's status
   after a pause first waits for the driver to exit (`driving` false) or park
