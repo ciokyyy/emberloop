@@ -155,11 +155,12 @@
       if (next.state === 'error' || next.state === 'cancelled') return;
     } catch (error) {
       if (antigravityLogin?.id !== id) return;
-      rowErrors = { ...rowErrors, 'google-antigravity': error?.message || 'Could not check Antigravity login.' };
       if (error?.status === 404) {
+        rowErrors = { ...rowErrors, 'google-antigravity': 'Antigravity login expired. Start again.' };
         antigravityLogin = null;
         return;
       }
+      rowErrors = { ...rowErrors, 'google-antigravity': error?.message || 'Could not check Antigravity login.' };
       connectPollFailures += 1;
       if (connectPollFailures >= 5) return;
       delay = Math.min(500 * 2 ** connectPollFailures, 5000);

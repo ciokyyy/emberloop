@@ -352,7 +352,7 @@ describe('ProvidersPage', () => {
     await screen.findByTestId('antigravity-connect-panel');
     expireLogin();
 
-    expect((await screen.findByRole('alert')).textContent).toContain('request failed: 404');
+    expect((await screen.findByRole('alert')).textContent).toBe('Antigravity login expired. Start again.');
     await waitFor(() => expect(screen.queryByTestId('antigravity-connect-panel')).toBeNull());
     const getCount = () => calls.filter((call) =>
       call.method === 'GET' && call.url.startsWith('/api/providers/google-antigravity/connect/'),
