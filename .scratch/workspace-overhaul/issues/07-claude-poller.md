@@ -4,10 +4,10 @@
 
 **Blocked by:** 06-percent-contract
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Polls the OAuth usage endpoint with the host login's access token, the required `User-Agent` (version read from the installed binary with a fallback constant) and the OAuth beta header; never a model call
-- [ ] Maps the 5-hour window to 5-hour and the 7-day window to Weekly (`utilization` is already percent used); plan name comes from the credentials subscription type; reproduces the observed shape (5-hour 36%, Weekly 8%, Pro plan)
-- [ ] Cache TTL 60-300s; a rate-limit reply backs off for its `Retry-After` duration
-- [ ] A 401 or an expired token timestamp yields `expired` with last values kept; other failures yield `stale` with their age and never blank the card
-- [ ] Test asserts the poller never writes the credentials file; HTTP-seam tests with local stubs and temp state dir; repo check passes
+- [x] Polls the OAuth usage endpoint with the host login's access token, the required `User-Agent` (version read from the installed binary with a fallback constant) and the OAuth beta header; never a model call
+- [x] Maps the 5-hour window to 5-hour and the 7-day window to Weekly (`utilization` is already percent used); plan name comes from the credentials subscription type; reproduces the observed shape (5-hour 36%, Weekly 8%, Pro plan)
+- [x] Cache TTL 60-300s; a rate-limit reply backs off for its `Retry-After` duration
+- [x] A 401 or an expired token timestamp yields `expired` with last values kept; other failures yield `stale` with their age and never blank the card
+- [x] Test asserts the poller never writes the credentials file; HTTP-seam tests with local stubs and temp state dir; repo check passes
