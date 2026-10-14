@@ -4,8 +4,8 @@
 
 **Blocked by:** 17-runs-list-summaries (uses the summary shape)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `App.svelte` and `RunsSidebar.svelte` no longer each refetch the Runs list; one shared store refetches
-- [ ] A burst of Run events within the coalesce window triggers one request
-- [ ] Vitest covers the coalescing; repo check and `npm test` pass
+- [x] `App.svelte` and `RunsSidebar.svelte` no longer each refetch the Runs list; one shared store refetches
+- [x] A burst of Run events within the coalesce window triggers one request
+- [x] Vitest covers the coalescing; repo check and `npm test` pass
