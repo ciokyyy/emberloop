@@ -15,12 +15,12 @@ Design details from the mock:
 
 **Blocked by:** 03-suite-time-target-and-check-timeout (Part 7 goes first; builds to the spec response contract with stubbed payloads)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Page header, grid and card layout match the mock on desktop and phone widths
-- [ ] Cards render `pct`, `detail`, word labels, countdowns, plan badge, state badge and the source subline from the contract; bars and status read only `pct`, never compute a percent from dollars
-- [ ] Text-only windows (no `pct`) render as a bordered text row without a bar
-- [ ] Stale keeps last values with age; expired shows the callout and dims last values; not-connected shows the hint and "Connect in Providers"
-- [ ] Per-card and refresh-all buttons show a busy state and keep values during refresh
-- [ ] Colors come only from `src/app.css` tokens and the threshold classes; logic stays in colocated `lib/*.js` helpers, markup in `lib/*.svelte`
-- [ ] Vitest covers helpers (threshold, countdown, stale label, word labels) and the page (cards per state, text-only window, secondary detail text, buttons); repo check and `npm test` pass
+- [x] Page header, grid and card layout match the mock on desktop and phone widths
+- [x] Cards render `pct`, `detail`, word labels, countdowns, plan badge, state badge and the source subline from the contract; bars and status read only `pct`, never compute a percent from dollars
+- [x] Text-only windows (no `pct`) render as a bordered text row without a bar
+- [x] Stale keeps last values with age; expired shows the callout and dims last values; not-connected shows the hint and "Connect in Providers"
+- [x] Per-card and refresh-all buttons show a busy state and keep values during refresh
+- [x] Colors come only from `src/app.css` tokens and the threshold classes; logic stays in colocated `lib/*.js` helpers, markup in `lib/*.svelte`
+- [x] Vitest covers helpers (threshold, countdown, stale label, word labels) and the page (cards per state, text-only window, secondary detail text, buttons); repo check and `npm test` pass
