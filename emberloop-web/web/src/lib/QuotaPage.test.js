@@ -299,18 +299,21 @@ describe('QuotaPage refresh', () => {
 });
 
 describe('QuotaPage loading', () => {
-  it('fetches cached quota once on mount', async () => {
+  it('fetches cached quota once on mount and does not poll', async () => {
     const calls = stubFetch();
     render(QuotaPage);
     await screen.findAllByTestId('quota-card');
-    expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
+    const started = performance.now();
+    await waitFor(() => {
+      expect(performance.now() - started).toBeGreaterThanOrEqual(60);
+      expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
+    }, { interval: 10, timeout: 300 });
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
   });
 });
 
 describe('QuotaPage live updates', () => {
-  it('patches live cards, advances display labels locally and unsubscribes on unmount', async () => {
-    const clockNow = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+  it('patches cards from the live topic and unsubscribes on unmount', async () => {
     const streams = [];
     vi.stubGlobal('EventSource', class {
       constructor(url) {
@@ -325,33 +328,28 @@ describe('QuotaPage live updates', () => {
         : provider
     ));
     const calls = stubFetch({ get: initialProviders });
-    const intervals = vi.spyOn(globalThis, 'setInterval');
     const { unmount } = render(QuotaPage);
     await screen.findAllByTestId('quota-card');
 
-    const clockTick = intervals.mock.calls.find(([, delay]) => delay === 1_000)?.[0];
-    expect(typeof clockTick).toBe('function');
     expect(screen.getByText('updated 8s ago · Host login')).toBeTruthy();
     expect(screen.getByText('resets in 1m')).toBeTruthy();
-
     const quotaStream = streams.find((stream) => stream.url.includes('topic=quota'));
     expect(quotaStream).toBeTruthy();
     expect(streams.filter((stream) => stream.url.includes('topic=quota'))).toHaveLength(1);
     const updatedProviders = initialProviders.map((provider) => (
       provider.key === 'claude'
-        ? { ...provider, windows: [{ ...provider.windows[0], pct: 82 }, ...provider.windows.slice(1)] }
+        ? {
+            ...provider,
+            updated_at: NOW / 1000,
+            windows: [{ ...provider.windows[0], pct: 82, resets_at: secs(-5) }, ...provider.windows.slice(1)],
+          }
         : provider
     ));
     quotaStream.onmessage({ data: JSON.stringify({ topic: 'quota', providers: updatedProviders }) });
     await waitFor(() => {
       expect(screen.getByRole('progressbar', { name: 'Claude 5-hour' }).getAttribute('aria-valuenow')).toBe('82');
-    });
-
-    clockNow.mockReturnValue(NOW + 2_000);
-    clockTick();
-    await waitFor(() => {
-      expect(screen.getByText('updated 10s ago · Host login')).toBeTruthy();
-      expect(screen.getByText('resets in now')).toBeTruthy();
+      expect(screen.getByText('updated just now · Host login')).toBeTruthy();
+      expect(screen.getByText('resets now')).toBeTruthy();
     });
     expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);

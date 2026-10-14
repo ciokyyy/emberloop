@@ -109,12 +109,11 @@ Same-origin by default. To point the static build at another Daemon:
   sidebar and phone drawer share `quotaStore`: its first subscriber opens one
   `topic=quota` stream, which patches cards and status rows from full provider
   lists; the last subscriber leaving closes it. The page reads the cache once
-  through `GET /api/quota` and never polls quota values; its one-second local
-  clock only advances cache-age and reset labels. Values change from live
-  events or an explicit refresh. The sidebar shows one
-  highest-`pct` status per provider with a neutral marker when absent. Either
-  view starts the Daemon's guarded refresher while subscribed; `quota.js` owns
-  the threshold, age and label helpers.
+  through `GET /api/quota` and uses no browser timer or quota polling. Age and
+  reset labels recompute on initial cache read, live provider lists or explicit
+  refresh; the sidebar shows one highest-`pct` status per provider with a
+  neutral marker when absent. Either view starts the Daemon's guarded refresher
+  while subscribed; `quota.js` owns the threshold, age and label helpers.
 - `src/lib/memory.js` — pure Memory page helpers: row normalizers that accept Go-case and lowercase keys, proposal parsing with the old remember-shape upgrade, per-Session queue grouping, purge counts and summaries, latency labels
 - `src/lib/PromotionQueue.svelte` (`api.js` promotion calls) — the promotion approval queue embedded in the Memory page: each item shows its target path and diff preview with approve and reject; approving writes the worktree file and leaves it uncommitted for review
 - `SettingsPage.svelte` Accounts section, admin only: the `Allow sign-up` switch saves `signup_enabled` with the rest of the Save bar; other Users never see or send the key

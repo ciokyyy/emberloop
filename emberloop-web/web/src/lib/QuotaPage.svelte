@@ -89,13 +89,7 @@
       now = Date.now();
     });
     void load();
-    // This clock only rerenders age and reset labels; quota values come from
-    // the live topic or an explicit refresh, never from timer-driven fetches.
-    const clock = setInterval(() => (now = Date.now()), 1_000);
-    return () => {
-      clearInterval(clock);
-      unsubscribe();
-    };
+    return unsubscribe;
   });
 </script>
 
@@ -208,7 +202,7 @@
                         </div>
                         <div class="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 text-[11px] text-muted-foreground">
                           <span>{w.detail ?? ''}</span>
-                          {#if countdown}<span>resets in {countdown}</span>{/if}
+                          {#if countdown}<span>{countdown === 'now' ? 'resets now' : `resets in ${countdown}`}</span>{/if}
                         </div>
                       </div>
                     {/each}
