@@ -4,10 +4,10 @@
 
 **Blocked by:** 05-concurrent-fetch-isolation, 06-percent-contract
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A `quota` live topic carries the provider list whenever a refresh changes it (verified at the live seam: subscribe, force a stub change, observe the payload)
-- [ ] Refresher runs only with at least one subscriber; cold start serves the cache at once; no upstream calls happen with zero subscribers
-- [ ] Shared cache files and per-key lock with header panes stay; header pane behaviour and its tests are unchanged
-- [ ] Existing 90s age guard stays for page-load reads
-- [ ] Go tests for the topic payload, the subscriber gating and the shared lock; repo check passes
+- [x] A `quota` live topic carries the provider list whenever a refresh changes it (verified at the live seam: subscribe, force a stub change, observe the payload)
+- [x] Refresher runs only with at least one subscriber; cold start serves the cache at once; no upstream calls happen with zero subscribers
+- [x] Shared cache files and per-key lock with header panes stay; header pane behaviour and its tests are unchanged
+- [x] Existing 90s age guard stays for page-load reads
+- [x] Go tests for the topic payload, the subscriber gating and the shared lock; repo check passes
