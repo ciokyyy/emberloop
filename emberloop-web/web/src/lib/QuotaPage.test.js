@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor, cleanup } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import QuotaPage from './QuotaPage.svelte';
+import { stopLive } from './live.js';
 
 const NOW = Date.UTC(2030, 0, 1);
 const secs = (s) => NOW / 1000 + s;
@@ -101,6 +102,7 @@ function stubFetch({ get = providerCards, post = null, gate = null } = {}) {
 beforeEach(() => vi.spyOn(Date, 'now').mockReturnValue(NOW));
 afterEach(() => {
   cleanup();
+  stopLive();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -305,5 +307,41 @@ describe('QuotaPage loading', () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+  });
+});
+
+describe('QuotaPage live updates', () => {
+  it('patches cards from the live topic and unsubscribes on unmount without polling', async () => {
+    const streams = [];
+    vi.stubGlobal('EventSource', class {
+      constructor(url) {
+        this.url = String(url);
+        this.close = vi.fn();
+        streams.push(this);
+      }
+    });
+    const calls = stubFetch();
+    const setInterval = vi.spyOn(globalThis, 'setInterval');
+    const { unmount } = render(QuotaPage);
+    await screen.findAllByTestId('quota-card');
+
+    const quotaStream = streams.find((stream) => stream.url.includes('topic=quota'));
+    expect(quotaStream).toBeTruthy();
+    expect(streams.filter((stream) => stream.url.includes('topic=quota'))).toHaveLength(1);
+    const updatedProviders = providerCards().map((provider) => (
+      provider.key === 'claude'
+        ? { ...provider, windows: [{ ...provider.windows[0], pct: 82 }, ...provider.windows.slice(1)] }
+        : provider
+    ));
+    quotaStream.onmessage({ data: JSON.stringify({ topic: 'quota', providers: updatedProviders }) });
+
+    await waitFor(() => {
+      expect(screen.getByRole('progressbar', { name: 'Claude 5-hour' }).getAttribute('aria-valuenow')).toBe('82');
+    });
+    expect(calls.filter((call) => call.method === 'GET')).toHaveLength(1);
+    expect(setInterval).not.toHaveBeenCalledWith(expect.any(Function), 30_000);
+
+    unmount();
+    expect(quotaStream.close).toHaveBeenCalledOnce();
   });
 });

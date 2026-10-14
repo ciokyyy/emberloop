@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, within, screen, fireEvent, cleanup } from '@testing-library/svelte';
 import App from './App.svelte';
+import { stopLive } from './lib/live.js';
 
 // jsdom has no ResizeObserver; App measures the floating composer with one.
 beforeEach(() => {
@@ -181,24 +182,36 @@ describe('Sidebar collapse', () => {
 });
 
 describe('Quota navigation', () => {
-  it('shows the global Quota sidebar and shares status data without collapsing desktop', async () => {
+  afterEach(() => {
+    cleanup();
+    stopLive();
+  });
+
+  it('shares one live subscription across the page, desktop sidebar and phone drawer', async () => {
     history.replaceState(null, '', '/');
     localStorage.clear();
-    vi.stubGlobal('EventSource', class { close() {} });
-    const calls = [];
-    const providers = [
+    const streams = [];
+    vi.stubGlobal('EventSource', class {
+      constructor(url) {
+        this.url = String(url);
+        this.close = vi.fn();
+        streams.push(this);
+      }
+    });
+    let liveProviders = [
       { key: 'claude', label: 'Claude', windows: [{ label: '5-hour', pct: 36 }, { label: 'Weekly', pct: 8 }] },
       { key: 'openrouter', label: 'OpenRouter', windows: [{ label: 'Credits', pct: 94, detail: '$59.16 of $63.00 · $3.84 left · today $0.91 · week $2.37 · month $5.70' }] },
       { key: 'agy-gemini', label: 'Antigravity Gemini', windows: [] },
     ];
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (u) => {
-        calls.push(String(u));
-        if (String(u).includes('/api/quota')) return { ok: true, json: async () => ({ providers }) };
-        return { ok: true, json: async () => [] };
-      }),
-    );
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (u, opts = {}) => {
+      const url = String(u);
+      const method = opts.method ?? 'GET';
+      calls.push({ url, method, body: opts.body ? JSON.parse(opts.body) : null });
+      if (url.includes('/api/quota')) return { ok: true, json: async () => ({ providers: liveProviders }) };
+      return { ok: true, json: async () => [] };
+    }));
+
     const { container } = render(App);
     await fireEvent.click(await within(container).findByLabelText('Quota and Providers'));
     expect(await within(container).findByTestId('quota-page')).toBeTruthy();
@@ -215,6 +228,7 @@ describe('Quota navigation', () => {
       'Antigravity Gemini —',
     ]);
     expect(within(container).getAllByText('94%')).toHaveLength(2);
+
     await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
     const drawer = await screen.findByTestId('drawer-scroll');
     const drawerQuotaSidebar = within(drawer).getByTestId('quota-sidebar');
@@ -228,7 +242,29 @@ describe('Quota navigation', () => {
     const areaTabs = screen.getByTestId('drawer-nav');
     for (const tab of within(areaTabs).getAllByRole('button')) expect(tab.className).toContain('min-h-14');
     expect(screen.getByRole('button', { name: 'Close menu' }).className).toContain('max-md:size-11');
-    expect(calls.filter((u) => u === '/api/quota' || u.endsWith('/api/quota')).length).toBe(1);
+
+    const quotaStreams = streams.filter((stream) => stream.url.includes('topic=quota'));
+    expect(quotaStreams).toHaveLength(1);
+    liveProviders = liveProviders.map((provider) => (
+      provider.key === 'claude'
+        ? { ...provider, windows: [{ ...provider.windows[0], pct: 82 }, ...provider.windows.slice(1)] }
+        : provider
+    ));
+    quotaStreams[0].onmessage({ data: JSON.stringify({ topic: 'quota', providers: liveProviders }) });
+
+    const claudeCard = container.querySelector('[data-testid="quota-card"][data-key="claude"]');
+    const desktopClaudeRow = rows.find((row) => row.dataset.key === 'claude');
+    const drawerClaudeRow = drawerRows.find((row) => row.dataset.key === 'claude');
+    await vi.waitFor(() => {
+      expect(within(claudeCard).getByRole('progressbar', { name: 'Claude 5-hour' }).getAttribute('aria-valuenow')).toBe('82');
+      expect(within(desktopClaudeRow).getByTestId('quota-status-percent').textContent.trim()).toBe('82%');
+      expect(within(drawerClaudeRow).getByTestId('quota-status-percent').textContent.trim()).toBe('82%');
+    });
+    expect(calls.filter((call) => call.method === 'GET' && call.url.endsWith('/api/quota'))).toHaveLength(1);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh Claude' }));
+    await vi.waitFor(() => expect(calls.some((call) => call.method === 'POST')).toBe(true));
+    expect(calls.find((call) => call.method === 'POST')).toMatchObject({ url: '/api/quota/refresh', body: { key: 'claude' } });
   });
 });
 

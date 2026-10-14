@@ -105,13 +105,15 @@ Same-origin by default. To point the static build at another Daemon:
   90 seconds, backs off on `Retry-After`, and falls back to statusline data only
   when no host login is available; the terminal header remains statusline-backed.
   Manual refresh keeps cached values visible, marks affected cards busy and
-  respects the Daemon's per-provider minimum interval. The contextual sidebar
-  shares a replaceable provider store and shows one highest-`pct` status per
-  provider with a neutral marker when absent; initial values come from
-  `GET /api/quota`, and the store applies full provider lists from the live
-  `quota` topic. Either view starts the Daemon's guarded refresher while
-  subscribed; the last listener leaving stops it. `quota.js` owns the threshold,
-  age and label helpers.
+  respects the Daemon's per-provider minimum interval. The page, desktop
+  sidebar and phone drawer share `quotaStore`: its first subscriber opens one
+  `topic=quota` stream, which patches cards and status rows from full provider
+  lists; the last subscriber leaving closes it. The page reads the cache once
+  through `GET /api/quota` and has no polling or countdown timer; updates arrive
+  from live events or an explicit refresh. The sidebar shows one
+  highest-`pct` status per provider with a neutral marker when absent. Either
+  view starts the Daemon's guarded refresher while subscribed; `quota.js` owns
+  the threshold, age and label helpers.
 - `src/lib/memory.js` — pure Memory page helpers: row normalizers that accept Go-case and lowercase keys, proposal parsing with the old remember-shape upgrade, per-Session queue grouping, purge counts and summaries, latency labels
 - `src/lib/PromotionQueue.svelte` (`api.js` promotion calls) — the promotion approval queue embedded in the Memory page: each item shows its target path and diff preview with approve and reject; approving writes the worktree file and leaves it uncommitted for review
 - `SettingsPage.svelte` Accounts section, admin only: the `Allow sign-up` switch saves `signup_enabled` with the rest of the Save bar; other Users never see or send the key
@@ -142,6 +144,7 @@ rendering (`runsGraph.test.js`, `RunsGraph.test.js`); Ticket state, review round
 Dispositions, gate, actions and SSE (`ticketPage.test.js`, `TicketPage.test.js`);
 Settings max_tickets, validation, locked fields, ordered per-role Chains, inherited
 role fallbacks and alias-preserving saves, compression thresholds incl. the absolute token cap (`SettingsPage.test.js`); quota thresholds, countdowns, word labels, percent-first bars, cache age, card states, secondary details, per-card/refresh-all behavior, shared-store updates, live topic payloads and the sidebar's highest-percent status rows (`quota.test.js`, `quotaStore.test.js`, `QuotaSidebar.test.js`, `QuotaPage.test.js`, `live.test.js`); ContextMeter read-only render, nowrap row and phone-hidden window (`ContextMeter.test.js`); low-disk banner render (`DiskBanner.test.js`); plus install, sound, version, Session, Memory, auth, routing, Composer and navigation tests in their matching `*.test.js` files.
+The Quota tests also verify that one mocked live channel patches the page, desktop status list and phone drawer, without polling.
 Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (stable shared stream, quota stream, payloads and `stopLive`), plus the App's summary-backed Run sidebar, footer, session-not-found overlay gate and Git Escape (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
 ## Routes
 

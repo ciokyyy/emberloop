@@ -89,11 +89,7 @@
       now = Date.now();
     });
     void load();
-    const timer = setInterval(() => (now = Date.now()), 30_000);
-    return () => {
-      clearInterval(timer);
-      unsubscribe();
-    };
+    return unsubscribe;
   });
 </script>
 
