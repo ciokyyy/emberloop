@@ -124,8 +124,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   interrupts busy Sessions every poll and stops waiting on a Session still
   busy after 50 polls. Fake turns last about 5ms, so tests wait for a turn's
   end with `waitTurnEnd` (an idle status after the prompt's seq), never
-  working-then-idle polls. A test that jumps the fake clock first waits for the
-  Worker's first turn to end.
+  working-then-idle polls. A test that mutates state after that idle Event also
+  waits for `busy=false` and `active==0`; the Event precedes submit-gate and
+  post-turn work. A test that jumps the fake clock first waits for the Worker's
+  first turn to end.
 - A Session exists before its first prompt lands: tests read a transcript only
   after `firstPromptWhere` sees a prompt. A test that forces a Run's status
   after a pause first waits for the driver to exit (`driving` false) or park

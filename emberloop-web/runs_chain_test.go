@@ -903,7 +903,27 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "initial Worker")
 	worker := ticketByID(r, "01-first").WorkerSession
-	waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool { return s.Meta.Status == "idle" }, "initial Worker idle")
+	taskPrompt := firstPromptWhere(t, srv.URL, worker, func(e Event) bool {
+		return strings.Contains(e.Text, "Implement ticket 01-first")
+	})
+	waitTurnEnd(t, srv.URL, worker, taskPrompt.Seq)
+	// The backend's idle Event precedes runTurn's submit-gate/post-turn work.
+	// Wait for the whole turn before synthesizing a failure; otherwise the
+	// restart stop can race that work and make the failure look interrupted.
+	settleDeadline := time.Now().Add(10 * time.Second)
+	for {
+		d.mu.Lock()
+		s := d.sessions[worker]
+		settled := s != nil && !s.busy && s.active == 0
+		d.mu.Unlock()
+		if settled {
+			break
+		}
+		if time.Now().After(settleDeadline) {
+			t.Fatal("initial Worker turn did not settle")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if !d.RequestRestart() {
 		t.Fatal("RequestRestart returned false")
 	}
@@ -913,6 +933,13 @@ func TestRunResumeReconcilesFailedChainSession(t *testing.T) {
 	d.appendEvent(worker, "status", "", "working")
 	d.appendEvent(worker, "error", "quota exceeded", "")
 	d.appendEvent(worker, "status", "", "failed")
+	d.mu.Lock()
+	paused := d.runs[run.ID].Status == runStatusPaused
+	failed := d.sessions[worker].meta.Status == "failed"
+	d.mu.Unlock()
+	if !paused || !failed {
+		t.Fatalf("test setup: Run paused=%v, Worker failed=%v", paused, failed)
+	}
 	srv.Close()
 
 	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
