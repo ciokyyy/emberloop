@@ -70,20 +70,14 @@ func (s usageQuotaSource) Key() string      { return s.key }
 func (s usageQuotaSource) FetchKey() string { return s.fetchKey }
 
 func (s usageQuotaSource) Configured(stateDir string, now time.Time) bool {
-	return s.configuredFn != nil && s.configuredFn(stateDir, now)
+	return s.configuredFn(stateDir, now)
 }
 
 func (s usageQuotaSource) NotConfiguredHint(stateDir string) string {
-	if s.hintFn == nil {
-		return ""
-	}
 	return s.hintFn(stateDir)
 }
 
 func (s usageQuotaSource) CachePath(stateDir string) string {
-	if s.cachePathFn == nil {
-		return ""
-	}
 	return s.cachePathFn(stateDir)
 }
 

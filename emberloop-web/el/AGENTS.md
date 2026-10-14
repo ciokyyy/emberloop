@@ -47,7 +47,6 @@ durable boundaries with their own docs. File map (non-test file owns its
   distinct upstreams for Daemon cooldown admission),
   `compress_prompt.go` (the Handoff summarizer prompt, its section list
   `HandoffSections` that emberloop-web uses, and the handoff sanity check),
-
   `context_window.go` (model window table; settings override via
   `context.windows` / `el settings window <model> <n>` beats table; unknown
   models get 200k default), `docs.go` (install copies the checkout's
