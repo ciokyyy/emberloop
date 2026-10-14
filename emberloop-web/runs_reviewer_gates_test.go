@@ -523,7 +523,6 @@ func TestSelectiveCarryRerunsPassedSeatOnLargeDiff(t *testing.T) {
 // stated scope without blocking, and the Worker first prompt carries the
 // scope rule.
 func TestScopeWarningInReviewerPrompt(t *testing.T) {
-	t.Parallel()
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\nWork in work.go only.\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
@@ -547,21 +546,25 @@ func TestScopeWarningInReviewerPrompt(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
-	if transcript := sessTranscript(getSession(t, srv.URL, worker)); !strings.Contains(transcript, "Keep the diff to the ticket's stated scope") {
-		t.Fatalf("worker first prompt lacks the scope rule:\n%s", transcript)
-	}
+	firstPromptWhere(t, srv.URL, worker, func(e Event) bool {
+		return strings.Contains(e.Text, "Keep the diff to the ticket's stated scope")
+	})
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	commitTicketFile(t, worktree, "work.go", "package main\n", "work")
 	commitTicketFile(t, worktree, "surprise.go", "package main\n", "surprise")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
 	for typ, sess := range revs {
-		transcript := sessTranscript(getSession(t, srv.URL, sess))
-		if !strings.Contains(transcript, "Scope note (non-blocking)") || !strings.Contains(transcript, "surprise.go") {
-			t.Fatalf("reviewer %s prompt lacks the scope warning:\n%s", typ, transcript)
+		prompt := firstPromptWhere(t, srv.URL, sess, func(e Event) bool {
+			return strings.Contains(e.Text, "Scope note (non-blocking)") && strings.Contains(e.Text, "surprise.go")
+		})
+		start := strings.Index(prompt.Text, "Scope note (non-blocking)")
+		warning := prompt.Text[start:]
+		if end := strings.IndexByte(warning, '\n'); end >= 0 {
+			warning = warning[:end]
 		}
-		if strings.Contains(transcript, "work.go:") && strings.Contains(transcript, "not mentioned") {
-			t.Fatalf("reviewer %s warns about the in-scope file:\n%s", typ, transcript)
+		if !strings.Contains(warning, "surprise.go") || strings.Contains(warning, "work.go") {
+			t.Fatalf("reviewer %s scope note = %q, want surprise.go only", typ, warning)
 		}
 	}
 	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {

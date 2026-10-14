@@ -84,13 +84,28 @@ func TestKilledDaemonRunResumesSameWorkerWithContinue(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+	d.mu.Lock()
+	rsAfterRestart := d.runs[run.ID]
+	restartPaused := d.restartReq && rsAfterRestart != nil && rsAfterRestart.Status == runStatusPaused && rsAfterRestart.ResumeOnRestart
+	d.mu.Unlock()
+	if !restartPaused {
+		t.Fatal("restart request did not persist the Run as paused for automatic resume")
+	}
+	// Drain every old writer before staging the files left by a hard kill.
+	// stopRunsForTest marks tickets discarded, so the staged Run file below
+	// clears that test-cleanup-only state.
+	d.stopRunsForTest(t)
+	d.Shutdown()
 	srv.Close()
 	rewriteJSONFile(t, filepath.Join(stateDir, "enderbloom", "runs", run.ID+".json"), func(m map[string]any) {
 		m["status"] = "running"
 		delete(m, "resumeOnRestart")
+		delete(m, "discarded")
 	})
 	rewriteJSONFile(t, filepath.Join(stateDir, "enderbloom", "sessions", first, "meta.json"), func(m map[string]any) {
 		m["status"] = "working"
+		delete(m, "restartStopped")
+		delete(m, "carry")
 	})
 
 	d2 := runTestDaemon(t, stateDir, NewFakeBackend())
