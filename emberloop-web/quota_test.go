@@ -288,8 +288,8 @@ func assertQuotaContract(t *testing.T, body []byte) {
 				}
 			}
 			var window struct {
-				Label string `json:"label"`
-				Pct   *int   `json:"pct"`
+				Label string          `json:"label"`
+				Pct   json.RawMessage `json:"pct"`
 			}
 			if err := json.Unmarshal(windowFields["label"], &window.Label); err != nil {
 				t.Errorf("%s window label: %v", card.Key, err)
@@ -299,17 +299,20 @@ func assertQuotaContract(t *testing.T, body []byte) {
 				t.Errorf("%s window percent: %v", card.Key, err)
 				continue
 			}
+			if string(window.Pct) == "null" {
+				t.Errorf("%s %q has no integer percent", card.Key, window.Label)
+				continue
+			}
+			var pct int
+			if err := json.Unmarshal(window.Pct, &pct); err != nil {
+				t.Errorf("%s window percent is not an integer: %v", card.Key, err)
+				continue
+			}
 			if window.Label == "5h" || window.Label == "wk" || window.Label == "mo" {
 				t.Errorf("%s uses short quota label %q", card.Key, window.Label)
 			}
-			if window.Pct == nil {
-				if card.Key != "openrouter" || window.Label != "Spend this week" {
-					t.Errorf("%s %q unexpectedly has no percent", card.Key, window.Label)
-				}
-				continue
-			}
-			if *window.Pct < 0 || *window.Pct > 100 {
-				t.Errorf("%s %q percent = %d, outside 0-100", card.Key, window.Label, *window.Pct)
+			if pct < 0 || pct > 100 {
+				t.Errorf("%s %q percent = %d, outside 0-100", card.Key, window.Label, pct)
 			}
 		}
 	}
@@ -965,30 +968,11 @@ func TestQuotaOpenRouterCreditsAndKeySpendAtHTTPSeam(t *testing.T) {
 		t.Fatal("quota response exposed the pig OpenRouter key")
 	}
 	card := quotaByKey(t, cards)["openrouter"]
-	if card.State != "ok" || card.Label != "OpenRouter" || card.Plan != "Credits" || len(card.Windows) != 2 {
+	if card.State != "ok" || card.Label != "OpenRouter" || card.Plan != "Credits" || len(card.Windows) != 1 {
 		t.Fatalf("OpenRouter card = %+v", card)
 	}
-	if got := card.Windows[0]; got.Label != "Credits" || got.Pct != 94 || got.Detail != "$59.16 of $63.00 · $3.84 left" {
-		t.Errorf("OpenRouter credits window = %+v", got)
-	}
-	if got := card.Windows[1]; got.Label != "Spend this week" || got.Detail != "$2.37 · today $0.91 · month $5.70" {
-		t.Errorf("OpenRouter spend window = %+v", got)
-	}
-	var rawCard struct {
-		Providers []struct {
-			Key     string `json:"key"`
-			Windows []struct {
-				Pct *int `json:"pct"`
-			} `json:"windows"`
-		} `json:"providers"`
-	}
-	if err := json.Unmarshal(raw, &rawCard); err != nil {
-		t.Fatal(err)
-	}
-	for _, provider := range rawCard.Providers {
-		if provider.Key == "openrouter" && (len(provider.Windows) != 2 || provider.Windows[1].Pct != nil) {
-			t.Errorf("OpenRouter spend window should be text-only: %+v", provider.Windows)
-		}
+	if got := card.Windows[0]; got.Label != "Credits" || got.Pct != 94 || got.Detail != "$59.16 of $63.00 · $3.84 left · today $0.91 · week $2.37 · month $5.70" {
+		t.Errorf("OpenRouter credits and spend window = %+v", got)
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, "usage-openrouter.json")); err != nil {
 		t.Errorf("OpenRouter cache missing from temp state dir: %v", err)

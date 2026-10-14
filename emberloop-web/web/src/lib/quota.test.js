@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  hasPercent,
   highestPercent,
   quotaHint,
   quotaPlan,
@@ -33,16 +32,6 @@ describe('thresholdClass', () => {
   });
 });
 
-describe('hasPercent', () => {
-  it('accepts zero and rejects absent or nonnumeric values', () => {
-    expect(hasPercent(0)).toBe(true);
-    expect(hasPercent('94')).toBe(true);
-    expect(hasPercent(undefined)).toBe(false);
-    expect(hasPercent(null)).toBe(false);
-    expect(hasPercent('')).toBe(false);
-    expect(hasPercent('spend')).toBe(false);
-  });
-});
 
 describe('wordLabel', () => {
   it('formats provider window labels in words and leaves custom labels intact', () => {
@@ -51,7 +40,6 @@ describe('wordLabel', () => {
     expect(wordLabel('wk')).toBe('Weekly');
     expect(wordLabel('seven_day')).toBe('Weekly');
     expect(wordLabel('mo')).toBe('Monthly');
-    expect(wordLabel('Spend this week')).toBe('Spend this week');
     expect(wordLabel('Credits')).toBe('Credits');
   });
 });
@@ -109,10 +97,9 @@ describe('provider presentation', () => {
 });
 
 describe('highestPercent', () => {
-  it('uses only the maximum valid pct across provider windows', () => {
-    expect(highestPercent({ windows: [{ pct: 36 }, { pct: 94 }, { pct: null, detail: '$99' }] })).toBe(94);
-    expect(highestPercent({ windows: [{ pct: 0 }, { detail: '100 credits' }] })).toBe(0);
-    expect(highestPercent({ windows: [{ pct: null, detail: '$99' }, { pct: 'invalid' }] })).toBeNull();
+  it('uses the maximum integer pct across provider windows', () => {
+    expect(highestPercent({ windows: [{ pct: 36 }, { pct: 94 }] })).toBe(94);
+    expect(highestPercent({ windows: [{ pct: 0 }, { pct: 100 }] })).toBe(100);
     expect(highestPercent({ windows: [] })).toBeNull();
   });
 });

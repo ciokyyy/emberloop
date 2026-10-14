@@ -22,8 +22,8 @@ describe('QuotaSidebar', () => {
   it('shows the Quota navigation and each provider highest pct with threshold tones', async () => {
     const { store } = sourceWith([
       { key: 'claude', label: 'Claude', windows: [{ pct: 36 }, { pct: 8 }] },
-      { key: 'router', label: 'OpenRouter', windows: [{ pct: null, detail: '$99 of $100' }, { pct: 60 }] },
-      { key: 'agy', label: 'Antigravity', windows: [{ pct: null, detail: '100 credits' }] },
+      { key: 'router', label: 'OpenRouter', windows: [{ pct: 40, detail: '$99 of $100' }, { pct: 60 }] },
+      { key: 'agy', label: 'Antigravity', windows: [] },
     ]);
     const onNavigate = vi.fn();
     const { container } = render(QuotaSidebar, { props: { store, onNavigate } });

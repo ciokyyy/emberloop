@@ -77,10 +77,7 @@ function providerCards() {
       source: 'API key',
       state: 'ok',
       updated_at: NOW / 1000 - 8,
-      windows: [
-        { label: 'Credits', pct: 94, detail: '$59.16 of $63.00 · $3.84 left' },
-        { label: 'Spend this week', pct: null, detail: '$2.37 · today $0.91 · month $5.70' },
-      ],
+      windows: [{ label: 'Credits', pct: 94, detail: '$59.16 of $63.00 · $3.84 left · today $0.91 · week $2.37 · month $5.70' }],
     },
   ];
 }
@@ -217,18 +214,13 @@ describe('QuotaPage cards', () => {
     expect(gemini.querySelector('[role="progressbar"]')).toBeNull();
   });
 
-  it('renders OpenRouter spend as a text-only row, with details separate from its percent', async () => {
+  it('renders OpenRouter credits percent and key spend in secondary detail', async () => {
     stubFetch();
     const { container } = render(QuotaPage);
     await screen.findAllByTestId('quota-card');
     const router = container.querySelector('[data-key="openrouter"]');
     expect(within(router).getByText('94%')).toBeTruthy();
-    expect(within(router).getByText('$59.16 of $63.00 · $3.84 left')).toBeTruthy();
-    const spend = within(router).getByTestId('quota-text-window');
-    expect(spend.textContent).toContain('Spend this week');
-    expect(spend.textContent).toContain('$2.37 · today $0.91 · month $5.70');
-    expect(spend.className).toContain('border-t');
-    expect(spend.querySelector('[role="progressbar"]')).toBeNull();
+    expect(within(router).getByText('$59.16 of $63.00 · $3.84 left · today $0.91 · week $2.37 · month $5.70')).toBeTruthy();
     expect(within(router).getAllByRole('progressbar')).toHaveLength(1);
   });
 });

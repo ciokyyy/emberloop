@@ -19,7 +19,6 @@
   import { refreshQuota } from './api.js';
   import { quotaStore } from './quotaStore.js';
   import {
-    hasPercent,
     quotaHint,
     quotaPlan,
     quotaState,
@@ -188,36 +187,28 @@
                   <div class={`mt-3 flex flex-col gap-3 ${state === 'expired' ? 'opacity-50' : ''}`} data-testid="quota-windows">
                     {#each p.windows as w, i (`${w.label}-${i}`)}
                       {@const label = wordLabel(w.label)}
-                      {@const hasPct = hasPercent(w.pct)}
                       {@const tone = thresholdClass(w.pct)}
                       {@const countdown = resetCountdown(w.resets_at, now)}
-                      {#if !hasPct}
-                        <div class="flex items-baseline justify-between gap-3 border-t pt-3 text-xs" data-testid="quota-text-window">
+                      <div data-testid="quota-window">
+                        <div class="flex items-baseline justify-between gap-3 text-xs">
                           <span class="font-medium">{label}</span>
-                          <span class="text-right text-muted-foreground">{w.detail ?? ''}</span>
+                          <span class={`tabular-nums font-medium ${PCT_TEXT[tone]}`} data-testid="quota-pct">{w.pct}%</span>
                         </div>
-                      {:else}
-                        <div data-testid="quota-window">
-                          <div class="flex items-baseline justify-between gap-3 text-xs">
-                            <span class="font-medium">{label}</span>
-                            <span class={`tabular-nums font-medium ${PCT_TEXT[tone]}`} data-testid="quota-pct">{w.pct}%</span>
-                          </div>
-                          <div
-                            class="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"
-                            role="progressbar"
-                            aria-label={`${p.label} ${label}`}
-                            aria-valuenow={w.pct}
-                            aria-valuemin="0"
-                            aria-valuemax="100"
-                          >
-                            <div class={`h-full rounded-full transition-all duration-300 ${BAR[tone]}`} style={`width: ${Math.min(100, Math.max(0, Number(w.pct)))}%`}></div>
-                          </div>
-                          <div class="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 text-[11px] text-muted-foreground">
-                            <span>{w.detail ?? ''}</span>
-                            {#if countdown}<span>resets in {countdown}</span>{/if}
-                          </div>
+                        <div
+                          class="mt-1 h-1.5 overflow-hidden rounded-full bg-muted"
+                          role="progressbar"
+                          aria-label={`${p.label} ${label}`}
+                          aria-valuenow={w.pct}
+                          aria-valuemin="0"
+                          aria-valuemax="100"
+                        >
+                          <div class={`h-full rounded-full transition-all duration-300 ${BAR[tone]}`} style={`width: ${Math.min(100, Math.max(0, Number(w.pct)))}%`}></div>
                         </div>
-                      {/if}
+                        <div class="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 text-[11px] text-muted-foreground">
+                          <span>{w.detail ?? ''}</span>
+                          {#if countdown}<span>resets in {countdown}</span>{/if}
+                        </div>
+                      </div>
                     {/each}
                   </div>
                 {:else if state === 'error' && !p.error && !cardError[p.key]}

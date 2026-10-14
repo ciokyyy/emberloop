@@ -188,8 +188,8 @@ describe('Quota navigation', () => {
     const calls = [];
     const providers = [
       { key: 'claude', label: 'Claude', windows: [{ label: '5-hour', pct: 36 }, { label: 'Weekly', pct: 8 }] },
-      { key: 'openrouter', label: 'OpenRouter', windows: [{ label: 'Credits', pct: 94 }, { label: 'Spend this week', pct: null, detail: '$2.37' }] },
-      { key: 'agy-gemini', label: 'Antigravity Gemini', windows: [{ label: '5-hour', pct: null }] },
+      { key: 'openrouter', label: 'OpenRouter', windows: [{ label: 'Credits', pct: 94, detail: '$59.16 of $63.00 · $3.84 left · today $0.91 · week $2.37 · month $5.70' }] },
+      { key: 'agy-gemini', label: 'Antigravity Gemini', windows: [] },
     ];
     vi.stubGlobal(
       'fetch',

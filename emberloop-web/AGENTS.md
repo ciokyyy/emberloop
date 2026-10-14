@@ -32,9 +32,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `~/.claude/.credentials.json`, starts a harness or sends a prompt. Statusline
   data is the fallback only when host OAuth is absent; the terminal header
   remains unchanged. OpenRouter reads pig's `openrouter.key`, combines credits
-  and current-key spend, and caches a percent bar plus secondary spend detail.
-  `quota_test.go` covers cached reads, provider isolation, cooldowns, shared
-  locks, ChatGPT and Claude behavior, and OpenRouter's credits/key endpoints.
+  and current-key spend in the Credits window detail, and caches its percent
+  bar plus secondary text. Provider-agnostic refreshes skip unconfigured sources.
+  `quota_test.go` covers cache reads, provider isolation, cooldowns, ChatGPT and
+  Claude behavior, and OpenRouter's credits/key endpoints against local stubs.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both

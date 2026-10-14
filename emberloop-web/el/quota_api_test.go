@@ -113,7 +113,7 @@ func TestQuotaNotConfiguredWithCachedValuesIsNotError(t *testing.T) {
 	if got.State != QuotaNotConfigured || got.Error != "" || got.Hint == "" {
 		t.Fatalf("provider without login = %+v, want not_configured with hint and no error", got)
 	}
-	if len(got.Windows) != 1 || got.Windows[0].Pct == nil || *got.Windows[0].Pct != 52 {
+	if len(got.Windows) != 1 || got.Windows[0].Pct != 52 {
 		t.Errorf("not-configured provider dropped its cached window: %+v", got.Windows)
 	}
 }
@@ -148,7 +148,7 @@ func TestQuotaSourceOwnsProviderConfigurationAndCachePath(t *testing.T) {
 	if got.State != QuotaNotConfigured || got.Error != "" || got.Hint != "Missing ChatGPT login." {
 		t.Fatalf("provider configuration = %+v, want provider-owned not_configured state and hint", got)
 	}
-	if got.UpdatedAt != cacheInfo.ModTime().Unix() || len(got.Windows) != 1 || got.Windows[0].Pct == nil || *got.Windows[0].Pct != 37 {
+	if got.UpdatedAt != cacheInfo.ModTime().Unix() || len(got.Windows) != 1 || got.Windows[0].Pct != 37 {
 		t.Errorf("provider cache = %+v, want custom cache mtime and retained percent window", got)
 	}
 }
@@ -165,7 +165,7 @@ func TestQuotaExpiredRetainsLastValuesAndHint(t *testing.T) {
 	if got.State != QuotaExpired || got.Hint == "" || got.Error != "" {
 		t.Fatalf("expired provider = %+v", got)
 	}
-	if len(got.Windows) != 1 || got.Windows[0].Pct == nil || *got.Windows[0].Pct != 47 || got.Windows[0].Label != "5-hour" {
+	if len(got.Windows) != 1 || got.Windows[0].Pct != 47 || got.Windows[0].Label != "5-hour" {
 		t.Errorf("expired provider lost its cached window: %+v", got.Windows)
 	}
 }
@@ -179,13 +179,13 @@ func TestQuotaWindowsClampPercentAndUseWordLabels(t *testing.T) {
 	wantLabels := []string{"5-hour", "Weekly", "Monthly"}
 	wantPcts := []int{0, 57, 100}
 	for i, window := range got {
-		if window.Label != wantLabels[i] || window.Pct == nil || *window.Pct != wantPcts[i] {
+		if window.Label != wantLabels[i] || window.Pct != wantPcts[i] {
 			t.Errorf("window %d = %+v, want label %q and pct %d", i, window, wantLabels[i], wantPcts[i])
 		}
 	}
-	textOnly := quotaWindows([]UsageWindow{{Label: "Spend this week", Detail: "$2.37", NoPercent: true}})
-	if len(textOnly) != 1 || textOnly[0].Pct != nil || textOnly[0].Detail != "$2.37" {
-		t.Errorf("text-only secondary window = %+v", textOnly)
+	withDetail := quotaWindows([]UsageWindow{{Label: "Credits", Pct: 94, Detail: "$59.16 of $63.00 · $3.84 left · today $0.91"}})
+	if len(withDetail) != 1 || withDetail[0].Pct != 94 || withDetail[0].Detail == "" {
+		t.Errorf("percent window with secondary detail = %+v", withDetail)
 	}
 }
 
@@ -258,8 +258,8 @@ func TestQuotaStaleFallbackKeepsCache(t *testing.T) {
 	if card.State != QuotaStale || card.Error == "" {
 		t.Errorf("failed card = %+v, want stale with error text", card)
 	}
-	if len(card.Windows) == 0 || card.Windows[0].Pct == nil || *card.Windows[0].Pct != 50 {
-		t.Errorf("failed card dropped the stale cache: %+v", card)
+	if len(card.Windows) == 0 || card.Windows[0].Pct != 50 {
+		t.Errorf("failed card dropped the stale cache: %+v", card.Windows)
 	}
 	if card.UpdatedAt != opencodeUpdatedAt {
 		t.Errorf("failed fetch moved updated_at from %d to %d", opencodeUpdatedAt, card.UpdatedAt)
@@ -283,7 +283,7 @@ func TestQuotaClaudeRereadOnly(t *testing.T) {
 	if got[0].Key != usageKeyClaude || got[0].State != QuotaOK {
 		t.Fatalf("claude card = %+v, want ok", got[0])
 	}
-	if len(got[0].Windows) != 2 || got[0].Windows[0].Label != "5-hour" || got[0].Windows[0].Pct == nil || *got[0].Windows[0].Pct != 10 || got[0].Windows[1].Label != "Weekly" {
+	if len(got[0].Windows) != 2 || got[0].Windows[0].Label != "5-hour" || got[0].Windows[0].Pct != 10 || got[0].Windows[1].Label != "Weekly" {
 		t.Errorf("claude windows = %+v", got[0].Windows)
 	}
 	if got[0].UpdatedAt == 0 {
@@ -327,11 +327,11 @@ func TestQuotaAgyGroups(t *testing.T) {
 		byKey[p.Key] = p
 	}
 	gem, ok := byKey[usageKeyAgyGem]
-	if !ok || gem.State != QuotaOK || len(gem.Windows) != 2 || gem.Windows[0].Label != "5-hour" || gem.Windows[0].Pct == nil || *gem.Windows[0].Pct != 20 || gem.Windows[1].Label != "Weekly" || gem.Windows[1].Pct == nil || *gem.Windows[1].Pct != 25 {
+	if !ok || gem.State != QuotaOK || len(gem.Windows) != 2 || gem.Windows[0].Label != "5-hour" || gem.Windows[0].Pct != 20 || gem.Windows[1].Label != "Weekly" || gem.Windows[1].Pct != 25 {
 		t.Errorf("gemini card = %+v", gem)
 	}
 	tp, ok := byKey[usageKeyAgy3P]
-	if !ok || tp.State != QuotaOK || len(tp.Windows) != 2 || tp.Windows[0].Label != "5-hour" || tp.Windows[0].Pct == nil || *tp.Windows[0].Pct != 10 || tp.Windows[1].Label != "Weekly" || tp.Windows[1].Pct == nil || *tp.Windows[1].Pct != 60 {
+	if !ok || tp.State != QuotaOK || len(tp.Windows) != 2 || tp.Windows[0].Label != "5-hour" || tp.Windows[0].Pct != 10 || tp.Windows[1].Label != "Weekly" || tp.Windows[1].Pct != 60 {
 		t.Errorf("3p card = %+v", tp)
 	}
 	if !QuotaKeyValid("") || !QuotaKeyValid(usageKeyClaude) || !QuotaKeyValid(usageKeyChatGPT) || !QuotaKeyValid(usageKeyOpenrouter) || QuotaKeyValid("nope") {

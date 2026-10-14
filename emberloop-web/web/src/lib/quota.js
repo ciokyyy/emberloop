@@ -12,8 +12,6 @@ const WINDOW_LABELS = new Map([
   ['month', 'Monthly'],
   ['mo', 'Monthly'],
   ['monthly', 'Monthly'],
-  ['spend week', 'Spend this week'],
-  ['spend this week', 'Spend this week'],
 ]);
 
 const DEFAULT_PLANS = {
@@ -53,18 +51,10 @@ export function thresholdClass(pct) {
   return 'hot';
 }
 
-export function hasPercent(pct) {
-  return pct !== null && pct !== undefined && pct !== '' && Number.isFinite(Number(pct));
-}
-
-// Highest provider window percent for the Live status list. Secondary detail
-// values (credits, dollars or spend) never participate in this comparison.
+// Highest window percentage for the Live status list.
 export function highestPercent(provider) {
-  const percentages = (provider?.windows ?? [])
-    .map((window) => window?.pct)
-    .filter(hasPercent)
-    .map(Number);
-  return percentages.length ? Math.max(...percentages) : null;
+  const windows = provider?.windows ?? [];
+  return windows.length ? Math.max(...windows.map((window) => window.pct)) : null;
 }
 
 export function wordLabel(label) {

@@ -827,7 +827,7 @@ func fetchOpencodeUsage(ctx context.Context) ([]UsageWindow, error) {
 }
 
 // fetchOpenRouterUsage combines account credits with usage for the current
-// pig API key. The credit window drives the percent bar; spend is secondary text.
+// pig API key. Credit percent and key spend share one window; spend is secondary text.
 func fetchOpenRouterUsage(ctx context.Context) ([]UsageWindow, error) {
 	auth, err := readPigAuth()
 	if err != nil || auth.OpenRouter.Key == "" {
@@ -858,18 +858,13 @@ func fetchOpenRouterUsage(ctx context.Context) ([]UsageWindow, error) {
 	}
 	used, total := credits.Data.TotalUsage, credits.Data.TotalCredits
 	left := total - used
-	return []UsageWindow{
-		{
-			Label:  "Credits",
-			Pct:    int(used/total*100 + 0.5),
-			Detail: fmt.Sprintf("$%.2f of $%.2f · $%.2f left", used, total, left),
-		},
-		{
-			Label:     "Spend this week",
-			Detail:    fmt.Sprintf("$%.2f · today $%.2f · month $%.2f", keyUsage.Data.Weekly, keyUsage.Data.Daily, keyUsage.Data.Monthly),
-			NoPercent: true,
-		},
-	}, nil
+	creditDetail := fmt.Sprintf("$%.2f of $%.2f · $%.2f left", used, total, left)
+	spendDetail := fmt.Sprintf("today $%.2f · week $%.2f · month $%.2f", keyUsage.Data.Daily, keyUsage.Data.Weekly, keyUsage.Data.Monthly)
+	return []UsageWindow{{
+		Label:  "Credits",
+		Pct:    int(used/total*100 + 0.5),
+		Detail: creditDetail + " · " + spendDetail,
+	}}, nil
 }
 
 func parseResetTime(s string) int64 {

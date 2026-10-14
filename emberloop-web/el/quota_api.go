@@ -22,11 +22,10 @@ const (
 	QuotaError         = "error"
 )
 
-// QuotaWindow is one comparable account limit: an optional percent and reset.
-// Text-only secondary values have no percent bar.
+// QuotaWindow is one comparable account limit, with an integer percent used and reset.
 type QuotaWindow struct {
 	Label    string `json:"label"`
-	Pct      *int   `json:"pct"`
+	Pct      int    `json:"pct"`
 	ResetsAt int64  `json:"resets_at"`
 	Detail   string `json:"detail,omitempty"`
 }
@@ -298,19 +297,15 @@ func quotaWindowLabel(label string) string {
 func quotaWindows(windows []UsageWindow) []QuotaWindow {
 	out := make([]QuotaWindow, 0, len(windows))
 	for _, window := range windows {
-		var pct *int
-		if !window.NoPercent {
-			value := window.Pct
-			if value < 0 {
-				value = 0
-			} else if value > 100 {
-				value = 100
-			}
-			pct = &value
+		value := window.Pct
+		if value < 0 {
+			value = 0
+		} else if value > 100 {
+			value = 100
 		}
 		out = append(out, QuotaWindow{
 			Label:    quotaWindowLabel(window.Label),
-			Pct:      pct,
+			Pct:      value,
 			ResetsAt: window.ResetsAt,
 			Detail:   window.Detail,
 		})

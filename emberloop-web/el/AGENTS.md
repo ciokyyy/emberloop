@@ -39,17 +39,17 @@ durable boundaries with their own docs. File map (non-test file owns its
   `UsageTailFromEnv`/`RunUsageTail`/`TailUsageFile`), `claude_usage.go` (the
   statusline command `el claude-status` and its usage windows),
   `usage_providers.go` (Claude, ChatGPT Plus, OpenCode-Go, OpenRouter and
-  Antigravity pollers: one fetch per 90s per account, shared cache and per-key
-  lock; ChatGPT reads pig's `openai-codex` OAuth read-only; Claude's separate
-  host OAuth cache is read-only, persists `Retry-After` and falls back to the
-  statusline only when the host login is absent; OpenRouter combines account
-  credits with current pig-key daily, weekly and monthly spend),
+  Antigravity pollers; one fetch per 90s per account, shared cache and per-key
+  lock. ChatGPT reads pig's `openai-codex` OAuth read-only; Claude's host OAuth
+  cache is read-only, persists `Retry-After` and falls back to its statusline
+  only when host login is absent; OpenRouter combines account credits with
+  current pig-key daily, weekly and monthly spend in the Credits detail),
   `quota_api.go` (the provider-source registry for browser Quota: sources own
   fetch, configuration, missing-login hints and cache paths; snapshots normalize
-  word-form percent windows, retain detail and assemble state. Text-only
-  secondary windows serialize a null `pct`; provider-agnostic refreshes skip
-  unconfigured sources and run concurrently with completion callbacks.
-  `QuotaFetchKeys` exposes distinct upstreams for Daemon cooldown admission),
+  word-form windows to integer `pct` values from 0 to 100, retain detail and
+  assemble state. Provider-agnostic refreshes skip unconfigured sources and run
+  concurrently with completion callbacks. `QuotaFetchKeys` exposes distinct
+  upstreams for Daemon cooldown admission),
   `compress_prompt.go` (the Handoff summarizer prompt, its section list
   `HandoffSections` that emberloop-web uses, and the handoff sanity check),
   `context_window.go` (model window table; settings override via
