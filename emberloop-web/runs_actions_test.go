@@ -360,6 +360,21 @@ func TestNeedsYouIdleAlertSurfaced(t *testing.T) {
 		}
 		return false
 	}, "worker first turn ended")
+	worker := ticketByID(r, "01-first").WorkerSession
+	settleDeadline := time.Now().Add(10 * time.Second)
+	for {
+		d.mu.Lock()
+		s := d.sessions[worker]
+		settled := s != nil && !s.busy && s.active == 0
+		d.mu.Unlock()
+		if settled {
+			break
+		}
+		if time.Now().After(settleDeadline) {
+			t.Fatal("worker remained busy after its first turn ended")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	clock.advance(11 * time.Minute)
 	deadline := time.Now().Add(15 * time.Second)

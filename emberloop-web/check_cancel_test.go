@@ -167,7 +167,10 @@ func TestCheckChildShowsSummaryAndEvents(t *testing.T) {
 
 	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
 	child := spawnOne(t, srv.URL, parent, "slow job")
-	waitStatus(t, srv.URL, child, "idle", 10*time.Second)
+	prompt := firstPromptWhere(t, srv.URL, child, func(e Event) bool {
+		return strings.Contains(e.Text, "slow job")
+	})
+	waitTurnEnd(t, srv.URL, child, prompt.Seq)
 
 	outcome, code, msg := d.CheckChild(parent, child)
 	if code != 0 {
