@@ -69,10 +69,11 @@ client: session ids, JSON or SSE replies, one OAuth retry on 401),
 approval, refresh, the per-user token store, reauth-needed), `graph.go` (the
 graph server synthesis: path-slug projects, binary resolution, the exposed
 tool include over the hidden management set, per-role placement, and the
-first-query index-status gate), `systemone/`
-(the decisions-model client the find cascade asks), and `mcpfake/` (the fakes
-the client, execute and graph tests spawn: stdio plus Streamable-HTTP with
-its own authorization server).
+first-query index-status gate), `systemone/` (the decisions-model client used
+by the find cascade and draft Project picker; `NewOpenRouterWithEndpoint`
+keeps HTTP-seam tests local while production uses OpenRouter), and `mcpfake/`
+(the fakes the client, execute and graph tests spawn: stdio plus
+Streamable-HTTP with its own authorization server).
 
 ## Ownership
 

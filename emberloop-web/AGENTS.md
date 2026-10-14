@@ -40,6 +40,12 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both
   sources, cache refresh and edit precedence.
+- Draft Project pick: `POST /api/projects/suggest` (`projectpick.go`) evaluates
+  one `noul` per Project plus `none` before any Session starts. Jev receives the
+  prompt and each Project's name and gist, never its path; a suggestion requires
+  top >= 0.5 and a lead >= 0.2. Missing keys and failed calls return no pick;
+  `projectpick_test.go` checks the HTTP response and local systemone stub.
+  The response always carries `suggestedProject` (the Project or `null`).
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git

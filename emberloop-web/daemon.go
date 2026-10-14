@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"example.com/emberloop-web/el/tools/systemone"
 	"example.com/emberloop-web/memory"
 )
 
@@ -91,11 +92,15 @@ type Daemon struct {
 	// projects are the recorded working directories; projMu guards them.
 	projMu   sync.Mutex
 	projects []Project
-	backend  Backend
-	live     *liveHub
-	presence presence
-	push     *pushStore
-	claude   *ClaudeBackend
+	// projectPickKeyFn and projectPickProvider override Jev for the draft
+	// project picker; nil uses systemone.APIKey and OpenRouter.
+	projectPickKeyFn    func(context.Context) string
+	projectPickProvider systemone.Provider
+	backend             Backend
+	live                *liveHub
+	presence            presence
+	push                *pushStore
+	claude              *ClaudeBackend
 	// maxTickets overrides the max_tickets setting when positive.
 	maxTickets int
 	// starting counts Sessions reserving a running slot while their
@@ -380,6 +385,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/specs/preview", d.handleSpecPreview)
 	mux.HandleFunc("/api/runs", d.handleRuns)
 	mux.HandleFunc("/api/runs/", d.handleRunSub)
+	mux.HandleFunc("/api/projects/suggest", d.handleProjectPick)
 	mux.HandleFunc("/api/projects", d.handleProjects)
 	mux.HandleFunc("/api/projects/", d.handleProjectSub)
 	mux.HandleFunc("/api/quota", d.handleQuota)

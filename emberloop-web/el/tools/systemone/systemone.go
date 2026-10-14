@@ -102,9 +102,8 @@ type Provider interface {
 	Evaluate(ctx context.Context, req Request) (Response, error)
 }
 
-// OpenRouter is the hosted Provider. endpoint is a field, not a constant, so
-// tests can point it at a fake server; production builds always use the
-// default below.
+// OpenRouter is the hosted Provider. NewOpenRouter uses the fixed OpenRouter
+// endpoint; NewOpenRouterWithEndpoint is the local HTTP-stub seam for tests.
 type OpenRouter struct {
 	APIKey   string
 	endpoint string
@@ -114,7 +113,17 @@ type OpenRouter struct {
 
 // NewOpenRouter builds a provider that runs at most 16 requests at once.
 func NewOpenRouter(apiKey string) *OpenRouter {
-	return &OpenRouter{APIKey: apiKey, endpoint: endpoint, client: http.Client{Timeout: 30 * time.Second}, sem: make(chan struct{}, 16)}
+	return NewOpenRouterWithEndpoint(apiKey, endpoint)
+}
+
+// NewOpenRouterWithEndpoint builds a provider for an endpoint URL. Production
+// callers should use NewOpenRouter; this constructor also lets HTTP-seam
+// tests exercise the real wire client against a local server.
+func NewOpenRouterWithEndpoint(apiKey, endpointURL string) *OpenRouter {
+	if strings.TrimSpace(endpointURL) == "" {
+		endpointURL = endpoint
+	}
+	return &OpenRouter{APIKey: apiKey, endpoint: endpointURL, client: http.Client{Timeout: 30 * time.Second}, sem: make(chan struct{}, 16)}
 }
 
 func (o *OpenRouter) Evaluate(ctx context.Context, req Request) (Response, error) {
