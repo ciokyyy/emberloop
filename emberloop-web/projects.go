@@ -7,11 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// projectGistLink removes Markdown link syntax while retaining its readable label.
+var projectGistLink = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
 
 // agentsMDNames are the files that satisfy a root DOX contract, in the same
 // priority the project-context loader reads them. A directory holding any of
@@ -44,12 +48,15 @@ func ensureAgentsMD(dir string) (bool, error) {
 
 // Project is a recorded working directory. Sessions started in a Project run
 // with the Project path as their cwd. Projects persist in
-// stateDir/enderbloom/projects.json, so the sidebar survives restarts.
+// stateDir/enderbloom/projects.json, so the sidebar survives restarts. Gist is
+// derived from the Project docs and cached; GistEdited marks an explicit override.
 type Project struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	Gist       string    `json:"gist,omitempty"`
+	GistEdited bool      `json:"gistEdited,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 func (d *Daemon) projectsFile() string {
@@ -65,7 +72,116 @@ func (d *Daemon) loadProjects() {
 	if err != nil {
 		return
 	}
-	_ = json.Unmarshal(b, &d.projects)
+	if err := json.Unmarshal(b, &d.projects); err != nil {
+		d.projects = nil
+		return
+	}
+	changed := false
+	for i := range d.projects {
+		if refreshProjectGist(&d.projects[i]) {
+			changed = true
+		}
+	}
+	if changed {
+		_ = d.saveProjectsLocked()
+	}
+}
+
+// refreshProjectGist derives and caches a Project's gist unless the user has
+// explicitly edited it. It returns whether the cached value changed.
+func refreshProjectGist(project *Project) bool {
+	if project.GistEdited {
+		return false
+	}
+	gist := deriveProjectGist(project.Path)
+	if gist == "" || gist == project.Gist {
+		return false
+	}
+	project.Gist = gist
+	return true
+}
+
+// deriveProjectGist reads a root AGENTS file first, then README.md. Only local
+// project documentation is read; its first Purpose paragraph (or first prose
+// paragraph when no Purpose section exists) becomes the one-line gist.
+func deriveProjectGist(projectPath string) string {
+	for _, name := range agentsMDNames {
+		b, err := os.ReadFile(filepath.Join(projectPath, name))
+		if err != nil {
+			continue
+		}
+		gist := projectGistParagraph(string(b))
+		if gist != "" && !(strings.HasPrefix(gist, "Working contract for ") && strings.Contains(gist, "Project knowledge lives here;")) {
+			return gist
+		}
+	}
+	for _, name := range []string{"README", "README.md", "README.MD", "Readme.md", "readme.md"} {
+		b, err := os.ReadFile(filepath.Join(projectPath, name))
+		if err == nil {
+			if gist := projectGistParagraph(string(b)); gist != "" {
+				return gist
+			}
+		}
+	}
+	return ""
+}
+
+func projectGistParagraph(markdown string) string {
+	lines := strings.Split(markdown, "\n")
+	start := 0
+	for i, line := range lines {
+		level, title := projectMarkdownHeading(line)
+		if level == 2 && strings.EqualFold(title, "Purpose") {
+			start = i + 1
+			break
+		}
+	}
+
+	var paragraph []string
+	inCode := false
+	for _, raw := range lines[start:] {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "```") {
+			inCode = !inCode
+			continue
+		}
+		if inCode || strings.HasPrefix(line, "<!--") || strings.HasPrefix(line, "![") {
+			continue
+		}
+		if line == "" {
+			if len(paragraph) != 0 {
+				break
+			}
+			continue
+		}
+		if level, _ := projectMarkdownHeading(line); level != 0 {
+			if len(paragraph) != 0 {
+				break
+			}
+			continue
+		}
+		paragraph = append(paragraph, line)
+	}
+	text := strings.Join(paragraph, " ")
+	text = projectGistLink.ReplaceAllString(text, "$1")
+	text = strings.NewReplacer("`", "", "**", "", "__", "", "*", "", "_", "", "~~", "").Replace(text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func projectMarkdownHeading(line string) (int, string) {
+	line = strings.TrimSpace(line)
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || (level < len(line) && line[level] != ' ') {
+		return 0, ""
+	}
+	return level, strings.TrimSpace(line[level:])
+}
+
+func oneLineGist(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // saveProjectsLocked writes projects.json atomically; callers hold d.projMu.
@@ -117,6 +233,7 @@ func (d *Daemon) handleProjects(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "path is not a directory", http.StatusBadRequest)
 			return
 		}
+		gist := deriveProjectGist(path)
 		d.projMu.Lock()
 		defer d.projMu.Unlock()
 		for _, p := range d.projects {
@@ -129,7 +246,7 @@ func (d *Daemon) handleProjects(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = filepath.Base(path)
 		}
-		p := Project{ID: newID(), Name: name, Path: path, CreatedAt: time.Now().UTC()}
+		p := Project{ID: newID(), Name: name, Path: path, Gist: gist, CreatedAt: time.Now().UTC()}
 		d.projects = append(d.projects, p)
 		if err := d.saveProjectsLocked(); err != nil {
 			http.Error(w, "save failed", http.StatusInternalServerError)
@@ -153,20 +270,38 @@ func (d *Daemon) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case sub == "" && r.Method == "PATCH":
 		var req struct {
-			Name string `json:"name"`
+			Name *string `json:"name"`
+			Gist *string `json:"gist"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Name == nil && req.Gist == nil) || (req.Name != nil && strings.TrimSpace(*req.Name) == "") {
+			http.Error(w, "name or gist is required", http.StatusBadRequest)
 			return
 		}
 		d.projMu.Lock()
+		found := false
 		for i := range d.projects {
 			if d.projects[i].ID == id {
-				d.projects[i].Name = strings.TrimSpace(req.Name)
+				if req.Name != nil {
+					d.projects[i].Name = strings.TrimSpace(*req.Name)
+				}
+				if req.Gist != nil {
+					d.projects[i].Gist = oneLineGist(*req.Gist)
+					d.projects[i].GistEdited = true
+				}
 				p = d.projects[i]
+				found = true
 			}
 		}
-		_ = d.saveProjectsLocked()
+		if !found {
+			d.projMu.Unlock()
+			http.NotFound(w, r)
+			return
+		}
+		if err := d.saveProjectsLocked(); err != nil {
+			d.projMu.Unlock()
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
 		d.projMu.Unlock()
 		writeJSON(w, http.StatusOK, p)
 	case sub == "" && r.Method == "DELETE":

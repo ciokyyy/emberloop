@@ -30,6 +30,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   10s minimum interval per upstream provider. `quota_test.go` covers cached
   reads, blocked-provider isolation, background failure isolation, the manual
   refresh interval and shared per-key lock.
+- Project metadata: `projects.go` derives a cached one-line gist from the root
+  `AGENTS.md` (else README), persists it with the Project, and preserves an
+  explicit gist edit across re-derivation; `projects_test.go` covers both
+  sources, cache refresh and edit precedence.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git

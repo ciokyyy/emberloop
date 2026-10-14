@@ -126,3 +126,126 @@ func TestProjectGitView(t *testing.T) {
 		t.Fatalf("escape = %d, want 400", code)
 	}
 }
+
+func TestProjectGistSourcesAreCachedAndRederived(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		file        string
+		content     string
+		updated     string
+		want        string
+		wantUpdated string
+		otherDocs   string
+	}{
+		{
+			name:        "agents takes precedence",
+			file:        "AGENTS.md",
+			content:     "# Example\n\n## Purpose\n\nThis project builds an **agent loop** for Go teams.\n\n## Tests\n\nIgnore this section.\n",
+			updated:     "# Example\n\n## Purpose\n\nUpdated project purpose for Go teams.\n",
+			want:        "This project builds an agent loop for Go teams.",
+			wantUpdated: "Updated project purpose for Go teams.",
+			otherDocs:   "# README\n\nREADME gist should lose to AGENTS.\n",
+		},
+		{
+			name:        "readme fallback",
+			file:        "README.md",
+			content:     "# Example\n\nThe README describes the application and its main purpose.\n\nMore details follow.\n",
+			updated:     "# Example\n\nThe README now describes its updated application purpose.\n",
+			want:        "The README describes the application and its main purpose.",
+			wantUpdated: "The README now describes its updated application purpose.",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state, projectPath := tempDir(t), tempDir(t)
+			write := func(name, content string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(projectPath, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(tt.file, tt.content)
+			if tt.otherDocs != "" {
+				write("README.md", tt.otherDocs)
+			}
+			d := NewDaemon(state, NewFakeBackend())
+			srv := httptest.NewServer(authedHandler(t, d))
+			defer srv.Close()
+			code, body := apiJSON(t, "POST", srv.URL+"/api/projects", map[string]string{"path": projectPath})
+			if code != http.StatusCreated {
+				t.Fatalf("create project = %d %s", code, body)
+			}
+			var created Project
+			if err := json.Unmarshal(body, &created); err != nil {
+				t.Fatal(err)
+			}
+			if created.Gist != tt.want || created.GistEdited {
+				t.Fatalf("created gist = %+v, want %q and unedited", created, tt.want)
+			}
+
+			stored, err := os.ReadFile(d.projectsFile())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cached []Project
+			if err := json.Unmarshal(stored, &cached); err != nil || len(cached) != 1 || cached[0].Gist != tt.want {
+				t.Fatalf("cached projects = %+v, err %v", cached, err)
+			}
+
+			write(tt.file, tt.updated)
+			d2 := NewDaemon(state, NewFakeBackend())
+			if len(d2.projects) != 1 || d2.projects[0].Gist != tt.wantUpdated {
+				t.Fatalf("rederived projects = %+v, want gist %q", d2.projects, tt.wantUpdated)
+			}
+		})
+	}
+}
+
+func TestEditedProjectGistWinsOverRederivation(t *testing.T) {
+	t.Parallel()
+	state, projectPath := tempDir(t), tempDir(t)
+	if err := os.WriteFile(filepath.Join(projectPath, "AGENTS.md"), []byte("## Purpose\n\nDerived gist.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(state, NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	code, body := apiJSON(t, "POST", srv.URL+"/api/projects", map[string]string{"path": projectPath})
+	if code != http.StatusCreated {
+		t.Fatalf("create project = %d %s", code, body)
+	}
+	var project Project
+	if err := json.Unmarshal(body, &project); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body = apiJSON(t, "PATCH", srv.URL+"/api/projects/"+project.ID, map[string]string{"gist": "Edited gist.\nStill one line."})
+	if code != http.StatusOK {
+		t.Fatalf("edit gist = %d %s", code, body)
+	}
+	var edited Project
+	if err := json.Unmarshal(body, &edited); err != nil {
+		t.Fatal(err)
+	}
+	if edited.Gist != "Edited gist. Still one line." || !edited.GistEdited {
+		t.Fatalf("edited project = %+v", edited)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "AGENTS.md"), []byte("## Purpose\n\nChanged derived gist.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d2 := NewDaemon(state, NewFakeBackend())
+	if len(d2.projects) != 1 || d2.projects[0].Gist != edited.Gist || !d2.projects[0].GistEdited {
+		t.Fatalf("edited gist was overwritten on reload: %+v", d2.projects)
+	}
+	srv2 := httptest.NewServer(authedHandler(t, d2))
+	defer srv2.Close()
+	code, body = apiJSON(t, "GET", srv2.URL+"/api/projects", nil)
+	var listed []Project
+	if err := json.Unmarshal(body, &listed); err != nil || code != http.StatusOK || len(listed) != 1 || listed[0].Gist != edited.Gist || !listed[0].GistEdited {
+		t.Fatalf("listed projects = %+v, code %d, err %v", listed, code, err)
+	}
+}
