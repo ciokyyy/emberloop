@@ -14,17 +14,21 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	el "example.com/emberloop-web/el"
 )
 
 // quotaStubState is the mutable stub behaviour.
 type quotaStubState struct {
-	mu          sync.Mutex
-	opencodePct int
-	opencodeErr bool
-	agyErr      bool
-	calls       int
+	mu              sync.Mutex
+	opencodePct     int
+	opencodeErr     bool
+	agyErr          bool
+	calls           int
+	opencodeStarted chan struct{}
+	opencodeBlock   <-chan struct{}
+	refreshDone     chan struct{}
 }
 
 func (s *quotaStubState) handler() http.Handler {
@@ -32,9 +36,19 @@ func (s *quotaStubState) handler() http.Handler {
 		s.mu.Lock()
 		s.calls++
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
+		opencodeStarted, opencodeBlock, refreshDone := s.opencodeStarted, s.opencodeBlock, s.refreshDone
 		s.mu.Unlock()
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage"):
+			if opencodeStarted != nil {
+				select {
+				case opencodeStarted <- struct{}{}:
+				default:
+				}
+			}
+			if opencodeBlock != nil {
+				<-opencodeBlock
+			}
 			if opencodeErr {
 				http.Error(w, "boom", http.StatusInternalServerError)
 				return
@@ -52,6 +66,9 @@ func (s *quotaStubState) handler() http.Handler {
 			             {"bucketId":"gemini-weekly","window":"weekly","resetTime":"2030-02-01T00:00:00Z","remainingFraction":0.75}]},
 			 {"buckets":[{"bucketId":"3p-5h","window":"5h","resetTime":"2030-01-01T00:00:00Z","remainingFraction":0.9},
 			             {"bucketId":"3p-weekly","window":"weekly","resetTime":"2030-02-01T00:00:00Z","remainingFraction":0.4}]}]}`))
+			if refreshDone != nil {
+				close(refreshDone)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -142,6 +159,65 @@ func getQuota(t *testing.T, base string) []quotaCard {
 	return out.Providers
 }
 
+func TestQuotaGetReturnsCachedDataBeforeBlockedRefresh(t *testing.T) {
+	blocked := make(chan struct{})
+	started := make(chan struct{}, 1)
+	done := make(chan struct{})
+	stub := &quotaStubState{
+		opencodePct:     72,
+		opencodeStarted: started,
+		opencodeBlock:   blocked,
+		refreshDone:     done,
+	}
+	base, stateDir := quotaEnv(t, stub, quotaAuth)
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(blocked) }) }
+	t.Cleanup(unblock)
+	cache := `{"fetched_at":1,"windows":[{"label":"5h","pct":41,"resets_at":1893456000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(cache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	start := time.Now()
+	resp, err := client.Get(base + "/api/quota")
+	if err != nil {
+		t.Fatalf("GET /api/quota did not return within 200ms: %v", err)
+	}
+	var out struct {
+		Providers []quotaCard `json:"providers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	elapsed := time.Since(start)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/quota status = %d", resp.StatusCode)
+	}
+	if elapsed >= 200*time.Millisecond {
+		t.Fatalf("cached GET /api/quota took %s, want under 200ms", elapsed)
+	}
+	cached := quotaByKey(t, out.Providers)["opencode-go"]
+	if cached.State != "ok" || len(cached.Windows) != 1 || cached.Windows[0].Pct != 41 || cached.UpdatedAt == 0 {
+		t.Fatalf("GET did not return the cached quota card: %+v", cached)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background quota refresh did not reach the upstream stub")
+	}
+	// The upstream remains blocked until after the cache response has arrived.
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background quota refresh did not finish after unblocking the stub")
+	}
+	t.Logf("cached GET /api/quota returned in %s while the upstream was blocked", elapsed)
+}
+
 func postQuotaRefresh(t *testing.T, base, key string) (int, []quotaCard) {
 	t.Helper()
 	var body *bytes.Reader
@@ -181,7 +257,9 @@ func TestQuotaGetAllProviders(t *testing.T) {
 	stub := &quotaStubState{opencodePct: 12}
 	base, stateDir := quotaEnv(t, stub, quotaAuth)
 	writeClaudeFile(t, stateDir, 10, 40)
-
+	if code, _ := postQuotaRefresh(t, base, "<empty>"); code != http.StatusOK {
+		t.Fatalf("initial refresh status = %d", code)
+	}
 	cards := getQuota(t, base)
 	if len(cards) != 4 {
 		t.Fatalf("providers = %d, want 4", len(cards))
@@ -235,7 +313,11 @@ func TestQuotaNotConfigured(t *testing.T) {
 func TestQuotaFailedFetchKeepsStaleCache(t *testing.T) {
 	stub := &quotaStubState{opencodePct: 50}
 	base, _ := quotaEnv(t, stub, quotaAuth)
-	seeded := quotaByKey(t, getQuota(t, base))["opencode-go"]
+	code, seededCards := postQuotaRefresh(t, base, "<empty>")
+	if code != http.StatusOK {
+		t.Fatalf("initial refresh status = %d", code)
+	}
+	seeded := quotaByKey(t, seededCards)["opencode-go"]
 	if seeded.State != "ok" || seeded.Windows[0].Pct != 50 {
 		t.Fatalf("seeded card = %+v", seeded)
 	}
@@ -265,7 +347,11 @@ func TestQuotaFailedFetchKeepsStaleCache(t *testing.T) {
 func TestQuotaRefreshForcesPastGuard(t *testing.T) {
 	stub := &quotaStubState{opencodePct: 12}
 	base, _ := quotaEnv(t, stub, quotaAuth)
-	if got := quotaByKey(t, getQuota(t, base))["opencode-go"]; got.Windows[0].Pct != 12 {
+	code, cards := postQuotaRefresh(t, base, "opencode-go")
+	if code != http.StatusOK {
+		t.Fatalf("initial refresh status = %d", code)
+	}
+	if got := quotaByKey(t, cards)["opencode-go"]; got.Windows[0].Pct != 12 {
 		t.Fatalf("seeded card = %+v", got)
 	}
 	stub.mu.Lock()
@@ -275,7 +361,7 @@ func TestQuotaRefreshForcesPastGuard(t *testing.T) {
 	if got := quotaByKey(t, getQuota(t, base))["opencode-go"]; got.Windows[0].Pct != 12 {
 		t.Fatalf("GET refetched inside the guard: %+v", got)
 	}
-	code, cards := postQuotaRefresh(t, base, "opencode-go")
+	code, cards = postQuotaRefresh(t, base, "opencode-go")
 	if code != http.StatusOK {
 		t.Fatalf("refresh status = %d", code)
 	}

@@ -1,11 +1,11 @@
 package web
 
-// Quota API for the browser UI's Quota tab: GET /api/quota returns every
-// provider's windows, state and update time; POST /api/quota/refresh with
-// an optional key forces a fresh fetch past the 90s age guard. Both share
-// the header panes' cache files and per-key lock through el, so N viewers
-// cause one upstream request. A failure keeps the stale cache with the
-// error text on that card; the page itself never fails.
+// Quota API for the browser UI's Quota tab: GET /api/quota returns the cache
+// immediately and starts a guarded refresh in the background. POST
+// /api/quota/refresh with an optional key forces a fresh synchronous fetch
+// past the 90s age guard. Both share the header panes' cache files and per-key
+// lock through el, so N viewers cause one upstream request. Fetch failures
+// keep the stale cache with error text; the page itself never fails.
 
 import (
 	"context"
@@ -16,8 +16,7 @@ import (
 	el "example.com/emberloop-web/el"
 )
 
-// quotaTimeout bounds the whole read: fetches never hold the response past
-// it, falling back to the stale cache instead.
+// quotaTimeout bounds both background cache refreshes and manual refreshes.
 const quotaTimeout = 25 * time.Second
 
 // quotaStateDir is the shared quota cache: the empty el default, the same
@@ -58,14 +57,24 @@ func (d *Daemon) handleQuotaRefresh(w http.ResponseWriter, r *http.Request) {
 	d.serveQuota(w, r, body.Key, true)
 }
 
-// serveQuota refreshes (guarded on page load, forced on manual refresh) and
-// answers the card list. The forced path skips the age guard on purpose: a
-// manual refresh must fetch really fresh data, and the per-key flock still
-// serializes concurrent refreshers into one upstream request.
+// serveQuota answers GET from the current cache and refreshes it in the
+// background. The forced path keeps POST /api/quota/refresh synchronous so
+// manual refresh callers receive the updated card list.
 func (d *Daemon) serveQuota(w http.ResponseWriter, r *http.Request, key string, force bool) {
+	if !force {
+		now := time.Now()
+		writeJSON(w, http.StatusOK, quotaResponse{Providers: el.QuotaSnapshot(quotaStateDir, now, nil)})
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), quotaTimeout)
+			defer cancel()
+			el.RefreshQuota(ctx, quotaStateDir, key, time.Now(), false)
+		}()
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), quotaTimeout)
 	defer cancel()
 	now := time.Now()
-	errs := el.RefreshQuota(ctx, quotaStateDir, key, now, force)
+	errs := el.RefreshQuota(ctx, quotaStateDir, key, now, true)
 	writeJSON(w, http.StatusOK, quotaResponse{Providers: el.QuotaSnapshot(quotaStateDir, now, errs)})
 }
