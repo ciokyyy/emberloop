@@ -671,11 +671,25 @@ func TestQueuedMessagesMergeIntoOne(t *testing.T) {
 	}
 
 	close(stub.blockPrompt)
-	events := readSSE(t, srv.URL, id, 0, 7, 10*time.Second)
-	stub.mu.Lock()
-	prompts := append([]string{}, stub.prompts...)
-	stub.mu.Unlock()
+	// Wait for the adapter to receive the merged message before reading the
+	// event stream; queued delivery can lag behind the first seven events.
 	want := "go left\n\nthen test\n\nand lint"
+	deadline := time.Now().Add(5 * time.Second)
+	var prompts []string
+	for {
+		stub.mu.Lock()
+		prompts = append([]string(nil), stub.prompts...)
+		stub.mu.Unlock()
+		if len(prompts) >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("adapter prompts after queued delivery timeout = %q, want merged prompt %q", prompts, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	eventCount := len(getSession(t, srv.URL, id).Events)
+	events := readSSE(t, srv.URL, id, 0, eventCount, 10*time.Second)
 	if len(prompts) != 2 || prompts[1] != want {
 		t.Fatalf("adapter prompts = %q, want [slow job %q]", prompts, want)
 	}
