@@ -159,8 +159,16 @@ func TestMergeCheckedBranchKeepsRebaseConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MergeCheckedBranch: %v", err)
 	}
-	if !strings.Contains(kept, "rebase onto main conflicted") {
-		t.Fatalf("kept = %q, want the rebase conflict", kept)
+	if !strings.Contains(kept, "rebase onto main conflicted in a.txt") {
+		t.Fatalf("kept = %q, want the rebase conflict naming a.txt", kept)
+	}
+	// The refusal tells the Worker to redo the rebase and resolve it itself;
+	// a bare "branch unchanged" read as a status and the Worker resubmitted
+	// done unchanged until the same-refusal alert fired.
+	for _, want := range []string{"`git rebase main`", "`git rebase --continue`", "submit done again"} {
+		if !strings.Contains(kept, want) {
+			t.Fatalf("kept = %q, want the resolve instruction %q", kept, want)
+		}
 	}
 	if got := gitRun(t, repo, "rev-parse", "implement/w"); got != before {
 		t.Fatalf("branch moved to %q, want it unchanged at %q", got, before)

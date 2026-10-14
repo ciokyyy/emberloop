@@ -1583,13 +1583,7 @@ func MergeCheckedBranch(run Exec, repo, worktree, branch, onto, head, dirtyAdvic
 			files = strings.Join(strings.Fields(u.Stdout), ", ")
 		}
 		_, _ = run("git", []string{"rebase", "--abort"}, ExecOpts{Cwd: worktree})
-		detail := "rebase onto " + onto + " conflicted"
-		if files != "" {
-			detail += " in " + files
-		} else {
-			detail += ": " + gitFullText(res.Stderr, "rebase failed")
-		}
-		return "", detail + "; the rebase was aborted, the branch is unchanged", nil
+		return "", RebaseConflictRefusal(onto, files, gitFullText(res.Stderr, "rebase failed")), nil
 	}
 
 	// The fast-forward lands on whatever the repo has checked out, so that
@@ -1749,4 +1743,24 @@ func gitFullText(text, fallback string) string {
 		return trimmed
 	}
 	return fallback
+}
+
+// RebaseConflictRefusal is the refusal a Worker gets when its done submit
+// cannot rebase onto onto. files lists the conflicted paths (comma joined,
+// empty when git named none); failure is git's text for that case. The
+// rebase is already aborted, so the text tells the Worker to redo it in its
+// own worktree and resolve the conflicts itself: a bare "branch unchanged"
+// reads as a status, and a Worker that resubmits done unchanged trips the
+// same-refusal needs-you alert.
+func RebaseConflictRefusal(onto, files, failure string) string {
+	detail := "rebase onto " + onto + " conflicted"
+	if files != "" {
+		detail += " in " + files
+	} else {
+		detail += ": " + failure
+	}
+	return detail + "; the rebase was aborted, the branch is unchanged and is not merged. " +
+		"Resolve it yourself in your worktree: run `git rebase " + onto + "`, edit each conflicted file so it keeps the intent of both sides, " +
+		"`git add` it, run `git rebase --continue` until the rebase finishes, rerun the check, then submit done again. " +
+		"Submitting done without rebasing gets this same refusal."
 }

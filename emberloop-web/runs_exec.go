@@ -3545,13 +3545,7 @@ func (d *Daemon) mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, t
 			files = strings.Join(strings.Fields(u), ", ")
 		}
 		_, _ = runGit(worktree, "rebase", "--abort")
-		detail := "rebase onto " + specBranch + " conflicted"
-		if files != "" {
-			detail += " in " + files
-		} else {
-			detail += ": " + strings.TrimSpace(strings.Replace(err.Error(), "\n", " ", -1))
-		}
-		return "", detail + "; the rebase was aborted, the branch is unchanged", nil
+		return "", el.RebaseConflictRefusal(specBranch, files, strings.TrimSpace(strings.Replace(err.Error(), "\n", " ", -1))), nil
 	}
 	sha, kept, err = ffUpdateSpecBranch(repo, branch, specBranch, ticketID)
 	if err != nil || kept != "" {

@@ -56,7 +56,9 @@ durable boundaries with their own docs. File map (non-test file owns its
   `DriverWorld`: ticket graph, start order, reviewer gate at the tip,
   stall nudges and needs-you, park/discard, checkbox ticks, the plain
   report; plus the web driver's file ops `TickDriverTicketFile`,
-  `MarkDriverTicketDone`, `MergeCheckedBranch`, the worker id `WorkerID`,
+  `MarkDriverTicketDone`, `MergeCheckedBranch`, the rebase-conflict refusal
+  `RebaseConflictRefusal` (both merge paths send it; it tells the Worker to
+  redo the rebase in its worktree and resolve it), the worker id `WorkerID`,
   and the reviewer vocabulary), `driver_run.go` (the shared run state
   `DriverRun`, published every pass; `ParkDriverTicketFile` is the park
   command), `ticketview.go` (the Runs preview surface: per-ticket title,

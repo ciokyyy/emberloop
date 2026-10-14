@@ -38,7 +38,9 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `runs_toolactive_test.go` (in-flight tool calls date worker activity up to
   a cap), `runs_starttree_test.go` (stale branch and worktree reuse or
   Needs-you), `runs_final_test.go`, `runs_markdone_basered_test.go`,
-  `runs_overlap_test.go` and `runs_stopsubmit_test.go` cover Run seams.
+  `runs_overlap_test.go`, `runs_stopsubmit_test.go` and
+  `runs_merge_conflict_test.go` (a done submit's spec-branch rebase conflict
+  refuses with `el.RebaseConflictRefusal`) cover Run seams.
   Base and tip checks (`runRepoCheckAtTip`, `runs_checkspeed_test.go`) run
   `.emberloop/check` in one reused, cleaned worktree per repo
   (`.el-worktrees/.check`, one check at a time), so Go caches hit. A base
