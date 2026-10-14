@@ -4,8 +4,8 @@
 
 **Blocked by:** 21-non-blocking-boot (Project scope depends on Speed)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A Dashboard endpoint returns running and needs-you Sessions and Runs grouped by Project id; idle history is absent
-- [ ] Runs map to the deepest containing Project; home-directory Sessions map to `none`
-- [ ] Go tests at the HTTP seam cover grouping, the filter and `none`; repo check passes
+- [x] A Dashboard endpoint returns running and needs-you Sessions and Runs grouped by Project id; idle history is absent
+- [x] Runs map to the deepest containing Project; home-directory Sessions map to `none`
+- [x] Go tests at the HTTP seam cover grouping, the filter and `none`; repo check passes
