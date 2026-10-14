@@ -380,6 +380,11 @@ func TestRunListIsBoundedWithManyRuns(t *testing.T) {
 		if len(out.Runs) != runCount {
 			t.Fatalf("runs = %d, want %d", len(out.Runs), runCount)
 		}
+		for idx, summary := range out.Runs {
+			if want := fmt.Sprintf("run-%03d", idx); summary.ID != want {
+				t.Fatalf("runs[%d].id = %q, want %q", idx, summary.ID, want)
+			}
+		}
 		if i >= 2 {
 			samples = append(samples, elapsed)
 		}

@@ -78,7 +78,7 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/DrawerNav.svelte` — phone drawer tab row switching the app area (44px-plus targets, active pill)
 - `src/lib/Rail.svelte` — narrow icon rail with the sliding active pill plus the rail-2 collapse toggle in its header
 - `src/lib/OwnerGroups.svelte` — sidebar Session list: filter chips Mine, Everyone and Project (persisted `eb.owner-filter` and `eb.owner-project`; the Project picker uses `ui/select.svelte`); one collapsible group per User, own group first and open, others collapsed with a count and an online dot (`eb.owners-collapsed`); the group's left bar takes its owner color (`--owner-1` to `--owner-6` in `app.css`)
-- `src/lib/owners.js` — pure owner grouping: `buildOwnerGroups` (groups, then Project sections, then tree roots with Runs and Subagents), `runRow` (a Run as a row), `dotState` (status dot), `ownerTone` (palette slot by account order), `projectIdForPath`
+- `src/lib/owners.js` — pure owner grouping: `buildOwnerGroups` (groups, then Project sections, then tree roots with Runs and Subagents), `runRow` (maps Run summary counts and Project id into a sidebar row), `dotState` (status dot), `ownerTone` (palette slot by account order), `projectIdForPath`
 - `src/lib/people.svelte.js` — the account list from `GET /api/users` (`people`, `refreshPeople`, `personFor`); a failed refresh keeps the last good list
 - `src/lib/UserAvatar.svelte` — a User's initial on its owner color, with a green dot while the User is online
 - `src/lib/ProjectList.svelte` — one User group's Project sections: collapsible headers (persisted `eb.projects-collapsed`, keyed by User and Project), hover rename and remove, `+` starts a draft chat there; a chat filter force-opens every section

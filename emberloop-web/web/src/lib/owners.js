@@ -26,15 +26,16 @@ export function projectIdForPath(projects = [], path = '') {
 // Row for a Run. A Run has no Session: its Worker and Reviewer Sessions name it
 // as parentId, so they nest under this row.
 export function runRow(run = {}, projects = []) {
+  const specParts = String(run.spec ?? '').split('/').filter(Boolean);
   return {
     id: run.id,
     kind: 'run',
-    title: run.title || run.spec || run.id,
+    title: run.title || specParts.at(-2) || run.spec || run.id,
     harness: run.harness ?? '',
     status: run.status ?? '',
-    needsYou: (run.tickets ?? []).some((t) => !!t.needsYou),
+    needsYou: (run.counts?.needsYou ?? 0) > 0,
     owner: run.owner ?? '',
-    projectId: projectIdForPath(projects, run.repo),
+    projectId: run.projectId || projectIdForPath(projects, run.repo),
   };
 }
 

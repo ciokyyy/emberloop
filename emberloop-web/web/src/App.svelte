@@ -197,18 +197,6 @@
   }
   const sessionsById = $derived(Object.fromEntries(sessions.map((s) => [s.id, s])));
 
-  // The main chat sidebar only needs each Run's label, owner, Project and
-  // needs-you signal. Adapt summary counts there without retaining Ticket data.
-  const ownerRuns = $derived(runs.map((run) => {
-    const project = projects.find((p) => p.id === run.projectId);
-    const specParts = String(run.spec ?? '').split('/').filter(Boolean);
-    return {
-      ...run,
-      title: specParts.at(-2) || run.id,
-      repo: project?.path ?? run.repo,
-      tickets: run.counts?.needsYou > 0 ? [{ needsYou: true }] : [],
-    };
-  }));
   // Grouping memoizes the settled prefix: a chunk burst only replaces the
   // tail block, so settled cards keep their object identity (no re-render,
   // no re-measure, no restarted entrance animation). The caches live outside
@@ -779,7 +767,7 @@
         <Button variant="ghost" size="icon-sm" class="size-6" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }} aria-label="Add project"><FolderPlus class="size-3.5" /></Button>
       </div>
       <div class="min-h-0 flex-1 overflow-auto">
-        <OwnerGroups users={people.list} me={user} {sessions} runs={ownerRuns} {projects} {currentId} {activeProjectId} query={chatQuery} onSelect={openRow} onNew={startDraft} onRename={rename} onRemove={remove} />
+        <OwnerGroups users={people.list} me={user} {sessions} {runs} {projects} {currentId} {activeProjectId} query={chatQuery} onSelect={openRow} onNew={startDraft} onRename={rename} onRemove={remove} />
       </div>
     {/if}
   </div>

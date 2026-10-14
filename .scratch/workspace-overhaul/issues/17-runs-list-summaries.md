@@ -9,6 +9,7 @@
 - [x] `GET /api/runs`, Run-list render and cold boot are measured BEFORE any change; the numbers are recorded in this ticket
   Baseline (before implementation): `GET /api/runs` p50 2.53s (5 timed requests after 2 warmups) for a fixture of 40 Runs × 8 Tickets; Vitest/jsdom list render 226.4ms for 40 Runs; cold boot to the Runs sidebar shell 516.2ms and to all 40 rows 610.7ms. The UI measurements use the same 40-Run, 8-Ticket fixture.
   After summaries: `GET /api/runs` p50 548.8µs, p95 833.1µs (5 timed requests after 2 warmups) for the same 40-Run, 8-Ticket fixture; every request stayed under the 750ms test bound.
+  After UI (Vitest/jsdom, 5 timed trials after 2 warmups, same 40-Run × 8-Ticket fixture): Run-list render p50 192.5ms; cold boot to the Runs sidebar shell p50 170.3ms and to all 40 rows 369.7ms.
 - [x] `GET /api/runs` returns the summary shape; a per-Run endpoint returns Ticket bodies and acceptance text
 - [x] The Runs sidebar and Runs page render from summaries and load detail when a Run opens
 - [x] Go tests at the `/api/runs` seam cover the summary shape and the detail endpoint; a bounded-time test runs on a fixture with many Runs

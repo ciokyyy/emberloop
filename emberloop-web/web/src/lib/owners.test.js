@@ -43,12 +43,13 @@ describe('Run rows', () => {
     expect(projectIdForPath(projects, '')).toBe('');
   });
 
-  it('turn a Run into a Run-kind row, needs-you when any ticket asks', () => {
+  it('turns a Run summary into a Run-kind row with needs-you count and Project id', () => {
     const row = runRow(
-      { id: 'r1', spec: 'specs/x/spec.md', owner: 'u-cioky', repo: '/src/emberloop', status: 'running', tickets: [{ needsYou: '' }, { needsYou: 'conflict' }] },
+      { id: 'r1', spec: 'specs/x/spec.md', owner: 'u-cioky', projectId: 'p-emb', status: 'running', counts: { total: 2, needsYou: 1 } },
       projects,
     );
-    expect(row).toMatchObject({ id: 'r1', kind: 'run', title: 'specs/x/spec.md', projectId: 'p-emb', needsYou: true });
+    expect(row).toMatchObject({ id: 'r1', kind: 'run', title: 'x', projectId: 'p-emb', needsYou: true });
+    expect(row).not.toHaveProperty('tickets');
   });
 });
 

@@ -622,12 +622,7 @@ func (d *Daemon) handleRuns(w http.ResponseWriter, r *http.Request) {
 				runs = append(runs, summary)
 			}
 		}
-		sort.Slice(runs, func(i, j int) bool {
-			if runs[i].UpdatedAt.Equal(runs[j].UpdatedAt) {
-				return runs[i].ID < runs[j].ID
-			}
-			return runs[i].UpdatedAt.After(runs[j].UpdatedAt)
-		})
+		sort.Slice(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
 		writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 	case "POST":
 		d.createRun(w, r)
