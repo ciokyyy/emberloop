@@ -69,7 +69,7 @@ var (
 	claudeVersionValue  string
 )
 
-var claudeVersionPattern = regexp.MustCompile(`(?:^|[^0-9])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)`)
+var claudeVersionSegmentPattern = regexp.MustCompile(`^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$`)
 
 func claudeCodeVersion() string {
 	claudeVersionMu.Lock()
@@ -114,7 +114,27 @@ func findClaudeCodeBinary() string {
 }
 
 func parseClaudeCodeVersionPath(path string) string {
-	match := claudeVersionPattern.FindStringSubmatch(filepath.ToSlash(path))
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(path)), "/")
+	for i, part := range parts {
+		if part == "claude-code" && i+1 < len(parts) {
+			if version := parseClaudeCodeVersionSegment(parts[i+1]); version != "" {
+				return version
+			}
+		}
+		if part == "versions" && i > 0 && parts[i-1] == "claude" && i+1 < len(parts) {
+			if version := parseClaudeCodeVersionSegment(parts[i+1]); version != "" {
+				return version
+			}
+		}
+	}
+	if len(parts) > 0 {
+		return parseClaudeCodeVersionSegment(parts[len(parts)-1])
+	}
+	return ""
+}
+
+func parseClaudeCodeVersionSegment(segment string) string {
+	match := claudeVersionSegmentPattern.FindStringSubmatch(segment)
 	if len(match) != 2 {
 		return ""
 	}

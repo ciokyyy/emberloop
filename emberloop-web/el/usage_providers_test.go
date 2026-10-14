@@ -241,9 +241,23 @@ func TestClaudeRetryAfterAndCredentialTimestamps(t *testing.T) {
 	}
 }
 
+func TestParseClaudeCodeVersionPathUsesClaudeVersionSegment(t *testing.T) {
+	for path, want := range map[string]string{
+		"/opt/2.0.1/node/v20.11.0/bin/claude":                             "",
+		"/opt/2.0.1/claude/versions/2.1.42/bin/claude":                    "2.1.42",
+		"/opt/2.0.1/node_modules/@anthropic-ai/claude-code/2.1.42/cli.js": "2.1.42",
+		"/opt/2.0.1/node_modules/@anthropic-ai/claude-code/cli.js":        "",
+		"/opt/2.0.1/2.1.42": "2.1.42",
+	} {
+		if got := parseClaudeCodeVersionPath(path); got != want {
+			t.Errorf("parseClaudeCodeVersionPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func TestClaudeVersionUsesInstalledPathOrFallback(t *testing.T) {
 	root := t.TempDir()
-	versionDir := filepath.Join(root, "versions", "2.1.42")
+	versionDir := filepath.Join(root, "claude", "versions", "2.1.42")
 	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
