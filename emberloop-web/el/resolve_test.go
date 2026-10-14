@@ -3,6 +3,7 @@ package el
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"example.com/emberloop-web/el/tools"
@@ -137,6 +138,43 @@ func TestReadDriverTicketsSkipsSpecFiles(t *testing.T) {
 	}
 	if _, ok := tickets["01-first"]; !ok {
 		t.Errorf("tickets = %v, want 01-first", tickets)
+	}
+}
+
+// A spec with no issues/ directory reads tickets beside the spec, where the
+// directory doc lives. AGENTS.md, CLAUDE.md and README.md are never tickets:
+// with real tickets they are skipped, and alone they leave "no tickets", not
+// "has no ticket number".
+func TestTicketScansSkipDirectoryDocs(t *testing.T) {
+	dir := filepath.Join(".scratch", "x")
+	spec := filepath.Join(dir, "spec.md")
+	run := SpecRun{Spec: spec, Tickets: dir, Branch: "spec/x"}
+	docs := map[string]string{
+		spec:                            "# Spec\n",
+		filepath.Join(dir, "AGENTS.md"): "# AGENTS.md\n",
+		filepath.Join(dir, "CLAUDE.md"): "@AGENTS.md\n",
+		filepath.Join(dir, "README.md"): "# Readme\n",
+		filepath.Join(dir, "readme.md"): "# readme\n",
+	}
+	if _, err := readDriverTickets(run, docs); err == nil || !strings.Contains(err.Error(), "no tickets under") {
+		t.Fatalf("docs only: err = %v, want no tickets under %s", err, dir)
+	}
+	if got := PreviewTickets(run, docs); len(got) != 0 {
+		t.Fatalf("docs only: preview = %+v, want no rows", got)
+	}
+	files := map[string]string{filepath.Join(dir, "01-first.md"): "# 01: First\n\n**Blocked by:** None\n"}
+	for k, v := range docs {
+		files[k] = v
+	}
+	tickets, err := readDriverTickets(run, files)
+	if err != nil {
+		t.Fatalf("readDriverTickets: %v", err)
+	}
+	if len(tickets) != 1 || tickets["01-first"] == nil {
+		t.Fatalf("tickets = %v, want only 01-first", tickets)
+	}
+	if got := PreviewTickets(run, files); len(got) != 1 || got[0].ID != "01-first" || got[0].Error != "" {
+		t.Fatalf("preview = %+v, want one clean 01-first row", got)
 	}
 }
 

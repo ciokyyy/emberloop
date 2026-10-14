@@ -23,8 +23,11 @@ durable boundaries with their own docs. File map (non-test file owns its
   caveman plugin skill, byte for byte, at ultra; plus the per-turn reminder,
   `el voice-reminder`), `models.go` (harness model listings through the Exec
   seam, with a cache; served by `el settings models`), `resolve.go` (spec
-  resolution: `SpecRun`, `ResolveSpec`, `IsSpecFileName`, the per-spec ticket
-  cap `MaxTicketsForSpec`, and the small frontmatter reader), `stopgate.go`
+  resolution: `SpecRun`, `ResolveSpec`, `IsSpecFileName`,
+  `IsNotTicketFileName` (spec files and `AGENTS.md`/`CLAUDE.md`/`README.md`
+  are never tickets, so a spec with no `issues/` keeps its doc beside it),
+  the per-spec ticket cap `MaxTicketsForSpec`, and the small frontmatter
+  reader), `stopgate.go`
   (the shared stop-gate decision `DecideGate` over `GateInput`, applied by
   the web Daemon; the `stop-gate`/`pig-gate` CLI hooks are gone),
   `agentstate.go` (the agent record the usage tailer reads for the current

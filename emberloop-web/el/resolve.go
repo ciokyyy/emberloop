@@ -60,6 +60,23 @@ func IsSpecFileName(name string) bool {
 	return base == "spec.md" || (strings.HasPrefix(base, "spec-") && strings.HasSuffix(base, ".md"))
 }
 
+// IsNotTicketFileName reports whether a markdown file in a tickets directory
+// is never a ticket: a spec file (IsSpecFileName) or a directory doc
+// (AGENTS.md, CLAUDE.md, README.md, any case). A spec with no issues/
+// directory reads tickets beside the spec, where the DOX contract puts an
+// AGENTS.md; without this skip that doc fails the Run as a ticket with no
+// ticket number.
+func IsNotTicketFileName(name string) bool {
+	if IsSpecFileName(name) {
+		return true
+	}
+	switch strings.ToLower(filepath.Base(name)) {
+	case "agents.md", "claude.md", "readme.md":
+		return true
+	}
+	return false
+}
+
 // SpecMaxTickets reads a spec file's per-spec ticket cap from its frontmatter
 // max_tickets key (max_agents is the pre-rename alias). It reports false when
 // the file cannot be read, has no frontmatter, or sets no positive cap, so

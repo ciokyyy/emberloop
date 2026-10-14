@@ -84,7 +84,7 @@ func PreviewTickets(spec SpecRun, files map[string]string) []TicketPreview {
 	dir := filepath.Clean(spec.Tickets)
 	var paths []string
 	for path := range files {
-		if path == spec.Spec || IsSpecFileName(path) {
+		if path == spec.Spec || IsNotTicketFileName(path) {
 			continue
 		}
 		if filepath.Dir(filepath.Clean(path)) != dir || !strings.HasSuffix(path, ".md") {

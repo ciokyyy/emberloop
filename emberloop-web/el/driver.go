@@ -1083,7 +1083,7 @@ func readDriverTickets(spec SpecRun, files map[string]string) (map[string]*Drive
 		if filepath.Dir(filepath.Clean(path)) != dir || !strings.HasSuffix(path, ".md") {
 			continue
 		}
-		if path == spec.Spec || IsSpecFileName(path) {
+		if path == spec.Spec || IsNotTicketFileName(path) {
 			continue
 		}
 		paths = append(paths, path)
