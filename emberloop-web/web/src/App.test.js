@@ -25,6 +25,165 @@ describe('Runs navigation', () => {
     expect(await within(container).findByText(/repo directory/i)).toBeTruthy();
   });
 });
+describe('Non-blocking boot', () => {
+  beforeEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    history.replaceState(null, '', '/');
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  const response = (body) => ({ ok: true, json: async () => body });
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const fakeEvents = () => class {
+    static instances = [];
+    constructor(url) {
+      this.url = String(url);
+      this.constructor.instances.push(this);
+    }
+    close() {}
+  };
+
+  it('renders the home shell while Session and Run lists are still loading', async () => {
+    history.replaceState(null, '', '/');
+    localStorage.clear();
+    const sessions = deferred();
+    const runs = deferred();
+    const fetchMock = vi.fn((url) => {
+      const path = String(url);
+      if (path.endsWith('/api/sessions')) return sessions.promise.then(response);
+      if (path.endsWith('/api/runs')) return runs.promise.then(response);
+      return Promise.resolve(response(path.endsWith('/api/specs') ? { specs: [] } : []));
+    });
+    vi.stubGlobal('EventSource', fakeEvents());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(App);
+    expect(await within(container).findByTestId('sidebar')).toBeTruthy();
+    expect(within(container).getByTestId('sessions-loading').textContent).toContain('Loading Sessions');
+    await vi.waitFor(() => {
+      const paths = fetchMock.mock.calls.map(([url]) => String(url));
+      expect(paths.some((path) => path.endsWith('/api/sessions'))).toBe(true);
+      expect(paths.some((path) => path.endsWith('/api/runs'))).toBe(true);
+    });
+
+    expect(within(container).getByTestId('header-title').textContent).toContain('No Session');
+
+    sessions.resolve([]);
+    runs.resolve({ runs: [] });
+    await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
+  });
+  it('keeps a direct Session open when the Session list races ahead of its detail', async () => {
+    history.replaceState(null, '', '/s/s1');
+    localStorage.clear();
+    const detail = deferred();
+    const fetchMock = vi.fn((url) => {
+      const path = String(url);
+      if (path === '/api/sessions') return Promise.resolve(response([]));
+      if (path.startsWith('/api/sessions/s1')) return detail.promise.then(response);
+      return Promise.resolve(response(path.endsWith('/api/specs') ? { specs: [] } : []));
+    });
+    vi.stubGlobal('EventSource', fakeEvents());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(App);
+    expect(await within(container).findByTestId('sessions-loading')).toBeTruthy();
+    await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
+    detail.resolve({
+      session: { id: 's1', harness: 'fake', model: 'fake-model', title: 'Loaded Session' },
+      events: [], resumable: true, hasMore: false, firstSeq: 0,
+    });
+    await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('Loaded Session'));
+    expect(within(container).queryByTestId('session-missing')).toBeNull();
+  });
+
+
+  it('renders Quota before its own read finishes without fetching either list', async () => {
+    history.replaceState(null, '', '/quota');
+    localStorage.clear();
+    const quota = deferred();
+    const fetchMock = vi.fn((url) => {
+      const path = String(url);
+      if (path.endsWith('/api/quota')) return quota.promise.then(response);
+      return Promise.resolve(response(path.endsWith('/api/projects') ? [] : {}));
+    });
+    const EventSource = fakeEvents();
+    vi.stubGlobal('EventSource', EventSource);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(App);
+    const page = within(container).getByTestId('quota-page');
+    expect(within(page).getByRole('heading', { name: 'Quota' })).toBeTruthy();
+    expect(within(page).getByLabelText('Loading quota')).toBeTruthy();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/quota'));
+    const normalStream = EventSource.instances.find((stream) => !stream.url.includes('topic=quota'));
+    expect(normalStream).toBeTruthy();
+    normalStream.onmessage({ data: 'hello' });
+    await Promise.resolve();
+    const paths = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(paths.some((path) => path.endsWith('/api/sessions'))).toBe(false);
+    expect(paths.some((path) => path.endsWith('/api/runs'))).toBe(false);
+
+    quota.resolve({ providers: [] });
+    await vi.waitFor(() => expect(within(page).queryByLabelText('Loading quota')).toBeNull());
+  });
+
+  it('renders Runs and its loading state before the Run summary arrives', async () => {
+    history.replaceState(null, '', '/runs');
+    localStorage.clear();
+    const runs = deferred();
+    const fetchMock = vi.fn((url) => {
+      const path = String(url);
+      if (path.endsWith('/api/runs')) return runs.promise.then(response);
+      return Promise.resolve(response(path.endsWith('/api/specs') ? { specs: [] } : []));
+    });
+    vi.stubGlobal('EventSource', fakeEvents());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(App);
+    expect(within(container).getByRole('heading', { name: 'Runs' })).toBeTruthy();
+    const sidebar = await within(container).findByTestId('runs-sidebar');
+    expect(within(sidebar).getByText('Loading Runs…')).toBeTruthy();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/runs'));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/sessions'))).toBe(false);
+
+    runs.resolve({ runs: [] });
+    expect(await within(sidebar).findByText('No Runs yet.')).toBeTruthy();
+  });
+  it('renders all 40 Run summaries after the cold Runs shell', async () => {
+    history.replaceState(null, '', '/runs');
+    localStorage.clear();
+    const summaries = Array.from({ length: 40 }, (_, i) => ({
+      id: `boot-${i}`,
+      spec: `/repo/.scratch/boot-${i}/spec.md`,
+      status: 'done',
+      updatedAt: `2026-10-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+      counts: { total: 8, merged: 8, needsYou: 0 },
+    }));
+    vi.stubGlobal('EventSource', fakeEvents());
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      return response(path.endsWith('/api/runs') ? { runs: summaries } : path.endsWith('/api/specs') ? { specs: [] } : []);
+    }));
+
+    const started = performance.now();
+    const { container } = render(App);
+    const sidebar = await within(container).findByTestId('runs-sidebar');
+    const shellMs = performance.now() - started;
+    expect(await within(sidebar).findByRole('button', { name: /boot-39.*8\/8/ })).toBeTruthy();
+    const listMs = performance.now() - started;
+    expect(sidebar.querySelectorAll('ul button')).toHaveLength(40);
+    if (process.env.EL_BOOT_BENCH === '1') {
+      console.info(`COLD_BOOT_BENCH shell=${shellMs.toFixed(1)}ms rows40=${listMs.toFixed(1)}ms`);
+    }
+  });
+});
+
 
 describe('Header', () => {
   it('shows a compact Live dot, and Reconnecting text only when disconnected', async () => {

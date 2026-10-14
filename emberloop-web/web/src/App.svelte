@@ -44,6 +44,7 @@
   const sounds = soundPlayer();
 
   let sessions = $state([]);
+  let sessionsLoaded = $state(false);
   let currentId = $state(null);
   let meta = $state(null);
   let events = $state([]);
@@ -51,8 +52,6 @@
   let connected = $state(true);
   let projects = $state([]);
   let runs = $state([]);
-  const stopRuns = runsStore.subscribe((value) => { runs = value; });
-  onDestroy(stopRuns);
   let draftProjectId = $state(null);
   let addOpen = $state(false);
   let adding = $state(false);
@@ -106,7 +105,23 @@
   const activeProject = $derived(projects.find((p) => p.id === activeProjectId) ?? null);
   const drafting = $derived(!currentId && !!draftProjectId);
   const creatorName = $derived(meta?.owner ? (personFor(meta.owner)?.username ?? meta.owner.slice(0, 8)) : '');
-  let view = $state('chat');
+  const initialPath = window.location.pathname + window.location.search;
+  const initialRoute = parsePath(initialPath);
+  let view = $state(
+    ['runs', 'run', 'ticket'].includes(initialRoute.name) ? 'runs' :
+      initialRoute.name === 'settings' ? 'settings' :
+        initialRoute.name === 'quota' ? 'quota' :
+          initialRoute.name === 'memory' ? 'memory' : 'chat',
+  );
+  $effect(() => {
+    // Keep the shared Run-list request alive while moving between its two
+    // consumers; global pages should not load summaries they never display.
+    if (view !== 'chat' && view !== 'runs') {
+      runs = [];
+      return;
+    }
+    return runsStore.subscribe((value) => { runs = value; });
+  });
   // Rail 2 for Settings: jump to a section by its heading.
   let settingsSections = $state([]);
   $effect(() => {
@@ -233,9 +248,10 @@
   let firstSeq = $state(0);
   let loadingEarlier = $state(false);
   let sessionMissing = $state(false);
-  let runId = $state(null);
-  let ticketId = $state(null);
+  let runId = $state(initialRoute.runId ?? null);
+  let ticketId = $state(initialRoute.ticketId ?? null);
   let atSeq = $state(0);
+  let homeRouteLoading = false;
   let openToken = 0;
 
   const goSession = (id) => navigate(buildPath({ name: 'session', id }));
@@ -282,6 +298,7 @@
       return;
     }
     if (r.name === 'session') {
+      void refresh();
       if (r.id !== currentId) return openSession(r.id, { at: r.at ?? 0 });
       if (r.at) atSeq = r.at;
       view = 'chat';
@@ -290,6 +307,17 @@
     // Home: a draft stays, otherwise the last viewed Session else newest.
     if (draftProjectId) {
       view = 'chat';
+      return;
+    }
+    if (!sessionsLoaded) {
+      view = 'chat';
+      if (!homeRouteLoading) {
+        homeRouteLoading = true;
+        void refresh().then(() => {
+          homeRouteLoading = false;
+          if (window.location.pathname + window.location.search === path) void applyRoute(path);
+        });
+      }
       return;
     }
     let id = null;
@@ -400,9 +428,11 @@
   async function refresh() {
     try {
       sessions = await listSessions();
+      sessionsLoaded = true;
       // A deleted Session never opens something random: flag it instead.
-      if (currentId && !sessionMissing && !sessions.some((s) => s.id === currentId)) sessionMissing = true;
+      if (currentId && meta?.id === currentId && !sessionMissing && !sessions.some((s) => s.id === currentId)) sessionMissing = true;
     } catch {
+      sessionsLoaded = true;
       loadError = 'Daemon unreachable. Start it and reload.';
     }
   }
@@ -648,7 +678,10 @@
   // The sidebar follows the Daemon: new, spawned, finished and ended Sessions
   // appear without a reload. The router owns the initial open, so refresh
   // never auto-opens here.
-  watch('sessions', () => refresh());
+  watch('sessions', (topic) => {
+    if (view !== 'chat' || (topic === 'hello' && !sessionsLoaded)) return;
+    void refresh();
+  });
   watch('users', () => refreshPeople());
   watch('disk', () => refreshDisk());
   refreshDisk();
@@ -718,12 +751,10 @@
     onDestroy(() => navigator.serviceWorker?.removeEventListener('message', onSwMessage));
   }
 
-  // Boot from the URL: sessions first (home falls back to newest), then route.
-  (async () => {
-    void refreshPeople();
-    await refresh();
-    await applyRoute(window.location.pathname + window.location.search);
-  })();
+  void refreshPeople();
+  // The requested area is available immediately. Home resolves its last/newest
+  // Session in the background; Runs and Quota load their own data on mount.
+  void applyRoute(initialPath);
 </script>
 
 {#snippet rail2(inDrawer = false)}
@@ -758,7 +789,11 @@
         <Button variant="ghost" size="icon-sm" class="size-6" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }} aria-label="Add project"><FolderPlus class="size-3.5" /></Button>
       </div>
       <div class="min-h-0 flex-1 overflow-auto">
-        <OwnerGroups users={people.list} me={user} {sessions} {runs} {projects} {currentId} {activeProjectId} query={chatQuery} onSelect={openRow} onNew={startDraft} onRename={rename} onRemove={remove} />
+        {#if sessionsLoaded}
+          <OwnerGroups users={people.list} me={user} {sessions} {runs} {projects} {currentId} {activeProjectId} query={chatQuery} onSelect={openRow} onNew={startDraft} onRename={rename} onRemove={remove} />
+        {:else}
+          <p class="px-3 py-4 text-sm text-muted-foreground" role="status" data-testid="sessions-loading">Loading Sessions…</p>
+        {/if}
       </div>
     {/if}
   </div>

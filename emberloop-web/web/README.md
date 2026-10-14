@@ -53,6 +53,14 @@ Same-origin by default. To point the static build at another Daemon:
  - `src/Root.svelte` — sign-in gate: probes `GET /api/auth/me`; signed out shows `AuthScreen`, signed in mounts `App` with the User; sign out and any 401 from a non-auth route return to sign-in; an unreachable Daemon offers Try again
  - `src/lib/AuthScreen.svelte`, `src/lib/authForm.js` — sign-in, create-account and first-admin screen on `ui/` primitives; `authForm.js` holds the mode, copy and error-line helpers
  - `src/App.svelte` — layout, rail-1 icon rail (`Rail.svelte`) plus a contextual rail-2 sidebar (persistently collapsible, with Quota's shared status list and same content in the phone drawer), Session tail loading (`?tail=6`, `?at=`) with load-earlier prepend, SSE stream with reconnect, pending prompt cards that the echoed prompt Event replaces with no second entrance animation (`noAnim` swap), queued-message panel with clear, route-driven chat/settings/runs/Quota/Memory switch, Session-not-found state (composer/meter overlay stays unmounted there), the Git toggle (`#git-toggle`, `GitPanel`) closing on Escape with focus back on the toggle, version badge mount, turn-done/failed and sudo-request sounds off the stream, service worker cue plus exact-path navigate handling. Stream flushes coalesce chunks to one apply per ~80ms window (structural Events flush at once) over the cached grouping below
+ - `App.svelte` boot — selects the URL route immediately. The home/chat sidebar
+   loads Sessions and shared Run summaries in the background, showing
+   `Loading Sessions…`; `/runs` loads summaries in `RunsSidebar` and shows
+   `Loading Runs…`; `/quota` loads through `QuotaPage` without either list.
+   Same 40-Run × 8-Ticket Vitest fixture, 5 trials after 2 warmups: cold boot
+   p50 to the Runs sidebar shell is 54.6ms and to all rows is 212.6ms. Ticket
+   17's post-summary p50 was 170.3/369.7ms; its pre-implementation baseline
+   was 516.2/610.7ms.
  - `App.svelte` sidebar footer: the signed-in User and Sign out (desktop rail 2 and the drawer); the `user` and `onSignOut` props come from `Root.svelte`; unmount calls `stopLive`
 - `App.svelte` Session header: `created by <User>` from `meta.owner`, read through the people store. The sidebar feeds `OwnerGroups` from `sessions`, shared-store Run summaries (owner, Project id and aggregate needs-you count), `projects` and the account list (refreshed on the `users` topic).
 - `src/lib/router.js` — pure route parse/build (`/s/<id>` with `?at=`, `/runs[/<runId>[/<ticketId>]]`, `/settings`, `/quota`, `/memory`, `/` as last-viewed `eb.last` else newest); `App.svelte` owns pushState/popstate around it
@@ -146,6 +154,10 @@ Settings max_tickets, validation, locked fields, ordered per-role Chains, inheri
 role fallbacks and alias-preserving saves, compression thresholds incl. the absolute token cap (`SettingsPage.test.js`); quota thresholds, countdowns, word labels, percent-first bars, cache age, card states, secondary details, per-card/refresh-all behavior, shared-store updates, live topic payloads and the sidebar's highest-percent status rows (`quota.test.js`, `quotaStore.test.js`, `QuotaSidebar.test.js`, `QuotaPage.test.js`, `live.test.js`); ContextMeter read-only render, nowrap row and phone-hidden window (`ContextMeter.test.js`); low-disk banner render (`DiskBanner.test.js`); plus install, sound, version, Session, Memory, auth, routing, Composer and navigation tests in their matching `*.test.js` files.
 The Quota tests also verify that one mocked live channel patches the page, desktop status list and phone drawer, without polling.
 Sign-in and accounts: `authForm.test.js` (mode, copy and error lines), `AuthScreen.test.js` (admin, login, signup, the create-account link and server answers), `Root.test.js` (the gate, footer sign out, 401 return, retry), `api.test.js` (auth client and the 401 signal, promotions client), `live.test.js` (stable shared stream, quota stream, payloads and `stopLive`), plus the App's shared, coalesced Run summaries for the sidebar, footer, session-not-found overlay gate and Git Escape (`App.test.js`) and the Accounts switch (`SettingsPage.test.js`).
+`App.test.js` also covers a boot while Session and Run lists are delayed,
+route-owned Quota and Runs loading states, the 40-Run cold-boot timing, and
+direct-Session loading races.
+
 ## Routes
 
 Real paths, served from `index.html` by the Daemon SPA fallback (missing

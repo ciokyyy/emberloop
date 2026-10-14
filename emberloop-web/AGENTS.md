@@ -111,6 +111,12 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
   mapped in `web/README.md`.
 
+- Browser boot: `App.svelte` routes from the URL before list reads finish.
+  `/quota` skips Session and Run list fetches; `/runs` loads summaries through
+  `RunsSidebar`. Home loads Sessions asynchronously and resolves last/newest
+  only after the list arrives; the chat sidebar shows `Loading Sessions…`.
+  `App.test.js` covers delayed lists and route-owned loading states.
+
 ## Adapter retry
 
 - An `adapter closed` prompt failure on a Session the Daemon closed
