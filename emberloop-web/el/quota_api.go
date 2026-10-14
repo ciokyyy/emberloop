@@ -1,73 +1,145 @@
 package el
 
-// Quota snapshot for the browser UI's Quota tab. The Daemon serves it at
-// GET /api/quota and POST /api/quota/refresh; the header strip never reads
-// it. It reuses ReadClaudeUsage, ReadUsage, RefreshUsage, RefreshUsageForce
-// and the UsageKeyFor mapping. Provider fetching stays in usage_providers.go;
-// this file dispatches independent refreshes and assembles per-provider state.
+// Quota snapshot for the browser UI. Registered sources own provider fetch
+// and cache behavior; shared snapshots and concurrent refresh dispatch stay
+// provider-agnostic.
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
-// Quota states: ok has fresh or cached windows, not_configured has no auth
-// (never an error), error carries the fetch failure while keeping stale
-// windows when the cache has any.
+// Quota states describe whether a card has usable, current values.
 const (
 	QuotaOK            = "ok"
+	QuotaStale         = "stale"
+	QuotaExpired       = "expired"
 	QuotaNotConfigured = "not_configured"
 	QuotaError         = "error"
 )
 
-// QuotaProvider is one card on the quota page: Claude, OpenCode-Go, or one
-// Antigravity group. Windows reuse UsageWindow's JSON (label, pct,
-// resets_at); UpdatedAt is the cache file's mtime (the last push for
-// Claude, the last fetch for the rest), 0 when never written.
+// QuotaWindow is one comparable account limit: percent used and its reset.
+type QuotaWindow struct {
+	Label    string `json:"label"`
+	Pct      int    `json:"pct"`
+	ResetsAt int64  `json:"resets_at"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+// QuotaProvider is one card on the quota page. Error is always present in
+// JSON; Hint is reserved for actionable states such as expired or missing
+// credentials.
 type QuotaProvider struct {
 	Key       string        `json:"key"`
 	Label     string        `json:"label"`
+	Plan      string        `json:"plan"`
 	State     string        `json:"state"`
-	Windows   []UsageWindow `json:"windows"`
 	UpdatedAt int64         `json:"updated_at"`
-	Error     string        `json:"error,omitempty"`
+	Error     string        `json:"error"`
+	Hint      string        `json:"hint,omitempty"`
+	Windows   []QuotaWindow `json:"windows"`
 }
 
-// quotaCardDef is the one table a new provider edits: its cache key, card
-// label, and the key a refresh fetches. Both Antigravity cards share one
-// fetch; Claude is push-only, so its fetch key is empty.
-type quotaCardDef struct {
-	key, label, fetchKey string
+// quotaSource separates provider fetch/cache behavior from the quota
+// endpoint and refresher. A source may share a FetchKey with related cards
+// (the two Antigravity pools), while each card still returns its own snapshot.
+type quotaSource interface {
+	Key() string
+	FetchKey() string
+	Fetch(context.Context, string, time.Time, bool) error
+	Snapshot(string, time.Time, error) QuotaProvider
 }
 
-// quotaCards names the four cards in display order.
-var quotaCards = []quotaCardDef{
-	{usageKeyClaude, "Claude", ""},
-	{usageKeyOpencode, "OpenCode-Go", usageKeyOpencode},
-	{usageKeyAgyGem, "Antigravity Gemini", usageKeyAgyGem},
-	{usageKeyAgy3P, "Antigravity 3P", usageKeyAgyGem},
+// usageQuotaSource adapts the existing shared usage cache and lock used by
+// terminal header panes to the quota card contract.
+type usageQuotaSource struct {
+	key, label, plan, fetchKey string
 }
 
-// quotaCard returns the card definition for a key.
-func quotaCard(key string) (quotaCardDef, bool) {
-	for _, c := range quotaCards {
-		if c.key == key {
-			return c, true
+func (s usageQuotaSource) Key() string      { return s.key }
+func (s usageQuotaSource) FetchKey() string { return s.fetchKey }
+
+func (s usageQuotaSource) Fetch(ctx context.Context, stateDir string, now time.Time, force bool) error {
+	if s.fetchKey == "" { // Claude's statusline file is the fallback source.
+		return nil
+	}
+	if force {
+		return RefreshUsageForce(ctx, stateDir, s.fetchKey, now)
+	}
+	return RefreshUsage(ctx, stateDir, s.fetchKey, now)
+}
+
+func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr error) QuotaProvider {
+	set := ReadUsage(stateDir, s.key, now)
+	p := QuotaProvider{
+		Key:       s.key,
+		Label:     s.label,
+		Plan:      s.plan,
+		UpdatedAt: quotaUpdatedAt(stateDir, s.key),
+		Windows:   quotaWindows(set.Windows),
+	}
+	if p.Windows == nil {
+		p.Windows = []QuotaWindow{}
+	}
+
+	var failure *quotaFailure
+	if errors.As(fetchErr, &failure) && failure.state == QuotaExpired {
+		p.State = QuotaExpired
+		p.Hint = failure.hint
+		return p
+	}
+	if !quotaConfigured(stateDir, s.key, now) {
+		p.State = QuotaNotConfigured
+		p.Hint = quotaNotConfiguredHint(s.key)
+		return p
+	}
+	switch {
+	case set.Has && fetchErr != nil:
+		p.State = QuotaStale
+		p.Error = fetchErr.Error()
+		if errors.As(fetchErr, &failure) {
+			p.Hint = failure.hint
 		}
+	case set.Has:
+		p.State = QuotaOK
+	case fetchErr != nil:
+		p.State = QuotaError
+		p.Error = fetchErr.Error()
+	default:
+		p.State = QuotaError
+		p.Error = "no cached usage yet"
 	}
-	return quotaCardDef{}, false
+	return p
 }
 
-// QuotaKeyValid reports a key the refresh endpoint accepts: "" (all) or one
-// of the four card keys.
-func QuotaKeyValid(key string) bool {
-	if key == "" {
-		return true
+// quotaFailure lets a provider distinguish an expired login from a transient
+// fetch failure while retaining the common cache and response path.
+type quotaFailure struct {
+	state string
+	hint  string
+	err   error
+}
+
+func (e *quotaFailure) Error() string {
+	if e.err != nil {
+		return e.err.Error()
 	}
-	_, ok := quotaCard(key)
-	return ok
+	return e.hint
+}
+
+func (e *quotaFailure) Unwrap() error { return e.err }
+
+// quotaSources is the registry used by the cache snapshot, validation, and
+// refresher. Add a provider here without teaching those paths its fetch logic.
+var quotaSources = []quotaSource{
+	usageQuotaSource{key: usageKeyClaude, label: "Claude"},
+	usageQuotaSource{key: usageKeyOpencode, label: "OpenCode-Go", plan: "Go", fetchKey: usageKeyOpencode},
+	usageQuotaSource{key: usageKeyAgyGem, label: "Antigravity Gemini", plan: "Gemini", fetchKey: usageKeyAgyGem},
+	usageQuotaSource{key: usageKeyAgy3P, label: "Antigravity 3P", plan: "Claude + GPT-OSS", fetchKey: usageKeyAgyGem},
 }
 
 // QuotaFetchKeys returns the distinct upstream providers selected by a card
@@ -109,10 +181,8 @@ func quotaUpdatedAt(stateDir, key string) int64 {
 	return fi.ModTime().Unix()
 }
 
-// quotaConfigured reports whether a fetch could ever succeed with local
-// auth alone, without touching the network. Missing pig auth, or a missing
-// Antigravity OAuth client, reads not_configured, never error. For Claude
-// the file is the auth: no push yet means not configured.
+// quotaConfigured reports whether a provider has the local credentials needed
+// to fetch. Missing credentials are a normal not_configured state.
 func quotaConfigured(stateDir, key string, now time.Time) bool {
 	switch key {
 	case usageKeyClaude:
@@ -120,61 +190,128 @@ func quotaConfigured(stateDir, key string, now time.Time) bool {
 	case usageKeyOpencode:
 		auth, err := readPigAuth()
 		return err == nil && auth.OpencodeGo.Key != ""
-	default: // both Antigravity cards share one login
+	default:
 		auth, err := readPigAuth()
 		if err != nil || auth.Antigravity.Refresh == "" {
 			return false
 		}
-		_, _, cerr := agyClient()
-		return cerr == nil
+		_, _, err = agyClient()
+		return err == nil
 	}
 }
 
-// RefreshQuota refetches through the shared cache and lock, then returns
-// the per-card refresh error (nil when fresh, fetched, or skipped). An
-// empty key refreshes every fetchable provider concurrently; "claude" only
-// re-reads its file, so it never fails. force skips the 90s age guard (manual
-// refresh); without it the guard applies (page load). A failure keeps the old
-// cache: the snapshot still serves stale windows with the error text.
-//
-// force carries no cooldown at this layer; the Daemon's manual refresh
-// endpoint reserves its per-provider interval before calling here. The
-// per-key flock also serializes concurrent refreshers into one upstream call.
+func quotaNotConfiguredHint(key string) string {
+	switch key {
+	case usageKeyClaude:
+		return "Claude quota needs a host Claude login or a Claude Code statusline report."
+	case usageKeyOpencode:
+		return "Missing OpenCode-Go login in pig auth.json (opencode-go.key)."
+	default:
+		var missing []string
+		auth, err := readPigAuth()
+		if err != nil || auth.Antigravity.Refresh == "" {
+			missing = append(missing, "pig auth.json google-antigravity.refresh login")
+		}
+		if _, _, err := agyClient(); err != nil {
+			missing = append(missing, "~/.el/agy-oauth.json client credentials")
+		}
+		if len(missing) == 0 {
+			return "Antigravity login is not configured."
+		}
+		return "Missing " + strings.Join(missing, " and ") + "."
+	}
+}
+
+func quotaWindowLabel(label string) string {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "5h", "5-hour":
+		return "5-hour"
+	case "wk", "weekly":
+		return "Weekly"
+	case "mo", "monthly":
+		return "Monthly"
+	default:
+		return label
+	}
+}
+
+func quotaWindows(windows []UsageWindow) []QuotaWindow {
+	out := make([]QuotaWindow, 0, len(windows))
+	for _, window := range windows {
+		pct := window.Pct
+		if pct < 0 {
+			pct = 0
+		} else if pct > 100 {
+			pct = 100
+		}
+		out = append(out, QuotaWindow{
+			Label:    quotaWindowLabel(window.Label),
+			Pct:      pct,
+			ResetsAt: window.ResetsAt,
+		})
+	}
+	return out
+}
+
+// QuotaKeyValid reports a key the refresh endpoint accepts: "" (all) or one
+// of the registered card keys.
+func QuotaKeyValid(key string) bool {
+	if key == "" {
+		return true
+	}
+	for _, source := range quotaSources {
+		if source.Key() == key {
+			return true
+		}
+	}
+	return false
+}
+
+// RefreshQuota refreshes selected registered sources through the shared cache
+// and per-key lock. An empty key refreshes every fetchable source concurrently.
+// force skips the 90s age guard; the Daemon's manual refresh endpoint reserves
+// its per-provider cooldown before calling here. Failed fetches retain cached
+// windows, which the snapshot reports as stale. Local-only sources such as
+// Claude have no upstream fetch key and do not require a fetch.
 func RefreshQuota(ctx context.Context, stateDir, key string, now time.Time, force bool) map[string]error {
 	return RefreshQuotaWithCallback(ctx, stateDir, key, now, force, nil)
 }
 
-// RefreshQuotaWithCallback is RefreshQuota with a completion callback invoked
-// concurrently as each distinct provider fetch finishes. The callback receives
-// the fetch key and errors for its cards, allowing callers to publish a fast
-// provider's result without waiting for slower providers in the same refresh.
+// RefreshQuotaWithCallback reports each independent fetch as it completes so
+// the Daemon can publish one provider's result without waiting for another.
 func RefreshQuotaWithCallback(ctx context.Context, stateDir, key string, now time.Time, force bool, onFetchComplete func(string, map[string]error)) map[string]error {
-	refresh := RefreshUsage
-	if force {
-		refresh = RefreshUsageForce
+	sources := make([]quotaSource, 0, len(quotaSources))
+	seen := map[string]bool{}
+	for _, source := range quotaSources {
+		if key != "" && source.Key() != key {
+			continue
+		}
+		fetchKey := source.FetchKey()
+		if fetchKey == "" || seen[fetchKey] {
+			continue
+		}
+		seen[fetchKey] = true
+		sources = append(sources, source)
 	}
-	fetchKeys := QuotaFetchKeys(key)
 
-	// Each fetch key owns an independent cache file and flock. Run them in
-	// parallel so a slow provider cannot hold up another provider's cache.
-	errsByFetchKey := make([]error, len(fetchKeys))
+	errsBySource := make([]error, len(sources))
 	var wg sync.WaitGroup
-	wg.Add(len(fetchKeys))
-	for i, fk := range fetchKeys {
-		go func(i int, fk string) {
+	wg.Add(len(sources))
+	for i, source := range sources {
+		go func(i int, source quotaSource) {
 			defer wg.Done()
-			fetchErr := refresh(ctx, stateDir, fk, now)
-			errsByFetchKey[i] = fetchErr
+			fetchErr := source.Fetch(ctx, stateDir, now, force)
+			errsBySource[i] = fetchErr
 			if onFetchComplete != nil {
-				onFetchComplete(fk, quotaFetchErrors(fk, fetchErr))
+				onFetchComplete(source.FetchKey(), quotaFetchErrors(source.FetchKey(), fetchErr))
 			}
-		}(i, fk)
+		}(i, source)
 	}
 	wg.Wait()
 
 	errs := map[string]error{}
-	for i, fetchErr := range errsByFetchKey {
-		for cardKey, err := range quotaFetchErrors(fetchKeys[i], fetchErr) {
+	for i, fetchErr := range errsBySource {
+		for cardKey, err := range quotaFetchErrors(sources[i].FetchKey(), fetchErr) {
 			errs[cardKey] = err
 		}
 	}
@@ -186,49 +323,21 @@ func quotaFetchErrors(fetchKey string, err error) map[string]error {
 		return nil
 	}
 	errs := map[string]error{}
-	for _, c := range quotaCards {
-		if c.fetchKey == fetchKey {
-			errs[c.key] = err
+	for _, source := range quotaSources {
+		if source.FetchKey() == fetchKey {
+			errs[source.Key()] = err
 		}
 	}
 	return errs
 }
 
-// QuotaSnapshot reads the cache only (no network) and assembles the four
-// cards. errs carries RefreshQuota's per-card errors: a card with windows
-// and an error reads error with the stale windows kept; a card without
-// windows and without auth reads not_configured.
+// QuotaSnapshot reads the provider caches only and assembles the registered
+// cards. A failed refresh retains its values as stale; expired failures keep
+// the values but carry an actionable hint.
 func QuotaSnapshot(stateDir string, now time.Time, errs map[string]error) []QuotaProvider {
-	out := make([]QuotaProvider, 0, len(quotaCards))
-	for _, c := range quotaCards {
-		set := ReadUsage(stateDir, c.key, now)
-		p := QuotaProvider{
-			Key:       c.key,
-			Label:     c.label,
-			UpdatedAt: quotaUpdatedAt(stateDir, c.key),
-		}
-		if set.Has {
-			p.Windows = set.Windows
-		} else {
-			p.Windows = []UsageWindow{}
-		}
-		err := errs[c.key]
-		switch {
-		case set.Has && err == nil:
-			p.State = QuotaOK
-		case set.Has:
-			p.State = QuotaError
-			p.Error = err.Error()
-		case !quotaConfigured(stateDir, c.key, now):
-			p.State = QuotaNotConfigured
-		case err != nil:
-			p.State = QuotaError
-			p.Error = err.Error()
-		default:
-			p.State = QuotaError
-			p.Error = "no cached usage yet"
-		}
-		out = append(out, p)
+	out := make([]QuotaProvider, 0, len(quotaSources))
+	for _, source := range quotaSources {
+		out = append(out, source.Snapshot(stateDir, now, errs[source.Key()]))
 	}
 	return out
 }

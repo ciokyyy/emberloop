@@ -114,16 +114,103 @@ func quotaItoa(n int) string {
 }
 
 type quotaCard struct {
-	Key     string `json:"key"`
-	Label   string `json:"label"`
-	State   string `json:"state"`
-	Windows []struct {
+	Key       string `json:"key"`
+	Label     string `json:"label"`
+	Plan      string `json:"plan"`
+	State     string `json:"state"`
+	UpdatedAt int64  `json:"updated_at"`
+	Error     string `json:"error"`
+	Hint      string `json:"hint"`
+	Windows   []struct {
 		Label  string `json:"label"`
 		Pct    int    `json:"pct"`
 		Resets int64  `json:"resets_at"`
+		Detail string `json:"detail"`
 	} `json:"windows"`
-	UpdatedAt int64  `json:"updated_at"`
-	Error     string `json:"error"`
+}
+
+func assertQuotaContract(t *testing.T, body []byte) {
+	t.Helper()
+	var response struct {
+		Providers []json.RawMessage `json:"providers"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatalf("decode quota response: %v", err)
+	}
+	if len(response.Providers) == 0 {
+		t.Fatal("quota response contains no providers")
+	}
+	for _, raw := range response.Providers {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("decode provider fields: %v", err)
+		}
+		for _, name := range []string{"key", "label", "plan", "state", "updated_at", "error", "windows"} {
+			if _, ok := fields[name]; !ok {
+				t.Errorf("provider is missing %q: %s", name, raw)
+			}
+		}
+		var card struct {
+			Key       string `json:"key"`
+			State     string `json:"state"`
+			UpdatedAt int64  `json:"updated_at"`
+			Error     string `json:"error"`
+			Hint      string `json:"hint"`
+		}
+		if err := json.Unmarshal(raw, &card); err != nil {
+			t.Fatalf("decode provider state: %v", err)
+		}
+		switch card.State {
+		case "ok", "stale", "expired", "not_configured", "error":
+		default:
+			t.Errorf("%s has unknown state %q", card.Key, card.State)
+		}
+		if card.State == "not_configured" && (card.Hint == "" || card.Error != "") {
+			t.Errorf("%s not_configured card needs a hint and no error: %+v", card.Key, card)
+		}
+		if card.State == "expired" && card.Hint == "" {
+			t.Errorf("%s expired card needs a hint", card.Key)
+		}
+		if card.State == "stale" && card.UpdatedAt == 0 {
+			t.Errorf("%s stale card needs its cached update time", card.Key)
+		}
+		var windows []map[string]json.RawMessage
+		if err := json.Unmarshal(fields["windows"], &windows); err != nil {
+			t.Errorf("%s windows: %v", card.Key, err)
+			continue
+		}
+		if windows == nil {
+			t.Errorf("%s windows must be an array, not null", card.Key)
+		}
+		if card.State == "stale" && len(windows) == 0 {
+			t.Errorf("%s stale card dropped its cached windows", card.Key)
+		}
+		for _, windowFields := range windows {
+			for _, name := range []string{"label", "pct", "resets_at"} {
+				if _, ok := windowFields[name]; !ok {
+					t.Errorf("%s window is missing %q: %v", card.Key, name, windowFields)
+				}
+			}
+			var window struct {
+				Label string `json:"label"`
+				Pct   int    `json:"pct"`
+			}
+			if err := json.Unmarshal(windowFields["label"], &window.Label); err != nil {
+				t.Errorf("%s window label: %v", card.Key, err)
+				continue
+			}
+			if err := json.Unmarshal(windowFields["pct"], &window.Pct); err != nil {
+				t.Errorf("%s window percent: %v", card.Key, err)
+				continue
+			}
+			if window.Pct < 0 || window.Pct > 100 {
+				t.Errorf("%s %q percent = %d, outside 0-100", card.Key, window.Label, window.Pct)
+			}
+			if window.Label == "5h" || window.Label == "wk" || window.Label == "mo" {
+				t.Errorf("%s uses short quota label %q", card.Key, window.Label)
+			}
+		}
+	}
 }
 
 // quotaEnv starts the stub, points the el fetchers and EL_STATE_DIR at temp
@@ -246,10 +333,15 @@ func getQuota(t *testing.T, base string) []quotaCard {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/quota status = %d", resp.StatusCode)
 	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuotaContract(t, raw)
 	var out struct {
 		Providers []quotaCard `json:"providers"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Providers
@@ -359,10 +451,15 @@ func sendQuotaRefresh(base, key string) (int, []quotaCard, error) {
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, nil, nil
 	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertQuotaContract(t, raw)
 	var out struct {
 		Providers []quotaCard `json:"providers"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return resp.StatusCode, nil, err
 	}
 	return resp.StatusCode, out.Providers, nil
@@ -405,19 +502,19 @@ func TestQuotaGetAllProviders(t *testing.T) {
 	}
 	m := quotaByKey(t, cards)
 	cl := m["claude"]
-	if cl.Label != "Claude" || cl.State != "ok" || len(cl.Windows) != 2 || cl.Windows[0].Label != "5h" || cl.Windows[0].Pct != 10 || cl.Windows[1].Pct != 40 {
+	if cl.Label != "Claude" || cl.State != "ok" || len(cl.Windows) != 2 || cl.Windows[0].Label != "5-hour" || cl.Windows[0].Pct != 10 || cl.Windows[1].Label != "Weekly" || cl.Windows[1].Pct != 40 {
 		t.Errorf("claude card = %+v", cl)
 	}
 	oc := m["opencode-go"]
-	if oc.Label != "OpenCode-Go" || oc.State != "ok" || len(oc.Windows) != 3 || oc.Windows[0].Label != "5h" || oc.Windows[0].Pct != 12 || oc.Windows[1].Label != "wk" || oc.Windows[2].Label != "mo" {
+	if oc.Label != "OpenCode-Go" || oc.State != "ok" || oc.Plan != "Go" || len(oc.Windows) != 3 || oc.Windows[0].Label != "5-hour" || oc.Windows[0].Pct != 12 || oc.Windows[1].Label != "Weekly" || oc.Windows[2].Label != "Monthly" {
 		t.Errorf("opencode card = %+v", oc)
 	}
 	gem := m["agy-gemini"]
-	if gem.State != "ok" || len(gem.Windows) != 2 || gem.Windows[0].Pct != 20 || gem.Windows[1].Pct != 25 {
+	if gem.State != "ok" || gem.Plan != "Gemini" || len(gem.Windows) != 2 || gem.Windows[0].Label != "5-hour" || gem.Windows[0].Pct != 20 || gem.Windows[1].Label != "Weekly" || gem.Windows[1].Pct != 25 {
 		t.Errorf("gemini card = %+v", gem)
 	}
 	tp := m["agy-3p"]
-	if tp.State != "ok" || len(tp.Windows) != 2 || tp.Windows[0].Pct != 10 || tp.Windows[1].Pct != 60 {
+	if tp.State != "ok" || tp.Plan != "Claude + GPT-OSS" || len(tp.Windows) != 2 || tp.Windows[0].Label != "5-hour" || tp.Windows[0].Pct != 10 || tp.Windows[1].Label != "Weekly" || tp.Windows[1].Pct != 60 {
 		t.Errorf("3p card = %+v", tp)
 	}
 	for _, c := range cards {
@@ -437,8 +534,8 @@ func TestQuotaNotConfigured(t *testing.T) {
 		if c.State != "not_configured" {
 			t.Errorf("%s state = %q, want not_configured", c.Key, c.State)
 		}
-		if len(c.Windows) != 0 || c.Error != "" {
-			t.Errorf("%s = %+v, want empty card without error", c.Key, c)
+		if len(c.Windows) != 0 || c.Error != "" || c.Hint == "" {
+			t.Errorf("%s = %+v, want empty card with a missing-login hint and no error", c.Key, c)
 		}
 	}
 }
@@ -463,8 +560,8 @@ func TestQuotaFailedFetchKeepsStaleCache(t *testing.T) {
 	now = now.Add(quotaManualRefreshMinInterval)
 	_, cards := postQuotaRefresh(t, base, "opencode-go")
 	got := quotaByKey(t, cards)["opencode-go"]
-	if got.State != "error" || got.Error == "" {
-		t.Errorf("failed card = %+v, want error with text", got)
+	if got.State != "stale" || got.Error == "" || got.UpdatedAt == 0 {
+		t.Errorf("failed card = %+v, want stale with error text and its cache age", got)
 	}
 	if len(got.Windows) == 0 || got.Windows[0].Pct != 50 {
 		t.Errorf("failed card dropped the stale cache: %+v", got)

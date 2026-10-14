@@ -92,7 +92,8 @@ export function resetCountdown(resetsAt, nowMs = Date.now()) {
   return `${Math.ceil(secs / 60)}m`;
 }
 
-// updatedAt is epoch seconds; 0 means that no value has been read yet.
+// staleLabel is the quota card's cache-age stamp: "updated 12m ago".
+// updatedAt is epoch seconds; 0 means the cache has never been written/read.
 export function staleLabel(updatedAt, nowMs = Date.now()) {
   const updated = epochSeconds(updatedAt);
   if (!Number.isFinite(updated) || updated <= 0) return 'never updated';

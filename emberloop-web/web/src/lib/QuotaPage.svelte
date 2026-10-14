@@ -119,7 +119,7 @@
 
       {#if loading}
         <div class="grid gap-4 md:grid-cols-2" aria-label="Loading quota" data-testid="quota-card-grid">
-          {#each [0, 1, 2, 3, 4] as i (i)}
+          {#each [0, 1, 2, 3, 4, 5] as i (i)}
             <div class="h-40 animate-pulse rounded-2xl border bg-card"></div>
           {/each}
         </div>
@@ -169,6 +169,7 @@
                 {#if state === 'expired'}
                   <div class="mt-3 flex items-start gap-2 rounded-xl bg-amber-500/10 p-3 text-xs text-amber-300" data-testid="quota-expired-callout">
                     <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                    {#if p.hint}<span data-testid="quota-hint">{p.hint}</span>{/if}
                     {#if p.key === 'claude'}
                       <span>Host login expired, so quota cannot refresh. Run <code class="font-mono">claude auth login</code> or <a class="inline-flex items-center underline max-md:min-h-11" href="/providers">reconnect in Providers</a>.</span>
                     {:else}
