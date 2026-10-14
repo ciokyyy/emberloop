@@ -4,9 +4,9 @@
 
 **Blocked by:** 22-providers-page-and-api-keys
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Connect on the ChatGPT row starts the device-code login and shows the code and the link
-- [ ] Success writes the pig login and refreshes the ChatGPT Quota card
-- [ ] Go tests with a local stub cover success, expiry and cancel; vitest covers the panel
-- [ ] Repo check and `npm test` pass
+- [x] Connect on the ChatGPT row starts the device-code login and shows the code and the link
+- [x] Success writes the pig login and refreshes the ChatGPT Quota card
+- [x] Go tests with a local stub cover success, expiry and cancel; vitest covers the panel
+- [x] Repo check and `npm test` pass
