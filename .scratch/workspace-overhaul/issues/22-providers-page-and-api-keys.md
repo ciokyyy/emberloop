@@ -4,11 +4,11 @@
 
 **Blocked by:** 21-non-blocking-boot (Speed lands before Providers; both edit `App.svelte`)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `/providers` route and Providers entry in the Quota second sidebar
-- [ ] The provider list comes from the pig SDK with the status source per row
-- [ ] Admin sets and removes an API key; no response body ever contains a key
-- [ ] Writes are admin-only; non-admin Users see status read-only
-- [ ] Go tests with a temp pig dir cover list, status sources, set, remove, no key in any response and admin-only writes; vitest covers page states and phone layout
-- [ ] Repo check and `npm test` pass
+- [x] `/providers` route and Providers entry in the Quota second sidebar
+- [x] The provider list comes from the pig SDK with the status source per row
+- [x] Admin sets and removes an API key; no response body ever contains a key
+- [x] Writes are admin-only; non-admin Users see status read-only
+- [x] Go tests with a temp pig dir cover list, status sources, set, remove, no key in any response and admin-only writes; vitest covers page states and phone layout
+- [x] Repo check and `npm test` pass
