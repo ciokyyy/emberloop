@@ -1184,11 +1184,20 @@ func ticketPath(rs *runState, ticketID string) string {
 	return ""
 }
 
-// runTicketBody returns the ticket file content the live table shows: from
-// the Run's spec branch when it has one (the merge target, so ticks and the
-// done mark show the way they did when tickets merged to master), else from
-// the checkout. Missing files read empty; callers fall back.
-func runTicketBody(rs *runState, ticketID string) string {
+// runTicketBody returns a Ticket body through the per-Run/Ticket git cache.
+// The cache expires after a few seconds and every Run event invalidates it.
+func (d *Daemon) runTicketBody(rs *runState, ticketID string) string {
+	value := d.runGitCache.get(rs.ID, ticketID, func() any {
+		return runTicketBodyUncached(rs, ticketID)
+	})
+	body, _ := value.(string)
+	return body
+}
+
+// runTicketBodyUncached returns the ticket file content the live table shows:
+// from the Run's spec branch when it has one, else from the checkout. Missing
+// files read empty; callers fall back.
+func runTicketBodyUncached(rs *runState, ticketID string) string {
 	path := ticketPath(rs, ticketID)
 	if path == "" {
 		return ""
@@ -3845,6 +3854,13 @@ func runSpecBehind(repo, branch string) any {
 	return behind
 }
 
+// cachedRunSpecBehind reuses the Run's git-derived master distance briefly.
+func (d *Daemon) cachedRunSpecBehind(runID, repo, branch string) any {
+	return d.runGitCache.get(runID, "", func() any {
+		return runSpecBehind(repo, branch)
+	})
+}
+
 // runSummary calculates compact Ticket counts from the in-memory rows. It
 // deliberately avoids runJSON: the list seam must never read Ticket files or
 // run git to calculate a master distance.
@@ -3951,7 +3967,7 @@ func (d *Daemon) runJSON(rs *runState) map[string]any {
 	repo, branch := current.Repo, current.SpecBranch
 	d.mu.Unlock()
 
-	specBehind := runSpecBehind(repo, branch)
+	specBehind := d.cachedRunSpecBehind(id, repo, branch)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	current, ok = d.runs[id]
@@ -3993,7 +4009,7 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			"required": append([]string(nil), requiredReviewerTypes...),
 			"verdicts": verdicts,
 		}
-		body := runTicketBody(rs, t.ID)
+		body := d.runTicketBody(rs, t.ID)
 		title := parseTicketTitle(body)
 		if title == "" {
 			title = t.Title
@@ -4068,6 +4084,7 @@ func (d *Daemon) ticketAgentsLocked(rs *runState, ticketID string) []ticketAgent
 // broadcastRunLocked wakes the Run's SSE streams; callers hold d.mu.
 func (d *Daemon) broadcastRunLocked(rs *runState) {
 	rs.UpdatedAt = time.Now().UTC()
+	d.runGitCache.invalidateRun(rs.ID)
 	d.live.publish("runs", "run:"+rs.ID)
 	notify := rs.notify
 	rs.notify = make(chan struct{})
@@ -4086,7 +4103,7 @@ func (d *Daemon) runEventSnapshot(id string) (string, chan struct{}, bool) {
 	repo, branch := rs.Repo, rs.SpecBranch
 	d.mu.Unlock()
 
-	specBehind := runSpecBehind(repo, branch)
+	specBehind := d.cachedRunSpecBehind(id, repo, branch)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rs, ok = d.runs[id]

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // isAncestor reports whether ancestor is an ancestor of ref in repo: git
@@ -454,6 +455,8 @@ func TestRebaseSpecBranchOntoMaster(t *testing.T) {
 	testGit(t, repo, "add", "master-only.txt")
 	testGit(t, repo, "commit", "-m", "master moves")
 	master := strings.TrimSpace(testGit(t, repo, "rev-parse", "main"))
+	// The branch moved outside this Run; wait for its cached distance to expire.
+	time.Sleep(runGitResultCacheTTL)
 	if got := getRun(t, srv.URL, run.ID).SpecBehind; got != 1 {
 		t.Fatalf("specBehind after master moves = %d, want 1", got)
 	}

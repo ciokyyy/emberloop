@@ -50,7 +50,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Run collection API: `GET /api/runs` returns git-free summaries (`id`, `spec`,
   `status`, `counts`, `repo`, `projectId`, `updatedAt`, plus `owner` for the
   account sidebar); `GET /api/runs/<id>` returns the detailed Ticket snapshot.
-  `runs_test.go` covers both HTTP shapes and a bounded 40-Run, 8-Ticket list.
+  Detail snapshots cache git-derived Run and Ticket results for three seconds;
+  each Run event invalidates that Run's entries (`runs_git_cache.go`).
+  `runs_test.go` covers both HTTP shapes and a bounded 40-Run, 8-Ticket list;
+  `runs_git_cache_test.go` covers cache hits, expiry and Run-event invalidation.
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
   `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
   check, selective re-review, scope warning), `runs_persist_test.go`,

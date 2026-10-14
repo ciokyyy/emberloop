@@ -114,9 +114,12 @@ type Daemon struct {
 	// submit tool's terminal update before its turn is stopped
 	// (runs_stopsubmit.go). Memory only: a restart clears it and the turn
 	// simply runs on.
-	runs       map[string]*runState
-	submits    map[string]*submitRec
-	stopSubmit map[string]bool
+	runs map[string]*runState
+	// runGitCache holds short-lived git results per Run and Ticket; Run events
+	// invalidate that Run's entries.
+	runGitCache runGitResultCache
+	submits     map[string]*submitRec
+	stopSubmit  map[string]bool
 	// sudo holds the pending and settled sudo approval requests (sudo.go).
 	sudoOnce sync.Once
 	sudo     *sudoStore
