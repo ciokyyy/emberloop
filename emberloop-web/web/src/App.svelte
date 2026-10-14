@@ -196,7 +196,6 @@
     }, 2500);
   }
   const sessionsById = $derived(Object.fromEntries(sessions.map((s) => [s.id, s])));
-
   // Grouping memoizes the settled prefix: a chunk burst only replaces the
   // tail block, so settled cards keep their object identity (no re-render,
   // no re-measure, no restarted entrance animation). The caches live outside
@@ -407,8 +406,7 @@
 
   async function refreshRuns() {
     try {
-      const body = await listRuns();
-      runs = body.runs ?? [];
+      runs = (await listRuns()).runs ?? [];
     } catch {
       // Keep the last good Run list.
     }
