@@ -4,9 +4,9 @@
 
 **Blocked by:** 13-quota-sidebar
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The phone drawer shows the same Live status list as the desktop second sidebar
-- [ ] Cards lay out in one column on narrow screens
-- [ ] All buttons and tabs meet the 44px minimum target (`max-md:h-11`); inputs are 16px
-- [ ] Vitest covers the drawer list and layout behaviour; repo check and `npm test` pass
+- [x] The phone drawer shows the same Live status list as the desktop second sidebar
+- [x] Cards lay out in one column on narrow screens
+- [x] All buttons and tabs meet the 44px minimum target (`max-md:h-11`); inputs are 16px
+- [x] Vitest covers the drawer list and layout behaviour; repo check and `npm test` pass
