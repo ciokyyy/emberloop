@@ -1,19 +1,21 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/url"
 	"strings"
+
+	"github.com/MichaelKinsy/PiG/ai"
 )
 
 const oauthRedirectBaseURLSettingKey = "oauth_redirect_base_url"
 
-// Redirect use is deferred to Ticket 38: the pinned pig SDK exposes no
-// per-login callback URI override for both authorization and token exchange.
-// Until that seam exists, this setting is validated and stored but consumed by
-// no production OAuth flow.
+// The setting is opt-in. Callback-server OAuth flows must pass through the
+// provider-specific fail-closed probe gate below; device-code flows have no
+// redirect URI and cannot use this setting.
 
 // oauthRedirectBaseFromSettings reads and validates the optional setting from a
 // decoded settings map. Sharing this keeps the Settings view and future OAuth
@@ -61,4 +63,42 @@ func isLoopbackOAuthHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// providerOAuthRedirectProbe must verify that the provider accepts this exact
+// callback base. A DNS or reachability check is not sufficient.
+type providerOAuthRedirectProbe func(context.Context, string, string) (bool, error)
+
+// browserOAuthRedirectBase applies the configured base only to callback-server
+// OAuth providers whose provider-specific probe accepts it. Errors and
+// rejection fail closed; device-code login has no redirect URI.
+func browserOAuthRedirectBase(ctx context.Context, providerID, configured string, probe providerOAuthRedirectProbe) string {
+	base, err := normalizeOAuthRedirectBaseURL(configured)
+	if err != nil || base == "" || providerID == "" || providerID == "openai-codex" || probe == nil {
+		return ""
+	}
+	auth, err := ai.BuiltinProviderAuth(providerID)
+	if err != nil || auth.OAuth == nil {
+		return ""
+	}
+	oauthProvider, ok := ai.GetOAuthProvider(providerID)
+	if !ok || !oauthProvider.UsesCallbackServer() {
+		return ""
+	}
+	accepted, err := probe(ctx, providerID, base)
+	if err != nil || !accepted {
+		return ""
+	}
+	return base
+}
+
+// oauthRedirectBaseForBrowserOAuth is the Daemon entry point for a browser
+// OAuth flow. No current Providers-page flow consumes a configurable redirect;
+// device-code login is independent of this setting.
+func (d *Daemon) oauthRedirectBaseForBrowserOAuth(ctx context.Context, providerID string, probe providerOAuthRedirectProbe) string {
+	all, err := d.settingsMap()
+	if err != nil {
+		return ""
+	}
+	return browserOAuthRedirectBase(ctx, providerID, oauthRedirectBaseFromSettings(all), probe)
 }
