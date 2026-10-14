@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -84,26 +83,42 @@ func claudeCodeVersion() string {
 	return claudeVersionValue
 }
 
+// discoverClaudeCodeVersion reads the installed binary's versioned path. It
+// deliberately never starts Claude Code, so quota polling cannot launch a
+// harness or agent process.
 func discoverClaudeCodeVersion() string {
-	path, err := exec.LookPath("claude")
-	if err != nil {
+	path := findClaudeCodeBinary()
+	if path == "" {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, path, "--version").Output()
-	if err != nil {
-		return ""
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if version := parseClaudeCodeVersionPath(resolved); version != "" {
+			return version
+		}
 	}
-	return parseClaudeCodeVersion(output)
+	return parseClaudeCodeVersionPath(path)
 }
 
-func parseClaudeCodeVersion(output []byte) string {
-	match := claudeVersionPattern.FindSubmatch(output)
+func findClaudeCodeBinary() string {
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		path := filepath.Join(dir, "claude")
+		info, err := os.Stat(path)
+		if err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+			return path
+		}
+	}
+	return ""
+}
+
+func parseClaudeCodeVersionPath(path string) string {
+	match := claudeVersionPattern.FindStringSubmatch(filepath.ToSlash(path))
 	if len(match) != 2 {
 		return ""
 	}
-	return string(match[1])
+	return match[1]
 }
 
 func claudeCredentialsPath() (string, error) {
@@ -185,10 +200,10 @@ func claudeQuotaConfigured(stateDir string, now time.Time) bool {
 	return ReadClaudeUsage(stateDir, now).Has
 }
 
-func claudeQuotaCachePath(stateDir string) string {
+func claudeQuotaCachePath(stateDir string, now time.Time) string {
 	_, configured, err := readClaudeOAuthCredentials()
 	oauthPath := usageCachePath(stateDir, usageKeyClaude)
-	if (configured || err != nil) && readUsageCache(stateDir, usageKeyClaude, time.Now()).Has {
+	if configured || (err != nil && readUsageCache(stateDir, usageKeyClaude, now).Has) {
 		return oauthPath
 	}
 	return claudeUsagePath(stateDir)
@@ -196,7 +211,10 @@ func claudeQuotaCachePath(stateDir string) string {
 
 func ReadClaudeQuotaUsage(stateDir string, now time.Time) UsageSet {
 	_, configured, err := readClaudeOAuthCredentials()
-	if configured || err != nil {
+	if configured {
+		return readUsageCache(stateDir, usageKeyClaude, now)
+	}
+	if err != nil {
 		if cached := readUsageCache(stateDir, usageKeyClaude, now); cached.Has {
 			return cached
 		}
@@ -331,18 +349,12 @@ func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, forc
 		return nil
 	}
 	if key == usageKeyClaude {
-		credentials, configured, err := readClaudeOAuthCredentials()
+		_, configured, err := claudeQuotaCredentialsForFetch(stateDir, now)
 		if err != nil {
 			return err
 		}
 		if !configured {
 			return nil // Keep the statusline file as the fallback source.
-		}
-		if claudeCredentialsExpired(credentials, now) || claudeTokenRejected(stateDir, credentials.AccessToken) {
-			return claudeExpiredError("Claude Code login expired. Sign in again in Claude Code.")
-		}
-		if err := claudeBackoffError(stateDir, now); err != nil {
-			return err
 		}
 	}
 	if !force && usageCacheAge(stateDir, key, now) < usageRefreshEvery {
@@ -484,6 +496,20 @@ func claudeBackoffError(stateDir string, now time.Time) error {
 	return nil
 }
 
+func claudeQuotaCredentialsForFetch(stateDir string, now time.Time) (claudeOAuthCredentials, bool, error) {
+	credentials, configured, err := readClaudeOAuthCredentials()
+	if err != nil || !configured {
+		return credentials, configured, err
+	}
+	if claudeCredentialsExpired(credentials, now) || claudeTokenRejected(stateDir, credentials.AccessToken) {
+		return credentials, true, claudeExpiredError("Claude Code login expired. Sign in again in Claude Code.")
+	}
+	if err := claudeBackoffError(stateDir, now); err != nil {
+		return credentials, true, err
+	}
+	return credentials, true, nil
+}
+
 func parseRetryAfter(value string, now time.Time) time.Duration {
 	value = strings.TrimSpace(value)
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
@@ -499,18 +525,12 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 }
 
 func fetchClaudeQuota(ctx context.Context, stateDir string, now time.Time) error {
-	credentials, configured, err := readClaudeOAuthCredentials()
+	credentials, configured, err := claudeQuotaCredentialsForFetch(stateDir, now)
 	if err != nil {
 		return err
 	}
 	if !configured {
 		return nil
-	}
-	if claudeCredentialsExpired(credentials, now) || claudeTokenRejected(stateDir, credentials.AccessToken) {
-		return claudeExpiredError("Claude Code login expired. Sign in again in Claude Code.")
-	}
-	if err := claudeBackoffError(stateDir, now); err != nil {
-		return err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeUsageURL, nil)
 	if err != nil {
@@ -555,10 +575,10 @@ func fetchClaudeQuota(ctx context.Context, stateDir string, now time.Time) error
 	}
 	var windows []UsageWindow
 	if usage.FiveHour != nil {
-		windows = append(windows, UsageWindow{Label: "5h", Pct: int(usage.FiveHour.Utilization + 0.5), ResetsAt: parseResetTime(usage.FiveHour.ResetsAt)})
+		windows = append(windows, UsageWindow{Label: "5h", Pct: claudeUsagePercent(usage.FiveHour.Utilization), ResetsAt: parseResetTime(usage.FiveHour.ResetsAt)})
 	}
 	if usage.SevenDay != nil {
-		windows = append(windows, UsageWindow{Label: "wk", Pct: int(usage.SevenDay.Utilization + 0.5), ResetsAt: parseResetTime(usage.SevenDay.ResetsAt)})
+		windows = append(windows, UsageWindow{Label: "wk", Pct: claudeUsagePercent(usage.SevenDay.Utilization), ResetsAt: parseResetTime(usage.SevenDay.ResetsAt)})
 	}
 	if len(windows) == 0 {
 		return fmt.Errorf("Claude OAuth usage response has no supported windows")
@@ -569,6 +589,16 @@ func fetchClaudeQuota(ctx context.Context, stateDir string, now time.Time) error
 	clearClaudeBackoff(stateDir)
 	clearClaudeRejectedToken(stateDir)
 	return nil
+}
+
+func claudeUsagePercent(utilization float64) int {
+	if utilization <= 0 {
+		return 0
+	}
+	if utilization >= 100 {
+		return 100
+	}
+	return int(utilization + 0.5)
 }
 
 // pigAuth is the part of pig's auth file the usage fetchers read.

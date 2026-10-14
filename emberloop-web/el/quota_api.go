@@ -53,7 +53,7 @@ type quotaSource interface {
 	Fetch(context.Context, string, time.Time, bool) error
 	Configured(string, time.Time) bool
 	NotConfiguredHint(string) string
-	CachePath(string) string
+	CachePath(string, time.Time) string
 	Snapshot(string, time.Time, error) QuotaProvider
 }
 
@@ -66,7 +66,7 @@ type usageQuotaSource struct {
 	expiredFn                  func(string, time.Time) bool
 	expiredHint                string
 	hintFn                     func(string) string
-	cachePathFn                func(string) string
+	cachePathFn                func(string, time.Time) string
 	planFn                     func() string
 }
 
@@ -81,8 +81,8 @@ func (s usageQuotaSource) NotConfiguredHint(stateDir string) string {
 	return s.hintFn(stateDir)
 }
 
-func (s usageQuotaSource) CachePath(stateDir string) string {
-	return s.cachePathFn(stateDir)
+func (s usageQuotaSource) CachePath(stateDir string, now time.Time) string {
+	return s.cachePathFn(stateDir, now)
 }
 
 func (s usageQuotaSource) Fetch(ctx context.Context, stateDir string, now time.Time, force bool) error {
@@ -110,7 +110,7 @@ func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr erro
 		Key:       s.key,
 		Label:     s.label,
 		Plan:      plan,
-		UpdatedAt: quotaUpdatedAt(s.CachePath(stateDir)),
+		UpdatedAt: quotaUpdatedAt(s.CachePath(stateDir, now)),
 		Windows:   quotaWindows(set.Windows),
 	}
 
@@ -204,19 +204,19 @@ var quotaSources = []quotaSource{
 			return err == nil && auth.OpencodeGo.Key != ""
 		},
 		hintFn:      func(string) string { return "Missing OpenCode-Go login in pig auth.json (opencode-go.key)." },
-		cachePathFn: func(stateDir string) string { return usageCachePath(stateDir, usageKeyOpencode) },
+		cachePathFn: func(stateDir string, _ time.Time) string { return usageCachePath(stateDir, usageKeyOpencode) },
 	},
 	usageQuotaSource{
 		key: usageKeyAgyGem, label: "Antigravity Gemini", plan: "Gemini", fetchKey: usageKeyAgyGem,
 		configuredFn: antigravityQuotaConfigured,
 		hintFn:       antigravityQuotaNotConfiguredHint,
-		cachePathFn:  func(stateDir string) string { return usageCachePath(stateDir, usageKeyAgyGem) },
+		cachePathFn:  func(stateDir string, _ time.Time) string { return usageCachePath(stateDir, usageKeyAgyGem) },
 	},
 	usageQuotaSource{
 		key: usageKeyAgy3P, label: "Antigravity 3P", plan: "Claude + GPT-OSS", fetchKey: usageKeyAgyGem,
 		configuredFn: antigravityQuotaConfigured,
 		hintFn:       antigravityQuotaNotConfiguredHint,
-		cachePathFn:  func(stateDir string) string { return usageCachePath(stateDir, usageKeyAgy3P) },
+		cachePathFn:  func(stateDir string, _ time.Time) string { return usageCachePath(stateDir, usageKeyAgy3P) },
 	},
 }
 

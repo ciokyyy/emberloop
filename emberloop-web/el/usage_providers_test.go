@@ -192,6 +192,33 @@ func TestRefreshUsageClaudeOAuthCacheTTL(t *testing.T) {
 	}
 }
 
+func TestRefreshClaudeUsageClampsPercent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	credentialsPath := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(credentialsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialsPath, []byte(`{"claudeAiOauth":{"accessToken":"token","expiresAt":9999999999999,"subscriptionType":"pro"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":-12,"resets_at":"2030-01-01T05:00:00Z"},"seven_day":{"utilization":145,"resets_at":"2030-01-08T00:00:00Z"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	restore := SetUsageEndpointsForTest(srv.URL, srv.URL, srv.URL)
+	t.Cleanup(restore)
+	dir := t.TempDir()
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := RefreshUsageForce(context.Background(), dir, usageKeyClaude, now); err != nil {
+		t.Fatal(err)
+	}
+	usage := ReadClaudeQuotaUsage(dir, now)
+	if !usage.Has || len(usage.Windows) != 2 || usage.Windows[0].Pct != 0 || usage.Windows[1].Pct != 100 {
+		t.Errorf("clamped Claude usage = %+v, want percent values in 0..100", usage)
+	}
+}
+
 func TestClaudeRetryAfterAndCredentialTimestamps(t *testing.T) {
 	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
 	for value, want := range map[string]time.Duration{
@@ -214,16 +241,43 @@ func TestClaudeRetryAfterAndCredentialTimestamps(t *testing.T) {
 	}
 }
 
-func TestClaudeVersionUsesInstalledOutputOrFallback(t *testing.T) {
-	if got := parseClaudeCodeVersion([]byte("2.1.42 (Claude Code)")); got != "2.1.42" {
-		t.Fatalf("parsed version = %q, want 2.1.42", got)
+func TestClaudeVersionUsesInstalledPathOrFallback(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "versions", "2.1.42")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := parseClaudeCodeVersion([]byte("not a version")); got != "" {
-		t.Fatalf("invalid version output parsed as %q", got)
+	marker := filepath.Join(root, "started")
+	t.Setenv("CLAUDE_VERSION_PROBE_MARKER", marker)
+	binary := filepath.Join(versionDir, "claude")
+	script := []byte("#!/bin/sh\n: > \"$CLAUDE_VERSION_PROBE_MARKER\"\necho 9.9.9\n")
+	if err := os.WriteFile(binary, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(binary, filepath.Join(binDir, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	if got := discoverClaudeCodeVersion(); got != "2.1.42" {
+		t.Fatalf("discovered Claude version = %q, want version from symlink target", got)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("version discovery started the Claude binary")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", filepath.Join(root, "empty-bin"))
+	if got := discoverClaudeCodeVersion(); got != "" {
+		t.Fatalf("version without an installed binary = %q, want no discovery", got)
 	}
 	claudeVersionMu.Lock()
 	oldLookup, oldValue := claudeVersionLookup, claudeVersionValue
-	claudeVersionLookup, claudeVersionValue = func() string { return "" }, ""
+	claudeVersionLookup, claudeVersionValue = discoverClaudeCodeVersion, ""
 	claudeVersionMu.Unlock()
 	t.Cleanup(func() {
 		claudeVersionMu.Lock()

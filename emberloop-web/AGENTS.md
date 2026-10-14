@@ -87,7 +87,6 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go`, `grok_handoff_test.go` and
   `acpretry_test.go`.
-- Quota HTTP seam: `quota.go` serves the registered provider contract at `/api/quota` and `/api/quota/refresh`; `quota_test.go` verifies the Claude OAuth, OpenCode-Go and Antigravity shapes against local upstream stubs.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
   mapped in `web/README.md`.
 

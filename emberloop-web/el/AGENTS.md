@@ -42,12 +42,12 @@ durable boundaries with their own docs. File map (non-test file owns its
   one fetch per 90s per account, shared cache and per-key lock; ChatGPT Plus
   reads pig's `openai-codex` OAuth with `ReadOnlyAuthStorage`, sends the account
   ID header and never refreshes credentials; Claude's separate host OAuth cache
-  is read-only, persists `Retry-After`, never writes credentials and uses the
-  statusline fallback only when host OAuth is absent), `quota_api.go` (the
-  provider-source registry for browser Quota: sources own fetch, configuration,
-  missing-login hints and cache paths; snapshots normalize word-form percent
-  windows and assemble state, including retained Claude stale/expired values;
-  provider-agnostic refreshes run concurrently with completion callbacks.
+  is read-only, persists `Retry-After`, reads `~/.claude/.credentials.json`
+  without writing and uses statusline only when host OAuth is absent),
+  `quota_api.go` (the provider-source registry for browser Quota: sources own
+  fetch, configuration, missing-login hints and cache paths; snapshots normalize
+  word-form percent windows and assemble state, including retained Claude
+  stale/expired values; refreshes run concurrently with completion callbacks.
   `QuotaFetchKeys` exposes distinct upstreams for Daemon cooldown admission),
   `compress_prompt.go` (the Handoff summarizer prompt, its section list
   `HandoffSections` that emberloop-web uses, and the handoff sanity check),

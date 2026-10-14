@@ -2,6 +2,7 @@ package el
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -142,7 +143,7 @@ func TestQuotaSourceOwnsProviderConfigurationAndCachePath(t *testing.T) {
 			return false
 		},
 		hintFn:      func(string) string { return "Missing ChatGPT login." },
-		cachePathFn: func(string) string { return cachePath },
+		cachePathFn: func(string, time.Time) string { return cachePath },
 	}
 	got := source.Snapshot(dir, now, nil)
 	if got.State != QuotaNotConfigured || got.Error != "" || got.Hint != "Missing ChatGPT login." {
@@ -284,6 +285,28 @@ func TestQuotaClaudeRereadOnly(t *testing.T) {
 	}
 	if got[0].UpdatedAt == 0 {
 		t.Error("claude updated_at = 0, want the file mtime")
+	}
+}
+
+func TestQuotaClaudeConfiguredLoginDoesNotUseStatuslineFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	credentialsPath := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(credentialsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialsPath, []byte(`{"claudeAiOauth":{"accessToken":"token","expiresAt":9999999999999,"subscriptionType":"pro"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	statusline := `{"five_hour":{"label":"5h","pct":77,"resets_at":1792000000},"seven_day":{"label":"wk","pct":88,"resets_at":1792000000}}`
+	if err := os.WriteFile(filepath.Join(dir, "claude-usage.json"), []byte(statusline), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	got := QuotaSnapshot(dir, now, map[string]error{usageKeyClaude: errors.New("network down")})[0]
+	if got.State != QuotaStale || got.Plan != "Pro" || got.UpdatedAt != 0 || len(got.Windows) != 0 {
+		t.Errorf("configured OAuth card mixed statusline data or cache age: %+v", got)
 	}
 }
 
