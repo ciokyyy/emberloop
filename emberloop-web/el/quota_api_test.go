@@ -57,6 +57,7 @@ func quotaEnv(t *testing.T, stub *quotaStub) string {
 	t.Setenv("EL_PIG_AUTH", auth)
 	t.Setenv("EL_AGY_CLIENT_ID", "test-id")
 	t.Setenv("EL_AGY_CLIENT_SECRET", "test-secret")
+	t.Setenv("HOME", t.TempDir())
 	return t.TempDir()
 }
 
@@ -73,6 +74,7 @@ func quotaSourceForTest(t *testing.T, key string) quotaSource {
 
 func TestQuotaSnapshotNotConfigured(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	t.Setenv("EL_PIG_AUTH", filepath.Join(dir, "missing.json"))
 	t.Setenv("EL_AGY_CLIENT_ID", "")
 	t.Setenv("EL_AGY_CLIENT_SECRET", "")
@@ -261,6 +263,7 @@ func TestQuotaStaleFallbackKeepsCache(t *testing.T) {
 }
 
 func TestQuotaClaudeRereadOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	raw := `{"five_hour":{"label":"5h","pct":10,"resets_at":1792000000},"seven_day":{"label":"wk","pct":40,"resets_at":1792000000}}`
 	if err := os.WriteFile(filepath.Join(dir, "claude-usage.json"), []byte(raw), 0o644); err != nil {
@@ -268,7 +271,7 @@ func TestQuotaClaudeRereadOnly(t *testing.T) {
 	}
 	ctx := context.Background()
 	now := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
-	// No endpoints stubbed: a fetch would fail, a re-read succeeds.
+	// With no host OAuth login, Claude continues to read its push-based statusline fallback.
 	if errs := RefreshQuota(ctx, dir, usageKeyClaude, now, true); len(errs) != 0 {
 		t.Fatal(errs)
 	}

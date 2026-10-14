@@ -1,13 +1,15 @@
 package web
 
 // Quota API seam: GET /api/quota and POST /api/quota/refresh against local
-// HTTP stubs for the opencode and Antigravity endpoints, with a temp
-// EL_STATE_DIR so the Daemon shares the header panes' cache files.
+// HTTP stubs for Claude, ChatGPT Plus, OpenCode-Go and Antigravity,
+// with temp credential and state dirs so tests never read host logins
+// or touch real upstreams.
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +39,14 @@ type quotaStubState struct {
 	chatGPTAccountID     string
 	tokenCalls           int
 	calls                int
+	claudeCalls          int
+	claudeStatus         int
+	claudeRetryAfter     string
+	claudeBody           string
+	claudeMethod         string
+	claudeAuthorization  string
+	claudeUserAgent      string
+	claudeBeta           string
 	opencodeStarted      chan struct{}
 	opencodeBlock        <-chan struct{}
 	agyStarted           chan struct{}
@@ -49,6 +59,7 @@ func (s *quotaStubState) handler() http.Handler {
 		isChatGPT := strings.HasSuffix(r.URL.Path, "/backend-api/wham/usage")
 		isOpencode := strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage")
 		isAgy := strings.HasSuffix(r.URL.Path, ":retrieveUserQuotaSummary")
+		isClaude := strings.HasSuffix(r.URL.Path, "/api/oauth/usage")
 		s.mu.Lock()
 		s.calls++
 		if isChatGPT {
@@ -66,8 +77,16 @@ func (s *quotaStubState) handler() http.Handler {
 		if strings.HasSuffix(r.URL.Path, "/token") {
 			s.tokenCalls++
 		}
+		if isClaude {
+			s.claudeCalls++
+			s.claudeMethod = r.Method
+			s.claudeAuthorization = r.Header.Get("Authorization")
+			s.claudeUserAgent = r.Header.Get("User-Agent")
+			s.claudeBeta = r.Header.Get("anthropic-beta")
+		}
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
 		chatGPTStatus := s.chatGPTStatus
+		claudeStatus, claudeRetryAfter, claudeBody := s.claudeStatus, s.claudeRetryAfter, s.claudeBody
 		opencodeStarted, opencodeBlock := s.opencodeStarted, s.opencodeBlock
 		agyStarted, agyBlock, refreshDone := s.agyStarted, s.agyBlock, s.refreshDone
 		s.mu.Unlock()
@@ -78,6 +97,19 @@ func (s *quotaStubState) handler() http.Handler {
 				return
 			}
 			w.Write([]byte(`{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":4,"limit_window_seconds":18000,"reset_at":1893456000},"secondary_window":{"used_percent":4,"limit_window_seconds":604800,"reset_at":1893996000}},"credits":{"has_credits":false}}`))
+		case isClaude:
+			if claudeRetryAfter != "" {
+				w.Header().Set("Retry-After", claudeRetryAfter)
+			}
+			if claudeStatus != 0 && claudeStatus != http.StatusOK {
+				w.WriteHeader(claudeStatus)
+				_, _ = io.WriteString(w, claudeBody)
+				return
+			}
+			if claudeBody == "" {
+				claudeBody = `{"five_hour":{"utilization":36,"resets_at":"2030-01-01T00:00:00Z"},"seven_day":{"utilization":8,"resets_at":"2030-02-01T00:00:00Z"}}`
+			}
+			_, _ = io.WriteString(w, claudeBody)
 		case isOpencode:
 			if opencodeStarted != nil {
 				select {
@@ -122,7 +154,6 @@ func (s *quotaStubState) handler() http.Handler {
 		}
 	})
 }
-
 func quotaItoa(n int) string {
 	if n == 0 {
 		return "0"
@@ -277,6 +308,7 @@ func quotaEnvWithDaemon(t *testing.T, stub *quotaStubState, auth string) (base, 
 	t.Cleanup(restore)
 	restoreChatGPT := el.SetChatGPTUsageEndpointForTest(srv.URL + "/backend-api/wham/usage")
 	t.Cleanup(restoreChatGPT)
+	t.Setenv("HOME", tempDir(t))
 	stateDir = tempDir(t)
 	t.Setenv("EL_STATE_DIR", stateDir)
 	if auth != "" {
@@ -309,6 +341,7 @@ func TestQuotaEndpointTiming(t *testing.T) {
 	t.Cleanup(restore)
 
 	stateDir := tempDir(t)
+	t.Setenv("HOME", tempDir(t))
 	t.Setenv("EL_STATE_DIR", stateDir)
 	authPath := filepath.Join(tempDir(t), "auth.json")
 	if err := os.WriteFile(authPath, []byte(quotaAuth), 0o600); err != nil {
@@ -373,6 +406,181 @@ func writeClaudeFile(t *testing.T, dir string, fiveHour, sevenDay int) {
 	if err := os.WriteFile(filepath.Join(dir, "claude-usage.json"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeHostClaudeCredentials(t *testing.T, home, token, plan string, expiresAt int64) (string, []byte) {
+	t.Helper()
+	path := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"refreshToken":"must-not-change","expiresAt":%d,"subscriptionType":%q,"scopes":["user:profile"]}}`, token, expiresAt, plan))
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, raw
+}
+
+func writeClaudeOAuthCache(t *testing.T, stateDir string, fetchedAt time.Time) {
+	t.Helper()
+	raw := []byte(fmt.Sprintf(`{"fetched_at":%d,"windows":[{"label":"5h","pct":36,"resets_at":1893456000},{"label":"wk","pct":8,"resets_at":1893456000}]}`, fetchedAt.Unix()))
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-claude.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQuotaClaudeHostOAuthRefreshIsReadOnly(t *testing.T) {
+	stub := &quotaStubState{}
+	base, _, d := quotaEnvWithDaemon(t, stub, "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	d.clock = func() time.Time { return now }
+	credentialsPath, original := writeHostClaudeCredentials(t, home, "host-access-token", "pro", now.Add(time.Hour).UnixMilli())
+	before, err := os.Stat(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, cards, raw, err := sendQuotaRefresh(base, "claude")
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("Claude refresh: status %d, error %v", status, err)
+	}
+	assertQuotaContract(t, raw)
+	card := quotaByKey(t, cards)["claude"]
+	if card.State != "ok" || card.Plan != "Pro" || len(card.Windows) != 2 {
+		t.Fatalf("Claude card = %+v, want Pro with two windows", card)
+	}
+	if card.Windows[0].Label != "5-hour" || card.Windows[0].Pct != 36 || card.Windows[1].Label != "Weekly" || card.Windows[1].Pct != 8 {
+		t.Errorf("Claude windows = %+v, want 5-hour 36%% and Weekly 8%%", card.Windows)
+	}
+	stub.mu.Lock()
+	calls, totalCalls, method, authorization, userAgent, beta := stub.claudeCalls, stub.calls, stub.claudeMethod, stub.claudeAuthorization, stub.claudeUserAgent, stub.claudeBeta
+	stub.mu.Unlock()
+	if calls != 1 || totalCalls != 1 || method != http.MethodGet || authorization != "Bearer host-access-token" || beta != "oauth-2025-04-20" || userAgent != "claude-code/1.0.0" {
+		t.Errorf("Claude usage requests = calls:%d total:%d method:%q authorization:%q user-agent:%q beta:%q", calls, totalCalls, method, authorization, userAgent, beta)
+	}
+	after, err := os.Stat(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRaw, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterRaw) != string(original) || !before.ModTime().Equal(after.ModTime()) || before.Mode().Perm() != after.Mode().Perm() {
+		t.Errorf("Claude credentials changed during polling: bytesEqual=%t mtimeEqual=%t modeBefore=%#o modeAfter=%#o", string(afterRaw) == string(original), before.ModTime().Equal(after.ModTime()), before.Mode().Perm(), after.Mode().Perm())
+	}
+}
+
+func TestQuotaClaudeExpiredLoginRetainsCachedValues(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    int
+		expiredAt time.Duration
+		wantCalls int
+	}{
+		{name: "expired timestamp", expiredAt: -time.Minute, wantCalls: 0},
+		{name: "unauthorized response", status: http.StatusUnauthorized, expiredAt: time.Hour, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stub := &quotaStubState{claudeStatus: test.status}
+			base, stateDir, d := quotaEnvWithDaemon(t, stub, "")
+			now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+			d.clock = func() time.Time { return now }
+			home, err := os.UserHomeDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeHostClaudeCredentials(t, home, "host-access-token", "pro", now.Add(test.expiredAt).UnixMilli())
+			writeClaudeOAuthCache(t, stateDir, now.Add(-5*time.Minute))
+			status, cards := postQuotaRefresh(t, base, "claude")
+			card := quotaByKey(t, cards)["claude"]
+			if status != http.StatusOK || card.State != "expired" || !strings.Contains(card.Hint, "expired") {
+				t.Fatalf("Claude card = %+v, status %d; want expired with a sign-in hint", card, status)
+			}
+			if card.Plan != "Pro" || len(card.Windows) != 2 || card.Windows[0].Pct != 36 || card.Windows[1].Pct != 8 {
+				t.Errorf("expired Claude card dropped last values or plan: %+v", card)
+			}
+			stub.mu.Lock()
+			calls := stub.claudeCalls
+			stub.mu.Unlock()
+			if calls != test.wantCalls {
+				t.Errorf("Claude endpoint calls = %d, want %d", calls, test.wantCalls)
+			}
+			if test.status == http.StatusUnauthorized {
+				now = now.Add(30 * time.Second)
+				status, cards = postQuotaRefresh(t, base, "claude")
+				card = quotaByKey(t, cards)["claude"]
+				if status != http.StatusOK || card.State != "expired" || len(card.Windows) != 2 {
+					t.Errorf("repeat after 401 = %+v, status %d; want retained expired card", card, status)
+				}
+				stub.mu.Lock()
+				calls = stub.claudeCalls
+				stub.mu.Unlock()
+				if calls != 1 {
+					t.Errorf("repeated expired token made %d upstream calls, want 1", calls)
+				}
+			}
+		})
+	}
+}
+
+func TestQuotaClaudeRateLimitBacksOffAndTransientFailureKeepsCache(t *testing.T) {
+	t.Run("retry-after", func(t *testing.T) {
+		stub := &quotaStubState{claudeStatus: http.StatusTooManyRequests, claudeRetryAfter: "120"}
+		base, stateDir, d := quotaEnvWithDaemon(t, stub, "")
+		now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+		d.clock = func() time.Time { return now }
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHostClaudeCredentials(t, home, "host-access-token", "pro", now.Add(time.Hour).UnixMilli())
+		writeClaudeOAuthCache(t, stateDir, now.Add(-5*time.Minute))
+		_, cards := postQuotaRefresh(t, base, "claude")
+		card := quotaByKey(t, cards)["claude"]
+		if card.State != "stale" || card.Error == "" || len(card.Windows) != 2 || card.Windows[0].Pct != 36 {
+			t.Fatalf("rate-limited Claude card = %+v, want stale with retained windows", card)
+		}
+		now = now.Add(30 * time.Second)
+		_, cards = postQuotaRefresh(t, base, "claude")
+		if card = quotaByKey(t, cards)["claude"]; card.State != "stale" || len(card.Windows) != 2 {
+			t.Errorf("card during Retry-After backoff = %+v", card)
+		}
+		stub.mu.Lock()
+		calls := stub.claudeCalls
+		stub.mu.Unlock()
+		if calls != 1 {
+			t.Errorf("Claude endpoint calls during Retry-After = %d, want 1", calls)
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, "usage-claude-backoff")); err != nil {
+			t.Errorf("Retry-After backoff was not persisted: %v", err)
+		}
+	})
+
+	t.Run("other failure", func(t *testing.T) {
+		stub := &quotaStubState{claudeStatus: http.StatusInternalServerError}
+		base, stateDir, d := quotaEnvWithDaemon(t, stub, "")
+		now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+		d.clock = func() time.Time { return now }
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeHostClaudeCredentials(t, home, "host-access-token", "pro", now.Add(time.Hour).UnixMilli())
+		writeClaudeOAuthCache(t, stateDir, now.Add(-5*time.Minute))
+		cacheInfo, err := os.Stat(filepath.Join(stateDir, "usage-claude.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, cards := postQuotaRefresh(t, base, "claude")
+		card := quotaByKey(t, cards)["claude"]
+		if card.State != "stale" || card.Error == "" || len(card.Windows) != 2 || card.Windows[0].Pct != 36 || card.UpdatedAt != cacheInfo.ModTime().Unix() {
+			t.Errorf("transient failure card = %+v; want stale with its age and last values", card)
+		}
+	})
 }
 
 func getQuota(t *testing.T, base string) []quotaCard {

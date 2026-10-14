@@ -1,14 +1,14 @@
 package el
 
-// Usage windows of the model account behind a pane, for the strip's right
-// side. claude reports its own through the statusline (claude_usage.go);
-// the opencode Go plan and Antigravity have no push channel, so one poller
-// per machine asks their usage endpoints and every strip reads the cache:
-// `usage-<key>.json` in el's state dir. Panes race for one lock per key, so
-// N panes cost one request per interval, never N.
+// Usage windows for quota cards and the strip's right side. Claude's terminal
+// strip keeps using the push-based statusline file; browser quota reads its
+// host OAuth usage endpoint without refreshing credentials. OpenCode-Go and
+// Antigravity also have no push channel, so their pollers share
+// `usage-<key>.json` caches and per-key locks across viewers.
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +16,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,8 +55,154 @@ var (
 	chatGPTUsageURL  = "https://chatgpt.com/backend-api/wham/usage"
 	agyBaseURL       = "https://daily-cloudcode-pa.googleapis.com"
 	googleTokenURL   = "https://oauth2.googleapis.com/token"
+	claudeUsageURL   = "https://api.anthropic.com/api/oauth/usage"
 	usageHTTP        = &http.Client{Timeout: 20 * time.Second}
 )
+
+const (
+	claudeOAuthBeta       = "oauth-2025-04-20"
+	claudeVersionFallback = "1.0.0"
+)
+
+var (
+	claudeVersionMu     sync.Mutex
+	claudeVersionLookup = discoverClaudeCodeVersion
+	claudeVersionValue  string
+)
+
+var claudeVersionPattern = regexp.MustCompile(`(?:^|[^0-9])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)`)
+
+func claudeCodeVersion() string {
+	claudeVersionMu.Lock()
+	defer claudeVersionMu.Unlock()
+	if claudeVersionValue == "" {
+		claudeVersionValue = claudeVersionLookup()
+		if claudeVersionValue == "" {
+			claudeVersionValue = claudeVersionFallback
+		}
+	}
+	return claudeVersionValue
+}
+
+func discoverClaudeCodeVersion() string {
+	path, err := exec.LookPath("claude")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return parseClaudeCodeVersion(output)
+}
+
+func parseClaudeCodeVersion(output []byte) string {
+	match := claudeVersionPattern.FindSubmatch(output)
+	if len(match) != 2 {
+		return ""
+	}
+	return string(match[1])
+}
+
+func claudeCredentialsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate Claude Code credentials: %w", err)
+	}
+	return filepath.Join(home, ".claude", ".credentials.json"), nil
+}
+
+type claudeOAuthCredentials struct {
+	AccessToken      string `json:"accessToken"`
+	ExpiresAt        *int64 `json:"expiresAt"`
+	SubscriptionType string `json:"subscriptionType"`
+}
+
+func readClaudeOAuthCredentials() (claudeOAuthCredentials, bool, error) {
+	path, err := claudeCredentialsPath()
+	if err != nil {
+		return claudeOAuthCredentials{}, false, err
+	}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return claudeOAuthCredentials{}, false, nil
+	}
+	if err != nil {
+		return claudeOAuthCredentials{}, false, fmt.Errorf("read Claude Code credentials: %w", err)
+	}
+	var root struct {
+		OAuth *claudeOAuthCredentials `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return claudeOAuthCredentials{}, false, fmt.Errorf("decode Claude Code credentials: %w", err)
+	}
+	if root.OAuth == nil {
+		return claudeOAuthCredentials{}, false, nil
+	}
+	root.OAuth.AccessToken = strings.TrimSpace(root.OAuth.AccessToken)
+	if root.OAuth.AccessToken == "" {
+		return claudeOAuthCredentials{}, false, nil
+	}
+	return *root.OAuth, true, nil
+}
+
+func claudeCredentialsExpired(credentials claudeOAuthCredentials, now time.Time) bool {
+	if credentials.ExpiresAt == nil {
+		return false
+	}
+	expiresAt := *credentials.ExpiresAt
+	if expiresAt >= 1e11 { // Claude Code stores millisecond Unix timestamps.
+		return expiresAt <= now.UnixMilli()
+	}
+	return expiresAt <= now.Unix()
+}
+
+func claudePlanName(subscriptionType string) string {
+	switch strings.ToLower(strings.TrimSpace(subscriptionType)) {
+	case "pro":
+		return "Pro"
+	case "max", "max_5", "max_20":
+		return "Max"
+	case "team":
+		return "Team"
+	case "enterprise":
+		return "Enterprise"
+	default:
+		if subscriptionType == "" {
+			return ""
+		}
+		return strings.ToUpper(subscriptionType[:1]) + subscriptionType[1:]
+	}
+}
+
+func claudeQuotaConfigured(stateDir string, now time.Time) bool {
+	_, configured, err := readClaudeOAuthCredentials()
+	if configured || (err != nil && readUsageCache(stateDir, usageKeyClaude, now).Has) {
+		return true
+	}
+	return ReadClaudeUsage(stateDir, now).Has
+}
+
+func claudeQuotaCachePath(stateDir string) string {
+	_, configured, err := readClaudeOAuthCredentials()
+	oauthPath := usageCachePath(stateDir, usageKeyClaude)
+	if (configured || err != nil) && readUsageCache(stateDir, usageKeyClaude, time.Now()).Has {
+		return oauthPath
+	}
+	return claudeUsagePath(stateDir)
+}
+
+func ReadClaudeQuotaUsage(stateDir string, now time.Time) UsageSet {
+	_, configured, err := readClaudeOAuthCredentials()
+	if configured || err != nil {
+		if cached := readUsageCache(stateDir, usageKeyClaude, now); cached.Has {
+			return cached
+		}
+	}
+	return ReadClaudeUsage(stateDir, now).Set()
+}
 
 // The Antigravity OAuth client id and secret are not kept in source.
 // pig-antigravity-auth saves them to ~/.el/agy-oauth.json at login; the
@@ -101,6 +250,10 @@ func ReadUsage(stateDir, key string, now time.Time) UsageSet {
 	if key == usageKeyClaude {
 		return ReadClaudeUsage(stateDir, now).Set()
 	}
+	return readUsageCache(stateDir, key, now)
+}
+
+func readUsageCache(stateDir, key string, now time.Time) UsageSet {
 	raw, err := os.ReadFile(usageCachePath(stateDir, key))
 	if err != nil {
 		return UsageSet{}
@@ -158,9 +311,9 @@ func usageCacheAge(stateDir, key string, now time.Time) time.Duration {
 }
 
 // RefreshUsage refetches the account behind key when its cache is older than
-// usageRefreshEvery. Panes race for a per-key file lock without waiting, so
-// one request serves them all. Failure keeps the old cache: a stale number
-// beats a blank one, and the next interval retries.
+// usageRefreshEvery. Viewers share a per-key file lock. Claude's fetch uses
+// the host OAuth access token read-only, persists Retry-After backoff, and
+// never refreshes or writes the credentials file; failures retain old values.
 func RefreshUsage(ctx context.Context, stateDir, key string, now time.Time) error {
 	return refreshUsage(ctx, stateDir, key, now, false)
 }
@@ -174,8 +327,23 @@ func RefreshUsageForce(ctx context.Context, stateDir, key string, now time.Time)
 }
 
 func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, force bool) error {
-	if key == "" || key == usageKeyClaude {
+	if key == "" {
 		return nil
+	}
+	if key == usageKeyClaude {
+		credentials, configured, err := readClaudeOAuthCredentials()
+		if err != nil {
+			return err
+		}
+		if !configured {
+			return nil // Keep the statusline file as the fallback source.
+		}
+		if claudeCredentialsExpired(credentials, now) || claudeTokenRejected(stateDir, credentials.AccessToken) {
+			return claudeExpiredError("Claude Code login expired. Sign in again in Claude Code.")
+		}
+		if err := claudeBackoffError(stateDir, now); err != nil {
+			return err
+		}
 	}
 	if !force && usageCacheAge(stateDir, key, now) < usageRefreshEvery {
 		return nil
@@ -209,6 +377,8 @@ func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, forc
 			return nil
 		}
 		return writeUsageCache(stateDir, key, w, now)
+	case usageKeyClaude:
+		return fetchClaudeQuota(ctx, stateDir, now)
 	case usageKeyOpencode:
 		w, err := fetchOpencodeUsage(ctx)
 		if err != nil {
@@ -225,6 +395,179 @@ func refreshUsage(ctx context.Context, stateDir, key string, now time.Time, forc
 		}
 		return writeUsageCache(stateDir, usageKeyAgy3P, tp, now)
 	}
+	return nil
+}
+
+func claudeExpiredError(hint string) error {
+	return &quotaFailure{state: QuotaExpired, hint: hint, err: fmt.Errorf("Claude OAuth login expired")}
+}
+
+func claudeBackoffPath(stateDir string) string {
+	if stateDir == "" {
+		stateDir = statedb.StateDir()
+	}
+	return filepath.Join(stateDir, "usage-claude-backoff")
+}
+
+func claudeRejectedTokenPath(stateDir string) string {
+	if stateDir == "" {
+		stateDir = statedb.StateDir()
+	}
+	return filepath.Join(stateDir, "usage-claude-expired-token")
+}
+
+func claudeTokenFingerprint(token string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
+}
+
+func claudeTokenRejected(stateDir, token string) bool {
+	path := claudeRejectedTokenPath(stateDir)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(string(raw)) == claudeTokenFingerprint(token) {
+		return true
+	}
+	_ = os.Remove(path)
+	return false
+}
+
+func writeClaudeRejectedToken(stateDir, token string) error {
+	path := claudeRejectedTokenPath(stateDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, []byte(claudeTokenFingerprint(token)), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func clearClaudeRejectedToken(stateDir string) {
+	_ = os.Remove(claudeRejectedTokenPath(stateDir))
+}
+
+func claudeBackoffUntil(stateDir string, now time.Time) (time.Time, bool) {
+	raw, err := os.ReadFile(claudeBackoffPath(stateDir))
+	if err != nil {
+		return time.Time{}, false
+	}
+	nanos, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		return now.Add(usageRefreshEvery), true
+	}
+	return time.Unix(0, nanos), true
+}
+
+func writeClaudeBackoff(stateDir string, until time.Time) error {
+	path := claudeBackoffPath(stateDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, []byte(strconv.FormatInt(until.UnixNano(), 10)), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func clearClaudeBackoff(stateDir string) {
+	_ = os.Remove(claudeBackoffPath(stateDir))
+}
+
+func claudeBackoffError(stateDir string, now time.Time) error {
+	if until, ok := claudeBackoffUntil(stateDir, now); ok && now.Before(until) {
+		return fmt.Errorf("Claude quota rate limit backoff until %s", until.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		if delay := at.Sub(now); delay > 0 {
+			return delay
+		}
+		return 0
+	}
+	return usageRefreshEvery
+}
+
+func fetchClaudeQuota(ctx context.Context, stateDir string, now time.Time) error {
+	credentials, configured, err := readClaudeOAuthCredentials()
+	if err != nil {
+		return err
+	}
+	if !configured {
+		return nil
+	}
+	if claudeCredentialsExpired(credentials, now) || claudeTokenRejected(stateDir, credentials.AccessToken) {
+		return claudeExpiredError("Claude Code login expired. Sign in again in Claude Code.")
+	}
+	if err := claudeBackoffError(stateDir, now); err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeUsageURL, nil)
+	if err != nil {
+		return fmt.Errorf("create Claude OAuth usage request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
+	request.Header.Set("anthropic-beta", claudeOAuthBeta)
+	request.Header.Set("User-Agent", "claude-code/"+claudeCodeVersion())
+	response, err := usageHTTP.Do(request)
+	if err != nil {
+		return fmt.Errorf("Claude OAuth usage request: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized {
+		_ = writeClaudeRejectedToken(stateDir, credentials.AccessToken)
+		clearClaudeBackoff(stateDir)
+		return claudeExpiredError("Claude Code login expired. Sign in again in Claude Code.")
+	}
+	if response.StatusCode == http.StatusTooManyRequests {
+		delay := parseRetryAfter(response.Header.Get("Retry-After"), now)
+		until := now.Add(delay)
+		if err := writeClaudeBackoff(stateDir, until); err != nil {
+			return fmt.Errorf("Claude quota is rate limited; could not save retry backoff: %w", err)
+		}
+		return fmt.Errorf("Claude quota rate limited; retry after %s", delay.Round(time.Second))
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Claude OAuth usage request returned HTTP %d", response.StatusCode)
+	}
+	var usage struct {
+		FiveHour *struct {
+			Utilization float64 `json:"utilization"`
+			ResetsAt    string  `json:"resets_at"`
+		} `json:"five_hour"`
+		SevenDay *struct {
+			Utilization float64 `json:"utilization"`
+			ResetsAt    string  `json:"resets_at"`
+		} `json:"seven_day"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&usage); err != nil {
+		return fmt.Errorf("decode Claude OAuth usage response: %w", err)
+	}
+	var windows []UsageWindow
+	if usage.FiveHour != nil {
+		windows = append(windows, UsageWindow{Label: "5h", Pct: int(usage.FiveHour.Utilization + 0.5), ResetsAt: parseResetTime(usage.FiveHour.ResetsAt)})
+	}
+	if usage.SevenDay != nil {
+		windows = append(windows, UsageWindow{Label: "wk", Pct: int(usage.SevenDay.Utilization + 0.5), ResetsAt: parseResetTime(usage.SevenDay.ResetsAt)})
+	}
+	if len(windows) == 0 {
+		return fmt.Errorf("Claude OAuth usage response has no supported windows")
+	}
+	if err := writeUsageCache(stateDir, usageKeyClaude, windows, now); err != nil {
+		return err
+	}
+	clearClaudeBackoff(stateDir)
+	clearClaudeRejectedToken(stateDir)
 	return nil
 }
 

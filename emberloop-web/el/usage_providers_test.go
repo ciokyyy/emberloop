@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -38,6 +39,7 @@ func providerEnv(t *testing.T, handler http.Handler) string {
 	agyToken = ""
 	agyTokenMu.Unlock()
 	t.Cleanup(func() { opencodeUsageURL, agyBaseURL, googleTokenURL = oldOC, oldAgy, oldTok })
+	t.Setenv("HOME", t.TempDir())
 	auth := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.WriteFile(auth, []byte(`{"opencode-go":{"key":"k1"},"google-antigravity":{"refresh":"r1","projectId":"p1"}}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -138,5 +140,97 @@ func TestRefreshUsageSkipsKeyless(t *testing.T) {
 		if err := RefreshUsage(context.Background(), dir, key, time.Now()); err != nil {
 			t.Errorf("key %q: %v", key, err)
 		}
+	}
+}
+
+func TestRefreshUsageClaudeOAuthCacheTTL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	credentialsPath := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(credentialsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialsPath, []byte(`{"claudeAiOauth":{"accessToken":"token","expiresAt":9999999999999,"subscriptionType":"pro"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var callsMu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callsMu.Lock()
+		calls++
+		callsMu.Unlock()
+		w.Write([]byte(`{"five_hour":{"utilization":36,"resets_at":"2030-01-01T05:00:00Z"},"seven_day":{"utilization":8,"resets_at":"2030-01-08T00:00:00Z"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	restore := SetUsageEndpointsForTest(srv.URL, srv.URL, srv.URL)
+	t.Cleanup(restore)
+	requestCalls := func() int {
+		callsMu.Lock()
+		defer callsMu.Unlock()
+		return calls
+	}
+	dir := t.TempDir()
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := RefreshUsageForce(context.Background(), dir, usageKeyClaude, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := RefreshUsage(context.Background(), dir, usageKeyClaude, now.Add(30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got := requestCalls(); got != 1 {
+		t.Fatalf("Claude refreshes inside the TTL = %d, want 1", got)
+	}
+	if err := RefreshUsage(context.Background(), dir, usageKeyClaude, now.Add(usageRefreshEvery)); err != nil {
+		t.Fatal(err)
+	}
+	if got := requestCalls(); got != 2 {
+		t.Fatalf("Claude refreshes at the TTL boundary = %d, want 2", got)
+	}
+	usage := ReadClaudeQuotaUsage(dir, now.Add(usageRefreshEvery))
+	if !usage.Has || len(usage.Windows) != 2 || usage.Windows[0].Pct != 36 || usage.Windows[1].Pct != 8 {
+		t.Errorf("cached Claude OAuth usage = %+v", usage)
+	}
+}
+
+func TestClaudeRetryAfterAndCredentialTimestamps(t *testing.T) {
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	for value, want := range map[string]time.Duration{
+		"120": 120 * time.Second,
+		now.Add(2 * time.Minute).Format(http.TimeFormat): 2 * time.Minute,
+		"": usageRefreshEvery,
+	} {
+		if got := parseRetryAfter(value, now); got != want {
+			t.Errorf("parseRetryAfter(%q) = %s, want %s", value, got, want)
+		}
+	}
+	for _, expiresAt := range []int64{now.Add(-time.Second).Unix(), now.Add(-time.Second).UnixMilli()} {
+		if !claudeCredentialsExpired(claudeOAuthCredentials{ExpiresAt: &expiresAt}, now) {
+			t.Errorf("expired timestamp %d was not recognized", expiresAt)
+		}
+	}
+	future := now.Add(time.Hour).UnixMilli()
+	if claudeCredentialsExpired(claudeOAuthCredentials{ExpiresAt: &future}, now) {
+		t.Errorf("future timestamp %d was recognized as expired", future)
+	}
+}
+
+func TestClaudeVersionUsesInstalledOutputOrFallback(t *testing.T) {
+	if got := parseClaudeCodeVersion([]byte("2.1.42 (Claude Code)")); got != "2.1.42" {
+		t.Fatalf("parsed version = %q, want 2.1.42", got)
+	}
+	if got := parseClaudeCodeVersion([]byte("not a version")); got != "" {
+		t.Fatalf("invalid version output parsed as %q", got)
+	}
+	claudeVersionMu.Lock()
+	oldLookup, oldValue := claudeVersionLookup, claudeVersionValue
+	claudeVersionLookup, claudeVersionValue = func() string { return "" }, ""
+	claudeVersionMu.Unlock()
+	t.Cleanup(func() {
+		claudeVersionMu.Lock()
+		claudeVersionLookup, claudeVersionValue = oldLookup, oldValue
+		claudeVersionMu.Unlock()
+	})
+	if got := claudeCodeVersion(); got != claudeVersionFallback {
+		t.Errorf("fallback Claude version = %q, want %q", got, claudeVersionFallback)
 	}
 }

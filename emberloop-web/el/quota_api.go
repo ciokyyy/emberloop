@@ -57,8 +57,9 @@ type quotaSource interface {
 	Snapshot(string, time.Time, error) QuotaProvider
 }
 
-// usageQuotaSource adapts the existing shared usage cache and lock used by
-// terminal header panes to the quota card contract.
+// usageQuotaSource adapts provider usage caches and locks to the browser quota
+// contract; the OpenCode-Go and Antigravity caches remain shared with header
+// panes, while Claude's OAuth cache stays separate from its statusline file.
 type usageQuotaSource struct {
 	key, label, plan, fetchKey string
 	configuredFn               func(string, time.Time) bool
@@ -66,6 +67,7 @@ type usageQuotaSource struct {
 	expiredHint                string
 	hintFn                     func(string) string
 	cachePathFn                func(string) string
+	planFn                     func() string
 }
 
 func (s usageQuotaSource) Key() string      { return s.key }
@@ -84,7 +86,7 @@ func (s usageQuotaSource) CachePath(stateDir string) string {
 }
 
 func (s usageQuotaSource) Fetch(ctx context.Context, stateDir string, now time.Time, force bool) error {
-	if s.fetchKey == "" { // Claude's statusline file is the fallback source.
+	if s.fetchKey == "" { // A local-only source has nothing to refresh.
 		return nil
 	}
 	if force {
@@ -94,16 +96,22 @@ func (s usageQuotaSource) Fetch(ctx context.Context, stateDir string, now time.T
 }
 
 func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr error) QuotaProvider {
-	set := ReadUsage(stateDir, s.key, now)
+	var set UsageSet
+	if s.key == usageKeyClaude {
+		set = ReadClaudeQuotaUsage(stateDir, now)
+	} else {
+		set = ReadUsage(stateDir, s.key, now)
+	}
+	plan := s.plan
+	if s.planFn != nil {
+		plan = s.planFn()
+	}
 	p := QuotaProvider{
 		Key:       s.key,
 		Label:     s.label,
-		Plan:      s.plan,
+		Plan:      plan,
 		UpdatedAt: quotaUpdatedAt(s.CachePath(stateDir)),
 		Windows:   quotaWindows(set.Windows),
-	}
-	if p.Windows == nil {
-		p.Windows = []QuotaWindow{}
 	}
 
 	var failure *quotaFailure
@@ -131,6 +139,9 @@ func (s usageQuotaSource) Snapshot(stateDir string, now time.Time, fetchErr erro
 		}
 	case set.Has:
 		p.State = QuotaOK
+	case fetchErr != nil && s.key == usageKeyClaude:
+		p.State = QuotaStale
+		p.Error = fetchErr.Error()
 	case fetchErr != nil:
 		p.State = QuotaError
 		p.Error = fetchErr.Error()
@@ -162,14 +173,19 @@ func (e *quotaFailure) Unwrap() error { return e.err }
 // refresher. Add a provider here without teaching those paths its fetch logic.
 var quotaSources = []quotaSource{
 	usageQuotaSource{
-		key: usageKeyClaude, label: "Claude",
-		configuredFn: func(stateDir string, now time.Time) bool {
-			return ReadClaudeUsage(stateDir, now).Has
-		},
+		key: usageKeyClaude, label: "Claude", fetchKey: usageKeyClaude,
+		configuredFn: claudeQuotaConfigured,
 		hintFn: func(string) string {
-			return "Claude quota needs a host Claude login or a Claude Code statusline report."
+			return "Claude quota needs a host Claude Code login or a Claude Code statusline report."
 		},
-		cachePathFn: claudeUsagePath,
+		cachePathFn: claudeQuotaCachePath,
+		planFn: func() string {
+			credentials, configured, _ := readClaudeOAuthCredentials()
+			if !configured {
+				return ""
+			}
+			return claudePlanName(credentials.SubscriptionType)
+		},
 	},
 	usageQuotaSource{
 		key: usageKeyChatGPT, label: "ChatGPT Plus", plan: "Plus", fetchKey: usageKeyChatGPT,
@@ -376,19 +392,27 @@ func QuotaSnapshot(stateDir string, now time.Time, errs map[string]error) []Quot
 	return out
 }
 
-// SetUsageEndpointsForTest aims the usage fetchers at local stubs and clears
-// the cached Antigravity token, so cross-package HTTP-seam tests never touch
-// the real upstreams. It returns a restore func.
+// SetUsageEndpointsForTest aims every usage fetcher at local stubs and clears
+// cached token/version data, so HTTP-seam tests never touch the real upstreams
+// or start an installed Claude binary. It returns a restore func.
 func SetUsageEndpointsForTest(opencodeURL, agyBase, tokenURL string) func() {
-	oldOC, oldAgy, oldTok := opencodeUsageURL, agyBaseURL, googleTokenURL
+	oldOC, oldAgy, oldTok, oldClaude := opencodeUsageURL, agyBaseURL, googleTokenURL, claudeUsageURL
 	opencodeUsageURL, agyBaseURL, googleTokenURL = opencodeURL, agyBase, tokenURL
+	claudeUsageURL = strings.TrimRight(agyBase, "/") + "/api/oauth/usage"
 	agyTokenMu.Lock()
 	agyToken = ""
 	agyTokenMu.Unlock()
+	claudeVersionMu.Lock()
+	oldVersionLookup, oldVersionValue := claudeVersionLookup, claudeVersionValue
+	claudeVersionLookup, claudeVersionValue = func() string { return claudeVersionFallback }, ""
+	claudeVersionMu.Unlock()
 	return func() {
-		opencodeUsageURL, agyBaseURL, googleTokenURL = oldOC, oldAgy, oldTok
+		opencodeUsageURL, agyBaseURL, googleTokenURL, claudeUsageURL = oldOC, oldAgy, oldTok, oldClaude
 		agyTokenMu.Lock()
 		agyToken = ""
 		agyTokenMu.Unlock()
+		claudeVersionMu.Lock()
+		claudeVersionLookup, claudeVersionValue = oldVersionLookup, oldVersionValue
+		claudeVersionMu.Unlock()
 	}
 }

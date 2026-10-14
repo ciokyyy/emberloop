@@ -27,8 +27,13 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   refreshes independent providers concurrently, publishing each completion;
   manual POST skips the 90s age guard and enforces a 10s per-provider minimum.
   ChatGPT Plus uses pig's `openai-codex` login read-only and never refreshes it.
-  `quota_test.go` covers cached reads, provider isolation, refresh cooldowns,
-  shared locks and ChatGPT's HTTP headers, windows, missing and expired states.
+  `el/usage_providers.go` polls Claude's host OAuth read-only with a separate
+  90s cache and persisted `Retry-After` backoff; it never refreshes or writes
+  `~/.claude/.credentials.json`, starts a harness or sends a prompt. Statusline
+  data is the fallback only when host OAuth is absent; the terminal header
+  remains unchanged. `quota_test.go` covers cached reads, provider isolation,
+  cooldowns, shared locks, ChatGPT headers/windows/missing/expired states and
+  Claude's safe credentials and retained stale/expired values.
 - Project metadata: `projects.go` derives a cached one-line gist from the root
   `AGENTS.md` (else README), persists it with the Project, and preserves an
   explicit gist edit across re-derivation; `projects_test.go` covers both
@@ -82,7 +87,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go`, `grok_handoff_test.go` and
   `acpretry_test.go`.
-- Quota HTTP seam: `quota.go` serves the registered provider contract at `/api/quota` and `/api/quota/refresh`; `quota_test.go` verifies its full shape against local upstream stubs.
+- Quota HTTP seam: `quota.go` serves the registered provider contract at `/api/quota` and `/api/quota/refresh`; `quota_test.go` verifies the Claude OAuth, OpenCode-Go and Antigravity shapes against local upstream stubs.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
   mapped in `web/README.md`.
 
