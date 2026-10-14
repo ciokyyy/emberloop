@@ -3,12 +3,13 @@ package el
 // Quota snapshot for the browser UI's Quota tab. The Daemon serves it at
 // GET /api/quota and POST /api/quota/refresh; the header strip never reads
 // it. It reuses ReadClaudeUsage, ReadUsage, RefreshUsage, RefreshUsageForce
-// and the UsageKeyFor mapping: no fetch logic lives here, only the
-// per-provider state assembly.
+// and the UsageKeyFor mapping. Provider fetching stays in usage_providers.go;
+// this file dispatches independent refreshes and assembles per-provider state.
 
 import (
 	"context"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -109,10 +110,10 @@ func quotaConfigured(stateDir, key string, now time.Time) bool {
 
 // RefreshQuota refetches through the shared cache and lock, then returns
 // the per-card refresh error (nil when fresh, fetched, or skipped). An
-// empty key refreshes every fetchable provider; "claude" only re-reads its
-// file, so it never fails. force skips the 90s age guard (manual refresh);
-// without it the guard applies (page load). A failure keeps the old cache:
-// the snapshot still serves stale windows with the error text.
+// empty key refreshes every fetchable provider concurrently; "claude" only
+// re-reads its file, so it never fails. force skips the 90s age guard (manual
+// refresh); without it the guard applies (page load). A failure keeps the old
+// cache: the snapshot still serves stale windows with the error text.
 //
 // force carries no cooldown on purpose: a manual refresh must fetch really
 // fresh data (spec story 14), and the per-key flock still serializes
@@ -134,13 +135,28 @@ func RefreshQuota(ctx context.Context, stateDir, key string, now time.Time, forc
 	} else if c, ok := quotaCard(key); ok && c.fetchKey != "" {
 		fetchKeys = append(fetchKeys, c.fetchKey)
 	}
+
+	// Each fetch key owns an independent cache file and flock. Run them in
+	// parallel so a slow provider cannot hold up another provider's cache.
+	errsByFetchKey := make([]error, len(fetchKeys))
+	var wg sync.WaitGroup
+	wg.Add(len(fetchKeys))
+	for i, fk := range fetchKeys {
+		go func(i int, fk string) {
+			defer wg.Done()
+			errsByFetchKey[i] = refresh(ctx, stateDir, fk, now)
+		}(i, fk)
+	}
+	wg.Wait()
+
 	errs := map[string]error{}
-	for _, fk := range fetchKeys {
-		if err := refresh(ctx, stateDir, fk, now); err != nil {
-			for _, c := range quotaCards {
-				if c.fetchKey == fk {
-					errs[c.key] = err
-				}
+	for i, err := range errsByFetchKey {
+		if err == nil {
+			continue
+		}
+		for _, c := range quotaCards {
+			if c.fetchKey == fetchKeys[i] {
+				errs[c.key] = err
 			}
 		}
 	}

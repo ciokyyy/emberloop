@@ -26,6 +26,7 @@ type quotaStubState struct {
 	mu              sync.Mutex
 	opencodePct     int
 	opencodeErr     bool
+	opencodeCalls   int
 	agyErr          bool
 	calls           int
 	opencodeStarted chan struct{}
@@ -35,13 +36,17 @@ type quotaStubState struct {
 
 func (s *quotaStubState) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isOpencode := strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage")
 		s.mu.Lock()
 		s.calls++
+		if isOpencode {
+			s.opencodeCalls++
+		}
 		opencodePct, opencodeErr, agyErr := s.opencodePct, s.opencodeErr, s.agyErr
 		opencodeStarted, opencodeBlock, refreshDone := s.opencodeStarted, s.opencodeBlock, s.refreshDone
 		s.mu.Unlock()
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/zen/go/v1/usage"):
+		case isOpencode:
 			if opencodeStarted != nil {
 				select {
 				case opencodeStarted <- struct{}{}:
@@ -314,30 +319,45 @@ func TestQuotaGetReportsBackgroundRefreshError(t *testing.T) {
 	}
 }
 
-func postQuotaRefresh(t *testing.T, base, key string) (int, []quotaCard) {
-	t.Helper()
-	var body *bytes.Reader
-	if key == "<empty>" {
-		body = bytes.NewReader(nil)
-	} else {
-		raw, _ := json.Marshal(map[string]string{"key": key})
+type quotaPostResult struct {
+	status int
+	cards  []quotaCard
+	err    error
+}
+
+func sendQuotaRefresh(base, key string) (int, []quotaCard, error) {
+	var body io.Reader
+	if key != "<empty>" {
+		raw, err := json.Marshal(map[string]string{"key": key})
+		if err != nil {
+			return 0, nil, err
+		}
 		body = bytes.NewReader(raw)
 	}
 	resp, err := http.Post(base+"/api/quota/refresh", "application/json", body)
 	if err != nil {
-		t.Fatal(err)
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, nil
+		return resp.StatusCode, nil, nil
 	}
 	var out struct {
 		Providers []quotaCard `json:"providers"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, out.Providers, nil
+}
+
+func postQuotaRefresh(t *testing.T, base, key string) (int, []quotaCard) {
+	t.Helper()
+	status, cards, err := sendQuotaRefresh(base, key)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return resp.StatusCode, out.Providers
+	return status, cards
 }
 
 func quotaByKey(t *testing.T, cards []quotaCard) map[string]quotaCard {
@@ -517,5 +537,163 @@ func TestQuotaRefreshAll(t *testing.T) {
 	}
 	if m["claude"].State != "ok" || m["agy-gemini"].State != "ok" || m["agy-3p"].State != "ok" {
 		t.Errorf("refresh-all cards = %+v", m)
+	}
+}
+
+func waitForQuotaCaches(t *testing.T, stateDir string, keys ...string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		allPresent := true
+		for _, key := range keys {
+			if _, err := os.Stat(filepath.Join(stateDir, "usage-"+key+".json")); err != nil {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("quota caches %v were not written while another provider was blocked", keys)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestQuotaRefreshAllDoesNotWaitForBlockedProviderToUpdateOtherCards(t *testing.T) {
+	blocked := make(chan struct{})
+	started := make(chan struct{}, 1)
+	agyDone := make(chan struct{})
+	stub := &quotaStubState{
+		opencodePct:     72,
+		opencodeStarted: started,
+		opencodeBlock:   blocked,
+		refreshDone:     agyDone,
+	}
+	base, stateDir, _ := quotaEnvWithDaemon(t, stub, quotaAuth)
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(blocked) }) }
+	t.Cleanup(unblock)
+	staleCache := `{"fetched_at":1,"windows":[{"label":"5h","pct":41,"resets_at":1893456000}]}`
+	if err := os.WriteFile(filepath.Join(stateDir, "usage-opencode-go.json"), []byte(staleCache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan quotaPostResult, 1)
+	go func() {
+		status, cards, err := sendQuotaRefresh(base, "<empty>")
+		result <- quotaPostResult{status: status, cards: cards, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("refresh-all did not reach the blocked OpenCode-Go stub")
+	}
+	select {
+	case <-agyDone:
+	case <-time.After(time.Second):
+		t.Fatal("Antigravity refresh waited for the blocked OpenCode-Go provider")
+	}
+	waitForQuotaCaches(t, stateDir, "agy-gemini", "agy-3p")
+
+	// A new read sees the completed providers even though refresh-all is still
+	// waiting for OpenCode-Go's upstream response.
+	cards := quotaByKey(t, getQuota(t, base))
+	for _, key := range []string{"agy-gemini", "agy-3p"} {
+		if card := cards[key]; card.State != "ok" || len(card.Windows) != 2 {
+			t.Errorf("%s while OpenCode-Go is blocked = %+v, want fresh ok card", key, card)
+		}
+	}
+	if card := cards["opencode-go"]; card.State != "ok" || len(card.Windows) != 1 || card.Windows[0].Pct != 41 {
+		t.Errorf("OpenCode-Go cache while upstream is blocked = %+v, want previous cached value", card)
+	}
+	stub.mu.Lock()
+	opencodeCalls := stub.opencodeCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 1 {
+		t.Errorf("OpenCode-Go upstream calls while blocked = %d, want 1", opencodeCalls)
+	}
+
+	unblock()
+	select {
+	case got := <-result:
+		if got.err != nil || got.status != http.StatusOK {
+			t.Fatalf("refresh-all result = status %d, err %v", got.status, got.err)
+		}
+		if card := quotaByKey(t, got.cards)["opencode-go"]; card.State != "ok" || card.Windows[0].Pct != 72 {
+			t.Errorf("completed OpenCode-Go card = %+v, want fresh value", card)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("refresh-all did not finish after unblocking OpenCode-Go")
+	}
+}
+
+func TestQuotaRefreshFailureIsIsolatedToOneProvider(t *testing.T) {
+	stub := &quotaStubState{opencodeErr: true}
+	base, _ := quotaEnv(t, stub, quotaAuth)
+	status, cards := postQuotaRefresh(t, base, "<empty>")
+	if status != http.StatusOK {
+		t.Fatalf("refresh-all status = %d, want 200", status)
+	}
+	m := quotaByKey(t, cards)
+	if card := m["opencode-go"]; card.State != "error" || card.Error == "" {
+		t.Errorf("failed OpenCode-Go card = %+v, want its own error", card)
+	}
+	for _, key := range []string{"agy-gemini", "agy-3p"} {
+		if card := m[key]; card.State != "ok" || len(card.Windows) != 2 {
+			t.Errorf("%s after OpenCode-Go failure = %+v, want intact ok card", key, card)
+		}
+	}
+}
+
+func TestQuotaConcurrentRefreshersShareProviderLock(t *testing.T) {
+	blocked := make(chan struct{})
+	started := make(chan struct{}, 1)
+	stub := &quotaStubState{opencodePct: 66, opencodeStarted: started, opencodeBlock: blocked}
+	base, _, _ := quotaEnvWithDaemon(t, stub, quotaAuth)
+	var unblockOnce sync.Once
+	unblock := func() { unblockOnce.Do(func() { close(blocked) }) }
+	t.Cleanup(unblock)
+
+	first := make(chan quotaPostResult, 1)
+	go func() {
+		status, cards, err := sendQuotaRefresh(base, "opencode-go")
+		first <- quotaPostResult{status: status, cards: cards, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first refresher did not reach the OpenCode-Go stub")
+	}
+
+	second := make(chan quotaPostResult, 1)
+	go func() {
+		status, cards, err := sendQuotaRefresh(base, "opencode-go")
+		second <- quotaPostResult{status: status, cards: cards, err: err}
+	}()
+	select {
+	case got := <-second:
+		if got.err != nil || got.status != http.StatusOK {
+			t.Fatalf("second refresh = status %d, err %v", got.status, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second refresh waited for the in-flight provider request")
+	}
+	stub.mu.Lock()
+	opencodeCalls := stub.opencodeCalls
+	stub.mu.Unlock()
+	if opencodeCalls != 1 {
+		t.Errorf("concurrent refreshers made %d upstream requests, want one", opencodeCalls)
+	}
+
+	unblock()
+	select {
+	case got := <-first:
+		if got.err != nil || got.status != http.StatusOK {
+			t.Fatalf("first refresh = status %d, err %v", got.status, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first refresher did not finish after unblocking the upstream")
 	}
 }
