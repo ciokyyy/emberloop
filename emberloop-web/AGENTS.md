@@ -25,10 +25,11 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `submitgate_test.go`.
 - Quota HTTP/live seam: `quota.go` serves the shared cache immediately on GET;
   one `/api/live?topic=quota` subscriber starts the guarded refresher, which
-  refreshes configured providers concurrently, and the last departure cancels
-  it. Its first non-forced pass retains the 90s/provider age guard; changed
-  provider lists publish only to quota streams. Header panes share cache files
-  and per-key locks; manual POST skips the age guard and enforces a 10s/provider
+  refreshes configured providers concurrently, while ordinary live watchers keep
+  the shared EventSource stable. The first non-forced pass retains the 90s/provider
+  age guard; the last quota subscriber leaving cancels it. Changed provider
+  lists publish only to quota streams. Header panes share cache files and
+  per-key locks; manual POST skips the age guard and enforces a 10s/provider
   minimum. ChatGPT Plus uses pig's read-only `openai-codex` login.
   `el/usage_providers.go` polls Claude's host OAuth read-only with a separate
   90s cache and persisted `Retry-After` backoff; it never refreshes or writes

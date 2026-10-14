@@ -139,16 +139,18 @@ func (d *Daemon) refreshQuotaFetchKeys(ctx context.Context, fetchKeys []string, 
 	wg.Wait()
 }
 
-// refreshQuota records each provider's outcome as it completes, before
-// returning aggregate errors, and publishes the provider list only if its
-// public snapshot changed.
+// refreshQuota publishes each upstream result as it completes. Local-only
+// providers have no callback, so their error state is refreshed once after
+// the read.
 func (d *Daemon) refreshQuota(ctx context.Context, key string, now time.Time, force bool) map[string]error {
 	errs := el.RefreshQuotaWithCallback(ctx, quotaStateDir, key, now, force, func(fetchKey string, fetchErrs map[string]error) {
 		d.rememberQuotaErrors(fetchKey, fetchErrs)
 		d.publishQuotaIfChanged()
 	})
-	d.rememberQuotaErrors(key, errs)
-	d.publishQuotaIfChanged()
+	if len(el.QuotaFetchKeys(key)) == 0 {
+		d.rememberQuotaErrors(key, errs)
+		d.publishQuotaIfChanged()
+	}
 	return errs
 }
 
@@ -176,7 +178,11 @@ func (d *Daemon) hasQuotaSubscribers() bool {
 }
 
 func (d *Daemon) publishQuotaIfChanged() {
-	payload, err := json.Marshal(d.quotaProviders())
+	if !d.hasQuotaSubscribers() {
+		return
+	}
+	providers := d.quotaProviders()
+	payload, err := json.Marshal(providers)
 	if err != nil {
 		return
 	}
@@ -192,8 +198,8 @@ func (d *Daemon) publishQuotaIfChanged() {
 		d.quotaPublishedJSON = append(d.quotaPublishedJSON[:0], payload...)
 	}
 	d.quotaMu.Unlock()
-	if changed && d.hasQuotaSubscribers() {
-		d.live.publishPayload("quota", payload)
+	if changed {
+		d.live.publishQuota(providers)
 	}
 }
 

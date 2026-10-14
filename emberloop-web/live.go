@@ -7,30 +7,30 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	el "example.com/emberloop-web/el"
 )
 
-// liveHub is the one realtime channel of the Daemon. Every state change
-// publishes the name of the topic it touched; GET /api/live fans those names
-// out over a single SSE stream. State topics normally carry no data and the
-// client refetches their normal GET endpoint. Topics may opt into a payload
-// when refetching would defeat the purpose of a live update (quota).
-//
-// Topics: "sessions" (the list), "session:<id>" (one Session's meta and
-// queue), "runs" (the list), "run:<id>" (one Run), "settings", "users" (the
-// User list and who is online), and "quota" (the provider list).
-// Transcript Events keep their own append-only stream; they are a log, not
-// state.
+// liveHub is the one realtime channel of the Daemon. State changes publish
+// topic names over an SSE stream; the client refetches their normal endpoints.
+// Quota subscribers use a dedicated payload event because the page should not
+// poll to pick up changed provider values.
+type quotaLiveEvent struct {
+	Topic     string             `json:"topic"`
+	Providers []el.QuotaProvider `json:"providers"`
+}
+
 type liveMessage struct {
-	topic   string
-	payload []byte
+	topic string
+	quota *quotaLiveEvent
 }
 
 type liveHub struct {
 	mu   sync.Mutex
-	subs map[chan liveMessage]struct{}
+	subs map[chan liveMessage]bool // true only for streams subscribed to quota
 }
 
-func newLiveHub() *liveHub { return &liveHub{subs: map[chan liveMessage]struct{}{}} }
+func newLiveHub() *liveHub { return &liveHub{subs: map[chan liveMessage]bool{}} }
 
 // publish tells every subscriber the topics changed. It never blocks: a
 // subscriber with a full buffer already has a refetch pending for the same
@@ -51,27 +51,58 @@ func (h *liveHub) publish(topics ...string) {
 	}
 }
 
-// publishPayload publishes a topic with a JSON provider-list payload. The
-// bytes are copied so the caller can safely reuse its buffer.
-func (h *liveHub) publishPayload(topic string, payload []byte) {
-	if h == nil || !json.Valid(payload) {
+// enqueueQuota replaces any queued quota event with the newest provider list.
+// If the buffer is full, it preserves ordinary invalidations and drops only
+// the oldest one needed to make room.
+func enqueueQuota(ch chan liveMessage, message liveMessage) {
+	select {
+	case ch <- message:
 		return
+	default:
 	}
-	message := liveMessage{topic: topic, payload: append([]byte(nil), payload...)}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for ch := range h.subs {
+
+	queued := make([]liveMessage, 0, cap(ch))
+	for {
 		select {
-		case ch <- message:
+		case old := <-ch:
+			if old.quota == nil {
+				queued = append(queued, old)
+			}
 		default:
+			if len(queued) == cap(ch) {
+				queued = queued[1:]
+			}
+			for _, old := range queued {
+				ch <- old
+			}
+			ch <- message
+			return
 		}
 	}
 }
 
-func (h *liveHub) subscribe() chan liveMessage {
+// publishQuota sends the full latest provider list to quota subscribers only.
+func (h *liveHub) publishQuota(providers []el.QuotaProvider) {
+	if h == nil {
+		return
+	}
+	message := liveMessage{
+		topic: "quota",
+		quota: &quotaLiveEvent{Topic: "quota", Providers: append([]el.QuotaProvider(nil), providers...)},
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch, quotaSubscriber := range h.subs {
+		if quotaSubscriber {
+			enqueueQuota(ch, message)
+		}
+	}
+}
+
+func (h *liveHub) subscribe(quota bool) chan liveMessage {
 	ch := make(chan liveMessage, 256)
 	h.mu.Lock()
-	h.subs[ch] = struct{}{}
+	h.subs[ch] = quota
 	h.mu.Unlock()
 	return ch
 }
@@ -144,7 +175,8 @@ func (p *presence) online(userID string) bool {
 
 // handleLive serves GET /api/live. A new connection first gets a "hello"
 // message, which tells the client to refetch everything it shows. Quota
-// subscribers opt in with ?topic=quota; only then does its refresher run.
+// consumers open a separate connection with ?topic=quota; only those streams
+// start the refresher and receive its provider-list payloads.
 func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -155,9 +187,10 @@ func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	ch := d.live.subscribe()
+	quotaSubscriber := quotaTopicRequested(r)
+	ch := d.live.subscribe(quotaSubscriber)
 	defer d.live.unsubscribe(ch)
-	if quotaTopicRequested(r) {
+	if quotaSubscriber {
 		stopQuota := d.subscribeQuotaRefresher()
 		defer stopQuota()
 	}
@@ -185,8 +218,10 @@ func (d *Daemon) handleLive(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, ": heartbeat\n\n")
 			flush()
 		case message := <-ch:
-			if len(message.payload) != 0 {
-				fmt.Fprintf(w, "data: {\"topic\":%q,\"providers\":%s}\n\n", message.topic, message.payload)
+			if message.quota != nil {
+				if event, err := json.Marshal(message.quota); err == nil {
+					fmt.Fprintf(w, "data: %s\n\n", event)
+				}
 			} else {
 				fmt.Fprintf(w, "data: %s\n\n", message.topic)
 			}

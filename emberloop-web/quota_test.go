@@ -880,6 +880,48 @@ func TestQuotaLiveTopicPublishesChangedProviderList(t *testing.T) {
 		}
 	}
 	t.Fatal("quota live topic never carried the changed provider list")
+
+}
+func TestQuotaLivePayloadTargetsSubscribersAndCoalescesFullQueue(t *testing.T) {
+	hub := newLiveHub()
+	normal := hub.subscribe(false)
+	quota := hub.subscribe(true)
+	defer hub.unsubscribe(normal)
+	defer hub.unsubscribe(quota)
+
+	for range cap(normal) {
+		hub.publish("sessions")
+	}
+	hub.publishQuota([]el.QuotaProvider{{
+		Key:     "opencode-go",
+		Windows: []el.QuotaWindow{{Label: "5-hour", Pct: 77}},
+	}})
+
+	normalCount := 0
+	for len(normal) > 0 {
+		if message := <-normal; message.quota != nil {
+			t.Fatal("quota payload was sent to a sessions-only subscriber")
+		}
+		normalCount++
+	}
+	if normalCount != cap(normal) {
+		t.Fatalf("sessions-only queue has %d messages, want %d ordinary invalidations", normalCount, cap(normal))
+	}
+
+	quotaEvents := 0
+	for len(quota) > 0 {
+		message := <-quota
+		if message.quota == nil {
+			continue
+		}
+		quotaEvents++
+		if message.quota.Topic != "quota" || len(message.quota.Providers) != 1 || message.quota.Providers[0].Windows[0].Pct != 77 {
+			t.Fatalf("coalesced quota event = %+v", message.quota)
+		}
+	}
+	if quotaEvents != 1 {
+		t.Fatalf("full subscriber queue has %d quota events, want latest payload retained once", quotaEvents)
+	}
 }
 
 type quotaPostResult struct {

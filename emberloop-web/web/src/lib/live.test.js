@@ -7,13 +7,13 @@ afterEach(() => {
 });
 
 describe('live channel', () => {
-  it('closes the stream and drops every watcher on stopLive', () => {
+  it('closes both streams and drops every watcher on stopLive', () => {
     const close = vi.fn();
     vi.stubGlobal('EventSource', class { close() { close(); } });
     watch('sessions', () => {});
     expect(close).not.toHaveBeenCalled();
     stopLive();
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it('opens a fresh stream for the next watch after stopLive', () => {
@@ -25,18 +25,35 @@ describe('live channel', () => {
     expect(opened).toHaveBeenCalledTimes(2);
   });
 
-  it('sends watched topics and forwards quota provider payloads', () => {
-    let stream;
+  it('keeps the shared EventSource when ordinary topic watchers change', () => {
+    const streams = [];
     vi.stubGlobal('EventSource', class {
-      constructor(url) { this.url = url; stream = this; }
-      close() {}
+      constructor(url) { this.url = url; this.close = vi.fn(); streams.push(this); }
+    });
+    const stopSessions = watch('sessions', () => {});
+    const stopSession = watch('session:one', () => {});
+    expect(streams).toHaveLength(1);
+    expect(streams[0].url).toMatch(/\/api\/live$/);
+    stopSession();
+    expect(streams).toHaveLength(1);
+    expect(streams[0].close).not.toHaveBeenCalled();
+    stopSessions();
+  });
+
+  it('opens a quota-only stream and forwards provider payloads', () => {
+    const streams = [];
+    vi.stubGlobal('EventSource', class {
+      constructor(url) { this.url = url; this.close = vi.fn(); streams.push(this); }
     });
     const update = vi.fn();
     const stop = watch('quota', update);
-    expect(stream.url).toContain('topic=quota');
+    expect(streams).toHaveLength(2);
+    expect(streams[0].url).toMatch(/\/api\/live$/);
+    expect(streams[1].url).toContain('topic=quota');
     const message = { topic: 'quota', providers: [{ key: 'claude' }] };
-    stream.onmessage({ data: JSON.stringify(message) });
+    streams[1].onmessage({ data: JSON.stringify(message) });
     expect(update).toHaveBeenCalledWith('quota', message);
     stop();
+    expect(streams[1].close).toHaveBeenCalledOnce();
   });
 });

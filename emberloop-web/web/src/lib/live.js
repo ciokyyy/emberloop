@@ -1,16 +1,19 @@
-// One realtime channel for the whole UI. The Daemon publishes state topic
-// names over one EventSource; components refetch on those messages. Quota is
-// the exception: its event carries the complete provider list. Subscribed
-// topic names are sent on the connection so topic-scoped Daemon work can stop
-// when no component is listening. On reconnect, "hello" refetches state topics.
+// One shared EventSource carries ordinary topic invalidations; watched
+// components refetch their own endpoints on it. Quota opens a separate
+// topic=quota stream only while subscribed, carrying provider lists without
+// making the shared stream reconnect as unrelated watchers change.
 import { apiBase } from './api.js';
 
 const watchers = new Map(); // topic -> Set<fn>
 let source = null;
-let sourceTopics = '';
+let quotaSource = null;
 
-function dispatch(topic, payload) {
-  const fns = topic === 'hello' ? [...watchers.values()].flatMap((s) => [...s]) : [...(watchers.get(topic) ?? [])];
+function dispatch(topic, payload, onlyTopic = null) {
+  const fns = onlyTopic
+    ? [...(watchers.get(onlyTopic) ?? [])]
+    : topic === 'hello'
+      ? [...watchers.values()].flatMap((s) => [...s])
+      : [...(watchers.get(topic) ?? [])];
   // One call per function per message, even when it watches several topics.
   for (const fn of new Set(fns)) {
     try {
@@ -21,32 +24,36 @@ function dispatch(topic, payload) {
   }
 }
 
-function syncSource() {
-  const topics = [...watchers.keys()].sort();
-  const key = topics.join('\u0000');
-  if (source && key === sourceTopics) return;
-  source?.close();
-  source = null;
-  sourceTopics = key;
-  if (!topics.length || typeof EventSource === 'undefined') return;
-
-  const params = new URLSearchParams();
-  for (const topic of topics) params.append('topic', topic);
-  const next = new EventSource(`${apiBase()}/api/live?${params}`);
+function openSource() {
+  if (source || !watchers.size || typeof EventSource === 'undefined') return;
+  const next = new EventSource(`${apiBase()}/api/live`);
   source = next;
   next.onmessage = (ev) => {
-    if (source !== next) return;
+    if (source === next) dispatch(String(ev.data));
+  };
+}
+
+// Quota uses its own opt-in stream so adding/removing ordinary topic watchers
+// never reconnects the shared stream or causes a global hello/refetch burst.
+function openQuotaSource() {
+  if (quotaSource || !watchers.get('quota')?.size || typeof EventSource === 'undefined') return;
+  const next = new EventSource(`${apiBase()}/api/live?topic=quota`);
+  quotaSource = next;
+  let greeted = false;
+  next.onmessage = (ev) => {
+    if (quotaSource !== next) return;
     const data = String(ev.data);
+    if (data === 'hello') {
+      if (greeted) dispatch('hello', undefined, 'quota');
+      greeted = true;
+      return;
+    }
     try {
       const message = JSON.parse(data);
-      if (typeof message?.topic === 'string') {
-        dispatch(message.topic, message);
-        return;
-      }
+      if (message?.topic === 'quota') dispatch('quota', message, 'quota');
     } catch {
-      // Existing state-topic messages are plain strings.
+      // Non-quota live topics are irrelevant on this opt-in stream.
     }
-    dispatch(data);
   };
 }
 
@@ -83,21 +90,33 @@ export function watch(topic, fn) {
       }
     }
   };
+  const wasWatchingTopic = Boolean(watchers.get(topic)?.size);
   if (!watchers.has(topic)) watchers.set(topic, new Set());
   watchers.get(topic).add(run);
-  syncSource();
+  openSource();
+  if (topic === 'quota' && !wasWatchingTopic) openQuotaSource();
   return () => {
     watchers.get(topic)?.delete(run);
-    if (!watchers.get(topic)?.size) watchers.delete(topic);
-    syncSource();
+    if (!watchers.get(topic)?.size) {
+      watchers.delete(topic);
+      if (topic === 'quota') {
+        quotaSource?.close();
+        quotaSource = null;
+      }
+    }
+    if (!watchers.size) {
+      source?.close();
+      source = null;
+    }
   };
 }
 
-// stopLive closes the stream and drops every watcher. App calls it on unmount,
-// which sign-out triggers, so the next sign-in starts from a clean channel.
+// stopLive closes both streams and drops every watcher. App calls it on
+// unmount/sign-out so the next sign-in starts from a clean channel.
 export function stopLive() {
   source?.close();
+  quotaSource?.close();
   source = null;
-  sourceTopics = '';
+  quotaSource = null;
   watchers.clear();
 }
