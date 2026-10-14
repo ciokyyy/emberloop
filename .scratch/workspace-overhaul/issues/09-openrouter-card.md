@@ -4,9 +4,9 @@
 
 **Blocked by:** 06-percent-contract
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Reads the pig OpenRouter key; credits percent is total usage over total credits times 100; `detail` carries dollars used, total and left (reproduces the observed shape: 94% used, `$59.16 of $63.00 · $3.84 left`)
-- [ ] Key spend today, this week and this month appears as secondary text (0.91 / 2.37 / 5.70)
-- [ ] Missing key yields `not_configured`
-- [ ] Go tests at the HTTP seam with local stubs (credits plus key endpoints) and temp state dir; repo check passes
+- [x] Reads the pig OpenRouter key; credits percent is total usage over total credits times 100; `detail` carries dollars used, total and left (reproduces the observed shape: 94% used, `$59.16 of $63.00 · $3.84 left`)
+- [x] Key spend today, this week and this month appears as secondary text (0.91 / 2.37 / 5.70)
+- [x] Missing key yields `not_configured`
+- [x] Go tests at the HTTP seam with local stubs (credits plus key endpoints) and temp state dir; repo check passes
