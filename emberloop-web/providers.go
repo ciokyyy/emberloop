@@ -101,34 +101,34 @@ func providerAuthView(ctx context.Context, store ai.CredentialStore, id string, 
 
 	credential, hasCredential, err := ai.ReadRawCredential(ctx, store, id)
 	if err != nil {
-		return providerView{}, err
+		return view, err
 	}
 	storedKey := hasCredential && credential.Type == ai.CredentialAPIKey && strings.TrimSpace(credential.Key) != ""
 	view.KeySet = storedKey
 
 	check, err := ai.CheckProviderAuth(ctx, id, auth, store, ai.DefaultProviderAuthContext())
 	if err != nil {
-		return providerView{}, err
+		return view, err
 	}
 	if check == nil {
 		return view, nil
 	}
 	view.Connected = true
+	view.Source, view.SourceLabel = providerAuthSource(check, storedKey)
+	return view, nil
+}
+
+func providerAuthSource(check *ai.AuthCheck, storedKey bool) (string, string) {
 	switch {
 	case check.Type == ai.CredentialOAuth || check.Source == "OAuth":
-		view.Source = "oauth"
-		view.SourceLabel = "OAuth login"
+		return "oauth", "OAuth login"
 	case check.Source == "stored credential" && storedKey:
-		view.Source = "stored_key"
-		view.SourceLabel = "Stored key"
+		return "stored_key", "Stored key"
+	case check.Source == "stored credential":
+		return "pig_auth", "Pig auth configuration"
 	default:
-		view.Source = "environment"
-		view.SourceLabel = check.Source
-		if check.Source == "stored credential" {
-			view.SourceLabel = "Pig auth configuration"
-		}
+		return "environment", check.Source
 	}
-	return view, nil
 }
 
 func (d *Daemon) handleProviders(w http.ResponseWriter, r *http.Request) {
@@ -153,8 +153,8 @@ func (d *Daemon) handleProviders(w http.ResponseWriter, r *http.Request) {
 		}
 		view, err := providerAuthView(ctx, store, id, auth, providerKeyEditable(id, auth))
 		if err != nil {
-			http.Error(w, "could not read provider status", http.StatusInternalServerError)
-			return
+			view.Source = "unavailable"
+			view.SourceLabel = "Status unavailable"
 		}
 		providers = append(providers, view)
 	}

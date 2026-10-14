@@ -71,6 +71,26 @@ afterEach(() => {
 });
 
 describe('ProvidersPage', () => {
+  it('shows a loading skeleton until provider status arrives', async () => {
+    let resolveFetch;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; })));
+    render(ProvidersPage, { props: { admin: true } });
+
+    expect(screen.getByTestId('providers-loading')).toBeTruthy();
+    expect(screen.queryByTestId('provider-row')).toBeNull();
+    resolveFetch({ ok: true, json: async () => ({ providers: providerRows() }) });
+    expect(await screen.findAllByTestId('provider-row')).toHaveLength(3);
+    expect(screen.queryByTestId('providers-loading')).toBeNull();
+  });
+
+  it('shows an alert when loading provider status fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 })));
+    render(ProvidersPage, { props: { admin: false } });
+
+    expect((await screen.findByRole('alert')).textContent).toContain('request failed: 503');
+    expect(screen.queryByTestId('providers-loading')).toBeNull();
+  });
+
   it('groups SDK provider statuses without rendering credential values', async () => {
     stubProviders();
     const { container } = render(ProvidersPage, { props: { admin: true } });
@@ -123,9 +143,8 @@ describe('ProvidersPage', () => {
     expect(within(keyRow).queryByRole('button', { name: /key|remove/i })).toBeNull();
     expect(within(keyRow).getByTestId('provider-key-set')).toBeTruthy();
     const cliRow = container.querySelector('[data-provider="xai"]');
-    expect(within(cliRow).getByText('Admin only')).toBeTruthy();
-    expect(within(cliRow).queryByText('pig login xai')).toBeNull();
-    expect(within(cliRow).queryByRole('button', { name: /copy/i })).toBeNull();
+    expect(within(cliRow).getByText('pig login xai')).toBeTruthy();
+    expect(within(cliRow).getByRole('button', { name: 'Copy xAI command' })).toBeTruthy();
   });
 
   it('keeps provider rows and key controls phone-friendly', async () => {

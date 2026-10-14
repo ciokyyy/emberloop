@@ -39,6 +39,35 @@ func findProvider(t *testing.T, providers []providerView, id string) providerVie
 	return providerView{}
 }
 
+func TestProviderAuthSourceDistinguishesNonKeyPigCredentials(t *testing.T) {
+	source, label := providerAuthSource(&ai.AuthCheck{Source: "stored credential", Type: ai.CredentialType("other")}, false)
+	if source != "pig_auth" || label != "Pig auth configuration" {
+		t.Fatalf("stored non-key source = %q (%q), want pig_auth (Pig auth configuration)", source, label)
+	}
+}
+
+func TestProvidersKeepsCatalogWhenAuthFileIsUnreadable(t *testing.T) {
+	t.Setenv("EL_PIG_AUTH", "")
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.hostPigDir = filepath.Join(tempDir(t), "pig")
+	if err := os.MkdirAll(d.hostPigDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d.hostPigDir, "auth.json"), []byte(`{"openai":{"type":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := d.Handler()
+	admin := signedIn(t, h, "admin")
+	providers, _ := decodeProviderList(t, h, admin)
+	if len(providers) != len(ai.ListProviders()) {
+		t.Fatalf("provider count = %d after credential read error, SDK catalog has %d", len(providers), len(ai.ListProviders()))
+	}
+	if got := findProvider(t, providers, "openai"); got.Source != "unavailable" || got.SourceLabel != "Status unavailable" {
+		t.Fatalf("unreadable provider status = %+v, want unavailable row", got)
+	}
+}
+
 func TestProvidersListsPigCatalogAndRedactsCredentials(t *testing.T) {
 	t.Setenv("EL_PIG_AUTH", "")
 	t.Setenv("DEEPSEEK_API_KEY", "provider-environment-secret")
