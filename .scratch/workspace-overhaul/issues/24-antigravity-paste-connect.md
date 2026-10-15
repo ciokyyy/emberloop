@@ -4,9 +4,9 @@
 
 **Blocked by:** 22-providers-page-and-api-keys
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Connect on the Antigravity row shows the login link and a field for the callback URL or code
-- [ ] A pasted URL or bare code completes the login; a bad value shows an error and keeps the panel open
-- [ ] Go tests with a local stub cover URL, bare code and a bad value; vitest covers the panel
-- [ ] Repo check and `npm test` pass
+- [x] Connect on the Antigravity row shows the login link and a field for the callback URL or code
+- [x] A pasted URL or bare code completes the login; a bad value shows an error and keeps the panel open
+- [x] Go tests with a local stub cover URL, bare code and a bad value; vitest covers the panel
+- [x] Repo check and `npm test` pass
