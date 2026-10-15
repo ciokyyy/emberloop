@@ -4,9 +4,9 @@
 
 **Blocked by:** 09-openrouter-card, 11-refresh-min-interval, 14-quota-phone-drawer, 15-quota-live-patching, 18-runs-git-cache, 19-ticket-session-index, 26-cli-only-rows-and-redirect-base, 33-draft-pick-banner, 35-agents-chains-with-effort, 36-runs-and-memory-settings-pages (docs describe the shipped behavior)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `emberloop-web/AGENTS.md` covers the quota endpoint shape, the live topic, the subscriber-gated refresher and the new Runs, Providers, Project and Settings seams
-- [ ] The web README Quota rows and the other area rows match the shipped behavior
-- [ ] `GLOSSARY.md` defines Provider, Dashboard and quota percent
-- [ ] Stale text is removed; every Child DOX Index entry resolves to a file; repo check passes
+- [x] `emberloop-web/AGENTS.md` covers the quota endpoint shape, the live topic, the subscriber-gated refresher and the new Runs, Providers, Project and Settings seams
+- [x] The web README Quota rows and the other area rows match the shipped behavior
+- [x] `GLOSSARY.md` defines Provider, Dashboard and quota percent
+- [x] Stale text is removed; every Child DOX Index entry resolves to a file; repo check passes
