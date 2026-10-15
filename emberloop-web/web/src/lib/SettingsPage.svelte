@@ -1,6 +1,6 @@
 <!-- Settings page: harness, model and effort per role, grouped like Apple Settings. -->
 <script>
-  import { ArrowDown, ArrowLeft, ArrowUp, Check, Trash2 } from '@lucide/svelte';
+  import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, Trash2 } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
@@ -21,7 +21,7 @@
   const DATA_SECTIONS = ['agents', 'runs', 'context', 'memory', 'access'];
   const descriptions = {
     agents: 'Configure one ordered chain per Session and Run agent role.',
-    runs: 'Set the global concurrency limit for each Run.',
+    runs: 'Set the global ticket concurrency cap for each Run.',
     context: 'Keep long Sessions small and readable.',
     memory: 'Configure how remembered notes become Rules.',
     access: 'Manage who can sign in to this Daemon.',
@@ -78,6 +78,7 @@
   let compressNote = $state('');
   let decider = $state({ mode: 'heuristic', model: 'none', low: '0.35', high: '0.7' });
   let jev = $state({ baseURL: '', apiKey: '', model: 'jev-latest' });
+  let jevOpen = $state(false);
   let jevKeySet = $state(false);
   let deciderNote = $state('');
   let signupOpen = $state('on');
@@ -346,12 +347,12 @@
         <section class="animate-rise flex flex-col gap-2">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Concurrency</h2>
-            <p class="text-xs text-muted-foreground">How many Run tickets run at once. Chat sessions and subagents are uncapped.</p>
+            <p class="text-xs text-muted-foreground">Global max_tickets caps concurrent tickets in each Run. A spec's max_tickets value can only lower this cap, never raise it. Sessions and subagents are uncapped.</p>
           </div>
           <div class="flex flex-col gap-2 rounded-2xl border bg-card p-4">
             <FloatingInput
               id="max-tickets"
-              label="Maximum tickets"
+              label="Maximum tickets per Run (spec)"
               type="number"
               min="1"
               step="1"
@@ -515,9 +516,19 @@
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
                 <div class="text-sm font-medium">Decider mode</div>
-                <div class="text-xs text-muted-foreground">Heuristic is local. LLM and ensemble ask the memory model. Jev asks the decision endpoint.</div>
+                <div class="text-xs text-muted-foreground">Heuristic is local. LLM uses the memory model; Ensemble uses the memory model or a custom Jev URL. Jev uses OpenRouter by default.</div>
               </div>
-              <Combobox class="md:h-10" aria-label="Decider mode" bind:value={decider.mode} items={deciderModeItems} />
+              <div role="group" aria-label="Decider mode" class="inline-flex max-w-full items-center gap-0.5 rounded-xl border border-border bg-muted p-1">
+                {#each deciderModeItems as option (option.value)}
+                  <Button
+                    size="sm"
+                    variant={decider.mode === option.value ? 'secondary' : 'ghost'}
+                    class="h-8 rounded-lg px-3 max-md:h-11"
+                    aria-pressed={decider.mode === option.value}
+                    onclick={() => (decider.mode = option.value)}
+                  >{option.label}</Button>
+                {/each}
+              </div>
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">
@@ -527,30 +538,47 @@
               </div>
               <Combobox class="md:h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
             </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Jev endpoint</div>
-                <div class="text-xs text-muted-foreground">Decision endpoint URL, empty when off. A local Laya server plugs in by URL.</div>
+            <div class="group">
+              <Button
+                variant="ghost"
+                class="flex min-h-11 w-full items-center justify-between gap-3 rounded-none p-4 text-left"
+                aria-expanded={jevOpen}
+                aria-controls="custom-jev-settings"
+                onclick={() => (jevOpen = !jevOpen)}
+              >
+                <span class="min-w-0 text-left">
+                  <span class="block text-sm font-medium">Custom Jev endpoint</span>
+                  <span class="block text-xs text-muted-foreground">Leave the endpoint URL blank to use OpenRouter. Set a custom URL to use another Jev endpoint.</span>
+                </span>
+                <ChevronDown class={`size-4 shrink-0 text-muted-foreground transition-transform ${jevOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </Button>
+              <div id="custom-jev-settings" class="divide-y divide-border border-t" hidden={!jevOpen}>
+                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium">Jev endpoint</div>
+                    <div class="text-xs text-muted-foreground">Overrides the default OpenRouter endpoint.</div>
+                  </div>
+                  <FloatingInput id="jev-endpoint" label="Endpoint URL" bind:value={jev.baseURL} placeholder="https://jev-api.org/api/v1/decisions" />
+                </div>
+                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium">Jev API key</div>
+                    {#if jevKeySet}
+                      <div class="text-xs text-muted-foreground">Key set. Type a new one to replace it; empty keeps it.</div>
+                    {:else}
+                      <div class="text-xs text-muted-foreground">Empty for a local server without one.</div>
+                    {/if}
+                  </div>
+                  <FloatingInput id="jev-key" label="API key" type="password" bind:value={jev.apiKey} placeholder={jevKeySet ? '••••••' : 'Key'} />
+                </div>
+                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium">Jev model</div>
+                    <div class="text-xs text-muted-foreground">Sent with every call. When on, redacted user turns leave this host for the endpoint.</div>
+                  </div>
+                  <FloatingInput id="jev-model" label="Model" bind:value={jev.model} placeholder="jev-latest" />
+                </div>
               </div>
-              <FloatingInput id="jev-endpoint" label="Endpoint URL" bind:value={jev.baseURL} placeholder="https://jev-api.org/api/v1/decisions" />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Jev API key</div>
-                {#if jevKeySet}
-                  <div class="text-xs text-muted-foreground">Key set. Type a new one to replace it; empty keeps it.</div>
-                {:else}
-                  <div class="text-xs text-muted-foreground">Empty for a local server without one.</div>
-                {/if}
-              </div>
-              <FloatingInput id="jev-key" label="API key" type="password" bind:value={jev.apiKey} placeholder={jevKeySet ? '••••••' : 'Key'} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Jev model</div>
-                <div class="text-xs text-muted-foreground">Sent with every call. When on, redacted user turns leave this host for the endpoint.</div>
-              </div>
-              <FloatingInput id="jev-model" label="Model" bind:value={jev.model} placeholder="jev-latest" />
             </div>
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
               <div class="min-w-0">

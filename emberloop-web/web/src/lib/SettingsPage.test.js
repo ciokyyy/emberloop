@@ -45,15 +45,17 @@ describe('SettingsPage max_tickets', () => {
   it('shows the saved value', async () => {
     stubSettings({ settings: base });
     const { container } = renderSettings();
-    const input = await within(container).findByLabelText('Maximum tickets');
+    const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     expect(input.value).toBe('2');
+    expect(within(container).getByText(/Global max_tickets caps concurrent tickets in each Run/i)).toBeTruthy();
+    expect(within(container).getByText(/A spec's max_tickets value can only lower this cap, never raise it/i)).toBeTruthy();
   });
 
   it('saves an edit with the roles', async () => {
     const seen = {};
     stubSettings({ settings: base, seen });
     const { container } = renderSettings();
-    const input = await within(container).findByLabelText('Maximum tickets');
+    const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     await fireEvent.input(input, { target: { value: '5' } });
     await tick();
     await fireEvent.click(await within(container).findByText('Save'));
@@ -65,7 +67,7 @@ describe('SettingsPage max_tickets', () => {
   it('locks the field with a note under an environment override', async () => {
     stubSettings({ settings: { roles: {}, max_tickets: 1, max_tickets_from_env: true } });
     const { container } = renderSettings();
-    const input = await within(container).findByLabelText('Maximum tickets');
+    const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     expect(input.disabled).toBe(true);
     expect(within(container).getByText(/EL_MAX_TICKETS/)).toBeTruthy();
   });
@@ -73,7 +75,7 @@ describe('SettingsPage max_tickets', () => {
   it('surfaces a rejected value as an error', async () => {
     stubSettings({ settings: base, failPut: true });
     const { container } = renderSettings();
-    const input = await within(container).findByLabelText('Maximum tickets');
+    const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     await fireEvent.input(input, { target: { value: '0' } });
     await tick();
     await fireEvent.click(await within(container).findByText('Save'));
@@ -91,7 +93,7 @@ describe('SettingsPage max_tickets', () => {
       seen,
     });
     const { container } = renderSettings();
-    const input = await within(container).findByLabelText('Maximum tickets');
+    const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     // Disabled inputs take no typing, but the event still flips the binding:
     // enough to make the form dirty and reach Save.
     await fireEvent.input(input, { target: { value: '9' } });
@@ -122,7 +124,7 @@ describe('SettingsPage max_tickets', () => {
 
     expect(resolveSettings).toBeDefined();
     resolveSettings();
-    await within(container).findByLabelText('Maximum tickets');
+    await within(container).findByLabelText('Maximum tickets per Run (spec)');
     expect(within(container).queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
@@ -137,7 +139,7 @@ describe('SettingsPage max_tickets', () => {
   it('shows Revert and Save on the first change and Revert restores the saved value', async () => {
     stubSettings({ settings: base });
     const { container } = renderSettings();
-    const input = await within(container).findByLabelText('Maximum tickets');
+    const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     expect(within(container).queryByRole('button', { name: 'Save' })).toBeNull();
 
     await fireEvent.input(input, { target: { value: '5' } });
@@ -349,7 +351,12 @@ describe('SettingsPage memory deciders', () => {
       seen,
     });
     const { container } = renderSettings({ props: { admin: true } });
-    expect(await within(container).findByLabelText('Decider mode')).toBeTruthy();
+    const modes = await within(container).findByRole('group', { name: 'Decider mode' });
+    const ensemble = within(modes).getByRole('button', { name: 'Ensemble' });
+    expect(ensemble.getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(within(modes).getByRole('button', { name: 'Jev' }));
+    expect(within(modes).getByRole('button', { name: 'Jev' }).getAttribute('aria-pressed')).toBe('true');
+    expect(ensemble.getAttribute('aria-pressed')).toBe('false');
     expect(within(container).getByLabelText('Memory model').textContent).toMatch(/auto/i);
     expect(within(container).getByLabelText('Low').value).toBe('0.4');
     expect(within(container).getByLabelText('High').value).toBe('0.8');
@@ -359,7 +366,7 @@ describe('SettingsPage memory deciders', () => {
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect(seen.body.decider).toEqual({
-      decider_mode: 'ensemble',
+      decider_mode: 'jev',
       memory_model: 'auto',
       decider_confirm_low: 0.4,
       decider_confirm_high: 0.9,
@@ -400,11 +407,18 @@ describe('SettingsPage jev decider', () => {
       seen,
     });
     const { container } = renderSettings({ props: { admin: true } });
-    expect((await within(container).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
-    expect(within(container).getByLabelText('Model').value).toBe('jev-latest');
-    expect(await within(container).findByText(/leave this host/)).toBeTruthy();
+    const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
+    expect(endpoint.getAttribute('aria-expanded')).toBe('false');
+    expect(within(endpoint).getByText(/Leave the endpoint URL blank to use OpenRouter/i)).toBeTruthy();
+    await fireEvent.click(endpoint);
+    expect(endpoint.getAttribute('aria-expanded')).toBe('true');
+    const endpointPanel = container.querySelector('#custom-jev-settings');
+    expect(endpointPanel.hidden).toBe(false);
+    expect((await within(endpointPanel).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
+    expect(within(endpointPanel).getByLabelText('Model').value).toBe('jev-latest');
+    expect(await within(endpointPanel).findByText(/leave this host/)).toBeTruthy();
 
-    await fireEvent.input(within(container).getByLabelText('Endpoint URL'), {
+    await fireEvent.input(within(endpointPanel).getByLabelText('Endpoint URL'), {
       target: { value: 'https://jev-api.org/api/v1/decisions' },
     });
     await tick();
@@ -416,10 +430,20 @@ describe('SettingsPage jev decider', () => {
     });
   });
 
+  it('keeps the custom endpoint collapsed and defaults an empty URL to OpenRouter', async () => {
+    stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest' } } });
+    const { container } = renderSettings({ props: { admin: true } });
+    const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
+    expect(endpoint.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('#custom-jev-settings').hidden).toBe(true);
+    expect(within(endpoint).getByText(/Leave the endpoint URL blank to use OpenRouter/i)).toBeTruthy();
+  });
+
   it('sends a typed key and keeps it out of later saves', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest', api_key_set: false } }, seen });
     const { container } = renderSettings({ props: { admin: true } });
+    await fireEvent.click(await within(container).findByRole('button', { name: /Custom Jev endpoint/ }));
     await fireEvent.input(await within(container).findByLabelText('API key'), { target: { value: 'k' } });
     await tick();
     await fireEvent.click(await within(container).findByText('Save'));
