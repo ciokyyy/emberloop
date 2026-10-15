@@ -203,16 +203,17 @@ type Daemon struct {
 	// runs .emberloop/check at the requested tip in a detached worktree.
 	tipCheck       func(repo, ticketBranch, tip string) (bool, []string)
 	nightlyLastDay string
-	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
-	// holds one in-flight/again flag per Session, mineWG lets tests and
-	// Shutdown wait for running scans, mineActive counts them for the
-	// restart state, and mineWait bounds Shutdown's wait (0 takes 30s).
-	liveMine   bool
-	mineMu     sync.Mutex
-	mineState  map[string]*mineFlight
-	mineActive int
-	mineWG     sync.WaitGroup
-	mineWait   time.Duration
+	// Turn-end ingestion (mine_live.go): liveMine enables the worker; mineState
+	// owns debounce and per-Session serialization, mineWG drains it on shutdown.
+	liveMine        bool
+	mineMu          sync.Mutex
+	mineState       map[string]*mineFlight
+	mineActive      int
+	mineWG          sync.WaitGroup
+	mineWait        time.Duration
+	ingestExtractor memory.Extractor
+	ingestModel     string
+	ingestEffort    string
 	// Disk hygiene (disk.go): last janitor result and last low-disk warn,
 	// guarded by diskMu so the janitor goroutine and /api/disk race no one.
 	diskMu       sync.Mutex

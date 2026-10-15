@@ -5,14 +5,14 @@ import (
 	"time"
 )
 
-// mineFlight is the per-Session mining state. scan serializes scans of one
-// Session (the cursor file is single-writer). running and again coalesce
-// turn-end triggers: a trigger that lands while a scan runs sets again, and
-// the running worker scans once more instead of stacking goroutines.
+// mineFlight is the per-Session turn-end ingestion state.
 type mineFlight struct {
-	scan    sync.Mutex
-	running bool
-	again   bool
+	scan       sync.Mutex
+	running    bool
+	again      bool
+	queued     bool
+	generation uint64
+	timer      *time.Timer
 }
 
 // mineFlightFor returns the Session's flight state, creating it on first use.
@@ -43,52 +43,66 @@ func (d *Daemon) EnableLiveMining() {
 	d.mineMu.Unlock()
 }
 
-// maybeMineLive is the turn-end ingestion trigger, the mnemopi
-// `maybeRetainOnAgentEnd` shape: when a turn settles, mine only the bytes
-// added to the Session log since the cursor. It never blocks the turn: the scan
-// runs on its own goroutine, and a failing or missing engine is dropped
-// silently (Memory never blocks a turn; the nightly catch-up retries from
-// the same cursor). Only the heuristic pass and the configured confirming
-// Decider run here. Distill, pairing and Profile proposals stay nightly.
+// maybeMineLive debounces idle notifications, then scans off the turn path.
+// A burst during a scan schedules exactly one follow-up scan.
 func (d *Daemon) maybeMineLive(id string) {
 	d.mineMu.Lock()
-	on := d.liveMine
-	d.mineMu.Unlock()
-	if !on {
+	if !d.liveMine {
+		d.mineMu.Unlock()
 		return
 	}
-	fl := d.mineFlightFor(id)
-	d.mineMu.Lock()
+	if d.mineState == nil {
+		d.mineState = make(map[string]*mineFlight)
+	}
+	fl := d.mineState[id]
+	if fl == nil {
+		fl = &mineFlight{}
+		d.mineState[id] = fl
+	}
 	if fl.running {
 		fl.again = true
 		d.mineMu.Unlock()
 		return
 	}
-	fl.running = true
+	if fl.queued {
+		fl.timer.Stop()
+	} else {
+		fl.queued = true
+		d.mineWG.Add(1)
+		d.mineActive++
+	}
+	fl.generation++
+	generation := fl.generation
+	fl.timer = time.AfterFunc(ingestDebounce, func() { d.runTurnIngest(id, fl, generation) })
 	d.mineMu.Unlock()
-	d.mineWG.Add(1)
-	d.mineMu.Lock()
-	d.mineActive++
-	d.mineMu.Unlock()
-	go func() {
-		defer d.mineWG.Done()
-		defer func() {
-			d.mineMu.Lock()
+}
+
+func (d *Daemon) runTurnIngest(id string, fl *mineFlight, generation uint64) {
+	fl.scan.Lock()
+	defer fl.scan.Unlock()
+	for {
+		d.mineMu.Lock()
+		if generation != fl.generation {
+			d.mineMu.Unlock()
+			return
+		}
+		fl.queued = false
+		fl.running = true
+		fl.again = false
+		d.mineMu.Unlock()
+		_ = d.ingestSession(id)
+		d.mineMu.Lock()
+		if !fl.again {
+			fl.running = false
 			d.mineActive--
 			d.mineMu.Unlock()
-		}()
-		for {
-			_, _ = d.mineSession(id, true)
-			d.mineMu.Lock()
-			if !fl.again {
-				fl.running = false
-				d.mineMu.Unlock()
-				return
-			}
-			fl.again = false
-			d.mineMu.Unlock()
+			d.mineWG.Done()
+			return
 		}
-	}()
+		fl.again = false
+		d.mineMu.Unlock()
+		time.Sleep(ingestDebounce)
+	}
 }
 
 // waitMining blocks until every running turn-end scan finishes. Shutdown and
