@@ -4,11 +4,11 @@
 
 **Blocked by:** 01, 02
 
-**Status:** todo
+**Status:** done
 
-- [ ] A steer burst becomes one scan
-- [ ] Injection, handoff, Subagent result and sudo result Events are never scanned
-- [ ] The assistant context is never accepted as a quote
-- [ ] A steer from User B inside User A's Session lands in B's bank only
-- [ ] An extractor failure still stores Episodes and writes a ledger row; the turn is never blocked
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A steer burst becomes one scan
+- [x] Injection, handoff, Subagent result and sudo result Events are never scanned
+- [x] The assistant context is never accepted as a quote
+- [x] A steer from User B inside User A's Session lands in B's bank only
+- [x] An extractor failure still stores Episodes and writes a ledger row; the turn is never blocked
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
