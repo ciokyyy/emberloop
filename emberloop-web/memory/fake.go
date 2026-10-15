@@ -18,8 +18,12 @@ type Fake struct {
 	now        func() time.Time
 	nextObs    int64
 	nextQueue  int64
+	nextMem    int64
+	nextEp     int64
 	nextLedger int64
 	obs        []Observation
+	mems       []MemoryItem
+	eps        []Episode
 	rules      []Rule
 	queue      []QueueItem
 	ledger     []LedgerRow

@@ -90,7 +90,6 @@ func TestParseDeciderLabels(t *testing.T) {
 	}
 }
 
-
 func TestScoreDeciderPrecision(t *testing.T) {
 	labels := []DeciderLabel{
 		{ID: "a", Text: "remember: always wrap errors", Durable: true},

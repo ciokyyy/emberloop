@@ -115,7 +115,7 @@ func purgeDB(ctx context.Context, db *sql.DB, sel Selection, texts []string) (Pu
 		return res, err
 	}
 	defer tx.Rollback()
-	for _, t := range deletableTables {
+	for _, t := range purgeTables {
 		if _, err := tx.ExecContext(ctx, "DROP TRIGGER IF EXISTS "+noDeleteName(t)); err != nil {
 			return res, err
 		}
@@ -139,7 +139,7 @@ func purgeDB(ctx context.Context, db *sql.DB, sel Selection, texts []string) (Pu
 		}
 		res.Scrubbed += n
 	}
-	for _, t := range deletableTables {
+	for _, t := range purgeTables {
 		if _, err := tx.ExecContext(ctx, noDeleteSQL(t)); err != nil {
 			return res, err
 		}
