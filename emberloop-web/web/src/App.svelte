@@ -24,8 +24,9 @@
   import Rail from './lib/Rail.svelte';
   import QuotaSidebar from './lib/QuotaSidebar.svelte';
   import RunsSidebar from './lib/RunsSidebar.svelte';
+  import ProjectSwitcher from './lib/ProjectSwitcher.svelte';
+  import DashboardPage from './lib/DashboardPage.svelte';
   import DrawerNav from './lib/DrawerNav.svelte';
-  import { areas } from './lib/areas.js';
   import { modelLabel } from './lib/harnesses.js';
   import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
@@ -56,6 +57,7 @@
   let projects = $state([]);
   let runs = $state([]);
   let draftProjectId = $state(null);
+  let draftOpen = $state(false);
   let addOpen = $state(false);
   let adding = $state(false);
   let addError = $state('');
@@ -104,20 +106,25 @@
   $effect(() => {
     localStorage.setItem(PREF_KEY, JSON.stringify({ harness: draftHarness, model: draftModel, effort: draftEffort }));
   });
-  const activeProjectId = $derived(currentId ? (meta?.projectId ?? null) : draftProjectId);
+  const activeProjectId = $derived(currentId ? (meta?.projectId ?? null) : draftOpen ? draftProjectId : null);
   const activeProject = $derived(projects.find((p) => p.id === activeProjectId) ?? null);
-  const drafting = $derived(!currentId && !!draftProjectId);
+  const drafting = $derived(!currentId && draftOpen);
   const creatorName = $derived(meta?.owner ? (personFor(meta.owner)?.username ?? meta.owner.slice(0, 8)) : '');
   const initialPath = window.location.pathname + window.location.search;
   const initialRoute = parsePath(initialPath);
-  let view = $state(
-    ['runs', 'run', 'ticket'].includes(initialRoute.name) ? 'runs' :
-      initialRoute.name === 'settings' ? 'settings' :
-        initialRoute.name === 'quota' ? 'quota' :
-          initialRoute.name === 'providers' ? 'providers' :
-            initialRoute.name === 'memory' ? 'memory' : 'chat',
-  );
-  const areaView = $derived(view === 'providers' ? 'quota' : view);
+  let route = $state(initialRoute);
+  const viewForRoute = (r) => {
+    if (['runs', 'run', 'ticket', 'project-runs', 'project-run', 'project-ticket'].includes(r.name)) return 'runs';
+    if (r.name === 'project-settings') return 'project-settings';
+    if (r.name === 'settings') return 'settings';
+    if (r.name === 'quota') return 'quota';
+    if (r.name === 'providers') return 'providers';
+    if (r.name === 'memory') return 'memory';
+    if (r.name === 'home') return 'dashboard';
+    return 'chat';
+  };
+  let view = $state(viewForRoute(initialRoute));
+  const areaView = $derived(view === 'providers' ? 'quota' : view === 'dashboard' || view === 'project-settings' ? 'chat' : view);
   $effect(() => {
     // Keep the shared Run-list request alive while moving between its two
     // consumers; global pages should not load summaries they never display.
@@ -219,6 +226,21 @@
     }, 2500);
   }
   const sessionsById = $derived(Object.fromEntries(sessions.map((s) => [s.id, s])));
+  const scopedRouteNames = ['project', 'project-runs', 'project-run', 'project-ticket', 'project-settings'];
+  const isProjectRoute = $derived(scopedRouteNames.includes(route.name));
+  const scopeProjectId = $derived.by(() => {
+    if (isProjectRoute) return route.projectId === 'none' ? '' : route.projectId;
+    if (route.name !== 'session') return null;
+    if (meta?.id === route.id) return meta.projectId ?? '';
+    const summary = sessionsById[route.id];
+    return summary ? (summary.projectId ?? '') : null;
+  });
+  const isProjectScoped = $derived(isProjectRoute || (route.name === 'session' && scopeProjectId !== null));
+  const switcherProjectId = $derived(isProjectScoped ? scopeProjectId : null);
+  const scopedProjectRouteId = $derived(isProjectScoped ? (scopeProjectId || 'none') : null);
+  const scopedProject = $derived(scopedProjectRouteId && scopedProjectRouteId !== 'none'
+    ? projects.find((project) => project.id === scopedProjectRouteId) ?? null
+    : null);
   // Grouping memoizes the settled prefix: a chunk burst only replaces the
   // tail block, so settled cards keep their object identity (no re-render,
   // no re-measure, no restarted entrance animation). The caches live outside
@@ -246,7 +268,8 @@
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
   let overlayH = $state(176);
 
-  // Routes: /s/<id>, /runs[/<runId>[/<ticketId>]], /settings, /quota, /memory, / (last viewed).
+  // Routes: / is the Dashboard; /p/<id> scopes Sessions and Runs, while /s/<id>
+  // stays canonical and derives its scope from the Session metadata.
   const TAIL_TURNS = 6;
   const LAST_KEY = 'eb.last';
   let hasMore = $state(false);
@@ -256,11 +279,17 @@
   let runId = $state(initialRoute.runId ?? null);
   let ticketId = $state(initialRoute.ticketId ?? null);
   let atSeq = $state(0);
-  let homeRouteLoading = false;
   let openToken = 0;
 
   const goSession = (id) => navigate(buildPath({ name: 'session', id }));
-  const openRow = (row) => (row.kind === 'run' ? navigate(buildPath({ name: 'run', runId: row.id })) : goSession(row.id));
+  const openRow = (row) => {
+    if (row.kind !== 'run') return goSession(row.id);
+    const path = scopedProjectRouteId
+      ? buildPath({ name: 'project-run', projectId: scopedProjectRouteId, runId: row.id })
+      : buildPath({ name: 'run', runId: row.id });
+    return navigate(path);
+  };
+
   function navigate(path, { replace = false } = {}) {
     // Any navigation closes the phone drawer (backdrop taps close it
     // through the dialog itself).
@@ -274,12 +303,72 @@
     else if (window.location.pathname + window.location.search !== path) history.pushState(null, '', path);
     return applyRoute(path);
   }
+
+  function clearSessionView() {
+    closeStream();
+    stopSessionWatch();
+    openToken++;
+    batch = [];
+    pendingSends = [];
+    queue = [];
+    currentId = null;
+    meta = null;
+    events = [];
+    lastSeq = 0;
+    draftOpen = false;
+    draftProjectId = null;
+    sessionMissing = false;
+    hasMore = false;
+    firstSeq = 0;
+    loadingEarlier = false;
+    atSeq = 0;
+    resumable = true;
+    resumeNote = '';
+  }
+
+  function resolveProjectScope(projectId) {
+    if (route.name !== 'project' || route.projectId !== projectId || draftOpen) return;
+    const wanted = projectId === 'none' ? '' : projectId;
+    const belongs = (session) => (session.projectId ?? '') === wanted;
+    const currentMatches = currentId && sessionsById[currentId] && belongs(sessionsById[currentId]) && meta?.id === currentId && belongs(meta);
+    let id = currentMatches ? currentId : null;
+    if (!id) {
+      const scopedSessions = sessions.filter(belongs);
+      let last = null;
+      try {
+        last = localStorage.getItem(LAST_KEY);
+      } catch {
+        // Private mode: use the newest Session in this scope.
+      }
+      id = scopedSessions.some((session) => session.id === last) ? last : scopedSessions[0]?.id ?? null;
+    }
+    if (id) {
+      if (id !== currentId) void openSession(id);
+      else view = 'chat';
+      return;
+    }
+    if (projectId === 'none' || projects.some((project) => project.id === projectId)) {
+      startDraft(projectId === 'none' ? null : projectId);
+    } else {
+      clearSessionView();
+      view = 'chat';
+    }
+  }
+
+  function showDashboard() {
+    clearSessionView();
+    view = 'dashboard';
+    menuOpen = false;
+    gitOpen = false;
+  }
+
   async function applyRoute(path) {
     const r = parsePath(path);
     if (r.name === 'unknown') {
       history.replaceState(null, '', '/');
       return applyRoute('/');
     }
+    route = r;
     if (r.name === 'settings') {
       view = 'settings';
       menuOpen = false;
@@ -300,7 +389,12 @@
       menuOpen = false;
       return;
     }
-    if (r.name === 'runs' || r.name === 'run' || r.name === 'ticket') {
+    if (r.name === 'project-settings') {
+      view = 'project-settings';
+      menuOpen = false;
+      return;
+    }
+    if (['runs', 'run', 'ticket', 'project-runs', 'project-run', 'project-ticket'].includes(r.name)) {
       view = 'runs';
       menuOpen = false;
       runId = r.runId ?? null;
@@ -308,40 +402,41 @@
       return;
     }
     if (r.name === 'session') {
+      draftOpen = false;
+      draftProjectId = null;
       void refresh();
       if (r.id !== currentId) return openSession(r.id, { at: r.at ?? 0 });
       if (r.at) atSeq = r.at;
       view = 'chat';
+      menuOpen = false;
       return;
     }
-    // Home: a draft stays, otherwise the last viewed Session else newest.
-    if (draftProjectId) {
+    if (r.name === 'project') {
       view = 'chat';
-      return;
-    }
-    if (!sessionsLoaded || sessionsDirty) {
-      view = 'chat';
-      if (!homeRouteLoading) {
-        homeRouteLoading = true;
-        void refresh().then(() => {
-          homeRouteLoading = false;
-          if (window.location.pathname + window.location.search === path) void applyRoute(path);
-        });
+      menuOpen = false;
+      runId = null;
+      ticketId = null;
+      const matchingDraft = draftOpen && (r.projectId === 'none' ? draftProjectId == null : draftProjectId === r.projectId);
+      if (!matchingDraft) {
+        draftOpen = false;
+        draftProjectId = null;
+      } else {
+        if (!sessionsLoaded || sessionsDirty) void refresh();
+        return;
       }
+      if (!sessionsLoaded || sessionsDirty) {
+        void refresh().then(() => {
+          if (window.location.pathname + window.location.search === path) resolveProjectScope(r.projectId);
+        });
+        return;
+      }
+      resolveProjectScope(r.projectId);
       return;
     }
-    let id = null;
-    try {
-      id = localStorage.getItem(LAST_KEY);
-    } catch {
-      // Private mode: fall through to newest.
+    if (r.name === 'home') {
+      showDashboard();
+      return;
     }
-    if (!id || !sessions.some((s) => s.id === id)) id = sessions[0]?.id ?? null;
-    if (id) {
-      history.replaceState(null, '', buildPath({ name: 'session', id }));
-      return openSession(id);
-    }
-    view = 'chat';
   }
 
   async function loadProjects() {
@@ -384,7 +479,7 @@
       const p = await addProject(data);
       await loadProjects();
       addOpen = false;
-      startDraft(p.id);
+      beginScopedDraft(p.id);
     } catch (err) {
       addError = err.message || 'Could not add the project.';
     } finally {
@@ -405,34 +500,24 @@
     await loadProjects();
   }
 
-  // A draft chat: the Project is chosen, the Session starts on first send.
+  // A draft creates its Session only when the first prompt is sent.
   function startDraft(projectId) {
-    closeStream();
-    stopSessionWatch();
-    batch = [];
-    pendingSends = [];
-    queue = [];
+    clearSessionView();
     view = 'chat';
     menuOpen = false;
-    currentId = null;
-    meta = null;
-    events = [];
-    lastSeq = 0;
-    resumable = true;
-    resumeNote = '';
-    sessionMissing = false;
-    hasMore = false;
-    firstSeq = 0;
-    atSeq = 0;
-    loadingEarlier = false;
     draftProjectId = projectId;
+    draftOpen = true;
   }
+
+  function beginScopedDraft(projectId) {
+    const id = projectId ?? null;
+    const path = buildPath({ name: 'project', projectId: id ?? 'none' });
+    void navigate(path);
+    startDraft(id);
+  }
+
   function newChat() {
-    const id = activeProjectId ?? projects[0]?.id ?? null;
-    if (id) {
-      startDraft(id);
-      history.pushState(null, '', '/');
-    } else addOpen = true;
+    beginScopedDraft(isProjectScoped && scopeProjectId !== null ? scopeProjectId || null : null);
   }
 
   async function refresh() {
@@ -463,8 +548,8 @@
     pendingSends = [];
     view = 'chat';
     currentId = id;
+    draftOpen = false;
     draftProjectId = null;
-    events = [];
     lastSeq = 0;
     connected = true;
     backoff = 1;
@@ -750,7 +835,7 @@
 
   // Service worker messages: push sounds play the cue (keyed, so a tab that
   // already sounded the event over its live stream stays silent) and push
-  // taps route to the exact path (/s/<id> or /runs/<run>/<ticket>).
+  // taps route to the exact canonical Session or scoped/unscoped Run URL.
   const onSwMessage = (ev) => {
     const data = ev?.data ?? {};
     if (typeof data.cue === 'string' && data.cue) {
@@ -768,6 +853,17 @@
     onDestroy(() => navigator.serviceWorker?.removeEventListener('message', onSwMessage));
   }
 
+  function navigateArea(id) {
+    if (id === 'chat') {
+      const path = scopedProjectRouteId ? buildPath({ name: 'project', projectId: scopedProjectRouteId }) : '/';
+      return navigate(path);
+    }
+    if (id === 'runs') {
+      const path = scopedProjectRouteId ? buildPath({ name: 'project-runs', projectId: scopedProjectRouteId }) : '/runs';
+      return navigate(path);
+    }
+    return navigate(id === 'quota' ? '/quota' : id === 'memory' ? '/memory' : '/settings');
+  }
   void refreshPeople();
   // The requested area is available immediately. Home resolves its last/newest
   // Session in the background; Runs and Quota load their own data on mount.
@@ -778,8 +874,18 @@
   {#if view !== 'memory'}
   <div class="animate-rise flex min-h-0 flex-1 flex-col gap-3">
     {#if view === 'runs'}
+      <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Specs and Runs</h1></div>
-      <RunsSidebar workDir={meta?.workDir ?? ''} {runId} {ticketId} onNavigate={navigate} />
+      <RunsSidebar
+        workDir={isProjectScoped ? (scopedProject?.path ?? '') : (meta?.workDir ?? '')}
+        projectId={scopedProjectRouteId}
+        {runId}
+        {ticketId}
+        onNavigate={navigate}
+      />
+    {:else if view === 'project-settings'}
+      <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
+      <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Project settings</h1></div>
     {:else if view === 'settings'}
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Settings</h1></div>
       <nav class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto" data-testid="settings-nav">
@@ -789,10 +895,14 @@
       </nav>
     {:else if view === 'quota' || view === 'providers'}
       <QuotaSidebar onNavigate={navigate} inDrawer={inDrawer} current={view} />
+    {:else if view === 'dashboard'}
+      <ProjectSwitcher projects={projects} selectedId={null} onNavigate={navigate} />
+      <Button variant="secondary" class="justify-start" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }}><FolderPlus />Add project</Button>
     {:else}
+      <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
       {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
-        <h1 class="text-sm font-semibold tracking-tight">Emberloop</h1>
+        <h1 class="text-sm font-semibold tracking-tight">{scopedProject?.name ?? (scopeProjectId === '' && isProjectScoped ? 'No project' : 'Sessions')}</h1>
         <Button variant="ghost" size="icon-sm" onclick={newChat} aria-label="New Session"><SquarePen /></Button>
       </div>
       {/if}
@@ -806,10 +916,25 @@
         <Button variant="ghost" size="icon-sm" class="size-6" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }} aria-label="Add project"><FolderPlus class="size-3.5" /></Button>
       </div>
       <div class="min-h-0 flex-1 overflow-auto">
-        {#if sessionsLoaded}
-          <OwnerGroups users={people.list} me={user} {sessions} {runs} {projects} {currentId} {activeProjectId} query={chatQuery} onSelect={openRow} onNew={startDraft} onRename={rename} onRemove={remove} />
+        {#if sessionsLoaded && (route.name !== 'session' || scopeProjectId !== null)}
+          <OwnerGroups
+            users={people.list}
+            me={user}
+            {sessions}
+            {runs}
+            {projects}
+            {currentId}
+            {activeProjectId}
+            query={chatQuery}
+            scoped={isProjectScoped}
+            scopeProjectId={scopeProjectId ?? ''}
+            onSelect={openRow}
+            onNew={beginScopedDraft}
+            onRename={rename}
+            onRemove={remove}
+          />
         {:else}
-          <p class="px-3 py-4 text-sm text-muted-foreground" role="status" data-testid="sessions-loading">Loading Sessions…</p>
+          <p class="px-3 py-4 text-sm text-muted-foreground" role="status" data-testid="sessions-loading">{sessionsLoaded ? 'Loading Project scope…' : 'Loading Sessions…'}</p>
         {/if}
       </div>
     {/if}
@@ -831,7 +956,7 @@
 {/snippet}
 
 <div class="flex h-dvh">
-  <Rail view={areaView} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={(id) => navigate(id === 'chat' ? '/' : id === 'runs' ? '/runs' : id === 'quota' ? '/quota' : id === 'memory' ? '/memory' : '/settings')} />
+  <Rail view={areaView} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={navigateArea} />
   <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
     <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3" aria-hidden={sideCollapsed}>
       {#key view}
@@ -861,11 +986,34 @@
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
       <MemoryPage onBack={() => navigate('/')} />
+    {:else if view === 'dashboard'}
+      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Project switcher"><Menu /></Button>
+      </header>
+      <DashboardPage {projects} onNavigate={navigate} />
+    {:else if view === 'project-settings'}
+      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Project switcher"><Menu /></Button>
+      </header>
+      <main class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-4 py-6" data-testid="project-settings-shell">
+        <h1 class="text-xl font-semibold tracking-tight">{scopedProject?.name ?? 'Project'} settings</h1>
+        {#if scopedProjectRouteId}
+          <Button variant="outline" class="w-fit" onclick={() => navigate(buildPath({ name: 'project', projectId: scopedProjectRouteId }))}>Back to Sessions</Button>
+        {/if}
+      </main>
     {:else if view === 'runs'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
-      <RunsView workDir={meta?.workDir ?? ''} {runId} {ticketId} onOpenSession={goSession} onNavigate={navigate} onOpenMenu={() => (menuOpen = true)} />
+      <RunsView
+        workDir={isProjectScoped ? (scopedProject?.path ?? '') : (meta?.workDir ?? '')}
+        projectId={scopedProjectRouteId}
+        {runId}
+        {ticketId}
+        onOpenSession={goSession}
+        onNavigate={navigate}
+        onOpenMenu={() => (menuOpen = true)}
+      />
     {:else}
     <header class="flex items-center gap-2 px-3 py-2.5 backdrop-blur-xl sm:gap-3 sm:px-4">
       <Button variant="ghost" size="icon-sm" class="md:hidden" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
@@ -980,7 +1128,7 @@
   </div>
 </div>
 
-<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'quota' || view === 'providers' ? 'Quota and Providers' : view === 'memory' ? 'Memory' : 'Sessions'}>
+<Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'project-settings' ? 'Project settings' : view === 'dashboard' ? 'All projects' : view === 'quota' || view === 'providers' ? 'Quota and Providers' : view === 'memory' ? 'Memory' : 'Sessions'}>
   <div class="flex shrink-0 items-center gap-2" data-testid="drawer-head">
     {#if user}
       <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
@@ -1000,7 +1148,7 @@
       {@render rail2(true)}
     {/key}
   </div>
-  <DrawerNav view={areaView} onSelect={(id) => navigate(areas.find((a) => a.id === id)?.path ?? '/')} />
+  <DrawerNav view={areaView} onSelect={navigateArea} />
   <VersionBadge inline />
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />

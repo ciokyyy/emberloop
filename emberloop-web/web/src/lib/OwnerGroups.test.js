@@ -87,6 +87,17 @@ describe('OwnerGroups filters', () => {
     expect(container.querySelectorAll('[data-owner]')).toHaveLength(2);
   });
 
+
+  it('scopes Sessions to one Project without rendering per-Project sections or its filter', () => {
+    setStored('eb.owner-filter', 'all');
+    const { container, getByText, queryByText, queryByLabelText } = render(OwnerGroups, {
+      props: { ...props, scoped: true, scopeProjectId: 'p1' },
+    });
+    expect(getByText('Own chat')).toBeTruthy();
+    expect(queryByText('Mira chat')).toBeNull();
+    expect(queryByLabelText('Project filter')).toBeNull();
+    expect(container.querySelector('section[aria-label="emberloop"]')).toBeNull();
+  });
   it('matches the chat query, opens the matching groups and shows an empty line when nothing matches', async () => {
     setStored('eb.owner-filter', 'all');
     const view = render(OwnerGroups, { props });

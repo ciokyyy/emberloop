@@ -24,6 +24,9 @@ async function json(res) {
 
 export const listSessions = () => fetch(url('/api/sessions')).then(json);
 
+// Active Session and Run summaries grouped by stable Project id for the home Dashboard.
+export const getDashboard = () => fetch(url('/api/dashboard')).then(json);
+
 export const createSession = (body) =>
   fetch(url('/api/sessions'), {
     method: 'POST',

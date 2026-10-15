@@ -1,4 +1,4 @@
-<!-- Ticket page at /runs/<runId>/<ticketId>: the worker transcript as the
+<!-- Project-scoped or global Run Ticket page: the worker transcript as the
      main column with review rounds woven in, plus the facts panel (agents,
      acceptance, gate, follow-ups). Realtime comes from the Run SSE snapshot
      and the worker Session stream; nothing here polls. Reviewers and scouts
@@ -44,10 +44,11 @@
     ticketFinished,
     runFinished,
   } from './ticketPage.js';
+  import { buildPath } from './router.js';
 
   import FloatingInput from './ui/floating-input.svelte';
 
-  let { runId = '', ticketId = '', onNavigate = null, onOpenSession = null } = $props();
+  let { runId = '', ticketId = '', projectId = null, onNavigate = null, onOpenSession = null } = $props();
 
   const TAIL_TURNS = 6;
 
@@ -400,8 +401,13 @@
   }
 
   function goBack() {
-    if (runId) onNavigate?.(`/runs/${runId}`);
-    else onNavigate?.('/runs');
+    if (runId) {
+      onNavigate?.(projectId == null
+        ? buildPath({ name: 'run', runId })
+        : buildPath({ name: 'project-run', projectId, runId }));
+    } else {
+      onNavigate?.(projectId == null ? '/runs' : buildPath({ name: 'project-runs', projectId }));
+    }
   }
 
   onMount(() => {

@@ -32,6 +32,52 @@ describe('parsePath', () => {
   });
 });
 
+describe('Project-scoped routes', () => {
+  it('parses every Project scope URL and keeps global pages unscoped', () => {
+    expect(parsePath('/')).toEqual({ name: 'home' });
+    expect(parsePath('/p/project-1')).toEqual({ name: 'project', projectId: 'project-1' });
+    expect(parsePath('/p/project-1/runs')).toEqual({ name: 'project-runs', projectId: 'project-1' });
+    expect(parsePath('/p/project-1/settings')).toEqual({ name: 'project-settings', projectId: 'project-1' });
+    expect(parsePath('/p/none')).toEqual({ name: 'project', projectId: 'none' });
+    expect(parsePath('/s/session-1')).toEqual({ name: 'session', id: 'session-1' });
+    for (const path of ['/quota', '/providers', '/memory', '/settings']) {
+      expect(parsePath(path).name).not.toBe('project');
+      expect(parsePath(path).name).not.toBe('project-runs');
+    }
+  });
+
+  it('round-trips scoped Run links and uses stable ids instead of renamed labels', () => {
+    const routes = [
+      { name: 'project', projectId: 'project-1' },
+      { name: 'project', projectId: 'none' },
+      { name: 'project-runs', projectId: 'project-1' },
+      { name: 'project-settings', projectId: 'project-1' },
+      { name: 'project-run', projectId: 'project-1', runId: 'run-1' },
+      { name: 'project-ticket', projectId: 'project-1', runId: 'run-1', ticketId: 'ticket-1' },
+    ];
+    for (const route of routes) expect(parsePath(buildPath(route))).toEqual(route);
+
+    const renamed = buildPath({ name: 'project', projectId: 'stable-id', projectName: 'New name' });
+    expect(renamed).toBe('/p/stable-id');
+    expect(parsePath(renamed).projectId).toBe('stable-id');
+  });
+
+  it('preserves scope when navigating between Project Runs routes', () => {
+    expect(sameRoute(
+      { name: 'project', projectId: 'one' },
+      { name: 'project', projectId: 'two' },
+    )).toBe(false);
+    expect(sameRoute(
+      { name: 'project-run', projectId: 'one', runId: 'r' },
+      { name: 'project-run', projectId: 'two', runId: 'r' },
+    )).toBe(false);
+    const history = ['/p/one', '/p/one/runs', '/p/none', '/quota', '/'];
+    expect(history.map((path) => parsePath(path).name)).toEqual([
+      'project', 'project-runs', 'project', 'quota', 'home',
+    ]);
+  });
+});
+
 describe('buildPath', () => {
   it('round-trips every route', () => {
     const routes = [

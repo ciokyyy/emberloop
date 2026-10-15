@@ -17,6 +17,7 @@
     initDiscoveryRepo,
     ensureDiscoveryContext,
   } from './runsDiscovery.svelte.js';
+  import { buildPath } from './router.js';
 
   // Run sounds: a blocked cue when a ticket turns needs-you, a complete cue
   // when a ticket merges or the Run finishes. The first snapshot of a Run
@@ -71,13 +72,18 @@
     return boxes.length ? `${boxes.filter((b) => b.checked).length}/${boxes.length}` : '—';
   };
 
-  let { workDir = '', onOpenSession = null, runId = '', ticketId = '', onNavigate = null, onOpenMenu = null } = $props();
+  let { workDir = '', onOpenSession = null, runId = '', ticketId = '', projectId = null, onNavigate = null, onOpenMenu = null } = $props();
+
+  const runPath = (id, childTicketId = '') => projectId == null
+    ? buildPath(childTicketId ? { name: 'ticket', runId: id, ticketId: childTicketId } : { name: 'run', runId: id })
+    : buildPath(childTicketId
+      ? { name: 'project-ticket', projectId, runId: id, ticketId: childTicketId }
+      : { name: 'project-run', projectId, runId: id });
 
   // The sidebar owns the repo default; the main area only fills a blank
   // store (a cold deep link with no session context), never clobbering a
   // typed repo.
   initDiscoveryRepo(workDir);
-
   let run = $state(null);
   let runError = $state('');
   let runLoading = $state(false);
@@ -146,7 +152,7 @@
     }
   }
 
-  // Deep link (/runs/<runId>): load that Run instead of starting blank. The
+  // Deep links to `/runs/<runId>` or `/p/<projectId>/runs/<runId>` load that Run.
   // token keeps a fast runA -> runB navigation from letting A's late answer
   // overwrite B or double-subscribe the stream.
   async function openRun(id) {
@@ -207,7 +213,7 @@
       const body = await startRun({ spec: discovery.selected, repo: discovery.repo });
       applyRun(body.run ?? null);
       if (run?.id) {
-        onNavigate?.(`/runs/${run.id}`);
+        onNavigate?.(runPath(run.id));
         subscribeRun(run.id);
       }
     } catch (e) {
@@ -305,9 +311,13 @@
   // Follow route changes without a remount: entering a ticket hands the Run
   // to the ticket page (which owns its own SSE stream, no polling), leaving
   // one seeds the spec context again through openRun.
-  let routeSeen = `${runId ?? ''}/${ticketId ?? ''}`;
+  let routeSeen = '';
   $effect(() => {
-    const key = `${runId ?? ''}/${ticketId ?? ''}`;
+    const key = `${projectId ?? ''}/${runId ?? ''}/${ticketId ?? ''}`;
+    if (!routeSeen) {
+      routeSeen = key;
+      return;
+    }
     if (key === routeSeen) return;
     routeSeen = key;
     if (ticketId && runId) {
@@ -337,7 +347,7 @@
 
   {#if ticketId && runId}
   {#key `${runId}/${ticketId}`}
-    <TicketPage {runId} {ticketId} {onNavigate} onOpenSession={onOpenSession} />
+    <TicketPage {runId} {ticketId} {projectId} {onNavigate} onOpenSession={onOpenSession} />
   {/key}
   {:else}
   <div class="min-h-0 flex-1 overflow-auto">
@@ -465,7 +475,7 @@
             <button
               type="button"
               class="truncate rounded-lg px-2 py-1 text-left text-sm transition-colors hover:bg-amber-500/15"
-              onclick={() => run?.id && onNavigate?.(`/runs/${run.id}/${t.id}`)}
+              onclick={() => run?.id && onNavigate?.(runPath(run.id, t.id))}
             >{t.num ? `#${t.num} ` : ''}{t.title || t.id}{t.needsYou ? ` — ${t.needsYou}` : ''}</button>
           {/each}
         </div>
@@ -487,7 +497,7 @@
         </div>
       </div>
       {#if graphView === 'graph'}
-        <RunsGraph tickets={run.tickets ?? []} selectedId={ticketId} onSelect={(t) => run?.id && onNavigate?.(`/runs/${run.id}/${t.id}`)} />
+        <RunsGraph tickets={run.tickets ?? []} selectedId={ticketId} onSelect={(t) => run?.id && onNavigate?.(runPath(run.id, t.id))} />
       {:else if run.tickets?.length}
         <div class="overflow-x-auto rounded-2xl border" data-testid="live-tickets-wrap">
         <table class="w-full min-w-[1120px] text-left text-sm" data-testid="live-tickets">
@@ -512,14 +522,14 @@
                 data-current={ticketId && t.id === ticketId ? '' : undefined}
                 onclick={(event) => {
                   if (event.target?.closest?.('button,[role="combobox"]')) return;
-                  if (run?.id) onNavigate?.(`/runs/${run.id}/${t.id}`);
+                  if (run?.id) onNavigate?.(runPath(run.id, t.id));
                 }}
               >
                 <td class="min-w-[14rem] max-w-[22rem] px-3 py-2 [overflow-wrap:anywhere]">
                   <div class="flex min-w-0 items-baseline gap-2">
                     <span class="shrink-0 tabular-nums text-muted-foreground">#{t.num}</span>
                     {#if onNavigate && run?.id}
-                      <Button variant="link" size="sm" class="h-auto min-w-0 shrink justify-start whitespace-normal p-0 text-left font-medium max-md:min-h-11 max-md:py-2" onclick={(e) => { e.stopPropagation(); onNavigate(`/runs/${run.id}/${t.id}`); }}>{t.title}</Button>
+                      <Button variant="link" size="sm" class="h-auto min-w-0 shrink justify-start whitespace-normal p-0 text-left font-medium max-md:min-h-11 max-md:py-2" onclick={(e) => { e.stopPropagation(); onNavigate(runPath(run.id, t.id)); }}>{t.title}</Button>
                     {:else}
                       <span class="font-medium">{t.title}</span>
                     {/if}

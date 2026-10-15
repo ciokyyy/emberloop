@@ -1,10 +1,10 @@
-// Browser router: real paths for sessions, runs, settings, quota, providers and memory.
+// Browser router: stable Project-id paths and canonical Session URLs.
 // Pure parse/build functions live here so tests cover them without the DOM;
-// App.svelte owns history.pushState and popstate around them.
+// App.svelte owns history.pushState and popstate around it.
 //
-// Paths: /s/<id> session (optional ?at=<seq> deep link), /runs,
-// /runs/<runId>, /runs/<runId>/<ticketId>, /settings, /quota, /providers,
-// /memory, / home.
+// Paths: / is the All projects Dashboard; /p/<id> scopes Sessions;
+// /p/<id>/runs[/<runId>[/<ticketId>]] and /p/<id>/settings stay scoped;
+// /p/none is the home-directory scope. /s/<id> remains canonical.
 export function parsePath(input) {
   const raw = String(input ?? '');
   const fragment = raw.indexOf('#');
@@ -33,6 +33,16 @@ export function parsePath(input) {
     if (at) route.at = at;
     return route;
   }
+  if (segs[0] === 'p' && segs[1]) {
+    if (segs.length === 2) return { name: 'project', projectId: segs[1] };
+    if (segs[2] === 'runs') {
+      if (segs.length === 3) return { name: 'project-runs', projectId: segs[1] };
+      if (segs.length === 4 && segs[3]) return { name: 'project-run', projectId: segs[1], runId: segs[3] };
+      if (segs.length === 5 && segs[3] && segs[4])
+        return { name: 'project-ticket', projectId: segs[1], runId: segs[3], ticketId: segs[4] };
+    }
+    if (segs[2] === 'settings' && segs.length === 3) return { name: 'project-settings', projectId: segs[1] };
+  }
   if (segs[0] === 'runs' && segs.length === 1) return { name: 'runs' };
   if (segs[0] === 'runs' && segs.length === 2 && segs[1]) return { name: 'run', runId: segs[1] };
   if (segs[0] === 'runs' && segs.length === 3 && segs[1] && segs[2])
@@ -54,6 +64,16 @@ export function buildPath(route) {
   switch (route?.name) {
     case 'home':
       return '/';
+    case 'project':
+      return `/p/${encodeURIComponent(route.projectId)}`;
+    case 'project-runs':
+      return `/p/${encodeURIComponent(route.projectId)}/runs`;
+    case 'project-settings':
+      return `/p/${encodeURIComponent(route.projectId)}/settings`;
+    case 'project-run':
+      return `/p/${encodeURIComponent(route.projectId)}/runs/${encodeURIComponent(route.runId)}`;
+    case 'project-ticket':
+      return `/p/${encodeURIComponent(route.projectId)}/runs/${encodeURIComponent(route.runId)}/${encodeURIComponent(route.ticketId)}`;
     case 'session':
       return `/s/${encodeURIComponent(route.id)}${route.at ? `?at=${route.at}` : ''}`;
     case 'runs':
@@ -75,12 +95,14 @@ export function buildPath(route) {
   }
 }
 
-// sameRoute reports whether a navigation changes anything visible: same
-// session id and same at target means no reload.
+// sameRoute compares route identity, including Session scroll targets and Project ids.
 export function sameRoute(a, b) {
   if (!a || !b || a.name !== b.name) return false;
   if (a.name === 'session') return a.id === b.id && (a.at ?? 0) === (b.at ?? 0);
   if (a.name === 'run') return a.runId === b.runId;
   if (a.name === 'ticket') return a.runId === b.runId && a.ticketId === b.ticketId;
+  if (a.name === 'project' || a.name === 'project-runs' || a.name === 'project-settings') return a.projectId === b.projectId;
+  if (a.name === 'project-run') return a.projectId === b.projectId && a.runId === b.runId;
+  if (a.name === 'project-ticket') return a.projectId === b.projectId && a.runId === b.runId && a.ticketId === b.ticketId;
   return true;
 }

@@ -57,6 +57,119 @@ describe('Providers route', () => {
     }
   });
 });
+describe('Project scope routes', () => {
+  afterEach(() => {
+    cleanup();
+    stopLive();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
+
+  const response = (body) => ({ ok: true, json: async () => body });
+  class FakeEventSource {
+    constructor() {}
+    close() {}
+  }
+
+  it('derives Project scope from the canonical Session URL', async () => {
+    history.replaceState(null, '', '/s/session-one');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const sessions = [
+      { id: 'session-one', title: 'Project Session', projectId: 'project-one', owner: 'u1', status: 'idle' },
+      { id: 'session-two', title: 'Other Project Session', projectId: 'project-two', owner: 'u1', status: 'idle' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/api/projects')) return response([
+        { id: 'project-one', name: 'Renamed Project', path: '/one' },
+        { id: 'project-two', name: 'Other Project', path: '/two' },
+      ]);
+      if (path.endsWith('/api/sessions')) return response(sessions);
+      if (path.startsWith('/api/sessions/session-one?')) return response({
+        session: sessions[0], events: [], resumable: true, hasMore: false, firstSeq: 0,
+      });
+      if (path.endsWith('/api/runs')) return response({ runs: [] });
+      if (path.endsWith('/api/users')) return response([{ id: 'u1', username: 'alice' }]);
+      if (path.endsWith('/queue')) return response({ queue: [] });
+      return response({});
+    }));
+
+    const { container } = render(App, { props: { user: { id: 'u1', username: 'alice' } } });
+    expect(await within(container).findAllByText('Project Session')).toHaveLength(2);
+    expect(within(container).queryByText('Other Project Session')).toBeNull();
+    expect(within(container).getByRole('button', { name: 'Project scope' }).textContent).toContain('Renamed Project');
+    expect(window.location.pathname).toBe('/s/session-one');
+  });
+
+  it('shows the Dashboard and its Project switcher in the phone drawer', async () => {
+    history.replaceState(null, '', '/');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/api/dashboard')) return response({ groups: {} });
+      if (path.endsWith('/api/projects')) return response([{ id: 'project-one', name: 'Demo', path: '/repo' }]);
+      return response([]);
+    }));
+
+    const { container } = render(App);
+    expect(await within(container).findByTestId('dashboard')).toBeTruthy();
+    await fireEvent.click(within(container).getByRole('button', { name: 'Project switcher' }));
+    const drawer = await screen.findByTestId('drawer-scroll');
+    expect(within(drawer).getByTestId('project-switcher')).toBeTruthy();
+    expect(within(drawer).getByRole('button', { name: 'Project scope' }).textContent).toContain('All projects');
+
+    await fireEvent.keyDown(within(drawer).getByRole('button', { name: 'Project scope' }), { key: 'ArrowDown' });
+    await fireEvent.pointerUp(await screen.findByRole('option', { name: 'Demo' }), { button: 0, pointerId: 1, pointerType: 'mouse' });
+    await vi.waitFor(() => expect(window.location.pathname).toBe('/p/project-one'));
+    expect(screen.queryByTestId('drawer-scroll')).toBeNull();
+  });
+
+  it('keeps home-directory Sessions in the built-in No project scope', async () => {
+    history.replaceState(null, '', '/p/none');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const sessions = [
+      { id: 'home-session', title: 'Home Session', owner: 'u1', status: 'idle' },
+      { id: 'project-session', title: 'Project Session', projectId: 'project-one', owner: 'u1', status: 'idle' },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/api/projects')) return response([{ id: 'project-one', name: 'Demo', path: '/repo' }]);
+      if (path.endsWith('/api/sessions')) return response(sessions);
+      if (path.endsWith('/api/runs')) return response({ runs: [] });
+      if (path.endsWith('/api/users')) return response([{ id: 'u1', username: 'alice' }]);
+      return response({});
+    }));
+
+    const { container } = render(App, { props: { user: { id: 'u1', username: 'alice' } } });
+    expect(await within(container).findByText('Home Session')).toBeTruthy();
+    expect(within(container).queryByText('Project Session')).toBeNull();
+    expect(within(container).getByRole('button', { name: 'Project scope' }).textContent).toContain('No project');
+  });
+  it('filters Project Runs by stable Project id', async () => {
+    history.replaceState(null, '', '/p/project-one/runs');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/api/projects')) return response([
+        { id: 'project-one', name: 'Renamed Project', path: '/one' },
+        { id: 'project-two', name: 'Other Project', path: '/two' },
+      ]);
+      if (path.endsWith('/api/runs')) return response({ runs: [
+        { id: 'run-one', spec: '/one/.scratch/one/spec.md', projectId: 'project-one', updatedAt: '2026-10-14T10:00:00Z', counts: { total: 1 } },
+        { id: 'run-two', spec: '/two/.scratch/two/spec.md', projectId: 'project-two', updatedAt: '2026-10-14T09:00:00Z', counts: { total: 1 } },
+      ] });
+      if (path.endsWith('/api/specs')) return response({ specs: [] });
+      return response([]);
+    }));
+
+    const { container } = render(App);
+    const sidebar = await within(container).findByTestId('runs-sidebar');
+    expect(await within(sidebar).findByRole('button', { name: /one.*0\/1/ })).toBeTruthy();
+    expect(within(sidebar).queryByRole('button', { name: /two.*0\/1/ })).toBeNull();
+    expect(window.location.pathname).toBe('/p/project-one/runs');
+  });
+});
 describe('Non-blocking boot', () => {
   beforeEach(() => cleanup());
   afterEach(() => {
@@ -81,48 +194,45 @@ describe('Non-blocking boot', () => {
     close() {}
   };
 
-  it('renders the home shell while Session and Run lists are still loading', async () => {
+  it('renders the Dashboard while its payload loads without waiting for Session or Run lists', async () => {
     history.replaceState(null, '', '/');
     localStorage.clear();
-    const sessions = deferred();
-    const runs = deferred();
+    const dashboard = deferred();
     const fetchMock = vi.fn((url) => {
       const path = String(url);
-      if (path.endsWith('/api/sessions')) return sessions.promise.then(response);
-      if (path.endsWith('/api/runs')) return runs.promise.then(response);
-      return Promise.resolve(response(path.endsWith('/api/specs') ? { specs: [] } : []));
+      if (path.endsWith('/api/dashboard')) return dashboard.promise.then(response);
+      return Promise.resolve(response([]));
     });
     vi.stubGlobal('EventSource', fakeEvents());
     vi.stubGlobal('fetch', fetchMock);
 
     const { container } = render(App);
-    expect(await within(container).findByTestId('sidebar')).toBeTruthy();
-    expect(within(container).getByTestId('sessions-loading').textContent).toContain('Loading Sessions');
-    await vi.waitFor(() => {
-      const paths = fetchMock.mock.calls.map(([url]) => String(url));
-      expect(paths.some((path) => path.endsWith('/api/sessions'))).toBe(true);
-      expect(paths.some((path) => path.endsWith('/api/runs'))).toBe(true);
-    });
+    expect(await within(container).findByTestId('dashboard')).toBeTruthy();
+    expect(within(container).getByRole('status').textContent).toContain('Loading Dashboard');
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/dashboard'))).toBe(true));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/sessions'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/runs'))).toBe(false);
 
-    expect(within(container).getByTestId('header-title').textContent).toContain('No Session');
-
-    sessions.resolve([]);
-    runs.resolve({ runs: [] });
-    await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
+    dashboard.resolve({ groups: {} });
+    expect(await within(container).findByText(/Nothing needs attention/)).toBeTruthy();
   });
-  it('refreshes Sessions changed while away before resolving the home route', async () => {
-    history.replaceState(null, '', '/');
+  it('refreshes Sessions changed while away before resolving the Project scope', async () => {
+    history.replaceState(null, '', '/p/none');
     localStorage.clear();
     const refreshedSessions = deferred();
     let sessionReads = 0;
+    const priorSession = { id: 's1', harness: 'fake', model: 'fake-model', title: 'Prior Session', status: 'idle' };
     const newSession = { id: 's2', harness: 'fake', model: 'fake-model', title: 'Fresh Session', status: 'idle' };
     const fetchMock = vi.fn((url) => {
       const path = String(url);
       if (path === '/api/sessions') {
         sessionReads += 1;
-        if (sessionReads === 1) return Promise.resolve(response([]));
+        if (sessionReads === 1) return Promise.resolve(response([priorSession]));
         if (sessionReads === 2) return refreshedSessions.promise.then(response);
         return Promise.resolve(response([newSession]));
+      }
+      if (path.startsWith('/api/sessions/s1')) {
+        return Promise.resolve(response({ session: priorSession, events: [], resumable: true, hasMore: false, firstSeq: 0 }));
       }
       if (path.startsWith('/api/sessions/s2')) {
         return Promise.resolve(response({ session: newSession, events: [], resumable: true, hasMore: false, firstSeq: 0 }));
@@ -146,7 +256,7 @@ describe('Non-blocking boot', () => {
 
     await fireEvent.click(within(container).getByLabelText('Chat'));
     await vi.waitFor(() => expect(sessionReads).toBe(2));
-    expect(within(container).getByTestId('header-title').textContent).toContain('No Session');
+    expect(within(container).getByTestId('header-title').textContent).toContain('Prior Session');
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/sessions/s2'))).toBe(false);
 
     refreshedSessions.resolve([newSession]);
@@ -168,12 +278,13 @@ describe('Non-blocking boot', () => {
 
     const { container } = render(App);
     expect(await within(container).findByTestId('sessions-loading')).toBeTruthy();
-    await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
+    await vi.waitFor(() => expect(within(container).getByTestId('sessions-loading').textContent).toContain('Loading Project scope'));
     detail.resolve({
       session: { id: 's1', harness: 'fake', model: 'fake-model', title: 'Loaded Session' },
       events: [], resumable: true, hasMore: false, firstSeq: 0,
     });
     await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('Loaded Session'));
+    await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
     expect(within(container).queryByTestId('session-missing')).toBeNull();
   });
 
@@ -263,10 +374,11 @@ describe('Non-blocking boot', () => {
 describe('Header', () => {
   it('shows a compact Live dot, and Reconnecting text only when disconnected', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => [] })));
+    history.replaceState(null, '', '/p/none');
     const { container } = render(App);
     expect(await within(container).findByTestId('live')).toBeTruthy();
     expect(within(container).queryByText('Live')).toBeNull();
-    expect(within(container).getByTestId('header-title').textContent).toContain('No Session');
+    await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('New chat'));
   });
 });
 
@@ -279,7 +391,7 @@ describe('Sidebar collapse', () => {
   function stubApp() {
     // Each render boots from the URL: reset it, or a leaked /runs from an
     // earlier test opens the Runs view instead of the chat sidebar.
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', '/p/p1');
     localStorage.clear();
     vi.stubGlobal('EventSource', class { close() {} });
     vi.stubGlobal(
@@ -341,7 +453,7 @@ describe('Sidebar collapse', () => {
 
   it('closes the drawer on system Back and keeps the page', async () => {
     stubApp();
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', '/p/p1');
     const { container } = render(App, { props: { user: me } });
     await within(container).findByTestId('sidebar');
     await new Promise((r) => setTimeout(r, 50));
@@ -356,7 +468,7 @@ describe('Sidebar collapse', () => {
 
   it('shows Close and the area tabs in the drawer', async () => {
     stubApp();
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', '/p/p1');
     const { container } = render(App, { props: { user: me } });
     await within(container).findByTestId('sidebar');
     await fireEvent.click(within(container).getByRole('button', { name: 'Sessions' }));
@@ -550,7 +662,7 @@ describe('Run summaries in the Session sidebar', () => {
   afterEach(() => cleanup());
 
   it('uses summary counts and Project ids without fetching Run details', async () => {
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', '/p/project-1');
     localStorage.clear();
     vi.stubGlobal('EventSource', class { close() {} });
     const fetchMock = vi.fn(async (url) => ({
@@ -575,7 +687,7 @@ describe('Run summaries in the Session sidebar', () => {
     const { container } = render(App, { props: { user: { id: 'u1', username: 'alice', admin: true } } });
     const runRow = await within(container).findByRole('button', { name: /demo.*Run/i });
     expect(runRow.className).toContain('border-amber-500/30');
-		expect(runRow.closest('section[aria-label="Demo"]')).toBeTruthy();
+    expect(runRow.closest('section[aria-label="alice"]')).toBeTruthy();
     expect(fetchMock.mock.calls.some(([url]) => /\/api\/runs\/[^/]+$/.test(String(url)))).toBe(false);
   });
 });

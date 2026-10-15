@@ -120,15 +120,8 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
   mapped in `web/README.md`.
 
-- Browser boot: `App.svelte` routes from the URL before list reads finish.
-  `/quota` loads its cache and `/providers` loads the SDK provider status without
-  waiting for Session or Run lists; `/runs` loads summaries through
-  `RunsSidebar`. Home loads Sessions asynchronously and resolves last/newest
-  only after the list arrives; the chat sidebar shows `Loading Sessions…`.
-  Session events while another area is open mark the list stale; returning
-  home refreshes it before selecting last/newest. `App.test.js` covers delayed
-  lists, route-owned loading states, provider navigation and this return-to-home
-  refresh.
+- Browser project scope: `/` renders the active-work Dashboard from `GET /api/dashboard`; the Project switcher routes by stable id to `/p/<id>` or `/p/none`, filters scoped Sessions and Runs, and is available with the Dashboard in the phone drawer. `/s/<id>` stays canonical and derives scope from Session metadata. `/quota`, `/providers`, `/memory` and account `/settings` remain global.
+- Browser boot: the Dashboard and global pages do not wait for Session or Run lists. Project scope loads Sessions asynchronously; `/runs` and `/p/<id>/runs` load summaries in `RunsSidebar`. Session events while another area is open mark the list stale; returning to a Project scope refreshes before selecting its last/newest Session. `router.test.js` and `App.test.js` cover URL round trips, scope, global routes, Dashboard and drawer navigation.
 
 ## Adapter retry
 
