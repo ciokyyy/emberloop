@@ -64,7 +64,10 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/ProjectSwitcher.svelte` — the stable-id scope picker: All projects maps to `/`, No project to `/p/none`, and renamed Project labels remain display-only; the same picker is used in the phone drawer.
 - `src/lib/DashboardPage.svelte` — grouped active Sessions and Runs from `GET /api/dashboard`; refreshes on Session/Run live invalidations and builds Session links canonically and Run links with the group's stable Project id.
 - `src/lib/ProjectSettingsPage.svelte` — Project name and one-line gist editors with explicit saves, Project removal, path display and a return to the scoped Sessions view; no per-Project overrides.
-- `src/lib/QuotaPage.svelte`, `src/lib/quota.js` — quota cards consume the Daemon's percent-used windows, word labels, plan/detail and state fields; Claude's plan and usage come from a read-only host OAuth poller with statusline fallback, and the UI never derives percentages from money.
+- `src/lib/QuotaPage.svelte`, `src/lib/quota.js` — quota cards render the
+  Daemon's percent-used windows, word labels, plan/detail and provider state;
+  Claude uses a read-only host OAuth poller with statusline fallback, and the UI
+  never derives percentages from money.
  - `src/lib/ProvidersPage.svelte` — global pig provider status grouped as subscription logins, API keys and CLI-only; OAuth rows without a browser flow show the exact `pig login <provider>` command and copy button, while Bedrock, Vertex and Cloudflare cloud-auth rows say `configure via CLI`. Stored key values never enter the response or page, only a `keySet` flag. Admins can set/remove supported API keys, connect ChatGPT with a short-lived device-code session showing its verification link and user code, connect Claude through a Daemon PTY running `claude auth login` (Claude Code writes only the host `~/.claude` login), and connect Antigravity by opening its login link and pasting a callback URL or code; invalid Antigravity input stays in the open panel for correction. Successful ChatGPT, Antigravity, Claude and quota-backed API-key connections refresh and publish their matching quota data; other Users see read-only status.
 - `src/lib/DraftBar.svelte` — harness, model and effort pickers for a new chat draft (effort for claude and pig); `App.svelte` owns the first-message Project suggestion banner and Yes/No decision.
  - `src/lib/Transcript.svelte`, `src/lib/transcript.js` — TanStack-virtualized transcript (throttled dynamic measurement at ~5Hz or >32px deltas, overscan, `content-visibility:auto` rows, instant `scroll-behavior` on the scroller so the time-based glide loop runs alone, stick-to-bottom unless scrolled up, jump-to-latest) with a load-earlier sentinel (auto-load on scroll up, scroll-anchored, spinner, stops at `hasMore=false`); pure stick/anchor/seq helpers in `transcript.js`
@@ -105,25 +108,32 @@ Same-origin by default. To point the static build at another Daemon:
 - `src/lib/ProfileSettings.svelte` (`api.js` profile calls) — the Profile editor: live lines with add, edit and retire, the pending proposal queue with approve and reject, versions with restore; every approval writes a `profile_updated` Event
 - `src/lib/MemoryPage.svelte` (`api.js` memory calls, `memory.js` normalizers) — the Memory page on `/memory`: engine status chip, stats (queue size, approval latency, last nightly run and ledger), Rules and observations list plus FTS5 search with a Promote button per Rule, the rule queue with quotes, source Sessions, approve, edit, reject and per-Session plus selected batch approve, the promotion approval queue with diffs, the reused Profile editor with versions, the ledger tail, and the purge section with the typed PURGE confirmation and the removed-counts report; loads once, buttons fetch again
 - `src/lib/QuotaPage.svelte`, `src/lib/QuotaSidebar.svelte`, `src/lib/quotaStore.js`
-  and `src/lib/quota.js` — the read-only `/quota` page with integer percent bars,
-  word-form windows, reset countdowns and stale/expired/not-connected states;
-  ChatGPT Plus uses pig's read-only `openai-codex` login, and OpenRouter shows
-  credits-used percent, dollars left and daily/weekly/monthly key spend in the
-  Credits detail. The Daemon polls Claude's host OAuth usage from
-  `~/.claude/.credentials.json` without refreshing or writing it, caches for
-  90 seconds, backs off on `Retry-After`, and falls back to statusline data only
-  when no host login is available; the terminal header remains statusline-backed.
-  Manual refresh keeps cached values visible, marks affected cards busy and
-  respects the Daemon's per-provider minimum interval. The page, desktop
-  sidebar and phone drawer share `quotaStore`: its first subscriber opens one
-  `topic=quota` stream, which patches cards and status rows from full provider
-  lists; the last subscriber leaving closes it. The page reads the cache once
-  through `GET /api/quota` and uses no browser timer or quota polling. Age and
-  reset labels recompute on initial cache read, live provider lists or explicit
-  refresh; the sidebar shows one highest-`pct` status per provider with a
-  neutral marker when absent. Either view starts the Daemon's guarded refresher
-  while subscribed; `quota.js` owns the threshold, age and label helpers.
-  Not-connected cards link directly to their provider row in `/providers`; both Antigravity pool cards target the Google Antigravity row. `ProvidersPage.svelte` focuses the requested row after its async list loads.
+  and `src/lib/quota.js` — the read-only `/quota` page reads
+  `GET /api/quota`'s `{providers: [...]}` cache response. Each provider has
+  `key`, `label`, `plan`, `state` (`ok`, `stale`, `expired`, `not_configured`,
+  `error`), `updated_at`, `error`, optional `hint` and `windows[]`; each window
+  has a word-form `label`, integer 0–100 percent-used `pct`, `resets_at` and
+  optional `detail`. Cards cover Claude, ChatGPT Plus, OpenCode-Go, OpenRouter
+  and Antigravity's Gemini (`agy-gemini`) and Claude + GPT-OSS (`agy-3p`) pools.
+  Cards show percent used first; bars and Live status rows use only `pct`. The
+  UI never computes a percent from dollars. OpenRouter's Credits detail includes
+  credits used, total and left plus current-key daily, weekly and monthly spend.
+  Claude's usage and plan come from a read-only host OAuth poller with statusline
+  fallback; the terminal header remains statusline-backed.
+  The page, desktop sidebar and phone drawer share `quotaStore`: its first
+  subscriber opens one `topic=quota` stream, which patches cards and status rows
+  from full provider lists; the last subscriber leaving closes it. The Daemon
+  starts the guarded, concurrent refresher only while a quota-topic subscriber
+  exists, checks every 15s against the 90s per-provider cache age guard, and
+  stops when the last subscriber leaves. The page reads the cache once and uses
+  no browser quota timer or polling. `POST /api/quota/refresh` keeps cached
+  values visible, marks affected cards busy, skips the age guard and enforces a
+  10s per-provider minimum. Age and reset labels recompute on cache reads, live
+  provider lists or explicit refresh; the sidebar shows each provider's highest
+  `pct` with a neutral marker when absent. `quota.js` owns threshold, age and
+  label helpers. Not-connected cards link to their provider row in `/providers`;
+  both Antigravity pool cards target Google Antigravity, and `ProvidersPage.svelte`
+  focuses the requested row after its async list loads.
 - `src/lib/memory.js` — pure Memory page helpers: row normalizers that accept Go-case and lowercase keys, proposal parsing with the old remember-shape upgrade, per-Session queue grouping, purge counts and summaries, latency labels
 - `src/lib/PromotionQueue.svelte` (`api.js` promotion calls) — the promotion approval queue embedded in the Memory page: each item shows its target path and diff preview with approve and reject; approving writes the worktree file and leaves it uncommitted for review
 - `SettingsPage.svelte` Accounts section, admin only: the `Allow sign-up` switch saves `signup_enabled` with the rest of the Save bar; other Users never see or send the key

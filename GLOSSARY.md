@@ -24,9 +24,22 @@ _Avoid_: Chat, thread, run
 A registered directory that Sessions and Runs belong to. A Session started in a Project uses the Project's path as its working directory. The UI scopes its sidebar, dashboard and URLs by Project.
 _Avoid_: Workspace, folder, repo
 
+**Dashboard**:
+The global `/` view of active Sessions and Runs that are working or need you, grouped by Project. Idle history stays in each Project view.
+_Avoid_: Home, activity feed
+
+**Provider**:
+A model service or authentication account listed in the Providers area; some
+also expose quota. It is distinct from a Backend, which drives a Session.
+_Avoid_: Backend, harness
+
+**Quota percent**:
+The integer 0–100 percentage of a provider limit already used. It is the common value for quota bars and Live status rows; the UI does not derive it from money or tokens.
+_Avoid_: Remaining percent, balance
+
 **Backend**:
 The adapter that drives one harness behind the Daemon's `Agent` interface: claude and grok through ACP, pig through ACP or its Go SDK.
-_Avoid_: Driver, provider, adapter
+_Avoid_: Driver, adapter
 
 **Handle**:
 The harness-side agent process and resume token behind one Session. A Compress swaps the handle and the Session ID stays. Every handle start derives its owner, role and injections from the Session record (`startHandle`).

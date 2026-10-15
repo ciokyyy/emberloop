@@ -1,12 +1,15 @@
 # AGENTS.md — emberloop
 
-Project preamble: emberloop is a browser UI and local Daemon (`emberloop-web/`, one Go module) that runs coding-agent sessions and deterministic implement/review Runs. `emberloop-web/el/` is the el library behind it: the tool roles the el MCP server serves, the Run driver, the session archive and usage tailer, and the operator CLI with its update path; `pig-antigravity-auth/` is a separate pig
-extension; `installer/` is the install TUI run by `install.sh`; `scripts/` holds
-live
-probes that need running agents; `.scratch/archive/retro-hardening/` holds this
-run's spec and tickets. Claude sessions read the same source through
-`CLAUDE.md`, which imports this file; Daemon claude Sessions load no
-CLAUDE.md and get a system-prompt pointer to this file instead. The repo check is `.emberloop/check`
+Project preamble: Emberloop is a browser UI and local Daemon (`emberloop-web/`,
+one Go module) that runs coding-agent Sessions and deterministic implement/
+review Runs. `emberloop-web/el/` is the el library behind it: the el MCP tools,
+Run driver, session archive and usage tailer, and operator CLI with its update
+path. `pig-antigravity-auth/` is a separate pig extension; `installer/` is the
+install TUI run by `install.sh`; `scripts/` holds live probes that need running
+agents; `.scratch/workspace-overhaul/` holds the combined workspace spec and
+ticket map. Claude sessions read the same source through `CLAUDE.md`, which
+imports this file; Daemon Claude Sessions load no `CLAUDE.md` and get a system-
+prompt pointer to this file instead. The repo check is `.emberloop/check`
 (`cd emberloop-web && go vet ./... && go test -timeout 15m -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
 
 ## DOX contract
@@ -39,7 +42,14 @@ CLAUDE.md and get a system-prompt pointer to this file instead. The repo check i
 Index paths are repo-relative. Every doc below is listed here or in the
 child it belongs to, and every entry must resolve to a file.
 
-- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login, sign-in, owners, per-User harness dirs, Run summaries, active-work Project Dashboard, Jev draft Project-pick banner, folderless Project Runs and editable Project gist settings, per-concern Settings hub and merged model/effort chains per agent role, persisted Ticket-to-Session index, read-only quota pollers, admin-only pig provider keys, ChatGPT device-code connect, Claude auth login through a host PTY, CLI-only OAuth guidance and the probed redirect-base setting, and Antigravity callback login); indexes the el library, memory, web source and Backend spikes
+- `emberloop-web/AGENTS.md` — browser UI and Daemon seams: summary-only Runs,
+  git caching, Ticket-to-Session index and non-blocking boot; cache-only quota
+  API, subscriber-gated `quota` live refresher and percent-first cards for
+  Claude, ChatGPT Plus, OpenCode-Go, OpenRouter and both Antigravity pools;
+  provider status/connect flows; Project Dashboard and stable scope routes;
+  Jev draft Project picks; per-concern Settings and model/effort chains; and
+  panic-safe Run-test cleanup, slot watchdog and per-test deadlines. Indexes the
+  el library, memory, web source and Backend spikes
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
@@ -57,6 +67,6 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
 - `.scratch/settings-redesign/AGENTS.md` — the design reference (static mock) for the Settings redesign in `emberloop-web`
-- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
+- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK

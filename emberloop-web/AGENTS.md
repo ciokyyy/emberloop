@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Enderbloom Web: a local Daemon and embedded browser UI driving claude, pig and
-grok Sessions behind one `Backend` interface. See
-`.scratch/archive/enderbloom-web/spec.md`.
+Emberloop Web is the local Daemon and embedded browser UI for claude, pig and
+grok Sessions and deterministic implement/review Runs. It owns the Daemon,
+web app and embedded el library; see the Child DOX Index below.
 
 ## Ownership
 
@@ -23,24 +23,36 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
-- Quota HTTP/live seam: `quota.go` serves the shared cache immediately on GET;
-  one `/api/live?topic=quota` subscriber starts the guarded refresher, which
-  refreshes configured providers concurrently, while ordinary live watchers keep
-  the shared EventSource stable. The first non-forced pass retains the 90s/provider
-  age guard; the last quota subscriber leaving cancels it. Changed provider
-  lists publish only to quota streams. Header panes share cache files and
-  per-key locks; manual POST skips the age guard and enforces a 10s/provider
-  minimum. ChatGPT Plus uses pig's read-only `openai-codex` login.
+- Quota HTTP/live seam: `GET /api/quota` returns `{"providers":[...]}` from
+  the shared cache only. Each provider has `key`, `label`, `plan`, `state`
+  (`ok`, `stale`, `expired`, `not_configured`, `error`), `updated_at`, `error`,
+  optional `hint`, and `windows[]`; each window has a word-form `label`, an
+  integer percent-used `pct` (0–100), `resets_at`, and optional secondary
+  `detail`. Cards show the percent used first; `pct` alone drives quota bars
+  and Live status rows. Cards cover
+  Claude, ChatGPT Plus, OpenCode-Go, OpenRouter, and Antigravity's Gemini
+  (`agy-gemini`) and Claude + GPT-OSS (`agy-3p`) pools.
+  One `/api/live?topic=quota` subscriber starts the shared refresher: its first
+  pass reads the cache and fetches configured providers concurrently when the
+  90s per-provider age guard allows; it checks every 15s and the last subscriber
+  leaving cancels it. Ordinary live watchers keep the shared EventSource
+  stable. Changed full provider lists publish only to quota streams. Header
+  panes share cache files and per-key locks. `POST /api/quota/refresh` accepts
+  an optional provider `key` in JSON or the query string; an empty key refreshes
+  all providers. Manual refresh skips the age guard and enforces a 10s minimum
+  per upstream provider.
+  ChatGPT Plus reads pig's `openai-codex` login without refreshing it.
   `el/usage_providers.go` polls Claude's host OAuth read-only with a separate
   90s cache and persisted `Retry-After` backoff; it never refreshes or writes
   credentials, starts a harness or sends a prompt. Statusline data is the
   fallback only when host OAuth is absent; the terminal header remains
-  unchanged. OpenRouter reads pig's `openrouter.key`, combines credits and
-  current-key spend in the Credits detail, and caches its percent bar plus
-  secondary text. Unconfigured sources are skipped. `quota_test.go` covers
-  cache reads, live payloads/gating/coalescing, provider isolation, cooldowns,
-  shared locks, ChatGPT and Claude behavior, and OpenRouter endpoints against
-  local stubs.
+  statusline-backed. OpenRouter reads pig's `openrouter.key`; its Credits detail
+  combines dollars used, total and left with current-key spend. OpenCode-Go and
+  both Antigravity pools use the shared usage fetchers. Missing configuration
+  remains a `not_configured` card with an actionable hint and skips upstream
+  fetches. `quota_test.go` covers response shape, cached reads, live payloads,
+  subscriber gating/coalescing, provider isolation, cooldowns, shared locks,
+  ChatGPT and Claude behavior, and OpenRouter endpoints against local stubs.
 - Dashboard payload: `GET /api/dashboard` returns only working/needs-you
   Sessions and running/needs-you Runs grouped by Project id. Unassigned work
   uses the built-in `none` scope; Runs resolve to the deepest Project containing
@@ -134,7 +146,14 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   stays canonical and derives scope from Session metadata. Account pages remain
   global; the switcher and Dashboard are available in the phone drawer.
 - Browser Settings: `/settings` is the hub on phones and redirects to `/settings/agents` on desktop. Each concern has a stable `/settings/<section>` route, grouped Workspace and You in `SettingsNav.svelte`; each page shows its Global, Admin or You scope and a phone return link. Agents has one ordered chain per Session and Run role (Orchestrator, Subagent, Scout, Ticket worker, Spec reviewer, Standards reviewer), at most three `{harness, model, effort}` entries; effort choices come from each model's `/api/models` metadata. The Daemon migrates legacy role settings and Run Chain aliases to canonical chains; configured legacy role keys mirror primaries for `el settings role` compatibility. Daemon-backed pages share a first-change Revert/Save bar. Runs labels the global cap “Maximum tickets per Run (spec)” and explains that `max_tickets` caps each Run while a spec value can only lower it. Memory uses a segmented decider control and a collapsed custom Jev endpoint; an empty endpoint means OpenRouter in Jev mode, while Ensemble keeps its memory-model default unless a custom endpoint is set. Profile, notification and device preference components retain their existing behavior. `model_efforts_test.go`, `settings_test.go`, `SettingsPage.test.js`, `SettingsHub.test.js`, `SettingsRoutes.test.js` and `router.test.js` cover model capabilities, editing, migration, grouping, routes, phone navigation and the save bar.
-- Browser boot: the Dashboard and global pages do not wait for Session or Run lists. Project scope loads Sessions asynchronously; `/runs` and `/p/<id>/runs` load summaries in `RunsSidebar`. Session events while another area is open mark the list stale; returning to a Project scope refreshes before selecting its last/newest Session. `router.test.js` and `App.test.js` cover URL round trips, scope, global routes, Dashboard and drawer navigation.
+- Browser boot: the Dashboard and global pages do not wait for Session or Run
+  lists. Project scope loads Sessions asynchronously; `/runs` and
+  `/p/<id>/runs` load summaries in `RunsSidebar`. `runsStore` shares one summary
+  list between the sidebar and app and coalesces bursts of Run events into one
+  refetch. Session events while another area is open mark the list stale;
+  returning to a Project scope refreshes before selecting its last/newest
+  Session. `router.test.js` and `App.test.js` cover URL round trips, scope,
+  global routes, Dashboard and drawer navigation.
 
 ## Adapter retry
 
@@ -176,17 +195,18 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - `stopRunsForTest` is registered per Daemon (`runsStopped`; `runTestDaemon`
   and `authedHandler` both register it). Every critical section defers its
   unlock; recovered cleanup panics are reported with `t.Errorf`, and its
-  bounded wait never fails a test itself. `runTestDaemon` acquires the Run-test
-  slot before registering shutdown; `initRunRepo` also acquires it for tests
-  that do not start a Daemon. The unconditional slot cleanup runs last. After
-  60 seconds waiting, the watchdog writes holder names to stderr and `t.Log`.
-  Each Run test has a 5-minute deadline, shortened to precede `t.Deadline()`;
-  expiry streams its name and goroutine dump to stderr, then calls `t.Errorf`
-  so only that test fails. Cleanup waits for the watchdog to exit before
-  releasing the slot, so it cannot report after the test completes. The helper
-  interrupts busy Sessions every poll and stops waiting on a Session still
-  busy after 50 polls. Fake turns last about 5ms, so tests wait for a turn's
-  end with `waitTurnEnd` (an idle status after the prompt's seq), never
+  bounded wait never fails a test itself. The Run-test semaphore release is a
+  separate unconditional cleanup registered before other cleanup, so it runs
+  last. `runTestDaemon` acquires a slot before registering shutdown;
+  `initRunRepo` also acquires one for tests that do not start a Daemon. After
+  60 seconds waiting, the watchdog writes slot-holder test names to stderr and
+  `t.Log`. Each Run test has a 5-minute deadline, shortened to precede
+  `t.Deadline()`; expiry streams its name and goroutine dump to stderr, then
+  calls `t.Errorf` so only that test fails. Cleanup waits for the watchdog to
+  exit before releasing the slot, so it cannot report after the test completes.
+  The helper interrupts busy Sessions every poll and stops waiting on a Session
+  still busy after 50 polls. Fake turns last about 5ms, so tests wait for a
+  turn's end with `waitTurnEnd` (an idle status after the prompt's seq), never
   working-then-idle polls. A test that mutates state after that idle Event also
   waits for `busy=false` and `active==0`; the Event precedes submit-gate and
   post-turn work. A test that jumps the fake clock first waits for the Worker's
