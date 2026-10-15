@@ -683,6 +683,15 @@ func TestJevMineDeciderUsesOpenRouterByDefault(t *testing.T) {
 	}
 }
 
+func TestJevMineDeciderWithoutOpenRouterKeyIsUnavailable(t *testing.T) {
+	disableOpenRouterForTest(t)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(useSettings(t, `{"jev_model":"jev-latest"}`))
+	if decider := d.jevMineDecider(); decider != nil {
+		t.Fatalf("decider = %T, want nil without an OpenRouter key", decider)
+	}
+}
+
 // jev mode end to end: a confirming endpoint stores the verdict with the
 // model and version in decider_json, queue-eligible at the high threshold.
 func TestMineSessionJevConfirms(t *testing.T) {
