@@ -18,8 +18,8 @@ const oauthRedirectBaseURLSettingKey = "oauth_redirect_base_url"
 // redirect URI and cannot use this setting.
 
 // oauthRedirectBaseFromSettings reads and validates the optional setting from a
-// decoded settings map. Sharing this keeps the Settings view and future OAuth
-// flow lookup on the same fail-closed normalization path.
+// decoded settings map. Sharing this keeps the Settings view and redirect gate
+// on the same fail-closed normalization path.
 func oauthRedirectBaseFromSettings(all map[string]json.RawMessage) string {
 	raw, ok := all[oauthRedirectBaseURLSettingKey]
 	if !ok {
