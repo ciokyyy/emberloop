@@ -1031,6 +1031,15 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 			tk.Verdicts["reviewer-standards"].Verdict == "pass" &&
 			tk.LastRefusal != ""
 	}, "both pass at the tip with the merge blocked")
+	// Verdicts can land before the fake Reviewer turn emits idle. Wait for both
+	// turns to settle before changing the branch tip, so the next submit cannot
+	// race the old Reviewer work.
+	for _, sess := range revs {
+		prompt := firstPromptWhere(t, srv.URL, sess, func(e Event) bool {
+			return e.Kind == "prompt" && strings.Contains(e.Text, "Review ticket")
+		})
+		waitTurnEnd(t, srv.URL, sess, prompt.Seq)
+	}
 	t1 := ticketByID(r, "01-first").Tip
 	// Keep the untracked dirty sentinel in place while amending. The Run driver
 	// polls independently and would otherwise be able to merge t1 in the gap
