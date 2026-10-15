@@ -87,6 +87,24 @@ func selectedTexts(ctx context.Context, db *sql.DB, sel Selection) ([]string, er
 		}
 		texts = append(texts, got...)
 	}
+	if len(sel.Memories) > 0 {
+		args := anyArgs(sel.Memories)
+		got, err := queryAll(ctx, db, scanText,
+			"SELECT text FROM memories WHERE id IN ("+placeholders(len(args))+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		texts = append(texts, got...)
+	}
+	if len(sel.Episodes) > 0 {
+		args := anyArgs(sel.Episodes)
+		got, err := queryAll(ctx, db, scanText,
+			"SELECT text FROM episodes WHERE id IN ("+placeholders(len(args))+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		texts = append(texts, got...)
+	}
 	if len(sel.Rules) > 0 {
 		args := anyArgs(sel.Rules)
 		got, err := queryAll(ctx, db, scanText,
@@ -123,6 +141,12 @@ func purgeDB(ctx context.Context, db *sql.DB, sel Selection, texts []string) (Pu
 	if res.Observations, err = deleteIDs(ctx, tx, "observations", sel.Observations); err != nil {
 		return res, err
 	}
+	if res.Memories, err = deleteIDs(ctx, tx, "memories", sel.Memories); err != nil {
+		return res, err
+	}
+	if res.Episodes, err = deleteIDs(ctx, tx, "episodes", sel.Episodes); err != nil {
+		return res, err
+	}
 	if res.Rules, err = deleteRuleIDs(ctx, tx, sel.Rules); err != nil {
 		return res, err
 	}
@@ -144,7 +168,7 @@ func purgeDB(ctx context.Context, db *sql.DB, sel Selection, texts []string) (Pu
 			return res, err
 		}
 	}
-	for _, t := range []string{"observations", "rules"} {
+	for _, t := range []string{"observations", "rules", "memories", "episodes"} {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s_fts (%s_fts) VALUES ('rebuild')", t, t)); err != nil {
 			return res, err
 		}

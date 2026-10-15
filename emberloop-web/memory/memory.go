@@ -301,8 +301,6 @@ type MemoryItem struct {
 }
 
 // Episode stores the redacted text of one user turn.
-type Mem = MemoryItem
-type MemoryRecord = MemoryItem
 type Episode struct {
 	ID             int64
 	SessionID      string
@@ -485,7 +483,7 @@ func validMemory(m MemoryItem) error {
 		return fmt.Errorf("%w: memory needs session, event and author", ErrInvalid)
 	case m.Text == "":
 		return fmt.Errorf("%w: memory text empty", ErrInvalid)
-	case len(m.Text) > 300:
+	case utf8.RuneCountInString(m.Text) > 300:
 		return fmt.Errorf("%w: memory text too long", ErrInvalid)
 	case m.Quote == "":
 		return fmt.Errorf("%w: memory quote empty", ErrInvalid)

@@ -644,6 +644,27 @@ func (f *Fake) Purge(_ context.Context, sel Selection) (PurgeResult, error) {
 		}
 		rules = append(rules, r)
 	}
+	var mems []MemoryItem
+	memIDs := setOf(sel.Memories)
+	for _, m := range f.mems {
+		if memIDs[m.ID] {
+			texts = append(texts, m.Text)
+			res.Memories++
+			continue
+		}
+		mems = append(mems, m)
+	}
+	var eps []Episode
+	epIDs := setOf(sel.Episodes)
+	for _, e := range f.eps {
+		if epIDs[e.ID] {
+			texts = append(texts, e.Text)
+			res.Episodes++
+			continue
+		}
+		eps = append(eps, e)
+	}
+
 	var queue []QueueItem
 	for _, q := range f.queue {
 		if queueIDs[q.ID] {
@@ -681,7 +702,7 @@ func (f *Fake) Purge(_ context.Context, sel Selection) (PurgeResult, error) {
 		}
 		res.Scrubbed += boolInt(changed)
 	}
-	f.obs, f.rules, f.queue, f.ledger = obs, rules, queue, ledger
+	f.obs, f.rules, f.mems, f.eps, f.queue, f.ledger = obs, rules, mems, eps, queue, ledger
 	return res, nil
 }
 
