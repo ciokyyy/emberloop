@@ -361,7 +361,7 @@ func discoverProject(ctx context.Context, token string, progress func(string)) (
 	return "", errors.New("loadCodeAssist did not return a cloudaicompanionProject")
 }
 
-// ---- the sdk OAuth provider ----
+// ---- the SDK OAuth provider ----
 
 // LoginCallbacks let the Daemon host the extension's existing OAuth flow in a
 // browser without changing how the pig extension itself prompts users.
