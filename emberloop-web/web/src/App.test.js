@@ -170,6 +170,93 @@ describe('Project scope routes', () => {
     expect(window.location.pathname).toBe('/p/project-one/runs');
   });
 });
+
+describe('Draft Project pick', () => {
+  afterEach(() => {
+    cleanup();
+    stopLive();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
+
+  const response = (body) => ({ ok: true, json: async () => body });
+  const project = { id: 'project-1', name: 'Demo', path: '/repo' };
+  const session = { id: 'draft-session', harness: 'claude', model: 'sonnet', projectId: 'project-1', workDir: '/repo', status: 'idle' };
+
+  function setup(suggestedProject) {
+    history.replaceState(null, '', '/p/none');
+    localStorage.clear();
+    vi.stubGlobal('EventSource', class { close() {} });
+    const createBodies = [];
+    const promptBodies = [];
+    let createdSession = session;
+    const fetchMock = vi.fn(async (url, options = {}) => {
+      const path = String(url);
+      const method = options.method ?? 'GET';
+      if (path.endsWith('/api/projects/suggest')) return response({ suggestedProject });
+      if (path.endsWith('/api/projects')) return response([project]);
+      if (path === '/api/sessions' && method === 'POST') {
+        const body = JSON.parse(options.body);
+        createBodies.push(body);
+        createdSession = { ...session, projectId: body.projectId ?? '', workDir: body.projectId ? '/repo' : '/home/alice' };
+        return response(createdSession);
+      }
+      if (path === '/api/sessions') return response([]);
+      if (path.startsWith('/api/sessions/draft-session?')) return response({ session: createdSession, events: [], resumable: true, hasMore: false, firstSeq: 0 });
+      if (path.endsWith('/api/sessions/draft-session/prompt')) {
+        promptBodies.push(JSON.parse(options.body));
+        return response({ seq: 1 });
+      }
+      if (path.endsWith('/api/sessions/draft-session/queue')) return response({ queue: [] });
+      if (path.endsWith('/api/runs')) return response({ runs: [] });
+      if (path.endsWith('/api/users')) return response([]);
+      if (path.endsWith('/api/projects/project-1/git')) return response({});
+      return response([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { ...render(App), createBodies, promptBodies, fetchMock };
+  }
+
+  async function sendFirstPrompt(container) {
+    const message = await within(container).findByRole('textbox', { name: 'message' });
+    await fireEvent.input(message, { target: { value: 'Fix the Demo startup flow.' } });
+    await fireEvent.click(within(container).getByRole('button', { name: 'Send' }));
+  }
+
+  it('shows the Daemon suggestion and Yes starts the Session and prompt in that Project', async () => {
+    const { container, createBodies, promptBodies, fetchMock } = setup(project);
+    await sendFirstPrompt(container);
+
+    const banner = await within(container).findByTestId('project-pick-banner');
+    expect(banner.textContent).toContain('Run this in Demo?');
+    expect(createBodies).toHaveLength(0);
+    expect(promptBodies).toHaveLength(0);
+    const suggestCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/projects/suggest'));
+    expect(JSON.parse(suggestCall[1].body)).toEqual({ prompt: 'Fix the Demo startup flow.' });
+
+    await fireEvent.click(within(banner).getByRole('button', { name: 'Yes' }));
+    await vi.waitFor(() => expect(promptBodies).toHaveLength(1));
+    expect(createBodies[0].projectId).toBe('project-1');
+    expect(promptBodies[0]).toEqual({ text: 'Fix the Demo startup flow.' });
+  });
+
+  it('No keeps the existing unprojected start behavior, while no suggestion shows no banner', async () => {
+    const selected = setup(project);
+    await sendFirstPrompt(selected.container);
+    const banner = await within(selected.container).findByTestId('project-pick-banner');
+    await fireEvent.click(within(banner).getByRole('button', { name: 'No' }));
+    await vi.waitFor(() => expect(selected.promptBodies).toHaveLength(1));
+    expect(selected.createBodies[0].projectId).toBeNull();
+
+    cleanup();
+    const ordinary = setup(null);
+    await sendFirstPrompt(ordinary.container);
+    await vi.waitFor(() => expect(ordinary.promptBodies).toHaveLength(1));
+    expect(within(ordinary.container).queryByTestId('project-pick-banner')).toBeNull();
+    expect(ordinary.createBodies[0].projectId).toBeNull();
+  });
+});
 describe('Non-blocking boot', () => {
   beforeEach(() => cleanup());
   afterEach(() => {

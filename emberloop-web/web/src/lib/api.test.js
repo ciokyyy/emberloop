@@ -164,3 +164,21 @@ describe('Claude login client', () => {
     ]);
   });
 });
+describe('Project suggestion client', () => {
+  it('posts the first prompt and returns the Daemon suggestion response', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), method: options.method, body: JSON.parse(options.body) });
+      return reply(200, '{"suggestedProject":{"id":"project-1","name":"Demo","path":"/repo"}}');
+    }));
+
+    const result = await api.suggestProject('Fix the build in Demo.');
+
+    expect(result.suggestedProject.id).toBe('project-1');
+    expect(calls).toEqual([{
+      url: '/api/projects/suggest',
+      method: 'POST',
+      body: { prompt: 'Fix the build in Demo.' },
+    }]);
+  });
+});

@@ -57,9 +57,14 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Draft Project pick: `POST /api/projects/suggest` (`projectpick.go`) evaluates
   one `noul` per Project plus `none` before any Session starts. Jev receives the
   prompt and each Project's name and gist, never its path; a suggestion requires
-  top >= 0.5 and a lead >= 0.2. Missing keys and failed calls return no pick;
-  `projectpick_test.go` checks the HTTP response and local systemone stub.
-  The response always carries `suggestedProject` (the Project or `null`).
+  top >= 0.5 and a lead >= 0.2. Missing keys and failed calls return no pick.
+  `App.svelte` asks only for the first prompt of a projectless draft: a
+  suggestion shows “Run this in <Project>?”; Yes creates the Session with that
+  Project id and sends the held prompt, while No or no suggestion keeps the
+  home-directory start. A Session's working directory never changes after
+  creation. The response always carries `suggestedProject` (the Project or
+  `null`); `projectpick_test.go` covers the endpoint, local systemone stub and
+  starting a Session in the suggested Project path.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git

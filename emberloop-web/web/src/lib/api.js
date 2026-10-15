@@ -391,6 +391,14 @@ export const discardTicket = (runId, ticketId) =>
   }).then(json);
 
 export const listProjects = () => fetch(url('/api/projects')).then(json);
+// Ask Jev which Project fits the first prompt in a projectless draft. A null
+// suggestedProject means the draft should start with its existing home path.
+export const suggestProject = (prompt) =>
+  fetch(url('/api/projects/suggest'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  }).then(json);
 
 export const addProject = (body) =>
   fetch(url('/api/projects'), {

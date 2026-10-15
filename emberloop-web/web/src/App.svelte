@@ -33,7 +33,7 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, addProject, renameProject, removeProject, getGit, getDisk } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
   import { runsStore } from './lib/runsStore.js';
 
@@ -58,6 +58,8 @@
   let runs = $state([]);
   let draftProjectId = $state(null);
   let draftOpen = $state(false);
+  let draftPick = $state(null);
+  let draftPickGeneration = 0;
   let addOpen = $state(false);
   let adding = $state(false);
   let addError = $state('');
@@ -308,6 +310,8 @@
     closeStream();
     stopSessionWatch();
     openToken++;
+    draftPickGeneration++;
+    draftPick = null;
     batch = [];
     pendingSends = [];
     queue = [];
@@ -549,6 +553,8 @@
     view = 'chat';
     currentId = id;
     draftOpen = false;
+    draftPickGeneration++;
+    draftPick = null;
     draftProjectId = null;
     lastSeq = 0;
     connected = true;
@@ -728,27 +734,68 @@
   // Composer restores the draft.
   async function send(text, mode, images = [], imageIds = [], audio = null) {
     if (drafting) {
-      if (sending) return;
+      if (sending || draftPick) return;
       sending = true;
+      loadError = '';
+      const generation = draftPickGeneration;
       try {
-        const s = await createSession({ harness: draftHarness, model: draftModel, effort: (draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? draftEffort : '', projectId: draftProjectId });
-        await refresh();
-        await navigate(buildPath({ name: 'session', id: s.id }));
+        if (draftProjectId == null && text.trim()) {
+          let suggestedProject = null;
+          try {
+            suggestedProject = (await suggestProject(text))?.suggestedProject ?? null;
+          } catch {
+            // Jev is advisory: an unavailable suggestion keeps today's start path.
+          }
+          if (generation !== draftPickGeneration || !drafting) return;
+          if (suggestedProject?.id) {
+            draftPick = { project: suggestedProject, message: { text, images, imageIds, audio } };
+            return;
+          }
+        }
+        await createDraftAndSend(draftProjectId, { text, images, imageIds, audio });
       } catch (err) {
         loadError = 'Could not start the chat.';
         throw err;
       } finally {
         sending = false;
       }
-      mode = 'prompt';
+      return;
     }
-    // Sends in flight never lock the Composer: a slow resume must not leave
-    // Send disabled with no explanation. The Daemon orders and queues them.
-    if (!currentId) return;
+    await deliverToSession(currentId, text, mode, images, imageIds, audio);
+  }
+
+  async function createDraftAndSend(projectId, message) {
+    const session = await createSession({
+      harness: draftHarness,
+      model: draftModel,
+      effort: (draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? draftEffort : '',
+      projectId,
+    });
+    await refresh();
+    await navigate(buildPath({ name: 'session', id: session.id }));
+    await deliverToSession(session.id, message.text, 'prompt', message.images, message.imageIds, message.audio);
+  }
+
+  async function resolveDraftPick(useSuggestedProject) {
+    const pick = draftPick;
+    if (!pick || sending) return;
+    sending = true;
+    loadError = '';
+    try {
+      await createDraftAndSend(useSuggestedProject ? pick.project.id : null, pick.message);
+    } catch {
+      loadError = 'Could not start the chat.';
+    } finally {
+      sending = false;
+    }
+  }
+
+  async function deliverToSession(id, text, mode, images = [], imageIds = [], audio = null) {
+    if (!id) return;
     // A voice recording uploads once the Session exists; its id rides the
     // prompt like an image id, and the model still sees only the text.
     if (audio) {
-      const meta = await uploadAudio(currentId, audio);
+      const meta = await uploadAudio(id, audio);
       imageIds = [...imageIds, meta.id];
     }
     const key = ++pendingKey;
@@ -756,17 +803,17 @@
     try {
       let res;
       // Only the prompt route carries attachments; it takes the mode too.
-      if (images.length || imageIds.length) res = await postPrompt(currentId, text, { mode, images, imageIds });
-      else if (mode === 'steer') res = await postSteer(currentId, text);
-      else if (mode === 'followup') res = await postFollowup(currentId, text);
-      else res = await postPrompt(currentId, text);
+      if (images.length || imageIds.length) res = await postPrompt(id, text, { mode, images, imageIds });
+      else if (mode === 'steer') res = await postSteer(id, text);
+      else if (mode === 'followup') res = await postFollowup(id, text);
+      else res = await postPrompt(id, text);
       // A queued message shows in the queue panel until it is delivered;
       // an accepted one waits here for its prompt Event.
       if (res?.queued && !res?.seq) pendingSends = pendingSends.filter((p) => p.key !== key);
       else pendingSends = pendingSends.map((p) => (p.key === key ? { ...p, state: 'sent' } : p));
       // Best-effort and off the send path: a slow queue fetch must not keep
       // the Send button disabled.
-      void refreshQueue(currentId);
+      void refreshQueue(id);
     } catch (err) {
       pendingSends = pendingSends.filter((p) => p.key !== key);
       throw err;
@@ -1103,7 +1150,14 @@
             {#if !sessionMissing}
             {#if drafting}
               <DraftBar bind:harness={draftHarness} bind:model={draftModel} bind:effort={draftEffort} />
-              <Composer status="idle" busy={sending} onSend={send} />
+            {#if draftPick}
+              <div role="group" aria-label="Project suggestion" data-testid="project-pick-banner" class="animate-rise flex flex-wrap items-center gap-2 rounded-2xl border bg-card p-3">
+                <p class="min-w-0 flex-1 text-sm">Run this in <strong>{draftPick.project.name}</strong>?</p>
+                <Button variant="outline" disabled={sending} onclick={() => resolveDraftPick(false)}>No</Button>
+                <Button disabled={sending} onclick={() => resolveDraftPick(true)}>Yes</Button>
+              </div>
+            {/if}
+              <Composer status="idle" busy={sending || !!draftPick} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
               <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
             {/if}

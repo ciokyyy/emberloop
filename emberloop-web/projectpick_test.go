@@ -177,3 +177,58 @@ func TestProjectPickWithoutOpenRouterKeyReturnsNone(t *testing.T) {
 		t.Fatalf("result = %+v, calls = %d; no key must mean no Jev call and no suggestion", result, calls)
 	}
 }
+
+func TestProjectPickStartsSessionInSuggestedProjectPath(t *testing.T) {
+	projectPath := tempDir(t)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request systemone.Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode systemone request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		answers := make(map[string]systemone.Answer, len(request.Questions))
+		for id := range request.Questions {
+			probability := 0.1
+			if id == "project_0" {
+				probability = 0.9
+			}
+			answers[id] = systemone.Answer{Type: systemone.TypeNoul, Noul: &probability}
+		}
+		_ = json.NewEncoder(w).Encode(systemone.Response{Answers: answers})
+	}))
+	defer endpoint.Close()
+
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.projects = []Project{{ID: "alpha", Name: "Alpha", Path: projectPath, Gist: "Builds small solar-powered widgets."}}
+	d.projectPickKeyFn = func(context.Context) string { return "test-key" }
+	d.projectPickProvider = systemone.NewOpenRouterWithEndpoint("unused", endpoint.URL)
+	api := httptest.NewServer(authedHandler(t, d))
+	defer api.Close()
+
+	code, body := apiJSON(t, http.MethodPost, api.URL+"/api/projects/suggest", map[string]string{"prompt": "Fix the widget startup sequence."})
+	if code != http.StatusOK {
+		t.Fatalf("suggest = %d %s", code, body)
+	}
+	var result projectPickResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.SuggestedProject == nil || result.SuggestedProject.ID != "alpha" {
+		t.Fatalf("suggested Project = %+v, want alpha", result.SuggestedProject)
+	}
+
+	code, body = apiJSON(t, http.MethodPost, api.URL+"/api/sessions", map[string]string{
+		"harness": "fake", "model": "fake-model", "projectId": result.SuggestedProject.ID,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create suggested Session = %d %s", code, body)
+	}
+	var session SessionMeta
+	if err := json.Unmarshal(body, &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.ProjectID != result.SuggestedProject.ID || session.WorkDir != projectPath {
+		t.Fatalf("Session = %+v, want Project %q at %q", session, result.SuggestedProject.ID, projectPath)
+	}
+}
