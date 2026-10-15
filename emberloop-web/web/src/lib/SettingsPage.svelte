@@ -168,6 +168,7 @@
       deciderNote = body.decider_note ?? '';
       const j = body.jev ?? {};
       jev = { baseURL: j.base_url ?? '', apiKey: '', model: j.model || 'jev-latest' };
+      jevOpen = !!j.base_url?.trim();
       jevKeySet = !!j.api_key_set;
       saved = snapshot();
     } catch (e) {
@@ -289,7 +290,9 @@
       locked = !!savedBody.max_tickets_from_env;
       compressNote = savedBody.compress_note ?? '';
       deciderNote = savedBody.decider_note ?? '';
-      jev = { baseURL: savedBody.jev?.base_url ?? jev.baseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
+      const savedBaseURL = savedBody.jev?.base_url ?? jev.baseURL;
+      jev = { baseURL: savedBaseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
+      jevOpen = !!savedBaseURL.trim();
       jevKeySet = !!savedBody.jev?.api_key_set;
       saved = snapshot();
       justSaved = true;
@@ -510,7 +513,7 @@
         <section class="animate-rise flex flex-col gap-2" data-testid="decider-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Memory deciders</h2>
-            <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model, or with Jev when its endpoint is on, against the thresholds.</p>
+            <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model, or with Jev when a custom endpoint is configured, against the thresholds.</p>
           </div>
           <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
@@ -548,7 +551,7 @@
               >
                 <span class="min-w-0 text-left">
                   <span class="block text-sm font-medium">Custom Jev endpoint</span>
-                  <span class="block text-xs text-muted-foreground">Leave the endpoint URL blank to use OpenRouter. Set a custom URL to use another Jev endpoint.</span>
+                  <span class="block text-xs text-muted-foreground">In Jev mode, leave the endpoint URL blank to use OpenRouter. Set a custom URL to use another Jev endpoint.</span>
                 </span>
                 <ChevronDown class={`size-4 shrink-0 text-muted-foreground transition-transform ${jevOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </Button>
@@ -564,9 +567,9 @@
                   <div class="min-w-0">
                     <div class="text-sm font-medium">Jev API key</div>
                     {#if jevKeySet}
-                      <div class="text-xs text-muted-foreground">Key set. Type a new one to replace it; empty keeps it.</div>
+                      <div class="text-xs text-muted-foreground">Custom endpoint key set. Type a new one to replace it; empty keeps it.</div>
                     {:else}
-                      <div class="text-xs text-muted-foreground">Empty for a local server without one.</div>
+                      <div class="text-xs text-muted-foreground">For custom endpoints only. OpenRouter uses its configured key.</div>
                     {/if}
                   </div>
                   <FloatingInput id="jev-key" label="API key" type="password" bind:value={jev.apiKey} placeholder={jevKeySet ? '••••••' : 'Key'} />

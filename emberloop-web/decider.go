@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"example.com/emberloop-web/el/tools/systemone"
 	"example.com/emberloop-web/memory"
 )
 
@@ -30,6 +31,8 @@ const (
 	deciderMaxTokens = 1024
 	deciderTimeout   = 2 * time.Minute
 )
+
+const defaultOpenRouterJevEndpoint = "https://openrouter.ai/api/v1/systemone"
 
 // deciderSettings are the knobs stored in the settings file. They are
 // host-global: only the admin writes them, like signup_enabled.
@@ -97,10 +100,8 @@ func (d *Daemon) deciderSettingsOf() deciderSettings {
 }
 
 // deciderNote names why the confirming Decider cannot run as configured, or
-// empty when it can: llm needs an authed memory model and jev needs its
-// endpoint URL, else they fall back to the heuristic; crossed thresholds
-// fall back to the defaults. When jev confirms, the note names that redacted
-// user turns leave the host for the endpoint.
+// explains where Jev sends redacted user turns. Crossed thresholds fall back
+// to the defaults.
 func deciderNote(set deciderSettings) string {
 	var notes []string
 	if lo, hi, ok := rawDeciderThresholds(); ok && lo > hi {
@@ -112,7 +113,7 @@ func deciderNote(set deciderSettings) string {
 		notes = append(notes, llmModelNote(set.Model)...)
 	case deciderJev:
 		if jev.BaseURL == "" {
-			notes = append(notes, "jev is off: set the endpoint URL to confirm with Jev, candidates stay unconfirmed")
+			notes = append(notes, "jev uses OpenRouter by default and needs an OpenRouter key; with one, redacted user turns leave this host")
 		} else {
 			notes = append(notes, "jev sends redacted user turns to "+jev.BaseURL)
 		}
@@ -120,7 +121,7 @@ func deciderNote(set deciderSettings) string {
 		if jev.BaseURL != "" {
 			notes = append(notes, "ensemble confirms with jev: redacted user turns go to "+jev.BaseURL)
 		} else {
-			notes = append(notes, llmModelNote(set.Model)...)
+			notes = append(notes, "ensemble uses OpenRouter Jev when an OpenRouter key is configured; otherwise it tries the memory model and falls back to the heuristic if unavailable")
 		}
 	}
 	return strings.Join(notes, "; ")
@@ -140,12 +141,11 @@ func llmModelNote(model string) []string {
 
 // jevSettings are the Jev endpoint knobs stored in the settings file. They
 // are host-global: only the admin writes them, like signup_enabled. BaseURL
-// is the full decision-endpoint URL the client POSTs to verbatim: the hosted
-// /api/v1/decisions URL, a TypeSafe-compatible /v1/systemone URL, or a local
-// laya-serve /v1/systemone URL. Empty means off: the client never sends.
-// APIKey is the Bearer key, empty for a local server without one; it never
-// leaves the settings file for the settings view. Model defaults to
-// memory.DefaultJevModel.
+// is the full decision-endpoint URL the client POSTs to verbatim when set.
+// When empty, the Daemon uses OpenRouter's systemone endpoint and pig's
+// OpenRouter key when configured; without a key Jev is unavailable. APIKey
+// is the Bearer key for a custom endpoint only; it never leaves the settings
+// file for the settings view. Model defaults to memory.DefaultJevModel.
 type jevSettings struct {
 	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"-"`
@@ -199,13 +199,26 @@ func (d *Daemon) jevSettingsOf() jevSettings {
 	return parseJevSettings(all)
 }
 
-// jevMineDecider is the confirming Jev Decider, or nil while the endpoint is
-// off (no base URL). The caller falls back to the heuristic when it is nil.
-// The key stays optional so a local Laya server without one still works.
+// jevMineDecider is the confirming Jev Decider. A custom endpoint uses its
+// saved key; an empty endpoint uses OpenRouter's systemone endpoint and key.
+// It returns nil when OpenRouter is not configured, so the caller safely
+// falls back instead of making an unauthenticated request.
 func (d *Daemon) jevMineDecider() memory.Decider {
 	set := d.jevSettingsOf()
 	if set.BaseURL == "" {
-		return nil
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		key := systemone.APIKey(ctx)
+		cancel()
+		if key == "" {
+			return nil
+		}
+		model := set.Model
+		if model == "" || model == memory.DefaultJevModel {
+			model = systemone.JevModelPinned
+		} else {
+			model = systemone.CanonicalModel(model)
+		}
+		return memory.JevDecider{Config: memory.JevConfig{BaseURL: defaultOpenRouterJevEndpoint, APIKey: key, Model: model}}
 	}
 	return memory.JevDecider{Config: memory.JevConfig{BaseURL: set.BaseURL, APIKey: set.APIKey, Model: set.Model}}
 }
@@ -218,8 +231,8 @@ type jevPatch struct {
 }
 
 // validate refuses a patch with a non-URL endpoint, an over-long key or an
-// over-long model. An empty base URL turns the endpoint off; an empty model
-// resets it to the default.
+// over-long model. An empty base URL selects the OpenRouter default; an empty
+// model resets it to the default.
 func (p *jevPatch) validate() string {
 	if p == nil {
 		return ""

@@ -354,9 +354,6 @@ describe('SettingsPage memory deciders', () => {
     const modes = await within(container).findByRole('group', { name: 'Decider mode' });
     const ensemble = within(modes).getByRole('button', { name: 'Ensemble' });
     expect(ensemble.getAttribute('aria-pressed')).toBe('true');
-    await fireEvent.click(within(modes).getByRole('button', { name: 'Jev' }));
-    expect(within(modes).getByRole('button', { name: 'Jev' }).getAttribute('aria-pressed')).toBe('true');
-    expect(ensemble.getAttribute('aria-pressed')).toBe('false');
     expect(within(container).getByLabelText('Memory model').textContent).toMatch(/auto/i);
     expect(within(container).getByLabelText('Low').value).toBe('0.4');
     expect(within(container).getByLabelText('High').value).toBe('0.8');
@@ -366,11 +363,17 @@ describe('SettingsPage memory deciders', () => {
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect(seen.body.decider).toEqual({
-      decider_mode: 'jev',
+      decider_mode: 'ensemble',
       memory_model: 'auto',
       decider_confirm_low: 0.4,
       decider_confirm_high: 0.9,
     });
+    await fireEvent.click(within(modes).getByRole('button', { name: 'Jev' }));
+    expect(within(modes).getByRole('button', { name: 'Jev' }).getAttribute('aria-pressed')).toBe('true');
+    expect(ensemble.getAttribute('aria-pressed')).toBe('false');
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.decider.decider_mode).toBe('jev');
   });
 
   it('uses the defaults when the Daemon sends none', async () => {
@@ -408,10 +411,8 @@ describe('SettingsPage jev decider', () => {
     });
     const { container } = renderSettings({ props: { admin: true } });
     const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
-    expect(endpoint.getAttribute('aria-expanded')).toBe('false');
-    expect(within(endpoint).getByText(/Leave the endpoint URL blank to use OpenRouter/i)).toBeTruthy();
-    await fireEvent.click(endpoint);
     expect(endpoint.getAttribute('aria-expanded')).toBe('true');
+    expect(within(endpoint).getByText(/Leave blank to use OpenRouter's decision endpoint/i)).toBeTruthy();
     const endpointPanel = container.querySelector('#custom-jev-settings');
     expect(endpointPanel.hidden).toBe(false);
     expect((await within(endpointPanel).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
@@ -430,20 +431,33 @@ describe('SettingsPage jev decider', () => {
     });
   });
 
-  it('keeps the custom endpoint collapsed and defaults an empty URL to OpenRouter', async () => {
+  it('keeps a blank custom endpoint collapsed and explains the OpenRouter default', async () => {
     stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest' } } });
     const { container } = renderSettings({ props: { admin: true } });
     const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
     expect(endpoint.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('#custom-jev-settings').hidden).toBe(true);
-    expect(within(endpoint).getByText(/Leave the endpoint URL blank to use OpenRouter/i)).toBeTruthy();
+    expect(within(endpoint).getByText(/Leave blank to use OpenRouter's decision endpoint/i)).toBeTruthy();
+  });
+
+  it('saves a blank URL to use the OpenRouter default', async () => {
+    const seen = {};
+    stubSettings({ settings: { ...base, jev: { base_url: 'http://localhost:8000/v1/systemone', model: 'jev-latest' } }, seen });
+    const { container } = renderSettings({ props: { admin: true } });
+    const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
+    expect(endpoint.getAttribute('aria-expanded')).toBe('true');
+    await fireEvent.input(within(container).getByLabelText('Endpoint URL'), { target: { value: '' } });
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(seen.body.jev.base_url).toBe('');
   });
 
   it('sends a typed key and keeps it out of later saves', async () => {
     const seen = {};
-    stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest', api_key_set: false } }, seen });
+    stubSettings({ settings: { ...base, jev: { base_url: 'http://localhost:8000/v1/systemone', model: 'jev-latest', api_key_set: false } }, seen });
     const { container } = renderSettings({ props: { admin: true } });
-    await fireEvent.click(await within(container).findByRole('button', { name: /Custom Jev endpoint/ }));
+    const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
+    expect(endpoint.getAttribute('aria-expanded')).toBe('true');
     await fireEvent.input(await within(container).findByLabelText('API key'), { target: { value: 'k' } });
     await tick();
     await fireEvent.click(await within(container).findByText('Save'));

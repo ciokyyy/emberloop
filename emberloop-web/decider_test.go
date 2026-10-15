@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"example.com/emberloop-web/el/tools/systemone"
 	"example.com/emberloop-web/memory"
 )
 
@@ -21,6 +22,13 @@ func (e errDeciderTest) Error() string { return string(e) }
 
 // jsonNumber formats a probability for a scripted one-off reply.
 func jsonNumber(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
+
+func disableOpenRouterForTest(t *testing.T) {
+	t.Helper()
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("HOME", tempDir(t))
+	t.Setenv("PATH", tempDir(t))
+}
 
 // Seam: the Daemon HTTP API with the fake Backend for settings, and
 // MineSession with canned events.jsonl files for miner verdicts. The fake
@@ -268,7 +276,7 @@ func TestMineSessionStoresHeuristicModelVersion(t *testing.T) {
 // Ensemble mode end to end: below confirmLow drops, between the thresholds
 // stores an observation, at confirmHigh marks it queue-eligible.
 func TestMineSessionEnsembleThresholds(t *testing.T) {
-	t.Parallel()
+	disableOpenRouterForTest(t)
 	settingsPath := useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider","decider_confirm_low":0.35,"decider_confirm_high":0.7}`)
 	cases := []struct {
 		name     string
@@ -283,7 +291,6 @@ func TestMineSessionEnsembleThresholds(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
 			d := NewDaemon(tempDir(t), NewFakeBackend())
 			d.SetSettingsPath(settingsPath)
 			d.deciderOneShot = func(model, system, user string) (string, error) {
@@ -326,7 +333,7 @@ func TestMineSessionEnsembleThresholds(t *testing.T) {
 // Ensemble without a memory model still stores the observation: an
 // unconfirmable candidate is never dropped on a missing model.
 func TestMineSessionEnsembleWithoutModelStores(t *testing.T) {
-	t.Parallel()
+	disableOpenRouterForTest(t)
 	settingsPath := useSettings(t, `{"decider_mode":"ensemble"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
@@ -595,12 +602,12 @@ func TestJevSettingsWriteAndValidate(t *testing.T) {
 			t.Fatalf("write %s status = %d, want 400", bad, code)
 		}
 	}
-	// An empty URL turns the endpoint off; an empty model resets the default.
+	// An empty URL selects the OpenRouter default; an empty model resets it.
 	if code, _ := put(`{"jev":{"base_url":"","model":""}}`); code != http.StatusOK {
-		t.Fatalf("jev off status = %d, want 200", code)
+		t.Fatalf("jev OpenRouter-default status = %d, want 200", code)
 	}
 	if jev := jevView(t, srv.URL); jev["base_url"] != "" || jev["model"] != memory.DefaultJevModel {
-		t.Fatalf("jev after off = %v, want off with the default model", jev)
+		t.Fatalf("jev after reset = %v, want the OpenRouter default and default model", jev)
 	}
 }
 
@@ -629,8 +636,8 @@ func TestJevSettingsAreAdminOnly(t *testing.T) {
 	}
 }
 
-// The note names that redacted user turns leave the host while jev confirms,
-// and names the off state instead of failing silently.
+// The note explains the OpenRouter default and names the egress for both
+// default and custom Jev endpoints.
 func TestJevNoteNamesEgress(t *testing.T) {
 	noteOf := func(t *testing.T, base string) string {
 		t.Helper()
@@ -647,12 +654,32 @@ func TestJevNoteNamesEgress(t *testing.T) {
 		return note
 	}
 	srv, _ := settingsServer(t, `{"decider_mode":"jev"}`)
-	if note := noteOf(t, srv.URL); !strings.Contains(note, "jev is off") {
-		t.Fatalf("decider_note = %q, want the off state named", note)
+	if note := noteOf(t, srv.URL); !strings.Contains(note, "OpenRouter") || !strings.Contains(note, "redacted user turns leave this host") {
+		t.Fatalf("decider_note = %q, want the OpenRouter default and egress named", note)
 	}
 	srv, _ = settingsServer(t, `{"decider_mode":"jev","jev_base_url":"http://localhost:8000/v1/systemone"}`)
 	if note := noteOf(t, srv.URL); !strings.Contains(note, "redacted user turns") || !strings.Contains(note, "http://localhost:8000/v1/systemone") {
 		t.Fatalf("decider_note = %q, want the egress named", note)
+	}
+}
+
+func TestJevMineDeciderUsesOpenRouterByDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(useSettings(t, `{"jev_model":"jev-latest"}`))
+	decider := d.jevMineDecider()
+	got, ok := decider.(memory.JevDecider)
+	if !ok {
+		t.Fatalf("decider = %T, want memory.JevDecider", decider)
+	}
+	if got.Config.BaseURL != defaultOpenRouterJevEndpoint {
+		t.Errorf("base URL = %q, want %q", got.Config.BaseURL, defaultOpenRouterJevEndpoint)
+	}
+	if got.Config.APIKey != "test-openrouter-key" {
+		t.Errorf("API key = %q, want OpenRouter key from environment", got.Config.APIKey)
+	}
+	if got.Config.Model != systemone.JevModelPinned {
+		t.Errorf("model = %q, want pinned OpenRouter Jev model %q", got.Config.Model, systemone.JevModelPinned)
 	}
 }
 
@@ -699,10 +726,10 @@ func TestMineSessionJevConfirms(t *testing.T) {
 	}
 }
 
-// jev mode with the endpoint off stores the heuristic hit but never marks it
-// eligible: nothing is sent anywhere.
-func TestMineSessionJevOffNeverEligible(t *testing.T) {
-	t.Parallel()
+// jev mode with no OpenRouter key remains unavailable and never marks a hit
+// eligible: the Daemon does not send an unauthenticated request.
+func TestMineSessionJevWithoutOpenRouterKeyNeverEligible(t *testing.T) {
+	disableOpenRouterForTest(t)
 	settingsPath := useSettings(t, `{"decider_mode":"jev"}`)
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(settingsPath)
