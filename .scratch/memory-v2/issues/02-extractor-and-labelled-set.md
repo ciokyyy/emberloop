@@ -4,11 +4,11 @@
 
 **Blocked by:** 01
 
-**Status:** todo
+**Status:** done
 
-- [ ] Ungrounded, over-long, unknown-kind and redactor-changed items are dropped without a second model call
-- [ ] Importance is 0.7 plain, 0.85 with durable language, 0.5 inferred
-- [ ] An empty model setting skips the LLM and uses the heuristic fallback
-- [ ] A 429 retries once, then falls through the chain
-- [ ] `TestLiveExtract` with the shipped prompt catches at least 10 of 15 with at most 1 of 20 false alarms (record the result in the ticket before merge)
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Ungrounded, over-long, unknown-kind and redactor-changed items are dropped without a second model call
+- [x] Importance is 0.7 plain, 0.85 with durable language, 0.5 inferred
+- [x] An empty model setting skips the LLM and uses the heuristic fallback
+- [x] A 429 retries once, then falls through the chain
+- [x] `TestLiveExtract` with the shipped prompt catches at least 10 of 15 with at most 1 of 20 false alarms (record the result in the ticket before merge)
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
