@@ -4,10 +4,10 @@
 
 **Blocked by:** 34-settings-hub
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One chain per role with harness, model and effort per entry, at most three entries
-- [ ] Effort choices per model come from the model's supported efforts
-- [ ] Old role and chain keys migrate to the merged form; no role loses its model
-- [ ] Go test migrates a pre-redesign settings fixture; vitest covers chain editing with effort per model
-- [ ] Repo check and `npm test` pass
+- [x] One chain per role with harness, model and effort per entry, at most three entries
+- [x] Effort choices per model come from the model's supported efforts
+- [x] Old role and chain keys migrate to the merged form; no role loses its model
+- [x] Go test migrates a pre-redesign settings fixture; vitest covers chain editing with effort per model
+- [x] Repo check and `npm test` pass
