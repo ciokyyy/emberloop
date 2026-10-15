@@ -534,7 +534,6 @@
     return true;
   }
 
-
   // A draft creates its Session only when the first prompt is sent.
   function startDraft(projectId) {
     clearSessionView();
