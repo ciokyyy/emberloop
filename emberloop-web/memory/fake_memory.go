@@ -59,7 +59,11 @@ func (f *Fake) ListMemories(_ context.Context, kind, status string, limit int) (
 		if kind != "" && m.Kind != kind {
 			continue
 		}
-		if status != "" && m.Status != status {
+		if status != "" {
+			if m.Status != status {
+				continue
+			}
+		} else if m.Status == "forgotten" {
 			continue
 		}
 		out = append(out, m)

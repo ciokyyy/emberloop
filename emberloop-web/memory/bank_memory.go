@@ -77,6 +77,8 @@ func (b *Bank) ListMemories(ctx context.Context, kind, status string, limit int)
 	if status != "" {
 		q += " AND status = ?"
 		args = append(args, status)
+	} else {
+		q += " AND status != 'forgotten'"
 	}
 	q += " ORDER BY id DESC LIMIT ?"
 	args = append(args, clampList(limit))

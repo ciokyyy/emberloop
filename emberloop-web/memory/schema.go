@@ -258,7 +258,7 @@ CREATE TABLE episodes (
   importance REAL NOT NULL DEFAULT 0.65,
   embedding BLOB,
   embedding_model TEXT NOT NULL DEFAULT '',
-  consolidated_at TEXT NOT NULL DEFAULT '',
+  consolidated_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE VIRTUAL TABLE memories_fts USING fts5(text, quote, split_text, content = 'memories', content_rowid = 'id');
