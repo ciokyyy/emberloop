@@ -121,6 +121,30 @@ func TestOpenRouterExtractorTimeoutRetriesOnce(t *testing.T) {
 	}
 }
 
+func TestOpenRouterExtractorBodyTimeoutRetriesOnce(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			time.Sleep(40 * time.Millisecond)
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"items\":[]}"}}]}`))
+	}))
+	defer srv.Close()
+	x := NewOpenRouterExtractor("key", "model", "low")
+	x.Endpoint = srv.URL
+	x.Client = &http.Client{Timeout: 10 * time.Millisecond}
+	x.Sleep = func(context.Context, time.Duration) error { return nil }
+	if _, err := x.Extract(context.Background(), ExtractRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("HTTP calls=%d want 2", got)
+	}
+}
+
 func TestOpenRouterExtractorRequestAndJSON(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

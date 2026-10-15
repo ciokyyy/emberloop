@@ -150,6 +150,12 @@ func (o *OpenRouterExtractor) Extract(ctx context.Context, input ExtractRequest)
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
 		if readErr != nil {
+			if attempt == 0 && isTimeout(readErr) {
+				if err = o.pause(ctx); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			return nil, readErr
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
