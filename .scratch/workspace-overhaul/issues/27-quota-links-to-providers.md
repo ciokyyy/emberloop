@@ -4,8 +4,8 @@
 
 **Blocked by:** 23-chatgpt-device-code-connect, 24-antigravity-paste-connect, 25-claude-pty-connect
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Every not-connected Quota card links to its Providers row
-- [ ] A successful connect refreshes the matching Quota card
-- [ ] Vitest covers the link and the refresh; repo check and `npm test` pass
+- [x] Every not-connected Quota card links to its Providers row
+- [x] A successful connect refreshes the matching Quota card
+- [x] Vitest covers the link and the refresh; repo check and `npm test` pass
