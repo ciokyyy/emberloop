@@ -62,31 +62,9 @@
     'reviewer-spec': ['reviewer-spec', 'spec-review'],
     'reviewer-standards': ['reviewer-standards', 'code-review'],
   };
-  const LEGACY_CHAIN_KEYS = {
-    worker: ['implementer'],
-    'reviewer-spec': ['spec-review'],
-    'reviewer-standards': ['code-review'],
-  };
-  const ROLE_FALLBACK_KEYS = {
-    orchestrator: ['orchestrator'],
-    subagent: ['worker'],
-    scout: ['scout'],
-    worker: ['implementer', 'worker'],
-    'reviewer-spec': ['reviewer-spec', 'spec-review'],
-    'reviewer-standards': ['reviewer-standards', 'code-review'],
-  };
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
   const chainValues = (entries = []) => entries.map(({ backend, model, effort }) => ({ backend, model, ...(effort ? { effort } : {}) }));
   const cloneChains = (source) => Object.fromEntries(CHAIN_ROLES.map(({ id }) => [id, chainValues(source[id] ?? [])]));
-  const entriesFromSettings = (body, role) => {
-    const stored = body.chains ?? {};
-    if (Object.prototype.hasOwnProperty.call(stored, role.id)) return stored[role.id] ?? [];
-    for (const alias of LEGACY_CHAIN_KEYS[role.id] ?? []) {
-      if (Object.prototype.hasOwnProperty.call(stored, alias)) return stored[alias] ?? [];
-    }
-    const setting = (ROLE_FALLBACK_KEYS[role.id] ?? []).map((key) => body.roles?.[key]).find((value) => value?.model);
-    return setting ? [{ backend: setting.harness, model: setting.model, effort: setting.effort }] : [];
-  };
   const effortLabel = (effort) => effort ? effort[0].toUpperCase() + effort.slice(1) : 'Default';
   // The pig naming model is optional: "None" clears the role, so pig Sessions stay unnamed.
 
@@ -143,7 +121,7 @@
 
   function chainsFromSettings(body) {
     return Object.fromEntries(CHAIN_ROLES.map((role) => {
-      const entries = entriesFromSettings(body, role).map((entry) => {
+      const entries = (body.chains?.[role.id] ?? []).map((entry) => {
         const backend = entry.backend ?? entry.harness ?? '';
         const model = entry.model ?? '';
         let effort = entry.effort ?? '';

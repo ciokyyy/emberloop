@@ -497,3 +497,33 @@ func TestSettingsMigratesLegacyAgentRolesAndChains(t *testing.T) {
 		}
 	}
 }
+
+func TestPrimaryRunRoleConfigRejectsInvalidHandEditedClaudeChain(t *testing.T) {
+	chains := map[string][]chainEntry{
+		reviewerSpecType: {{Backend: "claude", Model: "not-a-claude-model", Effort: "high"}},
+	}
+	roles := map[string]roleSetting{
+		reviewerSpecType: {Harness: "pig", Model: "auto"},
+	}
+	if harness, model, effort := primaryRunRoleConfig(chains, roles, reviewerSpecType); harness != "" || model != "" || effort != "" {
+		t.Fatalf("invalid Claude chain resolved to %s/%s/%s, want no role config", harness, model, effort)
+	}
+}
+
+func TestLookupChainSkipsInvalidHandEditedClaudeEntries(t *testing.T) {
+	roles := map[string]roleSetting{reviewerSpecType: {Harness: "pig", Model: "auto"}}
+	chains := map[string][]chainEntry{
+		reviewerSpecType: {
+			{Backend: "claude", Model: "not-a-claude-model"},
+			{Backend: "pig", Model: "auto"},
+		},
+	}
+	got := lookupChain(chains, roles, reviewerSpecType)
+	want := []chainEntry{{Backend: "pig", Model: "auto"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviewer chain = %+v, want invalid Claude entry skipped: %+v", got, want)
+	}
+	if got := lookupChain(map[string][]chainEntry{reviewerSpecType: {{Backend: "claude", Model: "bad"}}}, roles, reviewerSpecType); len(got) != 0 {
+		t.Fatalf("invalid canonical chain fell back to legacy roles: %+v", got)
+	}
+}

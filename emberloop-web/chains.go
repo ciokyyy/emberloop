@@ -256,7 +256,16 @@ func lookupChain(chains map[string][]chainEntry, roles map[string]roleSetting, r
 	names := chainNames(role)
 	for _, name := range names {
 		if c, ok := chains[name]; ok {
-			return append([]chainEntry(nil), c...)
+			valid := make([]chainEntry, 0, min(len(c), maxChainEntries))
+			for i, entry := range c {
+				if validateChainEntry(name, i, entry) == "" {
+					valid = append(valid, entry)
+					if len(valid) == maxChainEntries {
+						break
+					}
+				}
+			}
+			return valid
 		}
 	}
 	for _, name := range names {

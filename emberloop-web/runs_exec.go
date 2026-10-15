@@ -356,6 +356,9 @@ func primaryRunRoleConfig(chains map[string][]chainEntry, roles map[string]roleS
 				return "", "", ""
 			}
 			entry := entries[0]
+			if entry.Backend == "claude" && !validClaudeModel(entry.Model) {
+				return "", "", ""
+			}
 			return entry.Backend, entry.Model, entry.Effort
 		}
 	}

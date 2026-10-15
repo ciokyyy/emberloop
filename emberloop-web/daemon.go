@@ -454,41 +454,53 @@ func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 	return d
 }
 
-// modelEffortOptions is the effort list for one offered model. Pig capabilities
-// come from its generated model metadata; the other harnesses expose the levels
-// their adapters validate for each currently offered model.
-func modelEffortOptions(harness, model string) []string {
+// modelEffortOptions is the effort list for one offered model. Pig uses its
+// model registry's supported levels; Claude and Grok expose the levels their
+// adapters validate.
+func modelEffortOptions(harness, model string, offered []string) []string {
 	switch harness {
 	case "pig":
 		for _, candidate := range ai.ListModels("") {
-			if candidate.Provider+"/"+candidate.ID != model {
-				continue
+			if candidate.Provider+"/"+candidate.ID == model {
+				return pigModelEffortOptions(candidate)
 			}
-			var efforts []string
-			for _, level := range []ai.ModelThinkingLevel{
-				ai.ThinkingOff, ai.ThinkingMinimal, ai.ThinkingLow,
-				ai.ThinkingMedium, ai.ThinkingHigh, ai.ThinkingXHigh, ai.ThinkingMax,
-			} {
-				if _, ok := candidate.ThinkingLevelMap[level]; ok {
-					efforts = append(efforts, string(level))
-				}
-			}
-			return efforts
 		}
 	case "claude":
 		if model == "opus" || model == "sonnet" {
 			return append([]string(nil), claudeEfforts...)
 		}
 	case "grok":
-		return append([]string(nil), grokEfforts...)
+		for _, available := range offered {
+			if available == model {
+				return append([]string(nil), grokEfforts...)
+			}
+		}
 	}
 	return []string{}
+}
+
+func pigModelEffortOptions(model ai.GeneratedModel) []string {
+	runtimeModel := ai.Model{
+		Capabilities:     model.ToCapabilities(),
+		ProviderMeta:     ai.ProviderMetadata{Reasoning: model.Reasoning},
+		ThinkingLevelMap: model.ThinkingLevelMap,
+	}
+	levels := ai.GetSupportedThinkingLevels(&runtimeModel)
+	efforts := make([]string, 0, len(levels))
+	max := runtimeModel.Capabilities.MaxThinking
+	for _, level := range levels {
+		if max != "" && ai.CompareThinkingLevels(level, max) > 0 {
+			continue
+		}
+		efforts = append(efforts, string(level))
+	}
+	return efforts
 }
 
 func modelEffortsFor(harness string, models []string) map[string][]string {
 	out := make(map[string][]string, len(models))
 	for _, model := range models {
-		out[model] = modelEffortOptions(harness, model)
+		out[model] = modelEffortOptions(harness, model, models)
 	}
 	return out
 }

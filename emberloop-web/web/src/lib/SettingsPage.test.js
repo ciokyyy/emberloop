@@ -11,12 +11,13 @@ beforeEach(() => {
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
 });
 
-function stubSettings({ settings, failGet = false, failPut = false, seen = {} }) {
+function stubSettings({ settings, failGet = false, failPut = false, failModels = false, seen = {} }) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (u, opts) => {
       const url = String(u);
       if (url.includes('/api/models')) {
+        if (failModels) return { ok: false, status: 503 };
         const harness = new URL(url, 'http://x').searchParams.get('harness');
         const models = harness === 'claude' ? ['opus'] : harness === 'grok' ? ['grok-4.7'] : ['auto'];
         const model_efforts = { opus: ['low', 'high'], 'grok-4.7': ['medium'], auto: ['low'] };
@@ -173,15 +174,29 @@ describe('SettingsPage session names', () => {
     expect(seen.body.session_titles).toBe(true);
   });
 
-  it('migrates a legacy role model into the merged Session and Run chains', async () => {
-  const seen = {};
-  stubSettings({ settings: { ...base, roles: { worker: { harness: 'claude', model: 'opus', effort: 'high' } } }, seen });
-  const { container } = renderSettings();
-  await dirtyAndSave(container);
-  expect(seen.body.chains.subagent).toEqual([{ backend: 'claude', model: 'opus', effort: 'high' }]);
-  expect(seen.body.chains.worker).toEqual([{ backend: 'claude', model: 'opus', effort: 'high' }]);
-  expect(seen.body.roles.worker).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
-  expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
+  it('preserves server-migrated role models in both merged chains', async () => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        roles: { worker: { harness: 'claude', model: 'opus', effort: 'high' } },
+        chains: {
+          orchestrator: [],
+          subagent: [{ backend: 'claude', model: 'opus', effort: 'high' }],
+          scout: [],
+          worker: [{ backend: 'claude', model: 'opus', effort: 'high' }],
+          'reviewer-spec': [],
+          'reviewer-standards': [],
+        },
+      },
+      seen,
+    });
+    const { container } = renderSettings();
+    await dirtyAndSave(container);
+    expect(seen.body.chains.subagent).toEqual([{ backend: 'claude', model: 'opus', effort: 'high' }]);
+    expect(seen.body.chains.worker).toEqual([{ backend: 'claude', model: 'opus', effort: 'high' }]);
+    expect(seen.body.roles.worker).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
+    expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
   });
 
   it('no pig model clears the role and claude naming off is saved', async () => {
@@ -473,7 +488,7 @@ describe('SettingsPage agent chains', () => {
     expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
   });
 
-  it('migrates old role model keys into the six grouped chains without losing models', async () => {
+  it('renders canonical chains returned by the server alongside legacy role keys', async () => {
     stubSettings({
       settings: {
         ...base,
@@ -484,6 +499,14 @@ describe('SettingsPage agent chains', () => {
           implementer: { harness: 'claude', model: 'opus', effort: 'high' },
           'spec-review': { harness: 'claude', model: 'opus', effort: 'low' },
           'code-review': { harness: 'grok', model: 'grok-4.7', effort: 'medium' },
+        },
+        chains: {
+          orchestrator: [{ backend: 'claude', model: 'opus', effort: 'high' }],
+          subagent: [{ backend: 'pig', model: 'auto', effort: 'low' }],
+          scout: [{ backend: 'grok', model: 'grok-4.7', effort: 'medium' }],
+          worker: [{ backend: 'claude', model: 'opus', effort: 'high' }],
+          'reviewer-spec': [{ backend: 'claude', model: 'opus', effort: 'low' }],
+          'reviewer-standards': [{ backend: 'grok', model: 'grok-4.7', effort: 'medium' }],
         },
       },
     });
@@ -499,6 +522,18 @@ describe('SettingsPage agent chains', () => {
     ]) {
       expect(within(agents).getByLabelText(`${role} Primary model`).textContent).toMatch(new RegExp(model.replace('.', '\\.'), 'i'));
     }
+  });
+
+  it('limits effort choices to Default when the model catalogue cannot be loaded', async () => {
+    stubSettings({
+      failModels: true,
+      settings: { ...base, chains: { worker: [{ backend: 'claude', model: 'opus', effort: 'high' }] } },
+    });
+    const { container } = renderSettings();
+    const agents = await within(container).findByTestId('agent-chains-settings');
+    await fireEvent.click(within(agents).getByLabelText('Ticket worker Primary effort'));
+    expect(await screen.findByRole('option', { name: 'Default' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'High' })).toBeNull();
   });
 
   it('caps each role at a primary and two fallbacks', async () => {
