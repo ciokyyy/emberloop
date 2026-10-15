@@ -4,10 +4,10 @@
 
 **Blocked by:** 31-project-runs-and-settings-shell (Settings runs after Project scope; both edit the Rail and `App.svelte`)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Hub and one route per page, grouped Workspace and You
-- [ ] Scope pill on each page
-- [ ] Save bar with Revert and Save appears on the first change
-- [ ] Phone hub list and "< Settings" links; 44px touch targets and 16px inputs
-- [ ] Vitest covers the hub routes, pills and save bar; repo check and `npm test` pass
+- [x] Hub and one route per page, grouped Workspace and You
+- [x] Scope pill on each page
+- [x] Save bar with Revert and Save appears on the first change
+- [x] Phone hub list and "< Settings" links; 44px touch targets and 16px inputs
+- [x] Vitest covers the hub routes, pills and save bar; repo check and `npm test` pass
