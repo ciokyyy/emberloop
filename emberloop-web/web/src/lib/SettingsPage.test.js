@@ -11,7 +11,7 @@ beforeEach(() => {
   if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
 });
 
-function stubSettings({ settings, failPut = false, seen = {} }) {
+function stubSettings({ settings, failGet = false, failPut = false, seen = {} }) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (u, opts) => {
@@ -26,6 +26,7 @@ function stubSettings({ settings, failPut = false, seen = {} }) {
         if (failPut) return { ok: false, status: 400 };
         return { ok: true, json: async () => ({ roles: seen.body.roles ?? {}, max_tickets: seen.body.max_tickets ?? 3, max_tickets_from_env: false }) };
       }
+      if (url.includes('/api/settings') && failGet) return { ok: false, status: 500 };
       return { ok: true, json: async () => settings };
     }),
   );
@@ -97,6 +98,40 @@ describe('SettingsPage max_tickets', () => {
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect('max_tickets' in seen.body).toBe(false);
   });
+  it('keeps the save bar hidden while settings are loading', async () => {
+    let resolveSettings;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        const url = String(u);
+        if (url.includes('/api/settings')) {
+          return new Promise((resolve) => {
+            resolveSettings = () => resolve({ ok: true, json: async () => base });
+          });
+        }
+        const harness = new URL(url, 'http://x').searchParams.get('harness');
+        const models = harness === 'claude' ? ['opus'] : harness === 'grok' ? ['grok-4.7'] : ['auto'];
+        return { ok: true, json: async () => ({ models }) };
+      }),
+    );
+    const { container } = renderSettings();
+    expect(within(container).queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(within(container).queryByRole('button', { name: 'Revert' })).toBeNull();
+
+    expect(resolveSettings).toBeDefined();
+    resolveSettings();
+    await within(container).findByLabelText('Maximum tickets');
+    expect(within(container).queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  it('keeps the save bar hidden when settings fail to load', async () => {
+    stubSettings({ settings: base, failGet: true });
+    const { container } = renderSettings();
+    expect((await within(container).findByRole('alert')).textContent).toMatch(/request failed: 500/);
+    expect(within(container).queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(within(container).queryByRole('button', { name: 'Revert' })).toBeNull();
+  });
+
   it('shows Revert and Save on the first change and Revert restores the saved value', async () => {
     stubSettings({ settings: base });
     const { container } = renderSettings();

@@ -85,7 +85,7 @@
   let signupOpen = $state('on');
   let titlesLocked = $state(false);
   let locked = $state(false);
-  let saved = $state('');
+  let saved = $state(null);
   let catalogue = $state({});
   let loading = $state(true);
   let saving = $state(false);
@@ -97,7 +97,7 @@
     return fallback?.model ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }] : [];
   }
   const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
-  const dirty = $derived(DATA_SECTIONS.includes(section) && snapshot() !== saved);
+  const dirty = $derived(saved !== null && DATA_SECTIONS.includes(section) && snapshot() !== saved);
 
   async function models(harness) {
     let list = modelsForHarness(harness);
@@ -312,6 +312,7 @@
   }
 
   function revert() {
+    if (saved === null) return;
     const prev = JSON.parse(saved);
     roles = prev.roles;
     maxTickets = prev.maxTickets;
@@ -657,7 +658,7 @@
     <div class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
       <div class="animate-rise pointer-events-auto flex items-center gap-3 rounded-full border bg-popover/90 py-2 pr-2 pl-5 shadow-2xl backdrop-blur-xl">
         {#if justSaved && !dirty}
-          <span class="flex items-center gap-1.5 text-sm text-green-300"><Check class="size-4" />Saved</span>
+          <span class="flex items-center gap-1.5 text-sm text-primary"><Check class="size-4" />Saved</span>
         {:else}
           <span class="text-sm text-muted-foreground">Unsaved changes</span>
           <Button variant="ghost" size="sm" onclick={revert} disabled={saving}>Revert</Button>
