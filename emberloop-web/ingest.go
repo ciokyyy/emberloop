@@ -19,13 +19,14 @@ const (
 )
 
 type ingestCounts struct {
-	Scanned           int `json:"scanned"`
-	Kept              int `json:"kept"`
-	Extracted         int `json:"extracted"`
-	DroppedUngrounded int `json:"dropped_ungrounded"`
-	Stored            int `json:"stored"`
-	Duplicates        int `json:"duplicates"`
-	Superseded        int `json:"superseded"`
+	Scanned           int  `json:"scanned"`
+	Kept              int  `json:"kept"`
+	Extracted         int  `json:"extracted"`
+	DroppedUngrounded int  `json:"dropped_ungrounded"`
+	Stored            int  `json:"stored"`
+	Duplicates        int  `json:"duplicates"`
+	Superseded        int  `json:"superseded"`
+	ExtractionFailed  bool `json:"extraction_failed,omitempty"`
 }
 type ingestEvent struct {
 	event Event
@@ -62,8 +63,7 @@ func (d *Daemon) ingestSession(sessionID string) error {
 			assistantParts = append(assistantParts, all[i].Text)
 		}
 	}
-	assistant := strings.Join(assistantParts, "\n")
-	assistant = memory.Redact(cutUTF8(assistant, 1024))
+	assistant := memory.Redact(cutUTF8(strings.Join(assistantParts, "\n"), 1024))
 	var chosen []ingestEvent
 	used := 0
 	for i := len(all) - 1; i >= 0; i-- {
@@ -71,13 +71,13 @@ func (d *Daemon) ingestSession(sessionID string) error {
 		if !MinerReadable(e) || e.Sender != senderUser || e.Handoff || strings.HasPrefix(strings.TrimSpace(e.Text), "/") {
 			continue
 		}
-		text := strings.TrimSpace(e.Text)
-		if utf8.RuneCountInString(text) < 12 {
+		if utf8.RuneCountInString(strings.TrimSpace(e.Text)) < 12 {
 			continue
 		}
-		text = memory.Redact(cutUTF8(text, maxIngestEvent))
-		if len(text) == 0 || len(text) > maxIngestEvent || len(text)+used > maxIngestScan {
-			continue
+		// Redact before truncation so a secret crossing the byte boundary is never sent.
+		text := cutUTF8(memory.Redact(strings.TrimSpace(e.Text)), maxIngestEvent)
+		if text == "" || len(text)+used > maxIngestScan {
+			break
 		}
 		used += len(text)
 		chosen = append(chosen, ingestEvent{e, text})
@@ -103,8 +103,7 @@ func (d *Daemon) ingestSession(sessionID string) error {
 			}
 			banks[author] = bank
 		}
-		eventID := ingestEventID(item.event, n)
-		if _, err = bank.AddEpisode(ctx, memory.Episode{SessionID: sessionID, EventRange: eventID, Author: author, Text: item.text, Importance: 0.65}); err != nil {
+		if _, err = bank.AddEpisode(ctx, memory.Episode{SessionID: sessionID, EventRange: ingestEventID(item.event, n), Author: author, Text: item.text, Importance: 0.65}); err != nil {
 			episodeFailed = true
 		}
 	}
@@ -118,12 +117,18 @@ func (d *Daemon) ingestSession(sessionID string) error {
 		items, extractErr := extractor.Extract(ctx, memory.ExtractRequest{Events: events, AssistantContext: assistant})
 		if extractErr != nil {
 			extractionFailed = true
-			counts.DroppedUngrounded++
+			counts.ExtractionFailed = true
 		} else {
 			valid, dropped := memory.ValidateExtractedItems(items, events)
 			counts.Extracted = len(items)
 			counts.DroppedUngrounded = len(dropped)
 			for _, item := range valid {
+				// The validator admits only unique event numbers in this 1-based list;
+				// guard the indexing boundary too, so malformed output cannot panic.
+				if item.Event < 1 || item.Event > len(events) {
+					counts.DroppedUngrounded++
+					continue
+				}
 				ev := events[item.Event-1]
 				owner := strings.TrimSpace(chosen[item.Event-1].event.User)
 				bank := banks[owner]
@@ -143,7 +148,8 @@ func (d *Daemon) ingestSession(sessionID string) error {
 			}
 		}
 	}
-	if len(chosen) > 0 && (extractionFailed || extractor == nil) {
+	// The heuristic is only the fallback after a configured extractor fails.
+	if extractionFailed {
 		counts.Stored += d.storeIngestFallback(ctx, sessionID, chosen, banks)
 	}
 	countsJSON, _ := json.Marshal(counts)
@@ -166,7 +172,17 @@ func (d *Daemon) ingestSession(sessionID string) error {
 	} else if counts.Kept == 0 {
 		status = memory.LedgerNoData
 	}
-	detail := fmt.Sprintf("model=%s latency_ms=%d cost=0", model, time.Since(started).Milliseconds())
+	costText := "unknown"
+	costKnown := extractor == nil || len(chosen) == 0
+	if costKnown {
+		costText = "0"
+	}
+	if reporter, ok := extractor.(interface{ CostUSD() (float64, bool) }); ok {
+		if cost, known := reporter.CostUSD(); known {
+			costText = fmt.Sprintf("%.8f", cost)
+		}
+	}
+	detail := fmt.Sprintf("model=%s latency_ms=%d cost_usd=%s", model, time.Since(started).Milliseconds(), costText)
 	for _, bank := range banks {
 		_, _ = bank.RecordLedger(ctx, memory.LedgerRow{RunID: sessionID, Stage: "ingest", Status: status, CountsJSON: string(countsJSON), Detail: detail})
 	}
@@ -175,7 +191,6 @@ func (d *Daemon) ingestSession(sessionID string) error {
 	}
 	return memory.SaveCursor(d.minerCursorPath(sessionID), next)
 }
-
 func ingestEventID(e Event, index int) string {
 	if e.Seq != 0 {
 		return fmt.Sprint(e.Seq)

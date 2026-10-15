@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -62,12 +63,22 @@ func (e *ExtractorError) Error() string {
 func (e *ExtractorError) Unwrap() error { return e.Err }
 
 type OpenRouterExtractor struct {
-	APIKey   string
-	Model    string
-	Effort   string
-	Endpoint string
-	Client   *http.Client
-	Sleep    func(context.Context, time.Duration) error
+	APIKey    string
+	Model     string
+	Effort    string
+	Endpoint  string
+	Client    *http.Client
+	Sleep     func(context.Context, time.Duration) error
+	costMu    sync.RWMutex
+	costUSD   float64
+	costKnown bool
+}
+
+// CostUSD reports the provider-reported cost for the last successful API response.
+func (o *OpenRouterExtractor) CostUSD() (float64, bool) {
+	o.costMu.RLock()
+	defer o.costMu.RUnlock()
+	return o.costUSD, o.costKnown
 }
 
 func NewOpenRouterExtractor(key, model, effort string) *OpenRouterExtractor {
@@ -99,11 +110,17 @@ type chatRequest struct {
 	Reasoning   struct {
 		Effort string `json:"effort"`
 	} `json:"reasoning"`
+	Usage struct {
+		Include bool `json:"include"`
+	} `json:"usage"`
 }
 type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		Cost *float64 `json:"cost"`
+	} `json:"usage"`
 }
 type extractorJSON struct {
 	Items []ExtractedItem `json:"items"`
@@ -126,6 +143,7 @@ func (o *OpenRouterExtractor) Extract(ctx context.Context, input ExtractRequest)
 	}
 	payload := chatRequest{Model: o.Model, Temperature: 0, MaxTokens: 4000, Messages: []chatMessage{{Role: "system", Content: ExtractorPromptX1}, {Role: "user", Content: ForDistill(formatExtractInput(input))}}}
 	payload.Reasoning.Effort = o.Effort
+	payload.Usage.Include = true
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -173,6 +191,12 @@ func (o *OpenRouterExtractor) Extract(ctx context.Context, input ExtractRequest)
 		var result chatResponse
 		if err := json.Unmarshal(data, &result); err != nil {
 			return nil, fmt.Errorf("decode OpenRouter response: %w", err)
+		}
+		if result.Usage.Cost != nil {
+			o.costMu.Lock()
+			o.costUSD = *result.Usage.Cost
+			o.costKnown = true
+			o.costMu.Unlock()
 		}
 		if len(result.Choices) == 0 {
 			return nil, errors.New("OpenRouter extractor: no choices")

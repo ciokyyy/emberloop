@@ -181,11 +181,11 @@ func TestOpenRouterExtractorRequestAndJSON(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
 		}
-		if req.Temperature != 0 || req.MaxTokens != 4000 || req.Reasoning.Effort != "low" || req.Messages[0].Content != ExtractorPromptX1 {
+		if req.Temperature != 0 || req.MaxTokens != 4000 || req.Reasoning.Effort != "low" || req.Messages[0].Content != ExtractorPromptX1 || !req.Usage.Include {
 			t.Errorf("request=%+v", req)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"items\":[{\"kind\":\"fact\",\"text\":\"The user uses Go.\",\"quote\":\"I use Go\",\"event\":1,\"stated\":true}] }"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"items\":[{\"kind\":\"fact\",\"text\":\"The user uses Go.\",\"quote\":\"I use Go\",\"event\":1,\"stated\":true}] }"}}],"usage":{"cost":0.000123}}`))
 	}))
 	defer srv.Close()
 	x := NewOpenRouterExtractor("secret", "model", "low")
@@ -196,6 +196,9 @@ func TestOpenRouterExtractorRequestAndJSON(t *testing.T) {
 	}
 	if calls != 1 || len(got) != 1 || got[0].Kind != KindFact {
 		t.Fatalf("calls=%d got=%+v", calls, got)
+	}
+	if cost, known := x.CostUSD(); !known || cost != 0.000123 {
+		t.Fatalf("cost=%v known=%v", cost, known)
 	}
 }
 
