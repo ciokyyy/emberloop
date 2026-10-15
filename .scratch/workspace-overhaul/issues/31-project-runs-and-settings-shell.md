@@ -4,8 +4,8 @@
 
 **Blocked by:** 29-project-gist, 30-project-scope-routes
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `/p/<id>/runs` lists the Project's Runs and starts a Run without a folder field
-- [ ] `/p/<id>/settings` offers rename, remove and gist edit
-- [ ] Vitest covers both routes; repo check and `npm test` pass
+- [x] `/p/<id>/runs` lists the Project's Runs and starts a Run without a folder field
+- [x] `/p/<id>/settings` offers rename, remove and gist edit
+- [x] Vitest covers both routes; repo check and `npm test` pass
