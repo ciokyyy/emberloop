@@ -4,9 +4,9 @@
 
 **Blocked by:** 30-project-scope-routes, 32-draft-project-pick-api
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The banner appears only when the Daemon returns a suggestion
-- [ ] Yes starts the Session in the suggested Project's path; dismiss starts it as today
-- [ ] Go test: a Session started through Yes runs in the chosen path; vitest covers the banner
-- [ ] Repo check and `npm test` pass
+- [x] The banner appears only when the Daemon returns a suggestion
+- [x] Yes starts the Session in the suggested Project's path; dismiss starts it as today
+- [x] Go test: a Session started through Yes runs in the chosen path; vitest covers the banner
+- [x] Repo check and `npm test` pass
