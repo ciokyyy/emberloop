@@ -66,6 +66,7 @@ func TestQueueItemLabels(t *testing.T) {
 		t.Errorf("queue-2 = %+v, want rejected as non-durable", labels[1])
 	}
 }
+
 func TestParseDeciderLabels(t *testing.T) {
 	raw := []byte("{\"id\":\"a\",\"text\":\"remember: always wrap errors\",\"durable\":true}\n" +
 		"\n" +
