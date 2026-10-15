@@ -1,10 +1,11 @@
 # UI
 
-Svelte 5 + Vite 8 (with `@sveltejs/vite-plugin-svelte` 7) single-page app, built to static files. `npm run build` in
+Svelte 5 + Vite 8 (with `@sveltejs/vite-plugin-svelte` 7) single-page app, built to static files plus an SSR bundle. `npm run build` in
 `web/` writes `web/dist/`; the Daemon embeds `web/dist` and serves `/`,
 `/index.html` and the bundle assets (JS, CSS, favicon, manifest, service
-worker, icons) at `/` with PWA headers (see Installable app). No server
-rendering anywhere, so the same build wraps in Tauri later unchanged.
+worker, icons) at `/` with PWA headers (see Installable app). `dist/ssr/ssr.js`
+is the bundled Dashboard SSR entry used by the Go QuickJS spike; it is not yet
+invoked by request handling. The browser-only build remains standalone for Tauri.
 
 ## Design rules
 
@@ -50,6 +51,7 @@ Same-origin by default. To point the static build at another Daemon:
 
 ## Source map
 
+- `src/ssr.js`, `src/ssr-hydrate.js` — Dashboard SSR entry and browser hydration probe for the embedded QuickJS spike; production requests do not invoke this entry yet.
  - `src/Root.svelte` — sign-in gate: probes `GET /api/auth/me`; signed out shows `AuthScreen`, signed in mounts `App` with the User; sign out and any 401 from a non-auth route return to sign-in; an unreachable Daemon offers Try again
  - `src/lib/AuthScreen.svelte`, `src/lib/authForm.js` — sign-in, create-account and first-admin screen on `ui/` primitives; `authForm.js` holds the mode, copy and error-line helpers
 - `src/App.svelte` — app shell and route owner: the global rail and contextual sidebar, Project switcher, active-work Dashboard, Project-scoped Sessions and Runs, and global Settings, Quota, Providers and Memory; Settings has a Workspace/You hub on phones and one route per concern, with a shared SettingsNav in the sidebar and drawer; Session tail/SSE loading, queued and optimistic prompts, Git panel, sounds, service-worker navigation and sign-out; projectless draft prompts ask Jev before creating a Session and hold the first message for the Project-pick banner; stream chunks coalesce at ~80ms while structural events flush immediately.

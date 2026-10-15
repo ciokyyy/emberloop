@@ -50,7 +50,7 @@ child it belongs to, and every entry must resolve to a file.
   only host-global Memory settings, hybrid recall/injection and nightly stages;
   Profile patch push actions, inline Session approval, context-sensitive rejected-
   patch dedup, one-time 48-hour reminders and opt-in daily Memory digests; Memory
-  page APIs and panic-safe Run-test cleanup.
+  page APIs, panic-safe Run-test cleanup and the no-cgo QuickJS SSR spike.
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
@@ -74,4 +74,5 @@ child it belongs to, and every entry must resolve to a file.
 - `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch, Boot payload, Prefetch table)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK
+- `docs/adr/0002-embedded-quickjs-ssr.md` — why the Daemon uses modernc QuickJS for Svelte SSR
 - `docs/adr/0004-automatic-memories-narrowed-human-gate.md` — automatic private Memories with human approval retained for Rules, Profile patches and Project notes

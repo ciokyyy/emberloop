@@ -60,7 +60,12 @@ function uiSourceHash() {
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
   base: '/',
-  build: { outDir: 'dist', emptyOutDir: true },
+  ssr: { noExternal: true },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    copyPublicDir: !process.argv.includes('--ssr'),
+  },
   define: { __EL_UI_HASH__: JSON.stringify(uiSourceHash()) },
   // Tests mount real components in jsdom, so resolve the client build of Svelte.
   resolve: { conditions: ['browser', 'module', 'import', 'default'] },
