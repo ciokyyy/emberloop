@@ -662,8 +662,8 @@ func TestJevNoteNamesEgress(t *testing.T) {
 		t.Fatalf("decider_note = %q, want the egress named", note)
 	}
 	srv, _ = settingsServer(t, `{"decider_mode":"ensemble"}`)
-	if note := noteOf(t, srv.URL); !strings.Contains(note, "OpenRouter Jev") || !strings.Contains(note, "tries the memory model") || !strings.Contains(note, "keeps heuristic hits unconfirmed") {
-		t.Fatalf("ensemble decider_note = %q, want the Jev, memory model and unconfirmed fallback described", note)
+	if note := noteOf(t, srv.URL); !strings.Contains(note, "no memory model") || !strings.Contains(note, "falls back to the heuristic") {
+		t.Fatalf("ensemble decider_note = %q, want the missing memory model fallback described", note)
 	}
 }
 
@@ -693,6 +693,23 @@ func TestJevMineDeciderWithoutOpenRouterKeyIsUnavailable(t *testing.T) {
 	d.SetSettingsPath(useSettings(t, `{"jev_model":"jev-latest"}`))
 	if decider := d.jevMineDecider(); decider != nil {
 		t.Fatalf("decider = %T, want nil without an OpenRouter key", decider)
+	}
+}
+
+func TestMineConfirmersEnsembleDefaultsToMemoryModel(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(useSettings(t, `{"decider_mode":"ensemble","memory_model":"test-faux/decider"}`))
+	decider, ensemble := d.mineConfirmers()
+	if !ensemble {
+		t.Fatal("ensemble = false, want heuristic proposal first")
+	}
+	llm, ok := decider.(memory.LLMDecider)
+	if !ok {
+		t.Fatalf("decider = %T, want memory.LLMDecider even when OpenRouter is configured", decider)
+	}
+	if llm.ModelName != "test-faux/decider" {
+		t.Fatalf("memory model = %q, want test-faux/decider", llm.ModelName)
 	}
 }
 

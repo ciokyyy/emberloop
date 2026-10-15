@@ -412,7 +412,7 @@ describe('SettingsPage jev decider', () => {
     const { container } = renderSettings({ props: { admin: true } });
     const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
     expect(endpoint.getAttribute('aria-expanded')).toBe('true');
-    expect(within(endpoint).getByText(/Leave blank to use OpenRouter's decision endpoint/i)).toBeTruthy();
+    expect(within(endpoint).getByText(/In Jev mode, leave blank to use OpenRouter/i)).toBeTruthy();
     const endpointPanel = container.querySelector('#custom-jev-settings');
     expect(endpointPanel.hidden).toBe(false);
     expect((await within(endpointPanel).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
@@ -431,13 +431,13 @@ describe('SettingsPage jev decider', () => {
     });
   });
 
-  it('keeps a blank custom endpoint collapsed and explains the OpenRouter default', async () => {
+  it('keeps a blank custom endpoint collapsed and explains the Jev-mode OpenRouter default', async () => {
     stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest' } } });
     const { container } = renderSettings({ props: { admin: true } });
     const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
     expect(endpoint.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('#custom-jev-settings').hidden).toBe(true);
-    expect(within(endpoint).getByText(/Leave blank to use OpenRouter's decision endpoint/i)).toBeTruthy();
+    expect(within(endpoint).getByText(/In Jev mode, leave blank to use OpenRouter/i)).toBeTruthy();
   });
 
   it('saves a blank URL to use the OpenRouter default', async () => {

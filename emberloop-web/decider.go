@@ -32,7 +32,7 @@ const (
 	deciderTimeout   = 2 * time.Minute
 )
 
-const defaultOpenRouterJevEndpoint = "https://openrouter.ai/api/v1/systemone"
+const defaultOpenRouterJevEndpoint = systemone.Endpoint
 
 // deciderSettings are the knobs stored in the settings file. They are
 // host-global: only the admin writes them, like signup_enabled.
@@ -121,7 +121,7 @@ func deciderNote(set deciderSettings) string {
 		if jev.BaseURL != "" {
 			notes = append(notes, "ensemble confirms with jev: redacted user turns go to "+jev.BaseURL)
 		} else {
-			notes = append(notes, "ensemble uses OpenRouter Jev when an OpenRouter key is available; otherwise it tries the memory model. Unavailable confirmation keeps heuristic hits unconfirmed")
+			notes = append(notes, llmModelNote(set.Model)...)
 		}
 	}
 	return strings.Join(notes, "; ")
@@ -347,8 +347,8 @@ func (d *Daemon) deciderLLMCall(_ context.Context, model, system, user string) (
 
 // mineConfirmers selects the confirming Decider for the current settings,
 // shared by decideMine and minerSubjectKey so the two paths never diverge:
-// the test seam wins, else the endpoint in jev mode, the memory model in llm
-// mode, and the endpoint when on else the model in ensemble mode.
+// the test seam wins, Jev mode uses Jev (OpenRouter by default), llm mode uses
+// the memory model, and ensemble uses Jev only for an explicit endpoint.
 // ensemble reports whether the heuristic proposes first. A nil second means
 // the heuristic judges alone.
 func (d *Daemon) mineConfirmers() (second memory.Decider, ensemble bool) {
@@ -360,10 +360,10 @@ func (d *Daemon) mineConfirmers() (second memory.Decider, ensemble bool) {
 	case deciderJev:
 		return d.jevMineDecider(), false
 	case deciderEnsemble:
-		// The ensemble confirms with jev when its endpoint is on, else
-		// with the memory model: the configured second Decider.
-		if j := d.jevMineDecider(); j != nil {
-			return j, true
+		// Preserve ensemble's memory-model default; Jev is used only when a
+		// custom endpoint was explicitly configured.
+		if d.jevSettingsOf().BaseURL != "" {
+			return d.jevMineDecider(), true
 		}
 		return d.llmMineDecider(set.Model), true
 	case deciderLLM:

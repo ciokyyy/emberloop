@@ -569,7 +569,7 @@
                     {#if jevKeySet}
                       <div class="text-xs text-muted-foreground">Custom endpoint key set. Type a new one to replace it; empty keeps it.</div>
                     {:else}
-                      <div class="text-xs text-muted-foreground">For custom endpoints only. OpenRouter uses its configured key.</div>
+                      <div class="text-xs text-muted-foreground">Empty for a local server without one.</div>
                     {/if}
                   </div>
                   <FloatingInput id="jev-key" label="API key" type="password" bind:value={jev.apiKey} placeholder={jevKeySet ? '••••••' : 'Key'} />

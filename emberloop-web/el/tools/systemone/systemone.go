@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	endpoint  = "https://openrouter.ai/api/v1/systemone"
+	// Endpoint is OpenRouter's typed decision endpoint used by Jev.
+	Endpoint  = "https://openrouter.ai/api/v1/systemone"
 	modelsURL = "https://openrouter.ai/api/v1/models?output_modalities=decisions"
 
 	// JevModelPinned is the versioned Jev selector. Pinned, not floating: a
@@ -113,7 +114,7 @@ type OpenRouter struct {
 
 // NewOpenRouter builds a provider that runs at most 16 requests at once.
 func NewOpenRouter(apiKey string) *OpenRouter {
-	return NewOpenRouterWithEndpoint(apiKey, endpoint)
+	return NewOpenRouterWithEndpoint(apiKey, Endpoint)
 }
 
 // NewOpenRouterWithEndpoint builds a provider for an endpoint URL. Production
@@ -121,7 +122,7 @@ func NewOpenRouter(apiKey string) *OpenRouter {
 // tests exercise the real wire client against a local server.
 func NewOpenRouterWithEndpoint(apiKey, endpointURL string) *OpenRouter {
 	if strings.TrimSpace(endpointURL) == "" {
-		endpointURL = endpoint
+		endpointURL = Endpoint
 	}
 	return &OpenRouter{APIKey: apiKey, endpoint: endpointURL, client: http.Client{Timeout: 30 * time.Second}, sem: make(chan struct{}, 16)}
 }
