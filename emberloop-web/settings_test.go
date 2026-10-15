@@ -393,6 +393,9 @@ func TestBrowserOAuthRedirectBaseRequiresProviderProbe(t *testing.T) {
 	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", rejected); got != "" {
 		t.Fatalf("rejected provider redirect base = %q, want empty", got)
 	}
+	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", nil); got != "" {
+		t.Fatalf("redirect base without provider probe = %q, want empty", got)
+	}
 	failed := func(context.Context, string, string) (bool, error) { return false, os.ErrPermission }
 	if got := d.oauthRedirectBaseForBrowserOAuth(context.Background(), "openrouter", failed); got != "" {
 		t.Fatalf("failed provider probe redirect base = %q, want empty", got)
