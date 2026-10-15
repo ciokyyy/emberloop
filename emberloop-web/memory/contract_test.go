@@ -573,3 +573,59 @@ func ruleIDs(rules []Rule) []string {
 	}
 	return out
 }
+
+func TestMemoriesAndEpisodes(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			clock := newTestClock()
+			m := fac.open(t, clock)
+			ctx := context.Background()
+			id, err := m.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: "e", Author: "u1", Kind: KindFact, Text: "remember this", Quote: "remember this"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := m.GetMemory(ctx, id)
+			if err != nil || got.ID != id {
+				t.Fatalf("get: %+v %v", got, err)
+			}
+			all, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(all) != 1 {
+				t.Fatalf("list all: %d %v", len(all), err)
+			}
+			if err := m.SetMemoryStatus(ctx, id, StatusForgotten); err != nil {
+				t.Fatal(err)
+			}
+			live, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(live) != 0 {
+				t.Fatalf("forgotten not excluded: %d %v", len(live), err)
+			}
+			epID, err := m.AddEpisode(ctx, Episode{SessionID: "s", EventRange: "e1-e2", Author: "u1", Text: "hello user"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			epGot, err := m.GetEpisode(ctx, epID)
+			if err != nil || epGot.ID != epID {
+				t.Fatalf("get episode: %+v %v", epGot, err)
+			}
+			if err := m.SetMemoryStatus(ctx, id, StatusActive); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.BumpMemory(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemoryEmbedding(ctx, id, []byte{1, 2}, "m"); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemoryPinned(ctx, id, true); err != nil {
+				t.Fatal(err)
+			}
+			_, err = m.Purge(ctx, Selection{Memories: []int64{id}, Episodes: []int64{epID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := m.ListEpisodes(ctx, 10); len(got) != 0 {
+				t.Fatalf("episode not purged: %d", len(got))
+			}
+		})
+	}
+}
