@@ -4,11 +4,11 @@
 
 **Blocked by:** 27-quota-links-to-providers, 28-dashboard-payload (Providers lands before Project scope; both edit the Rail and `App.svelte`)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Project switcher with "All projects" replaces the per-Project sidebar sections
-- [ ] `/` renders the Dashboard from the ticket 28 payload
-- [ ] `/p/<id>` and `/p/none` scope the sidebar, Sessions and Runs; `/s/<id>` sets the scope
-- [ ] Global pages ignore the scope
-- [ ] Switcher and Dashboard work in the phone drawer
-- [ ] Vitest router tests cover every URL in the spec table, scope from `/s/<id>`, `/p/none` and rename-stable links; repo check and `npm test` pass
+- [x] Project switcher with "All projects" replaces the per-Project sidebar sections
+- [x] `/` renders the Dashboard from the ticket 28 payload
+- [x] `/p/<id>` and `/p/none` scope the sidebar, Sessions and Runs; `/s/<id>` sets the scope
+- [x] Global pages ignore the scope
+- [x] Switcher and Dashboard work in the phone drawer
+- [x] Vitest router tests cover every URL in the spec table, scope from `/s/<id>`, `/p/none` and rename-stable links; repo check and `npm test` pass
