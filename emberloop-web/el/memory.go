@@ -182,7 +182,11 @@ func SampleAndAppend(procRoot string, harnessPid int, agent, run, at string) err
 // skipped and retried next interval, never fatal to the MCP server. It stops
 // when ctx ends with the session. A session with no agent id records nothing.
 func StartMemorySampler(ctx context.Context, agent, run string, interval time.Duration) {
-	harness := os.Getppid()
+	startMemorySampler(ctx, agent, run, interval, "/proc", os.Getppid())
+}
+
+// startMemorySampler lets tests supply a stable process-tree root and proc tree.
+func startMemorySampler(ctx context.Context, agent, run string, interval time.Duration, procRoot string, harness int) {
 	if agent == "" || harness <= 1 {
 		return
 	}
@@ -190,7 +194,7 @@ func StartMemorySampler(ctx context.Context, agent, run string, interval time.Du
 		run = "local"
 	}
 	tick := func() {
-		_ = SampleAndAppend("/proc", harness, agent, run, time.Now().UTC().Format(time.RFC3339))
+		_ = SampleAndAppend(procRoot, harness, agent, run, time.Now().UTC().Format(time.RFC3339))
 	}
 	tick()
 	t := time.NewTicker(interval)

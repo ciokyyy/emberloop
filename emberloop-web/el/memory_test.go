@@ -138,15 +138,28 @@ func splitLines(s string) []string {
 }
 
 // The sampler ticks on its interval into the agent's log and stops with the
-// session: rows carry the agent, and one of them is the harness (our parent
-// here). A session with no agent id records nothing.
+// session. A fake proc tree keeps the session's harness root deterministic.
+// A session with no agent id records nothing.
 func TestMemorySamplerTicksAndStopsWithTheSession(t *testing.T) {
 	isolateState(t)
+	const harnessPID = 100
+	proc := t.TempDir()
+	taskDir := filepath.Join(proc, strconv.Itoa(harnessPID), "task", strconv.Itoa(harnessPID))
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	statLine := strconv.Itoa(harnessPID) + " (harness) S 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345 100\n"
+	if err := os.WriteFile(filepath.Join(proc, strconv.Itoa(harnessPID), "stat"), []byte(statLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "children"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		StartMemorySampler(ctx, "loop-1", "loop-run", 5*time.Millisecond)
+		startMemorySampler(ctx, "loop-1", "loop-run", 5*time.Millisecond, proc, harnessPID)
 	}()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -166,7 +179,6 @@ func TestMemorySamplerTicksAndStopsWithTheSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ppid := os.Getppid()
 	seenHarness := false
 	for _, line := range splitLines(string(raw)) {
 		var r MemorySample
@@ -176,12 +188,12 @@ func TestMemorySamplerTicksAndStopsWithTheSession(t *testing.T) {
 		if r.Agent != "loop-1" || r.At == "" || r.PID <= 0 || r.Name == "" || r.RSS <= 0 {
 			t.Errorf("row is not a full sample: %+v", r)
 		}
-		if r.PID == ppid {
+		if r.PID == harnessPID {
 			seenHarness = true
 		}
 	}
 	if !seenHarness {
-		t.Errorf("no row for the harness (parent pid %d) in %s", ppid, string(raw))
+		t.Errorf("no row for the harness (pid %d) in %s", harnessPID, string(raw))
 	}
 }
 
