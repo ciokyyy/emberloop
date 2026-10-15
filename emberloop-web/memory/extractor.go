@@ -234,8 +234,16 @@ func (s *ScriptedExtractor) Extract(_ context.Context, _ ExtractRequest) ([]Extr
 // ValidateExtractedItems drops invalid candidates independently; validation never calls the model.
 func ValidateExtractedItems(items []ExtractedItem, events []ExtractEvent) (valid, dropped []ExtractedItem) {
 	byNumber := make(map[int]ExtractEvent, len(events))
+	numberCounts := make(map[int]int, len(events))
+	idCounts := make(map[string]int, len(events))
 	for _, ev := range events {
-		byNumber[ev.Number] = ev
+		numberCounts[ev.Number]++
+		idCounts[ev.ID]++
+	}
+	for _, ev := range events {
+		if ev.Number > 0 && ev.ID != "" && numberCounts[ev.Number] == 1 && idCounts[ev.ID] == 1 {
+			byNumber[ev.Number] = ev
+		}
 	}
 	for _, item := range items {
 		ev, ok := byNumber[item.Event]
@@ -248,12 +256,27 @@ func ValidateExtractedItems(items []ExtractedItem, events []ExtractEvent) (valid
 	return
 }
 
+func uniqueExtractEvents(events []ExtractEvent) []ExtractEvent {
+	numbers, ids := make(map[int]int, len(events)), make(map[string]int, len(events))
+	for _, ev := range events {
+		numbers[ev.Number]++
+		ids[ev.ID]++
+	}
+	out := make([]ExtractEvent, 0, len(events))
+	for _, ev := range events {
+		if ev.Number > 0 && ev.ID != "" && numbers[ev.Number] == 1 && ids[ev.ID] == 1 {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
 // ExtractWithFallback uses the configured extractor when enabled; on an error or an empty setting it
 // falls through to the legacy heuristic, whose results are inferred and deliberately low-importance.
 func ExtractWithFallback(ctx context.Context, extractor Extractor, model string, input ExtractRequest) ([]MemoryItem, error) {
 	// Validation and grounding use the exact redacted text sent to the model.
 	safe := input
-	safe.Events = append([]ExtractEvent(nil), input.Events...)
+	safe.Events = uniqueExtractEvents(input.Events)
 	for i := range safe.Events {
 		safe.Events[i].Text = ForDistill(safe.Events[i].Text)
 	}

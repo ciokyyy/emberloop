@@ -35,6 +35,31 @@ func TestValidateExtractedItemsDropsInvalidWithoutAnotherCall(t *testing.T) {
 	}
 }
 
+func TestValidateExtractedItemsRejectsAmbiguousEventReferences(t *testing.T) {
+	events := []ExtractEvent{
+		{Number: 1, ID: "first", Text: "A safe preference was stated."},
+		{Number: 1, ID: "second", Text: "The quote from another event."},
+		{Number: 2, ID: "second", Text: "A duplicate event ID."},
+	}
+	items := []ExtractedItem{
+		{Kind: KindPreference, Text: "A safe preference.", Quote: "The quote from another event", Event: 1, Stated: true},
+		{Kind: KindFact, Text: "Something happened.", Quote: "A duplicate event ID", Event: 2, Stated: true},
+	}
+	valid, dropped := ValidateExtractedItems(items, events)
+	if len(valid) != 0 || len(dropped) != len(items) {
+		t.Fatalf("valid=%+v dropped=%+v", valid, dropped)
+	}
+	input := ExtractRequest{Events: events}
+	s := &ScriptedExtractor{Results: [][]ExtractedItem{items}}
+	got, err := ExtractWithFallback(context.Background(), s, "model", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 || s.Calls != 1 {
+		t.Fatalf("memories=%+v calls=%d", got, s.Calls)
+	}
+}
+
 func TestMemoryImportance(t *testing.T) {
 	for _, tc := range []struct {
 		text   string
