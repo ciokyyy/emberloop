@@ -1032,14 +1032,19 @@ func TestReviewPatchIdenticalRebaseReusesVerdict(t *testing.T) {
 			tk.LastRefusal != ""
 	}, "both pass at the tip with the merge blocked")
 	t1 := ticketByID(r, "01-first").Tip
-	// Clean the tree and amend the message: new SHAs, identical diff.
-	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
-		t.Fatal(err)
-	}
+	// Keep the untracked dirty sentinel in place while amending. The Run driver
+	// polls independently and would otherwise be able to merge t1 in the gap
+	// between making the tree clean and changing the branch tip.
 	testGit(t, worktree, "commit", "--amend", "-m", "work v1 rebased")
+	if got := strings.TrimSpace(testGit(t, worktree, "status", "--porcelain")); got != "?? dirty.txt" {
+		t.Fatalf("worktree status during amend = %q, want dirty sentinel to hold the merge", got)
+	}
 	t2 := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
 	if t1 == "" || t2 == "" || t1 == t2 {
 		t.Fatalf("tips = %q and %q, want two different SHAs", t1, t2)
+	}
+	if err := os.Remove(filepath.Join(worktree, "dirty.txt")); err != nil {
+		t.Fatal(err)
 	}
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
