@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func postRunJSON(t *testing.T, base, path string, body any) (int, runJSON, string) {
@@ -224,6 +225,29 @@ func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "Worker started before Reviewer setup")
 	ticket := ticketByID(r, "01-first")
+	oldWorker := ticket.WorkerSession
+	waitInitialTurn := func(sessionID, role string) {
+		initial := waitSessionCond(t, srv.URL, sessionID, func(s sessionBody) bool {
+			for _, event := range s.Events {
+				if event.Kind == "prompt" {
+					return true
+				}
+			}
+			return false
+		}, "initial "+role+" task")
+		var promptSeq int64
+		for _, event := range initial.Events {
+			if event.Kind == "prompt" {
+				promptSeq = event.Seq
+				break
+			}
+		}
+		waitTurnEnd(t, srv.URL, sessionID, promptSeq)
+		if !d.waitRunSessionIdle(sessionID, 10*time.Second) {
+			t.Fatalf("initial %s did not settle before Run pause", role)
+		}
+	}
+	waitInitialTurn(oldWorker, "Worker")
 	tip, err := runGit(repo, "rev-parse", ticket.Branch)
 	if err != nil {
 		t.Fatal(err)
@@ -234,8 +258,8 @@ func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
 	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
 		return ticketByID(r, "01-first").ReviewerSessions[reviewerSpecType] != ""
 	}, "Reviewer started before Run pause")
-	oldWorker := ticketByID(r, "01-first").WorkerSession
 	oldReviewer := ticketByID(r, "01-first").ReviewerSessions[reviewerSpecType]
+	waitInitialTurn(oldReviewer, "Reviewer")
 
 	if _, code := postRunAction(t, srv.URL, run.ID, "pause"); code != http.StatusOK {
 		t.Fatalf("Run pause = %d, want 200", code)
@@ -268,10 +292,33 @@ func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
 	if newReviewer == "" || newReviewer == oldReviewer {
 		t.Fatalf("resumed Reviewer = %q, want replacement for %q", newReviewer, oldReviewer)
 	}
-	reviewerSession := waitSessionCond(t, srv.URL, newReviewer, func(s sessionBody) bool {
-		_, _, ok := firstHandoffAndTask(s.Events)
-		return ok
-	}, "Run-switched Reviewer Handoff and task")
+	deadline := time.Now().Add(15 * time.Second)
+	var reviewerSession sessionBody
+	for {
+		reviewerSession = getSession(t, srv.URL, newReviewer)
+		if _, _, ok := firstHandoffAndTask(reviewerSession.Events); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			current := getActionRun(t, srv.URL, run.ID)
+			d.mu.Lock()
+			rs := d.runs[run.ID]
+			status, driving, currentReviewer, needsYou := "", false, "", ""
+			var pausedRoles map[string]bool
+			if rs != nil {
+				status, driving = rs.Status, rs.driving
+				currentReviewer = rs.Reviewers["01-first"][reviewerSpecType]
+				needsYou = rs.NeedsYouReason["01-first"]
+				pausedRoles = make(map[string]bool, len(rs.PausedRoles["01-first"]))
+				for role, paused := range rs.PausedRoles["01-first"] {
+					pausedRoles[role] = paused
+				}
+			}
+			d.mu.Unlock()
+			t.Fatalf("timed out waiting for Run-switched Reviewer Handoff and task: run=%+v ticket=%+v status=%q driving=%v currentReviewer=%q needsYou=%q pausedRoles=%v session=%+v", current, actionTicketByID(current, "01-first"), status, driving, currentReviewer, needsYou, pausedRoles, reviewerSession)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	if reviewerSession.Meta.Harness != "fake" || reviewerSession.Meta.Model != "run-switched" {
 		t.Fatalf("resumed Reviewer config = %s/%s, want fake/run-switched", reviewerSession.Meta.Harness, reviewerSession.Meta.Model)
 	}

@@ -89,7 +89,7 @@ func TestRunWorkerWorktreeSeedsAgentsMD(t *testing.T) {
 // A seeding failure stops the worker like any other start error and leaves
 // no worktree or branch behind.
 func TestRunStartWorkerEnsureError(t *testing.T) {
-	t.Parallel()
+	// Serial: this test replaces the package-level worktree seeding hook.
 	repo, _ := initRunRepo(t, demoTickets())
 	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
 	prev := ensureWorktreeDOX

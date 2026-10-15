@@ -152,9 +152,9 @@ func TestStopAfterSubmitEndsWorkerTurn(t *testing.T) {
 	fb.SetDelay(50 * time.Millisecond)
 	sendPrompt(t, srv.URL, worker, "keep going")
 	waitStatus(t, srv.URL, worker, "idle", 10*time.Second)
-	if !strings.Contains(sessTranscript(getSession(t, srv.URL, worker)), "fake reply to: keep going") {
-		t.Fatalf("worker transcript misses the follow-up reply")
-	}
+	waitSessionCond(t, srv.URL, worker, func(s sessionBody) bool {
+		return strings.Contains(sessTranscript(s), "fake reply to: keep going")
+	}, "follow-up reply")
 }
 
 // An accepted Reviewer pass submit stops the running reviewer turn at once
