@@ -8,6 +8,7 @@ describe('parsePath', () => {
     expect(parsePath('/settings')).toEqual({ name: 'settings' });
     expect(parsePath('/quota')).toEqual({ name: 'quota' });
     expect(parsePath('/providers')).toEqual({ name: 'providers' });
+    expect(parsePath('/providers#provider-google-antigravity')).toEqual({ name: 'providers' });
     expect(parsePath('/memory')).toEqual({ name: 'memory' });
     expect(parsePath('/runs')).toEqual({ name: 'runs' });
     expect(parsePath('/runs/')).toEqual({ name: 'runs' });

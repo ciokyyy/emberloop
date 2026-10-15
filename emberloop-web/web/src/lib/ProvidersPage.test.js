@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import ProvidersPage from './ProvidersPage.svelte';
+import { get } from 'svelte/store';
+import { quotaStore } from './quotaStore.js';
+import { stopLive } from './live.js';
 
 const secret = 'provider-browser-secret';
 
@@ -150,7 +153,8 @@ function stubProviders() {
       return { ok: true, json: async () => ({ id: 'login-1', state: claudeLoginState, output: '\u001b[32mVisit https://claude.ai/oauth/authorize?code=abc\u001b[0m\nLogin successful' }) };
     }
     if (requestURL === '/api/quota/refresh' && method === 'POST') {
-      return { ok: true, json: async () => ({ providers: [] }) };
+      const key = JSON.parse(options.body).key;
+      return { ok: true, json: async () => ({ providers: [{ key, state: 'ok', windows: [{ label: '5-hour', pct: 42 }] }] }) };
     }
     if (requestURL === connectURL && method === 'POST') {
       antigravityLoginState = antigravityLoginSnapshot('waiting', {
@@ -216,6 +220,8 @@ function stubProviders() {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  stopLive();
+  window.history.replaceState({}, '', '/');
 });
 
 describe('ProvidersPage', () => {
@@ -251,6 +257,18 @@ describe('ProvidersPage', () => {
     await screen.findAllByTestId('provider-row');
     expect(container.textContent).not.toContain(secret);
   });
+  it('scrolls and focuses the provider row requested by a quota deep link', async () => {
+    window.history.replaceState({}, '', '/providers#provider-google-antigravity');
+    stubProviders();
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const row = container.querySelector('[data-provider="google-antigravity"]');
+
+    await waitFor(() => expect(document.activeElement).toBe(row));
+    expect(row.id).toBe('provider-google-antigravity');
+    expect(row.getAttribute('tabindex')).toBe('-1');
+  });
+
   it('copies CLI-only OAuth commands and names cloud-auth CLI configuration', async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { clipboard: { writeText } });
@@ -307,6 +325,9 @@ describe('ProvidersPage', () => {
       method: 'POST',
       body: { key: 'claude' },
     });
+    await waitFor(() => expect(get(quotaStore)).toEqual([
+      { key: 'claude', state: 'ok', windows: [{ label: '5-hour', pct: 42 }] },
+    ]));
     await waitFor(() => expect(within(claudeRow).getByTestId('provider-status').textContent).toBe('Connected'));
   });
 
@@ -377,6 +398,13 @@ describe('ProvidersPage', () => {
       url: '/api/providers/openrouter/key',
       body: { key: secret },
     });
+    await waitFor(() => expect(calls.filter((call) => call.url === '/api/quota/refresh')).toHaveLength(1));
+    expect(calls.find((call) => call.url === '/api/quota/refresh')).toMatchObject({
+      method: 'POST', body: { key: 'openrouter' },
+    });
+    await waitFor(() => expect(get(quotaStore)[0]).toMatchObject({
+      key: 'openrouter', state: 'ok', windows: [{ label: '5-hour', pct: 42 }],
+    }));
     expect(container.textContent).not.toContain(secret);
 
     const removeButton = within(keyRow).getByRole('button', { name: 'Remove' });
@@ -447,6 +475,51 @@ describe('ProvidersPage', () => {
     expect(calls).toContainEqual({ url: '/api/providers/openai-codex/device-code', method: 'POST' });
     expect(calls).toContainEqual({ url: '/api/providers/openai-codex/device-code/login-1', method: 'DELETE' });
   });
+
+  it('publishes the ChatGPT quota refresh from its live update after device-code login completes', async () => {
+    quotaStore.set([]);
+    const calls = [];
+    const streams = [];
+    vi.stubGlobal('EventSource', class {
+      constructor(url) {
+        this.url = String(url);
+        this.close = vi.fn();
+        streams.push(this);
+      }
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input, options = {}) => {
+      const url = String(input);
+      const method = options.method ?? 'GET';
+      calls.push({ url, method });
+      if (url === '/api/providers') return { ok: true, json: async () => ({ providers: providerRows() }) };
+      if (url === '/api/providers/openai-codex/device-code' && method === 'POST') {
+        return { ok: true, json: async () => ({ login: { id: 'login-1', status: 'starting' } }) };
+      }
+      if (url.endsWith('/device-code/login-1') && method === 'GET') {
+        return { ok: true, json: async () => ({ login: { id: 'login-1', status: 'complete' } }) };
+      }
+      throw new Error(`unexpected request: ${method} ${url}`);
+    }));
+    const stopQuota = quotaStore.subscribe(() => {});
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const chatGPT = container.querySelector('[data-provider="openai-codex"]');
+    await fireEvent.click(within(chatGPT).getByRole('button', { name: 'Reconnect ChatGPT' }));
+
+    expect(await screen.findByText('ChatGPT connected. The ChatGPT Quota card is refreshing.')).toBeTruthy();
+    const quotaStream = streams.find((stream) => stream.url.includes('topic=quota'));
+    expect(quotaStream).toBeTruthy();
+    quotaStream.onmessage({ data: JSON.stringify({
+      topic: 'quota',
+      providers: [{ key: 'openai-codex', state: 'ok', windows: [{ label: '5-hour', pct: 3 }] }],
+    }) });
+    await waitFor(() => expect(get(quotaStore)).toEqual([
+      { key: 'openai-codex', state: 'ok', windows: [{ label: '5-hour', pct: 3 }] },
+    ]));
+    expect(calls.some((call) => call.url === '/api/quota/refresh')).toBe(false);
+    stopQuota();
+  });
+
 
   it('keeps provider rows and key controls phone-friendly', async () => {
     stubProviders();

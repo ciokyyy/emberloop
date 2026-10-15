@@ -33,6 +33,30 @@ const DEFAULT_SOURCES = {
   'agy-gemini': 'pig login',
   'agy-3p': 'pig login',
 };
+// Provider IDs shared by the Providers page and quota-backed credentials.
+const PROVIDER_QUOTA_KEYS = Object.freeze({
+  claude: ['claude'],
+  'openai-codex': ['openai-codex'],
+  'google-antigravity': ['agy-gemini', 'agy-3p'],
+  'opencode-go': ['opencode-go'],
+  openrouter: ['openrouter'],
+});
+
+const QUOTA_PROVIDER_IDS = new Map(
+  Object.entries(PROVIDER_QUOTA_KEYS).flatMap(([providerId, quotaKeys]) =>
+    quotaKeys.map((key) => [key, providerId]),
+  ),
+);
+
+export function quotaKeysForProvider(providerId) {
+  return PROVIDER_QUOTA_KEYS[providerId] ?? [];
+}
+
+export function providerRowHref(quotaKey) {
+  const providerId = QUOTA_PROVIDER_IDS.get(quotaKey);
+  return providerId ? `/providers#provider-${encodeURIComponent(providerId)}` : '/providers';
+}
+
 
 function epochSeconds(value) {
   if (value === null || value === undefined || value === '') return Number.NaN;

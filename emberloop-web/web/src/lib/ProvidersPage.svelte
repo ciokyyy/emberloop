@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { Check, Copy, KeyRound, LockKeyhole, Terminal, Trash2, X } from '@lucide/svelte';
   import Badge from './ui/badge.svelte';
   import Button from './ui/button.svelte';
@@ -21,6 +21,8 @@
     startClaudeLogin,
     submitAntigravityLogin,
   } from './api.js';
+  import { quotaStore } from './quotaStore.js';
+  import { quotaKeysForProvider } from './quota.js';
 
   let { admin = false } = $props();
   let providers = $state([]);
@@ -46,6 +48,7 @@
   let antigravityBusy = $state(false);
   let connectPollTimer;
   let connectPollFailures = 0;
+  let providerTargetFocused = false;
 
   const groups = [
     {
@@ -86,6 +89,29 @@
     } finally {
       loading = false;
     }
+    await focusRequestedProvider();
+  }
+
+  async function focusRequestedProvider() {
+    if (providerTargetFocused) return;
+    providerTargetFocused = true;
+    const target = window.location.hash.slice(1);
+    if (!target.startsWith('provider-')) return;
+    await tick();
+    const row = document.getElementById(target);
+    row?.scrollIntoView?.({ block: 'start' });
+    row?.focus?.({ preventScroll: true });
+  }
+
+
+  async function refreshProviderQuota(providerId) {
+    await Promise.all(quotaKeysForProvider(providerId).map(async (key) => {
+      try {
+        quotaStore.set(await refreshQuota(key));
+      } catch {
+        // A credential connection succeeds even if its usage endpoint is down.
+      }
+    }));
   }
 
   function beginEdit(provider) {
@@ -115,6 +141,7 @@
       keyDrafts = { ...keyDrafts, [provider.id]: '' };
       editingID = '';
       await load();
+      void refreshProviderQuota(provider.id);
     } catch (error) {
       rowErrors = { ...rowErrors, [provider.id]: error?.message || 'Could not save this key.' };
     } finally {
@@ -147,8 +174,8 @@
       rowErrors = { ...rowErrors, 'google-antigravity': '' };
       if (next.state === 'complete') {
         antigravityCallback = '';
-        void Promise.allSettled([refreshQuota('agy-gemini'), refreshQuota('agy-3p')]);
         await load();
+        void refreshProviderQuota('google-antigravity');
         if (antigravityLogin?.id === id) antigravityLogin = null;
         return;
       }
@@ -331,7 +358,7 @@
     refreshedClaudeLogin = session.id;
     loginCode = '';
     void load();
-    void refreshQuota('claude').catch(() => {});
+    void refreshProviderQuota('claude');
   }
 
   async function pollClaudeLogin() {
@@ -453,7 +480,7 @@
               </div>
               <div class="divide-y divide-border/60 rounded-2xl border bg-card">
                 {#each rows as provider (provider.id)}
-                  <article class="p-4" data-testid="provider-row" data-provider={provider.id} data-source={provider.source}>
+                  <article id={`provider-${provider.id}`} tabindex="-1" class="p-4" data-testid="provider-row" data-provider={provider.id} data-source={provider.source}>
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
                       <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-muted" aria-hidden="true">
                         {#if provider.group === 'api_keys'}<KeyRound class="size-4" />{:else if provider.group === 'cli_only'}<Terminal class="size-4" />{:else}<Check class="size-4" />{/if}

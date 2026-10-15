@@ -23,11 +23,13 @@
     quotaPlan,
     quotaState,
     quotaUpdatedLine,
+    providerRowHref,
     resetCountdown,
     thresholdClass,
     wordLabel,
   } from './quota.js';
 
+  let { onNavigate = null } = $props();
   let providers = $state([]);
   let loading = $state(true);
   let error = $state('');
@@ -50,6 +52,12 @@
 
   const cardIcon = (key) => ICONS[key] ?? Gauge;
   const hasBusyCard = () => Object.values(busy).some(Boolean);
+
+  function navigateToProvider(event, key) {
+    if (typeof onNavigate !== 'function' || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onNavigate(providerRowHref(key));
+  }
 
   function apply(body) {
     if (quotaStore.set(body)) now = Date.now();
@@ -157,7 +165,7 @@
 
               {#if state === 'not_connected'}
                 <p class="mt-3 text-xs text-muted-foreground" data-testid="quota-not-connected">{quotaHint(p)}</p>
-                <a href="/providers" class={`${buttonVariants({ variant: 'outline', size: 'sm' })} mt-3 w-fit`}>
+                <a href={providerRowHref(p.key)} onclick={(event) => navigateToProvider(event, p.key)} class={`${buttonVariants({ variant: 'outline', size: 'sm' })} mt-3 w-fit`}>
                   <Plug class="size-4" />Connect in Providers
                 </a>
               {:else}

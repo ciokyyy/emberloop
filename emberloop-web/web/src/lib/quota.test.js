@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   highestPercent,
+  providerRowHref,
   quotaHint,
+  quotaKeysForProvider,
   quotaPlan,
   quotaSource,
   quotaState,
@@ -11,6 +13,20 @@ import {
   thresholdClass,
   wordLabel,
 } from './quota.js';
+
+describe('provider-to-quota links and refresh mapping', () => {
+  it('maps every quota card to its Providers row and each quota-backed provider to its cards', () => {
+    expect(providerRowHref('claude')).toBe('/providers#provider-claude');
+    expect(providerRowHref('openai-codex')).toBe('/providers#provider-openai-codex');
+    expect(providerRowHref('opencode-go')).toBe('/providers#provider-opencode-go');
+    expect(providerRowHref('openrouter')).toBe('/providers#provider-openrouter');
+    expect(providerRowHref('agy-gemini')).toBe('/providers#provider-google-antigravity');
+    expect(providerRowHref('agy-3p')).toBe('/providers#provider-google-antigravity');
+    expect(quotaKeysForProvider('google-antigravity')).toEqual(['agy-gemini', 'agy-3p']);
+    expect(quotaKeysForProvider('openrouter')).toEqual(['openrouter']);
+    expect(quotaKeysForProvider('google-vertex')).toEqual([]);
+  });
+});
 
 const NOW = Date.UTC(2030, 0, 1);
 const secs = (s) => NOW / 1000 + s;

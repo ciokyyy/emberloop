@@ -850,7 +850,7 @@
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
-      <QuotaPage onBack={() => navigate('/')} />
+      <QuotaPage onBack={() => navigate('/')} onNavigate={navigate} />
     {:else if view === 'providers'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Quota and Providers menu"><Menu /></Button>

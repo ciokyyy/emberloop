@@ -7,9 +7,11 @@
 // /memory, / home.
 export function parsePath(input) {
   const raw = String(input ?? '');
-  const q = raw.indexOf('?');
-  let path = q === -1 ? raw : raw.slice(0, q);
-  const search = q === -1 ? '' : raw.slice(q + 1);
+  const fragment = raw.indexOf('#');
+  const address = fragment === -1 ? raw : raw.slice(0, fragment);
+  const q = address.indexOf('?');
+  let path = q === -1 ? address : address.slice(0, q);
+  const search = q === -1 ? '' : address.slice(q + 1);
   if (!path.startsWith('/')) path = `/${path}`;
   if (path.length > 1) path = path.replace(/\/+$/, '');
   if (path === '') path = '/';

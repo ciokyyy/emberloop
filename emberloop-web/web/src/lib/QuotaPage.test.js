@@ -123,7 +123,7 @@ describe('QuotaPage cards', () => {
     stubFetch();
     const { container } = render(QuotaPage);
     await screen.findAllByTestId('quota-card');
-    const controls = [...container.querySelectorAll('button, a[href="/providers"]')];
+    const controls = [...container.querySelectorAll('button, a[href^="/providers#"]')];
     expect(controls.length).toBeGreaterThan(1);
     for (const control of controls) {
       expect(
@@ -211,9 +211,35 @@ describe('QuotaPage cards', () => {
     expect(within(gemini).getByTestId('quota-state').textContent).toBe('not connected');
     expect(within(gemini).getByTestId('quota-not-connected').textContent).toContain('~/.el/agy-oauth.json');
     expect(within(gemini).getByTestId('quota-not-connected').textContent).toContain('Claude + GPT-OSS pools');
-    expect(within(gemini).getByRole('link', { name: 'Connect in Providers' }).getAttribute('href')).toBe('/providers');
+    expect(within(gemini).getByRole('link', { name: 'Connect in Providers' }).getAttribute('href')).toBe('/providers#provider-google-antigravity');
     expect(within(gemini).queryByRole('alert')).toBeNull();
     expect(gemini.querySelector('[role="progressbar"]')).toBeNull();
+  });
+
+  it('links every not-connected card to its matching Providers row and navigates there in-app', async () => {
+    const unconnected = providerCards().map((provider) => ({ ...provider, state: 'not_configured', windows: [] }));
+    const onNavigate = vi.fn();
+    stubFetch({ get: unconnected });
+    const { container } = render(QuotaPage, { props: { onNavigate } });
+    await screen.findAllByTestId('quota-card');
+
+    for (const [key, providerId] of [
+      ['claude', 'claude'],
+      ['openai-codex', 'openai-codex'],
+      ['opencode-go', 'opencode-go'],
+      ['agy-gemini', 'google-antigravity'],
+      ['agy-3p', 'google-antigravity'],
+      ['openrouter', 'openrouter'],
+    ]) {
+      const card = container.querySelector(`[data-key="${key}"]`);
+      expect(within(card).getByRole('link', { name: 'Connect in Providers' }).getAttribute('href'))
+        .toBe(`/providers#provider-${providerId}`);
+    }
+
+    const link = within(container.querySelector('[data-key="agy-gemini"]'))
+      .getByRole('link', { name: 'Connect in Providers' });
+    await fireEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledWith('/providers#provider-google-antigravity');
   });
 
   it('renders OpenRouter credits percent and key spend in secondary detail', async () => {
