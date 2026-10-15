@@ -1,8 +1,9 @@
-// Shared spec-discovery state for the Runs area: the sidebar owns the repo
-// directory form and the spec list, while RunsView owns the preview table,
-// the Start button and the live Run. Both read this module, so a pick in the
-// rail-2 sidebar repaints the main area with no prop drilling.
+// Shared spec-discovery state for Runs: the sidebar owns the global repo form
+// or loads specs from a scoped Project path, while RunsView owns the preview
+// table, Start button and live Run. Both read this module so picks repaint
+// RunsView with no prop drilling.
 import { listSpecs, previewSpec } from './api.js';
+let discoveryRequest = 0;
 
 export const discovery = $state({
   repo: '',
@@ -22,6 +23,7 @@ export const discovery = $state({
 });
 
 export function resetDiscovery() {
+  discoveryRequest++;
   discovery.repo = '';
   discovery.specs = [];
   discovery.selected = '';
@@ -38,7 +40,10 @@ export function initDiscoveryRepo(workDir) {
   if (!discovery.repo && workDir) discovery.repo = workDir;
 }
 
-export async function loadDiscovery() {
+export async function loadDiscovery(repo = discovery.repo) {
+  const request = ++discoveryRequest;
+  const target = String(repo ?? '').trim();
+  discovery.repo = target;
   discovery.error = '';
   discovery.message = '';
   discovery.specs = [];
@@ -46,15 +51,17 @@ export async function loadDiscovery() {
   discovery.tickets = [];
   discovery.previewTitle = '';
   discovery.specSeedFor = '';
-  if (!discovery.repo) {
+  if (!target) {
     discovery.message = 'Enter a repo directory to find specs.';
     return;
   }
   try {
-    const body = await listSpecs(discovery.repo);
+    const body = await listSpecs(target);
+    if (request !== discoveryRequest || discovery.repo !== target) return;
     discovery.specs = body.specs ?? [];
     if (!discovery.specs.length) discovery.message = 'No specs found under this directory.';
   } catch {
+    if (request !== discoveryRequest || discovery.repo !== target) return;
     discovery.error = 'Could not list specs.';
   }
 }
@@ -92,7 +99,14 @@ export async function selectDiscovery(spec) {
 export async function ensureDiscoveryContext(run) {
   if (discovery.seeding || !run?.repo) return;
   if (run.id && discovery.specSeedFor === run.id) return;
-  if (discovery.specs.length || discovery.selected) return;
+  if (discovery.specs.length || discovery.selected) {
+    if (discovery.repo !== run.repo) return;
+    if (run.id) discovery.specSeedFor = run.id;
+    if (!discovery.selected && run.spec && discovery.specs.some((item) => item.spec === run.spec)) {
+      await previewDiscovery(run.spec);
+    }
+    return;
+  }
   const target = run.repo;
   // The user typed a repo of their own: keep it.
   if (discovery.repo && discovery.repo !== target) return;

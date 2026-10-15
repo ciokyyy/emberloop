@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, within, screen, fireEvent, cleanup } from '@testing-library/svelte';
 import App from './App.svelte';
+import { resetDiscovery } from './lib/runsDiscovery.svelte.js';
 import { stopLive } from './lib/live.js';
 
 // jsdom has no ResizeObserver; App measures the floating composer with one.
@@ -64,6 +65,7 @@ describe('Project scope routes', () => {
     vi.unstubAllGlobals();
     localStorage.clear();
     history.replaceState(null, '', '/');
+    resetDiscovery();
   });
 
   const response = (body) => ({ ok: true, json: async () => body });
@@ -146,20 +148,36 @@ describe('Project scope routes', () => {
     expect(within(container).queryByText('Project Session')).toBeNull();
     expect(within(container).getByRole('button', { name: 'Project scope' }).textContent).toContain('No project');
   });
-  it('filters Project Runs by stable Project id', async () => {
+  it('filters Project Runs, discovers specs in its folder, and starts without a folder input', async () => {
     history.replaceState(null, '', '/p/project-one/runs');
     vi.stubGlobal('EventSource', FakeEventSource);
-    vi.stubGlobal('fetch', vi.fn(async (url) => {
+    const starts = [];
+    const startedRun = {
+      id: 'run-started', spec: '/one/.scratch/one/spec.md', repo: '/one',
+      projectId: 'project-one', status: 'running', tickets: [],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url, opts = {}) => {
       const path = String(url);
       if (path.endsWith('/api/projects')) return response([
         { id: 'project-one', name: 'Renamed Project', path: '/one' },
         { id: 'project-two', name: 'Other Project', path: '/two' },
       ]);
+      if (path.endsWith('/api/runs') && opts.method === 'POST') {
+        starts.push(JSON.parse(opts.body));
+        return response({ run: startedRun });
+      }
+      if (path.endsWith('/api/runs/run-started')) return response({ run: startedRun });
       if (path.endsWith('/api/runs')) return response({ runs: [
         { id: 'run-one', spec: '/one/.scratch/one/spec.md', projectId: 'project-one', updatedAt: '2026-10-14T10:00:00Z', counts: { total: 1 } },
         { id: 'run-two', spec: '/two/.scratch/two/spec.md', projectId: 'project-two', updatedAt: '2026-10-14T09:00:00Z', counts: { total: 1 } },
       ] });
-      if (path.endsWith('/api/specs')) return response({ specs: [] });
+      if (path.includes('/api/specs/preview')) return response({
+        spec: '/one/.scratch/one/spec.md', title: 'One spec',
+        tickets: [{ id: 'one', num: 1, title: 'First ticket', blockers: [], done: 0, total: 1 }],
+      });
+      if (path.startsWith('/api/specs?')) return response({ specs: [
+        { spec: '/one/.scratch/one/spec.md', title: 'One spec', tickets: 1 },
+      ] });
       return response([]);
     }));
 
@@ -167,7 +185,55 @@ describe('Project scope routes', () => {
     const sidebar = await within(container).findByTestId('runs-sidebar');
     expect(await within(sidebar).findByRole('button', { name: /one.*0\/1/ })).toBeTruthy();
     expect(within(sidebar).queryByRole('button', { name: /two.*0\/1/ })).toBeNull();
-    expect(window.location.pathname).toBe('/p/project-one/runs');
+    expect(within(sidebar).queryByLabelText(/repo directory/i)).toBeNull();
+    expect(await within(sidebar).findByText('Specs in /one')).toBeTruthy();
+    await fireEvent.click(await within(sidebar).findByRole('button', { name: /one spec/i }));
+    await fireEvent.click(await within(container).findByRole('button', { name: 'Start Run' }));
+    expect(starts).toEqual([{ spec: '/one/.scratch/one/spec.md', repo: '/one' }]);
+    await vi.waitFor(() => expect(window.location.pathname).toBe('/p/project-one/runs/run-started'));
+  });
+
+  it('edits and removes a Project from its settings route', async () => {
+    history.replaceState(null, '', '/p/project-one/settings');
+    vi.stubGlobal('EventSource', FakeEventSource);
+    const calls = [];
+    let project = { id: 'project-one', name: 'Demo', path: '/repo', gist: 'Original gist.' };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn(async (url, opts = {}) => {
+      const path = String(url);
+      calls.push({ path, method: opts.method ?? 'GET', body: opts.body ? JSON.parse(opts.body) : null });
+      if (path.endsWith('/api/projects') && opts.method !== 'PATCH') return response(project ? [project] : []);
+      if (path.endsWith('/api/projects/project-one') && opts.method === 'PATCH') {
+        project = { ...project, ...JSON.parse(opts.body) };
+        return response(project);
+      }
+      if (path.endsWith('/api/projects/project-one') && opts.method === 'DELETE') {
+        project = null;
+        return response({ ok: true });
+      }
+      if (path.endsWith('/api/dashboard')) return response({ groups: {} });
+      return response([]);
+    }));
+
+    try {
+      const { container } = render(App);
+      expect(await within(container).findByRole('heading', { name: 'Demo settings' })).toBeTruthy();
+      await fireEvent.input(within(container).getByRole('textbox', { name: 'Project name' }), { target: { value: 'Renamed' } });
+      await fireEvent.click(within(container).getByRole('button', { name: 'Save name' }));
+      await vi.waitFor(() => expect(calls).toContainEqual({ path: '/api/projects/project-one', method: 'PATCH', body: { name: 'Renamed' } }));
+
+      await fireEvent.input(within(container).getByRole('textbox', { name: 'Project gist' }), { target: { value: 'Edited gist.' } });
+      await fireEvent.click(within(container).getByRole('button', { name: 'Save gist' }));
+      await vi.waitFor(() => expect(calls).toContainEqual({ path: '/api/projects/project-one', method: 'PATCH', body: { gist: 'Edited gist.' } }));
+      expect(within(container).queryByText(/override/i)).toBeNull();
+
+      await fireEvent.click(within(container).getByRole('button', { name: 'Remove project' }));
+      await vi.waitFor(() => expect(calls).toContainEqual({ path: '/api/projects/project-one', method: 'DELETE', body: null }));
+      await vi.waitFor(() => expect(window.location.pathname).toBe('/'));
+      expect(confirm).toHaveBeenCalledOnce();
+    } finally {
+      confirm.mockRestore();
+    }
   });
 });
 

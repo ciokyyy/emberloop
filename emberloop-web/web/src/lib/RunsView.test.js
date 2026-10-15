@@ -120,6 +120,26 @@ describe('RunsView preview and live run', () => {
     expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
   });
 
+  it('starts a scoped Run from the Project path instead of the discovery repo', async () => {
+    seedPreview();
+    discovery.repo = '/different/repo';
+    const starts = [];
+    const onNavigate = vi.fn();
+    stubRuns(async (url, opts) => {
+      const path = String(url);
+      if (path.endsWith('/api/runs') && opts?.method === 'POST') {
+        starts.push(JSON.parse(opts.body));
+        return { ok: true, json: async () => ({ run: { id: 'project-run', spec: preview.spec, repo: '/project', status: 'running', tickets: [] } }) };
+      }
+      return { ok: true, json: async () => ({ runs: [] }) };
+    });
+
+    const { container } = render(RunsView, { props: { workDir: '/project', projectId: 'project-1', onNavigate } });
+    await fireEvent.click(await within(container).findByRole('button', { name: 'Start Run' }));
+    expect(starts).toEqual([{ spec: preview.spec, repo: '/project' }]);
+    await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledWith('/p/project-1/runs/project-run'));
+  });
+
   it('shows both reviewer verdicts, tip freshness and the last refusal', async () => {
     const live = {
       id: 'run-1',

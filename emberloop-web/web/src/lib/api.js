@@ -410,12 +410,14 @@ export const addProject = (body) =>
     return res.json();
   });
 
-export const renameProject = (id, name) =>
+export const updateProject = (id, changes) =>
   fetch(url(`/api/projects/${id}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(changes),
   }).then(json);
+
+export const renameProject = (id, name) => updateProject(id, { name });
 
 export const removeProject = (id) => fetch(url(`/api/projects/${id}`), { method: 'DELETE' }).then(json);
 

@@ -1,7 +1,7 @@
-<!-- Rail 2 for Runs: spec discovery on top (repo directory, spec list),
-     then every Run newest first. A spec pick repaints the main RunsView
-     through the shared discovery store; the view owns the preview table,
-     the Start button and the live Run. -->
+<!-- Rail 2 for Runs: spec discovery on top (repo directory for global Runs,
+     fixed Project path for scoped Runs), then every Run newest first. A spec
+     pick repaints RunsView through the shared discovery store; the view owns
+     the preview table, Start button and live Run. -->
 <script>
   import { onMount, onDestroy } from 'svelte';
   import Button from './ui/button.svelte';
@@ -13,10 +13,13 @@
     ensureDiscoveryContext,
     initDiscoveryRepo,
     loadDiscovery,
+    resetDiscovery,
     selectDiscovery,
   } from './runsDiscovery.svelte.js';
 
   let { workDir = '', runId = '', ticketId = '', projectId = null, onNavigate = () => {} } = $props();
+  const scopedProject = $derived(projectId != null && projectId !== 'none');
+  let projectRepoKey = '';
 
   let runs = $state([]);
   // False until the shared summary request answers, so a cold load never reads
@@ -39,15 +42,34 @@
     void ensureDiscoveryContext(summary);
   });
 
-  // A newly selected Session re-defaults the repo directory.
+  // Project Runs bind spec discovery and starts to the selected Project path.
+  // Changing Projects clears the previous discovery state before loading the
+  // new Project's specs; global Runs keep their editable repo directory.
   $effect(() => {
-    if (workDir) discovery.repo = workDir;
+    const id = projectId;
+    const dir = workDir;
+    if (id != null && id !== 'none') {
+      const key = `${id}:${dir}`;
+      if (projectRepoKey === key) return;
+      projectRepoKey = key;
+      if (!dir) {
+        resetDiscovery();
+        discovery.message = 'Project folder is unavailable.';
+      } else {
+        void loadDiscovery(dir);
+      }
+      return;
+    }
+    projectRepoKey = '';
+    if (dir) discovery.repo = dir;
   });
 
   onMount(() => {
-    initDiscoveryRepo(workDir);
-    // A cold deep link waits for the list summary to seed the picker.
-    if (!runId && discovery.repo && !discovery.specs.length && !discovery.selected) void loadDiscovery();
+    if (!scopedProject) {
+      initDiscoveryRepo(workDir);
+      // A cold deep link waits for the list summary to seed the picker.
+      if (!runId && discovery.repo && !discovery.specs.length && !discovery.selected) void loadDiscovery();
+    }
     void runsStore.load().then(
       () => { loaded = true; },
       () => { loaded = true; },
@@ -82,16 +104,23 @@
     <div class="flex items-center justify-between px-2">
       <span class="text-xs font-medium text-muted-foreground">Specs</span>
     </div>
-    <form
-      class="flex flex-col gap-2"
-      onsubmit={(e) => {
-        e.preventDefault();
-        loadDiscovery();
-      }}
-    >
-      <FloatingInput class="min-w-0 flex-1" label="Repo directory" bind:value={discovery.repo} placeholder="/path/to/repo" />
-      <Button type="submit" size="sm" class="w-full">Find specs</Button>
-    </form>
+    {#if scopedProject}
+      <div class="flex flex-col gap-2" data-testid="project-runs-discovery">
+        <p class="break-all px-1 text-xs text-muted-foreground">Specs in {workDir || 'Project folder'}</p>
+        <Button type="button" size="sm" class="w-full" disabled={!workDir} onclick={() => loadDiscovery(workDir)}>Find specs</Button>
+      </div>
+    {:else}
+      <form
+        class="flex flex-col gap-2"
+        onsubmit={(e) => {
+          e.preventDefault();
+          loadDiscovery();
+        }}
+      >
+        <FloatingInput class="min-w-0 flex-1" label="Repo directory" bind:value={discovery.repo} placeholder="/path/to/repo" />
+        <Button type="submit" size="sm" class="w-full">Find specs</Button>
+      </form>
+    {/if}
     {#if discovery.error}
       <p role="alert" class="rounded-xl bg-destructive/10 px-3 py-1.5 text-xs text-destructive">{discovery.error}</p>
     {/if}

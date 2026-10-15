@@ -26,6 +26,7 @@
   import RunsSidebar from './lib/RunsSidebar.svelte';
   import ProjectSwitcher from './lib/ProjectSwitcher.svelte';
   import DashboardPage from './lib/DashboardPage.svelte';
+  import ProjectSettingsPage from './lib/ProjectSettingsPage.svelte';
   import DrawerNav from './lib/DrawerNav.svelte';
   import { modelLabel } from './lib/harnesses.js';
   import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason } from './lib/events.js';
@@ -33,7 +34,7 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, getGit, getDisk } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, updateProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
   import { runsStore } from './lib/runsStore.js';
 
@@ -55,6 +56,7 @@
   let lastSeq = $state(0);
   let connected = $state(true);
   let projects = $state([]);
+  let projectsLoaded = $state(false);
   let runs = $state([]);
   let draftProjectId = $state(null);
   let draftOpen = $state(false);
@@ -450,6 +452,8 @@
       projects = await listProjects();
     } catch {
       // The Session list reports an unreachable Daemon.
+    } finally {
+      projectsLoaded = true;
     }
   }
 
@@ -504,6 +508,26 @@
     await removeProject(p.id);
     if (draftProjectId === p.id) draftProjectId = null;
     await loadProjects();
+  }
+  async function renameFromSettings(p, name) {
+    const updated = await renameProject(p.id, name);
+    await loadProjects();
+    return updated;
+  }
+
+  async function saveProjectGist(p, gist) {
+    const updated = await updateProject(p.id, { gist });
+    await loadProjects();
+    return updated;
+  }
+
+  async function removeFromSettings(p) {
+    if (!window.confirm(`Remove "${p.name}" from the list? Its chats and files stay.`)) return false;
+    await removeProject(p.id);
+    if (draftProjectId === p.id) draftProjectId = null;
+    await loadProjects();
+    await navigate('/');
+    return true;
   }
 
   // A draft creates its Session only when the first prompt is sent.
@@ -952,6 +976,9 @@
   <div class="animate-rise flex min-h-0 flex-1 flex-col gap-3">
     {#if view === 'runs'}
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
+      {#if scopedProject}
+        <Button variant="ghost" class="justify-start" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}>Project settings</Button>
+      {/if}
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Specs and Runs</h1></div>
       <RunsSidebar
         workDir={isProjectScoped ? (scopedProject?.path ?? '') : (meta?.workDir ?? '')}
@@ -977,6 +1004,9 @@
       <Button variant="secondary" class="justify-start" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }}><FolderPlus />Add project</Button>
     {:else}
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
+      {#if scopedProject}
+        <Button variant="ghost" class="justify-start" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}>Project settings</Button>
+      {/if}
       {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
         <h1 class="text-sm font-semibold tracking-tight">{scopedProject?.name ?? (scopeProjectId === '' && isProjectScoped ? 'No project' : 'Sessions')}</h1>
@@ -1072,12 +1102,14 @@
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Project switcher"><Menu /></Button>
       </header>
-      <main class="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-4 py-6" data-testid="project-settings-shell">
-        <h1 class="text-xl font-semibold tracking-tight">{scopedProject?.name ?? 'Project'} settings</h1>
-        {#if scopedProjectRouteId}
-          <Button variant="outline" class="w-fit" onclick={() => navigate(buildPath({ name: 'project', projectId: scopedProjectRouteId }))}>Back to Sessions</Button>
-        {/if}
-      </main>
+      <ProjectSettingsPage
+        project={scopedProject}
+        loading={!projectsLoaded}
+        onBack={() => navigate(buildPath({ name: 'project', projectId: scopedProjectRouteId }))}
+        onRename={renameFromSettings}
+        onSaveGist={saveProjectGist}
+        onRemove={removeFromSettings}
+      />
     {:else if view === 'runs'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>

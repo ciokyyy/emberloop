@@ -207,14 +207,17 @@
 
   async function start() {
     if (!discovery.selected || starting) return;
+    const repo = projectId != null && projectId !== 'none' ? workDir : discovery.repo;
+    if (!repo) return;
     starting = true;
     runError = '';
     try {
-      const body = await startRun({ spec: discovery.selected, repo: discovery.repo });
-      applyRun(body.run ?? null);
-      if (run?.id) {
-        onNavigate?.(runPath(run.id));
-        subscribeRun(run.id);
+      const body = await startRun({ spec: discovery.selected, repo });
+      const startedRun = body.run ?? null;
+      applyRun(startedRun);
+      if (startedRun?.id) {
+        onNavigate?.(runPath(startedRun.id));
+        subscribeRun(startedRun.id);
       }
     } catch (e) {
       runError = e?.message?.includes('409') ? 'A run is already active for this spec.' : 'Could not start the Run.';
@@ -375,7 +378,7 @@
       {/if}
       <div class="ml-auto flex flex-wrap items-center gap-2">
         {#if run.status === 'done' || run.status === 'failed' || run.status === 'abandoned'}
-          <Button size="sm" variant="outline" disabled={starting || !discovery.selected} onclick={start}>Restart Run</Button>
+          <Button size="sm" variant="outline" disabled={starting || !discovery.selected || (projectId != null && projectId !== 'none' && !workDir)} onclick={start}>Restart Run</Button>
         {/if}
         {#if run.specBranch && (run.status !== 'abandoned' || run.error?.startsWith('abandon cleanup incomplete'))}
           {#if run.status !== 'abandoned'}
@@ -410,7 +413,7 @@
   {:else if discovery.selected}
     <div class="flex items-center gap-2">
       <h3 class="text-sm font-semibold tracking-tight">{discovery.previewTitle || discovery.selected}</h3>
-      <Button size="sm" class="ml-auto" disabled={starting || !discovery.tickets.length} onclick={start}>
+      <Button size="sm" class="ml-auto" disabled={starting || !discovery.tickets.length || (projectId != null && projectId !== 'none' && !workDir)} onclick={start}>
         {starting ? 'Starting…' : 'Start Run'}
       </Button>
     </div>

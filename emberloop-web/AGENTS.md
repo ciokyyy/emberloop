@@ -127,7 +127,13 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Memory package tests are mapped in `memory/AGENTS.md`; browser tests are
   mapped in `web/README.md`.
 
-- Browser project scope: `/` renders the active-work Dashboard from `GET /api/dashboard`; the Project switcher routes by stable id to `/p/<id>` or `/p/none`, filters scoped Sessions and Runs, and is available with the Dashboard in the phone drawer. `/s/<id>` stays canonical and derives scope from Session metadata. `/quota`, `/providers`, `/memory` and account `/settings` remain global.
+- Browser project scope: `/` renders the active-work Dashboard; stable-id
+  Project routes scope Sessions and Runs, with `/p/none` for home Sessions.
+  `/p/<id>/runs` filters Run summaries and discovers/starts specs at the Project
+  path without a folder field. `/p/<id>/settings` supports rename, removal
+  (chats and files stay) and gist editing, with no override fields. `/s/<id>`
+  stays canonical and derives scope from Session metadata. Account pages remain
+  global; the switcher and Dashboard are available in the phone drawer.
 - Browser boot: the Dashboard and global pages do not wait for Session or Run lists. Project scope loads Sessions asynchronously; `/runs` and `/p/<id>/runs` load summaries in `RunsSidebar`. Session events while another area is open mark the list stale; returning to a Project scope refreshes before selecting its last/newest Session. `router.test.js` and `App.test.js` cover URL round trips, scope, global routes, Dashboard and drawer navigation.
 
 ## Adapter retry

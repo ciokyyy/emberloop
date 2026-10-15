@@ -67,7 +67,17 @@ describe('RunsSidebar spec discovery', () => {
     await fireEvent.click(within(container).getByRole('button', { name: /find specs/i }));
     expect(await within(container).findByText(/demo spec/i)).toBeTruthy();
   });
+  it('loads specs from the Project path without asking for a folder', async () => {
+    stubSpecs({ specs: [{ spec: '/project/.scratch/demo/spec.md', title: 'Demo spec', tickets: 2 }] });
+    const { container } = render(RunsSidebar, { props: { workDir: '/project', projectId: 'project-1' } });
+    expect(await within(container).findByTestId('project-runs-discovery')).toBeTruthy();
+    expect(within(container).getByText('Specs in /project')).toBeTruthy();
+    expect(within(container).queryByLabelText(/repo directory/i)).toBeNull();
+    expect(await within(container).findByRole('button', { name: /demo spec/i })).toBeTruthy();
+    expect(discovery.repo).toBe('/project');
+  });
 });
+
 
 describe('RunsSidebar run list', () => {
   const runsBody = {

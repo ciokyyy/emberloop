@@ -39,7 +39,7 @@ CLAUDE.md and get a system-prompt pointer to this file instead. The repo check i
 Index paths are repo-relative. Every doc below is listed here or in the
 child it belongs to, and every entry must resolve to a file.
 
-- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login, sign-in, owners, per-User harness dirs, Run summaries, active-only Project Dashboard, Jev draft Project-pick banner, persisted Ticket-to-Session index, read-only quota pollers, admin-only pig provider keys, ChatGPT device-code connect, Claude auth login through a host PTY, CLI-only OAuth guidance and the probed redirect-base setting, and Antigravity callback login); indexes the el library, memory, web source and Backend spikes
+- `emberloop-web/AGENTS.md` — the browser UI and Daemon module (fake, pig and claude Backends; users, cookie login, sign-in, owners, per-User harness dirs, Run summaries, active-work Project Dashboard, Jev draft Project-pick banner, folderless Project Runs and editable Project gist settings, persisted Ticket-to-Session index, read-only quota pollers, admin-only pig provider keys, ChatGPT device-code connect, Claude auth login through a host PTY, CLI-only OAuth guidance and the probed redirect-base setting, and Antigravity callback login); indexes the el library, memory, web source and Backend spikes
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
