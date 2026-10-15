@@ -134,6 +134,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   (chats and files stay) and gist editing, with no override fields. `/s/<id>`
   stays canonical and derives scope from Session metadata. Account pages remain
   global; the switcher and Dashboard are available in the phone drawer.
+- Browser Settings: `/settings` is the hub on phones and redirects to `/settings/agents` on desktop. Each concern has a stable `/settings/<section>` route, grouped Workspace and You in `SettingsNav.svelte`; each page shows its Global, Admin or You scope and a phone return link. Daemon-backed settings pages show one Revert/Save bar when their first edit differs from the loaded snapshot. Profile, notification and device preference components retain their existing save/storage behavior. `SettingsHub.test.js`, `SettingsRoutes.test.js` and `router.test.js` cover grouping, routes, scope pills, phone navigation and the save bar.
 - Browser boot: the Dashboard and global pages do not wait for Session or Run lists. Project scope loads Sessions asynchronously; `/runs` and `/p/<id>/runs` load summaries in `RunsSidebar`. Session events while another area is open mark the list stale; returning to a Project scope refreshes before selecting its last/newest Session. `router.test.js` and `App.test.js` cover URL round trips, scope, global routes, Dashboard and drawer navigation.
 
 ## Adapter retry

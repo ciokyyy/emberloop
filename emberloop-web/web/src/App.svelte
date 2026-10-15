@@ -15,6 +15,9 @@
   import DiskBanner from './lib/DiskBanner.svelte';
   import Composer from './lib/Composer.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
+  import SettingsHub from './lib/SettingsHub.svelte';
+  import SettingsNav from './lib/SettingsNav.svelte';
+  import { SETTINGS_PAGES } from './lib/settings.js';
   import RunsView from './lib/RunsView.svelte';
   import QuotaPage from './lib/QuotaPage.svelte';
   import ProvidersPage from './lib/ProvidersPage.svelte';
@@ -139,20 +142,7 @@
     }
     return runsStore.subscribe((value) => { runs = value; });
   });
-  // Rail 2 for Settings: jump to a section by its heading.
-  let settingsSections = $state([]);
-  $effect(() => {
-    if (view !== 'settings') return;
-    const t = setTimeout(() => {
-      settingsSections = [...document.querySelectorAll('[data-testid="settings-page"] h2')].map((h) => h.textContent.trim());
-    }, 150);
-    return () => clearTimeout(t);
-  });
-  function jumpSetting(title) {
-    menuOpen = false;
-    const h = [...document.querySelectorAll('[data-testid="settings-page"] h2')].find((x) => x.textContent.trim() === title);
-    h?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
+  const isPhone = () => !!window.matchMedia?.('(max-width: 767px)').matches;
   let menuOpen = $state(false);
   // The phone drawer owns one transient history entry while open, so system
   // Back closes it instead of leaving the app. A navigation from the drawer
@@ -378,6 +368,11 @@
     }
     route = r;
     if (r.name === 'settings') {
+      if (!r.section && !isPhone()) {
+        const destination = '/settings/agents';
+        history.replaceState(null, '', destination);
+        return applyRoute(destination);
+      }
       view = 'settings';
       menuOpen = false;
       return;
@@ -1001,11 +996,7 @@
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Project settings</h1></div>
     {:else if view === 'settings'}
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Settings</h1></div>
-      <nav class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto" data-testid="settings-nav">
-        {#each settingsSections as t (t)}
-          <button type="button" class="rounded-xl px-2.5 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => jumpSetting(t)}>{t}</button>
-        {/each}
-      </nav>
+      <SettingsNav current={route.section ?? null} onNavigate={navigate} />
     {:else if view === 'quota' || view === 'providers'}
       <QuotaSidebar onNavigate={navigate} inDrawer={inDrawer} current={view} />
     {:else if view === 'dashboard'}
@@ -1082,9 +1073,16 @@
   <div class="flex min-w-0 flex-1 flex-col">
     {#if view === 'settings'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
+        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Settings menu"><Menu /></Button>
+        <span class="truncate text-base font-semibold">{route.section ? (SETTINGS_PAGES[route.section]?.label ?? 'Settings') : 'Settings'}</span>
       </header>
-      <SettingsPage onBack={() => navigate('/')} admin={!!user?.admin} />
+      {#if route.section}
+        {#key route.section}
+          <SettingsPage section={route.section} onBack={() => navigate('/settings')} admin={!!user?.admin} />
+        {/key}
+      {:else}
+        <SettingsHub onNavigate={navigate} />
+      {/if}
     {:else if view === 'quota'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
@@ -1197,7 +1195,7 @@
             {#if currentId && meta?.compressBlock}
               {@const bannerFor = currentId}
               {#key bannerFor}
-                <CompressBanner sessionId={bannerFor} onChangeModel={() => navigate('/settings')} onDismissed={() => clearCompressBlock(bannerFor)} />
+                <CompressBanner sessionId={bannerFor} onChangeModel={() => navigate('/settings/agents')} onDismissed={() => clearCompressBlock(bannerFor)} />
               {/key}
             {/if}
             {#if currentId && queue.length}

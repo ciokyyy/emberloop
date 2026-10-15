@@ -1,10 +1,12 @@
 <!-- Settings page: harness, model and effort per role, grouped like Apple Settings. -->
 <script>
   import { ArrowDown, ArrowLeft, ArrowUp, Check, Trash2 } from '@lucide/svelte';
+  import { onMount } from 'svelte';
   import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
   import Switch from './ui/switch.svelte';
   import Button from './ui/button.svelte';
+  import Badge from './ui/badge.svelte';
   import FloatingInput from './ui/floating-input.svelte';
   import Combobox from './ui/combobox.svelte';
   import Notifications from './Notifications.svelte';
@@ -12,7 +14,24 @@
   import ProfileSettings from './ProfileSettings.svelte';
   import SoundSettings from './SoundSettings.svelte';
   import VoiceSettings from './VoiceSettings.svelte';
-  let { onBack = () => {}, admin = false } = $props();
+  import { SETTINGS_PAGES } from './settings.js';
+  import { settingsIcons } from './settingsIcons.js';
+  let { section = 'agents', onBack = () => {}, admin = false } = $props();
+
+  const DATA_SECTIONS = ['agents', 'runs', 'context', 'memory', 'access'];
+  const descriptions = {
+    agents: 'Choose the harness and model used for each Session and Run role.',
+    runs: 'Set the global concurrency limit for each Run.',
+    context: 'Keep long Sessions small and readable.',
+    memory: 'Configure how remembered notes become Rules.',
+    access: 'Manage who can sign in to this Daemon.',
+    profile: 'Standing instructions agents can use about you.',
+    notifications: 'Choose whether this device receives push notifications.',
+    'sound-voice': 'Tune interface sounds, voice input and app installation for this device.',
+  };
+  const page = $derived(SETTINGS_PAGES[section] ?? SETTINGS_PAGES.agents);
+  const Icon = $derived(settingsIcons[page.icon]);
+  const pageDescription = $derived(descriptions[section] ?? '');
 
   const GROUPS = [
     {
@@ -78,7 +97,7 @@
     return fallback?.model ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }] : [];
   }
   const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
-  const dirty = $derived(snapshot() !== saved);
+  const dirty = $derived(DATA_SECTIONS.includes(section) && snapshot() !== saved);
 
   async function models(harness) {
     let list = modelsForHarness(harness);
@@ -160,7 +179,7 @@
       loading = false;
     }
   }
-  load();
+  onMount(() => { if (DATA_SECTIONS.includes(section)) void load(); });
 
   const itemsFor = (harness, current) => modelItems(harness, catalogue[harness] ?? [], current);
 
@@ -296,6 +315,7 @@
     const prev = JSON.parse(saved);
     roles = prev.roles;
     maxTickets = prev.maxTickets;
+    diskCap = prev.diskCap;
     pigTitle = prev.pigTitle;
     sessionTitles = prev.sessionTitles;
     compress = prev.compress;
@@ -309,23 +329,30 @@
 <div class="relative flex min-h-0 flex-1 flex-col" data-testid="settings-page">
   <div class="flex-1 overflow-auto px-4 pt-6 pb-32">
     <div class="mx-auto flex w-full max-w-3xl flex-col gap-8">
-      <div class="flex flex-col gap-1">
-        <Button variant="ghost" size="sm" class="-ml-3 w-fit text-muted-foreground" onclick={onBack}><ArrowLeft />Back</Button>
-        <h1 class="text-3xl font-semibold tracking-tight">Settings</h1>
-        <p class="text-sm text-muted-foreground">Choose the harness, model, and effort each role runs with. Changes apply to new agents.</p>
+      <div class="flex flex-col gap-2">
+        <Button variant="ghost" size="sm" class="-ml-2 min-h-11 w-fit text-muted-foreground md:hidden" onclick={onBack}><ArrowLeft />Settings</Button>
+        <div class="flex flex-wrap items-center gap-2.5">
+          <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-card"><Icon class="size-4" /></span>
+          <h1 class="text-3xl font-semibold tracking-tight max-md:text-2xl">{page.label}</h1>
+          <Badge variant="outline" data-testid="settings-scope">{page.scope}</Badge>
+        </div>
+        {#if pageDescription}<p class="text-sm text-muted-foreground">{pageDescription}</p>{/if}
       </div>
-
-      {#if error}
+      {#if DATA_SECTIONS.includes(section) && error}
         <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</p>
       {/if}
 
-      {#if loading}
+      {#if !admin && (section === 'memory' || section === 'access')}
+        <p role="status" class="rounded-xl bg-muted px-4 py-3 text-sm text-muted-foreground">Only admins can change these settings.</p>
+      {/if}
+      {#if DATA_SECTIONS.includes(section) && loading}
         <div class="flex flex-col gap-3">
           {#each [0, 1, 2] as i (i)}
             <div class="h-20 animate-pulse rounded-2xl bg-card"></div>
           {/each}
         </div>
       {:else}
+        {#if section === 'runs'}
         <section class="animate-rise flex flex-col gap-2">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Concurrency</h2>
@@ -361,6 +388,8 @@
             {/if}
           </div>
         </section>
+        {/if}
+        {#if section === 'agents'}
         <section class="animate-rise flex flex-col gap-2" data-testid="run-chains-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Run Chains</h2>
@@ -408,6 +437,8 @@
             {/each}
           </div>
         </section>
+        {/if}
+        {#if section === 'context'}
         <section class="animate-rise flex flex-col gap-2" data-testid="compress-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Context compression</h2>
@@ -463,12 +494,13 @@
                 maxlength="2000"
                 bind:value={compress.instructions}
                 placeholder="Keep file paths, open decisions and failing tests."
-                class="w-full resize-y rounded-xl border border-input bg-transparent px-3.5 py-2.5 text-sm shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
+                class="w-full resize-y rounded-xl border border-input bg-transparent px-3.5 py-2.5 text-base shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 md:text-sm"
               ></textarea>
             </div>
           </div>
         </section>
-        {#if admin}
+        {/if}
+        {#if section === 'memory' && admin}
         <section class="animate-rise flex flex-col gap-2" data-testid="decider-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Memory deciders</h2>
@@ -532,11 +564,14 @@
           </div>
         </section>
         {/if}
-        <ProfileSettings />
-        <Notifications />
-        <InstallApp />
-        <SoundSettings />
-        <VoiceSettings />
+        {#if section === 'profile'}
+          <ProfileSettings />
+        {:else if section === 'notifications'}
+          <Notifications />
+        {:else if section === 'sound-voice'}
+          <div class="flex flex-col gap-8"><SoundSettings /><VoiceSettings /><InstallApp /></div>
+        {/if}
+        {#if section === 'context'}
         <section class="animate-rise flex flex-col gap-2">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Session names</h2>
@@ -561,7 +596,8 @@
             </div>
           </div>
         </section>
-        {#if admin}
+        {/if}
+        {#if section === 'access' && admin}
         <section class="animate-rise flex flex-col gap-2" data-testid="accounts-settings">
           <div class="px-1">
             <h2 class="text-sm font-semibold">Accounts</h2>
@@ -578,6 +614,7 @@
           </div>
         </section>
         {/if}
+        {#if section === 'agents'}
         {#each GROUPS as g (g.title)}
           <section class="animate-rise flex flex-col gap-2">
             <div class="px-1">
@@ -611,12 +648,13 @@
             </div>
           </section>
         {/each}
+        {/if}
       {/if}
     </div>
   </div>
 
   {#if dirty || justSaved}
-    <div class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-5">
+    <div class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
       <div class="animate-rise pointer-events-auto flex items-center gap-3 rounded-full border bg-popover/90 py-2 pr-2 pl-5 shadow-2xl backdrop-blur-xl">
         {#if justSaved && !dirty}
           <span class="flex items-center gap-1.5 text-sm text-green-300"><Check class="size-4" />Saved</span>

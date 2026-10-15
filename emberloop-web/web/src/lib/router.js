@@ -1,3 +1,4 @@
+import { SETTINGS_PAGE_IDS } from './settings.js';
 // Browser router: stable Project-id paths and canonical Session URLs.
 // Pure parse/build functions live here so tests cover them without the DOM;
 // App.svelte owns history.pushState and popstate around it.
@@ -48,6 +49,8 @@ export function parsePath(input) {
   if (segs[0] === 'runs' && segs.length === 3 && segs[1] && segs[2])
     return { name: 'ticket', runId: segs[1], ticketId: segs[2] };
   if (segs[0] === 'settings' && segs.length === 1) return { name: 'settings' };
+  if (segs[0] === 'settings' && segs.length === 2 && SETTINGS_PAGE_IDS.includes(segs[1]))
+    return { name: 'settings', section: segs[1] };
   if (segs[0] === 'quota' && segs.length === 1) return { name: 'quota' };
   if (segs[0] === 'providers' && segs.length === 1) return { name: 'providers' };
   if (segs[0] === 'memory' && segs.length === 1) return { name: 'memory' };
@@ -83,7 +86,7 @@ export function buildPath(route) {
     case 'ticket':
       return `/runs/${encodeURIComponent(route.runId)}/${encodeURIComponent(route.ticketId)}`;
     case 'settings':
-      return '/settings';
+      return route.section ? `/settings/${encodeURIComponent(route.section)}` : '/settings';
     case 'quota':
       return '/quota';
     case 'providers':
@@ -101,6 +104,7 @@ export function sameRoute(a, b) {
   if (a.name === 'session') return a.id === b.id && (a.at ?? 0) === (b.at ?? 0);
   if (a.name === 'run') return a.runId === b.runId;
   if (a.name === 'ticket') return a.runId === b.runId && a.ticketId === b.ticketId;
+  if (a.name === 'settings') return a.section === b.section;
   if (a.name === 'project' || a.name === 'project-runs' || a.name === 'project-settings') return a.projectId === b.projectId;
   if (a.name === 'project-run') return a.projectId === b.projectId && a.runId === b.runId;
   if (a.name === 'project-ticket') return a.projectId === b.projectId && a.runId === b.runId && a.ticketId === b.ticketId;

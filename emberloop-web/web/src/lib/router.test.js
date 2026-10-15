@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { SETTINGS_PAGE_IDS, settingsPath } from './settings.js';
 import { parsePath, buildPath, sameRoute } from './router.js';
 
 describe('parsePath', () => {
@@ -12,6 +13,16 @@ describe('parsePath', () => {
     expect(parsePath('/memory')).toEqual({ name: 'memory' });
     expect(parsePath('/runs')).toEqual({ name: 'runs' });
     expect(parsePath('/runs/')).toEqual({ name: 'runs' });
+  });
+
+  it('parses and builds one route for every Settings page', () => {
+    for (const section of SETTINGS_PAGE_IDS) {
+      const path = settingsPath(section);
+      expect(parsePath(path)).toEqual({ name: 'settings', section });
+      expect(buildPath({ name: 'settings', section })).toBe(path);
+    }
+    expect(parsePath('/settings/not-a-page').name).toBe('unknown');
+    expect(sameRoute({ name: 'settings', section: 'agents' }, { name: 'settings', section: 'runs' })).toBe(false);
   });
 
   it('parses session, run and ticket paths', () => {

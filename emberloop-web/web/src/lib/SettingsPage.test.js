@@ -32,11 +32,16 @@ function stubSettings({ settings, failPut = false, seen = {} }) {
 }
 
 const base = { roles: {}, max_tickets: 2, max_tickets_from_env: false };
+let section = 'agents';
+function renderSettings(options = {}) {
+  return render(SettingsPage, { ...options, props: { section, ...(options.props ?? {}) } });
+}
 
 describe('SettingsPage max_tickets', () => {
+  beforeEach(() => { section = 'runs'; });
   it('shows the saved value', async () => {
     stubSettings({ settings: base });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const input = await within(container).findByLabelText('Maximum tickets');
     expect(input.value).toBe('2');
   });
@@ -44,7 +49,7 @@ describe('SettingsPage max_tickets', () => {
   it('saves an edit with the roles', async () => {
     const seen = {};
     stubSettings({ settings: base, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const input = await within(container).findByLabelText('Maximum tickets');
     await fireEvent.input(input, { target: { value: '5' } });
     await tick();
@@ -56,7 +61,7 @@ describe('SettingsPage max_tickets', () => {
 
   it('locks the field with a note under an environment override', async () => {
     stubSettings({ settings: { roles: {}, max_tickets: 1, max_tickets_from_env: true } });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const input = await within(container).findByLabelText('Maximum tickets');
     expect(input.disabled).toBe(true);
     expect(within(container).getByText(/EL_MAX_TICKETS/)).toBeTruthy();
@@ -64,7 +69,7 @@ describe('SettingsPage max_tickets', () => {
 
   it('surfaces a rejected value as an error', async () => {
     stubSettings({ settings: base, failPut: true });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const input = await within(container).findByLabelText('Maximum tickets');
     await fireEvent.input(input, { target: { value: '0' } });
     await tick();
@@ -82,7 +87,7 @@ describe('SettingsPage max_tickets', () => {
       },
       seen,
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const input = await within(container).findByLabelText('Maximum tickets');
     // Disabled inputs take no typing, but the event still flips the binding:
     // enough to make the form dirty and reach Save.
@@ -92,13 +97,30 @@ describe('SettingsPage max_tickets', () => {
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect('max_tickets' in seen.body).toBe(false);
   });
+  it('shows Revert and Save on the first change and Revert restores the saved value', async () => {
+    stubSettings({ settings: base });
+    const { container } = renderSettings();
+    const input = await within(container).findByLabelText('Maximum tickets');
+    expect(within(container).queryByRole('button', { name: 'Save' })).toBeNull();
+
+    await fireEvent.input(input, { target: { value: '5' } });
+    await tick();
+    expect(await within(container).findByText('Unsaved changes')).toBeTruthy();
+    expect(within(container).getByRole('button', { name: 'Revert' })).toBeTruthy();
+    expect(within(container).getByRole('button', { name: 'Save' })).toBeTruthy();
+
+    await fireEvent.click(within(container).getByRole('button', { name: 'Revert' }));
+    expect(input.value).toBe('2');
+    expect(within(container).queryByText('Unsaved changes')).toBeNull();
+  });
 
 });
 
 describe('SettingsPage session names', () => {
+  beforeEach(() => { section = 'context'; });
   async function dirtyAndSave(container) {
-    const input = await within(container).findByLabelText('Maximum tickets');
-    await fireEvent.input(input, { target: { value: '4' } });
+    const input = await within(container).findByLabelText('Summary focus');
+    await fireEvent.input(input, { target: { value: 'preserve paths' } });
     await tick();
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
@@ -107,7 +129,7 @@ describe('SettingsPage session names', () => {
   it('shows the saved pig naming model and sends it back', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, roles: { 'pig-title': { harness: 'pig', model: 'auto' } }, session_titles: true }, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const model = await within(container).findByLabelText('Pig naming model');
     expect(model.textContent).toMatch(/auto/i);
     await dirtyAndSave(container);
@@ -118,7 +140,7 @@ describe('SettingsPage session names', () => {
   it('leaves unconfigured roles out of the save', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, roles: { worker: { harness: 'claude', model: 'opus', effort: 'high' } } }, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     await dirtyAndSave(container);
     expect(Object.keys(seen.body.roles).sort()).toEqual(['pig-title', 'worker']);
   });
@@ -126,7 +148,7 @@ describe('SettingsPage session names', () => {
   it('no pig model clears the role and claude naming off is saved', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, session_titles: false }, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     await within(container).findByLabelText('Name claude Sessions');
     await dirtyAndSave(container);
     expect(seen.body.roles['pig-title']).toEqual({ harness: '', model: '' });
@@ -136,7 +158,7 @@ describe('SettingsPage session names', () => {
   it('an environment override locks the toggle and stays out of the save', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, session_titles: true, session_titles_from_env: true }, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     expect(await within(container).findByText(/EL_SESSION_TITLES/)).toBeTruthy();
     await dirtyAndSave(container);
     expect('session_titles' in seen.body).toBe(false);
@@ -144,13 +166,14 @@ describe('SettingsPage session names', () => {
 });
 
 describe('SettingsPage context compression', () => {
+  beforeEach(() => { section = 'context'; });
   it('shows saved values and sends the edited ones', async () => {
     const seen = {};
     stubSettings({
       settings: { ...base, compress: { auto_compress: false, compress_threshold_percent: 70, compress_threshold_tokens: 120000, compress_cooldown: 3, compress_instructions: 'keep ids' } },
       seen,
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const threshold = await within(container).findByLabelText('Threshold %');
     expect(threshold.value).toBe('70');
     expect(within(container).getByLabelText('Threshold tokens').value).toBe('120000');
@@ -174,7 +197,7 @@ describe('SettingsPage context compression', () => {
 
   it('uses the defaults when the Daemon sends none', async () => {
     stubSettings({ settings: base });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     expect((await within(container).findByLabelText('Threshold %')).value).toBe('80');
     expect(within(container).getByLabelText('Threshold tokens').value).toBe('300000');
     expect(within(container).getByLabelText('Turns').value).toBe('5');
@@ -183,7 +206,7 @@ describe('SettingsPage context compression', () => {
 
   it('disables threshold and cooldown while auto-compress is off', async () => {
     stubSettings({ settings: { ...base, compress: { auto_compress: false } } });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     expect((await within(container).findByLabelText('Threshold %')).disabled).toBe(true);
     expect(within(container).getByLabelText('Threshold tokens').disabled).toBe(true);
     expect(within(container).getByLabelText('Turns').disabled).toBe(true);
@@ -191,10 +214,11 @@ describe('SettingsPage context compression', () => {
 });
 
 describe('SettingsPage compress model', () => {
+  beforeEach(() => { section = 'context'; });
   it('shows the saved compress model and sends it back', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, compress: { compress_model: 'auto' } }, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const model = await within(container).findByLabelText('Compress model');
     expect(model.textContent).toMatch(/auto/i);
     await fireEvent.input(within(container).getByLabelText('Summary focus'), { target: { value: 'keep paths' } });
@@ -207,7 +231,7 @@ describe('SettingsPage compress model', () => {
   it('sends an empty model when none is picked', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, compress: { auto_compress: true } }, seen });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     await within(container).findByLabelText('Compress model');
     await fireEvent.input(within(container).getByLabelText('Summary focus'), { target: { value: 'keep paths' } });
     await tick();
@@ -218,29 +242,30 @@ describe('SettingsPage compress model', () => {
 
   it('shows why Compress is off until a compress model is set', async () => {
     stubSettings({ settings: { ...base, compress_note: 'no compress model: pick one in Settings' } });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     expect(await within(container).findByText('no compress model: pick one in Settings')).toBeTruthy();
   });
 
   it('warns that auto-compress needs a compress model', async () => {
     stubSettings({ settings: { ...base, compress: { auto_compress: true }, compress_note: 'no compress model: pick one in Settings' } });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     expect(await within(container).findByText('Auto-compress needs a compress model.')).toBeTruthy();
   });
 
   it('no warning while auto-compress is off', async () => {
     stubSettings({ settings: { ...base, compress: { auto_compress: false }, compress_note: 'no compress model: pick one in Settings' } });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     await within(container).findByLabelText('Compress model');
     expect(within(container).queryByText('Auto-compress needs a compress model.')).toBeNull();
   });
 });
 
 describe('SettingsPage accounts', () => {
+  beforeEach(() => { section = 'access'; });
   it('shows the sign-up switch to the admin and saves it', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, signup_enabled: true }, seen });
-    const { container } = render(SettingsPage, { props: { admin: true } });
+    const { container } = renderSettings({ props: { admin: true } });
     const toggle = await within(container).findByRole('switch', { name: 'Allow sign-up' });
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     await fireEvent.click(toggle);
@@ -250,21 +275,16 @@ describe('SettingsPage accounts', () => {
     expect(seen.body.signup_enabled).toBe(false);
   });
 
-  it('hides the switch from other Users and never sends the key', async () => {
-    const seen = {};
-    stubSettings({ settings: { ...base, signup_enabled: false }, seen });
-    const { container } = render(SettingsPage);
-    const workers = await within(container).findByLabelText('Maximum tickets');
+  it('shows access settings as admin-only to other Users', async () => {
+    stubSettings({ settings: { ...base, signup_enabled: false } });
+    const { container } = renderSettings();
+    expect(await within(container).findByText('Only admins can change these settings.')).toBeTruthy();
     expect(within(container).queryByRole('switch', { name: 'Allow sign-up' })).toBeNull();
-    await fireEvent.input(workers, { target: { value: '4' } });
-    await tick();
-    await fireEvent.click(await within(container).findByText('Save'));
-    expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect('signup_enabled' in seen.body).toBe(false);
   });
 });
 
 describe('SettingsPage memory deciders', () => {
+  beforeEach(() => { section = 'memory'; });
   it('shows saved values and sends the edited ones', async () => {
     const seen = {};
     stubSettings({
@@ -274,7 +294,7 @@ describe('SettingsPage memory deciders', () => {
       },
       seen,
     });
-    const { container } = render(SettingsPage, { props: { admin: true } });
+    const { container } = renderSettings({ props: { admin: true } });
     expect(await within(container).findByLabelText('Decider mode')).toBeTruthy();
     expect(within(container).getByLabelText('Memory model').textContent).toMatch(/auto/i);
     expect(within(container).getByLabelText('Low').value).toBe('0.4');
@@ -294,32 +314,27 @@ describe('SettingsPage memory deciders', () => {
 
   it('uses the defaults when the Daemon sends none', async () => {
     stubSettings({ settings: base });
-    const { container } = render(SettingsPage, { props: { admin: true } });
+    const { container } = renderSettings({ props: { admin: true } });
     expect((await within(container).findByLabelText('Low')).value).toBe('0.35');
     expect(within(container).getByLabelText('High').value).toBe('0.7');
   });
 
   it('shows why confirmation falls back to the heuristic', async () => {
     stubSettings({ settings: { ...base, decider_note: 'no memory model: confirmation falls back to the heuristic' } });
-    const { container } = render(SettingsPage, { props: { admin: true } });
+    const { container } = renderSettings({ props: { admin: true } });
     expect(await within(container).findByText('no memory model: confirmation falls back to the heuristic')).toBeTruthy();
   });
 
-  it('hides the section from other Users and never sends the key', async () => {
-    const seen = {};
-    stubSettings({ settings: base, seen });
-    const { container } = render(SettingsPage);
-    const workers = await within(container).findByLabelText('Maximum tickets');
+  it('shows memory decider settings as admin-only to other Users', async () => {
+    stubSettings({ settings: base });
+    const { container } = renderSettings();
+    expect(await within(container).findByText('Only admins can change these settings.')).toBeTruthy();
     expect(within(container).queryByTestId('decider-settings')).toBeNull();
-    await fireEvent.input(workers, { target: { value: '4' } });
-    await tick();
-    await fireEvent.click(await within(container).findByText('Save'));
-    expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect('decider' in seen.body).toBe(false);
   });
 });
 
 describe('SettingsPage jev decider', () => {
+  beforeEach(() => { section = 'memory'; });
   it('shows saved values and sends the edited ones without the key', async () => {
     const seen = {};
     stubSettings({
@@ -330,7 +345,7 @@ describe('SettingsPage jev decider', () => {
       },
       seen,
     });
-    const { container } = render(SettingsPage, { props: { admin: true } });
+    const { container } = renderSettings({ props: { admin: true } });
     expect((await within(container).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
     expect(within(container).getByLabelText('Model').value).toBe('jev-latest');
     expect(await within(container).findByText(/leave this host/)).toBeTruthy();
@@ -350,7 +365,7 @@ describe('SettingsPage jev decider', () => {
   it('sends a typed key and keeps it out of later saves', async () => {
     const seen = {};
     stubSettings({ settings: { ...base, jev: { base_url: '', model: 'jev-latest', api_key_set: false } }, seen });
-    const { container } = render(SettingsPage, { props: { admin: true } });
+    const { container } = renderSettings({ props: { admin: true } });
     await fireEvent.input(await within(container).findByLabelText('API key'), { target: { value: 'k' } });
     await tick();
     await fireEvent.click(await within(container).findByText('Save'));
@@ -358,21 +373,16 @@ describe('SettingsPage jev decider', () => {
     expect(seen.body.jev.api_key).toBe('k');
   });
 
-  it('hides the jev fields from other Users and never sends them', async () => {
-    const seen = {};
-    stubSettings({ settings: base, seen });
-    const { container } = render(SettingsPage);
+  it('keeps the Jev endpoint hidden from other Users', async () => {
+    stubSettings({ settings: base });
+    const { container } = renderSettings();
+    expect(await within(container).findByText('Only admins can change these settings.')).toBeTruthy();
     expect(within(container).queryByLabelText('Endpoint URL')).toBeNull();
-    const workers = await within(container).findByLabelText('Maximum tickets');
-    await fireEvent.input(workers, { target: { value: '4' } });
-    await tick();
-    await fireEvent.click(await within(container).findByText('Save'));
-    expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect('jev' in seen.body).toBe(false);
   });
 });
 
 describe('SettingsPage Run Chains', () => {
+  beforeEach(() => { section = 'agents'; });
   it('edits each per-role Chain, including its order, and saves the result', async () => {
     const seen = {};
     stubSettings({
@@ -386,7 +396,7 @@ describe('SettingsPage Run Chains', () => {
       },
       seen,
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const chains = await within(container).findByTestId('run-chains-settings');
     expect(within(chains).getByTestId('run-chain-worker')).toBeTruthy();
     expect(within(chains).getByTestId('run-chain-reviewer-spec')).toBeTruthy();
@@ -420,7 +430,7 @@ describe('SettingsPage Run Chains', () => {
         },
       },
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const chains = await within(container).findByTestId('run-chains-settings');
     expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/auto/i);
     expect(within(chains).getByLabelText('Spec reviewer Chain entry 1 model').textContent).toMatch(/sonnet/i);
@@ -440,7 +450,7 @@ describe('SettingsPage Run Chains', () => {
       },
       seen,
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const chains = await within(container).findByTestId('run-chains-settings');
     expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/sonnet/i);
 
@@ -459,9 +469,10 @@ describe('SettingsPage Run Chains', () => {
       settings: { ...base, chains: { implementer: [{ backend: 'claude', model: 'sonnet' }] } },
       seen,
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     await within(container).findByTestId('run-chains-settings');
-    await fireEvent.input(await within(container).findByLabelText('Maximum tickets'), { target: { value: '4' } });
+    await fireEvent.click(within(container).getByLabelText('Orchestrator model'));
+    await fireEvent.click(await screen.findByRole('option', { name: /auto/i }));
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect(seen.body.chains).toBeUndefined();
@@ -479,7 +490,7 @@ describe('SettingsPage Run Chains', () => {
       },
       seen,
     });
-    const { container } = render(SettingsPage);
+    const { container } = renderSettings();
     const chains = await within(container).findByTestId('run-chains-settings');
     await fireEvent.click(within(chains).getByLabelText('Remove Worker Chain entry 1'));
     await fireEvent.click(await within(container).findByText('Save'));
