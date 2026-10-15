@@ -4,8 +4,8 @@
 
 **Blocked by:** 34-settings-hub
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Runs page shows the new cap label and explanation
-- [ ] Memory page shows the decider as a segmented control and the Jev endpoint collapsed
-- [ ] Vitest covers both pages; repo check and `npm test` pass
+- [x] Runs page shows the new cap label and explanation
+- [x] Memory page shows the decider as a segmented control and the Jev endpoint collapsed
+- [x] Vitest covers both pages; repo check and `npm test` pass
