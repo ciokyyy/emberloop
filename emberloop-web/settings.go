@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// roleSetting is one role's harness and model, as stored under "roles" in
-// the shared el settings file. Unknown fields (effort) round-trip.
+// roleSetting is a legacy role's harness, model and effort in the shared el
+// settings file. The Agents migration mirrors each configured chain primary.
 type roleSetting struct {
 	Harness string `json:"harness"`
 	Model   string `json:"model"`
@@ -102,13 +102,13 @@ func (d *Daemon) settingsRoles() map[string]roleSetting {
 	return parseRoles(all)
 }
 
-// roleFor returns the configured harness and model for a role, or empty.
+// roleFor returns the configured harness and model for a legacy role key.
 func roleFor(name string) (string, string) {
 	return lookupRole(readRoles(), name)
 }
 
-// lookupRole resolves one role from a decoded roles map: shared by the host
-// reader and the Daemon-scoped test seam so the two never diverge.
+// lookupRole resolves a legacy role setting, shared by the host reader and
+// the Daemon-scoped test seam.
 func lookupRole(roles map[string]roleSetting, name string) (string, string) {
 	r, ok := roles[name]
 	if !ok || r.Harness == "" || r.Model == "" {
@@ -120,9 +120,38 @@ func lookupRole(roles map[string]roleSetting, name string) (string, string) {
 	return r.Harness, r.Model
 }
 
-// daemonRoleFor resolves one role from this Daemon's settings.
+// lookupAgentRoleSetting reads one Session-agent primary from the merged
+// chain form, with the pre-redesign role setting as a fallback for old files.
+func lookupAgentRoleSetting(chains map[string][]chainEntry, roles map[string]roleSetting, name string) roleSetting {
+	chainName := name
+	if name == "worker" {
+		chainName = "subagent"
+	}
+	if entries, ok := chains[chainName]; ok {
+		if len(entries) == 0 {
+			return roleSetting{}
+		}
+		entry := entries[0]
+		candidate := roleSetting{Harness: entry.Backend, Model: entry.Model, Effort: entry.Effort}
+		if _, model := lookupRole(map[string]roleSetting{name: candidate}, name); model == "" {
+			return roleSetting{}
+		}
+		return candidate
+	}
+	return roles[name]
+}
+
+func (d *Daemon) daemonRoleSettingFor(name string) roleSetting {
+	return lookupAgentRoleSetting(d.settingsChains(), d.settingsRoles(), name)
+}
+
+// daemonRoleFor resolves the configured harness and model for a Session role.
 func (d *Daemon) daemonRoleFor(name string) (string, string) {
-	return lookupRole(d.settingsRoles(), name)
+	r := d.daemonRoleSettingFor(name)
+	if h, m := lookupRole(map[string]roleSetting{name: r}, name); h != "" {
+		return h, m
+	}
+	return "", ""
 }
 
 // envMaxTickets reports the EL_MAX_TICKETS override when it sets a
@@ -157,7 +186,7 @@ func settingsView() map[string]any {
 	return map[string]any{
 		"roles":                   readRoles(),
 		"run_skills":              readRunSkillsRaw(),
-		"chains":                  readChains(),
+		"chains":                  agentChainsView(),
 		"max_tickets":             maxTicketsFromSettings(),
 		"max_tickets_from_env":    fromEnv,
 		"session_titles":          sessionTitlesSetting(),
@@ -307,16 +336,12 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			all["roles"] = raw
 		}
 		if body.Chains != nil {
-			merged := readChains()
-			for name, entries := range body.Chains {
-				if len(entries) == 0 {
-					delete(merged, name)
-					continue
-				}
-				merged[name] = entries
-			}
+			var version int
+			alreadyCanonical := json.Unmarshal(all[agentChainsVersionKey], &version) == nil && version >= 1
+			merged := canonicalAgentChains(readChains(), body.Chains, readRoles(), alreadyCanonical)
 			raw, _ := json.Marshal(merged)
 			all["chains"] = raw
+			all[agentChainsVersionKey] = json.RawMessage("1")
 		}
 		// max_tickets wins when both arrive; the old key is only a
 		// deprecated alias and is never written back.

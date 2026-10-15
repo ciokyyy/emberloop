@@ -19,6 +19,7 @@ import (
 
 	"example.com/emberloop-web/el/tools/systemone"
 	"example.com/emberloop-web/memory"
+	"github.com/MichaelKinsy/PiG/ai"
 )
 
 // Backend drives one harness behind the Daemon. The fake Backend replays
@@ -453,6 +454,45 @@ func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 	return d
 }
 
+// modelEffortOptions is the effort list for one offered model. Pig capabilities
+// come from its generated model metadata; the other harnesses expose the levels
+// their adapters validate for each currently offered model.
+func modelEffortOptions(harness, model string) []string {
+	switch harness {
+	case "pig":
+		for _, candidate := range ai.ListModels("") {
+			if candidate.Provider+"/"+candidate.ID != model {
+				continue
+			}
+			var efforts []string
+			for _, level := range []ai.ModelThinkingLevel{
+				ai.ThinkingOff, ai.ThinkingMinimal, ai.ThinkingLow,
+				ai.ThinkingMedium, ai.ThinkingHigh, ai.ThinkingXHigh, ai.ThinkingMax,
+			} {
+				if _, ok := candidate.ThinkingLevelMap[level]; ok {
+					efforts = append(efforts, string(level))
+				}
+			}
+			return efforts
+		}
+	case "claude":
+		if model == "opus" || model == "sonnet" {
+			return append([]string(nil), claudeEfforts...)
+		}
+	case "grok":
+		return append([]string(nil), grokEfforts...)
+	}
+	return []string{}
+}
+
+func modelEffortsFor(harness string, models []string) map[string][]string {
+	out := make(map[string][]string, len(models))
+	for _, model := range models {
+		out[model] = modelEffortOptions(harness, model)
+	}
+	return out
+}
+
 // handleModels lists the harness's runnable models for the new-Session form.
 // Pig lists only providers with usable auth; ?current= keeps the selected or
 // stored model visible even when its provider has none.
@@ -467,7 +507,8 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if harness == "claude" {
-		writeJSON(w, http.StatusOK, map[string]any{"models": ClaudeModels()})
+		models := ClaudeModels()
+		writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models)})
 		return
 	}
 	if harness != "pig" && harness != "grok" && harness != "fake" {
@@ -496,7 +537,7 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": models})
+	writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models)})
 }
 
 func validClaudeModel(model string) bool {

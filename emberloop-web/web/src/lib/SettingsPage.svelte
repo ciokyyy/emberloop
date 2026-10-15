@@ -20,7 +20,7 @@
 
   const DATA_SECTIONS = ['agents', 'runs', 'context', 'memory', 'access'];
   const descriptions = {
-    agents: 'Choose the harness and model used for each Session and Run role.',
+    agents: 'Configure one ordered chain per Session and Run agent role.',
     runs: 'Set the global concurrency limit for each Run.',
     context: 'Keep long Sessions small and readable.',
     memory: 'Configure how remembered notes become Rules.',
@@ -35,43 +35,63 @@
 
   const GROUPS = [
     {
-      title: 'Orchestration',
-      note: 'Who plans the work and who runs the spawned agents.',
+      title: 'Session agents',
+      note: 'Agents that plan work and assist a Session.',
       roles: [
         { id: 'orchestrator', label: 'Orchestrator', hint: 'Plans, delegates, and reviews results.' },
-        { id: 'worker', label: 'Worker', hint: 'Subagent that edits code.' },
+        { id: 'subagent', label: 'Subagent', hint: 'Spawned agent that edits code.' },
         { id: 'scout', label: 'Scout', hint: 'Read-only subagent that explores and reports.' },
       ],
     },
     {
-      title: 'Build and review',
-      note: 'Who writes the change and who checks it.',
+      title: 'Run agents',
+      note: 'Agents that implement tickets and review each change.',
       roles: [
-        { id: 'implementer', label: 'Implementer', hint: 'Writes the change for a ticket.' },
-        { id: 'code-review', label: 'Code review', hint: 'Reviews the diff for defects.' },
-        { id: 'spec-review', label: 'Spec review', hint: 'Checks the change against the spec.' },
+        { id: 'worker', label: 'Ticket worker', hint: 'Implements a ticket in its Run worktree.' },
+        { id: 'reviewer-spec', label: 'Spec reviewer', hint: 'Checks the change against the spec.' },
+        { id: 'reviewer-standards', label: 'Standards reviewer', hint: 'Reviews the diff for defects and standards.' },
       ],
     },
   ];
-  const ROLES = GROUPS.flatMap((g) => g.roles);
-
-  const CHAIN_ROLES = [
-    { id: 'worker', settingRoles: ['worker', 'implementer'], label: 'Worker' },
-    { id: 'reviewer-spec', settingRoles: ['reviewer-spec', 'spec-review'], label: 'Spec reviewer' },
-    { id: 'reviewer-standards', settingRoles: ['reviewer-standards', 'code-review'], label: 'Standards reviewer' },
-  ];
+  const CHAIN_ROLES = GROUPS.flatMap((group) => group.roles);
+  const LEGACY_ROLE_KEYS = {
+    orchestrator: ['orchestrator'],
+    subagent: ['worker'],
+    scout: ['scout'],
+    worker: ['implementer'],
+    'reviewer-spec': ['reviewer-spec', 'spec-review'],
+    'reviewer-standards': ['reviewer-standards', 'code-review'],
+  };
+  const LEGACY_CHAIN_KEYS = {
+    worker: ['implementer'],
+    'reviewer-spec': ['spec-review'],
+    'reviewer-standards': ['code-review'],
+  };
+  const ROLE_FALLBACK_KEYS = {
+    orchestrator: ['orchestrator'],
+    subagent: ['worker'],
+    scout: ['scout'],
+    worker: ['implementer', 'worker'],
+    'reviewer-spec': ['reviewer-spec', 'spec-review'],
+    'reviewer-standards': ['reviewer-standards', 'code-review'],
+  };
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
-  const effortItems = ['low', 'medium', 'high', 'max'].map((e) => ({ value: e, label: e[0].toUpperCase() + e.slice(1) }));
   const chainValues = (entries = []) => entries.map(({ backend, model, effort }) => ({ backend, model, ...(effort ? { effort } : {}) }));
-  const cloneChains = (source) => Object.fromEntries(CHAIN_ROLES.map(({ id }) => [id, chainValues(source[id])]));
-  const sameChain = (left, right) => JSON.stringify(chainValues(left)) === JSON.stringify(chainValues(right));
+  const cloneChains = (source) => Object.fromEntries(CHAIN_ROLES.map(({ id }) => [id, chainValues(source[id] ?? [])]));
+  const entriesFromSettings = (body, role) => {
+    const stored = body.chains ?? {};
+    if (Object.prototype.hasOwnProperty.call(stored, role.id)) return stored[role.id] ?? [];
+    for (const alias of LEGACY_CHAIN_KEYS[role.id] ?? []) {
+      if (Object.prototype.hasOwnProperty.call(stored, alias)) return stored[alias] ?? [];
+    }
+    const setting = (ROLE_FALLBACK_KEYS[role.id] ?? []).map((key) => body.roles?.[key]).find((value) => value?.model);
+    return setting ? [{ backend: setting.harness, model: setting.model, effort: setting.effort }] : [];
+  };
+  const effortLabel = (effort) => effort ? effort[0].toUpperCase() + effort.slice(1) : 'Default';
   // The pig naming model is optional: "None" clears the role, so pig Sessions stay unnamed.
 
   let roles = $state({});
   let chains = $state({});
-  let inheritedChains = $state({});
-  let chainBaseline = {};
-  let chainAliases = {};
   let maxTickets = $state('3');
   let diskCap = $state('8');
   let pigTitle = $state('none');
@@ -87,62 +107,60 @@
   let locked = $state(false);
   let saved = $state(null);
   let catalogue = $state({});
+  let effortCatalogue = $state({});
   let loading = $state(true);
   let saving = $state(false);
   let justSaved = $state(false);
   let error = $state('');
 
-  function fallbackChain(role) {
-    const fallback = role.settingRoles.map((name) => roles[name]).find((setting) => setting?.model);
-    return fallback?.model ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }] : [];
-  }
   const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
   const dirty = $derived(saved !== null && DATA_SECTIONS.includes(section) && snapshot() !== saved);
 
   async function models(harness) {
     let list = modelsForHarness(harness);
+    let efforts = null;
     try {
       const body = await getModels(harness);
       if (body.models?.length) list = body.models;
+      efforts = body.model_efforts ?? {};
     } catch {
-      // Static fallback.
+      // Static model fallback; effort capabilities stay unknown.
     }
-    catalogue[harness] = list;
+    catalogue = { ...catalogue, [harness]: list };
+    effortCatalogue = { ...effortCatalogue, [harness]: efforts };
+  }
+
+  function supportedEffortsFor(harness, model) {
+    const byModel = effortCatalogue[harness];
+    if (!byModel || !Object.prototype.hasOwnProperty.call(byModel, model)) return null;
+    return byModel[model] ?? [];
+  }
+
+  function effortItemsFor(harness, model) {
+    const efforts = supportedEffortsFor(harness, model) ?? [];
+    return [{ value: '', label: 'Default' }, ...efforts.map((effort) => ({ value: effort, label: effortLabel(effort) }))];
+  }
+
+  function chainsFromSettings(body) {
+    return Object.fromEntries(CHAIN_ROLES.map((role) => {
+      const entries = entriesFromSettings(body, role).map((entry) => {
+        const backend = entry.backend ?? entry.harness ?? '';
+        const model = entry.model ?? '';
+        let effort = entry.effort ?? '';
+        const supported = supportedEffortsFor(backend, model);
+        if (effort && supported && !supported.includes(effort)) effort = '';
+        return { backend, model, effort };
+      });
+      return [role.id, entries];
+    }));
   }
 
   async function load() {
     try {
       const body = await getSettings();
-      const next = {};
-      for (const r of ROLES) {
-        next[r.id] = { harness: 'pig', model: '', effort: 'medium', ...(body.roles?.[r.id] ?? {}) };
-      }
       await Promise.all(harnessItems.map((h) => models(h.value)));
-      roles = next;
-      const storedChains = body.chains ?? {};
-      const nextChains = {};
-      const nextInheritedChains = {};
-      const nextChainAliases = {};
-      for (const role of CHAIN_ROLES) {
-        const explicitName = role.settingRoles.find((name) => Array.isArray(storedChains[name]) && storedChains[name].length > 0);
-        const fallback = role.settingRoles.map((name) => next[name]).find((setting) => setting?.model);
-        const entries = explicitName
-          ? storedChains[explicitName]
-          : fallback?.model
-            ? [{ backend: fallback.harness, model: fallback.model, ...(fallback.effort ? { effort: fallback.effort } : {}) }]
-            : [];
-        nextChains[role.id] = entries.map((entry) => ({
-          backend: entry.backend ?? entry.harness ?? '',
-          model: entry.model ?? '',
-          ...(entry.effort ? { effort: entry.effort } : {}),
-        }));
-        nextInheritedChains[role.id] = !explicitName;
-        nextChainAliases[role.id] = role.settingRoles.filter((name) => name !== role.id && Array.isArray(storedChains[name]));
-      }
-      chains = nextChains;
-      inheritedChains = nextInheritedChains;
-      chainBaseline = cloneChains(nextChains);
-      chainAliases = nextChainAliases;
+      roles = body.roles ?? {};
+      chains = chainsFromSettings(body);
       maxTickets = body.max_tickets != null ? String(body.max_tickets) : '3';
       diskCap = body.disk_go_cache_cap_gb != null ? String(body.disk_go_cache_cap_gb) : '8';
       locked = !!body.max_tickets_from_env;
@@ -179,14 +197,10 @@
       loading = false;
     }
   }
+
   onMount(() => { if (DATA_SECTIONS.includes(section)) void load(); });
 
   const itemsFor = (harness, current) => modelItems(harness, catalogue[harness] ?? [], current);
-
-  function pickHarness(role, harness) {
-    roles[role].harness = harness;
-    roles[role].model = catalogue[harness]?.[0] ?? '';
-  }
 
   const pigTitleItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', pigTitle === 'none' ? '' : pigTitle)];
   const compressModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', compress.model === 'none' ? '' : compress.model)];
@@ -199,14 +213,13 @@
   ];
 
   const deciderModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', decider.model === 'none' ? '' : decider.model)];
+
   function addChainEntry(role) {
     const entries = chains[role] ?? [];
     if (entries.length >= 3) return;
-    const roleSettings = CHAIN_ROLES.find((item) => item.id === role)?.settingRoles ?? [];
-    const fallback = roleSettings.map((name) => roles[name]).find((setting) => setting?.model) ?? {};
-    const backend = fallback.model ? fallback.harness : 'claude';
-    const model = fallback.model || 'sonnet';
-    chains[role] = [...entries, { backend, model, ...(fallback.effort ? { effort: fallback.effort } : {}) }];
+    const backend = entries.at(-1)?.backend ?? 'claude';
+    const model = catalogue[backend]?.[0] ?? modelsForHarness(backend)[0] ?? '';
+    chains[role] = [...entries, { backend, model, effort: '' }];
   }
 
   function removeChainEntry(role, index) {
@@ -225,28 +238,39 @@
     const entry = chains[role][index];
     entry.backend = backend;
     entry.model = catalogue[backend]?.[0] ?? modelsForHarness(backend)[0] ?? '';
+    entry.effort = '';
+  }
+
+  function pickChainModel(role, index, model) {
+    const entry = chains[role][index];
+    entry.model = model;
+    const supported = supportedEffortsFor(entry.backend, model);
+    if (!supported || !supported.includes(entry.effort)) entry.effort = '';
   }
 
   function chainsValid() {
     return CHAIN_ROLES.every(({ id }) => (chains[id] ?? []).length <= 3 && (chains[id] ?? []).every((entry) => entry.backend && entry.model));
   }
 
-  // An untouched role-setting fallback is presentation only. Send a Chain
-  // update only when its entries differ, and clear legacy aliases only when
-  // that role's Chain is explicitly edited.
-  function chainsForSave() {
-    const payload = {};
+  function rolesForSave(pigTitleRole) {
+    const next = { ...Object.fromEntries(Object.entries(roles).filter(([, setting]) => setting?.model)), 'pig-title': pigTitleRole };
     for (const { id } of CHAIN_ROLES) {
-      if (sameChain(chains[id], chainBaseline[id])) continue;
-      payload[id] = chainValues(chains[id]);
-      for (const alias of chainAliases[id] ?? []) payload[alias] = [];
+      const entry = chains[id]?.[0];
+      for (const legacyRole of LEGACY_ROLE_KEYS[id]) {
+        next[legacyRole] = entry
+          ? { harness: entry.backend, model: entry.model, ...(entry.effort ? { effort: entry.effort } : {}) }
+          : { harness: '', model: '' };
+      }
     }
-    return payload;
+    return next;
   }
 
+  function chainsForSave() {
+    return cloneChains(chains);
+  }
   async function save() {
     if (!chainsValid()) {
-      error = 'Each Run Chain entry needs a Backend and model; each role can have at most three entries.';
+      error = 'Each chain entry needs a harness and model; each role can have at most three entries.';
       return;
     }
     saving = true;
@@ -255,12 +279,7 @@
       // Locked means the field holds the env value, not the file value:
       // leave the env-owned keys out so a save never writes them into the file.
       const pigTitleRole = pigTitle === 'none' ? { harness: '', model: '' } : { harness: 'pig', model: pigTitle };
-      // A role with no model was never configured: leave it out instead of failing the whole save.
-      const configured = Object.fromEntries(Object.entries(roles).filter(([, r]) => r.model));
-      const chainPayload = chainsForSave();
-      const editedChainRoles = new Set(CHAIN_ROLES.filter(({ id }) => Object.prototype.hasOwnProperty.call(chainPayload, id)).map(({ id }) => id));
-      const payload = { roles: { ...configured, 'pig-title': pigTitleRole } };
-      if (Object.keys(chainPayload).length) payload.chains = chainPayload;
+      const payload = { roles: rolesForSave(pigTitleRole), chains: chainsForSave() };
       if (!locked) payload.max_tickets = Number(maxTickets);
       if (admin) payload.disk_go_cache_cap_gb = Number(diskCap);
       if (!titlesLocked) payload.session_titles = sessionTitles === 'on';
@@ -273,18 +292,19 @@
         compress_model: compress.model === 'none' ? '' : compress.model,
       };
       if (admin) payload.signup_enabled = signupOpen === 'on';
-      if (admin)
+      if (admin) {
         payload.decider = {
           decider_mode: decider.mode,
           memory_model: decider.model === 'none' ? '' : decider.model,
           decider_confirm_low: Number(decider.low),
           decider_confirm_high: Number(decider.high),
         };
-      if (admin) {
         payload.jev = { base_url: jev.baseURL.trim(), model: jev.model.trim() };
         if (jev.apiKey) payload.jev.api_key = jev.apiKey;
       }
       const savedBody = await putSettings(payload);
+      roles = savedBody.roles ?? payload.roles;
+      chains = chainsFromSettings(savedBody);
       maxTickets = savedBody.max_tickets != null ? String(savedBody.max_tickets) : maxTickets;
       if (savedBody.disk_go_cache_cap_gb != null) diskCap = String(savedBody.disk_go_cache_cap_gb);
       locked = !!savedBody.max_tickets_from_env;
@@ -292,15 +312,6 @@
       deciderNote = savedBody.decider_note ?? '';
       jev = { baseURL: savedBody.jev?.base_url ?? jev.baseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
       jevKeySet = !!savedBody.jev?.api_key_set;
-      for (const role of CHAIN_ROLES) {
-        if (editedChainRoles.has(role.id)) {
-          inheritedChains[role.id] = false;
-          chainAliases[role.id] = [];
-        } else if (inheritedChains[role.id]) {
-          chains[role.id] = fallbackChain(role);
-        }
-      }
-      chainBaseline = cloneChains(chains);
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -391,52 +402,67 @@
         </section>
         {/if}
         {#if section === 'agents'}
-        <section class="animate-rise flex flex-col gap-2" data-testid="run-chains-settings">
+        <section class="animate-rise flex flex-col gap-2" data-testid="agent-chains-settings">
           <div class="px-1">
-            <h2 class="text-sm font-semibold">Run Chains</h2>
-            <p class="text-xs text-muted-foreground">Ordered Backend and model fallbacks for Workers and Reviewers. Each new Run snapshots these Chains; failures advance to the next entry only when the provider is out of quota, credit, auth or session capacity.</p>
+            <h2 class="text-sm font-semibold">Agents</h2>
+            <p class="text-xs text-muted-foreground">Each role has one ordered chain. The primary and up to two fallbacks each set a harness, model and supported thinking effort.</p>
           </div>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            {#each CHAIN_ROLES as role (role.id)}
-              <section class="p-4" data-testid={`run-chain-${role.id}`}>
-                <div class="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 class="text-sm font-medium">{role.label}</h3>
-                    {#if inheritedChains[role.id] && chains[role.id]?.length}
-                      <p class="text-xs text-muted-foreground">Inherited from the role setting; it is saved as a Chain only when you edit it.</p>
-                    {:else if !chains[role.id]?.length}
-                      <p class="text-xs text-muted-foreground">No explicit Chain; the regular role setting or Run defaults are used.</p>
-                    {/if}
-                  </div>
-                  <Button size="sm" variant="outline" aria-label={`Add ${role.label} Chain entry`} onclick={() => addChainEntry(role.id)} disabled={saving || chains[role.id].length >= 3}>Add entry</Button>
-                </div>
-                {#each chains[role.id] as entry, index (index)}
-                  <div class="grid items-center gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_minmax(0,16rem)_auto]" data-testid={`chain-entry-${role.id}-${index + 1}`}>
-                    <span class="text-xs font-medium text-muted-foreground">Entry {index + 1}</span>
-                    <Combobox
-                      class="md:h-10"
-                      aria-label={`${role.label} Chain entry ${index + 1} Backend`}
-                      value={entry.backend}
-                      items={harnessItems}
-                      onValueChange={(value) => pickChainBackend(role.id, index, value)}
-                    />
-                    <Combobox
-                      class="md:h-10"
-                      aria-label={`${role.label} Chain entry ${index + 1} model`}
-                      bind:value={entry.model}
-                      items={itemsFor(entry.backend, entry.model)}
-                      placeholder="Select a model"
-                    />
-                    <div class="flex items-center justify-end gap-1">
-                      <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} Chain entry ${index + 1} up`} disabled={saving || index === 0} onclick={() => moveChainEntry(role.id, index, -1)}><ArrowUp /></Button>
-                      <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} Chain entry ${index + 1} down`} disabled={saving || index === chains[role.id].length - 1} onclick={() => moveChainEntry(role.id, index, 1)}><ArrowDown /></Button>
-                      <Button size="icon-sm" variant="ghost" aria-label={`Remove ${role.label} Chain entry ${index + 1}`} disabled={saving} onclick={() => removeChainEntry(role.id, index)}><Trash2 /></Button>
+          {#each GROUPS as group (group.title)}
+            <section class="animate-rise flex flex-col gap-2" data-testid={`agent-group-${group.title.toLowerCase().replaceAll(' ', '-')}`}>
+              <div class="px-1">
+                <h3 class="text-sm font-semibold">{group.title}</h3>
+                <p class="text-xs text-muted-foreground">{group.note}</p>
+              </div>
+              <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+                {#each group.roles as role (role.id)}
+                  <section class="p-4" data-testid={`agent-chain-${role.id}`}>
+                    <div class="mb-3 flex items-center justify-between gap-3">
+                      <div class="min-w-0">
+                        <h4 class="text-sm font-medium">{role.label}</h4>
+                        <p class="text-xs text-muted-foreground">{role.hint}</p>
+                      </div>
+                      <Button size="sm" variant="outline" aria-label={`Add ${role.label} entry`} onclick={() => addChainEntry(role.id)} disabled={saving || chains[role.id].length >= 3}>Add entry</Button>
                     </div>
-                  </div>
+                    {#if !chains[role.id].length}
+                      <p class="border-t py-3 text-xs text-muted-foreground">No entries configured.</p>
+                    {/if}
+                    {#each chains[role.id] as entry, index (index)}
+                      <div class="grid items-center gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(7rem,0.7fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)_auto]" data-testid={`chain-entry-${role.id}-${index + 1}`}>
+                        <span class="text-xs font-medium text-muted-foreground">{index === 0 ? 'Primary' : `Fallback ${index}`}</span>
+                        <Combobox
+                          class="md:h-10"
+                          aria-label={`${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} harness`}
+                          value={entry.backend}
+                          items={harnessItems}
+                          onValueChange={(value) => pickChainBackend(role.id, index, value)}
+                        />
+                        <Combobox
+                          class="md:h-10"
+                          aria-label={`${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} model`}
+                          value={entry.model}
+                          items={itemsFor(entry.backend, entry.model)}
+                          placeholder="Select a model"
+                          onValueChange={(value) => pickChainModel(role.id, index, value)}
+                        />
+                        <Combobox
+                          class="md:h-10"
+                          aria-label={`${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} effort`}
+                          value={entry.effort ?? ''}
+                          items={effortItemsFor(entry.backend, entry.model)}
+                          onValueChange={(value) => (entry.effort = value)}
+                        />
+                        <div class="flex items-center justify-end gap-1">
+                          <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} up`} disabled={saving || index === 0} onclick={() => moveChainEntry(role.id, index, -1)}><ArrowUp /></Button>
+                          <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} down`} disabled={saving || index === chains[role.id].length - 1} onclick={() => moveChainEntry(role.id, index, 1)}><ArrowDown /></Button>
+                          <Button size="icon-sm" variant="ghost" aria-label={`Remove ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`}`} disabled={saving} onclick={() => removeChainEntry(role.id, index)}><Trash2 /></Button>
+                        </div>
+                      </div>
+                    {/each}
+                  </section>
                 {/each}
-              </section>
-            {/each}
-          </div>
+              </div>
+            </section>
+          {/each}
         </section>
         {/if}
         {#if section === 'context'}
@@ -614,41 +640,6 @@
             </div>
           </div>
         </section>
-        {/if}
-        {#if section === 'agents'}
-        {#each GROUPS as g (g.title)}
-          <section class="animate-rise flex flex-col gap-2">
-            <div class="px-1">
-              <h2 class="text-sm font-semibold">{g.title}</h2>
-              <p class="text-xs text-muted-foreground">{g.note}</p>
-            </div>
-            <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-              {#each g.roles as r (r.id)}
-                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem_minmax(0,16rem)_7rem]">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium">{r.label}</div>
-                    <div class="text-xs text-muted-foreground">{r.hint}</div>
-                  </div>
-                  <Combobox
-                    class="md:h-10"
-                    aria-label={`${r.label} harness`}
-                    value={roles[r.id].harness}
-                    items={harnessItems}
-                    onValueChange={(v) => pickHarness(r.id, v)}
-                  />
-                  <Combobox
-                    class="md:h-10"
-                    aria-label={`${r.label} model`}
-                    bind:value={roles[r.id].model}
-                    items={itemsFor(roles[r.id].harness, roles[r.id].model)}
-                    placeholder="Select a model"
-                  />
-                  <Combobox class="md:h-10" aria-label={`${r.label} effort`} bind:value={roles[r.id].effort} items={effortItems} />
-                </div>
-              {/each}
-            </div>
-          </section>
-        {/each}
         {/if}
       {/if}
     </div>

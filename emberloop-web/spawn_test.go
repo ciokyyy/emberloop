@@ -83,6 +83,44 @@ func TestSpawnCreatesSubagentsWithParentAndGroup(t *testing.T) {
 	waitParentIdle(t, srv.URL, parent)
 }
 
+func TestSpawnUsesConfiguredAgentChainEffort(t *testing.T) {
+	settings := filepath.Join(tempDir(t), "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"agents_chains_version":1,"chains":{
+		"subagent":[{"backend":"fake","model":"worker-model","effort":"max"}],
+		"scout":[{"backend":"fake","model":"scout-model","effort":"low"}]
+	}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settings)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	for _, tc := range []struct {
+		name   string
+		agent  map[string]any
+		model  string
+		effort string
+	}{
+		{name: "Subagent", agent: map[string]any{"prompt": "worker task"}, model: "worker-model", effort: "max"},
+		{name: "Scout", agent: map[string]any{"prompt": "scout task", "type": "scout"}, model: "scout-model", effort: "low"},
+	} {
+		code, out := postSpawn(t, srv.URL, parent, map[string]any{"agents": []map[string]any{tc.agent}})
+		if code != http.StatusCreated {
+			t.Fatalf("%s spawn status = %d, want 201: %v", tc.name, code, out)
+		}
+		raw, _ := json.Marshal(out["sessions"])
+		var children []SessionMeta
+		if err := json.Unmarshal(raw, &children); err != nil || len(children) != 1 {
+			t.Fatalf("%s spawned sessions = %v, want one", tc.name, out["sessions"])
+		}
+		if children[0].Model != tc.model || children[0].Effort != tc.effort {
+			t.Errorf("%s = %s/%s/%s, want fake/%s/%s", tc.name, children[0].Harness, children[0].Model, children[0].Effort, tc.model, tc.effort)
+		}
+	}
+}
+
 // Slice 1: the session list links Subagents to their parent, so the tree
 // nests them underneath it.
 func TestSpawnedSessionsNestUnderParent(t *testing.T) {

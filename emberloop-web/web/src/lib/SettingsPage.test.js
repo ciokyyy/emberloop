@@ -19,12 +19,13 @@ function stubSettings({ settings, failGet = false, failPut = false, seen = {} })
       if (url.includes('/api/models')) {
         const harness = new URL(url, 'http://x').searchParams.get('harness');
         const models = harness === 'claude' ? ['opus'] : harness === 'grok' ? ['grok-4.7'] : ['auto'];
-        return { ok: true, json: async () => ({ models }) };
+        const model_efforts = { opus: ['low', 'high'], 'grok-4.7': ['medium'], auto: ['low'] };
+        return { ok: true, json: async () => ({ models, model_efforts }) };
       }
       if (url.includes('/api/settings') && opts?.method === 'PUT') {
         seen.body = JSON.parse(opts.body);
         if (failPut) return { ok: false, status: 400 };
-        return { ok: true, json: async () => ({ roles: seen.body.roles ?? {}, max_tickets: seen.body.max_tickets ?? 3, max_tickets_from_env: false }) };
+        return { ok: true, json: async () => ({ ...seen.body, max_tickets: seen.body.max_tickets ?? 3, max_tickets_from_env: false }) };
       }
       if (url.includes('/api/settings') && failGet) return { ok: false, status: 500 };
       return { ok: true, json: async () => settings };
@@ -172,12 +173,15 @@ describe('SettingsPage session names', () => {
     expect(seen.body.session_titles).toBe(true);
   });
 
-  it('leaves unconfigured roles out of the save', async () => {
-    const seen = {};
-    stubSettings({ settings: { ...base, roles: { worker: { harness: 'claude', model: 'opus', effort: 'high' } } }, seen });
-    const { container } = renderSettings();
-    await dirtyAndSave(container);
-    expect(Object.keys(seen.body.roles).sort()).toEqual(['pig-title', 'worker']);
+  it('migrates a legacy role model into the merged Session and Run chains', async () => {
+  const seen = {};
+  stubSettings({ settings: { ...base, roles: { worker: { harness: 'claude', model: 'opus', effort: 'high' } } }, seen });
+  const { container } = renderSettings();
+  await dirtyAndSave(container);
+  expect(seen.body.chains.subagent).toEqual([{ backend: 'claude', model: 'opus', effort: 'high' }]);
+  expect(seen.body.chains.worker).toEqual([{ backend: 'claude', model: 'opus', effort: 'high' }]);
+  expect(seen.body.roles.worker).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
+  expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
   });
 
   it('no pig model clears the role and claude naming off is saved', async () => {
@@ -416,120 +420,103 @@ describe('SettingsPage jev decider', () => {
   });
 });
 
-describe('SettingsPage Run Chains', () => {
+describe('SettingsPage agent chains', () => {
   beforeEach(() => { section = 'agents'; });
-  it('edits each per-role Chain, including its order, and saves the result', async () => {
+
+  it('edits ordered role chains and offers only the selected model effort levels', async () => {
     const seen = {};
     stubSettings({
       settings: {
         ...base,
         chains: {
-          worker: [{ backend: 'pig', model: 'auto' }, { backend: 'claude', model: 'opus' }],
-          'reviewer-spec': [{ backend: 'claude', model: 'sonnet' }],
-          'reviewer-standards': [{ backend: 'grok', model: 'grok-4.7' }],
+          worker: [{ backend: 'pig', model: 'auto', effort: 'low' }, { backend: 'claude', model: 'opus', effort: 'high' }],
+          'reviewer-spec': [{ backend: 'claude', model: 'opus', effort: 'low' }],
         },
       },
       seen,
     });
     const { container } = renderSettings();
-    const chains = await within(container).findByTestId('run-chains-settings');
-    expect(within(chains).getByTestId('run-chain-worker')).toBeTruthy();
-    expect(within(chains).getByTestId('run-chain-reviewer-spec')).toBeTruthy();
-    expect(within(chains).getByTestId('run-chain-reviewer-standards')).toBeTruthy();
-    expect(within(chains).getByLabelText('Worker Chain entry 1 Backend').textContent).toMatch(/pig/i);
-    expect(within(chains).getByLabelText('Worker Chain entry 2 model').textContent).toMatch(/opus/i);
+    const agents = await within(container).findByTestId('agent-chains-settings');
+    expect(within(agents).getByText('Session agents')).toBeTruthy();
+    expect(within(agents).getByText('Run agents')).toBeTruthy();
+    expect(within(agents).getByTestId('agent-chain-subagent')).toBeTruthy();
+    expect(within(agents).getByTestId('agent-chain-worker')).toBeTruthy();
+    expect(within(agents).getAllByText('Primary').length).toBeGreaterThan(0);
+    expect(within(agents).getAllByText('Fallback 1').length).toBeGreaterThan(0);
 
-    await fireEvent.click(within(chains).getByLabelText('Move Worker Chain entry 2 up'));
-    await fireEvent.click(within(chains).getByLabelText('Remove Worker Chain entry 2'));
-    await fireEvent.click(within(chains).getByLabelText('Add Worker Chain entry'));
-    await fireEvent.click(within(chains).getByLabelText('Worker Chain entry 2 Backend'));
+    await fireEvent.click(within(agents).getByLabelText('Ticket worker Primary effort'));
+    expect(await screen.findByRole('option', { name: 'Default' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Low' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Medium' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'High' })).toBeNull();
+    await fireEvent.click(screen.getByRole('option', { name: 'Low' }));
+
+    await fireEvent.click(within(agents).getByLabelText('Move Ticket worker Fallback 1 up'));
+    await fireEvent.click(within(agents).getByLabelText('Remove Ticket worker Fallback 1'));
+    await fireEvent.click(within(agents).getByLabelText('Add Ticket worker entry'));
+    await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 harness'));
     await fireEvent.click(await screen.findByRole('option', { name: 'Grok' }));
-    await fireEvent.click(within(chains).getByLabelText('Worker Chain entry 2 model'));
+    await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 model'));
     await fireEvent.click(await screen.findByRole('option', { name: /grok-4.7/i }));
-    expect(within(chains).getByLabelText('Worker Chain entry 2 model').textContent).toMatch(/grok-4.7/i);
+    await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 effort'));
+    expect(await screen.findByRole('option', { name: 'Medium' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Low' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'High' })).toBeNull();
+    await fireEvent.click(screen.getByRole('option', { name: 'Medium' }));
+
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect(seen.body.chains).toEqual({
-      worker: [{ backend: 'claude', model: 'opus' }, { backend: 'grok', model: 'grok-4.7' }],
-    });
+    expect(seen.body.chains.worker).toEqual([
+      { backend: 'claude', model: 'opus', effort: 'high' },
+      { backend: 'grok', model: 'grok-4.7', effort: 'medium' },
+    ]);
+    expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
   });
 
-  it('uses existing role settings as the single-entry Chain fallback', async () => {
+  it('migrates old role model keys into the six grouped chains without losing models', async () => {
     stubSettings({
       settings: {
         ...base,
         roles: {
-          implementer: { harness: 'pig', model: 'auto', effort: 'high' },
-          'spec-review': { harness: 'claude', model: 'sonnet' },
-          'code-review': { harness: 'grok', model: 'grok-4.7' },
+          orchestrator: { harness: 'claude', model: 'opus', effort: 'high' },
+          worker: { harness: 'pig', model: 'auto', effort: 'low' },
+          scout: { harness: 'grok', model: 'grok-4.7', effort: 'medium' },
+          implementer: { harness: 'claude', model: 'opus', effort: 'high' },
+          'spec-review': { harness: 'claude', model: 'opus', effort: 'low' },
+          'code-review': { harness: 'grok', model: 'grok-4.7', effort: 'medium' },
         },
       },
     });
     const { container } = renderSettings();
-    const chains = await within(container).findByTestId('run-chains-settings');
-    expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/auto/i);
-    expect(within(chains).getByLabelText('Spec reviewer Chain entry 1 model').textContent).toMatch(/sonnet/i);
-    expect(within(chains).getByLabelText('Standards reviewer Chain entry 1 model').textContent).toMatch(/grok-4.7/i);
-    expect(within(chains).getAllByText(/Inherited from the role setting/)).toHaveLength(3);
+    const agents = await within(container).findByTestId('agent-chains-settings');
+    for (const [role, model] of [
+      ['Orchestrator', 'opus'],
+      ['Subagent', 'auto'],
+      ['Scout', 'grok-4.7'],
+      ['Ticket worker', 'opus'],
+      ['Spec reviewer', 'opus'],
+      ['Standards reviewer', 'grok-4.7'],
+    ]) {
+      expect(within(agents).getByLabelText(`${role} Primary model`).textContent).toMatch(new RegExp(model.replace('.', '\\.'), 'i'));
+    }
   });
 
-  it.each([
-    ['worker', 'Worker'],
-    ['implementer', 'Implementer'],
-  ])('does not pin an inherited Chain when the %s role model changes', async (role, label) => {
-    const seen = {};
-    stubSettings({
-      settings: {
-        ...base,
-        roles: { [role]: { harness: 'claude', model: 'sonnet', effort: 'high' } },
-      },
-      seen,
-    });
-    const { container } = renderSettings();
-    const chains = await within(container).findByTestId('run-chains-settings');
-    expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/sonnet/i);
-
-    await fireEvent.click(within(container).getByLabelText(`${label} model`));
-    await fireEvent.click(await screen.findByRole('option', { name: /opus/i }));
-    await fireEvent.click(await within(container).findByText('Save'));
-    expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect(seen.body.roles[role]).toMatchObject({ harness: 'claude', model: 'opus' });
-    expect(seen.body.chains).toBeUndefined();
-    expect(within(chains).getByLabelText('Worker Chain entry 1 model').textContent).toMatch(/opus/i);
-  });
-
-  it('preserves legacy Chain aliases during unrelated settings saves', async () => {
-    const seen = {};
-    stubSettings({
-      settings: { ...base, chains: { implementer: [{ backend: 'claude', model: 'sonnet' }] } },
-      seen,
-    });
-    const { container } = renderSettings();
-    await within(container).findByTestId('run-chains-settings');
-    await fireEvent.click(within(container).getByLabelText('Orchestrator model'));
-    await fireEvent.click(await screen.findByRole('option', { name: /auto/i }));
-    await fireEvent.click(await within(container).findByText('Save'));
-    expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect(seen.body.chains).toBeUndefined();
-  });
-
-  it('clears a legacy alias only when its Chain is edited', async () => {
-    const seen = {};
+  it('caps each role at a primary and two fallbacks', async () => {
     stubSettings({
       settings: {
         ...base,
         chains: {
-          implementer: [{ backend: 'claude', model: 'sonnet' }],
-          'spec-review': [{ backend: 'claude', model: 'sonnet' }],
+          worker: [
+            { backend: 'pig', model: 'auto', effort: 'low' },
+            { backend: 'claude', model: 'opus', effort: 'high' },
+            { backend: 'grok', model: 'grok-4.7', effort: 'medium' },
+          ],
         },
       },
-      seen,
     });
     const { container } = renderSettings();
-    const chains = await within(container).findByTestId('run-chains-settings');
-    await fireEvent.click(within(chains).getByLabelText('Remove Worker Chain entry 1'));
-    await fireEvent.click(await within(container).findByText('Save'));
-    expect(await within(container).findByText('Saved')).toBeTruthy();
-    expect(seen.body.chains).toEqual({ worker: [], implementer: [] });
+    const agents = await within(container).findByTestId('agent-chains-settings');
+    expect(within(agents).getByText('Fallback 2')).toBeTruthy();
+    expect(within(agents).getByLabelText('Add Ticket worker entry').disabled).toBe(true);
   });
 });

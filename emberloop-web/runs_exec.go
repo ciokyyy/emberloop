@@ -321,22 +321,20 @@ type runState struct {
 // on this cadence instead of the CLI's slower poll.
 const runPollInterval = 500 * time.Millisecond
 
-// roleWorkerConfig reads the Run worker harness, model and effort from the
-// settings roles: the implementer slot of the settings page first, then the
-// older worker slot. Empty when neither is set, so the caller falls back to
-// the Session default.
+// roleWorkerConfig returns the primary Worker chain entry, falling back to
+// the pre-redesign role settings when no Chain has been saved.
 func roleWorkerConfig() (harness, model, effort string) {
-	return lookupWorkerRole(readRoles())
+	return primaryRunRoleConfig(readChains(), readRoles(), "worker")
 }
 
-// daemonRoleWorkerConfig reads this Daemon's Run worker harness, model and
-// effort from its settings roles.
+// daemonRoleWorkerConfig reads the primary Worker entry from this Daemon's
+// settings, so its own settings path is respected.
 func (d *Daemon) daemonRoleWorkerConfig() (harness, model, effort string) {
-	return lookupWorkerRole(d.settingsRoles())
+	return primaryRunRoleConfig(d.settingsChains(), d.settingsRoles(), "worker")
 }
 
-// lookupWorkerRole resolves the worker slot from a decoded roles map: shared
-// by the host reader and the Daemon-scoped test seam.
+// lookupWorkerRole preserves the old role-setting precedence for callers and
+// old settings files that have no Run Chain.
 func lookupWorkerRole(roles map[string]roleSetting) (harness, model, effort string) {
 	for _, name := range []string{"implementer", "worker"} {
 		r, ok := roles[name]
@@ -351,29 +349,31 @@ func lookupWorkerRole(roles map[string]roleSetting) (harness, model, effort stri
 	return "", "", ""
 }
 
-// roleReviewerConfig reads one reviewer type's harness and model from the
-// settings roles: its own type name first, then the settings-page alias
-// (spec-review, code-review). Empty when neither role is set, so the caller
-// falls back the same way workers do.
-func roleReviewerConfig(reviewerType string) (harness, model string) {
-	roles := readRoles()
-	if r, ok := roles[reviewerType]; ok && r.Harness != "" && r.Model != "" {
-		if r.Harness != "claude" || validClaudeModel(r.Model) {
-			return r.Harness, r.Model
-		}
-	}
-	alias := map[string]string{
-		reviewerSpecType:      "spec-review",
-		reviewerStandardsType: "code-review",
-	}[reviewerType]
-	if alias != "" {
-		if r, ok := roles[alias]; ok && r.Harness != "" && r.Model != "" {
-			if r.Harness != "claude" || validClaudeModel(r.Model) {
-				return r.Harness, r.Model
+func primaryRunRoleConfig(chains map[string][]chainEntry, roles map[string]roleSetting, role string) (harness, model, effort string) {
+	for _, name := range chainNames(role) {
+		if entries, ok := chains[name]; ok {
+			if len(entries) == 0 {
+				return "", "", ""
 			}
+			entry := entries[0]
+			return entry.Backend, entry.Model, entry.Effort
 		}
 	}
-	return "", ""
+	if role == "worker" {
+		return lookupWorkerRole(roles)
+	}
+	entries := lookupChain(nil, roles, role)
+	if len(entries) == 0 {
+		return "", "", ""
+	}
+	return entries[0].Backend, entries[0].Model, entries[0].Effort
+}
+
+// roleReviewerConfig returns the primary reviewer entry, including its
+// pre-redesign role setting when the Chain has not yet been migrated.
+func roleReviewerConfig(reviewerType string) (harness, model string) {
+	harness, model, _ = primaryRunRoleConfig(readChains(), readRoles(), reviewerType)
+	return harness, model
 }
 
 // gitRoot walks up from path to the repo holding it: the first directory

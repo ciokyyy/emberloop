@@ -5,27 +5,23 @@ import (
 	"fmt"
 )
 
-// Run fallback chains: per role, an ordered list of up to three
-// {backend, model} entries stored under "chains" in the shared settings file.
-// A Worker or Reviewer failure classified (failures.go) as quota, credit,
-// auth or session limit starts a new Session on the next entry; any other
-// failure surfaces as today. Ticket 14 runs the advance; this file stores,
-// validates and returns the chains.
+// Agent chains store each role's harness, model and effort in one ordered
+// list. Run chains keep fallback semantics: quota, credit, auth or session
+// limit failures start a new Session on the next entry; any other failure
+// surfaces as today.
 
 // maxChainEntries caps one role's fallback chain.
 const maxChainEntries = 3
 
-// chainEntry is one fallback step: the Backend (harness) and model to start,
-// with the worker effort riding along when set.
+// chainEntry is one role's harness, model and optional thinking effort.
 type chainEntry struct {
 	Backend string `json:"backend"`
 	Model   string `json:"model"`
 	Effort  string `json:"effort,omitempty"`
 }
 
-// UnmarshalJSON reads one entry, accepting "harness" as an alias of
-// "backend": the settings page wrote "harness" before chains existed, and the
-// spec names the field "backend".
+// UnmarshalJSON accepts `harness` as a legacy alias for the canonical
+// `backend` field in stored and submitted chain entries.
 func (e *chainEntry) UnmarshalJSON(raw []byte) error {
 	var in struct {
 		Backend string `json:"backend"`
@@ -68,6 +64,151 @@ func chainNames(role string) []string {
 	return []string{role}
 }
 
+// agentChainRoles are the six slots shown on Settings > Agents. The legacy
+// roles map remains available to the operator CLI; the browser migrates these
+// model choices into chains on read and persists the merged map on save.
+var agentChainRoles = []struct {
+	key          string
+	chainAliases []string
+	roleAliases  []string
+}{
+	{key: "orchestrator", roleAliases: []string{"orchestrator"}},
+	{key: "subagent", roleAliases: []string{"worker"}},
+	{key: "scout", roleAliases: []string{"scout"}},
+	{key: "worker", chainAliases: []string{"implementer"}, roleAliases: []string{"implementer", "worker"}},
+	{key: reviewerSpecType, chainAliases: []string{"spec-review"}, roleAliases: []string{reviewerSpecType, "spec-review"}},
+	{key: reviewerStandardsType, chainAliases: []string{"code-review"}, roleAliases: []string{reviewerStandardsType, "code-review"}},
+}
+
+const agentChainsVersionKey = "agents_chains_version"
+
+func agentChainsView() map[string][]chainEntry {
+	all, err := readSettingsMap()
+	if err != nil {
+		return map[string][]chainEntry{}
+	}
+	var version int
+	if raw := all[agentChainsVersionKey]; json.Unmarshal(raw, &version) == nil && version >= 1 {
+		return parseChains(all)
+	}
+	return mergedAgentChains(parseChains(all), parseRoles(all))
+}
+
+// mergedAgentChains returns the canonical Agents-page chains while retaining
+// unrelated chain keys. Legacy role models become each Run role's primary;
+// old Run Chain entries follow as fallbacks, with duplicate entries removed.
+func mergedAgentChains(chains map[string][]chainEntry, roles map[string]roleSetting) map[string][]chainEntry {
+	out := make(map[string][]chainEntry, len(chains)+len(agentChainRoles))
+	known := make(map[string]bool, len(agentChainRoles)*2)
+	for _, role := range agentChainRoles {
+		known[role.key] = true
+		for _, alias := range role.chainAliases {
+			known[alias] = true
+		}
+	}
+	for name, entries := range chains {
+		if !known[name] {
+			out[name] = append([]chainEntry(nil), entries...)
+		}
+	}
+	for _, role := range agentChainRoles {
+		var legacyEntries []chainEntry
+		if entries, ok := chains[role.key]; ok {
+			legacyEntries = entries
+		} else {
+			for _, alias := range role.chainAliases {
+				if entries, ok := chains[alias]; ok {
+					legacyEntries = entries
+					break
+				}
+			}
+		}
+		entries := make([]chainEntry, 0, maxChainEntries)
+		appendUnique := func(candidate chainEntry) {
+			if candidate.Backend == "" || candidate.Model == "" || len(entries) >= maxChainEntries {
+				return
+			}
+			for _, existing := range entries {
+				if existing == candidate {
+					return
+				}
+			}
+			entries = append(entries, candidate)
+		}
+		for _, alias := range role.roleAliases {
+			if setting, ok := roles[alias]; ok {
+				appendUnique(chainEntry{Backend: setting.Harness, Model: setting.Model, Effort: setting.Effort})
+				if len(entries) > 0 {
+					break
+				}
+			}
+		}
+		for _, entry := range legacyEntries {
+			appendUnique(entry)
+		}
+		out[role.key] = entries
+	}
+	return out
+}
+
+// canonicalAgentChains applies a partial write to the migrated chain view.
+// Once the settings file has the version marker, its canonical chains are
+// authoritative, including explicit empty chains.
+func canonicalAgentChains(current, updates map[string][]chainEntry, roles map[string]roleSetting, alreadyCanonical bool) map[string][]chainEntry {
+	var out map[string][]chainEntry
+	if alreadyCanonical {
+		out = make(map[string][]chainEntry, len(current)+len(agentChainRoles))
+		for name, entries := range current {
+			out[name] = append([]chainEntry(nil), entries...)
+		}
+		for _, role := range agentChainRoles {
+			if _, ok := out[role.key]; !ok {
+				out[role.key] = []chainEntry{}
+			}
+			for _, alias := range role.chainAliases {
+				delete(out, alias)
+			}
+		}
+	} else {
+		out = mergedAgentChains(current, roles)
+	}
+	for _, role := range agentChainRoles {
+		if entries, ok := updates[role.key]; ok {
+			out[role.key] = append([]chainEntry(nil), entries...)
+			continue
+		}
+		for _, alias := range role.chainAliases {
+			if entries, ok := updates[alias]; ok {
+				out[role.key] = append([]chainEntry(nil), entries...)
+				break
+			}
+		}
+	}
+	for name, entries := range updates {
+		canonical := false
+		for _, role := range agentChainRoles {
+			if name == role.key {
+				canonical = true
+				break
+			}
+			for _, alias := range role.chainAliases {
+				if name == alias {
+					canonical = true
+					break
+				}
+			}
+		}
+		if !canonical {
+			if len(entries) == 0 {
+				delete(out, name)
+			} else {
+				out[name] = append([]chainEntry(nil), entries...)
+			}
+		}
+	}
+	return out
+}
+
 // readChains returns the stored per-role chains. A missing or unreadable
 // settings file means no chains.
 func readChains() map[string][]chainEntry {
@@ -97,10 +238,8 @@ func (d *Daemon) settingsChains() map[string][]chainEntry {
 	return parseChains(all)
 }
 
-// chainFor returns the active fallback chain for a role: the stored chain
-// under the role or one of its aliases, else the single "roles" entry as a
-// chain of one, so a role without a chain still runs once. Empty when the
-// role is nowhere configured.
+// chainFor returns the active Run chain for a role, including its legacy
+// aliases and the one-entry role setting used before Chains existed.
 func chainFor(role string) []chainEntry {
 	return lookupChain(readChains(), readRoles(), role)
 }
@@ -111,12 +250,13 @@ func (d *Daemon) daemonChainFor(role string) []chainEntry {
 }
 
 // lookupChain resolves a role against decoded chains and roles maps: shared
-// by the host reader and the Daemon-scoped test seam.
+// by the host reader and the Daemon-scoped test seam. An explicit empty chain
+// suppresses legacy role fallbacks.
 func lookupChain(chains map[string][]chainEntry, roles map[string]roleSetting, role string) []chainEntry {
 	names := chainNames(role)
 	for _, name := range names {
-		if c, ok := chains[name]; ok && len(c) > 0 {
-			return c
+		if c, ok := chains[name]; ok {
+			return append([]chainEntry(nil), c...)
 		}
 	}
 	for _, name := range names {

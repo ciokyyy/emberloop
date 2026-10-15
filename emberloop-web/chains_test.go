@@ -106,13 +106,13 @@ func TestChainSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("chains after merge = %+v (%d), want worker kept and reviewer-spec added", chains, code)
 	}
 
-	// An empty list clears one role and keeps the other.
+	// An empty chain clears one Run role while the other roles stay configured.
 	chains, code, _ = putChainsBody(t, srv.URL, `{"chains": {"worker": []}}`)
 	if code != http.StatusOK {
 		t.Fatalf("clear status = %d, want 200", code)
 	}
-	if _, ok := chains["worker"]; ok || len(chains["reviewer-spec"]) != 1 {
-		t.Fatalf("chains after clear = %+v, want worker gone and reviewer-spec kept", chains)
+	if entries, ok := chains["worker"]; !ok || len(entries) != 0 || len(chains["reviewer-spec"]) != 1 {
+		t.Fatalf("chains after clear = %+v, want empty worker and reviewer-spec kept", chains)
 	}
 }
 
@@ -135,8 +135,10 @@ func TestChainSettingsValidation(t *testing.T) {
 		}
 	}
 	got, _ := getChainsView(t, srv.URL)
-	if len(got) != 0 {
-		t.Fatalf("chains after rejected writes = %+v, want none stored", got)
+	for role, entries := range got {
+		if len(entries) != 0 {
+			t.Fatalf("chains after rejected writes = %+v, want no configured entries (role %q is non-empty)", got, role)
+		}
 	}
 	raw, _ := os.ReadFile(file)
 	var saved struct {

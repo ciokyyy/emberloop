@@ -123,7 +123,8 @@ func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out struct {
-			Models []string `json:"models"`
+			Models       []string            `json:"models"`
+			ModelEfforts map[string][]string `json:"model_efforts"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			resp.Body.Close()
@@ -132,6 +133,16 @@ func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
 		resp.Body.Close()
 		if strings.Join(out.Models, ",") != strings.Join(want, ",") {
 			t.Fatalf("harness %s models = %v, want %v", harness, out.Models, want)
+		}
+		if harness == "claude" {
+			if got := strings.Join(out.ModelEfforts["opus"], ","); got != strings.Join(claudeEfforts, ",") {
+				t.Errorf("Claude Opus effort options = %v, want %v", out.ModelEfforts["opus"], claudeEfforts)
+			}
+			if len(out.ModelEfforts["haiku"]) != 0 {
+				t.Errorf("Claude Haiku effort options = %v, want none", out.ModelEfforts["haiku"])
+			}
+		} else if len(out.ModelEfforts["fake-model"]) != 0 {
+			t.Errorf("Fake model effort options = %v, want none", out.ModelEfforts["fake-model"])
 		}
 	}
 	resp, err := http.Get(srv.URL + "/api/models?harness=nope")

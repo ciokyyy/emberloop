@@ -136,19 +136,21 @@ func (d *Daemon) spawnFrom(from promptSender, parentID string, agents []SpawnAge
 	metas := make([]SessionMeta, len(agents))
 	for i, a := range agents {
 		members[i] = newID()
-		h, m := harness, model
+		h, m, effort := harness, model, ""
 		role := "worker"
 		if a.Type == "scout" {
 			role = "scout"
 		}
-		if rh, rm := d.daemonRoleFor(role); rh != "" {
-			h, m = rh, rm
+		configured := d.daemonRoleSettingFor(role)
+		if rh, rm := lookupRole(map[string]roleSetting{role: configured}, role); rh != "" {
+			h, m, effort = rh, rm, configured.Effort
 		}
 		metas[i] = SessionMeta{
 			ID:        members[i],
 			Name:      agentDisplayName(a.Name, a.Prompt),
 			Harness:   h,
 			Model:     m,
+			Effort:    effort,
 			WorkDir:   workDir,
 			ProjectID: parent.meta.ProjectID,
 			Status:    "idle",

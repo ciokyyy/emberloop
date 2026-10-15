@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -33,10 +34,11 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 }
 
 type settingsResp struct {
-	Roles                map[string]roleSetting `json:"roles"`
-	MaxTickets           int                    `json:"max_tickets"`
-	MaxTicketsFromEnv    bool                   `json:"max_tickets_from_env"`
-	OAuthRedirectBaseURL string                 `json:"oauth_redirect_base_url"`
+	Roles                map[string]roleSetting  `json:"roles"`
+	Chains               map[string][]chainEntry `json:"chains"`
+	MaxTickets           int                     `json:"max_tickets"`
+	MaxTicketsFromEnv    bool                    `json:"max_tickets_from_env"`
+	OAuthRedirectBaseURL string                  `json:"oauth_redirect_base_url"`
 }
 
 func getSettingsView(t *testing.T, base string) (settingsResp, int) {
@@ -411,5 +413,87 @@ func TestBrowserOAuthRedirectBaseRequiresProviderProbe(t *testing.T) {
 	}
 	if probeCalls != 1 {
 		t.Fatalf("probe calls after rejected/ineligible providers = %d, want 1", probeCalls)
+	}
+}
+
+// A pre-redesign settings file's role models and Run fallback keys appear as
+// one ordered chain per role, then persist in the canonical schema on save.
+func TestSettingsMigratesLegacyAgentRolesAndChains(t *testing.T) {
+	srv, settings := settingsServer(t, `{"roles":{
+		"orchestrator":{"harness":"claude","model":"opus","effort":"high"},
+		"worker":{"harness":"pig","model":"auto","effort":"medium"},
+		"scout":{"harness":"grok","model":"grok-4.7","effort":"low"},
+		"implementer":{"harness":"claude","model":"sonnet","effort":"max"},
+		"reviewer-spec":{"harness":"claude","model":"opus","effort":"high"},
+		"code-review":{"harness":"pig","model":"auto","effort":"low"}
+	},"chains":{
+		"worker":[{"backend":"claude","model":"haiku","effort":"low"},{"backend":"pig","model":"auto","effort":"high"}],
+		"spec-review":[{"backend":"grok","model":"grok-4.7","effort":"xhigh"}],
+		"code-review":[{"backend":"claude","model":"sonnet","effort":"medium"}]
+	}}`)
+
+	view, status := getSettingsView(t, srv.URL)
+	if status != http.StatusOK {
+		t.Fatalf("settings status = %d, want 200", status)
+	}
+	for role, want := range map[string]chainEntry{
+		"orchestrator":       {Backend: "claude", Model: "opus", Effort: "high"},
+		"subagent":           {Backend: "pig", Model: "auto", Effort: "medium"},
+		"scout":              {Backend: "grok", Model: "grok-4.7", Effort: "low"},
+		"reviewer-spec":      {Backend: "claude", Model: "opus", Effort: "high"},
+		"reviewer-standards": {Backend: "pig", Model: "auto", Effort: "low"},
+	} {
+		if len(view.Chains[role]) == 0 || view.Chains[role][0] != want {
+			t.Errorf("%s primary = %+v, want %+v", role, view.Chains[role], want)
+		}
+	}
+	wantWorker := []chainEntry{
+		{Backend: "claude", Model: "sonnet", Effort: "max"},
+		{Backend: "claude", Model: "haiku", Effort: "low"},
+		{Backend: "pig", Model: "auto", Effort: "high"},
+	}
+	if got := view.Chains["worker"]; !reflect.DeepEqual(got, wantWorker) {
+		t.Fatalf("ticket worker chain = %+v, want merged role primary and fallbacks %+v", got, wantWorker)
+	}
+	if view.Chains["reviewer-spec"][1] != (chainEntry{Backend: "grok", Model: "grok-4.7", Effort: "xhigh"}) {
+		t.Fatalf("spec reviewer chain = %+v, want its old Chain fallback", view.Chains["reviewer-spec"])
+	}
+	if view.Chains["reviewer-standards"][1] != (chainEntry{Backend: "claude", Model: "sonnet", Effort: "medium"}) {
+		t.Fatalf("standards reviewer chain = %+v, want its old Chain fallback", view.Chains["reviewer-standards"])
+	}
+	if view.Roles["implementer"].Model != "sonnet" || view.Roles["worker"].Model != "auto" || view.Roles["code-review"].Model != "auto" {
+		t.Fatalf("legacy role models lost during migration: %+v", view.Roles)
+	}
+
+	body, err := json.Marshal(map[string]any{"chains": view.Chains})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, status := putSettingsBody(t, srv.URL, string(body)); status != http.StatusOK {
+		t.Fatalf("canonical migration save status = %d, want 200", status)
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		Version int                     `json:"agents_chains_version"`
+		Chains  map[string][]chainEntry `json:"chains"`
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Version != 1 {
+		t.Fatalf("saved agent-chain version = %d, want 1", saved.Version)
+	}
+	for _, alias := range []string{"implementer", "spec-review", "code-review"} {
+		if _, ok := saved.Chains[alias]; ok {
+			t.Errorf("legacy chain alias %q remains after migration: %+v", alias, saved.Chains)
+		}
+	}
+	for _, role := range []string{"orchestrator", "subagent", "scout", "worker", "reviewer-spec", "reviewer-standards"} {
+		if _, ok := saved.Chains[role]; !ok {
+			t.Errorf("canonical chain %q missing after migration: %+v", role, saved.Chains)
+		}
 	}
 }
