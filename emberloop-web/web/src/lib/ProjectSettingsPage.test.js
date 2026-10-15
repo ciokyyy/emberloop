@@ -34,6 +34,18 @@ describe('ProjectSettingsPage', () => {
     expect(getByRole('textbox', { name: 'Project gist' }).value).toBe('An edited one-line summary.');
   });
 
+  it('refreshes clean fields when the same Project is updated', async () => {
+    const view = render(ProjectSettingsPage, { props: { project } });
+    await view.rerender({
+      project: { ...project, name: 'Renamed elsewhere', gist: 'Updated summary.' },
+    });
+
+    await waitFor(() => {
+      expect(view.getByRole('textbox', { name: 'Project name' }).value).toBe('Renamed elsewhere');
+      expect(view.getByRole('textbox', { name: 'Project gist' }).value).toBe('Updated summary.');
+    });
+  });
+
   it('offers removal and returns to the Project Sessions route', async () => {
     const onBack = vi.fn();
     const onRemove = vi.fn();

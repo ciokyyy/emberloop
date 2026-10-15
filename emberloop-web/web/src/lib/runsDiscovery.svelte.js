@@ -99,14 +99,7 @@ export async function selectDiscovery(spec) {
 export async function ensureDiscoveryContext(run) {
   if (discovery.seeding || !run?.repo) return;
   if (run.id && discovery.specSeedFor === run.id) return;
-  if (discovery.specs.length || discovery.selected) {
-    if (discovery.repo !== run.repo) return;
-    if (run.id) discovery.specSeedFor = run.id;
-    if (!discovery.selected && run.spec && discovery.specs.some((item) => item.spec === run.spec)) {
-      await previewDiscovery(run.spec);
-    }
-    return;
-  }
+  if (discovery.specs.length || discovery.selected) return;
   const target = run.repo;
   // The user typed a repo of their own: keep it.
   if (discovery.repo && discovery.repo !== target) return;

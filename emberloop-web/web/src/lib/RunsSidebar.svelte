@@ -17,7 +17,7 @@
     selectDiscovery,
   } from './runsDiscovery.svelte.js';
 
-  let { workDir = '', runId = '', ticketId = '', projectId = null, onNavigate = () => {} } = $props();
+  let { workDir = '', runId = '', ticketId = '', projectId = null, projectsLoaded = true, onNavigate = () => {} } = $props();
   const scopedProject = $derived(projectId != null && projectId !== 'none');
   let projectRepoKey = '';
 
@@ -48,13 +48,14 @@
   $effect(() => {
     const id = projectId;
     const dir = workDir;
+    const ready = projectsLoaded;
     if (id != null && id !== 'none') {
-      const key = `${id}:${dir}`;
+      const key = `${id}:${dir}:${ready}`;
       if (projectRepoKey === key) return;
       projectRepoKey = key;
       if (!dir) {
         resetDiscovery();
-        discovery.message = 'Project folder is unavailable.';
+        if (ready) discovery.message = 'Project folder is unavailable.';
       } else {
         void loadDiscovery(dir);
       }

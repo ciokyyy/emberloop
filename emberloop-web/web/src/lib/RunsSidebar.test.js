@@ -76,6 +76,58 @@ describe('RunsSidebar spec discovery', () => {
     expect(await within(container).findByRole('button', { name: /demo spec/i })).toBeTruthy();
     expect(discovery.repo).toBe('/project');
   });
+
+  it('waits for Project loading before reporting an unavailable path', async () => {
+    stubSpecs({ specs: [] });
+    const { container, rerender } = render(RunsSidebar, {
+      props: { workDir: '', projectId: 'project-1', projectsLoaded: false },
+    });
+    expect(within(container).queryByText('Project folder is unavailable.')).toBeNull();
+
+    await rerender({ workDir: '/project', projectId: 'project-1', projectsLoaded: true });
+    expect(await within(container).findByText(/no specs found under this directory/i)).toBeTruthy();
+    expect(within(container).queryByText('Project folder is unavailable.')).toBeNull();
+  });
+  it('ignores stale discovery results after switching Projects', async () => {
+    let releaseOld;
+    let oldResponseRead;
+    const oldResponseReadPromise = new Promise((resolve) => { oldResponseRead = resolve; });
+    const fetchMock = vi.fn((input) => {
+      const url = String(input);
+      if (url.includes('repo=%2Fold')) {
+        return new Promise((resolve) => {
+          releaseOld = () => resolve({
+            ok: true,
+            json: async () => {
+              oldResponseRead();
+              return { specs: [{ spec: '/old/spec.md', title: 'Old spec', tickets: 1 }] };
+            },
+          });
+        });
+      }
+      if (url.includes('repo=%2Fnew')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ specs: [{ spec: '/new/spec.md', title: 'New spec', tickets: 1 }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ runs: [] }) });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container, rerender } = render(RunsSidebar, {
+      props: { workDir: '/old', projectId: 'project-old', projectsLoaded: true },
+    });
+    await vi.waitFor(() => expect(releaseOld).toBeTypeOf('function'));
+
+    await rerender({ workDir: '/new', projectId: 'project-new', projectsLoaded: true });
+    expect(await within(container).findByRole('button', { name: /new spec/i })).toBeTruthy();
+    releaseOld();
+    await oldResponseReadPromise;
+    await tick();
+
+    expect(within(container).queryByRole('button', { name: /old spec/i })).toBeNull();
+    expect(discovery.repo).toBe('/new');
+  });
 });
 
 

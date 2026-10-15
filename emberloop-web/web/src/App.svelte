@@ -496,23 +496,29 @@
       adding = false;
     }
   }
+  function confirmProjectRemoval(p) {
+    return window.confirm(`Remove "${p.name}" from the list? Its chats and files stay.`);
+  }
+
+  async function renameProjectRecord(p, name) {
+    const updated = await renameProject(p.id, name);
+    await loadProjects();
+    return updated;
+  }
+
   async function rename(p) {
     const name = window.prompt('Rename project', p.name);
-    if (name && name.trim() && name !== p.name) {
-      await renameProject(p.id, name.trim());
-      await loadProjects();
-    }
+    if (name && name.trim() && name !== p.name) await renameProjectRecord(p, name.trim());
   }
-  async function remove(p) {
-    if (!window.confirm(`Remove "${p.name}" from the list? Its chats and files stay.`)) return;
+
+  async function removeProjectRecord(p) {
     await removeProject(p.id);
     if (draftProjectId === p.id) draftProjectId = null;
     await loadProjects();
   }
-  async function renameFromSettings(p, name) {
-    const updated = await renameProject(p.id, name);
-    await loadProjects();
-    return updated;
+
+  async function remove(p) {
+    if (confirmProjectRemoval(p)) await removeProjectRecord(p);
   }
 
   async function saveProjectGist(p, gist) {
@@ -522,13 +528,12 @@
   }
 
   async function removeFromSettings(p) {
-    if (!window.confirm(`Remove "${p.name}" from the list? Its chats and files stay.`)) return false;
-    await removeProject(p.id);
-    if (draftProjectId === p.id) draftProjectId = null;
-    await loadProjects();
+    if (!confirmProjectRemoval(p)) return false;
+    await removeProjectRecord(p);
     await navigate('/');
     return true;
   }
+
 
   // A draft creates its Session only when the first prompt is sent.
   function startDraft(projectId) {
@@ -971,18 +976,23 @@
   void applyRoute(initialPath);
 </script>
 
+{#snippet projectSettingsLink()}
+  {#if scopedProject}
+    <Button variant="ghost" class="justify-start" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}>Project settings</Button>
+  {/if}
+{/snippet}
+
 {#snippet rail2(inDrawer = false)}
   {#if view !== 'memory'}
   <div class="animate-rise flex min-h-0 flex-1 flex-col gap-3">
     {#if view === 'runs'}
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
-      {#if scopedProject}
-        <Button variant="ghost" class="justify-start" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}>Project settings</Button>
-      {/if}
+      {@render projectSettingsLink()}
       <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Specs and Runs</h1></div>
       <RunsSidebar
         workDir={isProjectScoped ? (scopedProject?.path ?? '') : (meta?.workDir ?? '')}
         projectId={scopedProjectRouteId}
+        projectsLoaded={projectsLoaded}
         {runId}
         {ticketId}
         onNavigate={navigate}
@@ -1004,9 +1014,7 @@
       <Button variant="secondary" class="justify-start" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }}><FolderPlus />Add project</Button>
     {:else}
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
-      {#if scopedProject}
-        <Button variant="ghost" class="justify-start" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}>Project settings</Button>
-      {/if}
+      {@render projectSettingsLink()}
       {#if !inDrawer}
       <div class="flex items-center justify-between px-2 pt-1">
         <h1 class="text-sm font-semibold tracking-tight">{scopedProject?.name ?? (scopeProjectId === '' && isProjectScoped ? 'No project' : 'Sessions')}</h1>
@@ -1106,7 +1114,7 @@
         project={scopedProject}
         loading={!projectsLoaded}
         onBack={() => navigate(buildPath({ name: 'project', projectId: scopedProjectRouteId }))}
-        onRename={renameFromSettings}
+        onRename={renameProjectRecord}
         onSaveGist={saveProjectGist}
         onRemove={removeFromSettings}
       />

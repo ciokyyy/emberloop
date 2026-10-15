@@ -19,13 +19,22 @@
   let removing = $state(false);
   let error = $state('');
   let initializedProject = '';
+  let syncedProjectName = '';
+  let syncedProjectGist = '';
 
   $effect(() => {
     const current = project;
-    if (!current || initializedProject === current.id) return;
-    initializedProject = current.id;
-    name = current.name ?? '';
-    gist = current.gist ?? '';
+    if (!current) return;
+    if (initializedProject !== current.id) {
+      initializedProject = current.id;
+      name = current.name ?? '';
+      gist = current.gist ?? '';
+    } else {
+      if (!savingName && name.trim() === syncedProjectName) name = current.name ?? '';
+      if (!savingGist && gist === syncedProjectGist) gist = current.gist ?? '';
+    }
+    syncedProjectName = current.name ?? '';
+    syncedProjectGist = current.gist ?? '';
   });
 
   const nameDirty = $derived(name.trim() !== (project?.name ?? ''));
