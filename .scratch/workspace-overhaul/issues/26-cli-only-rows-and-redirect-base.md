@@ -4,10 +4,10 @@
 
 **Blocked by:** 22-providers-page-and-api-keys
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] OAuth rows without a flow show the CLI command with a copy button
-- [ ] Cloud-auth rows read "configure via CLI"
-- [ ] The redirect base URL setting exists, defaults to empty, and applies only to providers whose probe accepts it
-- [ ] Go tests cover the probe and the default; vitest covers the rows
-- [ ] Repo check and `npm test` pass
+- [x] OAuth rows without a flow show the CLI command with a copy button
+- [x] Cloud-auth rows read "configure via CLI"
+- [x] The redirect base URL setting exists, defaults to empty, and applies only to providers whose probe accepts it
+- [x] Go tests cover the probe and the default; vitest covers the rows
+- [x] Repo check and `npm test` pass
