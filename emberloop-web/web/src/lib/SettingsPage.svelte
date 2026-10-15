@@ -551,7 +551,7 @@
               >
                 <span class="min-w-0 text-left">
                   <span class="block text-sm font-medium">Custom Jev endpoint</span>
-                  <span class="block text-xs text-muted-foreground">In Jev mode, leave the endpoint URL blank to use OpenRouter. Set a custom URL to use another Jev endpoint.</span>
+                  <span class="block text-xs text-muted-foreground">In Jev mode, leave blank to use OpenRouter. Set a URL to use a custom endpoint.</span>
                 </span>
                 <ChevronDown class={`size-4 shrink-0 text-muted-foreground transition-transform ${jevOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
               </Button>
