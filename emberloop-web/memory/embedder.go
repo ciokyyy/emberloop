@@ -21,6 +21,8 @@ const (
 	MaxEmbeddingBatch     = 32
 	MaxVectorsPerBank     = 50000
 	EmbeddingQueryBudget  = 800 * time.Millisecond
+	// EmbeddingRequestTimeout bounds asynchronous row embedding, not query recall.
+	EmbeddingRequestTimeout = 30 * time.Second
 )
 
 // Embedder turns redacted text into vectors. Returned vectors preserve input order.
@@ -177,12 +179,14 @@ type EmbeddingWorker struct {
 	jobs     chan EmbeddingJob
 	done     chan struct{}
 	stopped  chan struct{}
+	mu       sync.RWMutex
 	once     sync.Once
 }
 type EmbeddingJob struct {
 	Context context.Context
 	Text    string
 	Store   func(context.Context, []byte, string) error
+	OnError func(error)
 }
 
 func NewEmbeddingWorker(embedder Embedder, model string, capacity int) *EmbeddingWorker {
@@ -200,6 +204,8 @@ func (w *EmbeddingWorker) Enqueue(job EmbeddingJob) bool {
 	if job.Context == nil {
 		job.Context = context.Background()
 	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	select {
 	case <-w.done:
 		return false
@@ -212,26 +218,63 @@ func (w *EmbeddingWorker) Enqueue(job EmbeddingJob) bool {
 		return false
 	}
 }
+
+// Close stops accepting work, waits for any active job, and reports queued work
+// as skipped before returning. Engine closes banks only after this join.
 func (w *EmbeddingWorker) Close() {
-	if w != nil {
-		w.once.Do(func() { close(w.done) })
-		<-w.stopped
+	if w == nil {
+		return
 	}
+	w.mu.Lock()
+	w.once.Do(func() { close(w.done) })
+	w.mu.Unlock()
+	<-w.stopped
 }
 func (w *EmbeddingWorker) run() {
 	defer close(w.stopped)
 	for {
 		select {
 		case <-w.done:
+			w.failPending()
 			return
-		case j := <-w.jobs:
-			ctx, cancel := context.WithTimeout(j.Context, EmbeddingQueryBudget)
-			vectors, err := w.embedder.Embed(ctx, w.model, []string{ForEmbedder(j.Text)})
-			if err == nil && len(vectors) == 1 {
-				_ = j.Store(ctx, EncodeVector(vectors[0]), w.model)
-			}
-			cancel()
+		default:
 		}
+		select {
+		case <-w.done:
+			w.failPending()
+			return
+		case job := <-w.jobs:
+			w.process(job)
+		}
+	}
+}
+func (w *EmbeddingWorker) process(job EmbeddingJob) {
+	ctx, cancel := context.WithTimeout(job.Context, EmbeddingRequestTimeout)
+	vectors, err := w.embedder.Embed(ctx, w.model, []string{ForEmbedder(job.Text)})
+	if err == nil && len(vectors) != 1 {
+		err = errors.New("embedding provider returned an unexpected vector count")
+	}
+	if err == nil {
+		err = job.Store(ctx, EncodeVector(vectors[0]), w.model)
+	}
+	cancel()
+	if err != nil {
+		w.report(job, err)
+	}
+}
+func (w *EmbeddingWorker) failPending() {
+	for {
+		select {
+		case job := <-w.jobs:
+			w.report(job, errors.New("embedding skipped during shutdown"))
+		default:
+			return
+		}
+	}
+}
+func (w *EmbeddingWorker) report(job EmbeddingJob, err error) {
+	if job.OnError != nil {
+		job.OnError(err)
 	}
 }
 
@@ -245,8 +288,7 @@ type VectorHit struct {
 	Similarity float64
 }
 
-// VectorSearch ranks only well-formed rows from the configured model. The
-// vector pass and fallback share one caller-derived query budget.
+// VectorSearch shares one caller-derived budget between cosine ranking and fallback.
 func VectorSearch(ctx context.Context, candidates []VectorCandidate, query []float32, model string, limit int, budget time.Duration, fallback func(context.Context) ([]VectorHit, error)) ([]VectorHit, error) {
 	if budget <= 0 {
 		budget = EmbeddingQueryBudget
@@ -262,23 +304,40 @@ func VectorSearch(ctx context.Context, candidates []VectorCandidate, query []flo
 	}
 	searchCtx, searchCancel := context.WithTimeout(queryCtx, searchBudget)
 	defer searchCancel()
-	type result struct{ hits []VectorHit }
+	fallbackSearch := func() ([]VectorHit, error) {
+		if fallback == nil {
+			return nil, searchCtx.Err()
+		}
+		return fallback(queryCtx)
+	}
+	type result struct {
+		hits []VectorHit
+		err  error
+	}
 	ch := make(chan result, 1)
 	go func() {
 		hits := make([]VectorHit, 0)
-		n := 0
-		for _, row := range candidates {
+		for i, row := range candidates {
+			if i >= MaxVectorsPerBank {
+				break
+			}
+			if i%128 == 0 {
+				if err := searchCtx.Err(); err != nil {
+					ch <- result{err: err}
+					return
+				}
+			}
 			if row.Model != model || len(row.Vector) == 0 {
 				continue
 			}
-			if n >= MaxVectorsPerBank {
-				break
-			}
-			n++
 			v, err := DecodeVector(row.Vector)
 			if err == nil && len(v) == len(query) {
 				hits = append(hits, VectorHit{row.ID, Cosine(query, v)})
 			}
+		}
+		if err := searchCtx.Err(); err != nil {
+			ch <- result{err: err}
+			return
 		}
 		sort.Slice(hits, func(i, j int) bool {
 			if hits[i].Similarity == hits[j].Similarity {
@@ -289,16 +348,16 @@ func VectorSearch(ctx context.Context, candidates []VectorCandidate, query []flo
 		if len(hits) > limit {
 			hits = hits[:limit]
 		}
-		ch <- result{hits}
+		ch <- result{hits: hits}
 	}()
 	select {
 	case r := <-ch:
+		if r.err != nil {
+			return fallbackSearch()
+		}
 		return r.hits, nil
 	case <-searchCtx.Done():
-		if fallback == nil {
-			return nil, searchCtx.Err()
-		}
-		return fallback(queryCtx)
+		return fallbackSearch()
 	}
 }
 

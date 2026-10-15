@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -149,4 +150,90 @@ func TestEngineWorkerEmbedsInsertedMemoriesAndEpisodes(t *testing.T) {
 	if len(fake.Inputs) != 2 || fake.Inputs[0] != "password=[redacted:password]" || fake.Inputs[1] != "password=[redacted:password]" {
 		t.Fatalf("unredacted embedder inputs: %q", fake.Inputs)
 	}
+}
+
+type blockingEmbedder struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *blockingEmbedder) Embed(ctx context.Context, _ string, _ []string) ([][]float32, error) {
+	close(e.started)
+	select {
+	case <-e.release:
+		return [][]float32{{1, 0}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestEngineCloseJoinsEmbeddingBeforeClosingBanks(t *testing.T) {
+	embedder := &blockingEmbedder{started: make(chan struct{}), release: make(chan struct{})}
+	root := tempDir(t)
+	eng, err := Open(root, Options{Embedder: embedder, EmbeddingModel: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bank, err := eng.Bank("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bank.AddMemory(context.Background(), MemoryItem{SessionID: "s", EventID: "e", Author: "alice", Kind: KindFact, Text: "fact", Quote: "fact"}); err != nil {
+		t.Fatal(err)
+	}
+	<-embedder.started
+	closed := make(chan error, 1)
+	go func() { closed <- eng.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before active embedding finished: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(embedder.release)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close failed to join worker")
+	}
+	reader, err := Open(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	readBank, err := reader.Bank("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := readBank.GetMemory(context.Background(), 1)
+	if err != nil || row.EmbeddingModel != "m" || len(row.Embedding) == 0 {
+		t.Fatalf("in-flight store did not finish before bank close: %+v, %v", row, err)
+	}
+
+}
+func TestEmbeddingFailuresAreRecorded(t *testing.T) {
+	fake := &FakeEmbedder{Err: errors.New("offline")}
+	eng, err := Open(tempDir(t), Options{Embedder: fake, EmbeddingModel: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	bank, err := eng.Bank("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bank.AddMemory(context.Background(), MemoryItem{SessionID: "s", EventID: "e", Author: "alice", Kind: KindFact, Text: "fact", Quote: "fact"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := bank.Ledger(context.Background())
+		if err == nil && len(rows) == 1 && rows[0].Stage == "embedding" && rows[0].Status == LedgerFailed {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("embedding failure was not recorded")
 }

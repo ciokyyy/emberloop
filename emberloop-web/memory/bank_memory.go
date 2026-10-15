@@ -33,10 +33,10 @@ func (b *Bank) insertMemory(ctx context.Context, m MemoryItem) (int64, error) {
 		id, err = res.LastInsertId()
 		return err
 	})
-	if err == nil && b.embedWorker != nil {
-		b.embedWorker.Enqueue(EmbeddingJob{Text: m.Text, Store: func(ctx context.Context, vector []byte, model string) error {
+	if err == nil {
+		b.enqueueEmbedding("memory", m.Text, id, func(ctx context.Context, vector []byte, model string) error {
 			return b.SetMemoryEmbedding(ctx, id, vector, model)
-		}})
+		})
 	}
 	return id, err
 }
@@ -198,10 +198,10 @@ func (b *Bank) insertEpisode(ctx context.Context, e Episode) (int64, error) {
 		id, err = res.LastInsertId()
 		return err
 	})
-	if err == nil && b.embedWorker != nil {
-		b.embedWorker.Enqueue(EmbeddingJob{Text: e.Text, Store: func(ctx context.Context, vector []byte, model string) error {
+	if err == nil {
+		b.enqueueEmbedding("episode", e.Text, id, func(ctx context.Context, vector []byte, model string) error {
 			return b.SetEpisodeEmbedding(ctx, id, vector, model)
-		}})
+		})
 	}
 	return id, err
 }
@@ -290,4 +290,17 @@ func orNow(t, fallback time.Time) time.Time {
 		return fallback
 	}
 	return t
+}
+func (b *Bank) enqueueEmbedding(kind, text string, id int64, store func(context.Context, []byte, string) error) {
+	if b.embedWorker == nil {
+		return
+	}
+	job := EmbeddingJob{Text: text, Store: store, OnError: func(error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = b.RecordLedger(ctx, LedgerRow{RunID: fmt.Sprintf("embedding-%s-%d", kind, id), Stage: "embedding", Status: LedgerFailed, CountsJSON: `{"failed":1}`, Detail: "embedding computation or persistence failed"})
+	}}
+	if !b.embedWorker.Enqueue(job) {
+		job.OnError(fmt.Errorf("embedding queue unavailable"))
+	}
 }
