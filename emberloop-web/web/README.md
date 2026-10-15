@@ -1,6 +1,6 @@
 # UI
 
-Svelte 5 + Vite single-page app, built to static files. `npm run build` in
+Svelte 5 + Vite 8 (with `@sveltejs/vite-plugin-svelte` 7) single-page app, built to static files. `npm run build` in
 `web/` writes `web/dist/`; the Daemon embeds `web/dist` and serves `/`,
 `/index.html` and the bundle assets (JS, CSS, favicon, manifest, service
 worker, icons) at `/` with PWA headers (see Installable app). No server
