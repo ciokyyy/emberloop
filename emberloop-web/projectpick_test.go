@@ -199,7 +199,14 @@ func TestProjectPickStartsSessionInSuggestedProjectPath(t *testing.T) {
 	}))
 	defer endpoint.Close()
 
-	d := NewDaemon(tempDir(t), NewFakeBackend())
+	backend := NewFakeBackend()
+	backend.CreateFailure = func(meta SessionMeta) error {
+		if meta.WorkDir != projectPath {
+			t.Errorf("fake Backend received cwd %q, want %q", meta.WorkDir, projectPath)
+		}
+		return nil
+	}
+	d := NewDaemon(tempDir(t), backend)
 	d.projects = []Project{{ID: "alpha", Name: "Alpha", Path: projectPath, Gist: "Builds small solar-powered widgets."}}
 	d.projectPickKeyFn = func(context.Context) string { return "test-key" }
 	d.projectPickProvider = systemone.NewOpenRouterWithEndpoint("unused", endpoint.URL)

@@ -60,6 +60,7 @@
   let draftOpen = $state(false);
   let draftPick = $state(null);
   let draftPickGeneration = 0;
+  let failedDraftPrompt = $state(null);
   let addOpen = $state(false);
   let adding = $state(false);
   let addError = $state('');
@@ -312,6 +313,7 @@
     openToken++;
     draftPickGeneration++;
     draftPick = null;
+    failedDraftPrompt = null;
     batch = [];
     pendingSends = [];
     queue = [];
@@ -555,6 +557,7 @@
     draftOpen = false;
     draftPickGeneration++;
     draftPick = null;
+    failedDraftPrompt = null;
     draftProjectId = null;
     lastSeq = 0;
     connected = true;
@@ -736,23 +739,30 @@
     if (drafting) {
       if (sending || draftPick) return;
       sending = true;
-      loadError = '';
       const generation = draftPickGeneration;
+      const settings = { projectId: draftProjectId, harness: draftHarness, model: draftModel, effort: draftEffort };
+      const message = { text, images, imageIds, audio };
       try {
-        if (draftProjectId == null && text.trim()) {
+        if (settings.projectId == null && text.trim() && !audio) {
           let suggestedProject = null;
           try {
             suggestedProject = (await suggestProject(text))?.suggestedProject ?? null;
           } catch {
             // Jev is advisory: an unavailable suggestion keeps today's start path.
           }
-          if (generation !== draftPickGeneration || !drafting) return;
+          if (generation !== draftPickGeneration || !drafting) {
+            // The Composer has already handed off this message. If navigation
+            // closed its draft while Jev was running, honor the send on the
+            // original settings rather than silently losing the prompt.
+            await createDraftAndSend(settings.projectId, message, settings);
+            return;
+          }
           if (suggestedProject?.id) {
-            draftPick = { project: suggestedProject, message: { text, images, imageIds, audio } };
+            draftPick = { project: suggestedProject, message };
             return;
           }
         }
-        await createDraftAndSend(draftProjectId, { text, images, imageIds, audio });
+        await createDraftAndSend(settings.projectId, message);
       } catch (err) {
         loadError = 'Could not start the chat.';
         throw err;
@@ -764,11 +774,12 @@
     await deliverToSession(currentId, text, mode, images, imageIds, audio);
   }
 
-  async function createDraftAndSend(projectId, message) {
+  async function createDraftAndSend(projectId, message, settings = null) {
+    const selected = settings ?? { harness: draftHarness, model: draftModel, effort: draftEffort };
     const session = await createSession({
-      harness: draftHarness,
-      model: draftModel,
-      effort: (draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? draftEffort : '',
+      harness: selected.harness,
+      model: selected.model,
+      effort: (selected.harness === 'claude' || selected.harness === 'pig') && selected.effort !== 'default' ? selected.effort : '',
       projectId,
     });
     await refresh();
@@ -780,11 +791,30 @@
     const pick = draftPick;
     if (!pick || sending) return;
     sending = true;
-    loadError = '';
     try {
       await createDraftAndSend(useSuggestedProject ? pick.project.id : null, pick.message);
     } catch {
-      loadError = 'Could not start the chat.';
+      if (currentId && !drafting) {
+        failedDraftPrompt = { sessionId: currentId, message: pick.message };
+        loadError = 'The Session started, but the first prompt was not sent.';
+      } else {
+        loadError = 'Could not start the chat.';
+      }
+    } finally {
+      sending = false;
+    }
+  }
+
+  async function retryFailedDraftPrompt() {
+    const failed = failedDraftPrompt;
+    if (!failed || sending || failed.sessionId !== currentId) return;
+    sending = true;
+    try {
+      await deliverToSession(failed.sessionId, failed.message.text, 'prompt', failed.message.images, failed.message.imageIds, failed.message.audio);
+      if (failedDraftPrompt === failed) failedDraftPrompt = null;
+      loadError = '';
+    } catch {
+      loadError = 'Could not send the first prompt. Retry below.';
     } finally {
       sending = false;
     }
@@ -1148,6 +1178,12 @@
               </div>
             {/if}
             {#if !sessionMissing}
+            {#if failedDraftPrompt?.sessionId === currentId}
+              <div role="alert" data-testid="failed-draft-prompt" class="animate-rise flex flex-wrap items-center gap-2 rounded-2xl border bg-card p-3 text-sm">
+                <span class="min-w-0 flex-1">The first prompt was not sent.</span>
+                <Button variant="outline" disabled={sending} onclick={retryFailedDraftPrompt}>Retry first prompt</Button>
+              </div>
+            {/if}
             {#if drafting}
               <DraftBar bind:harness={draftHarness} bind:model={draftModel} bind:effort={draftEffort} />
             {#if draftPick}

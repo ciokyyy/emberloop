@@ -61,10 +61,12 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `App.svelte` asks only for the first prompt of a projectless draft: a
   suggestion shows “Run this in <Project>?”; Yes creates the Session with that
   Project id and sends the held prompt, while No or no suggestion keeps the
-  home-directory start. A Session's working directory never changes after
-  creation. The response always carries `suggestedProject` (the Project or
-  `null`); `projectpick_test.go` covers the endpoint, local systemone stub and
-  starting a Session in the suggested Project path.
+  home-directory start. If navigation closes the draft during Jev evaluation,
+  the captured prompt still starts without a pick; a failed delivery after a
+  confirmed start remains available to retry in that Session. A Session's
+  working directory never changes after creation. The response always carries
+  `suggestedProject` (the Project or `null`); `projectpick_test.go` covers the
+  endpoint, local systemone stub, backend cwd and suggested Project path.
 - Users and harness identity: `auth_test.go`, `owner_test.go`,
   `users_list_test.go` and `harnessdirs_test.go`.
 - Disk hygiene: `disk.go` (10-minute janitor with the `diskFS` clock/FS/git

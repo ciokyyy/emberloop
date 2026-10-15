@@ -184,7 +184,7 @@ describe('Draft Project pick', () => {
   const project = { id: 'project-1', name: 'Demo', path: '/repo' };
   const session = { id: 'draft-session', harness: 'claude', model: 'sonnet', projectId: 'project-1', workDir: '/repo', status: 'idle' };
 
-  function setup(suggestedProject) {
+  function setup(suggestedProject, pendingSuggestion = null, failFirstPrompt = false) {
     history.replaceState(null, '', '/p/none');
     localStorage.clear();
     vi.stubGlobal('EventSource', class { close() {} });
@@ -194,7 +194,7 @@ describe('Draft Project pick', () => {
     const fetchMock = vi.fn(async (url, options = {}) => {
       const path = String(url);
       const method = options.method ?? 'GET';
-      if (path.endsWith('/api/projects/suggest')) return response({ suggestedProject });
+      if (path.endsWith('/api/projects/suggest')) return pendingSuggestion ?? response({ suggestedProject });
       if (path.endsWith('/api/projects')) return response([project]);
       if (path === '/api/sessions' && method === 'POST') {
         const body = JSON.parse(options.body);
@@ -206,6 +206,10 @@ describe('Draft Project pick', () => {
       if (path.startsWith('/api/sessions/draft-session?')) return response({ session: createdSession, events: [], resumable: true, hasMore: false, firstSeq: 0 });
       if (path.endsWith('/api/sessions/draft-session/prompt')) {
         promptBodies.push(JSON.parse(options.body));
+        if (failFirstPrompt) {
+          failFirstPrompt = false;
+          return { ok: false, status: 500, json: async () => ({}) };
+        }
         return response({ seq: 1 });
       }
       if (path.endsWith('/api/sessions/draft-session/queue')) return response({ queue: [] });
@@ -224,6 +228,22 @@ describe('Draft Project pick', () => {
     await fireEvent.click(within(container).getByRole('button', { name: 'Send' }));
   }
 
+  it('sends the held prompt if navigation closes its draft during the Jev request', async () => {
+    let finishSuggestion;
+    const pendingSuggestion = new Promise((resolve) => { finishSuggestion = resolve; });
+    const { container, createBodies, promptBodies, fetchMock } = setup(project, pendingSuggestion);
+    await sendFirstPrompt(container);
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/projects/suggest'))).toBe(true));
+
+    history.replaceState(null, '', '/s/other-session');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    finishSuggestion(response({ suggestedProject: project }));
+
+    await vi.waitFor(() => expect(promptBodies).toHaveLength(1));
+    expect(createBodies[0].projectId).toBeNull();
+    expect(promptBodies[0]).toEqual({ text: 'Fix the Demo startup flow.' });
+  });
+
   it('shows the Daemon suggestion and Yes starts the Session and prompt in that Project', async () => {
     const { container, createBodies, promptBodies, fetchMock } = setup(project);
     await sendFirstPrompt(container);
@@ -241,6 +261,21 @@ describe('Draft Project pick', () => {
     expect(promptBodies[0]).toEqual({ text: 'Fix the Demo startup flow.' });
   });
 
+  it('keeps a held prompt available to retry if the confirmed Session rejects it', async () => {
+    const { container, createBodies, promptBodies } = setup(project, null, true);
+    await sendFirstPrompt(container);
+    const banner = await within(container).findByTestId('project-pick-banner');
+    await fireEvent.click(within(banner).getByRole('button', { name: 'Yes' }));
+
+    const retry = await within(container).findByTestId('failed-draft-prompt');
+    expect(createBodies).toHaveLength(1);
+    expect(promptBodies).toHaveLength(1);
+    await fireEvent.click(within(retry).getByRole('button', { name: 'Retry first prompt' }));
+    await vi.waitFor(() => expect(promptBodies).toHaveLength(2));
+    expect(createBodies).toHaveLength(1);
+    expect(promptBodies[0]).toEqual(promptBodies[1]);
+  });
+
   it('No keeps the existing unprojected start behavior, while no suggestion shows no banner', async () => {
     const selected = setup(project);
     await sendFirstPrompt(selected.container);
@@ -255,6 +290,19 @@ describe('Draft Project pick', () => {
     await vi.waitFor(() => expect(ordinary.promptBodies).toHaveLength(1));
     expect(within(ordinary.container).queryByTestId('project-pick-banner')).toBeNull();
     expect(ordinary.createBodies[0].projectId).toBeNull();
+  });
+  it('starts an image-only draft without requesting a Project suggestion', async () => {
+    const { container, createBodies, promptBodies, fetchMock } = setup(project);
+    await within(container).findByRole('textbox', { name: 'message' });
+    const image = new File([Uint8Array.of(1, 2, 3)], 'diagram.png', { type: 'image/png' });
+    await fireEvent.change(container.querySelector('input[name="attachments"]'), { target: { files: [image] } });
+    await within(container).findByTestId('composer-tray');
+    await fireEvent.click(within(container).getByRole('button', { name: 'Send' }));
+
+    await vi.waitFor(() => expect(promptBodies).toHaveLength(1));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/projects/suggest'))).toBe(false);
+    expect(createBodies[0].projectId).toBeNull();
+    expect(promptBodies[0]).toMatchObject({ text: '', mode: 'prompt', images: [{ mime: 'image/png' }] });
   });
 });
 describe('Non-blocking boot', () => {
