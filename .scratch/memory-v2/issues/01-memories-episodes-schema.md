@@ -4,11 +4,11 @@
 
 **Blocked by:** none
 
-**Status:** todo
+**Status:** done
 
-- [ ] Migrations apply on an existing bank; no shipped migration is edited
-- [ ] An UPDATE of text, quote, author or provenance is refused by the guard
-- [ ] A DELETE is refused outside purge; purge scrubs both tables, their FTS and snapshots
-- [ ] `forgotten` Memories are excluded from every list used by recall, injection and dedup
-- [ ] The fake and the bank both satisfy `contract_test.go`
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Migrations apply on an existing bank; no shipped migration is edited
+- [x] An UPDATE of text, quote, author or provenance is refused by the guard
+- [x] A DELETE is refused outside purge; purge scrubs both tables, their FTS and snapshots
+- [x] `forgotten` Memories are excluded from every list used by recall, injection and dedup
+- [x] The fake and the bank both satisfy `contract_test.go`
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
