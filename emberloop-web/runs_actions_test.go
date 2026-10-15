@@ -536,8 +536,25 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 		return ticketByID(r, "01-first").WorkerSession != ""
 	}, "worker started")
 	worker := ticketByID(r, "01-first").WorkerSession
+	waitWorkerSettled := func(phase string) {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			d.mu.Lock()
+			s := d.sessions[worker]
+			settled := s != nil && !s.busy && s.active == 0
+			d.mu.Unlock()
+			if settled {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("worker did not settle after %s", phase)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 	firstPrompt := firstPromptWhere(t, srv.URL, worker, func(Event) bool { return true })
 	waitTurnEnd(t, srv.URL, worker, firstPrompt.Seq)
+	waitWorkerSettled("initial turn")
 	worktree := filepath.Join(repo, ".el-worktrees", "01-first")
 	commitTicketFile(t, worktree, "conflict.txt", "worker\n", "worker change")
 	specWT := filepath.Join(repo, ".el-worktrees", "spec-move")
@@ -551,6 +568,7 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 		submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 		refusalPrompt := waitPromptContaining(t, srv.URL, worker, "conflicted", n, "refusal tell")
 		waitTurnEnd(t, srv.URL, worker, refusalPrompt.Seq)
+		waitWorkerSettled("refusal tell turn")
 	}
 	waitActionState(t, srv.URL, run.ID, "01-first", "needs-you", "refusal needs-you")
 
@@ -564,6 +582,13 @@ func TestRetryAfterRefusalAlertMerges(t *testing.T) {
 	// The retry's steer reached the worker.
 	retryPrompt := waitPromptContaining(t, srv.URL, worker, "clean up and submit again", 1, "retry steer text")
 	waitTurnEnd(t, srv.URL, worker, retryPrompt.Seq)
+	waitWorkerSettled("retry steer turn")
+	// Retry replays the previously refused submit before it accepts new work.
+	// Wait for that rebase refusal and its tell to finish before resetting the
+	// worktree, otherwise git reset races the driver's rebase (index.lock).
+	postRetryRefusal := waitPromptContaining(t, srv.URL, worker, "conflicted", 4, "post-retry refusal tell")
+	waitTurnEnd(t, srv.URL, worker, postRetryRefusal.Seq)
+	waitWorkerSettled("post-retry refusal tell turn")
 
 	// A branch reset onto the moved spec, plus a new commit, merges: the
 	// rebase lands and the reviewers judge the new tip.

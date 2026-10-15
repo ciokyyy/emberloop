@@ -910,7 +910,8 @@ func submitSession(t *testing.T, base, id, status string, completed []string) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("submit status = %d, want 202", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("submit status = %d, want 202: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 }
 

@@ -211,7 +211,7 @@ func TestRunSwitchRequiresPause(t *testing.T) {
 }
 
 func TestRunSwitchChangesReviewerModelOnResume(t *testing.T) {
-	t.Parallel()
+	// Serial: a fast Run driver can race a pause/switch/resume sequence into a concluded run.
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})

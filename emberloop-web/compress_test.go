@@ -259,7 +259,9 @@ func TestSeededUsageAtSessionStart(t *testing.T) {
 	// The seed never overwrites a real reading: after a turn the newest
 	// usage is the turn's own, and no second seed appears.
 	sendPrompt(t, srv.URL, id, "hello")
-	waitStatus(t, srv.URL, id, "idle", 5*time.Second)
+	waitSessionCond(t, srv.URL, id, func(s sessionBody) bool {
+		return len(eventsOfKind(s.Events, "usage")) == 2
+	}, "turn usage event")
 	evs := transcriptOf(t, srv.URL, id)
 	if n := len(eventsOfKind(evs, "usage")); n != 2 {
 		t.Fatalf("usage events after one turn = %d, want seed plus turn", n)
