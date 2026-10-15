@@ -12,11 +12,12 @@ import (
 // Engine owns the banks under one root directory. Each User's bank is
 // root/users/<userID>.db; its snapshots are in root/snapshots/<userID>/.
 type Engine struct {
-	root   string
-	opts   Options
-	mu     sync.Mutex
-	banks  map[string]*Bank
-	closed bool
+	root        string
+	opts        Options
+	mu          sync.Mutex
+	banks       map[string]*Bank
+	embedWorker *EmbeddingWorker
+	closed      bool
 }
 
 // Open prepares an engine at root. Banks open on first use in Bank.
@@ -28,7 +29,11 @@ func Open(root string, opts Options) (*Engine, error) {
 	if err := os.MkdirAll(filepath.Join(abs, "users"), 0o755); err != nil {
 		return nil, fmt.Errorf("memory: open root: %w", err)
 	}
-	return &Engine{root: abs, opts: opts, banks: make(map[string]*Bank)}, nil
+	e := &Engine{root: abs, opts: opts, banks: make(map[string]*Bank)}
+	if opts.Embedder != nil && opts.EmbeddingModel != "" {
+		e.embedWorker = NewEmbeddingWorker(opts.Embedder, opts.EmbeddingModel, 64)
+	}
+	return e, nil
 }
 
 // Bank returns the bank of userID. The first call creates, migrates and starts
@@ -54,6 +59,7 @@ func (e *Engine) Bank(userID string) (*Bank, error) {
 	if err != nil {
 		return nil, err
 	}
+	b.embedWorker = e.embedWorker
 	e.banks[userID] = b
 	return b, nil
 }
@@ -67,6 +73,9 @@ func (e *Engine) Close() error {
 	}
 	e.closed = true
 	var errs []error
+	if e.embedWorker != nil {
+		e.embedWorker.Close()
+	}
 	for _, b := range e.banks {
 		errs = append(errs, b.Close())
 	}

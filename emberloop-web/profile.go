@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"example.com/emberloop-web/el/tools/systemone"
 	"example.com/emberloop-web/memory"
 )
 
@@ -45,17 +47,41 @@ func (d *Daemon) memoryRoot() string {
 	return filepath.Join(d.stateDir, "enderbloom", "memory")
 }
 
+// memoryEmbeddingOptions resolves the host-global embedding model and OpenRouter key.
+func (d *Daemon) memoryEmbeddingOptions() (memory.Embedder, string) {
+	model := memory.DefaultEmbeddingModel
+	if all, err := d.settingsMap(); err == nil {
+		if raw, ok := all[memory.EmbeddingModelSetting]; ok {
+			var configured string
+			if json.Unmarshal(raw, &configured) == nil {
+				model = strings.TrimSpace(configured)
+			}
+		}
+	}
+	if model == "" {
+		return nil, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	key := systemone.APIKey(ctx)
+	if key == "" {
+		return nil, model
+	}
+	return &memory.OpenRouterEmbedder{APIKey: key}, model
+}
+
 // memoryEngine lazily opens the per-User engine. memMu is separate from mu so
 // resume and compress paths that hold mu can still read the Profile. The
-// engine reads the Daemon clock, so API tests drive bank timestamps with the
-// fake clock.
+// engine owns the Daemon's bounded embedding worker and clock.
+
 func (d *Daemon) memoryEngine() (*memory.Engine, error) {
 	d.memMu.Lock()
 	defer d.memMu.Unlock()
 	if d.memEng != nil {
 		return d.memEng, nil
 	}
-	eng, err := memory.Open(d.memoryRoot(), memory.Options{Now: d.now})
+	embedder, model := d.memoryEmbeddingOptions()
+	eng, err := memory.Open(d.memoryRoot(), memory.Options{Now: d.now, Embedder: embedder, EmbeddingModel: model})
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,25 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
+func TestMemoryEmbeddingModelSettingDefaultsAndDisables(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+	for _, tc := range []struct{ raw, want string }{
+		{`{}`, memory.DefaultEmbeddingModel},
+		{`{"memory_embedding_model":"custom/model"}`, "custom/model"},
+		{`{"memory_embedding_model":""}`, ""},
+	} {
+		d := NewDaemon(tempDir(t), NewFakeBackend())
+		d.SetSettingsPath(useSettings(t, tc.raw))
+		embedder, got := d.memoryEmbeddingOptions()
+		if got != tc.want {
+			t.Errorf("setting %s: model = %q, want %q", tc.raw, got, tc.want)
+		}
+		if (embedder != nil) != (tc.want != "") {
+			t.Errorf("setting %s: embedder configured=%v", tc.raw, embedder != nil)
+		}
+	}
+}
+
 // profileDaemon starts a Daemon on the fake Backend with prompt capture,
 // like handleDaemon but exposing the profile API base URL.
 func profileDaemon(t *testing.T) (*Daemon, *FakeBackend, *promptsSeen, string, string) {

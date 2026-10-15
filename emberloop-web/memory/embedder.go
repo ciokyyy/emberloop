@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	EmbeddingModelSetting = "memory_embedding_model"
 	DefaultEmbeddingModel = "qwen/qwen3-embedding-4b"
 	MaxEmbeddingBatch     = 32
 	MaxVectorsPerBank     = 50000
@@ -40,10 +41,11 @@ func (e *OpenRouterEmbedder) Embed(ctx context.Context, model string, texts []st
 	if e == nil || e.APIKey == "" {
 		return nil, errors.New("memory: OpenRouter API key is missing")
 	}
-	for i, text := range texts {
-		texts[i] = ForEmbedder(text)
+	inputs := append([]string(nil), texts...)
+	for i, text := range inputs {
+		inputs[i] = ForEmbedder(text)
 	}
-	body, err := json.Marshal(map[string]any{"model": model, "input": texts})
+	body, err := json.Marshal(map[string]any{"model": model, "input": inputs})
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +176,7 @@ type EmbeddingWorker struct {
 	model    string
 	jobs     chan EmbeddingJob
 	done     chan struct{}
+	stopped  chan struct{}
 	once     sync.Once
 }
 type EmbeddingJob struct {
@@ -186,7 +189,7 @@ func NewEmbeddingWorker(embedder Embedder, model string, capacity int) *Embeddin
 	if capacity < 1 {
 		capacity = 64
 	}
-	w := &EmbeddingWorker{embedder: embedder, model: model, jobs: make(chan EmbeddingJob, capacity), done: make(chan struct{})}
+	w := &EmbeddingWorker{embedder: embedder, model: model, jobs: make(chan EmbeddingJob, capacity), done: make(chan struct{}), stopped: make(chan struct{})}
 	go w.run()
 	return w
 }
@@ -212,10 +215,11 @@ func (w *EmbeddingWorker) Enqueue(job EmbeddingJob) bool {
 func (w *EmbeddingWorker) Close() {
 	if w != nil {
 		w.once.Do(func() { close(w.done) })
+		<-w.stopped
 	}
 }
 func (w *EmbeddingWorker) run() {
-	defer func() {}()
+	defer close(w.stopped)
 	for {
 		select {
 		case <-w.done:
@@ -241,8 +245,8 @@ type VectorHit struct {
 	Similarity float64
 }
 
-// VectorSearch ranks only well-formed rows from the configured model. It is
-// bounded by the bank cap and returns promptly; fallback runs on timeout.
+// VectorSearch ranks only well-formed rows from the configured model. The
+// vector pass and fallback share one caller-derived query budget.
 func VectorSearch(ctx context.Context, candidates []VectorCandidate, query []float32, model string, limit int, budget time.Duration, fallback func(context.Context) ([]VectorHit, error)) ([]VectorHit, error) {
 	if budget <= 0 {
 		budget = EmbeddingQueryBudget
@@ -250,8 +254,14 @@ func VectorSearch(ctx context.Context, candidates []VectorCandidate, query []flo
 	if limit < 1 || limit > 40 {
 		limit = 40
 	}
-	ctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
+	queryCtx, queryCancel := context.WithTimeout(ctx, budget)
+	defer queryCancel()
+	searchBudget := budget / 2
+	if searchBudget <= 0 {
+		searchBudget = budget
+	}
+	searchCtx, searchCancel := context.WithTimeout(queryCtx, searchBudget)
+	defer searchCancel()
 	type result struct{ hits []VectorHit }
 	ch := make(chan result, 1)
 	go func() {
@@ -284,11 +294,11 @@ func VectorSearch(ctx context.Context, candidates []VectorCandidate, query []flo
 	select {
 	case r := <-ch:
 		return r.hits, nil
-	case <-ctx.Done():
-		if fallback != nil {
-			return fallback(context.Background())
+	case <-searchCtx.Done():
+		if fallback == nil {
+			return nil, searchCtx.Err()
 		}
-		return nil, ctx.Err()
+		return fallback(queryCtx)
 	}
 }
 

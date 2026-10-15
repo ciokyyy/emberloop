@@ -314,10 +314,11 @@ type Episode struct {
 	CreatedAt      time.Time
 }
 
-// Options configures an Engine or a Fake.
 type Options struct {
 	// Now is the clock. Nil reads time.Now. Tests inject a fixed clock.
-	Now func() time.Time
+	Now            func() time.Time
+	Embedder       Embedder
+	EmbeddingModel string
 }
 
 func (o Options) now() time.Time {

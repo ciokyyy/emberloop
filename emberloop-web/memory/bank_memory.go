@@ -33,6 +33,11 @@ func (b *Bank) insertMemory(ctx context.Context, m MemoryItem) (int64, error) {
 		id, err = res.LastInsertId()
 		return err
 	})
+	if err == nil && b.embedWorker != nil {
+		b.embedWorker.Enqueue(EmbeddingJob{Text: m.Text, Store: func(ctx context.Context, vector []byte, model string) error {
+			return b.SetMemoryEmbedding(ctx, id, vector, model)
+		}})
+	}
 	return id, err
 }
 func (b *Bank) AddMemory(ctx context.Context, m MemoryItem) (int64, error) {
@@ -193,6 +198,11 @@ func (b *Bank) insertEpisode(ctx context.Context, e Episode) (int64, error) {
 		id, err = res.LastInsertId()
 		return err
 	})
+	if err == nil && b.embedWorker != nil {
+		b.embedWorker.Enqueue(EmbeddingJob{Text: e.Text, Store: func(ctx context.Context, vector []byte, model string) error {
+			return b.SetEpisodeEmbedding(ctx, id, vector, model)
+		}})
+	}
 	return id, err
 }
 func (b *Bank) AddEpisode(ctx context.Context, e Episode) (int64, error) {

@@ -27,7 +27,8 @@ func TestOpenRouterEmbedderBatchIndexesAndLimits(t *testing.T) {
 	}))
 	defer srv.Close()
 	e := &OpenRouterEmbedder{APIKey: "test", Endpoint: srv.URL + "/api/v1/embeddings"}
-	got, err := e.Embed(context.Background(), "model", []string{"password=abc1234567890123456", "second"})
+	texts := []string{"password=abc1234567890123456", "second"}
+	got, err := e.Embed(context.Background(), "model", texts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +37,9 @@ func TestOpenRouterEmbedderBatchIndexesAndLimits(t *testing.T) {
 	}
 	if _, err := e.Embed(context.Background(), "model", make([]string, 33)); err == nil {
 		t.Fatal("expected batch limit")
+	}
+	if texts[0] != "password=abc1234567890123456" {
+		t.Fatalf("Embed mutated input: %q", texts[0])
 	}
 }
 
@@ -104,5 +108,45 @@ func TestEmbeddingWorkerDoesNotBlockAndPersistsLittleEndian(t *testing.T) {
 	defer fake.mu.Unlock()
 	if !reflect.DeepEqual(fake.Inputs, []string{"redacted only"}) {
 		t.Fatalf("embedder inputs %v", fake.Inputs)
+	}
+}
+func TestEngineWorkerEmbedsInsertedMemoriesAndEpisodes(t *testing.T) {
+	fake := &FakeEmbedder{Vector: []float32{0.25, 0.75}}
+	eng, err := Open(tempDir(t), Options{Embedder: fake, EmbeddingModel: "model-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	bank, err := eng.Bank("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	memoryID, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: "m1", Author: "alice", Kind: KindFact, Text: "password=abc1234567890123456", Quote: "redacted quote"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	episodeID, err := bank.AddEpisode(ctx, Episode{SessionID: "s", EventRange: "e1", Author: "alice", Text: "password=abc1234567890123456"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		m, merr := bank.GetMemory(ctx, memoryID)
+		e, eerr := bank.GetEpisode(ctx, episodeID)
+		if merr == nil && eerr == nil && m.EmbeddingModel == "model-x" && len(m.Embedding) > 0 && e.EmbeddingModel == "model-x" && len(e.Embedding) > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	m, _ := bank.GetMemory(ctx, memoryID)
+	e, _ := bank.GetEpisode(ctx, episodeID)
+	if m.EmbeddingModel != "model-x" || len(m.Embedding) == 0 || e.EmbeddingModel != "model-x" || len(e.Embedding) == 0 {
+		t.Fatalf("vectors not persisted asynchronously: memory=%+v episode=%+v", m, e)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.Inputs) != 2 || fake.Inputs[0] != "password=[redacted:password]" || fake.Inputs[1] != "password=[redacted:password]" {
+		t.Fatalf("unredacted embedder inputs: %q", fake.Inputs)
 	}
 }
