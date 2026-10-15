@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The memory engine package `memory`: one SQLite bank per User (observations, Rules, queue, Profile versions, ledger, Memories and Episodes) with FTS5 recall, append-only Rules, human purge and `VACUUM INTO` snapshots. In process, Go only, `modernc.org/sqlite`, no cgo. Design: `.scratch/web-v1/spec.md` and `.scratch/memory-v2/spec.md`.
+The memory engine package `memory`: one SQLite bank per User (observations, Rules, queue, Profile versions, ledger, Memories and Episodes) with FTS5 recall, append-only Rules, human purge and `VACUUM INTO` snapshots. Redacted OpenRouter embeddings are computed by a bounded async worker; vectors use little-endian float32, model-isolated cosine ranking is capped at 50,000 rows and 800 ms, with FTS fallback and a 256-entry query LRU. In process, Go only, `modernc.org/sqlite`, no cgo. Design: `.scratch/web-v1/spec.md` and `.scratch/memory-v2/spec.md`.
 
 ## Ownership
 
@@ -32,6 +32,7 @@ Owns `emberloop-web/memory/`. The Daemon reaches it only through the `Memory` in
 - Snapshots: `Snapshot` runs `VACUUM INTO` unless the newest snapshot is under 6 hours old (`SnapshotInterval`). It keeps the newest 10 (`SnapshotKeep`). File names carry the time, so order comes from names.
 - Anchors (`anchors.go`): `ExtractAnchors(quote, toolTexts, goMod)` is deterministic (sorted, deduped, capped at `MaxAnchors=20`, each at most `MaxAnchorRunes=200`); it finds slash paths, bare source files and explicit `module@version`, and resolves packages against `go.mod` requires. `NormalizeAnchors(kind, anchors)` drops preferences to nil. `validRule` refuses only preference Rules with anchors and empty/whitespace anchors (same rule as `cleanAnchor`); the spec caps only Rule text, so anchor count and length stay extraction caps, never write limits.
 - Fake: `fake.go` keeps the same rules (validation, live filter, purge scrub, snapshot policy, Profile cap and filter, evidence bump, subject-key normalization and lookup, atomic approve, queue annotation) and matches by term count, not FTS5 rank. Every `Memory` method has a case in `contract_test.go`, which runs against the bank and the fake; `LiveRules` ordering and the live filter have their case in `live_test.go` against both, annotation in `annotate_test.go` against both; deeper queue flows (proposers, partition, atomic refusal, stats) live in `queue_test.go`, Profile cases in `profile_test.go`.
+- Embeddings: `embedder.go` defines the OpenRouter client (batches of at most 32), FakeEmbedder, bounded worker, float32 codec, model-filtered cosine search, 800ms deadline and 256-entry query LRU. `ForEmbedder` is mandatory at the egress boundary. `DefaultEmbeddingModel` is `qwen/qwen3-embedding-4b`; empty model disables vector work. `embedder_test.go` covers batching, model isolation, timeout fallback, cache eviction and persistence.
 - Notice: `schema.go` adapts mnemopi (MIT), `redact.go` ports deja-vu (MIT) and `miner.go` ports claude-reflect (MIT). `NOTICE.md` holds all three notices. Keep them when the schema or the patterns change.
 
 ## Verification
