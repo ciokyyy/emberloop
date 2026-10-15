@@ -121,7 +121,7 @@ func deciderNote(set deciderSettings) string {
 		if jev.BaseURL != "" {
 			notes = append(notes, "ensemble confirms with jev: redacted user turns go to "+jev.BaseURL)
 		} else {
-			notes = append(notes, "ensemble uses OpenRouter Jev when an OpenRouter key is configured; otherwise it tries the memory model and falls back to the heuristic if unavailable")
+			notes = append(notes, "ensemble uses OpenRouter Jev when an OpenRouter key is available; otherwise it tries the memory model. Unavailable confirmation keeps heuristic hits unconfirmed")
 		}
 	}
 	return strings.Join(notes, "; ")

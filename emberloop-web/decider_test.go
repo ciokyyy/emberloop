@@ -661,6 +661,10 @@ func TestJevNoteNamesEgress(t *testing.T) {
 	if note := noteOf(t, srv.URL); !strings.Contains(note, "redacted user turns") || !strings.Contains(note, "http://localhost:8000/v1/systemone") {
 		t.Fatalf("decider_note = %q, want the egress named", note)
 	}
+	srv, _ = settingsServer(t, `{"decider_mode":"ensemble"}`)
+	if note := noteOf(t, srv.URL); !strings.Contains(note, "OpenRouter Jev") || !strings.Contains(note, "tries the memory model") || !strings.Contains(note, "keeps heuristic hits unconfirmed") {
+		t.Fatalf("ensemble decider_note = %q, want the Jev, memory model and unconfirmed fallback described", note)
+	}
 }
 
 func TestJevMineDeciderUsesOpenRouterByDefault(t *testing.T) {
