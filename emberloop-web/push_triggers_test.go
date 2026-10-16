@@ -140,7 +140,15 @@ func TestMemoryDigestPreferenceDefaultsOffAndGatesDailyPush(t *testing.T) {
 	if err := d.push.setDigestEnabled("digest-user", true); err != nil {
 		t.Fatal(err)
 	}
-	d.sendMemoryDigest(context.Background(), bank, "digest-user")
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.sendMemoryDigest(context.Background(), bank, "digest-user")
+		}()
+	}
+	wg.Wait()
 	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
 	if m.Body != "learned 3 things today, tap to review" || m.Path != "/memory" {
 		t.Fatalf("digest push = %+v", m)

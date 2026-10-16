@@ -75,6 +75,7 @@ type Daemon struct {
 	quotaLiveMu          sync.Mutex
 	quotaLiveSubscribers int
 	profileReminderMu    sync.Mutex
+	memoryDigestMu       sync.Mutex
 	quotaLiveCancel      context.CancelFunc
 	quotaLiveWG          sync.WaitGroup
 	// hostClaudeDir and hostPigDir are the host's own harness dirs. Owner

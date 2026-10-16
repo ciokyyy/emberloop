@@ -747,6 +747,8 @@ func (d *Daemon) sendMemoryDigest(ctx context.Context, bank memory.Memory, owner
 	if !d.push.digestEnabled(owner) {
 		return
 	}
+	d.memoryDigestMu.Lock()
+	defer d.memoryDigestMu.Unlock()
 	rows, err := bank.Ledger(ctx)
 	if err != nil {
 		return
@@ -768,9 +770,11 @@ func (d *Daemon) sendMemoryDigest(ctx context.Context, bank memory.Memory, owner
 			learned += counts["stored"] + counts["memories"]
 		}
 	}
+	if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "memory_digest_sent", Status: memory.LedgerSuccess, Detail: today}); err != nil {
+		return
+	}
 	payload := pushPayload(pushMessage{Title: "Memory daily digest", Body: fmt.Sprintf("learned %d things today, tap to review", learned), Tag: "memory-digest:" + today, Key: "memory-digest:" + today, Path: "/memory"})
 	go d.push.notify(payload)
-	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{Stage: "memory_digest_sent", Status: memory.LedgerSuccess, Detail: today})
 }
 
 // nightlyMainRepoDir resolves dir to its main repo workdir through the git
