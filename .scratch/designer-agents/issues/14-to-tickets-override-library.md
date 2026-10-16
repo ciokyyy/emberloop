@@ -4,10 +4,10 @@
 
 **Blocked by:** 02-ticket-type-parse
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The override library lives in the repo, embeds or copies into the skills root on `el skills install`, and survives a reinstall of upstream
-- [ ] A lookup by the upstream name returns the override text; a skill that exists only upstream still resolves upstream
-- [ ] The override's text contains the split rule, the Type line and the quiz Type column, and otherwise follows the upstream skill
-- [ ] The override's template writes `**Blocked by:**` as comma-separated Ticket ids like `02-ticket-type-parse` (digits then slug, the form the Run driver parses), never `slug (NN)` or titles
-- [ ] Tests cover install order, override precedence and an upstream-only skill; `el/AGENTS.md` records the two-library contract; `.emberloop/check` passes
+- [x] The override library lives in the repo, embeds or copies into the skills root on `el skills install`, and survives a reinstall of upstream
+- [x] A lookup by the upstream name returns the override text; a skill that exists only upstream still resolves upstream
+- [x] The override's text contains the split rule, the Type line and the quiz Type column, and otherwise follows the upstream skill
+- [x] The override's template writes `**Blocked by:**` as comma-separated Ticket ids like `02-ticket-type-parse` (digits then slug, the form the Run driver parses), never `slug (NN)` or titles
+- [x] Tests cover install order, override precedence and an upstream-only skill; `el/AGENTS.md` records the two-library contract; `.emberloop/check` passes
