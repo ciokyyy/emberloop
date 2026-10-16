@@ -280,7 +280,7 @@ func (d *Daemon) handleMemoryLedger(w http.ResponseWriter, r *http.Request) {
 // the last nightly run (the newest row whose run is not the queue's). Any
 // engine or bank failure answers 503 with available false, which the page
 // shows as the Unavailable chip and never blocks the turn.
-func summarizeMemoryMetrics(rows []memory.LedgerRow, now time.Time) memoryMetrics {
+func calculateMemoryStats(rows []memory.LedgerRow, now time.Time) memoryMetrics {
 	var m memoryMetrics
 	var stored, stored7d, forgotten7d, promoted, injections, creates int
 	for _, row := range rows {
@@ -352,8 +352,7 @@ func (d *Daemon) handleMemoryStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := memory.DescribeQueue(items, d.now())
-	out := memoryStatus{Available: true, Queue: &st, LedgerSize: len(rows)}
-	out.Metrics = summarizeMemoryMetrics(rows, d.now())
+	out := memoryStatus{Available: true, Queue: &st, LedgerSize: len(rows), Metrics: calculateMemoryStats(rows, d.now())}
 	if len(rows) > 0 {
 		last := toLedgerView(rows[len(rows)-1])
 		out.LastLedger = &last

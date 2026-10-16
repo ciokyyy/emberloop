@@ -18,7 +18,7 @@ func TestSummarizeMemoryMetricsUsesLedgerRows(t *testing.T) {
 		{Stage: "memory_contradicted", CountsJSON: `{"count":3}`, CreatedAt: now.Add(-time.Hour)},
 		{Stage: "embedding", Detail: "cost_usd=0.031", CreatedAt: now.Add(-time.Hour)},
 	}
-	got := summarizeMemoryMetrics(rows, now)
+	got := calculateMemoryStats(rows, now)
 	if got.MemoriesPerDay != 4 || got.Forgotten7Day != 1.0/7 || got.PromotedShare != 2.0/7 || got.InjectionHitRate != 1.5 || got.Contradictions != 3 {
 		t.Fatalf("ledger-derived proxies = %+v", got)
 	}
