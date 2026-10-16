@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"os/exec"
 	"strings"
 	"testing"
@@ -15,6 +16,15 @@ func TestBashRunsInRootAndReportsExit(t *testing.T) {
 	}
 	if !strings.Contains(out, dir) || !strings.Contains(out, "oops") || !strings.Contains(out, "[exit status 3]") {
 		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestBashInheritsSessionEnvironment(t *testing.T) {
+	ctx := WithSessionEnv(t.Context(), [][2]string{{"AGENT_BROWSER_SESSION", "session-test"}})
+	args, _ := json.Marshal(map[string]any{"command": "printf %s $AGENT_BROWSER_SESSION"})
+	out, err := (bashTool{}).Execute(ctx, t.TempDir(), args)
+	if err != nil || strings.TrimSpace(out) != "session-test" {
+		t.Fatalf("out=%q err=%v", out, err)
 	}
 }
 

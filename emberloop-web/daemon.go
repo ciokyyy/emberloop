@@ -368,6 +368,9 @@ func (d *Daemon) RegisterBackend(harness string, be Backend) {
 	if pb, ok := be.(*PigACPBackend); ok && pb.ClaudeBackend != nil {
 		pb.browserEnv = d.browserSessionEnv
 	}
+	if pb, ok := be.(*PigBackend); ok {
+		pb.BrowserEnv = d.browserSessionEnv
+	}
 	d.backends[harness] = be
 }
 

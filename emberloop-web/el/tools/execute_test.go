@@ -90,6 +90,17 @@ func TestExecuteScriptCallsRead(t *testing.T) {
 	}
 }
 
+func TestExecuteInheritsSessionEnvironment(t *testing.T) {
+	requirePython(t)
+	t.Setenv("EL_STATE_DIR", t.TempDir())
+	ex := NewExecute(nil, "test", false)
+	ctx := WithSessionEnv(context.Background(), [][2]string{{"AGENT_BROWSER_SESSION", "execute-test"}})
+	out, err := ex.Execute(ctx, t.TempDir(), json.RawMessage(`{"code":"import os; print(os.environ['AGENT_BROWSER_SESSION'])"}`))
+	if err != nil || strings.TrimSpace(out) != "execute-test" {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+}
+
 // errExecuteTool always fails, so a script sees a ToolError.
 type errExecuteTool struct{ name, msg string }
 

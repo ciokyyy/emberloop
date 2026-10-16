@@ -19,6 +19,7 @@ type elTool struct {
 	// gate, when set, takes over bash commands that invoke sudo (see
 	// tools.SudoGate); the Session's pending approval replaces the run.
 	gate func(ctx context.Context, root, command string) (string, bool)
+	env  [][2]string
 }
 
 func (t elTool) Name() string  { return t.tool.Name() }
@@ -36,6 +37,7 @@ func (t elTool) Execute(ctx context.Context, _ string, params json.RawMessage, _
 			}
 		}
 	}
+	ctx = tools.WithSessionEnv(ctx, t.env)
 	out, images, err := tools.ExecuteMulti(ctx, t.tool, t.root, params)
 	if err != nil {
 		return agent.AgentToolResult{}, err

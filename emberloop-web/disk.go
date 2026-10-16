@@ -243,6 +243,36 @@ func cleanTempDirs(fs diskFS) (dirs int, freed int64) {
 	return dirs, freed
 }
 
+func (d *Daemon) cleanBrowserScreenshotDirs(fs diskFS) int {
+	root := filepath.Join(d.stateDir, "agent-browser", "screenshots")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	active := map[string]bool{}
+	d.mu.Lock()
+	for id, session := range d.sessions {
+		if session.live {
+			active[id] = true
+		}
+	}
+	d.mu.Unlock()
+	removed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || active[entry.Name()] {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || fs.now().Sub(info.ModTime()) < diskTempMaxAge {
+			continue
+		}
+		if fs.remove(filepath.Join(root, entry.Name())) == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
 // janitorResult is the last janitor pass, served at GET /api/disk.
 type janitorResult struct {
 	At            time.Time `json:"at"`
@@ -253,6 +283,7 @@ type janitorResult struct {
 	TempFreed     int64     `json:"tempFreed"`
 	Worktrees     int       `json:"worktrees"`
 	WorktreesFree int64     `json:"worktreesFreed"`
+	BrowserDirs   int       `json:"browserDirs"`
 	Error         string    `json:"error,omitempty"`
 }
 
@@ -354,6 +385,7 @@ func (d *Daemon) runDiskJanitorOnce(fs diskFS) janitorResult {
 		}
 	}
 	res.TempDirs, res.TempFreed = cleanTempDirs(fs)
+	res.BrowserDirs = d.cleanBrowserScreenshotDirs(fs)
 	n, freed := reapWorktrees(fs, d.finishedWorktrees(), d.worktreeCheckActive)
 	res.Worktrees, res.WorktreesFree = n, freed
 	res.CacheBytes = goCacheSize(fs.cacheDr())

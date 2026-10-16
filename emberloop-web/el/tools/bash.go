@@ -110,6 +110,7 @@ func (bashTool) Execute(ctx context.Context, root string, args json.RawMessage) 
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", RTKRewrite(ctx, p.Command))
+	cmd.Env = commandEnv(ctx)
 	cmd.Dir = root
 	// A timeout must reach the children too, or CombinedOutput waits on a pipe
 	// they still hold. Own process group, killed as a group.

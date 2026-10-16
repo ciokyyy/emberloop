@@ -80,7 +80,8 @@ type PigBackend struct {
 	// event, each stall decision and each recovery, one JSON line each. A
 	// worker whose provider stream dies leaves no error in its transcript, so
 	// this is the only trace of where it stopped.
-	LogDir string
+	LogDir     string
+	BrowserEnv func(string) [][2]string
 }
 
 type pigSession struct {
@@ -129,6 +130,14 @@ func (b *PigBackend) sessionTools(meta SessionMeta) []agent.AgentTool {
 			gate = b.SudoGate(meta.ID)
 		}
 		if shared, err := elToolsFor(meta, gate); err == nil {
+			if b.BrowserEnv != nil {
+				for i, tool := range shared {
+					if et, ok := tool.(elTool); ok {
+						et.env = b.BrowserEnv(meta.ID)
+						shared[i] = et
+					}
+				}
+			}
 			tools = append(tools, shared...)
 		} else {
 			fmt.Fprintln(os.Stderr, "el-web: shared tools:", err)

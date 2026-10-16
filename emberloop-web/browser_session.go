@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -24,7 +26,7 @@ func (d *Daemon) browserSessionEnv(id string) [][2]string {
 	}
 	shotDir := filepath.Join(d.stateDir, "agent-browser", "screenshots", id)
 	_ = os.MkdirAll(shotDir, 0o700)
-	return [][2]string{
+	env := [][2]string{
 		{"AGENT_BROWSER_SESSION", id},
 		{"AGENT_BROWSER_NAMESPACE", browserNamespace(d.stateDir)},
 		{"AGENT_BROWSER_SCREENSHOT_DIR", shotDir},
@@ -34,9 +36,19 @@ func (d *Daemon) browserSessionEnv(id string) [][2]string {
 		{"AGENT_BROWSER_IDLE_TIMEOUT_MS", browserIdleTimeoutMS},
 		{"PATH", tools.BinDir() + string(os.PathListSeparator) + os.Getenv("PATH")},
 	}
+	for _, candidate := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			env = append(env, [2]string{"AGENT_BROWSER_EXECUTABLE_PATH", path})
+			break
+		}
+	}
+	return env
 }
 
-func browserNamespace(stateDir string) string { return filepath.Base(filepath.Clean(stateDir)) }
+func browserNamespace(stateDir string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(stateDir)))
+	return hex.EncodeToString(sum[:8])
+}
 
 func browserEnabled() bool {
 	all, err := readSettingsMap()

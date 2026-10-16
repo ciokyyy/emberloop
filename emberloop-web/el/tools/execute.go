@@ -320,6 +320,7 @@ func (e boundExecute) Execute(ctx context.Context, root string, raw json.RawMess
 		code = res.Code
 	} else {
 		cmd := exec.CommandContext(ctx, py, "-I", "-c", executeLauncher, dir, mainPath)
+		cmd.Env = commandEnv(ctx)
 		cmd.Dir = root
 		// A timeout must reach the children too, or the wait hangs on a pipe
 		// they still hold. Own process group, killed as a group, like bash.
