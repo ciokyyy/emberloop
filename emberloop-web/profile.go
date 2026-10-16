@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,10 +24,11 @@ const profilePreamble = "The task prompt beats everything. AGENTS.md beats the P
 // profileQueuePayload is the JSON of a profile_patch queue item: the proposed
 // ops plus who asked for them and why.
 type profileQueuePayload struct {
-	Ops       []memory.ProfileOp `json:"ops"`
-	Reason    string             `json:"reason,omitempty"`
-	SessionID string             `json:"sessionId,omitempty"`
-	Author    string             `json:"author,omitempty"`
+	Ops            []memory.ProfileOp `json:"ops"`
+	Reason         string             `json:"reason,omitempty"`
+	SessionID      string             `json:"sessionId,omitempty"`
+	Author         string             `json:"author,omitempty"`
+	ProfileVersion int                `json:"profileVersion,omitempty"`
 }
 
 // profileUpdatedText is the JSON Text of a profile_updated Event.
@@ -261,11 +263,11 @@ func (d *Daemon) proposeProfilePatch(ctx context.Context, owner string, patch me
 			continue
 		}
 		var previous profileQueuePayload
-		if json.Unmarshal([]byte(item.Payload), &previous) == nil && sameProfileOps(previous.Ops, patch.Ops) {
+		if json.Unmarshal([]byte(item.Payload), &previous) == nil && previous.ProfileVersion == current.Version && sameProfilePatchEffect(current.Lines, previous.Ops, patch.Ops) {
 			return 0, nil
 		}
 	}
-	raw, _ := json.Marshal(profileQueuePayload{Ops: patch.Ops, Reason: reason, SessionID: sessionID, Author: author})
+	raw, _ := json.Marshal(profileQueuePayload{Ops: patch.Ops, Reason: reason, SessionID: sessionID, Author: author, ProfileVersion: current.Version})
 	id, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: string(raw)})
 	if err != nil {
 		return 0, err
@@ -276,10 +278,38 @@ func (d *Daemon) proposeProfilePatch(ctx context.Context, owner string, patch me
 	return id, nil
 }
 
-func sameProfileOps(a, b []memory.ProfileOp) bool {
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
-	return string(x) == string(y)
+func sameProfilePatchEffect(lines []memory.ProfileLine, a, b []memory.ProfileOp) bool {
+	left, err := memory.ApplyProfilePatch(lines, memory.ProfilePatch{Ops: a})
+	if err != nil {
+		return false
+	}
+	right, err := memory.ApplyProfilePatch(lines, memory.ProfilePatch{Ops: b})
+	if err != nil {
+		return false
+	}
+	canonical := func(lines []memory.ProfileLine) string {
+		type semanticLine struct {
+			Text    string `json:"text"`
+			Tag     string `json:"tag"`
+			Retired bool   `json:"retired"`
+		}
+		out := make([]semanticLine, 0, len(lines))
+		for _, line := range lines {
+			out = append(out, semanticLine{line.Text, line.Tag, line.Retired})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].Tag != out[j].Tag {
+				return out[i].Tag < out[j].Tag
+			}
+			if out[i].Text != out[j].Text {
+				return out[i].Text < out[j].Text
+			}
+			return !out[i].Retired && out[j].Retired
+		})
+		encoded, _ := json.Marshal(out)
+		return string(encoded)
+	}
+	return canonical(left) == canonical(right)
 }
 
 func (d *Daemon) broadcastProfilePatchProposal(owner, source, text string) {

@@ -619,6 +619,7 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 			continue
 		}
 		d.remindOldProfilePatches(ctx, bank, owner)
+		d.sendMemoryDigest(ctx, bank, owner)
 		notes := byOwner[owner]
 		if len(notes) == 0 || needModel {
 			none++
@@ -704,6 +705,10 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 }
 
 func (d *Daemon) remindOldProfilePatches(ctx context.Context, bank memory.Memory, owner string) {
+	d.remindOldProfilePatchesAt(ctx, bank, owner, d.now())
+}
+
+func (d *Daemon) remindOldProfilePatchesAt(ctx context.Context, bank memory.Memory, owner string, now time.Time) {
 	items, err := bank.Queue(ctx)
 	if err != nil {
 		return
@@ -718,7 +723,6 @@ func (d *Daemon) remindOldProfilePatches(ctx context.Context, bank memory.Memory
 			reminded[row.Detail] = true
 		}
 	}
-	now := d.now()
 	for _, item := range items {
 		if item.Kind != memory.QueueProfilePatch || item.Status != memory.QueuePending || item.CreatedAt.IsZero() || now.Sub(item.CreatedAt) < 48*time.Hour {
 			continue
@@ -732,6 +736,36 @@ func (d *Daemon) remindOldProfilePatches(ctx context.Context, bank memory.Memory
 			reminded[key] = true
 		}
 	}
+}
+
+func (d *Daemon) sendMemoryDigest(ctx context.Context, bank memory.Memory, owner string) {
+	if !d.push.digestEnabled(owner) {
+		return
+	}
+	rows, err := bank.Ledger(ctx)
+	if err != nil {
+		return
+	}
+	today := d.now().In(time.Local).Format("2006-01-02")
+	learned := 0
+	for _, row := range rows {
+		if row.CreatedAt.In(time.Local).Format("2006-01-02") != today {
+			continue
+		}
+		if row.Stage == "memory_digest_sent" && row.Detail == today {
+			return
+		}
+		if row.Stage != "ingest" && row.Stage != nightlyStageFold {
+			continue
+		}
+		var counts map[string]int
+		if json.Unmarshal([]byte(row.CountsJSON), &counts) == nil {
+			learned += counts["stored"] + counts["memories"]
+		}
+	}
+	payload := pushPayload(pushMessage{Title: "Memory daily digest", Body: fmt.Sprintf("learned %d things today, tap to review", learned), Tag: "memory-digest:" + today, Key: "memory-digest:" + today, Path: "/memory"})
+	go d.push.notify(payload)
+	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{Stage: "memory_digest_sent", Status: memory.LedgerSuccess, Detail: today})
 }
 
 // nightlyMainRepoDir resolves dir to its main repo workdir through the git

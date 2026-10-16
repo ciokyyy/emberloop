@@ -3,14 +3,19 @@
   import { onMount } from 'svelte';
   import Button from './ui/button.svelte';
   import { pushUnsupported, pushEnabled, enablePush, disablePush } from './push.js';
+  import { getMemoryDigestPreference, setMemoryDigestPreference } from './api.js';
+  import Switch from './ui/switch.svelte';
 
   let enabled = $state(false);
+  let digestEnabled = $state(false);
   let busy = $state(false);
+  let digestBusy = $state(false);
   let error = $state('');
   const unsupported = pushUnsupported();
 
   onMount(async () => {
     enabled = await pushEnabled().catch(() => false);
+    digestEnabled = (await getMemoryDigestPreference().catch(() => ({ enabled: false }))).enabled;
   });
 
   async function toggle() {
@@ -25,6 +30,13 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function toggleDigest(value) {
+    digestBusy = true; error = '';
+    try { digestEnabled = (await setMemoryDigestPreference(value)).enabled; }
+    catch (err) { error = err.message || 'Could not change digest preference.'; }
+    finally { digestBusy = false; }
   }
 </script>
 
@@ -43,4 +55,8 @@
       <Button variant={enabled ? 'outline' : 'default'} disabled={busy || !!unsupported} onclick={toggle}>{enabled ? 'Turn off' : 'Turn on'}</Button>
     </div>
   </div>
+    <div class="grid items-center gap-3 border-t p-4 md:grid-cols-[1fr_auto]">
+      <div class="min-w-0"><div class="text-sm font-medium">Daily Memory digest</div><div class="text-xs text-muted-foreground">A daily “learned N things today” notification. Off by default.</div></div>
+      <Switch aria-label="Daily Memory digest" checked={digestEnabled} disabled={digestBusy} onCheckedChange={toggleDigest} />
+    </div>
 </section>

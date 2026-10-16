@@ -53,6 +53,43 @@ func newPushStore(stateDir string) *pushStore {
 	return &pushStore{dir: filepath.Join(stateDir, "enderbloom", "push"), client: &http.Client{Timeout: 15 * time.Second}}
 }
 
+func (p *pushStore) digestEnabled(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	data, err := os.ReadFile(filepath.Join(p.dir, "digest-prefs.json"))
+	if err != nil {
+		return false
+	}
+	var prefs map[string]bool
+	if json.Unmarshal(data, &prefs) != nil {
+		return false
+	}
+	return prefs[userID]
+}
+
+func (p *pushStore) setDigestEnabled(userID string, enabled bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	path := filepath.Join(p.dir, "digest-prefs.json")
+	prefs := map[string]bool{}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &prefs)
+	}
+	prefs[userID] = enabled
+	data, err := json.Marshal(prefs)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(p.dir, 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func (p *pushStore) load() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -388,6 +425,27 @@ func itoa(n int64) string {
 
 func (d *Daemon) handlePush(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api/push/digest" && (r.Method == http.MethodGet || r.Method == http.MethodPut):
+		user, ok := d.profileUserOf(w, r)
+		if !ok {
+			return
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(w, http.StatusOK, map[string]bool{"enabled": d.push.digestEnabled(user.ID)})
+			return
+		}
+		var in struct {
+			Enabled bool `json:"enabled"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in) != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if err := d.push.setDigestEnabled(user.ID, in.Enabled); err != nil {
+			http.Error(w, "could not save preference", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": in.Enabled})
 	case r.URL.Path == "/api/push/key" && r.Method == http.MethodGet:
 		k, err := d.push.publicKey()
 		if err != nil {

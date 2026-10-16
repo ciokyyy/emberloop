@@ -178,6 +178,10 @@ export const restoreProfile = (version) =>
     body: JSON.stringify({ version }),
   }).then(json);
 
+export const getMemoryDigestPreference = () => fetch(url('/api/push/digest')).then(json);
+export const setMemoryDigestPreference = (enabled) =>
+  fetch(url('/api/push/digest'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }).then(json);
+
 export const getProfileQueue = () => fetch(url('/api/profile/queue')).then(json);
 
 export const decideProfileQueue = (id, status, ops = null) =>

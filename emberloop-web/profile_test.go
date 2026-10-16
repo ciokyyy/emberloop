@@ -306,6 +306,12 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 	if _, view := getProfile(t, base); view.Version != 2 {
 		t.Fatalf("after direct edit version = %d, want 2", view.Version)
 	}
+	if code, _ := proposeViaSession(t, base, id, ops2, "profile changed since rejection"); code != http.StatusCreated {
+		t.Fatalf("propose after Profile context changed = %d", code)
+	}
+	if got := len(getProfileQueue(t, base)); got != 3 {
+		t.Fatalf("changed Profile context did not permit a new proposal: queue has %d rows", got)
+	}
 	n := 0
 	for _, e := range transcriptOf(t, base, id) {
 		if e.Kind == "profile_updated" {
@@ -316,6 +322,15 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 		t.Fatalf("profile_updated events = %d, want 2 (approve + direct)", n)
 	}
 	_ = d
+}
+
+func TestSameProfilePatchEffectCanonicalizesOperationOrder(t *testing.T) {
+	lines := []memory.ProfileLine{{ID: "l1", Text: "existing", Tag: memory.ProfileWorkflow}}
+	a := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "alpha", Tag: memory.ProfileStyle}, {Op: memory.ProfileAdd, Text: "beta", Tag: memory.ProfileOther}}
+	b := []memory.ProfileOp{a[1], a[0]}
+	if !sameProfilePatchEffect(lines, a, b) {
+		t.Fatal("reordered independent operations should have the same resulting Profile")
+	}
 }
 
 func TestProfileReviewerFilterAndBarredTag(t *testing.T) {

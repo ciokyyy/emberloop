@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"example.com/emberloop-web/memory"
 )
 
 // pushCapture collects encrypted push bodies sent to one subscription.
@@ -119,6 +122,89 @@ func TestPushProfilePatchCarriesActionTarget(t *testing.T) {
 	}
 }
 
+func TestMemoryDigestPreferenceDefaultsOffAndGatesDailyPush(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	bank, err := d.profileBankFor("digest-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bank.RecordLedger(context.Background(), memory.LedgerRow{Stage: "ingest", Status: memory.LedgerSuccess, CountsJSON: `{"stored":3}`}); err != nil {
+		t.Fatal(err)
+	}
+	cap, decrypt := capturePush(t, d)
+	d.sendMemoryDigest(context.Background(), bank, "digest-user")
+	if got := len(cap.all()); got != 0 {
+		t.Fatalf("default-off preference sent %d pushes", got)
+	}
+	if err := d.push.setDigestEnabled("digest-user", true); err != nil {
+		t.Fatal(err)
+	}
+	d.sendMemoryDigest(context.Background(), bank, "digest-user")
+	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
+	if m.Body != "learned 3 things today, tap to review" || m.Path != "/memory" {
+		t.Fatalf("digest push = %+v", m)
+	}
+	d.sendMemoryDigest(context.Background(), bank, "digest-user")
+	if got := len(cap.all()); got != 1 {
+		t.Fatalf("daily digest sent %d times", got)
+	}
+}
+
+func TestMemoryDigestPreferenceAPIIsAuthenticatedAndPersists(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	get := func() map[string]bool {
+		res, err := http.Get(srv.URL + "/api/push/digest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]bool
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if get()["enabled"] {
+		t.Fatal("digest preference defaulted on")
+	}
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/push/digest", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !get()["enabled"] {
+		t.Fatalf("digest preference update status=%d preference=%v", res.StatusCode, get())
+	}
+}
+
+func TestProfilePatchReminderSendsOnceAfter48Hours(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	reminderAt := time.Now().Add(49 * time.Hour)
+	bank, err := d.profileBankFor("reminder-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bank.Enqueue(context.Background(), memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: `{"ops":[]}`}); err != nil {
+		t.Fatal(err)
+	}
+	cap, decrypt := capturePush(t, d)
+	d.remindOldProfilePatchesAt(context.Background(), bank, "reminder-user", reminderAt)
+	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
+	if m.ProfilePatchID != 1 || !strings.Contains(m.Body, "Reminder") {
+		t.Fatalf("reminder push = %+v", m)
+	}
+	d.remindOldProfilePatchesAt(context.Background(), bank, "reminder-user", reminderAt)
+	if got := len(cap.all()); got != 1 {
+		t.Fatalf("sent %d reminders for one item", got)
+	}
+}
 func TestPushSudoRequestUsesMentionCue(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())

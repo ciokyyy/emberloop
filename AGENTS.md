@@ -48,8 +48,9 @@ child it belongs to, and every entry must resolve to a file.
   provider status/connect flows; Project Dashboard and stable scope routes;
   Jev draft Project picks; per-concern Settings and model/effort chains; admin-
   only host-global Memory settings, hybrid recall/injection and nightly stages;
-  Profile patch push actions, inline Session approval, rejected-patch dedup and
-  one-time 48-hour reminders; Memory page APIs and panic-safe Run-test cleanup.
+  Profile patch push actions, inline Session approval, context-sensitive rejected-
+  patch dedup, one-time 48-hour reminders and opt-in daily Memory digests; Memory
+  page APIs and panic-safe Run-test cleanup.
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
