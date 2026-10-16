@@ -9,7 +9,7 @@ import (
 )
 
 // runRoles are the Chain slots shown on each Ticket row.
-var runRoles = []string{"worker", reviewerSpecType, reviewerStandardsType}
+var runRoles = []string{"worker", "worker-design", reviewerSpecType, reviewerStandardsType, "reviewer-design"}
 
 // configuredRunChains snapshots the Run's configured chains so a settings
 // edit or Daemon restart cannot change a Ticket's fallback order mid-run.
@@ -60,17 +60,22 @@ func runChain(rs *runState, role string) []chainEntry {
 // workerRunChain applies a paused Ticket's manual Switch to its active Chain
 // slot. The remaining fallback entries stay intact; callers clear the
 // override when a quota failure advances to the next slot.
-func workerRunChain(rs *runState, ticketID string) []chainEntry {
-	entries := runChain(rs, "worker")
+func workerRunChain(rs *runState, ticketID, role string) []chainEntry {
+	if role == "" {
+		role = "worker"
+	}
+	entries := runChain(rs, role)
 	if len(entries) == 0 {
 		return nil
 	}
-	position := clampChainPosition(chainPosition(rs, ticketID, "worker"), len(entries))
-	if override, ok := rs.WorkerOverrides[ticketID]; ok {
-		if override.Backend == "grok" {
-			delete(rs.WorkerOverrides, ticketID)
-		} else {
-			entries[position] = override
+	position := clampChainPosition(chainPosition(rs, ticketID, role), len(entries))
+	if role != "worker-design" {
+		if override, ok := rs.WorkerOverrides[ticketID]; ok {
+			if override.Backend == "grok" {
+				delete(rs.WorkerOverrides, ticketID)
+			} else {
+				entries[position] = override
+			}
 		}
 	}
 	return entries
@@ -79,8 +84,8 @@ func workerRunChain(rs *runState, ticketID string) []chainEntry {
 // runRoleChain applies a per-Ticket override to the active slot of any Run
 // role; Worker and Reviewer overrides use separate maps.
 func runRoleChain(rs *runState, ticketID, role string) []chainEntry {
-	if role == "worker" {
-		return workerRunChain(rs, ticketID)
+	if role == "worker" || role == "worker-design" {
+		return workerRunChain(rs, ticketID, role)
 	}
 	entries := runChain(rs, role)
 	if len(entries) == 0 {
@@ -96,7 +101,6 @@ func runRoleChain(rs *runState, ticketID, role string) []chainEntry {
 	}
 	return entries
 }
-
 func clampChainPosition(position, length int) int {
 	if length == 0 || position < 0 {
 		return 0
@@ -377,7 +381,7 @@ func (d *Daemon) recordRunChainPosition(runID, ticketID, role string, position i
 // runRoleSessionLocked reports whether sessionID is still the current Session
 // for this Ticket role. Callers hold d.mu.
 func (d *Daemon) runRoleSessionLocked(rs *runState, ticketID, role, sessionID string) bool {
-	if role == "worker" {
+	if role == "worker" || role == "worker-design" {
 		return rs.Sessions[ticketID] == sessionID
 	}
 	return rs.Reviewers[ticketID][role] == sessionID

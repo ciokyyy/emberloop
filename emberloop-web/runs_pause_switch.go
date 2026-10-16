@@ -670,7 +670,7 @@ func setReviewerOverridesLocked(rs *runState, ticketID string, requested chainEn
 	if rs.ReviewerOverrides == nil {
 		rs.ReviewerOverrides = map[string]map[string]chainEntry{}
 	}
-	for _, role := range []string{reviewerSpecType, reviewerStandardsType} {
+	for _, role := range []string{reviewerSpecType, reviewerStandardsType, reviewerDesignType} {
 		chain := runRoleChain(rs, ticketID, role)
 		if len(chain) == 0 {
 			continue
@@ -712,7 +712,7 @@ func (d *Daemon) switchTicketBackend(w http.ResponseWriter, r *http.Request, run
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "ticket is finished"})
 		return
 	}
-	chain := workerRunChain(rs, ticketID)
+	chain := workerRunChain(rs, ticketID, "worker")
 	if len(chain) > 0 {
 		pos := clampChainPosition(chainPosition(rs, ticketID, "worker"), len(chain))
 		entry.Effort = chain[pos].Effort
@@ -752,7 +752,7 @@ func (d *Daemon) switchRunBackend(w http.ResponseWriter, r *http.Request, runID 
 			continue
 		}
 		selected := entry
-		chain := workerRunChain(rs, ticket.ID)
+		chain := workerRunChain(rs, ticket.ID, "worker")
 		if len(chain) > 0 {
 			pos := clampChainPosition(chainPosition(rs, ticket.ID, "worker"), len(chain))
 			selected.Effort = chain[pos].Effort
@@ -768,7 +768,7 @@ func (d *Daemon) switchRunBackend(w http.ResponseWriter, r *http.Request, runID 
 		if rs.Merged[ticket.ID] != "" || rs.Discarded[ticket.ID] {
 			continue
 		}
-		for _, role := range []string{reviewerSpecType, reviewerStandardsType} {
+		for _, role := range []string{reviewerSpecType, reviewerStandardsType, reviewerDesignType} {
 			chain := runRoleChain(rs, ticket.ID, role)
 			if len(chain) == 0 {
 				continue

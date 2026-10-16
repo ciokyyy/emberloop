@@ -90,6 +90,7 @@ type blockedTrack struct {
 const (
 	reviewerStandardsType = "reviewer-standards"
 	reviewerSpecType      = "reviewer-spec"
+	reviewerDesignType    = "reviewer-design"
 )
 
 // requiredReviewerTypes is the gate every finish needs: both reviewers
@@ -375,13 +376,6 @@ func primaryRunRoleConfig(chains map[string][]chainEntry, roles map[string]roleS
 		return "", "", ""
 	}
 	return entries[0].Backend, entries[0].Model, entries[0].Effort
-}
-
-// roleReviewerConfig returns the primary reviewer entry, including its
-// pre-redesign role setting when the Chain has not yet been migrated.
-func roleReviewerConfig(reviewerType string) (harness, model string) {
-	harness, model, _ = primaryRunRoleConfig(readChains(), readRoles(), reviewerType)
-	return harness, model
 }
 
 // gitRoot walks up from path to the repo holding it: the first directory
@@ -3080,7 +3074,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("run %s was abandoned", runID)
 	}
-	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID)...)
+	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID, "worker")...)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}

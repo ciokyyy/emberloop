@@ -18,7 +18,7 @@ type Role struct {
 }
 
 // RoleSlots are the launch slots a settings file may set, in print order.
-var RoleSlots = []string{"orchestrator", "implementer", "code-review", "spec-review", "scout"}
+var RoleSlots = []string{"orchestrator", "implementer", "code-review", "spec-review", "scout", "worker-design", "reviewer-design"}
 
 // IsRoleSlot reports whether name names a launch slot.
 func IsRoleSlot(name string) bool {

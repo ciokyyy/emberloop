@@ -48,8 +48,10 @@
       note: 'Agents that implement tickets and review each change.',
       roles: [
         { id: 'worker', label: 'Ticket worker', hint: 'Implements a ticket in its Run worktree.' },
+        { id: 'worker-design', label: 'Designer worker', hint: 'Implements a design ticket, judging the rendered page.' },
         { id: 'reviewer-spec', label: 'Spec reviewer', hint: 'Checks the change against the spec.' },
         { id: 'reviewer-standards', label: 'Standards reviewer', hint: 'Reviews the diff for defects and standards.' },
+        { id: 'reviewer-design', label: 'Design reviewer', hint: 'Judges the rendered result of a design ticket.' },
       ],
     },
   ];
@@ -61,6 +63,8 @@
     worker: ['implementer'],
     'reviewer-spec': ['reviewer-spec', 'spec-review'],
     'reviewer-standards': ['reviewer-standards', 'code-review'],
+    'worker-design': ['worker-design'],
+    'reviewer-design': ['reviewer-design'],
   };
   const harnessItems = HARNESSES.filter((h) => h.id !== 'fake').map((h) => ({ value: h.id, label: h.label }));
   const chainValues = (entries = []) => entries.map(({ backend, model, effort }) => ({ backend, model, ...(effort ? { effort } : {}) }));

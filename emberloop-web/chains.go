@@ -43,7 +43,7 @@ func (e *chainEntry) UnmarshalJSON(raw []byte) error {
 }
 
 // chainRoleGroups are the canonical run roles with their settings aliases,
-// mirroring roleWorkerConfig and roleReviewerConfig in runs_exec.go: the
+// mirroring roleWorkerConfig in runs_exec.go: the
 // worker slot is "worker" (older "implementer"), the reviewers are
 // "reviewer-spec" ("spec-review") and "reviewer-standards" ("code-review").
 var chainRoleGroups = [][]string{
@@ -65,7 +65,7 @@ func chainNames(role string) []string {
 	return []string{role}
 }
 
-// agentChainRoles are the six slots shown on Settings > Agents. The legacy
+// agentChainRoles are the eight slots shown on Settings > Agents. The legacy
 // roles map remains available to the operator CLI; the browser migrates these
 // model choices into chains on read and persists the merged map on save.
 var agentChainRoles = []struct {
@@ -79,6 +79,8 @@ var agentChainRoles = []struct {
 	{key: "worker", chainAliases: []string{"implementer"}, roleAliases: []string{"implementer", "worker"}},
 	{key: reviewerSpecType, chainAliases: []string{"spec-review"}, roleAliases: []string{reviewerSpecType, "spec-review"}},
 	{key: reviewerStandardsType, chainAliases: []string{"code-review"}, roleAliases: []string{reviewerStandardsType, "code-review"}},
+	{key: "worker-design", roleAliases: []string{"worker-design"}},
+	{key: "reviewer-design", roleAliases: []string{"reviewer-design"}},
 }
 
 const agentChainsVersionKey = "agents_chains_version"
