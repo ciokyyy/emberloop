@@ -49,7 +49,15 @@ func embed(model string, in []string) ([][]float64, float64, error) {
 	}
 	out := make([][]float64, len(in))
 	for _, d := range r.Data {
+		if d.Index < 0 || d.Index >= len(out) || len(d.Embedding) == 0 || out[d.Index] != nil {
+			return nil, 0, fmt.Errorf("invalid embedding response index or vector")
+		}
 		out[d.Index] = d.Embedding
+	}
+	for _, vector := range out {
+		if vector == nil {
+			return nil, 0, fmt.Errorf("missing embedding response index")
+		}
 	}
 	return out, time.Since(t).Seconds(), nil
 }
