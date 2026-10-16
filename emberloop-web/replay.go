@@ -74,13 +74,14 @@ type ReplaySession struct {
 	Events    []Event
 }
 
-// ReplayCase is one correction in Session N with the hits the replay found.
+// ReplayCase carries both recall-arm outcomes for the same correction case.
 type ReplayCase struct {
-	SessionID string
-	EventID   string
-	Query     string
-	FTSHits   []string
-	Covered   bool
+	SessionID     string
+	EventID       string
+	Query         string
+	FTSHits       []string
+	Covered       bool
+	MemoryCovered bool
 }
 
 // ReplayResult aggregates Rules-only and recall-with-Memories arms.
@@ -144,14 +145,11 @@ func truncateRuleText(s string) string {
 	return s
 }
 
-// ReplayEvaluate runs the offline replay over sessions in time order with
-// one bank built incrementally: for Session N the bank holds Rules from
-// Sessions before N (each prior correction as one Rule), then each
-// correction in N recalls the top 20, cuts to 5 and checks coverage with
-// memory.CoversRule. The repeat rate checks each correction against every
-// earlier correction (prior Sessions plus earlier in the same Session), the
-// capturable-Rule denominator. newBank supplies the bank (the Fake in tests,
-// a real FTS5 bank in the CLI).
+// ReplayEvaluate scores both recall arms on one ordered stream: each correction
+// is queried against the same chronological boundary in separate Rule and
+// Memory banks, and both outcomes are attached to the same ReplayCase. The
+// Run-time every-Nth-ticket recall-off A/B control is independent and remains
+// unchanged; it still assigns NoRecall per ticket through RecallOffForTicket.
 func ReplayEvaluate(sessions []ReplaySession, newBank func() memory.Memory) (ReplayResult, []ReplayCase, error) {
 	ordered := append([]ReplaySession(nil), sessions...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -208,13 +206,11 @@ func ReplayEvaluate(sessions []ReplaySession, newBank func() memory.Memory) (Rep
 			for _, hit := range memoryHits {
 				memoryTexts = append(memoryTexts, hit.Text)
 			}
-			if memory.TopCovered(memoryTexts, c.text, 5) {
+			memoryCovered := memory.TopCovered(memoryTexts, c.text, 5)
+			if memoryCovered {
 				res.MemoryCovered++
 			}
-			cases = append(cases, ReplayCase{
-				SessionID: c.sessionID, EventID: c.eventID, Query: c.text,
-				FTSHits: hits, Covered: covered,
-			})
+			cases = append(cases, ReplayCase{SessionID: c.sessionID, EventID: c.eventID, Query: c.text, FTSHits: hits, Covered: covered, MemoryCovered: memoryCovered})
 		}
 		// Session N becomes memory for N+1: each correction is one Rule.
 		for _, c := range corrections {

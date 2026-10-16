@@ -297,7 +297,8 @@ func calculateMemoryStats(rows []memory.LedgerRow, now time.Time) memoryMetrics 
 				m.ExtractorCostUSD += ledgerCost(row.Detail, "cost_usd")
 			}
 		case "memory_forgotten":
-			if row.CreatedAt.After(now.Add(-7 * 24 * time.Hour)) {
+			ageHours := counts["age_hours"]
+			if ageHours >= 0 && ageHours <= 168 && row.CreatedAt.After(now.Add(-7*24*time.Hour)) {
 				forgotten7d += int(counts["count"])
 			}
 		case "memory_promoted":
@@ -498,8 +499,18 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", 400)
 		return
 	}
+	forgottenWithin7Days := false
+	forgetAgeHours := -1
 	switch parts[1] {
 	case "forget":
+		m, e := bank.GetMemory(r.Context(), id)
+		if e != nil {
+			err = e
+			break
+		}
+		age := d.now().Sub(m.CreatedAt)
+		forgetAgeHours = int(age.Hours())
+		forgottenWithin7Days = age >= 0 && age <= 7*24*time.Hour
 		err = bank.SetMemoryStatus(r.Context(), id, memory.StatusForgotten)
 	case "park":
 		err = bank.SetMemoryStatus(r.Context(), id, memory.StatusParked)
@@ -549,8 +560,9 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	if parts[1] == "forget" {
-		_, _ = bank.RecordLedger(r.Context(), memory.LedgerRow{Stage: "memory_forgotten", Status: memory.LedgerSuccess, CountsJSON: `{"count":1}`})
+	if forgottenWithin7Days {
+		counts, _ := json.Marshal(map[string]int{"count": 1, "age_hours": forgetAgeHours})
+		_, _ = bank.RecordLedger(r.Context(), memory.LedgerRow{Stage: "memory_forgotten", Status: memory.LedgerSuccess, CountsJSON: string(counts)})
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }

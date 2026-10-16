@@ -24,7 +24,7 @@ func TestOpenRouterEmbedderBatchIndexesAndLimits(t *testing.T) {
 		if len(body.Input) != 2 || body.Input[0] != "password=[redacted:password]" {
 			t.Errorf("input = %v", body.Input)
 		}
-		_, _ = w.Write([]byte(`{"data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"index":1,"embedding":[0,1]},{"index":0,"embedding":[1,0]}],"usage":{"cost":0.00125}}`))
 	}))
 	defer srv.Close()
 	e := &OpenRouterEmbedder{APIKey: "test", Endpoint: srv.URL + "/api/v1/embeddings"}
@@ -35,6 +35,9 @@ func TestOpenRouterEmbedderBatchIndexesAndLimits(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, [][]float32{{1, 0}, {0, 1}}) {
 		t.Fatalf("vectors = %#v", got)
+	}
+	if cost, known := e.CostUSD(); !known || cost != .00125 {
+		t.Fatalf("cost = %v, %v", cost, known)
 	}
 	if _, err := e.Embed(context.Background(), "model", make([]string, 33)); err == nil {
 		t.Fatal("expected batch limit")

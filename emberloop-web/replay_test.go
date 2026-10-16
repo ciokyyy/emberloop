@@ -57,8 +57,8 @@ func TestReplayEvaluateCannedLogs(t *testing.T) {
 	if res.RepeatTotal != 3 || res.RepeatCovered != 1 || res.RepeatRate != 1.0/3.0 {
 		t.Fatalf("repeat = %+v, want total 3 covered 1 rate 1/3", res)
 	}
-	if len(cases) != 3 || !cases[1].Covered || cases[0].Covered || cases[2].Covered {
-		t.Fatalf("cases = %+v, want only the middle covered", cases)
+	if len(cases) != 3 || !cases[1].Covered || cases[0].Covered || cases[2].Covered || !cases[1].MemoryCovered || cases[0].MemoryCovered || cases[2].MemoryCovered {
+		t.Fatalf("same-case arms = %+v, want only middle case covered in Rules and Memories", cases)
 	}
 	report := FormatReplayReport(res, 3, 0, 0, 0, false)
 	if !strings.Contains(report, "recall@5: 0.333") || !strings.Contains(report, "recall@5 (Memories): 0.333") {

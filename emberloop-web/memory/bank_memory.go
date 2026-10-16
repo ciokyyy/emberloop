@@ -423,6 +423,14 @@ func (b *Bank) enqueueEmbedding(kind, text string, id int64, store func(context.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, _ = b.RecordLedger(ctx, LedgerRow{RunID: fmt.Sprintf("embedding-%s-%d", kind, id), Stage: "embedding", Status: LedgerFailed, CountsJSON: `{"failed":1}`, Detail: "embedding computation or persistence failed"})
+	}, OnSuccess: func(cost float64, known bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		detail := "cost_usd=unknown"
+		if known {
+			detail = fmt.Sprintf("cost_usd=%.8f", cost)
+		}
+		_, _ = b.RecordLedger(ctx, LedgerRow{RunID: fmt.Sprintf("embedding-%s-%d", kind, id), Stage: "embedding", Status: LedgerSuccess, CountsJSON: `{"embedded":1}`, Detail: detail})
 	}}
 	if !worker.Enqueue(job) {
 		job.OnError(fmt.Errorf("embedding queue unavailable"))

@@ -29,18 +29,34 @@ const (
 type Embedder interface {
 	Embed(context.Context, string, []string) ([][]float32, error)
 }
-
 type OpenRouterEmbedder struct {
-	APIKey   string
-	Endpoint string
-	Client   *http.Client
+	APIKey    string
+	Endpoint  string
+	Client    *http.Client
+	costMu    sync.RWMutex
+	lastCost  float64
+	costKnown bool
+}
+
+// CostUSD returns the provider-reported charge from the most recent request.
+func (e *OpenRouterEmbedder) CostUSD() (float64, bool) {
+	e.costMu.RLock()
+	defer e.costMu.RUnlock()
+	return e.lastCost, e.costKnown
 }
 
 func (e *OpenRouterEmbedder) Embed(ctx context.Context, model string, texts []string) ([][]float32, error) {
+	if e == nil {
+		return nil, errors.New("memory: OpenRouter embedder is nil")
+	}
+	e.costMu.Lock()
+	e.costKnown = false
+	e.lastCost = 0
+	e.costMu.Unlock()
 	if model == "" || len(texts) == 0 || len(texts) > MaxEmbeddingBatch {
 		return nil, fmt.Errorf("memory: invalid embedding model or batch size")
 	}
-	if e == nil || e.APIKey == "" {
+	if e.APIKey == "" {
 		return nil, errors.New("memory: OpenRouter API key is missing")
 	}
 	inputs := append([]string(nil), texts...)
@@ -82,6 +98,9 @@ func (e *OpenRouterEmbedder) Embed(ctx context.Context, model string, texts []st
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Usage *struct {
+			Cost *float64 `json:"cost"`
+		} `json:"usage"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&result); err != nil {
 		return nil, err
@@ -108,6 +127,11 @@ func (e *OpenRouterEmbedder) Embed(ctx context.Context, model string, texts []st
 				return nil, errors.New("memory: non-finite embedding")
 			}
 		}
+	}
+	if result.Usage != nil && result.Usage.Cost != nil {
+		e.costMu.Lock()
+		e.lastCost, e.costKnown = *result.Usage.Cost, true
+		e.costMu.Unlock()
 	}
 	return out, nil
 }
@@ -183,10 +207,11 @@ type EmbeddingWorker struct {
 	once     sync.Once
 }
 type EmbeddingJob struct {
-	Context context.Context
-	Text    string
-	Store   func(context.Context, []byte, string) error
-	OnError func(error)
+	Context   context.Context
+	Text      string
+	Store     func(context.Context, []byte, string) error
+	OnError   func(error)
+	OnSuccess func(costUSD float64, known bool)
 }
 
 func NewEmbeddingWorker(embedder Embedder, model string, capacity int) *EmbeddingWorker {
@@ -256,6 +281,14 @@ func (w *EmbeddingWorker) process(job EmbeddingJob) {
 	}
 	if err == nil {
 		err = job.Store(ctx, EncodeVector(vectors[0]), w.model)
+	}
+	if err == nil && job.OnSuccess != nil {
+		if reporter, ok := w.embedder.(interface{ CostUSD() (float64, bool) }); ok {
+			cost, known := reporter.CostUSD()
+			job.OnSuccess(cost, known)
+		} else {
+			job.OnSuccess(0, false)
+		}
 	}
 	cancel()
 	if err != nil {
