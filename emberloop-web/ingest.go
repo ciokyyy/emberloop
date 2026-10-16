@@ -250,6 +250,23 @@ func (d *Daemon) turnExtractor() (string, string, memory.Extractor) {
 	if err != nil {
 		return "", "", nil
 	}
+	var key string
+	var enabled bool
+	if raw, ok := all["memory_auto_extract"]; ok {
+		if json.Unmarshal(raw, &enabled) != nil {
+			enabled = false
+		}
+		if !enabled {
+			return "", "", nil
+		}
+		key = systemone.APIKey(context.Background())
+	} else {
+		key = systemone.APIKey(context.Background())
+		enabled = key != ""
+	}
+	if !enabled {
+		return "", "", nil
+	}
 	if raw, ok := all["memory_extract_model"]; ok {
 		var configured string
 		_ = json.Unmarshal(raw, &configured)
@@ -266,8 +283,16 @@ func (d *Daemon) turnExtractor() (string, string, memory.Extractor) {
 	if model == "off" || effort == "off" {
 		return "", effort, nil
 	}
-	if key := systemone.APIKey(context.Background()); key != "" {
+	if key != "" {
 		return model, effort, memory.NewOpenRouterExtractor(key, model, effort)
 	}
 	return model, effort, nil
+}
+
+func (d *Daemon) memoryExtractionEnabled(all map[string]json.RawMessage) bool {
+	var enabled bool
+	if raw, ok := all["memory_auto_extract"]; ok && json.Unmarshal(raw, &enabled) == nil {
+		return enabled
+	}
+	return systemone.APIKey(context.Background()) != ""
 }

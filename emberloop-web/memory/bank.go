@@ -33,10 +33,23 @@ type Bank struct {
 	done           chan struct{}
 	closeOnce      sync.Once
 	closeErr       error
+	embedMu        sync.RWMutex
 	embedWorker    *EmbeddingWorker
 	embedder       Embedder
 	embeddingModel string
 	queryCache     *QueryEmbeddingCache
+}
+
+func (b *Bank) setEmbedding(worker *EmbeddingWorker, embedder Embedder, model string) {
+	b.embedMu.Lock()
+	defer b.embedMu.Unlock()
+	b.embedWorker, b.embedder, b.embeddingModel = worker, embedder, model
+}
+
+func (b *Bank) embeddingConfig() (*EmbeddingWorker, Embedder, string) {
+	b.embedMu.RLock()
+	defer b.embedMu.RUnlock()
+	return b.embedWorker, b.embedder, b.embeddingModel
 }
 
 // writeJob is one write, run on the writer goroutine. The result goes to reply.

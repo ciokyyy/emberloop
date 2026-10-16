@@ -161,20 +161,21 @@ func (b *Bank) RecallMemories(ctx context.Context, text string, weights RecallWe
 }
 
 func (b *Bank) queryVector(ctx context.Context, text string) ([]float32, string) {
-	if b.embedder == nil || b.embeddingModel == "" {
+	_, embedder, model := b.embeddingConfig()
+	if embedder == nil || model == "" {
 		return nil, ""
 	}
-	if v, ok := b.queryCache.Get(b.embeddingModel, text); ok {
-		return v, b.embeddingModel
+	if v, ok := b.queryCache.Get(model, text); ok {
+		return v, model
 	}
 	qctx, cancel := context.WithTimeout(ctx, EmbeddingQueryBudget)
 	defer cancel()
-	vectors, err := b.embedder.Embed(qctx, b.embeddingModel, []string{ForEmbedder(text)})
+	vectors, err := embedder.Embed(qctx, model, []string{ForEmbedder(text)})
 	if err != nil || len(vectors) != 1 || len(vectors[0]) == 0 {
 		return nil, ""
 	}
-	b.queryCache.Put(b.embeddingModel, text, vectors[0])
-	return vectors[0], b.embeddingModel
+	b.queryCache.Put(model, text, vectors[0])
+	return vectors[0], model
 }
 
 // RecallEpisodes searches Episodes for the agent recall tool only. Results

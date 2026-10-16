@@ -64,6 +64,26 @@ func (e *Engine) Bank(userID string) (*Bank, error) {
 	return b, nil
 }
 
+// SetEmbedding changes the worker and query model for existing and future banks.
+func (e *Engine) SetEmbedding(embedder Embedder, model string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return
+	}
+	if e.embedWorker != nil {
+		e.embedWorker.Close()
+	}
+	e.embedWorker = nil
+	if embedder != nil && model != "" {
+		e.embedWorker = NewEmbeddingWorker(embedder, model, 64)
+	}
+	e.opts.Embedder, e.opts.EmbeddingModel = embedder, model
+	for _, bank := range e.banks {
+		bank.setEmbedding(e.embedWorker, embedder, model)
+	}
+}
+
 // Close stops every bank's writer and closes its files. It is safe to call twice.
 func (e *Engine) Close() error {
 	e.mu.Lock()

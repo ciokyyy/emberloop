@@ -292,7 +292,8 @@ func orNow(t, fallback time.Time) time.Time {
 	return t
 }
 func (b *Bank) enqueueEmbedding(kind, text string, id int64, store func(context.Context, []byte, string) error) {
-	if b.embedWorker == nil {
+	worker, _, _ := b.embeddingConfig()
+	if worker == nil {
 		return
 	}
 	job := EmbeddingJob{Text: text, Store: store, OnError: func(error) {
@@ -300,7 +301,7 @@ func (b *Bank) enqueueEmbedding(kind, text string, id int64, store func(context.
 		defer cancel()
 		_, _ = b.RecordLedger(ctx, LedgerRow{RunID: fmt.Sprintf("embedding-%s-%d", kind, id), Stage: "embedding", Status: LedgerFailed, CountsJSON: `{"failed":1}`, Detail: "embedding computation or persistence failed"})
 	}}
-	if !b.embedWorker.Enqueue(job) {
+	if !worker.Enqueue(job) {
 		job.OnError(fmt.Errorf("embedding queue unavailable"))
 	}
 }

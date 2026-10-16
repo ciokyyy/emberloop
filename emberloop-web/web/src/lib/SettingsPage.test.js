@@ -593,3 +593,27 @@ describe('SettingsPage agent chains', () => {
     expect(within(agents).getByLabelText('Add Ticket worker entry').disabled).toBe(true);
   });
 });
+
+describe('SettingsPage automatic Memory settings', () => {
+  beforeEach(() => { section = 'memory'; });
+
+  it('loads, edits and saves the host-global extraction, embedding and recall controls', async () => {
+    const seen = {};
+    const settings = { ...base, memory_extract_model: 'extract/model', memory_extract_effort: 'low', memory_embedding_model: 'embed/model', memory_auto_extract: false, memory_recall_weights: { vector: 0.4, fts: 0.4, importance: 0.2 } };
+    stubSettings({ settings, seen });
+    const { container } = renderSettings({ props: { admin: true } });
+    await within(container).findByRole('switch', { name: 'Automatic memory extraction' });
+    const extractor = container.querySelector('#memory-extract-model');
+    expect(extractor).not.toBeNull();
+    await fireEvent.input(extractor, { target: { value: 'new/extractor' } });
+    await fireEvent.input(within(container).getByLabelText('Vector'), { target: { value: '0.2' } });
+    await fireEvent.click(within(container).getByRole('switch', { name: 'Automatic memory extraction' }));
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.memory_extract_model).toBe('new/extractor');
+    expect(seen.body.memory_embedding_model).toBe('embed/model');
+    expect(seen.body.memory_auto_extract).toBe(true);
+    expect(seen.body.memory_recall_weights).toEqual({ vector: 0.2, fts: 0.4, importance: 0.2 });
+  });
+});

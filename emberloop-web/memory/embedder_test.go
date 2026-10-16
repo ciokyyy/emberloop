@@ -152,6 +152,34 @@ func TestEngineWorkerEmbedsInsertedMemoriesAndEpisodes(t *testing.T) {
 	}
 }
 
+func TestEngineEmbeddingSettingsApplyToOpenBanks(t *testing.T) {
+	eng, err := Open(tempDir(t), Options{Embedder: &FakeEmbedder{Vector: []float32{1, 0}}, EmbeddingModel: "old-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	bank, err := eng.Bank("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := &FakeEmbedder{Vector: []float32{0, 1}}
+	eng.SetEmbedding(next, "new-model")
+	id, err := bank.AddMemory(context.Background(), MemoryItem{SessionID: "s", EventID: "m1", Author: "alice", Kind: KindFact, Text: "new setting", Quote: "new setting"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		item, getErr := bank.GetMemory(context.Background(), id)
+		if getErr == nil && item.EmbeddingModel == "new-model" && len(item.Embedding) > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	item, _ := bank.GetMemory(context.Background(), id)
+	t.Fatalf("updated embedding setting did not reach open bank: %+v", item)
+}
+
 type blockingEmbedder struct {
 	started chan struct{}
 	release chan struct{}

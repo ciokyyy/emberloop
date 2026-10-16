@@ -109,6 +109,16 @@ func (d *Daemon) memoryEngine() (*memory.Engine, error) {
 	}
 	d.memEng = eng
 	return eng, nil
+
+}
+func (d *Daemon) reconfigureMemoryEmbedding() {
+	d.memMu.Lock()
+	defer d.memMu.Unlock()
+	if d.memEng == nil {
+		return
+	}
+	embedder, model := d.memoryEmbeddingOptions()
+	d.memEng.SetEmbedding(embedder, model)
 }
 
 // profileBankFor opens the bank of owner. Empty owner has no bank.
