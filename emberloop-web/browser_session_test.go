@@ -74,3 +74,31 @@ func TestBrowserScreenshotJanitorKeepsActiveAndRecent(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserCloseUsesSessionAndNamespace(t *testing.T) {
+	bin := tempDir(t)
+	logPath := filepath.Join(tempDir(t), "calls")
+	t.Setenv("EL_BIN_DIR", bin)
+	script := "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$AGENT_BROWSER_SESSION\" \"$AGENT_BROWSER_NAMESPACE\" \"$*\" >> \"" + logPath + "\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "agent-browser"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := &Daemon{stateDir: filepath.Join(tempDir(t), "state")}
+	d.closeBrowser("s-test", false)
+	d.closeBrowser("", true)
+	calls, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "s-test|") || !strings.HasSuffix(lines[0], "|close") || !strings.HasSuffix(lines[1], "|close --all") {
+		t.Fatalf("browser calls = %q", calls)
+	}
+}
+
+func TestBrowserSessionEnvAbsentBinary(t *testing.T) {
+	t.Setenv("EL_BIN_DIR", tempDir(t))
+	if got := (&Daemon{stateDir: tempDir(t)}).browserSessionEnv("s"); len(got) != 0 {
+		t.Fatalf("environment without binary = %v", got)
+	}
+}
