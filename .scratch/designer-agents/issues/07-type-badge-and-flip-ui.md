@@ -4,10 +4,10 @@
 
 **Blocked by:** 06-run-type-override-api
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Badge renders for every Ticket in preview and detail on desktop and phone layouts
-- [ ] Clicking a pre-start badge calls the override API and updates the row; failure shows the Daemon's message
-- [ ] A flipped Ticket is marked "overridden" with a way to clear
-- [ ] Read-only once the Worker has started, with the reason in a title or note
-- [ ] `RunsView.test.js` covers badge, flip, clear and read-only; `npm test` and `npm run build` pass in `emberloop-web/web/`; `web/README.md` maps the new tests
+- [x] Badge renders for every Ticket in preview and detail on desktop and phone layouts
+- [x] Clicking a pre-start badge calls the override API and updates the row; failure shows the Daemon's message
+- [x] A flipped Ticket is marked "overridden" with a way to clear
+- [x] Read-only once the Worker has started, with the reason in a title or note
+- [x] `RunsView.test.js` covers badge, flip, clear and read-only; `npm test` and `npm run build` pass in `emberloop-web/web/`; `web/README.md` maps the new tests
