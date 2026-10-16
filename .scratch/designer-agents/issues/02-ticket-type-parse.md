@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `**Type:**` parses with the same header reader as `**Blocked by:**`, case-insensitive on the value, tolerant of the bold markers like the blocker line
-- [ ] `DriverTicket` and `staticTicket` carry the type; absent line yields `code`
-- [ ] `GET /api/runs/<id>` and the preview payload include each Ticket's `type`; `GET /api/runs` summaries do not change
-- [ ] An unknown value fails that preview row with a message naming the allowed values, and fails the driver's check-world pass
-- [ ] Existing spec fixtures without a Type line behave exactly as before (no snapshot diff beyond the new field)
-- [ ] `emberloop-web/el/AGENTS.md` and `emberloop-web/AGENTS.md` state the Type line contract; `.emberloop/check` passes
+- [x] `**Type:**` parses with the same header reader as `**Blocked by:**`, case-insensitive on the value, tolerant of the bold markers like the blocker line
+- [x] `DriverTicket` and `staticTicket` carry the type; absent line yields `code`
+- [x] `GET /api/runs/<id>` and the preview payload include each Ticket's `type`; `GET /api/runs` summaries do not change
+- [x] An unknown value fails that preview row with a message naming the allowed values, and fails the driver's check-world pass
+- [x] Existing spec fixtures without a Type line behave exactly as before (no snapshot diff beyond the new field)
+- [x] `emberloop-web/el/AGENTS.md` and `emberloop-web/AGENTS.md` state the Type line contract; `.emberloop/check` passes
