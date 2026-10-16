@@ -4,11 +4,11 @@
 
 **Blocked by:** 01, 04
 
-**Status:** todo
+**Status:** done
 
-- [ ] "always return wrapped errors" and "never return wrapped errors" contradict and supersede; they never merge
-- [ ] A duplicate raises `mention_count` and creates no row
-- [ ] Contradiction across authors does not supersede
-- [ ] A superseded Memory is reachable only through `recall` with `include_superseded`
-- [ ] Null-vector rows use the text-only path
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] "always return wrapped errors" and "never return wrapped errors" contradict and supersede; they never merge
+- [x] A duplicate raises `mention_count` and creates no row
+- [x] Contradiction across authors does not supersede
+- [x] A superseded Memory is reachable only through `recall` with `include_superseded`
+- [x] Null-vector rows use the text-only path
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
