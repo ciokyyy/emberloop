@@ -45,13 +45,15 @@ describe('RunsView preview and live run', () => {
     expect(within(container).getByText('1/2')).toBeTruthy();
     expect(within(container).getAllByText('code').length).toBe(2);
   });
-  it('shows design as a distinct preview badge', async () => {
+  it('flips and clears the type in the pre-start preview', async () => {
     seedPreview([{ ...preview.tickets[0], type: 'design' }]);
     stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
     const { container } = render(RunsView, { props: { workDir: '/repo' } });
-    const badge = await within(container).findByText('design');
-    expect(badge).toBeTruthy();
-    expect(within(container).queryByRole('button', { name: 'design' })).toBeNull();
+    await fireEvent.click(await within(container).findByRole('button', { name: 'design' }));
+    expect(await within(container).findByText('overridden')).toBeTruthy();
+    expect(within(container).getByRole('button', { name: 'code' })).toBeTruthy();
+    await fireEvent.click(within(container).getByRole('button', { name: 'Clear' }));
+    expect(await within(container).findByRole('button', { name: 'design' })).toBeTruthy();
   });
 
   it('prompts for a sidebar pick with nothing selected', async () => {
@@ -171,8 +173,9 @@ describe('RunsView preview and live run', () => {
     });
 
     const { container } = render(RunsView, { props: { workDir: '/project', projectId: 'project-1', onNavigate } });
+    await fireEvent.click(within(container).getAllByRole('button', { name: 'code' })[0]);
     await fireEvent.click(await within(container).findByRole('button', { name: 'Start Run' }));
-    expect(starts).toEqual([{ spec: preview.spec, repo: '/project' }]);
+    expect(starts).toEqual([{ spec: preview.spec, repo: '/project', typeOverrides: { '01-first': 'design' } }]);
     await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledWith('/p/project-1/runs/project-run'));
   });
 

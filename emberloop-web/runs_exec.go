@@ -741,13 +741,14 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Spec              string `json:"spec"`
-		Repo              string `json:"repo"`
-		Harness           string `json:"harness"`
-		Model             string `json:"model"`
-		Effort            string `json:"effort"`
-		RecallOffN        int    `json:"recallOffN"`
-		NoStopAfterSubmit bool   `json:"noStopAfterSubmit"`
+		Spec              string            `json:"spec"`
+		Repo              string            `json:"repo"`
+		Harness           string            `json:"harness"`
+		Model             string            `json:"model"`
+		Effort            string            `json:"effort"`
+		RecallOffN        int               `json:"recallOffN"`
+		NoStopAfterSubmit bool              `json:"noStopAfterSubmit"`
+		TypeOverrides     map[string]string `json:"typeOverrides"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Spec == "" {
 		http.Error(w, "spec is required", http.StatusBadRequest)
@@ -771,6 +772,16 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previews := el.PreviewTickets(specRun, files)
+	ticketTypes := make(map[string]bool, len(previews))
+	for _, preview := range previews {
+		ticketTypes[preview.ID] = true
+	}
+	for id, typ := range req.TypeOverrides {
+		if !ticketTypes[id] || (typ != "code" && typ != "design") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "typeOverrides must name Tickets and use code or design"})
+			return
+		}
+	}
 	for _, p := range previews {
 		if p.Error != "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": p.Error})
@@ -899,6 +910,9 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		rs.Tickets = append(rs.Tickets, staticTicket{
 			ID: p.ID, Num: p.Num, Title: p.Title, Type: p.Type, Blockers: blockers, Path: pathByID[p.ID],
 		})
+	}
+	if len(req.TypeOverrides) > 0 {
+		rs.TypeOverrides = req.TypeOverrides
 	}
 	world := d.webDriverWorld(rs, files, max)
 	d.runs[rs.ID] = rs

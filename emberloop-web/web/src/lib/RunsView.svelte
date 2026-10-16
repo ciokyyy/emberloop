@@ -88,6 +88,7 @@
   initDiscoveryRepo(workDir);
   let run = $state(null);
   let runError = $state('');
+  let previewTypeOverrides = $state({});
   let runLoading = $state(false);
   let starting = $state(false);
   let acting = $state(false);
@@ -214,7 +215,7 @@
     starting = true;
     runError = '';
     try {
-      const body = await startRun({ spec: discovery.selected, repo });
+      const body = await startRun({ spec: discovery.selected, repo, ...(Object.keys(previewTypeOverrides).length ? { typeOverrides: previewTypeOverrides } : {}) });
       const startedRun = body.run ?? null;
       applyRun(startedRun);
       if (startedRun?.id) {
@@ -226,6 +227,19 @@
     } finally {
       starting = false;
     }
+  }
+  function previewType(ticket) {
+    return previewTypeOverrides[ticket.id] || ticket.type || 'code';
+  }
+
+  function flipPreviewType(ticket) {
+    const current = previewType(ticket);
+    previewTypeOverrides = { ...previewTypeOverrides, [ticket.id]: current === 'design' ? 'code' : 'design' };
+  }
+
+  function clearPreviewType(ticket) {
+    const { [ticket.id]: _removed, ...remaining } = previewTypeOverrides;
+    previewTypeOverrides = remaining;
   }
 
   async function act(fn, failed) {
@@ -452,7 +466,15 @@
               <td class="py-1 pr-2">{t.id}</td>
               <td class="py-1 pr-2">{t.title}</td>
               <td class="py-1 pr-2">{(t.blockers ?? []).join(', ') || '—'}</td>
-              <td class="py-1 pr-2"><Badge variant={(t.type || 'code') === 'design' ? 'secondary' : 'outline'}>{t.type || 'code'}</Badge></td>
+              <td class="py-1 pr-2">
+                <Button size="sm" variant={previewType(t) === 'design' ? 'secondary' : 'outline'} disabled={starting} title="Flip Ticket type before starting the Run" onclick={() => flipPreviewType(t)}>{previewType(t)}</Button>
+                {#if previewTypeOverrides[t.id]}
+                  <div class="flex items-center gap-1 text-xs text-muted-foreground">
+                    <span>overridden</span>
+                    <Button size="sm" variant="link" class="h-auto min-h-0 p-0 text-xs" disabled={starting} title="Clear override and use the Ticket file type" onclick={() => clearPreviewType(t)}>Clear</Button>
+                  </div>
+                {/if}
+              </td>
               <td class="py-1">{`${t.done ?? 0}/${t.total ?? 0}`}</td>
             </tr>
             {#if t.error}
