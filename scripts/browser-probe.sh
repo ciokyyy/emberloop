@@ -41,8 +41,10 @@ trap cleanup EXIT
 echo "Building Daemon..." >&2
 go -C "$root/emberloop-web" build -o "$tmp/emberloop-web" ./cmd/emberloop-web || exit 1
 mkdir -p "$tmp/work"
-cat >"$tmp/work/browser-probe.html" <<'HTML'
-<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{background:#132b45;color:white;font:24px sans-serif;padding:24px}.card{background:#e96b42;color:#111;padding:22px;border-radius:14px}strong{color:#ffe45e}</style></head><body><main class="card"><strong>HARBOR 7Q</strong><p>A lighthouse stands beside the sea.</p></main></body></html>
+palette="$(python3 -c 'import secrets; print(secrets.choice(["navy:coral:#132b45:#e96b42", "plum:lime:#38205c:#68b84a", "teal:amber:#124b4a:#e5a52e", "slate:magenta:#354052:#cb4b87"]))')"
+IFS=: read -r background_name card_name background_hex card_hex <<<"$palette"
+cat >"$tmp/work/browser-probe.html" <<HTML
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{background:$background_hex;color:white;font:24px sans-serif;padding:24px}.card{background:$card_hex;color:#111;padding:22px;border-radius:14px}strong{color:#ffe45e}</style></head><body><main class="card"><strong>HARBOR 7Q</strong><p>A lighthouse stands beside the sea.</p></main></body></html>
 HTML
 
 start_daemon() {
@@ -88,20 +90,41 @@ probe_session() {
   [ "$status" = idle ] || { echo "FAIL $name - session did not settle; artifacts: $tmp"; return 1; }
   printf '%s' "$response" >"$tmp/$name-session.json"
   expected_path="${browser_bin%/*}:$PATH"
-  python3 - "$name" "$id" "$expected_path" "$response" <<'PY'
+  python3 - "$name" "$id" "$expected_path" "$background_name" "$card_name" "$response" <<'PY'
 import json, re, sys
-name, session_id, expected_path, raw = sys.argv[1:]
+name, session_id, expected_path, background_name, card_name, raw = sys.argv[1:]
 data = json.loads(raw)
 events = data.get("events", [])
 text = "".join(e.get("text", "") for e in events if e.get("kind") == "assistant_chunk")
-def value(label):
-    found = re.findall(rf"^{label}=(.*)$", text, re.MULTILINE)
+calls = []
+for event in events:
+    if event.get("kind") not in ("tool_call_started", "tool_call_updated"):
+        continue
+    try:
+        calls.append(json.loads(event.get("text", "{}")))
+    except json.JSONDecodeError:
+        continue
+def completed_tool(name, input_text=""):
+    return [c for c in calls if c.get("name", "").lower().endswith(name)
+            and c.get("status") == "completed"
+            and input_text in c.get("input", "")]
+def output_value(call, label):
+    found = re.findall(rf"^{label}=(.*)$", call.get("output", ""), re.MULTILINE)
     return found[-1].strip() if found else ""
-bash_path, execute_path = value("BASH_PATH"), value("EXEC_PATH")
+bash_calls = completed_tool("bash")
+execute_calls = completed_tool("execute")
+read_calls = completed_tool("read", "probe.jpg")
+bash_env = next((c for c in bash_calls if "BASH_SESSION=" in c.get("output", "")), {})
+execute_env = next((c for c in execute_calls if "EXEC_SESSION=" in c.get("output", "")), {})
+bash_session = output_value(bash_env, "BASH_SESSION")
+execute_session = output_value(execute_env, "EXEC_SESSION")
+bash_path = output_value(bash_env, "BASH_PATH")
+execute_path = output_value(execute_env, "EXEC_PATH")
+snapshot_calls = [c for c in bash_calls if "snapshot" in c.get("input", "").lower()]
 checks = {
     "env inherited": bash_session == session_id and execute_session == session_id and bash_path == expected_path and execute_path == expected_path,
-    "snapshot works": "HARBOR 7Q" in text,
-    "screenshot read reaches model": "navy" in text.lower() and "coral" in text.lower(),
+    "snapshot works": any("HARBOR 7Q" in c.get("output", "") for c in snapshot_calls),
+    "screenshot read reaches model": bool(read_calls) and background_name in text.lower() and card_name in text.lower(),
 }
 print(f"{name} verdict: " + "; ".join(f"{'PASS' if ok else 'FAIL'} {label}" for label, ok in checks.items()))
 for label, ok in checks.items():
