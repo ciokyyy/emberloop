@@ -4,8 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** open
+**Status:** done
 
-- [ ] `go list -u -m all` shows no update except documented pins
-- [ ] `.emberloop/check` passes
-- [ ] Any pin names its reason in `go.mod`
+- [x] `go list -u -m all` shows no update except documented pins
+- [x] `.emberloop/check` passes
+- [x] Any pin names its reason in `go.mod`
