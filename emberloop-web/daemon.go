@@ -362,6 +362,12 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 func (d *Daemon) RegisterBackend(harness string, be Backend) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if cb, ok := be.(*ClaudeBackend); ok {
+		cb.browserEnv = d.browserSessionEnv
+	}
+	if pb, ok := be.(*PigACPBackend); ok && pb.ClaudeBackend != nil {
+		pb.browserEnv = d.browserSessionEnv
+	}
 	d.backends[harness] = be
 }
 

@@ -179,6 +179,7 @@ type acpConn interface {
 // ClaudeBackend drives claude Sessions through the ACP adapter. It satisfies
 // the Daemon's Backend seam (Models, CreateSession, OnPrompt, CloseSession).
 type ClaudeBackend struct {
+	browserEnv func(string) [][2]string
 	mcpName    string
 	mcpCommand string
 	mcpArgs    []string
@@ -1062,6 +1063,9 @@ func (b *ClaudeBackend) mcpServersFor(sessionID, role string) ([]acpMCPServer, e
 		if b.daemonToken != "" {
 			base.Env = append(base.Env, [2]string{"EL_WEB_TOKEN", b.daemonToken})
 		}
+	}
+	if b.browserEnv != nil {
+		base.Env = append(base.Env, b.browserEnv(sessionID)...)
 	}
 	base.Env = append(base.Env, b.mcpEnv...)
 	return []acpMCPServer{base}, nil
