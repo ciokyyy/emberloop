@@ -3137,11 +3137,18 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 	}()
 	tk.Type = effectiveRunTicketType(rs, staticTicket{ID: tk.ID, Type: tk.Type})
-	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID, "worker")...)
+	workerRole := "worker"
+	if tk.Type == "design" {
+		workerRole = "worker-design"
+	}
+	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID, workerRole)...)
+	if len(chain) == 0 && workerRole == "worker-design" {
+		chain = append([]chainEntry(nil), workerRunChain(rs, tk.ID, "worker")...)
+	}
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}
-	chainPos := clampChainPosition(chainPosition(rs, tk.ID, "worker"), len(chain))
+	chainPos := clampChainPosition(chainPosition(rs, tk.ID, workerRole), len(chain))
 	firstEntry := chain[chainPos]
 	harness, model, effort := firstEntry.Backend, firstEntry.Model, firstEntry.Effort
 	repo, specPath := rs.Repo, rs.Spec
@@ -3366,6 +3373,9 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
 		prompt := buildWorkerFirstPrompt(tk.ID, spec, tk.Path, branch, seeded, worktree)
+		if tk.Type == "design" {
+			prompt = appendDesignerPrompt(prompt)
+		}
 		d.mu.Lock()
 		if s, ok := d.sessions[meta.ID]; ok {
 			s.busy = true
