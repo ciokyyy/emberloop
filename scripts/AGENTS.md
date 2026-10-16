@@ -13,9 +13,10 @@ claude: each plants a fact, compresses by Handoff restart, then asks for
 the fact from the new handle), and the Jev probe (the real decision
 endpoint through `TestLiveJevDecider`, behind `EL_LIVE_JEV=1`).
 The Designer browser live probe, `browser-probe.sh`, proves Session env,
-snapshot and screenshot `read` on Claude, Pig ACP and Pig SDK. It uses a
-temporary Daemon/worktree and is never part of checks; its gate and model
-variables are listed under Local Contracts.
+snapshot and screenshot `read` on Claude, Pig ACP and Pig SDK. The Designer
+Run live probe, `designer-run-probe.sh`, proves a real code-then-design Run
+through merge, browser snapshots/screenshots and cleanup. Both use temporary
+Daemons/worktrees and are never part of checks; gates and models are below.
 Run-upgrade live probes run by hand against real Backends, never in the check:
 `run-upgrade-reviewer-submit-probe.sh` observes a real Pig Reviewer's typed
 submit Event and fresh verdict; `run-upgrade-chain-probe.sh` exercises a real
@@ -64,7 +65,9 @@ Anything a script verifies in another package is owned there.
   self-tests against its in-repo fake agent; hand runs against real agents
   need a fake LLM endpoint. `browser-probe.sh` needs `EL_LIVE_BROWSER=1` and
   `EL_LIVE_CLAUDE_MODEL`, `EL_LIVE_PIG_ACP_MODEL` and `EL_LIVE_PIG_SDK_MODEL`;
-  it uses live real-agent sessions and is never part of the repo check.
+  `designer-run-probe.sh` needs `EL_LIVE_DESIGNER_RUN=1`, a Claude or Pig
+  harness, `EL_LIVE_DESIGNER_MODEL` and optionally
+  `EL_LIVE_DESIGNER_CODE_MODEL`; it uses real Sessions and never joins the check.
 
 ## Work Guidance
 

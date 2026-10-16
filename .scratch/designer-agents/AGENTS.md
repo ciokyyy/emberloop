@@ -23,3 +23,8 @@ Owns `spec.md`, `issues/` and `research-browser-tooling.md` in this directory. C
 ## Verification
 
 No check.
+## Child DOX Index
+
+- `spec.md` — Designer agent decisions and implementation contract
+- `issues/` — ticket sequence and acceptance criteria
+- `research-browser-tooling.md` — browser tooling research; its Playwright MCP recommendation is superseded by ADR 0005

@@ -3,11 +3,13 @@
 Date: 2026-10-16. Question: how should a Ticket-scoped Worker/Reviewer SEE and
 debug web UI in its git worktree? Today only `read` tier-3 exists
 (`emberloop-web/el/tools/readurl.go`: one-shot `chrome-headless-shell`
-`--dump-dom`, HTML only, no interaction, no pixels). Plan under discussion:
-Daemon-owned `screenshot` tool + `.emberloop/preview` script that starts the
-dev server and prints a URL. Counter-proposal: a global browser MCP server.
+`--dump-dom`, HTML only, no interaction, no pixels). Initial candidates
+considered were a Daemon-owned screenshot tool with `.emberloop/preview`, and
+a global browser MCP server; both were superseded by the ADR below.
 
-## Recommendation
+Superseded by [ADR 0005](../../docs/adr/0005-designer-tickets-agent-browser-cli.md): the recommendation below is research history, not the current plan.
+
+## Historical recommendation
 
 **Winner: Daemon-owned, per-Session attachment — not a global shared server.
 Wrap Playwright MCP (`@playwright/mcp`) as a second upstream server visible

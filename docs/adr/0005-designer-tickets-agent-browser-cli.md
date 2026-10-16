@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Design Tickets run on a Designer that sees UI through the agent-browser CLI
