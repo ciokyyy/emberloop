@@ -56,8 +56,13 @@ durable boundaries with their own docs. File map (non-test file owns its
   `context.windows` / `el settings window <model> <n>` beats table; unknown
   models get 200k default), `docs.go` (install copies the checkout's
   `docs/agent/*.md` into the `docs` namespace, read as `el://docs/<page>`;
-  the system prompt names it), `skills.go` (the skill library root and
-  `deps.go` (the `el deps` installer: required system packages plus optional code graph (codebase-memory-mcp) and browser CLI (agent-browser) binaries), `logs.go` (`el logs` over the prod Daemon journal), `restart.go` (`el restart`),
+  the system prompt names it), `skills.go` (installs upstream `matt-pocock`
+  skills beside Emberloop's embedded override library under `emberloop`; the
+  upstream library is replaced on install, the override is rewritten from the
+  embedded source, and `el://matt-pocock/<skill>` prefers a matching override
+  while preserving upstream-only skills), `deps.go` (the `el deps` installer:
+  required system packages plus optional code graph (codebase-memory-mcp) and
+  browser CLI (agent-browser) binaries), `logs.go` (`el logs` over the prod Daemon journal), `restart.go` (`el restart`),
   `version.go`, `update.go` (rebuilds el, el-mcp and el-web with version
   stamps, installs them, rolls back when the new el-web fails its health
   check; `el install` is an alias), `install.go` (the shared build-and-swap

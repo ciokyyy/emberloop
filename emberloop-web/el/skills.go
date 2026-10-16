@@ -1,6 +1,7 @@
 package el
 
 import (
+	"embed"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+//go:embed skill-libraries/emberloop/to-tickets/SKILL.md
+var emberloopSkills embed.FS
 
 // skillsRoot is where el keeps the skill libraries it installs. The env var
 // names the root itself, so EL_SKILLS_DIR overrides the whole tree, not one
@@ -19,10 +23,10 @@ func skillsRoot() string {
 	return filepath.Join(os.Getenv("HOME"), ".emberloop", "skills")
 }
 
-// skillsNamespace is the library's directory under the skills root, and the
-// namespace its el:// addresses carry. The two must stay one string: an
-// address that names a namespace the read tool cannot find reads as nothing.
+// skillsNamespace is the upstream library's directory under the skills root.
 const skillsNamespace = "matt-pocock"
+
+const overrideSkillsNamespace = "emberloop"
 
 // skillsDir is the library el installs: the mattpocock skills, one
 // directory per skill, under the root.
@@ -88,7 +92,22 @@ func InstallSkills(run Exec) error {
 	if err := swapIn(staged, skillsDir()); err != nil {
 		return err
 	}
-	return keepLock(stage)
+	if err := keepLock(stage); err != nil {
+		return err
+	}
+	return installOverrideSkills()
+}
+
+func installOverrideSkills() error {
+	body, err := emberloopSkills.ReadFile("skill-libraries/emberloop/to-tickets/SKILL.md")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(skillsRoot(), overrideSkillsNamespace, "to-tickets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "SKILL.md"), body, 0o644)
 }
 
 // keepLock moves the CLI's lockfile out of the staging repo, beside the library

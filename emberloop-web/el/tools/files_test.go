@@ -457,3 +457,24 @@ func TestReadElPageWithoutExtension(t *testing.T) {
 		t.Fatal("a missing page must still fail")
 	}
 }
+
+func TestReadElPrefersOverrideAndFallsBackToUpstreamOnlySkills(t *testing.T) {
+	root := t.TempDir()
+	skillsRootWith(t, root, "matt-pocock", map[string]string{
+		"to-tickets":    "upstream version",
+		"upstream-only": "available upstream",
+	})
+	skillsRootWith(t, root, "emberloop", map[string]string{
+		"to-tickets": "override version",
+	})
+
+	for _, test := range []struct{ path, want string }{
+		{"el://matt-pocock/to-tickets/SKILL.md", "override version"},
+		{"el://matt-pocock/upstream-only/SKILL.md", "available upstream"},
+	} {
+		out, err := run(t, readTool{}, t.TempDir(), map[string]any{"path": test.path})
+		if err != nil || !strings.Contains(out, test.want) {
+			t.Errorf("read %s = %q, %v; want %q", test.path, out, err, test.want)
+		}
+	}
+}

@@ -169,3 +169,50 @@ func TestInstallSkillsReplacesTheOldLibrary(t *testing.T) {
 		t.Errorf("a replaced library must keep no stale lockfile, stat err = %v", err)
 	}
 }
+
+func TestInstallSkillsPreservesTheEmberloopOverrideAcrossUpstreamReinstall(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("EL_SKILLS_DIR", root)
+
+	first := &fakeSkills{skills: map[string]string{"to-tickets": "upstream v1", "only-upstream": "only v1"}}
+	if err := InstallSkills(first.run); err != nil {
+		t.Fatal(err)
+	}
+	override := filepath.Join(root, overrideSkillsNamespace, "to-tickets", "SKILL.md")
+	want := readFile(t, filepath.Join("skill-libraries", "emberloop", "to-tickets", "SKILL.md"))
+	if got := readFile(t, override); got != want {
+		t.Fatalf("installed override differs from embedded library")
+	}
+
+	second := &fakeSkills{skills: map[string]string{"to-tickets": "upstream v2", "new-upstream": "new"}}
+	if err := InstallSkills(second.run); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, override); got != want {
+		t.Errorf("upstream reinstall replaced override")
+	}
+	if got := readFile(t, filepath.Join(root, skillsNamespace, "to-tickets", "SKILL.md")); got != "upstream v2" {
+		t.Errorf("upstream library was not refreshed: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, skillsNamespace, "only-upstream")); !os.IsNotExist(err) {
+		t.Errorf("stale upstream skill survived reinstall, err = %v", err)
+	}
+
+}
+func TestEmberloopToTicketsSkillContainsOverrideRules(t *testing.T) {
+	body := readFile(t, filepath.Join("skill-libraries", "emberloop", "to-tickets", "SKILL.md"))
+	for _, want := range []string{
+		"The `code` Ticket delivers the logic, API, data, tests, and a working UI using plain semantic HTML",
+		"The `design` Ticket is blocked by the `code` Ticket",
+		"Restyle-only work is one `design` Ticket",
+		"Work with no UI is one `code` Ticket",
+		"The slice is complete only when both Tickets are done",
+		"**Type**: `code` or `design`",
+		"**Type:** code|design",
+		"comma-separated Ticket ids in `NN-slug` form",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("override skill missing %q", want)
+		}
+	}
+}

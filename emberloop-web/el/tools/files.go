@@ -109,6 +109,16 @@ func readEl(addr string, offset, limit int) (string, error) {
 			break
 		}
 	}
+	// Emberloop-owned skills shadow upstream skills by name while keeping the
+	// remaining upstream library available through the original namespace.
+	if namespace == "matt-pocock" && rest != "" {
+		overrideDir := filepath.Join(root, "emberloop")
+		if overridePath, overrideErr := elInside(overrideDir, rest); overrideErr == nil {
+			if _, statErr := os.Stat(overridePath); statErr == nil {
+				nsDir = overrideDir
+			}
+		}
+	}
 	if nsDir == "" {
 		if len(namespaces) == 0 {
 			return "", fmt.Errorf("unknown el namespace %q: no namespaces are installed under %s", namespace, root)
