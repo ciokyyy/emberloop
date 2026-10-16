@@ -4,9 +4,9 @@
 
 **Blocked by:** 06, 07, 09
 
-**Status:** todo
+**Status:** done
 
-- [ ] The replay eval reports the Memories arm next to the existing arms
-- [ ] Forget rate and cost figures match the ledger rows in a test fixture
-- [ ] ADR 0004 states the decision, the rejected alternative (approve every Memory) and the consequence
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] The replay eval reports the Memories arm next to the existing arms
+- [x] Forget rate and cost figures match the ledger rows in a test fixture
+- [x] ADR 0004 states the decision, the rejected alternative (approve every Memory) and the consequence
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
