@@ -1097,10 +1097,10 @@ func TestDeadWorkerTurnFailsWithoutChainAdvance(t *testing.T) {
 }
 
 func TestDesignerPromptAndChainRouting(t *testing.T) {
-	base := workerTaskPrompt("01", "spec.md", "ticket.md", "branch", false)
-	if got := appendDesignerPrompt(base); !strings.Contains(got, "## Designer") || !strings.Contains(got, "not logic or test behaviour") {
-		t.Fatalf("designer prompt missing constraints: %s", got)
+	if !strings.Contains(designerBrowserSkill, "For Designer implementation") || !strings.Contains(designerBrowserSkill, "logic and test behaviour are out of scope") {
+		t.Fatalf("designer skill missing implementation constraints: %s", designerBrowserSkill)
 	}
+
 	rs := &runState{Chains: map[string][]chainEntry{"worker": {{Backend: "pig", Model: "code"}}, "worker-design": {{Backend: "pig", Model: "design"}, {Backend: "claude", Model: "fallback"}}}, Rows: map[string]savedRow{}}
 	got := workerRunChain(rs, "01", "worker-design")
 	if len(got) != 2 || got[0].Model != "design" {

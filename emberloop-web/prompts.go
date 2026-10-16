@@ -94,8 +94,3 @@ func workerTaskPrompt(ticketID, spec, ticketPath, branch string, seeded bool) st
 	}
 	return prompt
 }
-
-// appendDesignerPrompt adds the design-only constraints without changing code prompts.
-func appendDesignerPrompt(prompt string) string {
-	return prompt + "\n\n## Designer\nThis Ticket builds on the merged code Ticket and owns layout, styling, visual states, and copy. You may change markup, but not logic or test behaviour. The Ticket's own tests and .emberloop/check must still pass."
-}

@@ -106,13 +106,15 @@ func TestRunSkillsFirstEntriesAreBriefs(t *testing.T) {
 	}
 }
 
+const expectedDesignerBrowserSkill = "Browser skill (local UI only). Use these CLI command shapes: `agent-browser open <url>`, `agent-browser snapshot -i -c -d5`, `agent-browser set viewport 390 844`, and `agent-browser screenshot $AGENT_BROWSER_SCREENSHOT_DIR/phone.jpg`. Start the Ticket's dev server with `.emberloop/preview` and use its printed URL, or follow the repo's AGENTS.md dev command. Stay on localhost only; never navigate to the public internet. Snapshot first with depth and element limits; use screenshots only to judge visuals, at 390 px and 1280 px, JPEG at capped scale, never full-page by default. Read saved screenshots with `el read`. Before submit, check the console and run `a11y`. If agent-browser is missing, report it and continue with available local checks; do not install ad hoc or claim visual verification. For Designer implementation, build on the merged code Ticket and own layout, styling, visual states, and copy; markup may change, but logic and test behaviour are out of scope, and the Ticket's tests and `.emberloop/check` must pass."
+
 func TestDesignerBrowserSkillsAndCodeMention(t *testing.T) {
 	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "missing.json"))
 	designer := runSkillsFor("designer")
 	designReviewer := runSkillsFor(reviewerDesignType)
 	for name, skills := range map[string][]string{"designer": designer, "design reviewer": designReviewer} {
-		if len(skills) == 0 || !strings.Contains(skills[len(skills)-1], "Browser skill (local UI only)") {
-			t.Errorf("%s lacks the default browser skill: %#v", name, skills)
+		if len(skills) == 0 || skills[len(skills)-1] != expectedDesignerBrowserSkill {
+			t.Errorf("%s browser skill = %#v, want exact injected text", name, skills)
 		}
 	}
 	for _, role := range []string{"worker", reviewerSpecType, reviewerStandardsType} {
@@ -283,14 +285,13 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 		t.Errorf("code Worker has wrong browser guidance: %q", worker)
 	}
 	designerPrompt := buildWorkerFirstPrompt("01-x", specPath, ticketPath, "implement/01-x", false, worktree, "worker-design")
-	if !strings.Contains(designerPrompt, "Snapshot first") || !strings.Contains(designerPrompt, "localhost only") || strings.Contains(designerPrompt, "agent-browser skills get core") {
-		t.Errorf("Designer prompt has wrong browser skill: %q", designerPrompt)
+	if strings.Count(designerPrompt, expectedDesignerBrowserSkill) != 1 || !strings.Contains(designerPrompt, "Snapshot first") || !strings.Contains(designerPrompt, "localhost only") || strings.Contains(designerPrompt, "agent-browser skills get core") {
+		t.Errorf("Designer first prompt must contain its exact browser skill once: %q", designerPrompt)
 	}
 	designReviewerPrompt := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerDesignType, "b", "tip", worktree, repo, "")
-	if !strings.Contains(designReviewerPrompt, "Browser skill (local UI only)") || !strings.Contains(designReviewerPrompt, "a11y") {
-		t.Errorf("design Reviewer prompt lacks browser skill: %q", designReviewerPrompt)
+	if strings.Count(designReviewerPrompt, expectedDesignerBrowserSkill) != 1 || !strings.Contains(designReviewerPrompt, "Design review axis.") {
+		t.Errorf("design Reviewer first prompt must contain its exact browser skill once: %q", designReviewerPrompt)
 	}
-
 
 	spec := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerSpecType, "b", "tip", worktree, repo, "")
 	for _, want := range []string{"Ticket body alpha", "Spec body beta", "AGENTS.md", "Spec axis."} {

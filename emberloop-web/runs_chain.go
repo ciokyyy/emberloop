@@ -422,9 +422,6 @@ func (d *Daemon) runFallbackTaskPrompt(runID, ticketID, role, branch, worktree, 
 			seeded = strings.HasPrefix(out, "??")
 		}
 		prompt := buildWorkerFirstPrompt(ticketID, spec, ticketFile, branch, seeded, worktree, role)
-		if role == "worker-design" {
-			prompt = appendDesignerPrompt(prompt)
-		}
 		return prompt
 	}
 	if tip == "" {

@@ -1779,7 +1779,7 @@ func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string
 }
 
 // designerBrowserSkill is injected only for Designers and design Reviewers.
-const designerBrowserSkill = "Browser skill (local UI only). Use the agent-browser CLI command shapes verified by the live probe: agent-browser open <url>, agent-browser snapshot, set the viewport, and save a JPEG screenshot. Start the Ticket's dev server with .emberloop/preview and use its printed URL, or follow the repo's AGENTS.md dev command. Stay on localhost only; never navigate to the public internet. Snapshot first with depth and element limits; use screenshots only to judge visuals, at 390 px and 1280 px, JPEG at capped scale, never full-page by default. Read saved screenshots with el read. Before submit, check the console and run a11y. If agent-browser is missing, report it and continue with available local checks; do not install ad hoc or claim visual verification."
+const designerBrowserSkill = "Browser skill (local UI only). Use these CLI command shapes: `agent-browser open <url>`, `agent-browser snapshot -i -c -d5`, `agent-browser set viewport 390 844`, and `agent-browser screenshot $AGENT_BROWSER_SCREENSHOT_DIR/phone.jpg`. Start the Ticket's dev server with `.emberloop/preview` and use its printed URL, or follow the repo's AGENTS.md dev command. Stay on localhost only; never navigate to the public internet. Snapshot first with depth and element limits; use screenshots only to judge visuals, at 390 px and 1280 px, JPEG at capped scale, never full-page by default. Read saved screenshots with `el read`. Before submit, check the console and run `a11y`. If agent-browser is missing, report it and continue with available local checks; do not install ad hoc or claim visual verification. For Designer implementation, build on the merged code Ticket and own layout, styling, visual states, and copy; markup may change, but logic and test behaviour are out of scope, and the Ticket's tests and `.emberloop/check` must pass."
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
 // into the Reviewer prompt: Reviewer Sessions load no skills, so the brief
@@ -3385,9 +3385,6 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			role = "worker-design"
 		}
 		prompt := buildWorkerFirstPrompt(tk.ID, spec, tk.Path, branch, seeded, worktree, role)
-		if tk.Type == "design" {
-			prompt = appendDesignerPrompt(prompt)
-		}
 		d.mu.Lock()
 		if s, ok := d.sessions[meta.ID]; ok {
 			s.busy = true
