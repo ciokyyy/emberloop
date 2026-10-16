@@ -42,7 +42,7 @@ func (d *Daemon) nightlyConsolidateMemories(ctx context.Context, runID string, o
 			failed++
 			continue
 		}
-		items, err := bank.ListMemories(ctx, "", memory.StatusActive, memory.MaxList)
+		items, err := bank.ListMemories(ctx, "", memory.StatusActive, -1)
 		if err != nil {
 			failed++
 			continue
@@ -65,13 +65,7 @@ func (d *Daemon) nightlyConsolidateMemories(ctx context.Context, runID string, o
 			}
 		}
 		cutoff := d.now().Add(-48 * time.Hour)
-		pool := make([]memory.MemoryItem, 0)
-		for _, item := range items {
-			if !item.CreatedAt.Before(cutoff) {
-				item.Embedding, item.EmbeddingModel = nil, ""
-				pool = append(pool, item)
-			}
-		}
+		pool := consolidationMemoryPool(items, cutoff)
 		if len(pool) < 2 || (setting == "" && d.consolidateOneShot == nil) {
 			continue
 		}
@@ -91,12 +85,9 @@ func (d *Daemon) nightlyConsolidateMemories(ctx context.Context, runID string, o
 			continue
 		}
 		input, _ := json.Marshal(payload)
-		reply, err := d.nightlyLLMCall(d.consolidateOneShot, setting, "Read recent user Memories. Propose supported merges or generalizations. Return JSON only: {\"proposals\":[{\"action\":\"merge|generalize\",\"text\":\"<=300 chars\",\"kind\":\"preference|instruction|decision|fact\",\"source_ids\":[memory IDs]}]}. Each needs two distinct input IDs, valid kind and redaction-safe text. Use none when unsure.", string(input))
+		reply, err := d.nightlyLLMCall(d.consolidateOneShot, setting, "Read recent user Memories and their embedding neighbors. Propose supported merges or generalizations. Return JSON only: {\"proposals\":[{\"action\":\"merge|generalize\",\"text\":\"<=300 chars\",\"kind\":\"preference|instruction|decision|fact\",\"source_ids\":[memory IDs]}]}. Each needs two distinct input IDs, valid kind and redaction-safe text. Use none when unsure.", string(input))
 		if err != nil {
 			failed++
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(reply), "none") {
 			continue
 		}
 		var result struct {
@@ -182,4 +173,44 @@ func (d *Daemon) nightlyConsolidateMemories(ctx context.Context, runID string, o
 	detail := fmt.Sprintf("consolidated Memories: %d pending generalizations, %d merges, %d rejected", proposed, merged, rejected)
 	d.nightlyLedger(ctx, runID, stage, status, counts, detail, owners)
 	return NightlyStageResult{Stage: stage, Status: status, Counts: counts, Detail: detail}
+}
+
+// consolidationMemoryPool keeps every recent Memory and adds any active
+// embedding neighbor at cosine >= 0.80, including older Memories. Vectors are
+// used only for selection; the model receives redacted text and provenance.
+func consolidationMemoryPool(items []memory.MemoryItem, cutoff time.Time) []memory.MemoryItem {
+	recent := make([]memory.MemoryItem, 0)
+	for _, item := range items {
+		if !item.CreatedAt.Before(cutoff) {
+			recent = append(recent, item)
+		}
+	}
+	pool := make([]memory.MemoryItem, 0, len(recent))
+	added := make(map[int64]bool, len(recent))
+	appendItem := func(item memory.MemoryItem) {
+		if !added[item.ID] {
+			pool = append(pool, item)
+			added[item.ID] = true
+		}
+	}
+	for _, item := range recent {
+		appendItem(item)
+		if len(item.Embedding) == 0 || item.EmbeddingModel == "" {
+			continue
+		}
+		seed, err := memory.DecodeVector(item.Embedding)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range items {
+			if added[candidate.ID] || len(candidate.Embedding) == 0 || candidate.EmbeddingModel != item.EmbeddingModel {
+				continue
+			}
+			vector, err := memory.DecodeVector(candidate.Embedding)
+			if err == nil && memory.Cosine(seed, vector) >= .80 {
+				appendItem(candidate)
+			}
+		}
+	}
+	return pool
 }

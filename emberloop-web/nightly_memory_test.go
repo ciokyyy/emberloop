@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,6 +173,41 @@ func TestNightlyMemoryConsolidationQueuesGeneralize(t *testing.T) {
 	}
 	if len(proposal.Quotes) != 2 || proposal.Origin != "consolidated_memory" {
 		t.Fatalf("proposal=%+v", proposal)
+	}
+}
+
+func TestNightlyMemoryConsolidationIncludesOlderEmbeddingNeighbors(t *testing.T) {
+	t.Parallel()
+	d, clock := nightlyTestDaemon(t, nil, nil)
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vector := memory.EncodeVector([]float32{1, 0})
+	oldID, err := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: "old-session", EventID: "old-event", Author: "alice", Kind: memory.KindPreference, Text: "Prefers tabs for legacy files.", Quote: "Use tabs in these old files", Importance: .8, Veracity: memory.VeracityStated, CreatedAt: clock.get().Add(-72 * time.Hour), Embedding: vector, EmbeddingModel: "test-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recentID, err := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: "new-session", EventID: "new-event", Author: "alice", Kind: memory.KindPreference, Text: "Prefers tabs for source files.", Quote: "Use tabs in source", Importance: .8, Veracity: memory.VeracityStated, CreatedAt: clock.get(), Embedding: vector, EmbeddingModel: "test-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modelInput string
+	d.consolidateOneShot = func(_, _, user string) (string, error) {
+		modelInput = user
+		return fmt.Sprintf(`{"proposals":[{"action":"generalize","text":"Prefers tabs.","kind":"preference","source_ids":[%d,%d]}]}`, oldID, recentID), nil
+	}
+	res := d.nightlyConsolidateMemories(context.Background(), "neighbor-run", []string{"alice"})
+	if res.Counts["proposed"] != 1 {
+		t.Fatalf("consolidation=%+v input=%s", res, modelInput)
+	}
+	for _, want := range []string{"Prefers tabs for legacy files.", "Prefers tabs for source files."} {
+		if !strings.Contains(modelInput, want) {
+			t.Errorf("model input omitted neighbor %q: %s", want, modelInput)
+		}
+	}
+	if strings.Contains(modelInput, "embedding") {
+		t.Fatalf("model input exposed embedding field: %s", modelInput)
 	}
 }
 
