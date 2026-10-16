@@ -4,11 +4,11 @@
 
 **Blocked by:** 02, 04, 06
 
-**Status:** todo
+**Status:** done
 
-- [ ] A non-admin cannot read or write the settings
-- [ ] The switch default follows OpenRouter key presence
-- [ ] Weights outside 0 to 1 or summing to 0 are rejected
-- [ ] Changes take effect without a Daemon restart
-- [ ] Settings search finds each new control
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A non-admin cannot read or write the settings
+- [x] The switch default follows OpenRouter key presence
+- [x] Weights outside 0 to 1 or summing to 0 are rejected
+- [x] Changes take effect without a Daemon restart
+- [x] Settings search finds each new control
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
