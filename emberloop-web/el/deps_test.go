@@ -473,3 +473,93 @@ func TestDepsWithoutTerminalWithManagerPrintsCommand(t *testing.T) {
 		t.Error("the package manager must not run without a terminal")
 	}
 }
+
+// Ticket 03: the browser release uses the pinned asset names on all supported
+// platforms and is checksum-verified before the executable is installed.
+func TestDepsBrowserAssetsAndDownload(t *testing.T) {
+	for _, tc := range []struct{ goos, goarch, asset string }{
+		{"linux", "amd64", "agent-browser-linux-x64"},
+		{"linux", "arm64", "agent-browser-linux-arm64"},
+		{"darwin", "amd64", "agent-browser-darwin-x64"},
+		{"darwin", "arm64", "agent-browser-darwin-arm64"},
+	} {
+		got, err := browserAssetName(tc.goos, tc.goarch)
+		if err != nil || got != tc.asset {
+			t.Fatalf("asset %s/%s = %q, %v; want %q", tc.goos, tc.goarch, got, err, tc.asset)
+		}
+	}
+	binDir := t.TempDir()
+	payload := []byte("#!/bin/sh\necho 'agent-browser 0.39.1'\n")
+	sum := sha256.Sum256(payload)
+	asset := "agent-browser-linux-x64"
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if strings.HasSuffix(r.URL.Path, "/checksums.txt") {
+			fmt.Fprintf(w, "%x  %s\n", sum, asset)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/"+asset) {
+			_, _ = w.Write(payload)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	cfg := DepsConfig{BinDir: binDir, ReleaseBaseURL: srv.URL, GOOS: "linux", GOARCH: "amd64"}
+	path, err := cfg.downloadBrowser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(path) != binDir {
+		t.Fatalf("download path %q is outside bin dir", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("browser binary not executable: %v", err)
+	}
+	if got, err := cfg.proveBrowser(path); err != nil || got != "agent-browser 0.39.1" {
+		t.Fatalf("proof = %q, %v", got, err)
+	}
+	if got := cfg.resolveBrowser(tools.Settings{}); got != path {
+		t.Fatalf("resolver = %q, want bin-dir binary %q", got, path)
+	}
+	if hits != 2 {
+		t.Fatalf("release requests = %d, want checksum and asset", hits)
+	}
+}
+
+func TestDepsBrowserInstallWarnsAndDisabledSkips(t *testing.T) {
+	fake := depsFakePath(t, "")
+	depsHermeticPath(t, fake)
+	binDir := t.TempDir()
+	serverHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { serverHits++; http.NotFound(w, r) }))
+	defer srv.Close()
+	settings := depsDisabledSettings() // graph disabled; browser enabled by default
+	settings.Browser.Enabled = new(bool)
+	*settings.Browser.Enabled = true
+	var out strings.Builder
+	cfg := DepsConfig{BinDir: binDir, ReleaseBaseURL: srv.URL, GOOS: "linux", GOARCH: "amd64", Settings: settings, Worktree: t.TempDir()}
+	if err := InstallDeps(&out, cfg); err != nil {
+		t.Fatalf("optional browser failure must only warn: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "agent-browser") || !strings.Contains(out.String(), "warn") {
+		t.Fatalf("missing browser warning: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(binDir, BrowserBinaryName)); !os.IsNotExist(err) {
+		t.Fatalf("failed install left a binary: %v", err)
+	}
+	settings.Browser.Enabled = new(bool)
+	*settings.Browser.Enabled = false
+	out.Reset()
+	if err := InstallDeps(&out, cfg); err != nil {
+		t.Fatalf("disabled browser must succeed: %v", err)
+	}
+	if !strings.Contains(out.String(), "agent-browser") || !strings.Contains(out.String(), "browser.enabled=false") {
+		t.Fatalf("disabled status missing: %s", out.String())
+	}
+	if serverHits != 1 {
+		t.Fatalf("disabled browser contacted release server; total requests %d", serverHits)
+	}
+}

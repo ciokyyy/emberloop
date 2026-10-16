@@ -25,14 +25,14 @@ import (
 // `el deps` installs and verifies every external dependency.
 //
 // Required: python3 (3.9+), rg, git, bwrap. Optional: the code graph binary
-// (codebase-memory-mcp), unless graph.enabled is false in settings, and the
-// browser CLI (agent-browser), unless browser.enabled is false in settings.
-// verified against the release checksums.txt SHA-256, into the el bin
-// directory (EL_BIN_DIR overrides). Its own install.sh never runs and no
-// agent client config is touched. Every dependency is proved after install and
+// (codebase-memory-mcp) and browser CLI (agent-browser), unless disabled in
+// settings. Both optional binaries are checksum-verified and installed into
+// the el bin directory (EL_BIN_DIR overrides); agent-browser is pinned to
+// v0.39.1. The browser binary is proved with --version; its own install.sh
+// never runs and no agent client config is touched. Every dependency is
 // printed one line with version and status; a failing required dependency
-// fails the command while the graph only warns. A second run changes nothing
-// and says so.
+// fails the command while optional binaries only warn. A second run changes
+// nothing and says so.
 //
 // Test seams: DepsConfig overrides the bin directory, terminal detection,
 // release server, platform and settings, so tests use a fake PATH with fake
@@ -946,12 +946,11 @@ func InstallDeps(out io.Writer, cfg DepsConfig) error {
 // depsUsage documents the installer.
 const depsUsage = `usage: el deps
 
-  Check python3 (3.9+), rg, git, bwrap and the code graph binary, install
-  what is missing with the system package manager, download the graph binary
-  verified by SHA-256 into the el bin directory, and prove each one.
-  Prints one line per dependency with its version and status; exits non-zero
-  when a required dependency fails (the graph only warns). A second run
-  changes nothing.`
+  Check python3 (3.9+), rg, git, bwrap, the code graph binary and browser CLI;
+  install missing optional binaries with verified checksums into the el bin
+  directory, and prove each one. Prints one line per dependency with its
+  version and status; required dependency failures exit non-zero while the
+  optional binaries only warn. A second run changes nothing.`
 
 // RunDeps serves `el deps`.
 func RunDeps(argv []string, out io.Writer) error {
