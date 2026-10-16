@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build && vite build --ssr src/ssr.js --outDir dist/ssr && EL_SSR_HYDRATE_BUILD=1 vite build",
-    "test": "vitest run",
+    "test": "npm run build && vitest run",
     "test:e2e": "npm run build && npm --prefix e2e install --no-audit --no-fund && npm --prefix e2e test",
     "dev:api": "cd .. && go run ./cmd/emberloop-web -addr 127.0.0.1:8910",
     "dev:ui": "API_PORT=8910 UI_PORT=5190 vite",
