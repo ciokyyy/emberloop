@@ -103,12 +103,24 @@ func toLedgerView(l memory.LedgerRow) ledgerView {
 
 // memoryStatus is GET /api/memory/status: the chip plus the stats. LedgerSize
 // has no omitempty so an empty ledger sends 0 instead of dropping the field.
+type memoryMetrics struct {
+	MemoriesPerDay   int     `json:"memoriesPerDay"`
+	Forgotten7Day    float64 `json:"forgotten7Day"`
+	PromotedShare    float64 `json:"promotedShare"`
+	InjectionHitRate float64 `json:"injectionHitRate"`
+	Contradictions   int     `json:"contradictions"`
+	ExtractorCostUSD float64 `json:"extractorCostUsd"`
+	EmbedderCostUSD  float64 `json:"embedderCostUsd"`
+	CostAlert        bool    `json:"costAlert"`
+}
+
 type memoryStatus struct {
 	Available   bool               `json:"available"`
 	Queue       *memory.QueueStats `json:"queue,omitempty"`
 	LedgerSize  int                `json:"ledgerSize"`
 	LastLedger  *ledgerView        `json:"lastLedger,omitempty"`
 	LastNightly *ledgerView        `json:"lastNightly,omitempty"`
+	Metrics     memoryMetrics      `json:"metrics"`
 	Error       string             `json:"error,omitempty"`
 }
 
@@ -268,6 +280,62 @@ func (d *Daemon) handleMemoryLedger(w http.ResponseWriter, r *http.Request) {
 // the last nightly run (the newest row whose run is not the queue's). Any
 // engine or bank failure answers 503 with available false, which the page
 // shows as the Unavailable chip and never blocks the turn.
+func summarizeMemoryMetrics(rows []memory.LedgerRow, now time.Time) memoryMetrics {
+	var m memoryMetrics
+	var stored, stored7d, forgotten7d, promoted, injections, creates int
+	for _, row := range rows {
+		counts := map[string]float64{}
+		_ = json.Unmarshal([]byte(row.CountsJSON), &counts)
+		switch row.Stage {
+		case "ingest":
+			stored += int(counts["stored"])
+			if row.CreatedAt.After(now.Add(-7 * 24 * time.Hour)) {
+				stored7d += int(counts["stored"])
+			}
+			if row.CreatedAt.After(now.Add(-24 * time.Hour)) {
+				m.MemoriesPerDay += int(counts["stored"])
+				m.ExtractorCostUSD += ledgerCost(row.Detail, "cost_usd")
+			}
+		case "memory_forgotten":
+			if row.CreatedAt.After(now.Add(-7 * 24 * time.Hour)) {
+				forgotten7d += int(counts["count"])
+			}
+		case "memory_promoted":
+			promoted += int(counts["count"])
+		case "injection":
+			injections += int(counts["memories"])
+			creates += int(counts["creates"])
+		case "memory_contradicted":
+			m.Contradictions += int(counts["count"])
+		case "embedding":
+			if row.CreatedAt.After(now.Add(-24 * time.Hour)) {
+				m.EmbedderCostUSD += ledgerCost(row.Detail, "cost_usd")
+			}
+		}
+	}
+	if stored > 0 {
+		m.PromotedShare = float64(promoted) / float64(stored)
+	}
+	if stored7d > 0 {
+		m.Forgotten7Day = float64(forgotten7d) / float64(stored7d)
+	}
+	if creates > 0 {
+		m.InjectionHitRate = float64(injections) / float64(creates)
+	}
+	m.CostAlert = m.ExtractorCostUSD+m.EmbedderCostUSD > .05
+	return m
+}
+
+func ledgerCost(detail, key string) float64 {
+	for _, part := range strings.Fields(detail) {
+		if k, v, ok := strings.Cut(part, "="); ok && k == key {
+			n, _ := strconv.ParseFloat(v, 64)
+			return n
+		}
+	}
+	return 0
+}
+
 func (d *Daemon) handleMemoryStatus(w http.ResponseWriter, r *http.Request) {
 	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusServiceUnavailable)
 	if !ok {
@@ -285,6 +353,7 @@ func (d *Daemon) handleMemoryStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	st := memory.DescribeQueue(items, d.now())
 	out := memoryStatus{Available: true, Queue: &st, LedgerSize: len(rows)}
+	out.Metrics = summarizeMemoryMetrics(rows, d.now())
 	if len(rows) > 0 {
 		last := toLedgerView(rows[len(rows)-1])
 		out.LastLedger = &last
@@ -481,6 +550,9 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), code)
 		return
 	}
+	if parts[1] == "forget" {
+		_, _ = bank.RecordLedger(r.Context(), memory.LedgerRow{Stage: "memory_forgotten", Status: memory.LedgerSuccess, CountsJSON: `{"count":1}`})
+	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -497,7 +569,6 @@ func (d *Daemon) handleObservationPromote(w http.ResponseWriter, r *http.Request
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || id <= 0 {
 		http.Error(w, "invalid observation id", 400)
-		return
 	}
 	o, err := bank.ObservationByID(r.Context(), id)
 	if err != nil {

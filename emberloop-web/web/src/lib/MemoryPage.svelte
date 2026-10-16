@@ -293,6 +293,18 @@
       <p class="text-xs text-muted-foreground" data-testid="memory-header-summary">
         {newSinceVisit} new since last visit · Queue {status?.queue?.pending ?? pendingCount} pending · Oldest pending {status?.queue?.oldestPendingAgeHours ? `${Number(status.queue.oldestPendingAgeHours).toFixed(1)} hours` : '—'}
       </p>
+      {#if status?.metrics}
+        <section class="grid grid-cols-2 gap-2 rounded-xl border p-3 text-xs" data-testid="memory-production-metrics" aria-label="Memory production metrics">
+          <div>Memories per day <strong>{status.metrics.memoriesPerDay}</strong></div>
+          <div>Forgotten within 7 days <strong>{(Number(status.metrics.forgotten7Day || 0) * 100).toFixed(1)}%</strong> · target &lt;20%</div>
+          <div>Promoted share <strong>{(Number(status.metrics.promotedShare || 0) * 100).toFixed(1)}%</strong></div>
+          <div>Injection hit rate <strong>{Number(status.metrics.injectionHitRate || 0).toFixed(2)}</strong></div>
+          <div>Contradictions <strong>{status.metrics.contradictions}</strong></div>
+          <div>Daily extractor + embedder <strong>${(Number(status.metrics.extractorCostUsd || 0) + Number(status.metrics.embedderCostUsd || 0)).toFixed(4)}</strong>
+            {#if status.metrics.costAlert}<span role="alert" class="text-destructive"> · Above $0.05/day</span>{/if}
+          </div>
+        </section>
+      {/if}
         <nav class="flex flex-wrap gap-2" aria-label="Memory tabs">
           <Button size="sm" variant={tab === 'memories' ? 'default' : 'outline'} onclick={() => (tab = 'memories')}>Memories · {newSinceVisit} new</Button>
           <Button size="sm" variant={tab === 'legacy' ? 'default' : 'outline'} onclick={() => (tab = 'legacy')}>Legacy observations</Button>

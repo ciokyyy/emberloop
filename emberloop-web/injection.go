@@ -1,6 +1,12 @@
 package web
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"example.com/emberloop-web/memory"
+)
 
 // InjectedRule names one Rule the memory block carried: its ID and version.
 // The injection Event lists these so a Session replay can resolve exactly
@@ -80,8 +86,21 @@ func FilterMinerEvents(events []Event) []Event {
 // injection. It is sender=system, never a user message.
 func (d *Daemon) appendInjectionEvent(id string, profile int, rules []InjectedRule) Event {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.appendEventExtraLocked(id, "injection", InjectionEvent{ProfileVersion: profile, Rules: rules}.text(), "", "", 0, nil, func(e *Event) {
+	session := d.sessions[id]
+	e := d.appendEventExtraLocked(id, "injection", InjectionEvent{ProfileVersion: profile, Rules: rules}.text(), "", "", 0, nil, func(e *Event) {
 		e.Sender = senderSystem
 	})
+	d.mu.Unlock()
+	if session != nil && session.meta.Owner != "" {
+		if bank, err := d.profileBankFor(session.meta.Owner); err == nil {
+			memories := 0
+			for _, ref := range rules {
+				if ref.MemoryID > 0 {
+					memories++
+				}
+			}
+			_, _ = bank.RecordLedger(context.Background(), memory.LedgerRow{Stage: "injection", Status: memory.LedgerSuccess, CountsJSON: fmt.Sprintf(`{"memories":%d,"creates":1}`, memories)})
+		}
+	}
+	return e
 }
