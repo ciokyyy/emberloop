@@ -123,3 +123,71 @@ func TestPreviewTicketsUnknownAmbiguousAndNumberless(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewTicketsTypeDefaultCode(t *testing.T) {
+	spec := previewSpec(t)
+	byID := previewByID(PreviewTickets(spec, previewFiles(spec, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n",
+	})))
+	if byID["01-first"].Type != "code" {
+		t.Fatalf("type = %q, want code", byID["01-first"].Type)
+	}
+	if byID["01-first"].Error != "" {
+		t.Fatalf("error = %q", byID["01-first"].Error)
+	}
+}
+
+func TestPreviewTicketsTypeParseValid(t *testing.T) {
+	spec := previewSpec(t)
+	cases := map[string]string{
+		"01-code.md":   "# 01: Code\n\n**Blocked by:** None\n\n**Type:** code\n",
+		"02-design.md": "# 02: Design\n\n**Blocked by:** None\n\n**Type:** Design\n",
+		"03-bold.md":   "# 03: Bold\n\n**Blocked by:** None\n\n**Type:** design\n",
+		"04-dash.md":   "# 04: Dash\n\n**Blocked by:** None\n\n- **Type:** code\n",
+	}
+	byID := previewByID(PreviewTickets(spec, previewFiles(spec, cases)))
+	if byID["01-code"].Type != "code" {
+		t.Fatalf("01 type = %q", byID["01-code"].Type)
+	}
+	if byID["02-design"].Type != "design" {
+		t.Fatalf("02 type = %q", byID["02-design"].Type)
+	}
+	if byID["03-bold"].Type != "design" {
+		t.Fatalf("03 type = %q", byID["03-bold"].Type)
+	}
+	if byID["04-dash"].Type != "code" {
+		t.Fatalf("04 type = %q", byID["04-dash"].Type)
+	}
+}
+
+func TestPreviewTicketsBadTypeIsolatesRow(t *testing.T) {
+	spec := previewSpec(t)
+	rows := PreviewTickets(spec, previewFiles(spec, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Type:** bogus\n",
+		"02-ok.md":    "# 02: Ok\n\n**Blocked by:** None\n",
+	}))
+	byID := previewByID(rows)
+	if byID["02-ok"].Error != "" {
+		t.Fatalf("ok error = %q", byID["02-ok"].Error)
+	}
+	bad := byID["01-first"]
+	if bad.Error == "" || !strings.Contains(bad.Error, "code") || !strings.Contains(bad.Error, "design") {
+		t.Fatalf("bad error = %q, want allowed values", bad.Error)
+	}
+	if bad.Type != "" {
+		t.Fatalf("bad type = %q, want empty", bad.Type)
+	}
+}
+
+func TestPreviewTicketsTypeProseNotHeader(t *testing.T) {
+	spec := previewSpec(t)
+	byID := previewByID(PreviewTickets(spec, previewFiles(spec, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\nTypes of things. TypeScript migration.\n",
+	})))
+	if byID["01-first"].Error != "" {
+		t.Fatalf("error = %q", byID["01-first"].Error)
+	}
+	if byID["01-first"].Type != "code" {
+		t.Fatalf("type = %q, want code", byID["01-first"].Type)
+	}
+}

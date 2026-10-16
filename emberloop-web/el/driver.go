@@ -1181,6 +1181,14 @@ func driverTypeValue(content string) (value string, line int, found bool, err er
 		}
 		rest := strings.TrimSpace(field[len("Type"):])
 		if !strings.HasPrefix(rest, ":") {
+			// Skip lines where "Type" begins another word, e.g. body prose.
+			if rest == "" {
+				continue
+			}
+			r := rune(rest[0])
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+				continue
+			}
 			return "", i + 1, true, fmt.Errorf("cannot parse Type line %q", strings.TrimSpace(raw))
 		}
 		value := strings.TrimSpace(strings.Trim(strings.TrimSpace(rest[1:]), "*_"))

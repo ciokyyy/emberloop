@@ -115,6 +115,7 @@ func PreviewTickets(spec SpecRun, files map[string]string) []TicketPreview {
 		p.preview.Type = "code"
 		typeValue, typeLine, typeFound, err := driverTypeValue(files[path])
 		if err != nil {
+			p.preview.Type = ""
 			p.preview.Error = fmt.Sprintf("%s:%d: %s", path, typeLine, err)
 			tickets = append(tickets, p)
 			continue
@@ -122,6 +123,7 @@ func PreviewTickets(spec SpecRun, files map[string]string) []TicketPreview {
 		if typeFound {
 			tt, err := parseTicketType(typeValue)
 			if err != nil {
+				p.preview.Type = ""
 				p.preview.Error = fmt.Sprintf("%s:%d: %s", path, typeLine, err)
 				tickets = append(tickets, p)
 				continue
