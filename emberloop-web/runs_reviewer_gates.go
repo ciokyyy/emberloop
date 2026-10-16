@@ -492,7 +492,9 @@ func designerOutOfScopeFiles(changed []string) []string {
 	for _, file := range changed {
 		lower := strings.ToLower(filepath.ToSlash(file))
 		base := filepath.Base(lower)
-		if strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.go") || strings.HasSuffix(base, ".spec.js") || strings.HasSuffix(base, ".test.js") || strings.HasSuffix(base, ".go") || strings.HasSuffix(base, ".py") || strings.HasSuffix(base, ".rs") || strings.HasSuffix(base, ".sql") {
+		isTest := strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") || strings.Contains(lower, "/__tests__/") || strings.HasPrefix(base, "test_") || strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") || strings.HasSuffix(base, "_test.go") || strings.HasSuffix(base, "_test.ts") || strings.HasSuffix(base, "_test.tsx")
+		isLogic := strings.HasSuffix(base, ".go") || strings.HasSuffix(base, ".py") || strings.HasSuffix(base, ".rs") || strings.HasSuffix(base, ".sql") || strings.HasSuffix(base, ".js") || strings.HasSuffix(base, ".jsx") || strings.HasSuffix(base, ".ts") || strings.HasSuffix(base, ".tsx")
+		if isTest || isLogic {
 			out = append(out, file)
 		}
 	}

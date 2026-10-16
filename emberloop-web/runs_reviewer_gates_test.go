@@ -667,8 +667,8 @@ func TestFileInTicketScope(t *testing.T) {
 }
 
 func TestDesignerOutOfScopeFiles(t *testing.T) {
-	got := designerOutOfScopeFiles([]string{"src/Card.svelte", "server/api.go", "src/Card.test.js", "src/Card.css"})
-	want := []string{"server/api.go", "src/Card.test.js"}
+	got := designerOutOfScopeFiles([]string{"src/Card.svelte", "server/api.go", "src/Card.test.js", "src/Card.css", "src/logic.ts", "src/View.tsx", "src/__tests__/View.spec.tsx"})
+	want := []string{"server/api.go", "src/Card.test.js", "src/View.tsx", "src/__tests__/View.spec.tsx", "src/logic.ts"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("designerOutOfScopeFiles = %q, want %q", got, want)
 	}

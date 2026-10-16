@@ -90,6 +90,15 @@ func workerRunChain(rs *runState, ticketID, role string) []chainEntry {
 	return entries
 }
 
+func runWorkerRole(rs *runState, ticketID string) string {
+	for _, ticket := range rs.Tickets {
+		if ticket.ID == ticketID && effectiveRunTicketType(rs, ticket) == "design" {
+			return "worker-design"
+		}
+	}
+	return "worker"
+}
+
 // runRoleChain applies a per-Ticket override to the active slot of any Run
 // role; Worker and Reviewer overrides use separate maps.
 func runRoleChain(rs *runState, ticketID, role string) []chainEntry {

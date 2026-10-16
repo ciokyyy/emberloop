@@ -130,7 +130,7 @@ func TestTicketPauseSwitchResumeKeepsBranchAndWIP(t *testing.T) {
 func TestRunPauseSwitchResumeReplacesWorkersManually(t *testing.T) {
 	t.Parallel()
 	tickets := map[string]string{
-		"01-first.md":  "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+		"01-first.md":  "# 01: First\n\n**Type:** design\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 		"02-second.md": "# 02: Second\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] beta\n",
 	}
 	repo, spec := initRunRepo(t, tickets)
@@ -169,8 +169,8 @@ func TestRunPauseSwitchResumeReplacesWorkersManually(t *testing.T) {
 	if got := getRun(t, srv.URL, run.ID).Model; got != "run-switched" {
 		t.Fatalf("Run model = %q, want run-switched", got)
 	}
-	if got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").Chain["worker"].Model; got != "run-switched" {
-		t.Fatalf("active Worker model = %q, want run-switched", got)
+	if got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").Chain["worker-design"].Model; got != "run-switched" {
+		t.Fatalf("active Designer model = %q, want run-switched", got)
 	}
 	if code, _, _ := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/switch", map[string]string{"backend": "fake", "model": "late"}); code != http.StatusOK {
 		t.Fatalf("repeated paused Run Switch = %d, want 200", code)

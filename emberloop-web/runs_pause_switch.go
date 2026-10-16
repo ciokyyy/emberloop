@@ -712,9 +712,10 @@ func (d *Daemon) switchTicketBackend(w http.ResponseWriter, r *http.Request, run
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "ticket is finished"})
 		return
 	}
-	chain := workerRunChain(rs, ticketID, "worker")
+	role := runWorkerRole(rs, ticketID)
+	chain := workerRunChain(rs, ticketID, role)
 	if len(chain) > 0 {
-		pos := clampChainPosition(chainPosition(rs, ticketID, "worker"), len(chain))
+		pos := clampChainPosition(chainPosition(rs, ticketID, role), len(chain))
 		entry.Effort = chain[pos].Effort
 	} else {
 		entry.Effort = rs.Effort
@@ -751,10 +752,11 @@ func (d *Daemon) switchRunBackend(w http.ResponseWriter, r *http.Request, runID 
 		if rs.Merged[ticket.ID] != "" || rs.Discarded[ticket.ID] {
 			continue
 		}
+		role := runWorkerRole(rs, ticket.ID)
 		selected := entry
-		chain := workerRunChain(rs, ticket.ID, "worker")
+		chain := workerRunChain(rs, ticket.ID, role)
 		if len(chain) > 0 {
-			pos := clampChainPosition(chainPosition(rs, ticket.ID, "worker"), len(chain))
+			pos := clampChainPosition(chainPosition(rs, ticket.ID, role), len(chain))
 			selected.Effort = chain[pos].Effort
 		} else {
 			selected.Effort = rs.Effort

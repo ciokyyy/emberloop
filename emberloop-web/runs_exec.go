@@ -3287,11 +3287,11 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 				cleanup()
 				d.mu.Lock()
 				if rs := d.runs[runID]; rs != nil {
-					setChainPosition(rs, tk.ID, "worker", chainPos)
+					setChainPosition(rs, tk.ID, workerRole, chainPos)
 					d.persistRun(rs)
 				}
 				d.mu.Unlock()
-				d.markRunChainNeedsYou(runID, tk.ID, "worker", "provider Chain exhausted while starting the Worker", true)
+				d.markRunChainNeedsYou(runID, tk.ID, workerRole, "provider Chain exhausted while starting the Worker", true)
 				return nil
 			}
 			if advanced {
@@ -3347,7 +3347,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			}
 			rs.RecallOff[tk.ID] = true
 		}
-		setChainPosition(rs, tk.ID, "worker", chainPos)
+		setChainPosition(rs, tk.ID, workerRole, chainPos)
 		if rs.ChainExhausted != nil {
 			delete(rs.ChainExhausted, tk.ID)
 		}
