@@ -405,6 +405,18 @@ export const steerTicket = (runId, ticketId, text) =>
     body: JSON.stringify({ text }),
   }).then(json);
 
+export const setRunTicketType = (runId, ticketId, type) =>
+  fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/type`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type }),
+  }).then(async (res) => {
+    const text = await res.text();
+    let body = {};
+    try { body = text ? JSON.parse(text) : {}; } catch { body = { error: text.trim() }; }
+    if (!res.ok) throw new Error(body.error || `request failed: ${res.status}`);
+    return body;
+  });
 export const retryTicket = (runId, ticketId, text = '') =>
   fetch(url(`/api/runs/${runId}/tickets/${encodeURIComponent(ticketId)}/retry`), {
     method: 'POST',

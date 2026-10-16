@@ -43,6 +43,15 @@ describe('RunsView preview and live run', () => {
     expect(await within(container).findByText('First')).toBeTruthy();
     expect(within(container).getAllByText('01-first').length).toBe(2);
     expect(within(container).getByText('1/2')).toBeTruthy();
+    expect(within(container).getAllByText('code').length).toBe(2);
+  });
+  it('shows design as a distinct preview badge', async () => {
+    seedPreview([{ ...preview.tickets[0], type: 'design' }]);
+    stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    const badge = await within(container).findByText('design');
+    expect(badge).toBeTruthy();
+    expect(within(container).queryByRole('button', { name: 'design' })).toBeNull();
   });
 
   it('prompts for a sidebar pick with nothing selected', async () => {
@@ -79,6 +88,32 @@ describe('RunsView preview and live run', () => {
     expect(await within(container).findByTestId('runs-graph')).toBeTruthy();
     expect(within(container).queryByTestId('run-loading')).toBeNull();
   });
+  it('flips and clears a queued Ticket type through the Run override API', async () => {
+    let current = { id: 'run-1', spec: preview.spec, status: 'running', tickets: [
+      { id: '01-first', num: 1, title: 'First', state: 'queued', type: 'code', effectiveType: 'code' },
+    ] };
+    const calls = [];
+    stubRuns(async (url, options = {}) => {
+      const path = String(url);
+      calls.push([path, options]);
+      if (path.endsWith('/type')) {
+        const type = JSON.parse(options.body).type;
+        current = { ...current, tickets: [{ ...current.tickets[0], type: type || 'code', effectiveType: type || 'code', typeOverride: type }] };
+        return { ok: true, text: async () => JSON.stringify({ run: current }) };
+      }
+      if (path.endsWith('/api/runs/run-1')) return { ok: true, json: async () => ({ run: current }) };
+      return { ok: true, json: async () => ({ runs: [] }) };
+    });
+    const { container } = render(RunsView, { props: { workDir: '/repo', runId: 'run-1' } });
+    await fireEvent.click(await within(container).findByRole('button', { name: 'List' }));
+    const typeButton = await within(container).findByRole('button', { name: 'code' });
+    await fireEvent.click(typeButton);
+    expect(await within(container).findByText('overridden')).toBeTruthy();
+    expect(calls.some(([path, opts]) => path.endsWith('/api/runs/run-1/tickets/01-first/type') && opts.method === 'PUT' && JSON.parse(opts.body).type === 'design')).toBe(true);
+    await fireEvent.click(within(container).getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(calls.some(([path, opts]) => path.endsWith('/type') && JSON.parse(opts.body).type === '')).toBe(true));
+  });
+
 
   it('surfaces an unparsable Blocked by line as a row error', async () => {
     seedPreview([{ id: '02-bad', num: 2, title: 'Bad', blockers: [], done: 0, total: 1, error: 'cannot parse Blocked by line' }]);
@@ -116,6 +151,7 @@ describe('RunsView preview and live run', () => {
     await fireEvent.click(within(container).getByRole('button', { name: 'List' }));
     const table = await within(container).findByTestId('live-tickets');
     expect(within(table).getByText('queued')).toBeTruthy();
+    expect(within(table).getAllByText('code').some((node) => /read-only after the Worker starts/i.test(node.getAttribute('title') || ''))).toBe(true);
     await fireEvent.click(within(table).getByRole('button', { name: 'worker' }));
     expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
   });

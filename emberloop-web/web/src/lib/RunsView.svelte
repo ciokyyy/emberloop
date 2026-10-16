@@ -8,7 +8,7 @@
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
   import RunsGraph from './RunsGraph.svelte';
-  import { startRun, getRun, openRunStream, pauseRun, resumeRun, pauseTicket as pauseRunTicket, resumeTicket as resumeRunTicket, switchRun as switchRunBackend, switchTicket as switchTicketBackend, rebaseRun, abandonRun } from './api.js';
+  import { startRun, getRun, openRunStream, pauseRun, resumeRun, pauseTicket as pauseRunTicket, resumeTicket as resumeRunTicket, switchRun as switchRunBackend, switchTicket as switchTicketBackend, rebaseRun, abandonRun, setRunTicketType } from './api.js';
   import RunSwitchPicker from './RunSwitchPicker.svelte';
   import TicketPage from './TicketPage.svelte';
   import { soundPlayer, runTransitions, seedRun } from './sound.js';
@@ -277,6 +277,19 @@
     await actTicket((runID, ticketID) => switchTicketBackend(runID, ticketID, selection), ticket, 'Could not switch the Ticket Backend and model.');
   }
 
+  async function changeTicketType(ticket, type) {
+    if (!run?.id || ticket.workerSession || acting) return;
+    acting = true;
+    runError = '';
+    try {
+      const body = await setRunTicketType(run.id, ticket.id, type);
+      applyRun(body.run ?? body);
+    } catch (error) {
+      runError = error?.message || 'Could not change Ticket type.';
+    } finally {
+      acting = false;
+    }
+  }
   async function switchRunSelection(selection) {
     await act((runID) => switchRunBackend(runID, selection), 'Could not switch the Run Backend and model.');
   }
@@ -428,6 +441,7 @@
             <th class="py-1 pr-2 font-medium">ID</th>
             <th class="py-1 pr-2 font-medium">Title</th>
             <th class="py-1 pr-2 font-medium">Blocked by</th>
+            <th class="py-1 pr-2 font-medium">Type</th>
             <th class="py-1 font-medium">Boxes</th>
           </tr>
         </thead>
@@ -438,6 +452,7 @@
               <td class="py-1 pr-2">{t.id}</td>
               <td class="py-1 pr-2">{t.title}</td>
               <td class="py-1 pr-2">{(t.blockers ?? []).join(', ') || '—'}</td>
+              <td class="py-1 pr-2"><Badge variant={(t.type || 'code') === 'design' ? 'secondary' : 'outline'}>{t.type || 'code'}</Badge></td>
               <td class="py-1">{`${t.done ?? 0}/${t.total ?? 0}`}</td>
             </tr>
             {#if t.error}
@@ -514,6 +529,7 @@
               <th class="px-3 py-2 font-medium">Active Chain</th>
               <th class="px-3 py-2 font-medium">Spec review</th>
               <th class="px-3 py-2 font-medium">Standards</th>
+              <th class="px-3 py-2 font-medium">Type</th>
               <th class="px-3 py-2 font-medium">Boxes</th>
               <th class="px-3 py-2 font-medium">Tip</th>
               <th class="px-3 py-2 font-medium">Refusal</th>
@@ -565,6 +581,21 @@
                 </td>
                 <td class="px-3 py-2">{@render verdict(t.verdicts?.['reviewer-spec'])}</td>
                 <td class="px-3 py-2">{@render verdict(t.verdicts?.['reviewer-standards'])}</td>
+                <td class="px-3 py-2">
+                  {#if !t.workerSession}
+                    <Button size="sm" variant={(t.effectiveType || t.type || 'code') === 'design' ? 'secondary' : 'outline'} disabled={acting} title="Flip Ticket type before the Worker starts" onclick={(event) => { event.stopPropagation(); changeTicketType(t, (t.effectiveType || t.type || 'code') === 'design' ? 'code' : 'design'); }}>{t.effectiveType || t.type || 'code'}</Button>
+                  {:else}
+                    <Badge variant={(t.effectiveType || t.type || 'code') === 'design' ? 'secondary' : 'outline'} title="Ticket type is read-only after the Worker starts">{t.effectiveType || t.type || 'code'}</Badge>
+                  {/if}
+                  {#if t.typeOverride}
+                    <div class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <span>overridden</span>
+                      {#if !t.workerSession}
+                        <Button size="sm" variant="link" class="h-auto min-h-0 p-0 text-xs" disabled={acting} title="Clear override and use the Ticket file type" onclick={(event) => { event.stopPropagation(); changeTicketType(t, ''); }}>Clear</Button>
+                      {/if}
+                    </div>
+                  {/if}
+                </td>
                 <td class="px-3 py-2 tabular-nums">{boxCount(t)}</td>
                 <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{t.tip ? t.tip.slice(0, 8) : '—'}</td>
                 <td class="max-w-[16rem] truncate px-3 py-2 text-xs text-muted-foreground" title={t.lastRefusal || t.needsYou || ''}>{t.lastRefusal || t.needsYou || '—'}</td>
