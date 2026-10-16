@@ -537,6 +537,19 @@ func TestMemoryPageMemoryActions(t *testing.T) {
 	if !found {
 		t.Fatalf("pending Rule omitted Memory provenance: %+v", items)
 	}
+	ledger, err := bank.Ledger(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	promotedEvents := 0
+	for _, row := range ledger {
+		if row.Stage == "memory_promoted" && strings.Contains(row.CountsJSON, `"memory_id":`+strconv.FormatInt(old.SupersededBy, 10)) {
+			promotedEvents++
+		}
+	}
+	if promotedEvents != 1 {
+		t.Fatalf("promotion ledger events for Memory %d = %d", old.SupersededBy, promotedEvents)
+	}
 	if got := post("/api/memory/memories/"+strconv.FormatInt(old.SupersededBy, 10)+"/forget", map[string]any{}); got.Code != 200 {
 		t.Fatalf("forget: %d %s", got.Code, got.Body.String())
 	}

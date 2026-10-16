@@ -136,6 +136,19 @@ func TestNightlyPromoteCreatesPendingQuotedRule(t *testing.T) {
 	if len(queue) != 1 {
 		t.Fatalf("repeated stage created duplicate pending proposal: %d", len(queue))
 	}
+	ledger, err := bank.Ledger(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	promotedRows := 0
+	for _, row := range ledger {
+		if row.Stage == "memory_promoted" {
+			promotedRows++
+		}
+	}
+	if promotedRows != 2 {
+		t.Fatalf("memory promotion ledger rows = %d, want one for each source Memory", promotedRows)
+	}
 }
 
 func TestNightlyMemoryConsolidationQueuesGeneralize(t *testing.T) {

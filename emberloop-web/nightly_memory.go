@@ -296,6 +296,12 @@ func (d *Daemon) nightlyPromote(ctx context.Context, runID string, owners []stri
 				failed++
 			} else {
 				proposed++
+				for _, source := range cluster {
+					countsJSON, _ := json.Marshal(map[string]int64{"count": 1, "memory_id": source.ID})
+					if _, ledgerErr := bank.RecordLedger(ctx, memory.LedgerRow{RunID: runID, Stage: "memory_promoted", Status: memory.LedgerSuccess, CountsJSON: string(countsJSON)}); ledgerErr != nil {
+						failed++
+					}
+				}
 			}
 		}
 	}
