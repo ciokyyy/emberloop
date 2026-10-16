@@ -16,12 +16,14 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
-// Nightly job (ticket 29): snapshot, mine, distill, pair, profile, anchors,
-// summary. Runs at 03:00 local when the Daemon is idle, and on demand from the
-// Memory page. Every stage writes a ledger row per User bank; a snapshot
-// failure aborts before any mine write, any other failing stage leaves later
-// stages running. Nothing is ever deleted: edits are new versions and status
-// changes, and tests assert row counts before and after.
+// Nightly job: snapshot, catch up, reembed, fold and consolidate Memories,
+// promote candidates, then run the legacy profile and anchor stages. The
+// scheduler checks each minute after the local 03:00 due boundary and starts
+// at the next idle opportunity; the Memory page can also run it on demand.
+// Every stage writes a ledger row per User bank; a snapshot failure aborts
+// before any mine write, while later stage failures leave later stages running.
+// Nothing is ever deleted: edits are new versions and status changes, and
+// tests assert row counts before and after.
 
 const (
 	// nightlyDistillCap caps one distill input at 15 KB of redacted text.
