@@ -4,11 +4,11 @@
 
 **Blocked by:** 01, 06
 
-**Status:** todo
+**Status:** done
 
-- [ ] Forget hides a Memory from recall at once and keeps the row until purge
-- [ ] Edit creates a new row and supersedes the old one; the old text is unchanged
-- [ ] Promote creates a pending Rule only; it does not approve
-- [ ] The counter resets on visit
-- [ ] Browser and API tests cover all actions
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] Forget hides a Memory from recall at once and keeps the row until purge
+- [x] Edit creates a new row and supersedes the old one; the old text is unchanged
+- [x] Promote creates a pending Rule only; it does not approve
+- [x] The counter resets on visit
+- [x] Browser and API tests cover all actions
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
