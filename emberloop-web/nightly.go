@@ -897,6 +897,7 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 		}
 	}
 	memoriesStored, episodesFolded, candidatesPromoted, memoriesMerged, generalizationsProposed := 0, 0, 0, 0, 0
+	memoriesForgotten, memoriesPinned, memoriesContradicted := 0, 0, 0
 	for _, s := range stages {
 		switch s.Stage {
 		case nightlyStageFold:
@@ -921,6 +922,18 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 		if !ok {
 			continue
 		}
+		forgotten, pinned, contradicted, countErr := nightlyMemorySummaryCounts(ctx, bank)
+		if countErr != nil {
+			failed++
+			if firstErr == "" {
+				firstErr = countErr.Error()
+			}
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageSummary, memory.LedgerFailed, map[string]any{}, "summary failed: "+countErr.Error())
+			continue
+		}
+		memoriesForgotten += forgotten
+		memoriesPinned += pinned
+		memoriesContradicted += contradicted
 		items, err := bank.Queue(ctx)
 		if err != nil {
 			failed++
@@ -939,6 +952,7 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 			"avgApprovalLatencyHours": st.AvgLatencyHrs, "oldestPendingAgeHours": st.OldestPendingAgeHrs,
 			"memoriesStored": memoriesStored, "episodesFolded": episodesFolded, "candidatesPromoted": candidatesPromoted,
 			"memoriesMerged": memoriesMerged, "generalizationsProposed": generalizationsProposed,
+			"memoriesForgotten": memoriesForgotten, "memoriesPinned": memoriesPinned, "memoriesContradicted": memoriesContradicted,
 		}
 		detail := fmt.Sprintf("nightly %s: %d stages, %d failed; queue %d pending / %d total (budget %d)",
 			runID, len(stages)+1, failedStages, st.Pending, st.Total, st.Budget)
@@ -951,7 +965,7 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 		detail = fmt.Sprintf("summary partial: %s; %s", firstErr, detail)
 	}
 	return NightlyStageResult{Stage: nightlyStageSummary, Status: status,
-		Counts: map[string]any{"owners": len(owners), "stages": len(stages) + 1, "failedStages": failedStages, "failed": failed, "memoriesStored": memoriesStored, "episodesFolded": episodesFolded, "candidatesPromoted": candidatesPromoted, "memoriesMerged": memoriesMerged, "generalizationsProposed": generalizationsProposed},
+		Counts: map[string]any{"owners": len(owners), "stages": len(stages) + 1, "failedStages": failedStages, "failed": failed, "memoriesStored": memoriesStored, "episodesFolded": episodesFolded, "candidatesPromoted": candidatesPromoted, "memoriesMerged": memoriesMerged, "generalizationsProposed": generalizationsProposed, "memoriesForgotten": memoriesForgotten, "memoriesPinned": memoriesPinned, "memoriesContradicted": memoriesContradicted},
 		Detail: detail}
 }
 
@@ -965,6 +979,47 @@ func countNightly(counts map[string]any, key string) int {
 		return int(n)
 	}
 	return 0
+}
+
+// nightlyMemorySummaryCounts counts Memory state across one bank. Contradictions
+// come from memory_contradicted ledger events; legacy contradicted rows also count.
+func nightlyMemorySummaryCounts(ctx context.Context, bank memory.Memory) (forgotten, pinned, contradicted int, err error) {
+	for _, status := range []string{memory.StatusActive, memory.StatusParked, memory.StatusSuperseded, memory.StatusForgotten} {
+		items, e := bank.ListMemories(ctx, "", status, -1)
+		if e != nil {
+			return 0, 0, 0, e
+		}
+		if status == memory.StatusForgotten {
+			forgotten = len(items)
+		}
+		for _, item := range items {
+			if item.Pinned != 0 {
+				pinned++
+			}
+		}
+	}
+	rows, err := bank.Ledger(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for _, row := range rows {
+		if row.Stage != "memory_contradicted" && row.Stage != "contradicted" {
+			continue
+		}
+		var counts map[string]any
+		if json.Unmarshal([]byte(row.CountsJSON), &counts) == nil {
+			count := countNightly(counts, "memories")
+			if count == 0 {
+				count = countNightly(counts, "count")
+			}
+			if count > 0 {
+				contradicted += count
+				continue
+			}
+		}
+		contradicted++
+	}
+	return forgotten, pinned, contradicted, nil
 }
 
 // RunNightly runs the ordered nightly stages. Catch-up ingest uses the turn

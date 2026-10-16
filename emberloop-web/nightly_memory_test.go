@@ -239,3 +239,35 @@ func TestNightlyCatchupIngestUsesCursorOnce(t *testing.T) {
 		t.Fatalf("duplicate catchup episodes=%+v err=%v", episodes, err)
 	}
 }
+
+func TestNightlySummaryIncludesMemoryLifecycleCounts(t *testing.T) {
+	t.Parallel()
+	d, _ := nightlyTestDaemon(t, nil, nil)
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgottenID, err := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: "s1", EventID: "e1", Author: "alice", Kind: memory.KindFact, Text: "Forgotten memory", Quote: "forget this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bank.SetMemoryStatus(context.Background(), forgottenID, memory.StatusForgotten); err != nil {
+		t.Fatal(err)
+	}
+	pinnedID, err := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: "s2", EventID: "e2", Author: "alice", Kind: memory.KindFact, Text: "Pinned memory", Quote: "keep this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bank.SetMemoryPinned(context.Background(), pinnedID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bank.RecordLedger(context.Background(), memory.LedgerRow{Stage: "memory_contradicted", Status: memory.LedgerSuccess, CountsJSON: `{"count":2}`}); err != nil {
+		t.Fatal(err)
+	}
+	summary := d.nightlySummary(context.Background(), "summary-counts", []string{"alice"}, nil)
+	for key, want := range map[string]int{"memoriesForgotten": 1, "memoriesPinned": 1, "memoriesContradicted": 2} {
+		if got := countNightly(summary.Counts, key); got != want {
+			t.Errorf("%s=%d, want %d; counts=%+v", key, got, want, summary.Counts)
+		}
+	}
+}
