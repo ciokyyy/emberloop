@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `grokacp.go`, `grokacp_test.go`, `grok_handoff_test.go` and `grokacp_live_test.go` are deleted; the `grok` Backend registration, `GROK_HOME` and `EL_LIVE_GROK` are gone
-- [ ] `/api/models`, Settings PUT and Chain validation reject `grok` with a "harness must be claude or pig" style error; the web harness list, icon and model entry for grok are gone
-- [ ] A saved Chain entry or role setting naming grok is dropped on read with a notice; a Run override or Chain position that referenced it is cleared; tests cover Chains, legacy role keys and a restored Run
-- [ ] A stored Session with harness `grok` loads, shows its history, and refuses resume or prompt with "grok support was removed"; it never reaches the fake or default Backend (test at the Daemon API seam)
-- [ ] `GLOSSARY.md` (Backend), `emberloop-web/AGENTS.md` (Purpose, adapter retry), the web README if it names grok, and `docs/adr/0005-designer-tickets-agent-browser-cli.md` (replace the grok Backend sentence with one line saying grok support was removed) carry no stale grok text
-- [ ] No grep hit for `grok` remains outside `.scratch/` history, the ADR line above, and the refusal message and its test
-- [ ] `.emberloop/check` passes; in `emberloop-web/web/`, `npm test` and `npm run build` pass
+- [x] `grokacp.go`, `grokacp_test.go`, `grok_handoff_test.go` and `grokacp_live_test.go` are deleted; the `grok` Backend registration, `GROK_HOME` and `EL_LIVE_GROK` are gone
+- [x] `/api/models`, Settings PUT and Chain validation reject `grok` with a "harness must be claude or pig" style error; the web harness list, icon and model entry for grok are gone
+- [x] A saved Chain entry or role setting naming grok is dropped on read with a notice; a Run override or Chain position that referenced it is cleared; tests cover Chains, legacy role keys and a restored Run
+- [x] A stored Session with harness `grok` loads, shows its history, and refuses resume or prompt with "grok support was removed"; it never reaches the fake or default Backend (test at the Daemon API seam)
+- [x] `GLOSSARY.md` (Backend), `emberloop-web/AGENTS.md` (Purpose, adapter retry), the web README if it names grok, and `docs/adr/0005-designer-tickets-agent-browser-cli.md` (replace the grok Backend sentence with one line saying grok support was removed) carry no stale grok text
+- [x] No grep hit for `grok` remains outside `.scratch/` history, the ADR line above, and the refusal message and its test
+- [x] `.emberloop/check` passes; in `emberloop-web/web/`, `npm test` and `npm run build` pass
