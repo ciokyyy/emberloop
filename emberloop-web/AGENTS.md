@@ -23,9 +23,9 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
-- SSR spike: `ssr_test.go` runs the embedded Dashboard bundle in `modernc.org/quickjs` (no cgo), tests Chromium hydration when installed, and benchmarks warm renders. Route requests currently prefetch their declared read-only API data in-process and embed `window.__EL_BOOT__`; rendering remains the plain shell. Run `npm run build` in `web/` first.
+- SSR spike: `ssr_test.go` runs the embedded Dashboard bundle in `modernc.org/quickjs` (no cgo), tests Chromium hydration when installed, and benchmarks warm renders. Run `npm run build` in `web/` first. The bundle is not invoked by request handling.
 
-- UI routing and prefetch: `ui.go` matches route patterns from `router.js`; known routes receive a private, no-store shell with route-specific `window.__EL_BOOT__` data prefetched through cookie-authenticated in-process handlers. Unmatched page paths get an HTML 404, while missing assets and `/api/*` remain 404s. `ui_assets_test.go` pins route coverage; `ui_prefetch_test.go` covers the route-to-data table.
+- UI routing: `ui.go` matches route patterns from `router.js` before serving the shell; unmatched page paths get an HTML 404, while missing assets and `/api/*` remain 404s. `ui_assets_test.go` pins route coverage and fallback status.
 - Quota HTTP/live seam: `GET /api/quota` returns `{"providers":[...]}` from
   the shared cache only. Each provider has `key`, `label`, `plan`, `state`
   (`ok`, `stale`, `expired`, `not_configured`, `error`), `updated_at`, `error`,

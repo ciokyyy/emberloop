@@ -66,7 +66,13 @@ func prefetchPaths(route, sessionID string) []string {
 		return []string{"/api/auth/me", "/api/dashboard", "/api/projects"}
 	case strings.HasPrefix(route, "/s/"):
 		return []string{"/api/auth/me", "/api/sessions/" + sessionID + "?tail=40", "/api/users", "/api/projects"}
-	case strings.HasSuffix(route, "/runs") || strings.Contains(route, "/runs/"):
+	case strings.HasPrefix(route, "/p/") && (strings.Contains(route, "/runs") || strings.HasSuffix(route, "/runs")):
+		parts := strings.Split(strings.Trim(route, "/"), "/")
+		if len(parts) >= 3 {
+			return []string{"/api/auth/me", "/api/runs?projectId=" + url.QueryEscape(parts[1]), "/api/projects"}
+		}
+		return nil
+	case route == "/runs" || strings.HasPrefix(route, "/runs/"):
 		return []string{"/api/auth/me", "/api/runs", "/api/projects"}
 	case strings.HasSuffix(route, "/settings") || strings.HasPrefix(route, "/settings"):
 		return []string{"/api/auth/me", "/api/settings", "/api/projects"}
@@ -96,6 +102,23 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 		req.Body = http.NoBody
 		rw := httptest.NewRecorder()
 		apiHandler(d, u.Path).ServeHTTP(rw, req)
+		if u.Path == "/api/runs" && u.Query().Get("projectId") != "" && rw.Code >= 200 && rw.Code < 300 {
+			var payload struct {
+				Runs []*runSummary `json:"runs"`
+			}
+			if json.Unmarshal(rw.Body.Bytes(), &payload) == nil {
+				projectID := u.Query().Get("projectId")
+				filtered := payload.Runs[:0]
+				for _, run := range payload.Runs {
+					if run.ProjectID == projectID || (projectID == "none" && run.ProjectID == "") {
+						filtered = append(filtered, run)
+					}
+				}
+				payload.Runs = filtered
+				rw = httptest.NewRecorder()
+				writeJSON(rw, http.StatusOK, payload)
+			}
+		}
 		if rw.Code >= 200 && rw.Code < 300 {
 			boot[apiPath] = json.RawMessage(rw.Body.Bytes())
 		}
@@ -111,6 +134,7 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 		}
 	}
 	raw, _ := json.Marshal(boot)
+	raw = []byte(strings.NewReplacer("<", "\\u003c", ">", "\\u003e", "&", "\\u0026", "\u2028", "\\u2028", "\u2029", "\\u2029").Replace(string(raw)))
 	index, err := fs.ReadFile(sub, "index.html")
 	if err != nil {
 		http.Error(w, "ui unavailable", http.StatusInternalServerError)
@@ -126,8 +150,10 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 	index = append(index[:idx], append(loader, index[idx:]...)...)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if route == "/" && boot["/api/auth/me"] != nil {
-		if html, err := renderDashboardWithin(200 * time.Millisecond); err == nil {
-			index = bytes.Replace(index, []byte(`<script type="module" src="/src/main.js"></script>`), []byte(`<div id="el-ssr-dashboard">`+html+`</div><script type="module" src="/src/main.js"></script>`), 1)
+		if html, err := renderDashboardWithin(200*time.Millisecond, boot["/api/projects"], boot["/api/dashboard"]); err == nil {
+			if start := bytes.Index(index, []byte(`<script type="module"`)); start >= 0 {
+				index = append(index[:start], append([]byte(`<div id="el-ssr-dashboard">`+html+`</div>`), index[start:]...)...)
+			}
 		} else {
 			log.Printf("SSR render fallback for %s: %v", route, err)
 		}
@@ -158,7 +184,7 @@ func apiHandler(d *Daemon, p string) http.Handler {
 	}
 }
 
-func renderDashboardWithin(limit time.Duration) (html string, err error) {
+func renderDashboardWithin(limit time.Duration, projects, dashboard json.RawMessage) (html string, err error) {
 	type result struct {
 		html string
 		err  error
@@ -185,7 +211,7 @@ func renderDashboardWithin(limit time.Duration) (html string, err error) {
 			done <- result{err: e}
 			return
 		}
-		value, e := vm.Call("__elRenderDashboard")
+		value, e := vm.Call("__elRenderDashboard", string(projects), string(dashboard))
 		if e != nil {
 			done <- result{err: e}
 			return

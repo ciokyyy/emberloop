@@ -5,9 +5,9 @@
   import { watch } from './live.js';
   import { buildPath } from './router.js';
 
-  let { projects = [], onNavigate = () => {} } = $props();
-  let groups = $state({});
-  let loaded = $state(false);
+  let { projects = [], onNavigate = () => {}, initialDashboard = null } = $props();
+  let groups = $state(initialDashboard?.groups ?? {});
+  let loaded = $state(Boolean(initialDashboard));
   let error = $state('');
   let request = 0;
   let mounted = false;

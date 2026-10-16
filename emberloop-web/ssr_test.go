@@ -41,8 +41,8 @@ func renderDashboard(t testing.TB) string {
 
 func TestDashboardSSRSpike(t *testing.T) {
 	html := renderDashboard(t)
-	if !strings.Contains(html, "All projects") || !strings.Contains(html, "Loading Dashboard") {
-		t.Fatalf("SSR did not render the Dashboard shell: %s", html)
+	if !strings.Contains(html, "All projects") || !strings.Contains(html, "Nothing needs attention") {
+		t.Fatalf("SSR did not render the Dashboard with its initial payload: %s", html)
 	}
 }
 

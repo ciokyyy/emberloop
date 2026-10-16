@@ -8,15 +8,11 @@ export function apiBase() {
 
 const url = (path) => apiBase() + path;
 
-// Consume each server-prefetched GET once; standalone builds and unmatched
-// requests naturally fall through to fetch.
-const consumedBoot = new Set();
+// Boot values are immutable for this document, so concurrent callers can
+// safely reuse them; standalone builds naturally fall through to fetch.
 function getJSON(path) {
   const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
-  if (boot && Object.prototype.hasOwnProperty.call(boot, path) && !consumedBoot.has(path)) {
-    consumedBoot.add(path);
-    return Promise.resolve(boot[path]);
-  }
+  if (boot && Object.prototype.hasOwnProperty.call(boot, path)) return Promise.resolve(boot[path]);
   return fetch(url(path)).then(json);
 }
 
@@ -143,6 +139,7 @@ export function openStream(id, since, onEvent, opts = {}) {
     }
   };
   source.onopen = () => {
+    try {
       opts.onOpen?.();
     } catch {
       // Hook must never break the stream.
@@ -298,7 +295,12 @@ export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURICompone
 
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);
 
-export const listRuns = () => getJSON('/api/runs');
+export const listRuns = () => {
+	const parts = typeof window === 'undefined' ? [] : window.location.pathname.split('/');
+	const scoped = parts[1] === 'p' && parts[3] === 'runs' ? `/api/runs?projectId=${encodeURIComponent(parts[2])}` : null;
+	const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
+	return getJSON(scoped && boot && Object.hasOwn(boot, scoped) ? scoped : '/api/runs');
+};
 export const listUsers = () => fetch(url('/api/users')).then(json);
 
 export const startRun = (body) =>
