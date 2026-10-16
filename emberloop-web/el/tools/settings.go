@@ -75,6 +75,12 @@ type GraphSetting struct {
 	CacheDir string `json:"cache_dir,omitempty"`
 }
 
+// BrowserSetting tunes the optional agent-browser CLI.
+type BrowserSetting struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	Binary  string `json:"binary,omitempty"`
+}
+
 // ToolRoleOverride overrides a tool entry for one role. Only enabled and
 // placement are per-role; the rename is global to every role.
 type ToolRoleOverride struct {
@@ -250,7 +256,8 @@ type Settings struct {
 	// Nil means no user macros; /compress still ships as a built-in.
 	Macros []MacroSetting `json:"macros,omitempty"`
 	// Graph tunes the optional code graph binary.
-	Graph GraphSetting `json:"graph,omitempty"`
+	Graph   GraphSetting   `json:"graph,omitempty"`
+	Browser BrowserSetting `json:"browser,omitempty"`
 	// extra holds top-level keys el does not know yet, so a save writes them
 	// back and the file can grow without a version bump. Never written from the
 	// struct itself; SaveSettings merges it in.
@@ -355,9 +362,21 @@ func (s Settings) GraphEnabled() bool {
 	return *s.Graph.Enabled
 }
 
+func (s Settings) BrowserEnabled() bool {
+	if s.Browser.Enabled == nil {
+		return true
+	}
+	return *s.Browser.Enabled
+}
+
 // GraphBinaryPath is the explicit graph binary from settings, or "".
 func (s Settings) GraphBinaryPath() string {
 	return s.Graph.Binary
+}
+
+// BrowserBinaryPath is the explicit browser binary from settings, or "".
+func (s Settings) BrowserBinaryPath() string {
+	return s.Browser.Binary
 }
 
 // GraphCacheDir is the graph cache directory override, or "".

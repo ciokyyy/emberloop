@@ -25,11 +25,8 @@ import (
 // `el deps` installs and verifies every external dependency.
 //
 // Required: python3 (3.9+), rg, git, bwrap. Optional: the code graph binary
-// (codebase-memory-mcp), unless graph.enabled is false in settings. Missing
-// system packages install with the detected package manager from one table;
-// the exact command is printed and run through sudo only when attached to a
-// terminal, otherwise printed and the command exits non-zero. The graph
-// binary downloads from its GitHub release tarball for the platform,
+// (codebase-memory-mcp), unless graph.enabled is false in settings, and the
+// browser CLI (agent-browser), unless browser.enabled is false in settings.
 // verified against the release checksums.txt SHA-256, into the el bin
 // directory (EL_BIN_DIR overrides). Its own install.sh never runs and no
 // agent client config is touched. Every dependency is proved after install and
@@ -55,6 +52,15 @@ const DefaultGraphVersion = "v0.11.0"
 // append as "<base>/<version>/<asset>". Tests point it at an httptest server.
 const DefaultGraphReleaseBase = "https://github.com/DeusData/codebase-memory-mcp/releases/download"
 
+// BrowserBinaryName is the browser CLI ticket 03 installs for UI checks.
+const BrowserBinaryName = "agent-browser"
+
+// DefaultBrowserVersion pins the agent-browser release deps installs.
+const DefaultBrowserVersion = "v0.39.1"
+
+// DefaultBrowserReleaseBase is the release download base for agent-browser.
+const DefaultBrowserReleaseBase = "https://github.com/vercel-labs/agent-browser/releases/download"
+
 // DepsConfig tunes InstallDeps. Zero values mean the real environment.
 type DepsConfig struct {
 	// BinDir overrides the el bin directory; empty means tools.BinDir().
@@ -65,6 +71,8 @@ type DepsConfig struct {
 	ReleaseBaseURL string
 	// GraphVersion overrides DefaultGraphVersion.
 	GraphVersion string
+	// BrowserVersion overrides DefaultBrowserVersion.
+	BrowserVersion string
 	// GOOS and GOARCH override runtime for tests.
 	GOOS   string
 	GOARCH string
@@ -103,6 +111,23 @@ func (c DepsConfig) graphVersion() string {
 		return c.GraphVersion
 	}
 	return DefaultGraphVersion
+}
+
+func (c DepsConfig) browserVersion() string {
+	if c.BrowserVersion != "" {
+		return c.BrowserVersion
+	}
+	if c.GraphVersion != "" {
+		return c.GraphVersion
+	}
+	return DefaultBrowserVersion
+}
+
+func (c DepsConfig) browserReleaseBase() string {
+	if c.ReleaseBaseURL != "" {
+		return strings.TrimSuffix(c.ReleaseBaseURL, "/")
+	}
+	return DefaultBrowserReleaseBase
 }
 
 func (c DepsConfig) goos() string {
@@ -564,6 +589,118 @@ func extractGraphBinary(tarball []byte) ([]byte, error) {
 	return nil, fmt.Errorf("release tarball holds no %s binary", GraphBinaryName)
 }
 
+// browserAssetName maps the platform to the agent-browser release asset.
+func browserAssetName(goos, goarch string) (string, error) {
+	switch goos {
+	case "linux", "darwin":
+	default:
+		return "", fmt.Errorf("unsupported platform %s/%s", goos, goarch)
+	}
+	arch := goarch
+	switch goarch {
+	case "amd64":
+		arch = "x64"
+	case "arm64":
+	default:
+		return "", fmt.Errorf("unsupported platform %s/%s", goos, goarch)
+	}
+	return fmt.Sprintf("agent-browser-%s-%s", goos, arch), nil
+}
+
+// resolveBrowser finds the browser CLI in the bin dir, on PATH, or at
+// browser.binary in settings.
+func (c DepsConfig) resolveBrowser(s tools.Settings) string {
+	if s.Browser.Binary != "" {
+		if isDepsExecutable(s.Browser.Binary) {
+			return s.Browser.Binary
+		}
+		if p, err := exec.LookPath(s.Browser.Binary); err == nil {
+			return p
+		}
+	}
+	if dir := c.binDir(); dir != "" {
+		if p := filepath.Join(dir, BrowserBinaryName); isDepsExecutable(p) {
+			return p
+		}
+	}
+	if p, err := exec.LookPath(BrowserBinaryName); err == nil {
+		return p
+	}
+	return ""
+}
+
+// downloadBrowser fetches the release asset for the platform, verifies its
+// sha256 against the release checksums and writes it into the bin directory.
+func (c DepsConfig) downloadBrowser() (string, error) {
+	asset, err := browserAssetName(c.goos(), c.goarch())
+	if err != nil {
+		return "", err
+	}
+	base := c.browserReleaseBase()
+	version := c.browserVersion()
+	assetURL := base + "/" + version + "/" + asset
+	sumsURL := base + "/" + version + "/checksums.txt"
+	client := c.httpClient()
+	sumsRaw, err := fetchURL(client, sumsURL)
+	if err != nil {
+		return "", fmt.Errorf("could not fetch %s: %v", sumsURL, err)
+	}
+	want, err := graphChecksum(sumsRaw, asset)
+	if err != nil {
+		return "", fmt.Errorf("%s: %v", sumsURL, err)
+	}
+	data, err := fetchURL(client, assetURL)
+	if err != nil {
+		return "", fmt.Errorf("could not fetch %s: %v", assetURL, err)
+	}
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); got != want {
+		return "", fmt.Errorf("checksum mismatch for %s: want %s, got %s; refusing it", asset, want, got)
+	}
+	dir := c.binDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, BrowserBinaryName)
+	tmp, err := os.CreateTemp(dir, BrowserBinaryName+".*")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return "", err
+	}
+	_ = tmp.Close()
+	if err := os.Chmod(tmpName, 0o755); err != nil {
+		_ = os.Remove(tmpName)
+		return "", err
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		_ = os.Remove(tmpName)
+		return "", err
+	}
+	return dst, nil
+}
+
+// proveBrowser runs the binary with --version.
+func (c DepsConfig) proveBrowser(path string) (string, error) {
+	out, err := runCmd(10*time.Second, path, "--version")
+	if err != nil {
+		return "", err
+	}
+	ver := strings.TrimSpace(out)
+	if ver == "" {
+		return "", fmt.Errorf("no version output")
+	}
+	// Prefer first line.
+	if i := strings.IndexByte(ver, '\n'); i >= 0 {
+		ver = strings.TrimSpace(ver[:i])
+	}
+	return ver, nil
+}
+
 func fetchURL(client *http.Client, url string) ([]byte, error) {
 	resp, err := client.Get(url)
 	if err != nil {
@@ -765,6 +902,32 @@ func InstallDeps(out io.Writer, cfg DepsConfig) error {
 				lines = append(lines, depLine{name: GraphBinaryName, version: cfg.graphVersion(), state: "warn", note: err.Error()})
 			} else {
 				lines = append(lines, depLine{name: GraphBinaryName, version: cfg.graphVersion(), state: "ok"})
+			}
+		}
+	}
+
+	browserEnabled := settings.BrowserEnabled()
+	browserWarn := ""
+	if !browserEnabled {
+		lines = append(lines, depLine{name: BrowserBinaryName, version: "", state: "disabled", note: "browser.enabled=false"})
+	} else {
+		bpath := cfg.resolveBrowser(settings)
+		if bpath == "" {
+			got, err := cfg.downloadBrowser()
+			if err != nil {
+				browserWarn = err.Error()
+				lines = append(lines, depLine{name: BrowserBinaryName, version: cfg.browserVersion(), state: "warn", note: err.Error()})
+			} else {
+				changed = true
+				bpath = got
+			}
+		}
+		if bpath != "" && browserWarn == "" {
+			if _, err := cfg.proveBrowser(bpath); err != nil {
+				browserWarn = err.Error()
+				lines = append(lines, depLine{name: BrowserBinaryName, version: cfg.browserVersion(), state: "warn", note: err.Error()})
+			} else {
+				lines = append(lines, depLine{name: BrowserBinaryName, version: cfg.browserVersion(), state: "ok"})
 			}
 		}
 	}

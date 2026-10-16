@@ -224,6 +224,7 @@ func depsDisabledSettings() *tools.Settings {
 	s := tools.Settings{}
 	off := false
 	s.Graph.Enabled = &off
+	s.Browser.Enabled = &off
 	return &s
 }
 func depsEnabledSettings() *tools.Settings {
@@ -371,8 +372,8 @@ func TestDepsSecondRunChangesNothing(t *testing.T) {
 	fake := depsFakePath(t, "")
 	depsHermeticPath(t, fake)
 	binDir := t.TempDir()
-	t.Setenv("EL_BIN_DIR", binDir)
 	depsWriteFake(t, binDir, GraphBinaryName, "#!/bin/sh\nread line\necho '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2024-11-05\"}}'\n")
+	depsWriteFake(t, binDir, BrowserBinaryName, "#!/bin/sh\necho \"agent-browser 0.39.1\"\n")
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
