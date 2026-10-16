@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+: "${PORT:?PORT must be set by the Daemon}"
+repo=$(git rev-parse --show-toplevel)
+web="$repo/emberloop-web/web"
+if [ ! -d "$web/node_modules" ]; then
+  (cd "$web" && npm ci --no-audit --no-fund)
+fi
+log="${TMPDIR:-/tmp}/emberloop-preview-${PORT}.log"
+(cd "$web" && API_PORT=8910 npm exec vite -- --host 127.0.0.1 --port "$PORT") >"$log" 2>&1 </dev/null &
+echo "http://127.0.0.1:$PORT"

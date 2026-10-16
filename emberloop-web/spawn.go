@@ -473,11 +473,13 @@ func (d *Daemon) endSession(id string) (SessionMeta, int) {
 	wasLive := s.live
 	s.live = false
 	d.persistMeta(s.meta)
+	workDir, designSession := s.meta.WorkDir, s.meta.DesignSession
 	be := d.backendForLocked(s.meta.Harness)
 	d.mu.Unlock()
 	if wasLive && be != nil {
 		be.CloseSession(id)
 	}
+	d.stopPreview(id, workDir, designSession)
 	d.closeBrowser(id, false)
 	// Attached images die with the Session (see above).
 	_ = os.RemoveAll(d.sessionImagesDir(id))

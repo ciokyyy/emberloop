@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"example.com/emberloop-web/el/tools"
@@ -41,6 +42,13 @@ func (d *Daemon) browserSessionEnv(id string) [][2]string {
 			env = append(env, [2]string{"AGENT_BROWSER_EXECUTABLE_PATH", path})
 			break
 		}
+	}
+	return env
+}
+func (d *Daemon) sessionToolEnv(id string) [][2]string {
+	env := d.browserSessionEnv(id)
+	if port, ok := d.previewPortFor(id); ok {
+		env = append(env, [2]string{"PORT", strconv.Itoa(port)})
 	}
 	return env
 }

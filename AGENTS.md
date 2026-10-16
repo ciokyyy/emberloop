@@ -12,6 +12,10 @@ imports this file; Daemon Claude Sessions load no `CLAUDE.md` and get a system-
 prompt pointer to this file instead. The repo check is `.emberloop/check`
 (`cd emberloop-web && go vet ./... && go test -timeout 15m -skip TestLive ./... && cd ../installer && go vet ./... && go test ./...`).
 
+## Local UI previews
+
+`.emberloop/preview` reads the Daemon-assigned `PORT`, starts the worktree's web UI dev server, and prints its URL. Design Sessions should use it; the Daemon stops processes started under a Session's worktree when that Session ends.
+
 ## DOX contract
 
 - `AGENTS.md` files are binding work contracts for their subtrees. A path

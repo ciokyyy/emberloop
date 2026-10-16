@@ -123,6 +123,8 @@ type SessionMeta struct {
 	// Title is the short generated name the session list shows; empty
 	// keeps the harness and id label.
 	Title string `json:"title,omitempty"`
+	// DesignSession grants this Session an isolated dev-server PORT.
+	DesignSession bool `json:"designSession,omitempty"`
 	// ResumeToken is the harness handle needed to resume: the claude ACP
 	// session id, the pig Session id, or an opaque marker for fake.
 	ResumeToken string `json:"resumeToken,omitempty"`

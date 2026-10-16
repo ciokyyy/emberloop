@@ -124,10 +124,13 @@ type Daemon struct {
 	maxTickets int
 	// starting counts Sessions reserving a running slot while their
 	// backend handle builds before publish.
-	starting int
-	mu       sync.Mutex
-	sessions map[string]*session
-	backends map[string]Backend
+	starting        int
+	mu              sync.Mutex
+	previewMu       sync.Mutex
+	previewPorts    map[string]int
+	previewReserved map[int]string
+	sessions        map[string]*session
+	backends        map[string]Backend
 	// groups tracks one spawn call each: its parent and members, so the
 	// last member to finish delivers one grouped result as a Steer.
 	groups map[string]*spawnGroup
@@ -363,13 +366,13 @@ func (d *Daemon) RegisterBackend(harness string, be Backend) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if cb, ok := be.(*ClaudeBackend); ok {
-		cb.browserEnv = d.browserSessionEnv
+		cb.browserEnv = d.sessionToolEnv
 	}
 	if pb, ok := be.(*PigACPBackend); ok && pb.ClaudeBackend != nil {
-		pb.browserEnv = d.browserSessionEnv
+		pb.browserEnv = d.sessionToolEnv
 	}
 	if pb, ok := be.(*PigBackend); ok {
-		pb.BrowserEnv = d.browserSessionEnv
+		pb.BrowserEnv = d.sessionToolEnv
 	}
 	d.backends[harness] = be
 }
@@ -466,6 +469,7 @@ func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	b.tokenFile = claudeTokenPath(d.stateDir)
+	b.browserEnv = d.sessionToolEnv
 	d.claude = b
 	d.backends["claude"] = b
 	return d
@@ -632,6 +636,11 @@ func (e *startError) Error() string { return e.msg }
 func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	if meta.ProjectID == "" {
 		meta.ProjectID = d.projectIDForPath(meta.WorkDir)
+	}
+	if meta.DesignSession {
+		if _, err := d.previewPort(meta.ID); err != nil {
+			return nil, &startError{code: http.StatusInternalServerError, msg: "could not allocate preview port: " + err.Error()}
+		}
 	}
 	h := startHandle(meta, handleCreate)
 	// The Profile leads the injection block: owner Sessions, Subagents and

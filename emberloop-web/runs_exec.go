@@ -2732,6 +2732,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 			ID: newID(), Harness: entry.Backend, Model: entry.Model, Effort: entry.Effort,
 			WorkDir: worktree, Status: "idle", CreatedAt: time.Now().UTC(),
 			ParentID: runID, Owner: owner, Reviewer: reviewerType,
+			DesignSession: reviewerType == reviewerDesignType,
 		}
 		var serr *startError
 		be, serr = d.startSession(meta)
@@ -3247,17 +3248,18 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 			return fmt.Errorf("could not ensure AGENTS.md in %s: %w", worktree, err)
 		}
 		meta := SessionMeta{
-			ID:        newID(),
-			Harness:   harness,
-			Model:     model,
-			Effort:    effort,
-			WorkDir:   worktree,
-			Status:    "idle",
-			CreatedAt: time.Now().UTC(),
-			ParentID:  runID,
-			Owner:     owner,
-			RunWorker: true,
-			NoRecall:  noRecall,
+			ID:            newID(),
+			Harness:       harness,
+			Model:         model,
+			Effort:        effort,
+			WorkDir:       worktree,
+			Status:        "idle",
+			CreatedAt:     time.Now().UTC(),
+			ParentID:      runID,
+			Owner:         owner,
+			RunWorker:     true,
+			NoRecall:      noRecall,
+			DesignSession: workerRole == "worker-design",
 		}
 		var be Backend
 		var startExhausted bool
