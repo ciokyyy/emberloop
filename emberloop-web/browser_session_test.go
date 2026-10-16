@@ -10,13 +10,13 @@ import (
 )
 
 func TestBrowserSessionEnvAndDomainValidation(t *testing.T) {
-	bin := t.TempDir()
+	bin := tempDir(t)
 	t.Setenv("EL_BIN_DIR", bin)
 	browser := filepath.Join(bin, "agent-browser")
 	if err := os.WriteFile(browser, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	d := &Daemon{stateDir: filepath.Join(t.TempDir(), "daemon-a")}
+	d := &Daemon{stateDir: filepath.Join(tempDir(t), "daemon-a")}
 	env := d.browserSessionEnv("session-123")
 	values := map[string]string{}
 	for _, pair := range env {
@@ -39,13 +39,13 @@ func TestBrowserSessionEnvAndDomainValidation(t *testing.T) {
 	if validateBrowserDomains(json.RawMessage(`["https://example.com"]`)) == "" {
 		t.Fatal("URL accepted as a domain")
 	}
-	if browserNamespace(filepath.Join(t.TempDir(), "daemon-a")) == browserNamespace(filepath.Join(t.TempDir(), "daemon-a")) {
+	if browserNamespace(filepath.Join(tempDir(t), "daemon-a")) == browserNamespace(filepath.Join(tempDir(t), "other", "daemon-a")) {
 		t.Fatal("namespace collision")
 	}
 }
 
 func TestBrowserScreenshotJanitorKeepsActiveAndRecent(t *testing.T) {
-	state := t.TempDir()
+	state := tempDir(t)
 	root := filepath.Join(state, "agent-browser", "screenshots")
 	old := filepath.Join(root, "ended")
 	recent := filepath.Join(root, "recent")
