@@ -99,7 +99,7 @@ func TestIngestExtractorFailureStillStoresEpisodeAndLedger(t *testing.T) {
 func TestIngestOffDoesNotRunHeuristicFallback(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
-	d.SetSettingsPath(useSettings(t, `{"memory_extract_effort":"off"}`))
+	d.SetSettingsPath(useSettings(t, `{"memory_auto_extract":false}`))
 	activeSession(t, d, "s1", "alice", []Event{userPrompt(1, "alice", "No, use tabs here")})
 	if err := d.ingestSession("s1"); err != nil {
 		t.Fatal(err)

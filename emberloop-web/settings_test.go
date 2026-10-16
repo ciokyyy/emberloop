@@ -561,10 +561,10 @@ func TestMemorySettingsAutomaticExtractionDefaultTracksOpenRouterKey(t *testing.
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	d.SetSettingsPath(useSettings(t, `{}`))
-	if !d.memoryExtractionEnabled(map[string]json.RawMessage{}) {
+	if !memoryExtractionEnabled(map[string]json.RawMessage{}, true) {
 		t.Fatal("automatic extraction default should be on when OpenRouter is configured")
 	}
-	if d.memoryExtractionEnabled(map[string]json.RawMessage{"memory_auto_extract": json.RawMessage("false")}) {
+	if memoryExtractionEnabled(map[string]json.RawMessage{"memory_auto_extract": json.RawMessage("false")}, true) {
 		t.Fatal("explicitly disabled automatic extraction should remain off")
 	}
 	view := d.memorySettingsView()

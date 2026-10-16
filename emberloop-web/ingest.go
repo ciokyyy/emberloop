@@ -108,6 +108,7 @@ func (d *Daemon) ingestSession(sessionID string) error {
 		}
 	}
 	model, effort, extractor := d.turnExtractor()
+	fallbackEnabled := model != "" || extractor != nil
 	extractionFailed := false
 	if len(chosen) > 0 && model != "" && extractor != nil {
 		events := make([]memory.ExtractEvent, 0, len(chosen))
@@ -148,8 +149,8 @@ func (d *Daemon) ingestSession(sessionID string) error {
 			}
 		}
 	}
-	// The heuristic is only the fallback after a configured extractor fails.
-	if extractionFailed {
+	// The heuristic runs only when automatic extraction is enabled and the model is unavailable or fails.
+	if extractionFailed || (fallbackEnabled && extractor == nil) {
 		counts.Stored += d.storeIngestFallback(ctx, sessionID, chosen, banks)
 	}
 	countsJSON, _ := json.Marshal(counts)
@@ -250,21 +251,14 @@ func (d *Daemon) turnExtractor() (string, string, memory.Extractor) {
 	if err != nil {
 		return "", "", nil
 	}
-	var key string
-	var enabled bool
 	if raw, ok := all["memory_auto_extract"]; ok {
-		if json.Unmarshal(raw, &enabled) != nil {
-			enabled = false
-		}
-		if !enabled {
+		var configured bool
+		if json.Unmarshal(raw, &configured) == nil && !configured {
 			return "", "", nil
 		}
-		key = systemone.APIKey(context.Background())
-	} else {
-		key = systemone.APIKey(context.Background())
-		enabled = key != ""
 	}
-	if !enabled {
+	key := systemone.APIKey(context.Background())
+	if !memoryExtractionEnabled(all, key != "") {
 		return "", "", nil
 	}
 	if raw, ok := all["memory_extract_model"]; ok {
@@ -289,10 +283,10 @@ func (d *Daemon) turnExtractor() (string, string, memory.Extractor) {
 	return model, effort, nil
 }
 
-func (d *Daemon) memoryExtractionEnabled(all map[string]json.RawMessage) bool {
+func memoryExtractionEnabled(all map[string]json.RawMessage, openRouterKeyConfigured bool) bool {
 	var enabled bool
 	if raw, ok := all["memory_auto_extract"]; ok && json.Unmarshal(raw, &enabled) == nil {
 		return enabled
 	}
-	return systemone.APIKey(context.Background()) != ""
+	return openRouterKeyConfigured
 }
