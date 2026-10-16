@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live end-to-end probe for Designer Run ticket 15. Uses real model calls.
-# Requires go, git, curl, python3, agent-browser, Chromium/Chrome, and an
-# authenticated Claude or Pig Backend. Never run by .emberloop/check.
+# Requires go, git, curl, python3, Linux `/proc`, agent-browser, Chromium/Chrome,
+# and an authenticated Claude or Pig Backend. Never run by .emberloop/check.
 # Usage:
 #   EL_LIVE_DESIGNER_RUN=1 EL_LIVE_DESIGNER_HARNESS=claude \
 #     EL_LIVE_DESIGNER_CODE_MODEL=haiku EL_LIVE_DESIGNER_MODEL=sonnet \
@@ -100,20 +100,11 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     case "$status" in failed|needs-you|cancelled|abandoned) printf '%s' "$snapshot" >"$PROBE_DIR/failed-run.json"; fail "Run entered $status; artifacts $PROBE_DIR";; esac
     if [ "$status" = done ]; then break; fi
     # Keep any failure label from the active state for useful first-step reporting.
-    printf '%s' "$snapshot" | python3 - "$PROBE_DIR" <<'PY' || true
-import json,sys
-try:
- r=json.load(sys.stdin)['run']; ts={t['id']:t for t in r.get('tickets',[])}
- if ts.get('01-code',{}).get('workerSession') and not ts.get('02-design',{}).get('workerSession'): open(sys.argv[1]+'/last-step','w').write('code Worker / two Reviewers')
- elif ts.get('02-design',{}).get('workerSession'): open(sys.argv[1]+'/last-step','w').write('Designer skill, preview and screenshots')
- if ts.get('02-design',{}).get('gate',{}).get('verdicts'): open(sys.argv[1]+'/last-step','w').write('three design Reviewer Passes and merge')
-except Exception: pass
-PY
+    last_step="$(printf '%s' "$snapshot" | python3 -c 'import json,sys; r=json.load(sys.stdin)["run"]; ts={t["id"]:t for t in r.get("tickets",[])}; c=ts.get("01-code",{}); d=ts.get("02-design",{}); print("code Worker routing" if not c.get("workerSession") else "code Reviewer starts" if len(c.get("reviewerSessions",{})) < 2 else "blocked design scheduling" if not d.get("workerSession") else "design Reviewer starts" if len(d.get("reviewerSessions",{})) < 3 else "design browser checks / Passes")' 2>/dev/null || echo 'Run state could not be decoded')"
   fi
   sleep 3
 done
-[ "${status:-}" = done ] || fail "$(cat "$PROBE_DIR/last-step" 2>/dev/null || echo "$last_step"): Run did not merge within ${TIMEOUT}s (run $runid; artifacts $PROBE_DIR)"
-step='routing, reviewer set and three Passes'
+[ "${status:-}" = done ] || fail "$last_step: Run did not merge within ${TIMEOUT}s (run $runid; artifacts $PROBE_DIR)"
 snapshot="$(getrun)" || fail "$step: cannot read Run"
 printf '%s' "$snapshot" | python3 -c '
 import json,sys
@@ -140,6 +131,11 @@ for tid,expected in [("01-code","worker"),("02-design","worker-design")]:
  sid=ts[tid].get('workerSession'); assert sid, (tid,ts[tid])
  session=fetch('/api/sessions/'+sid).get('session',{})
  assert session.get('runWorker') is True and (expected != 'worker-design' or session.get('designSession') is True),(tid,session)
+ reviewers=ts[tid].get('reviewerSessions',{}); required={'reviewer-spec','reviewer-standards'} | ({'reviewer-design'} if tid=='02-design' else set())
+ assert set(reviewers)==required,(tid,reviewers)
+ for role,reviewer_id in reviewers.items():
+  reviewer=fetch('/api/sessions/'+reviewer_id).get('session',{})
+  assert reviewer.get('reviewer')==role,(role,reviewer)
  if tid=='02-design':
   ev=events(sid); text='\n'.join(str(e.get('text','')) for e in ev)
   assert 'agent-browser' in text and ('snapshot' in text.lower() or 'designer' in text.lower()), text[-3000:]
@@ -158,7 +154,41 @@ print('PASS - code Worker, worker-design Designer, injected skill and phone/desk
 PY
 
 echo "checking no leftover browser or preview process" >&2
-# Daemon shutdown is performed by the shared cleanup trap; check after explicitly stopping it.
-if [ -n "$PROBE_DAEMON" ] && kill -0 "$PROBE_DAEMON" 2>/dev/null; then kill "$PROBE_DAEMON" 2>/dev/null || true; wait "$PROBE_DAEMON" 2>/dev/null || true; PROBE_DAEMON=""; fi
-if pgrep -af 'agent-browser.*(designer|02-design)|preview-server.go' | grep -v "$$" | grep -v 'pgrep -af' >/dev/null; then fail "browser or preview process remains"; fi
-printf 'PASS - Run %s merged after worker/reviewer chain and left no matching browser or preview process\n' "$runid"
+python3 - "$PROBE_BASE" "$PROBE_JAR" "$PROBE_DIR/state" "$snapshot" <<'PY' || fail "leftover browser or preview process check"
+import hashlib,json,os,re,subprocess,sys
+base,jar,state,raw=sys.argv[1:]
+run=json.loads(raw)['run']; sessions=set()
+for ticket in run.get('tickets',[]):
+    if ticket.get('workerSession'): sessions.add(ticket['workerSession'])
+    sessions.update(ticket.get('reviewerSessions',{}).values())
+ports=set()
+for sid in sessions:
+    data=json.loads(subprocess.check_output(['curl','-fsS','-b',jar,base+'/api/sessions/'+sid]))
+    port=data.get('session',{}).get('previewPort')
+    if port: ports.add(int(port))
+namespace=hashlib.sha256(os.path.normpath(state).encode()).digest()[:8].hex()
+left=[]
+for entry in os.listdir('/proc'):
+    if not entry.isdigit(): continue
+    try:
+        with open('/proc/'+entry+'/environ','rb') as f: env=f.read().split(bytes([0]))
+        with open('/proc/'+entry+'/cmdline','rb') as f: cmd=f.read().replace(bytes([0]),b' ').decode(errors='replace').lower()
+    except (OSError,ProcessLookupError): continue
+    values={item.split(b'=',1)[0]:item.split(b'=',1)[1] for item in env if b'=' in item}
+    ns=values.get(b'AGENT_BROWSER_NAMESPACE',b'').decode(errors='ignore')
+    preview_session=values.get(b'EL_PREVIEW_SESSION',b'').decode(errors='ignore')
+    if ns==namespace and re.search(r'agent-browser|chrom(e|ium)',cmd): left.append((entry,'browser',cmd[:180]))
+    if preview_session in sessions and re.search(r'preview-server|go run',cmd): left.append((entry,'preview',cmd[:180]))
+listeners=set()
+for table in ('/proc/net/tcp','/proc/net/tcp6'):
+    try:
+        with open(table) as f:
+            for row in f.readlines()[1:]:
+                fields=row.split()
+                if len(fields)>3 and fields[3]=='0A': listeners.add(int(fields[1].rsplit(':',1)[1],16))
+    except OSError: pass
+bound=ports & listeners
+assert not left and not bound, {'processes':left,'previewPortsStillListening':sorted(bound)}
+print('PASS - isolated browser namespace and assigned preview ports have no surviving processes/listeners')
+PY
+printf 'PASS - Run %s merged after worker/reviewer chain and left no browser or preview process\n' "$runid"

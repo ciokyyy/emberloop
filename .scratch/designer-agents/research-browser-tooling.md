@@ -131,24 +131,6 @@ worktree dev-server URL the browser tool navigates to.
   Images: pig SDK consumes `ai.ImageContent` tool results (`pigtools.go`,
   `pigtools_image_test.go`), but pig Sessions run through pi-acp, so the same
   forwarding probe is needed.
-- **grok via ACP.** No MCP channel exists: `catalogFor`
-  (`emberloop-web/grokacp.go:340`) renders the el tool catalog as **text** in
-  the system prompt and the model calls `use_tool`. A third-party MCP server
-  **cannot** be attached without changing the grok CLI/protocol. The only
-  path is a Daemon-owned el tool (CLI subprocess, text snapshots back as
-  text). Screenshots are useless for grok until its CLI accepts image tool
-  results — scope grok Designers to snapshot/console/network text.
-- **el-native alternative (works for all three, incl. grok).** New tool in
-  `emberloop-web/el/tools` (same seam as `readurl.go`) that shells to the
-  pinned browser CLI/MCP with a localhost-only guard, per-Session profile
-  dir, and caps (depth, JPEG quality, viewport); images via `Multimodal`
-  (`el/tools/image.go`), oversize text via `ctx:` handles (`overflow.go`).
-  Served to the designer role via `toolresolve.go`; upstream-MCP variant
-  needs no new tool at all (settings `mcp_servers` + per-role placement
-  already exist in `el/tools/settings.go` + `toolresolve.go`) — but settings
-  are static files, so per-Session args still need the Daemon-code paths
-  above. Either way the Daemon does per-Session parametrization; "global
-  static MCP config" cannot.
 
 ## Cited claims (primary sources)
 
@@ -172,10 +154,9 @@ worktree dev-server URL the browser tool navigates to.
   SDK shape: repo README. Puppeteer MCP archived:
   `modelcontextprotocol/servers-archived`.
 - Backend wiring: `emberloop-web/claude.go:1041` (`mcpServersFor`),
-  `pigacp.go:21-22,581-603` (`mergedMCP`), `grokacp.go:340-360`
-  (`catalogFor`), `el/mcp/server.go` (image blocks), `el/tools/image.go`
-  (`Multimodal`), `pigtools.go` (`ai.ImageContent`), `el/toolresolve.go`
-  (per-role server placement), `el/tools/settings.go` (`mcp_servers`).
+  `pigacp.go:21-22,581-603` (`mergedMCP`), `el/mcp/server.go` (image blocks),
+  `el/tools/image.go` (`Multimodal`), `pigtools.go` (`ai.ImageContent`),
+  `el/toolresolve.go` (per-role server placement), `el/tools/settings.go` (`mcp_servers`).
 - Local numbers: reproduced on this host (chromium headless, trivial page,
   `playwright-core` `ariaSnapshot()`; method above). Real-app pages will show
   larger snapshots — rerun against a worktree dev server before sizing caps.
@@ -186,16 +167,14 @@ worktree dev-server URL the browser tool navigates to.
    pig-via-ACP? Needs one live probe per backend (screenshot tool → vision
    model describes it). If either drops images, that backend's Designer is
    snapshot-only until the adapter is fixed.
-2. grok image input: does any `grok agent` release accept image tool results?
-   If yes, the MCP-attach answer for grok changes.
-3. Exact npm package/name for Microsoft's Playwright CLI (verify before
+2. Exact npm package/name for Microsoft's Playwright CLI (verify before
    pinning) and whether `el deps` (`el/deps.go`) should own the browser
    install.
-4. Orphan-Chrome reaping under parallel Runs (idle-timeout suffices, or
+3. Orphan-Chrome reaping under parallel Runs (idle-timeout suffices, or
    Daemon-side kill on Session end?) and per-Session `--output-dir` hygiene
    (wire into `disk.go` janitor).
-5. Snapshot cap numbers against the real Emberloop UI (rerun §Measured
+4. Snapshot cap numbers against the real Emberloop UI (rerun §Measured
    against a worktree dev server; pick `depth`, `browser_snapshot` vs
    `--delta`, JPEG quality from data).
-6. `chrome-devtools-mcp` needs official Chrome: acceptable extra install, or
+5. `chrome-devtools-mcp` needs official Chrome: acceptable extra install, or
    does `--executable-path`-style reuse (Playwright) decide it?
