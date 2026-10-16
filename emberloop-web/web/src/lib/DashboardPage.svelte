@@ -55,7 +55,8 @@
   }
 
   onMount(() => {
-	if (typeof document !== 'undefined') document.getElementById('el-ssr-dashboard')?.remove();
+	const snapshot = typeof document !== 'undefined' ? document.getElementById('el-ssr-dashboard') : null;
+	if (snapshot) requestAnimationFrame(() => requestAnimationFrame(() => snapshot.remove()));
     mounted = true;
 	if (!initialPayload) void refresh();
     const stopSessions = watch('sessions', onLiveChange);

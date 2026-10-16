@@ -149,12 +149,14 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 	index = append(index[:idx], append(loader, index[idx:]...)...)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if route == "/" && boot["/api/auth/me"] != nil {
-		if html, err := renderDashboardWithin(200*time.Millisecond, boot["/api/projects"], boot["/api/dashboard"]); err == nil {
-			if start := bytes.Index(index, []byte(`<script type="module"`)); start >= 0 {
-				index = append(index[:start], append([]byte(`<div id="el-ssr-dashboard">`+html+`</div>`), index[start:]...)...)
+		if _, gateErr := fs.Stat(sub, "ssr/ssr.js"); gateErr == nil {
+			if html, err := renderDashboardWithin(200*time.Millisecond, boot["/api/projects"], boot["/api/dashboard"]); err == nil {
+				if start := bytes.Index(index, []byte(`<script type="module"`)); start >= 0 {
+					index = append(index[:start], append([]byte(`<div id="el-ssr-dashboard">`+html+`</div>`), index[start:]...)...)
+				}
+			} else {
+				log.Printf("SSR render fallback for %s: %v", route, err)
 			}
-		} else {
-			log.Printf("SSR render fallback for %s: %v", route, err)
 		}
 	}
 	_, _ = w.Write(index)

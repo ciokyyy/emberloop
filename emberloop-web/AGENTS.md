@@ -23,7 +23,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
-- SSR spike and request rendering: `ssr_test.go` exercises the embedded Dashboard bundle in `modernc.org/quickjs` (no cgo), tests Chromium hydration when installed, and benchmarks warm renders. Signed-in `/` requests render the Dashboard with prefetched payload under a 200ms deadline; failures log and serve the shell. Run `npm run build` in `web/` first.
+- SSR spike and request rendering: `ssr_test.go` exercises the embedded Dashboard bundle in `modernc.org/quickjs` (no cgo), tests Chromium hydration when installed, and benchmarks warm renders. Signed-in `/` requests render the Dashboard with prefetched payload under a 200ms deadline only when the accepted ticket 03 SSR bundle is embedded; errors log and serve the shell. Run `npm run build` in `web/` first.
 
 - UI routing: `ui.go` matches route patterns from `router.js` before serving the shell; unmatched page paths get an HTML 404, while missing assets and `/api/*` remain 404s. `ui_assets_test.go` pins route coverage and fallback status.
 - Quota HTTP/live seam: `GET /api/quota` returns `{"providers":[...]}` from

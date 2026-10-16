@@ -79,7 +79,7 @@ describe('All projects Dashboard', () => {
     document.body.append(snapshot);
 
     render(DashboardPage);
-
+	expect(snapshot.isConnected).toBe(true);
     await waitFor(() => expect(document.getElementById('el-ssr-dashboard')).toBeNull());
     expect(await screen.findByText(/Nothing needs attention/)).toBeTruthy();
 	expect(fetchMock).not.toHaveBeenCalled();
