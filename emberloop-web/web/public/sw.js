@@ -22,7 +22,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/')) return;
   if (url.origin !== self.location.origin) return;
   if (req.mode === 'navigate') return;
-  if (!/^\/assets\/.+[-.][a-f0-9]{8,}\./i.test(url.pathname)) return;
+  if (!/(?:^|[-.])[A-Za-z0-9_-]{8,}\.[^/.]+$/.test(url.pathname)) return;
   event.respondWith(
     (async () => {
       try {

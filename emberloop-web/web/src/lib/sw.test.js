@@ -75,7 +75,17 @@ describe('service worker fetch caching', () => {
     handlers.fetch(assetEvent);
     await assetEvent.response;
     expect(fetch).toHaveBeenCalledOnce();
-    expect(put).toHaveBeenCalledOnce();
+    const builtHTML = readFileSync(new URL('../../dist/index.html', import.meta.url), 'utf8');
+    const emitted = [...builtHTML.matchAll(/(?:src|href)="(\/[^"?#]+\.(?:js|css))"/g)].map((match) => match[1]);
+    for (const path of emitted) {
+      const event = {
+        request: { method: 'GET', url: `https://emberloop.test${path}`, mode: 'cors' },
+        respondWith: (promise) => { event.response = promise; },
+      };
+      handlers.fetch(event);
+      await event.response;
+    }
+    expect(put).toHaveBeenCalledTimes(emitted.length + 1);
 
     const plainEvent = { request: { method: 'GET', url: 'https://emberloop.test/manifest.webmanifest', mode: 'cors' } };
     handlers.fetch(plainEvent);
