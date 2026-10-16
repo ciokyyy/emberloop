@@ -28,7 +28,11 @@ browser_bin="${EL_BIN_DIR:-$HOME/.emberloop/bin}/agent-browser"
 for bin in go git curl python3; do command -v "$bin" >/dev/null || fail "need $bin on PATH"; done
 source "$(dirname "${BASH_SOURCE[0]}")/run-upgrade-probe-lib.sh"
 TIMEOUT="${EL_LIVE_DESIGNER_TIMEOUT:-1800}"
-probe_init designer-run || fail "isolated Daemon setup"
+PREVIEW_PID_DIR="$(mktemp -d /tmp/el-designer-preview-pids.XXXXXX)"
+export EL_PROBE_PREVIEW_PID_DIR="$PREVIEW_PID_DIR"
+probe_init designer-run || { rm -rf "$PREVIEW_PID_DIR"; fail "isolated Daemon setup"; }
+probe_cleanup_with_preview_pids() { probe_cleanup; rm -rf "$PREVIEW_PID_DIR"; }
+trap probe_cleanup_with_preview_pids EXIT
 repo="$PROBE_DIR/repo"
 probe_git_init "$repo"
 probe_add_green_check "$repo"
@@ -50,8 +54,32 @@ exec go run ./preview-server.go
 PREVIEW
 cat >"$repo/preview-server.go" <<'GO'
 package main
-import("net/http";"os")
-func main(){ port:=os.Getenv("PORT"); if port=="" { port="4173" }; http.Handle("/",http.FileServer(http.Dir("."))); _=http.ListenAndServe("127.0.0.1:"+port,nil) }
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"syscall"
+)
+
+func main() {
+	portText := os.Getenv("PORT")
+	if portText == "" { portText = "4173" }
+	port, err := strconv.Atoi(portText)
+	if err != nil { panic(err) }
+	group, err := syscall.Getpgid(os.Getpid())
+	if err != nil { panic(err) }
+	marker := map[string]int{"pid": os.Getpid(), "pgid": group, "port": port}
+	encoded, err := json.Marshal(marker)
+	if err != nil { panic(err) }
+	name := fmt.Sprintf("%d-%d.json", port, os.Getpid())
+	if err := os.WriteFile(filepath.Join(os.Getenv("EL_PROBE_PREVIEW_PID_DIR"), name), encoded, 0600); err != nil { panic(err) }
+	http.Handle("/", http.FileServer(http.Dir(".")))
+	if err := http.ListenAndServe("127.0.0.1:"+portText, nil); err != nil { panic(err) }
+}
 GO
 chmod +x "$repo/.emberloop/preview"
 cat >"$repo/.scratch/designer-probe/spec.md" <<'SPEC'
@@ -154,9 +182,9 @@ print('PASS - code Worker, worker-design Designer, injected skill and phone/desk
 PY
 
 echo "checking no leftover browser or preview process" >&2
-python3 - "$PROBE_BASE" "$PROBE_JAR" "$PROBE_DIR/state" "$snapshot" "$browser_bin" <<'PY' || fail "leftover browser or preview process check"
-import hashlib,json,os,re,subprocess,sys
-base,jar,state,raw,browser=sys.argv[1:]
+python3 - "$PROBE_BASE" "$PROBE_JAR" "$PROBE_DIR/state" "$snapshot" "$browser_bin" "$PREVIEW_PID_DIR" <<'PY' || fail "leftover browser or preview process check"
+import hashlib,json,os,subprocess,sys
+base,jar,state,raw,browser,pid_dir=sys.argv[1:]
 run=json.loads(raw)['run']; sessions=set(); ports=set()
 for ticket in run.get('tickets',[]):
     if ticket.get('workerSession'): sessions.add(ticket['workerSession'])
@@ -170,32 +198,44 @@ for sid in sessions:
         ports.add(int(port))
 assert ports, 'no Designer/design Reviewer PORT was assigned'
 namespace=hashlib.sha256(os.path.normpath(state).encode()).digest()[:8].hex()
-env=dict(os.environ,AGENT_BROWSER_NAMESPACE=namespace,AGENT_BROWSER_SESSION='designer-run-probe-closeout')
-listing=subprocess.check_output([browser,'--json','session','list'],env=env,text=True,stderr=subprocess.STDOUT)
-active=[sid for sid in sessions if sid in listing]
+env=dict(os.environ,AGENT_BROWSER_NAMESPACE=namespace)
+env.pop('AGENT_BROWSER_SESSION',None)
+listing=json.loads(subprocess.check_output([browser,'--json','session','list'],env=env,text=True,stderr=subprocess.STDOUT))
+def listed_names(value):
+    names=[]
+    if isinstance(value,dict):
+        if 'sessions' in value:
+            return listed_names(value['sessions'])
+        fields=('name','session','sessionName','session_name','id')
+        for key in fields:
+            if isinstance(value.get(key),str): names.append(value[key])
+        if names: return names
+        for child in value.values(): names.extend(listed_names(child))
+    elif isinstance(value,list):
+        for child in value:
+            if isinstance(child,str): names.append(child)
+            else: names.extend(listed_names(child))
+    return names
+active=listed_names(listing)
 assert not active, {'activeBrowserSessions':active,'sessionList':listing}
-# Preview processes inherit the assigned PORT. Match those exact ports and
-# process identity, then independently confirm none still owns a LISTEN socket.
-left=[]; listeners=set()
+# The fixture server records its own PID and process group when it starts.
+markers=[os.path.join(pid_dir,name) for name in os.listdir(pid_dir) if name.endswith('.json')]
+assert markers, 'preview server never recorded its process identity'
+groups=set()
+for marker_path in markers:
+    marker=json.load(open(marker_path))
+    assert marker['port'] in ports, marker
+    groups.add(marker['pgid'])
+alive=[]
 for entry in os.listdir('/proc'):
     if not entry.isdigit(): continue
     try:
-        with open('/proc/'+entry+'/environ','rb') as f: envbytes=f.read().split(bytes([0]))
-        with open('/proc/'+entry+'/cmdline','rb') as f: cmd=f.read().replace(bytes([0]),b' ').decode(errors='replace').lower()
-    except (OSError,ProcessLookupError): continue
-    values={item.split(b'=',1)[0]:item.split(b'=',1)[1] for item in envbytes if b'=' in item}
-    port=values.get(b'PORT',b'').decode(errors='ignore')
-    if port.isdigit() and int(port) in ports and re.search(r'preview-server|go run',cmd):
-        left.append((entry,port,cmd[:180]))
-for table in ('/proc/net/tcp','/proc/net/tcp6'):
-    try:
-        with open(table) as f:
-            for row in f.readlines()[1:]:
-                fields=row.split()
-                if len(fields)>3 and fields[3]=='0A': listeners.add(int(fields[1].rsplit(':',1)[1],16))
-    except OSError: pass
-bound=ports & listeners
-assert not left and not bound, {'previewProcesses':left,'previewPortsStillListening':sorted(bound)}
-print('PASS - isolated agent-browser registry is empty and assigned preview processes/ports are gone')
+        with open('/proc/'+entry+'/stat') as f: stat=f.read()
+        fields=stat.rsplit(')',1)[1].split()
+        pid=int(entry); state=fields[0]; pgid=int(fields[2])
+    except (OSError,ValueError,IndexError): continue
+    if pgid in groups and state!='Z': alive.append(pid)
+assert not alive, {'previewProcessGroups':sorted(groups),'survivingPIDs':alive}
+print('PASS - isolated browser session registry is empty and recorded preview process groups have exited')
 PY
 printf 'PASS - Run %s merged after worker/reviewer chain and left no browser or preview process\n' "$runid"
