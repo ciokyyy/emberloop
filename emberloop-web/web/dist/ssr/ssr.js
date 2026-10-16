@@ -9648,8 +9648,10 @@ function buildPath(route) {
 function DashboardPage($$renderer, $$props) {
 	$$renderer.component(($$renderer) => {
 		let { projects = [], onNavigate = () => {}, initialDashboard = null } = $$props;
-		let groups = initialDashboard?.groups ?? {};
-		let loaded = Boolean(initialDashboard);
+		const bootDashboard = typeof window !== "undefined" ? window.__EL_BOOT__?.["/api/dashboard"] : null;
+		const initialPayload = initialDashboard ?? bootDashboard;
+		let groups = initialPayload?.groups ?? {};
+		let loaded = Boolean(initialPayload);
 		const projectNames = derived(() => new Map(projects.map((project) => [project.id, project.name])));
 		const activeGroups = derived(() => Object.entries(groups).map(([projectId, group]) => ({
 			projectId,

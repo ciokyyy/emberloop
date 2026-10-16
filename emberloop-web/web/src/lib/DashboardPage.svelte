@@ -6,8 +6,10 @@
   import { buildPath } from './router.js';
 
   let { projects = [], onNavigate = () => {}, initialDashboard = null } = $props();
-  let groups = $state(initialDashboard?.groups ?? {});
-  let loaded = $state(Boolean(initialDashboard));
+  const bootDashboard = typeof window !== 'undefined' ? window.__EL_BOOT__?.['/api/dashboard'] : null;
+  const initialPayload = initialDashboard ?? bootDashboard;
+  let groups = $state(initialPayload?.groups ?? {});
+  let loaded = $state(Boolean(initialPayload));
   let error = $state('');
   let request = 0;
   let mounted = false;
@@ -55,7 +57,7 @@
   onMount(() => {
 	if (typeof document !== 'undefined') document.getElementById('el-ssr-dashboard')?.remove();
     mounted = true;
-    void refresh();
+	if (!initialPayload) void refresh();
     const stopSessions = watch('sessions', onLiveChange);
     const stopRuns = watch('runs', onLiveChange);
     return () => {

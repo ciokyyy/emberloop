@@ -6,6 +6,7 @@ import { stopLive } from './live.js';
 afterEach(() => {
   cleanup();
   stopLive();
+  delete window.__EL_BOOT__;
   vi.unstubAllGlobals();
 });
 
@@ -70,7 +71,9 @@ describe('All projects Dashboard', () => {
   });
   it('hands off the server Dashboard snapshot after the client Dashboard mounts', async () => {
     vi.stubGlobal('EventSource', FakeEventSource);
-    vi.stubGlobal('fetch', vi.fn(async () => response({ groups: {} })));
+	window.__EL_BOOT__ = { '/api/dashboard': { groups: {} } };
+	const fetchMock = vi.fn(async () => response({ groups: {} }));
+	vi.stubGlobal('fetch', fetchMock);
     const snapshot = document.createElement('div');
     snapshot.id = 'el-ssr-dashboard';
     document.body.append(snapshot);
@@ -79,5 +82,6 @@ describe('All projects Dashboard', () => {
 
     await waitFor(() => expect(document.getElementById('el-ssr-dashboard')).toBeNull());
     expect(await screen.findByText(/Nothing needs attention/)).toBeTruthy();
+	expect(fetchMock).not.toHaveBeenCalled();
   });
 });
