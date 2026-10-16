@@ -51,34 +51,64 @@ func TestContentTypeFor(t *testing.T) {
 		}
 	}
 }
-// Direct loads of every route the browser router owns (see
-// web/src/lib/router.js) serve the app shell, so refresh, bookmarks and PWA
-// shortcuts land in the app; unknown paths and /api/* still 404.
-func TestSPAFallbackServesKnownRoutes(t *testing.T) {
+
+// Direct loads of every browser route shape (see web/src/lib/router.js) must
+// serve the shell. Keep this table aligned with uiRoutePatterns.
+func TestRouteTableServesKnownRoutes(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
 
-	get := func(path string) (int, string, string) {
-		resp, err := http.Get(srv.URL + path)
+	routes := []string{
+		"/", "/p/project-1", "/p/none", "/p/project-1/runs",
+		"/p/project-1/runs/run-1", "/p/project-1/runs/run-1/ticket-1",
+		"/p/project-1/settings", "/s/session-1", "/runs",
+		"/runs/run-1", "/runs/run-1/ticket-1", "/settings",
+		"/settings/agents", "/settings/runs", "/settings/context", "/settings/memory",
+		"/settings/access", "/settings/profile", "/settings/notifications",
+		"/settings/sound-voice", "/quota", "/providers", "/memory",
+	}
+	for _, route := range routes {
+		t.Run(route, func(t *testing.T) {
+			resp, err := http.Get(srv.URL + route)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") || !strings.Contains(string(body), "<!doctype html>") {
+				t.Fatalf("GET %s = %d type %q (want 200 app shell)", route, resp.StatusCode, resp.Header.Get("Content-Type"))
+			}
+		})
+	}
+}
+
+func TestRouteTable404sUnknownPathsAndAssets(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	for _, route := range []string{"/nope", "/settings/nope", "/p/id/runs/run/ticket/extra", "/quota/x", "/memory/x", "/s", "/s/"} {
+		resp, err := http.Get(srv.URL + route)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, resp.Header.Get("Content-Type"), string(raw)
-	}
-
-	for _, path := range []string{"/s/abc123", "/runs", "/runs/r1", "/runs/r1/t1", "/settings", "/quota", "/memory"} {
-		code, ct, body := get(path)
-		if code != http.StatusOK || !strings.Contains(ct, "text/html") || !strings.Contains(body, "<!doctype html>") {
-			t.Fatalf("GET %s = %d type %q (want 200 app shell)", path, code, ct)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") || !strings.Contains(string(body), "Page not found") {
+			t.Fatalf("GET %s = %d type %q body %q, want 404 page", route, resp.StatusCode, resp.Header.Get("Content-Type"), body)
 		}
 	}
-	for _, path := range []string{"/nope", "/quota/x", "/memory/x", "/s", "/s/"} {
-		if code, _, _ := get(path); code != http.StatusNotFound {
-			t.Fatalf("GET %s = %d, want 404", path, code)
+	for _, route := range []string{"/does-not-exist-xyz.js", "/api/not-a-route"} {
+		resp, err := http.Get(srv.URL + route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s = %d, want 404", route, resp.StatusCode)
 		}
 	}
 }

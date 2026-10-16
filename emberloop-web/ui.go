@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"embed"
+	"io"
 	"io/fs"
 	"net/http"
 	"path"
@@ -25,9 +26,8 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 		serveFile(sub, w, r, "index.html")
 		return
 	}
-	// Static bundle assets (hashed JS/CSS, favicon) serve by file. The
-	// client-side routes below fall back to index.html; anything else 404s,
-	// and /api/* never reaches here (mux routes it first).
+	// Static bundle assets (hashed JS/CSS, favicon) serve by file. Missing
+	// assets remain ordinary 404s; only recognized client routes get the shell.
 	name := strings.TrimPrefix(p, "/")
 	if name == "" || strings.Contains(name, "..") {
 		http.NotFound(w, r)
@@ -37,34 +37,62 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 		serveFile(sub, w, r, name)
 		return
 	}
-	if isSPARoute(p) {
+	if path.Ext(p) != "" {
+		http.NotFound(w, r)
+		return
+	}
+	if matchUIRoute(p) {
 		serveFile(sub, w, r, "index.html")
 		return
 	}
-	http.NotFound(w, r)
+	serveNotFoundPage(w, r)
 }
 
-// isSPARoute reports the client-side paths the browser router owns (see
-// web/src/lib/router.js): the session, runs, settings, quota and memory
-// pages. Every other missing path 404s, so a mistyped static asset never
-// renders the app shell.
-func isSPARoute(p string) bool {
-	if p == "/runs" || p == "/settings" || p == "/quota" || p == "/memory" {
-		return true
-	}
-	if p == "/s" || p == "/s/" {
-		return false
-	}
-	if strings.HasPrefix(p, "/s/") && len(strings.Trim(p[3:], "/")) > 0 {
-		return true
-	}
-	if p == "/runs/" {
-		return true
-	}
-	if strings.HasPrefix(p, "/runs/") && len(strings.Trim(p[6:], "/")) > 0 {
-		return true
+// uiRoutePatterns mirrors every route shape parsed by web/src/lib/router.js.
+var uiRoutePatterns = []string{
+	"/", "/p/<id>", "/p/<id>/runs", "/p/<id>/runs/<runId>",
+	"/p/<id>/runs/<runId>/<ticketId>", "/p/<id>/settings", "/s/<id>",
+	"/runs", "/runs/<runId>", "/runs/<runId>/<ticketId>",
+	"/settings", "/settings/agents", "/settings/runs", "/settings/context",
+	"/settings/memory", "/settings/access", "/settings/profile",
+	"/settings/notifications", "/settings/sound-voice", "/quota", "/providers", "/memory",
+}
+
+func matchUIRoute(p string) bool {
+	for _, pattern := range uiRoutePatterns {
+		if routePatternMatches(pattern, p) {
+			return true
+		}
 	}
 	return false
+}
+
+func routePatternMatches(pattern, p string) bool {
+	if pattern == "/" {
+		return p == "/"
+	}
+	got := strings.Split(strings.Trim(p, "/"), "/")
+	want := strings.Split(strings.Trim(pattern, "/"), "/")
+	if len(got) != len(want) {
+		return false
+	}
+	for i, segment := range want {
+		if strings.HasPrefix(segment, "<") && strings.HasSuffix(segment, ">") {
+			if got[i] == "" {
+				return false
+			}
+		} else if segment != got[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func serveNotFoundPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not found · Emberloop</title><body><main><h1>Page not found</h1><p>The page you requested doesn't exist.</p><a href="/">Return to Emberloop</a></main></body></html>`)
 }
 
 func serveFile(sub fs.FS, w http.ResponseWriter, r *http.Request, name string) {

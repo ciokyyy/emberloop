@@ -307,16 +307,16 @@ func TestSPAFallback(t *testing.T) {
 	}
 }
 
-func TestIsSPARoute(t *testing.T) {
+func TestMatchUIRoute(t *testing.T) {
 	t.Parallel()
-	for _, p := range []string{"/s/x", "/s/abc/", "/runs", "/runs/", "/runs/r1", "/runs/r1/t2", "/settings"} {
-		if !isSPARoute(p) {
-			t.Errorf("isSPARoute(%q) = false, want true", p)
+	for _, p := range []string{"/", "/p/project", "/p/none", "/p/id/runs", "/p/id/runs/r1", "/p/id/runs/r1/t2", "/p/id/settings", "/s/x", "/runs", "/runs/r1", "/runs/r1/t2", "/settings", "/settings/agents", "/settings/sound-voice", "/quota", "/providers", "/memory"} {
+		if !matchUIRoute(p) {
+			t.Errorf("matchUIRoute(%q) = false, want true", p)
 		}
 	}
-	for _, p := range []string{"/", "/s", "/s/", "/api/sessions", "/assets/a.js", "/favicon.png", "/unknown/deep"} {
-		if isSPARoute(p) {
-			t.Errorf("isSPARoute(%q) = true, want false", p)
+	for _, p := range []string{"/s", "/api/sessions", "/assets/a.js", "/favicon.png", "/unknown/deep", "/settings/unknown", "/p/id/runs/r1/t2/extra"} {
+		if matchUIRoute(p) {
+			t.Errorf("matchUIRoute(%q) = true, want false", p)
 		}
 	}
 }
