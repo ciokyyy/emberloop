@@ -19,6 +19,9 @@ type MemoryStoreResult struct {
 }
 
 func memoryRelation(incoming, existing MemoryItem) string {
+	if normalized := NormalizeQuote(incoming.Text); normalized != "" && normalized == NormalizeQuote(existing.Text) {
+		return RelDuplicate
+	}
 	relation := Relation(incoming.Text, existing.Text)
 	if incoming.Embedding == nil || existing.Embedding == nil || incoming.EmbeddingModel == "" || incoming.EmbeddingModel != existing.EmbeddingModel {
 		return relation
@@ -75,6 +78,11 @@ func (b *Bank) DedupAndStoreMemory(ctx context.Context, item MemoryItem) (result
 	}
 	if err = validMemory(item); err != nil {
 		return result, err
+	}
+	if item.Embedding == nil && b.embedWorker != nil {
+		if vector, model, embedErr := b.embedWorker.EmbedText(ctx, item.Text); embedErr == nil {
+			item.Embedding, item.EmbeddingModel = vector, model
+		}
 	}
 	err = b.write(ctx, func(db *sql.DB) error {
 		rows, e := db.QueryContext(ctx, `SELECT id, session_id, event_id, author, kind, text, quote, importance, veracity, mention_count, status, superseded_by, pinned, embedding, embedding_model, extractor_json, observed_commit, created_at, last_seen_at FROM memories WHERE status = 'active' ORDER BY id DESC`)
@@ -151,7 +159,7 @@ func (b *Bank) DedupAndStoreMemory(ctx context.Context, item MemoryItem) (result
 		}
 		return nil
 	})
-	if err == nil && !result.Duplicate {
+	if err == nil && !result.Duplicate && item.Embedding == nil {
 		b.enqueueEmbedding("memory", item.Text, result.ID, func(ctx context.Context, vector []byte, model string) error {
 			return b.SetMemoryEmbedding(ctx, result.ID, vector, model)
 		})
