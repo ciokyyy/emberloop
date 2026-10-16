@@ -10,7 +10,7 @@ A Ticket has a type, `code` or `design`, set by a `**Type:**` header line (defau
 
 ## Context
 
-Cheaper models implement backend logic well but cannot judge or direct UI, and reviewers on the same models call any UI good. Routing visual work to a stronger model with the ability to look at the result addresses both gaps. The grok Backend has no image path, so it cannot run these Chains in v1.
+Cheaper models implement backend logic well but cannot judge or direct UI, and reviewers on the same models call any UI good. Routing visual work to a stronger model with the ability to look at the result addresses both gaps. Grok support was removed.
 
 ## Rejected alternatives
 

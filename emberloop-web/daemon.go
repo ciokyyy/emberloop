@@ -463,7 +463,6 @@ func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 }
 
 // modelEffortOptions is the effort list for one offered model. Pig uses its
-// model registry's supported levels; Claude and Grok expose the levels their
 // adapters validate.
 func modelEffortOptions(harness, model string, offered []string) []string {
 	switch harness {
@@ -477,16 +476,9 @@ func modelEffortOptions(harness, model string, offered []string) []string {
 		if model == "opus" || model == "sonnet" {
 			return append([]string(nil), claudeEfforts...)
 		}
-	case "grok":
-		for _, available := range offered {
-			if available == model {
-				return append([]string(nil), grokEfforts...)
-			}
-		}
 	}
 	return []string{}
 }
-
 func pigModelEffortOptions(model ai.GeneratedModel) []string {
 	runtimeModel := ai.Model{
 		Capabilities:     model.ToCapabilities(),
@@ -531,12 +523,8 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models)})
 		return
 	}
-	if harness != "pig" && harness != "grok" && harness != "fake" {
-		http.Error(w, "unknown harness (want claude, pig, grok or fake)", http.StatusBadRequest)
-		return
-	}
-	if harness == "grok" && !d.hasBackend("grok") {
-		http.Error(w, "grok harness not available (grok or el-mcp missing)", http.StatusServiceUnavailable)
+	if harness != "pig" && harness != "fake" {
+		http.Error(w, "unknown harness (want claude, pig or fake)", http.StatusBadRequest)
 		return
 	}
 	d.mu.Lock()
@@ -705,6 +693,9 @@ func (d *Daemon) persistResumeToken(be Backend, id string) {
 // Sessions need the wired claude Backend; without it only history reads.
 // Callers hold d.mu.
 func (d *Daemon) resumeBackendLocked(meta SessionMeta) (Backend, string) {
+	if meta.Harness == "grok" {
+		return nil, "grok support was removed"
+	}
 	if meta.Harness == "claude" {
 		if d.claude == nil {
 			return nil, "claude backend not configured; history is read-only"
@@ -714,6 +705,8 @@ func (d *Daemon) resumeBackendLocked(meta SessionMeta) (Backend, string) {
 	return d.backendForLocked(meta.Harness), ""
 }
 
+// resumeViewLocked reports whether a new prompt would be accepted now: live
+// Sessions take one, ended Sessions never do, and released Sessions defer
 // resumeViewLocked reports whether a new prompt would be accepted now: live
 // Sessions take one, ended Sessions never do, and released Sessions defer
 // to the Backend. Callers hold d.mu.
@@ -1233,12 +1226,6 @@ func (d *Daemon) routeLiveOpt(id, mode, text string, images []Image, imageIDs []
 		mode = "followup"
 		degraded = true
 	}
-	if harness == "grok" && mode == "steer" && s.busy {
-		// Grok has no mid-turn injection on the primary Session: a Steer
-		// waits as a Follow-up.
-		mode = "followup"
-		degraded = true
-	}
 	if harness == "claude" && mode == "steer" && s.busy {
 		// A Steer always lands after the next tool call: the adapter injects
 		// at priority now, which pre-empts a running tool, so the Daemon holds
@@ -1613,8 +1600,8 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "harness and model are required", http.StatusBadRequest)
 			return
 		}
-		if req.Harness == "grok" && !d.hasBackend("grok") {
-			http.Error(w, "grok harness not available (grok or el-mcp missing)", http.StatusServiceUnavailable)
+		if req.Harness != "claude" && req.Harness != "pig" && req.Harness != "fake" {
+			http.Error(w, "harness must be claude or pig", http.StatusBadRequest)
 			return
 		}
 		if req.Harness == "claude" && !validClaudeModel(req.Model) {

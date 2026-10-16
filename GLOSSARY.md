@@ -38,7 +38,7 @@ The integer 0–100 percentage of a provider limit already used. It is the commo
 _Avoid_: Remaining percent, balance
 
 **Backend**:
-The adapter that drives one harness behind the Daemon's `Agent` interface: claude and grok through ACP, pig through ACP or its Go SDK.
+The adapter that drives one harness behind the Daemon's `Agent` interface: claude through ACP, pig through ACP or its Go SDK.
 _Avoid_: Driver, adapter
 
 **Handle**:

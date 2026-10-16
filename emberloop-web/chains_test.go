@@ -101,7 +101,7 @@ func TestChainSettingsRoundTrip(t *testing.T) {
 	}
 
 	// A second write merges: the new role lands, the worker chain stays.
-	chains, code, _ = putChainsBody(t, srv.URL, `{"chains": {"reviewer-spec": [{"backend": "grok", "model": "grok-4.7"}]}}`)
+	chains, code, _ = putChainsBody(t, srv.URL, `{"chains": {"reviewer-spec": [{"backend": "pig", "model": "auto"}]}}`)
 	if code != http.StatusOK || len(chains["worker"]) != 2 || len(chains["reviewer-spec"]) != 1 {
 		t.Fatalf("chains after merge = %+v (%d), want worker kept and reviewer-spec added", chains, code)
 	}
@@ -150,7 +150,7 @@ func TestChainSettingsValidation(t *testing.T) {
 	}
 
 	// Three entries with effort are the most a role holds.
-	chains, code, _ := putChainsBody(t, srv.URL, `{"chains": {"worker": [{"backend": "pig", "model": "a"}, {"backend": "claude", "model": "opus", "effort": "high"}, {"backend": "grok", "model": "grok-4.7"}]}}`)
+	chains, code, _ := putChainsBody(t, srv.URL, `{"chains": {"worker": [{"backend": "pig", "model": "a"}, {"backend": "claude", "model": "opus", "effort": "high"}, {"backend": "pig", "model": "auto"}]}}`)
 	if code != http.StatusOK || len(chains["worker"]) != 3 || chains["worker"][1].Effort != "high" {
 		t.Fatalf("three-entry write = %+v (%d), want all three with effort kept", chains, code)
 	}
@@ -184,9 +184,9 @@ func TestChainForPrefersChainsThenRoles(t *testing.T) {
 		t.Fatalf("chainFor without chains = %+v, want the single roles entry", got)
 	}
 
-	t.Setenv("EL_SETTINGS", useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto"}}, "chains": {"implementer": [{"backend": "grok", "model": "grok-4.7"}]}}`))
+	t.Setenv("EL_SETTINGS", useSettings(t, `{"roles": {"worker": {"harness": "pig", "model": "auto"}}, "chains": {"implementer": [{"backend": "pig", "model": "auto"}]}}`))
 	got = chainFor("worker")
-	if len(got) != 1 || got[0].Backend != "grok" {
+	if len(got) != 1 || got[0].Backend != "pig" {
 		t.Fatalf("chainFor with alias chains = %+v, want the implementer entry", got)
 	}
 

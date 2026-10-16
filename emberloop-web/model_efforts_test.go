@@ -49,13 +49,6 @@ func TestModelEffortOptionsPerHarness(t *testing.T) {
 			t.Errorf("Claude %s efforts = %v, want none", model, got)
 		}
 	}
-	offeredGrok := []string{grokDefaultModel}
-	if got := modelEffortOptions("grok", grokDefaultModel, offeredGrok); !slices.Equal(got, grokEfforts) {
-		t.Errorf("Grok efforts = %v, want %v", got, grokEfforts)
-	}
-	if got := modelEffortOptions("grok", "unknown", offeredGrok); len(got) != 0 {
-		t.Errorf("unknown Grok model efforts = %v, want none", got)
-	}
 	if got := modelEffortOptions("pig", "unknown/model", nil); len(got) != 0 {
 		t.Errorf("unknown pig model efforts = %v, want none", got)
 	}

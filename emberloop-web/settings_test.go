@@ -422,13 +422,13 @@ func TestSettingsMigratesLegacyAgentRolesAndChains(t *testing.T) {
 	srv, settings := settingsServer(t, `{"roles":{
 		"orchestrator":{"harness":"claude","model":"opus","effort":"high"},
 		"worker":{"harness":"pig","model":"auto","effort":"medium"},
-		"scout":{"harness":"grok","model":"grok-4.7","effort":"low"},
+		"scout":{"harness":"pig","model":"auto","effort":"low"},
 		"implementer":{"harness":"claude","model":"sonnet","effort":"max"},
 		"reviewer-spec":{"harness":"claude","model":"opus","effort":"high"},
 		"code-review":{"harness":"pig","model":"auto","effort":"low"}
 	},"chains":{
 		"worker":[{"backend":"claude","model":"haiku","effort":"low"},{"backend":"pig","model":"auto","effort":"high"}],
-		"spec-review":[{"backend":"grok","model":"grok-4.7","effort":"xhigh"}],
+		"spec-review":[{"backend":"pig","model":"auto","effort":"xhigh"}],
 		"code-review":[{"backend":"claude","model":"sonnet","effort":"medium"}]
 	}}`)
 
@@ -439,7 +439,7 @@ func TestSettingsMigratesLegacyAgentRolesAndChains(t *testing.T) {
 	for role, want := range map[string]chainEntry{
 		"orchestrator":       {Backend: "claude", Model: "opus", Effort: "high"},
 		"subagent":           {Backend: "pig", Model: "auto", Effort: "medium"},
-		"scout":              {Backend: "grok", Model: "grok-4.7", Effort: "low"},
+		"scout":              {Backend: "pig", Model: "auto", Effort: "low"},
 		"reviewer-spec":      {Backend: "claude", Model: "opus", Effort: "high"},
 		"reviewer-standards": {Backend: "pig", Model: "auto", Effort: "low"},
 	} {
@@ -455,7 +455,7 @@ func TestSettingsMigratesLegacyAgentRolesAndChains(t *testing.T) {
 	if got := view.Chains["worker"]; !reflect.DeepEqual(got, wantWorker) {
 		t.Fatalf("ticket worker chain = %+v, want merged role primary and fallbacks %+v", got, wantWorker)
 	}
-	if view.Chains["reviewer-spec"][1] != (chainEntry{Backend: "grok", Model: "grok-4.7", Effort: "xhigh"}) {
+	if view.Chains["reviewer-spec"][1] != (chainEntry{Backend: "pig", Model: "auto", Effort: "xhigh"}) {
 		t.Fatalf("spec reviewer chain = %+v, want its old Chain fallback", view.Chains["reviewer-spec"])
 	}
 	if view.Chains["reviewer-standards"][1] != (chainEntry{Backend: "claude", Model: "sonnet", Effort: "medium"}) {

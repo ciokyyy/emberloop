@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const workerTestChainSettings = `{"chains":{"worker":[{"backend":"pig","model":"worker-primary"},{"backend":"grok","model":"worker-fallback"}]}}`
+const workerTestChainSettings = `{"chains":{"worker":[{"backend":"pig","model":"worker-primary"},{"backend":"pig","model":"worker-fallback"}]}}`
 
 func waitSessionCond(t *testing.T, base, id string, cond func(sessionBody) bool, what string) sessionBody {
 	t.Helper()
@@ -94,7 +94,7 @@ func TestLoadRunsPreservesChainPositionAndMigratesPendingSubmit(t *testing.T) {
 		ID: "legacy-run", Status: runStatusPaused,
 		Sessions: map[string]string{"01-first": "fallback-worker"},
 		Rows:     map[string]savedRow{"01-first": {ChainPositions: map[string]int{"worker": 1}}},
-		Chains:   map[string][]chainEntry{"worker": {{Backend: "pig", Model: "primary"}, {Backend: "grok", Model: "fallback"}}},
+		Chains:   map[string][]chainEntry{"worker": {{Backend: "pig", Model: "primary"}, {Backend: "pig", Model: "fallback"}}},
 		Reviews:  map[string]map[string]storedReview{"01-first": {reviewerSpecType: {Verdict: "pass", At: "old-tip"}}},
 	}
 	raw, err := json.Marshal(rs)
@@ -126,7 +126,7 @@ func TestRunChainFailureClampsPersistedPosition(t *testing.T) {
 		Tickets:   []staticTicket{{ID: "01-first", Num: 1, Title: "First"}},
 		Sessions:  map[string]string{"01-first": "worker"},
 		Rows:      map[string]savedRow{"01-first": {State: "running", ChainPositions: map[string]int{"worker": 5}}},
-		Chains:    map[string][]chainEntry{"worker": {{Backend: "pig", Model: "primary"}, {Backend: "grok", Model: "fallback"}}},
+		Chains:    map[string][]chainEntry{"worker": {{Backend: "pig", Model: "primary"}, {Backend: "pig", Model: "fallback"}}},
 		Branches:  map[string]string{"01-first": "implement/01-first"},
 		Worktrees: map[string]string{"01-first": tempDir(t)},
 		notify:    make(chan struct{}),
@@ -283,10 +283,10 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 			if fallback.Meta.WorkDir != oldSession.Meta.WorkDir {
 				t.Fatalf("fallback Worker worktree = %q, want same Ticket worktree %q", fallback.Meta.WorkDir, oldSession.Meta.WorkDir)
 			}
-			if fallback.Meta.Harness != "grok" || fallback.Meta.Model != "worker-fallback" {
+			if fallback.Meta.Harness != "pig" || fallback.Meta.Model != "worker-fallback" {
 				t.Fatalf("fallback entry = %s/%s, want grok/worker-fallback", fallback.Meta.Harness, fallback.Meta.Model)
 			}
-			if got := after.Chain["worker"]; got.Position != 2 || got.Total != 2 || got.Backend != "grok" || got.Model != "worker-fallback" {
+			if got := after.Chain["worker"]; got.Position != 2 || got.Total != 2 || got.Backend != "pig" || got.Model != "worker-fallback" {
 				t.Fatalf("active Chain entry = %+v", got)
 			}
 			pauseTestRun(t, srv.URL, run.ID)
@@ -316,7 +316,7 @@ func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
 	fallback := waitSessionCond(t, srv.URL, tk.WorkerSession, func(s sessionBody) bool {
 		return s.Meta.Status == "idle"
 	}, "started fallback Worker")
-	if fallback.Meta.Harness != "grok" || fallback.Meta.Model != "worker-fallback" {
+	if fallback.Meta.Harness != "pig" || fallback.Meta.Model != "worker-fallback" {
 		t.Fatalf("fallback config = %s/%s, want grok/worker-fallback", fallback.Meta.Harness, fallback.Meta.Model)
 	}
 	worktrees, err := runGit(repo, "worktree", "list", "--porcelain")
@@ -615,10 +615,10 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"pig","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
 	fake.CreateFailure = func(meta SessionMeta) error {
-		if meta.Reviewer == reviewerSpecType && meta.Harness == "pig" {
+		if meta.Reviewer == reviewerSpecType && meta.Model == "review-primary" {
 			return errors.New("quota exceeded")
 		}
 		return nil
@@ -649,7 +649,7 @@ func TestRunReviewerStartChainAdvancesOnProviderFailure(t *testing.T) {
 	}, "fallback spec Reviewer after start failure")
 	tk := ticketByID(r, "01-first")
 	reviewer := getSession(t, srv.URL, tk.ReviewerSessions[reviewerSpecType])
-	if reviewer.Meta.Harness != "grok" || reviewer.Meta.Model != "review-fallback" {
+	if reviewer.Meta.Harness != "pig" || reviewer.Meta.Model != "review-fallback" {
 		t.Fatalf("Reviewer fallback config = %s/%s", reviewer.Meta.Harness, reviewer.Meta.Model)
 	}
 	if got := tk.Chain[reviewerSpecType]; got.Position != 2 || got.Total != 2 {
@@ -662,7 +662,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
-	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+	settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"pig","model":"review-fallback"}]}}`)
 	fake := NewFakeBackend()
 	var mu sync.Mutex
 	failedID := ""
@@ -733,7 +733,7 @@ func TestRunReviewerFallbackChain(t *testing.T) {
 	if fallback.Meta.WorkDir != old.Meta.WorkDir {
 		t.Fatalf("fallback Reviewer worktree = %q, want %q", fallback.Meta.WorkDir, old.Meta.WorkDir)
 	}
-	if fallback.Meta.Harness != "grok" || fallback.Meta.Model != "review-fallback" {
+	if fallback.Meta.Harness != "pig" || fallback.Meta.Model != "review-fallback" {
 		t.Fatalf("fallback Reviewer config = %s/%s", fallback.Meta.Harness, fallback.Meta.Model)
 	}
 }
@@ -811,7 +811,7 @@ func TestRunReviewerFallbackChainFailureClasses(t *testing.T) {
 			repo, spec := initRunRepo(t, map[string]string{
 				"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 			})
-			settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"grok","model":"review-fallback"}]}}`)
+			settingsPath := useSettings(t, `{"chains":{"reviewer-spec":[{"backend":"pig","model":"review-primary"},{"backend":"pig","model":"review-fallback"}]}}`)
 			fake := NewFakeBackend()
 			var failOnce sync.Once
 			var mu sync.Mutex
@@ -1006,7 +1006,7 @@ func TestRunWorkerChainPositionSurvivesRestart(t *testing.T) {
 	srv2 := newRunTestServer(t, d2)
 	defer srv2.Close()
 	loaded := getRun(t, srv2.URL, run.ID)
-	if got := ticketByID(loaded, "01-first").Chain["worker"]; got.Position != 2 || got.Total != 2 || got.Backend != "grok" || got.Model != "worker-fallback" {
+	if got := ticketByID(loaded, "01-first").Chain["worker"]; got.Position != 2 || got.Total != 2 || got.Backend != "pig" || got.Model != "worker-fallback" {
 		t.Fatalf("reloaded Chain entry = %+v", got)
 	}
 	if got := ticketByID(loaded, "01-first").WorkerSession; got != worker {

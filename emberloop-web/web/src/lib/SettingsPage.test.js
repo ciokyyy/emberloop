@@ -19,8 +19,8 @@ function stubSettings({ settings, failGet = false, failPut = false, failModels =
       if (url.includes('/api/models')) {
         if (failModels) return { ok: false, status: 503 };
         const harness = new URL(url, 'http://x').searchParams.get('harness');
-        const models = harness === 'claude' ? ['opus'] : harness === 'grok' ? ['grok-4.7'] : ['auto'];
-        const model_efforts = { opus: ['low', 'high'], 'grok-4.7': ['medium'], auto: ['low'] };
+        const models = harness === 'claude' ? ['opus'] : harness === 'pig' ? ['auto'] : ['auto'];
+        const model_efforts = { opus: ['low', 'high'], 'auto': ['medium'], auto: ['low'] };
         return { ok: true, json: async () => ({ models, model_efforts }) };
       }
       if (url.includes('/api/settings') && opts?.method === 'PUT') {
@@ -114,7 +114,7 @@ describe('SettingsPage max_tickets', () => {
           });
         }
         const harness = new URL(url, 'http://x').searchParams.get('harness');
-        const models = harness === 'claude' ? ['opus'] : harness === 'grok' ? ['grok-4.7'] : ['auto'];
+        const models = harness === 'claude' ? ['opus'] : harness === 'pig' ? ['auto'] : ['auto'];
         return { ok: true, json: async () => ({ models }) };
       }),
     );
@@ -508,9 +508,9 @@ describe('SettingsPage agent chains', () => {
     await fireEvent.click(within(agents).getByLabelText('Remove Ticket worker Fallback 1'));
     await fireEvent.click(within(agents).getByLabelText('Add Ticket worker entry'));
     await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 harness'));
-    await fireEvent.click(await screen.findByRole('option', { name: 'Grok' }));
+    await fireEvent.click(await screen.findByRole('option', { name: 'Pig' }));
     await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 model'));
-    await fireEvent.click(await screen.findByRole('option', { name: /grok-4.7/i }));
+    await fireEvent.click(await screen.findByRole('option', { name: /auto/i }));
     await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 effort'));
     expect(await screen.findByRole('option', { name: 'Medium' })).toBeTruthy();
     expect(screen.queryByRole('option', { name: 'Low' })).toBeNull();
@@ -521,7 +521,7 @@ describe('SettingsPage agent chains', () => {
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect(seen.body.chains.worker).toEqual([
       { backend: 'claude', model: 'opus', effort: 'high' },
-      { backend: 'grok', model: 'grok-4.7', effort: 'medium' },
+      { backend: 'pig', model: 'auto', effort: 'medium' },
     ]);
     expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
   });
@@ -533,18 +533,18 @@ describe('SettingsPage agent chains', () => {
         roles: {
           orchestrator: { harness: 'claude', model: 'opus', effort: 'high' },
           worker: { harness: 'pig', model: 'auto', effort: 'low' },
-          scout: { harness: 'grok', model: 'grok-4.7', effort: 'medium' },
+          scout: { harness: 'pig', model: 'auto', effort: 'medium' },
           implementer: { harness: 'claude', model: 'opus', effort: 'high' },
           'spec-review': { harness: 'claude', model: 'opus', effort: 'low' },
-          'code-review': { harness: 'grok', model: 'grok-4.7', effort: 'medium' },
+          'code-review': { harness: 'pig', model: 'auto', effort: 'medium' },
         },
         chains: {
           orchestrator: [{ backend: 'claude', model: 'opus', effort: 'high' }],
           subagent: [{ backend: 'pig', model: 'auto', effort: 'low' }],
-          scout: [{ backend: 'grok', model: 'grok-4.7', effort: 'medium' }],
+          scout: [{ backend: 'pig', model: 'auto', effort: 'medium' }],
           worker: [{ backend: 'claude', model: 'opus', effort: 'high' }],
           'reviewer-spec': [{ backend: 'claude', model: 'opus', effort: 'low' }],
-          'reviewer-standards': [{ backend: 'grok', model: 'grok-4.7', effort: 'medium' }],
+          'reviewer-standards': [{ backend: 'pig', model: 'auto', effort: 'medium' }],
         },
       },
     });
@@ -553,10 +553,10 @@ describe('SettingsPage agent chains', () => {
     for (const [role, model] of [
       ['Orchestrator', 'opus'],
       ['Subagent', 'auto'],
-      ['Scout', 'grok-4.7'],
+      ['Scout', 'auto'],
       ['Ticket worker', 'opus'],
       ['Spec reviewer', 'opus'],
-      ['Standards reviewer', 'grok-4.7'],
+      ['Standards reviewer', 'auto'],
     ]) {
       expect(within(agents).getByLabelText(`${role} Primary model`).textContent).toMatch(new RegExp(model.replace('.', '\\.'), 'i'));
     }
@@ -582,7 +582,7 @@ describe('SettingsPage agent chains', () => {
           worker: [
             { backend: 'pig', model: 'auto', effort: 'low' },
             { backend: 'claude', model: 'opus', effort: 'high' },
-            { backend: 'grok', model: 'grok-4.7', effort: 'medium' },
+            { backend: 'pig', model: 'auto', effort: 'medium' },
           ],
         },
       },

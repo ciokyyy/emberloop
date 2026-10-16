@@ -226,6 +226,22 @@ func parseChains(all map[string]json.RawMessage) map[string][]chainEntry {
 	if raw, ok := all["chains"]; ok {
 		_ = json.Unmarshal(raw, &chains)
 	}
+	for name, entries := range chains {
+		out := make([]chainEntry, 0, len(entries))
+		removed := false
+		for _, e := range entries {
+			if e.Backend == "grok" {
+				removed = true
+				continue
+			}
+			out = append(out, e)
+		}
+		if removed && len(out) == 0 {
+			delete(chains, name)
+		} else if removed {
+			chains[name] = out
+		}
+	}
 	return chains
 }
 
@@ -314,8 +330,8 @@ func validateChainEntry(role string, i int, e chainEntry) string {
 	if role == pigTitleRole && e.Backend != "pig" {
 		return at + ": harness must be pig"
 	}
-	if e.Backend != "claude" && e.Backend != "pig" && e.Backend != "grok" {
-		return at + ": harness must be claude, pig or grok"
+	if e.Backend != "claude" && e.Backend != "pig" {
+		return at + ": harness must be claude or pig"
 	}
 	if e.Backend == "claude" && !validClaudeModel(e.Model) {
 		return at + ": unknown claude model"

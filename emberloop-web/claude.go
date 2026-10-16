@@ -252,10 +252,6 @@ type ClaudeBackend struct {
 // carries size 1,000,000.
 const claudeWindow = 1000000
 
-// grokWindow is the context window assumed for grok models when the adapter
-// sends no usage_update of its own.
-const grokWindow = 256000
-
 // UsageWindow reports the context window for model: the Backend override
 // when set, else the claude window. It feeds the Daemon's usage seed.
 func (b *ClaudeBackend) UsageWindow(model string) int {

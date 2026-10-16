@@ -3,7 +3,7 @@
 ## Purpose
 
 Emberloop Web is the local Daemon and embedded browser UI for claude, pig and
-grok Sessions and deterministic implement/review Runs. It owns the Daemon,
+fake (tests) Sessions and deterministic implement/review Runs. It owns the Daemon,
 web app and embedded el library; see the Child DOX Index below.
 
 ## Ownership
@@ -156,8 +156,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   (`diffBasePrompt`): the ticket's own diff, not stacked blocker commits. A
   tell that hits a resuming Worker retries next pass instead of failing the Run.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
-  `handoff_test.go`, `compress_retry_test.go`, `grok_handoff_test.go` and
-  `acpretry_test.go`.
+  `handoff_test.go`, `compress_retry_test.go` and `acpretry_test.go`.
 - Memory vectors and recall: `memory/embedder.go` supplies redacted OpenRouter embeddings, a bounded per-Daemon worker, model-filtered cosine ranking and FTS fallback; `memory/hybrid.go` ranks Memories and searches Episodes separately (Episodes are never injected). The idle-gated nightly job in `nightly.go` uses ledger summaries as its local-03:00 due marker, catches up settled Sessions, retries after one daily busy-skip row, and runs reembedding, Episode fold, consolidation, Memory candidate promotion, Profile proposals, 48-hour Profile reminders, and an opt-in daily “learned N things” digest. Reminder and digest delivery serialize per Daemon; sent ledger rows are written only after at least one push endpoint accepts delivery. The digest is skipped when no Memories were learned. Authenticated `GET`/`PUT /api/push/digest` reads and writes the per-User preference in `stateDir/enderbloom/push/digest-prefs.json`; missing entries default off. Profile proposals enter the User's pending queue, raise action-enabled push notifications and broadcast inline Session cards; both approval paths share the queue decision API, stamp `approved_by`, and rejected identical patches are suppressed only while the Profile context is unchanged. Maintenance scans cover all rows; fold preserves Episodes and marks each folded row, and candidate Rules remain pending and require human approval. Admin-only host-global Memory extraction, embedding, recall weights and automatic-extraction settings are served through `/api/settings`; defaults track OpenRouter key presence and saved embedding-model changes reconfigure live. `memory/AGENTS.md` maps package contracts and tests; browser tests are mapped in `web/README.md`.
 - Memory dedup: `memory/dedup_memory.go` compares active same-bank Memories before insertion, prioritizes normalized-text duplicates, applies compatible-model vector thresholds when available, bumps duplicates and transactionally supersedes same-author contradictions. Embedding remains asynchronous after storage.
 - Memory deciders and turn-end ingestion: `decider.go` uses OpenRouter systemone for a blank Jev URL in Jev mode when a key is available; ensemble keeps its memory-model default unless a custom URL is set. Turn-end ingestion (`ingest.go`, `mine_live.go`) debounces settled turns, stores Episodes, extracts off-turn and deduplicates Memories. Session recall exposes superseded rows only with `include_superseded=true`; package and tool contracts/tests are mapped in `memory/AGENTS.md` and `el/tools/AGENTS.md`.
@@ -187,8 +186,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   deliberately (end, pause settle, abandon, restart Shutdown) drops quietly:
   no error Event, no failed status, no retry (`acpretry.go`).
 - An unexpected adapter death respawns through the Session's ResumeSession
-  (pig-acp and grok through their outer one) and resends the same prompt,
-  at most 3 sends with 1s/3s backoff (`acpRespawnBackoff`); a reconnecting
+  (pig-acp through their outer one) and resends the same prompt,
   status Event marks each retry, and exhaustion fails once naming the
   attempts. `claudeState` keeps the Session record for the respawn.
 

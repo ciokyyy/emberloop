@@ -722,7 +722,7 @@ describe('RunsView preview and live run', () => {
       }
       if (path.includes('/api/models')) {
         const selected = new URL(path, 'http://x').searchParams.get('harness');
-        return { ok: true, json: async () => ({ models: selected === 'grok' ? ['grok-4.7'] : ['auto'] }) };
+        return { ok: true, json: async () => ({ models: selected === 'pig' ? ['auto'] : ['auto'] }) };
       }
       if (path.includes('/api/specs/preview')) return { ok: true, json: async () => preview };
       if (path.includes('/api/specs')) return { ok: true, json: async () => ({ specs: [specRow] }) };
@@ -732,11 +732,11 @@ describe('RunsView preview and live run', () => {
     const controls = await within(container).findByTestId('run-switch-controls');
     const picker = within(controls).getByTestId('run-switch-picker');
     await fireEvent.click(within(picker).getByLabelText('Run Backend'));
-    await fireEvent.click(await screen.findByRole('option', { name: 'Grok' }));
+    await fireEvent.click(await screen.findByRole('option', { name: 'Pig' }));
     await fireEvent.click(within(picker).getByLabelText('Run model'));
-    await fireEvent.click(await screen.findByRole('option', { name: /grok-4.7/i }));
+    await fireEvent.click(await screen.findByRole('option', { name: /auto/i }));
     await fireEvent.click(within(picker).getByRole('button', { name: 'Switch Run' }));
-    expect(calls.some(({ path, opts }) => path.endsWith('/api/runs/run-paused/switch') && JSON.parse(opts.body).backend === 'grok' && JSON.parse(opts.body).model === 'grok-4.7')).toBe(true);
+    expect(calls.some(({ path, opts }) => path.endsWith('/api/runs/run-paused/switch') && JSON.parse(opts.body).backend === 'pig' && JSON.parse(opts.body).model === 'auto')).toBe(true);
     await waitFor(() => expect(within(picker).getByRole('button', { name: 'Switch Run' })).toBeTruthy());
     await fireEvent.click(within(container).getByRole('button', { name: 'Resume' }));
     await waitFor(() => expect(calls.some(({ path }) => path.endsWith('/api/runs/run-paused/resume'))).toBe(true));
