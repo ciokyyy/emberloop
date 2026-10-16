@@ -111,6 +111,89 @@ func (b *Bank) ListMemories(ctx context.Context, kind, status string, limit int)
 	}
 	return out, rows.Err()
 }
+func (b *Bank) SearchMemories(ctx context.Context, text, kind, status string, limit int) ([]MemoryItem, error) {
+	q := Query(text)
+	if q == "" {
+		return b.ListMemories(ctx, kind, status, limit)
+	}
+	rows, err := b.rdb.QueryContext(ctx, `SELECT m.id FROM memories_fts JOIN memories m ON m.id=memories_fts.rowid WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts),m.id DESC LIMIT ?`, q, clampLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]MemoryItem, 0, len(ids))
+	for _, id := range ids {
+		m, err := b.GetMemory(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if kind != "" && m.Kind != kind || status != "" && m.Status != status || status == "" && m.Status == StatusForgotten {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func (b *Bank) ReviseMemory(ctx context.Context, oldID int64, m MemoryItem) (int64, error) {
+	m.ID, m.Status, m.SupersededBy, m.Pinned = 0, StatusActive, 0, 0
+	m.Embedding, m.EmbeddingModel = nil, ""
+	if m.Veracity == "" {
+		m.Veracity = VeracityInferred
+	}
+	if m.MentionCount == 0 {
+		m.MentionCount = 1
+	}
+	if m.Importance == 0 {
+		m.Importance = 0.7
+	}
+	if err := validMemory(m); err != nil {
+		return 0, err
+	}
+	var id int64
+	split := SplitText(m.Text + " " + m.Quote)
+	err := b.write(ctx, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		res, err := tx.ExecContext(ctx, `INSERT INTO memories (session_id,event_id,author,kind,text,quote,split_text,importance,veracity,mention_count,status,superseded_by,pinned,embedding,embedding_model,extractor_json,observed_commit,created_at,last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.SessionID, m.EventID, m.Author, m.Kind, m.Text, m.Quote, split, m.Importance, m.Veracity, m.MentionCount, StatusActive, nil, 0, nil, "", m.ExtractorJSON, m.ObservedCommit, timeText(b.now()), timeText(b.now()))
+		if err != nil {
+			return err
+		}
+		id, err = res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		updated, err := tx.ExecContext(ctx, `UPDATE memories SET status=?,superseded_by=? WHERE id=? AND status NOT IN (?,?)`, StatusSuperseded, id, oldID, StatusForgotten, StatusSuperseded)
+		if err != nil {
+			return err
+		}
+		if n, _ := updated.RowsAffected(); n == 0 {
+			return fmt.Errorf("%w: memory %d", ErrNotFound, oldID)
+		}
+		return tx.Commit()
+	})
+	if err == nil {
+		b.enqueueEmbedding("memory", m.Text, id, func(ctx context.Context, vector []byte, model string) error {
+			return b.SetMemoryEmbedding(ctx, id, vector, model)
+		})
+	}
+	return id, err
+}
+
 func (b *Bank) SetMemoryStatus(ctx context.Context, id int64, status string) error {
 	if !validMemoryStatus(status) {
 		return fmt.Errorf("%w: status %q", ErrInvalid, status)

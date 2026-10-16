@@ -9,6 +9,8 @@ afterEach(() => {
 });
 
 function stubMemory({
+  memories = [],
+  episodes = [],
   rules = [],
   observations = [],
   queue = [],
@@ -39,6 +41,10 @@ function stubMemory({
         if (failStatus) return { ok: false, status: 503, json: async () => ({ available: false }) };
         return { ok: true, json: async () => status ?? defaultStatus };
       }
+      if (url.includes('/api/memory/memories') && method === 'GET') return { ok: true, json: async () => memories };
+      if (url.includes('/api/memory/episodes')) return { ok: true, json: async () => episodes };
+      if (url.includes('/api/memory/memories/') && method === 'POST') { seen.memoryAction = { url, body }; return { ok: true, json: async () => ({ ok: true }) }; }
+      if (url.includes('/api/memory/observations/') && method === 'POST') { seen.legacyPromote = url; return { ok: true, json: async () => ({ id: 12 }) }; }
       if (url === '/api/promotions' && method === 'POST') {
         return { ok: true, json: async () => ({ id: 9, status: 'pending', target: 'agents_md', target_path: 'AGENTS.md', diff: '--- a/AGENTS.md\n+++ b/AGENTS.md\n@@\n+- use tabs for Go files\n' }) };
       }
@@ -253,5 +259,31 @@ describe('MemoryPage promotions', () => {
     expect(within(row).getByTestId('promotion-diff-9').textContent).toContain('+- use tabs for Go files');
     await fireEvent.click(within(row).getByText('Approve'));
     await waitFor(() => expect(seen.promoteDecide).toEqual({ status: 'approved' }));
+  });
+});
+describe('MemoryPage Memories tabs and actions', () => {
+  it('lists provenance and performs soft forget, edit, pin, park and pending promotion', async () => {
+	localStorage.setItem('emberloop.memory.lastVisit.default', '0');
+    const item = { id: 4, sessionId: 's1', kind: 'preference', text: 'Use concise replies', quote: 'Please use concise replies', importance: 0.85, mentionCount: 2, status: 'active', createdAt: new Date().toISOString() };
+    const seen = stubMemory({ memories: [item], observations: [obsA], episodes: [{ id: 3, sessionId: 's1', text: 'An old turn' }] });
+    const { container } = render(MemoryPage);
+    const row = await within(container).findByTestId('memory-item-4');
+    expect(within(row).getByText(/importance 0.85/)).toBeTruthy();
+    expect(within(container).getByText(/1 new/)).toBeTruthy();
+    const revisited = render(MemoryPage);
+    expect(await within(revisited.container).findByText(/0 new/)).toBeTruthy();
+    for (const label of ['Forget', 'Park', 'Pin', 'Promote to Rule']) {
+      await fireEvent.click(within(row).getByText(label));
+      await waitFor(() => expect(seen.memoryAction?.url).toContain(label === 'Promote to Rule' ? '/promote' : `/${label.toLowerCase()}`));
+    }
+    await fireEvent.click(within(row).getByText('Edit'));
+    await fireEvent.input(within(row).getByLabelText('Memory text'), { target: { value: 'Prefer short replies' } });
+    await fireEvent.click(within(row).getByText('Save edit'));
+    await waitFor(() => expect(seen.memoryAction?.url).toContain('/edit'));
+    await fireEvent.click(within(container).getByText('Legacy observations'));
+    await fireEvent.click(within(container).getByText('Promote to Memory'));
+    expect(seen.legacyPromote).toContain('/observations/11/promote');
+    await fireEvent.click(within(container).getByRole('button', { name: 'Episodes' }));
+    expect(await within(container).findByTestId('memory-episodes')).toBeTruthy();
   });
 });

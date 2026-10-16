@@ -75,6 +75,61 @@ func (f *Fake) ListMemories(_ context.Context, kind, status string, limit int) (
 	}
 	return out, nil
 }
+func (f *Fake) SearchMemories(ctx context.Context, text, kind, status string, limit int) ([]MemoryItem, error) {
+	rows, err := f.ListMemories(ctx, kind, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	q := strings.ToLower(text)
+	if q == "" {
+		return rows, nil
+	}
+	out := rows[:0]
+	for _, m := range rows {
+		if strings.Contains(strings.ToLower(m.Text+" "+m.Quote), q) {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+func (f *Fake) ReviseMemory(_ context.Context, oldID int64, m MemoryItem) (int64, error) {
+	m.ID, m.Status, m.SupersededBy, m.Pinned = 0, StatusActive, 0, 0
+	m.Embedding, m.EmbeddingModel = nil, ""
+	if m.Veracity == "" {
+		m.Veracity = VeracityInferred
+	}
+	if m.MentionCount == 0 {
+		m.MentionCount = 1
+	}
+	if m.Importance == 0 {
+		m.Importance = .7
+	}
+	if err := validMemory(m); err != nil {
+		return 0, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	old := -1
+	for i := range f.mems {
+		if f.mems[i].ID == oldID && f.mems[i].Status != StatusForgotten && f.mems[i].Status != StatusSuperseded {
+			old = i
+			break
+		}
+	}
+	if old < 0 {
+		return 0, fmt.Errorf("%w: memory %d", ErrNotFound, oldID)
+	}
+	f.nextMem++
+	m.ID = f.nextMem
+	m.CreatedAt = f.now()
+	m.LastSeenAt = f.now()
+	f.mems[old].Status = StatusSuperseded
+	f.mems[old].SupersededBy = m.ID
+	f.mems = append(f.mems, m)
+	return m.ID, nil
+}
+
 func (f *Fake) SetMemoryStatus(_ context.Context, id int64, status string) error {
 	if !validMemoryStatus(status) {
 		return fmt.Errorf("%w: status %q", ErrInvalid, status)

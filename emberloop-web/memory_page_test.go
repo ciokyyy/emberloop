@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -457,4 +459,110 @@ func userIDOf(t *testing.T, base string) string {
 		t.Fatal("no user id behind the base")
 	}
 	return me.ID
+}
+
+func TestMemoryPageMemoryActions(t *testing.T) {
+	d, _ := memoryPageDaemon(t)
+	h := d.Handler()
+	cookie := signedIn(t, h, "memory-actions")
+	user := userOf(t, h, cookie)
+	bank, err := d.profileBankFor(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	loopback := func(req *http.Request) { req.RemoteAddr = "127.0.0.1:1234"; req.Host = "127.0.0.1" }
+	id, err := bank.AddMemory(ctx, memory.MemoryItem{SessionID: "session-a", EventID: "event-a", Author: user.ID, Kind: memory.KindPreference, Text: "Use concise replies", Quote: "Please use concise replies"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+		loopback(req)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/memory/memories?q=concise", nil)
+	loopback(req)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Use concise replies") {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, action := range []string{"pin", "park"} {
+		body := map[string]any{}
+		if action == "pin" {
+			body["pinned"] = true
+		}
+		if got := post("/api/memory/memories/"+strconv.FormatInt(id, 10)+"/"+action, body); got.Code != 200 {
+			t.Fatalf("%s: %d %s", action, got.Code, got.Body.String())
+		}
+	}
+	if got := post("/api/memory/memories/"+strconv.FormatInt(id, 10)+"/edit", map[string]string{"text": "Prefer concise replies"}); got.Code != 200 {
+		t.Fatalf("edit: %d %s", got.Code, got.Body.String())
+	}
+	old, _ := bank.GetMemory(ctx, id)
+	if old.Status != memory.StatusSuperseded || old.Text != "Use concise replies" || old.SupersededBy == 0 {
+		t.Fatalf("old row changed incorrectly: %+v", old)
+	}
+	if got := post("/api/memory/memories/"+strconv.FormatInt(old.SupersededBy, 10)+"/promote", map[string]any{}); got.Code != 200 {
+		t.Fatalf("promote: %d %s", got.Code, got.Body.String())
+	}
+	items, _ := bank.Queue(ctx)
+	found := false
+	for _, item := range items {
+		if item.Kind == memory.QueueRule && item.Status == memory.QueuePending && strings.Contains(item.Payload, `"source_memory_id"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pending source Rule not queued: %+v", items)
+	}
+	if got := post("/api/memory/memories/"+strconv.FormatInt(old.SupersededBy, 10)+"/forget", map[string]any{}); got.Code != 200 {
+		t.Fatalf("forget: %d %s", got.Code, got.Body.String())
+	}
+	forgot, _ := bank.GetMemory(ctx, old.SupersededBy)
+	if forgot.Status != memory.StatusForgotten {
+		t.Fatalf("forgotten status = %q", forgot.Status)
+	}
+	listed := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/memory/memories", nil)
+	loopback(req)
+	req.AddCookie(cookie)
+	h.ServeHTTP(listed, req)
+	if got := post("/api/memory/purge", map[string]any{"memories": []int64{forgot.ID}, "confirm": "PURGE"}); got.Code != 200 {
+		t.Fatalf("purge forgotten memory: %d %s", got.Code, got.Body.String())
+	}
+	if _, err := bank.GetMemory(ctx, forgot.ID); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("purged memory remains: %v", err)
+	}
+	if strings.Contains(listed.Body.String(), `"id":`+strconv.FormatInt(forgot.ID, 10)) {
+		t.Fatalf("forgotten row visible in default list: %s", listed.Body.String())
+	}
+	obsID, err := bank.AddObservation(ctx, memory.Observation{SessionID: "session-a", EventID: "legacy-event", Author: user.ID, Quote: "I prefer compact summaries", Kind: memory.KindPreference})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := post("/api/memory/observations/"+strconv.FormatInt(obsID, 10)+"/promote", map[string]any{}); got.Code != 201 {
+		t.Fatalf("legacy promote: %d %s", got.Code, got.Body.String())
+	}
+	legacy, _ := bank.ListMemories(ctx, "", "", 100)
+	if len(legacy) == 0 {
+		t.Fatal("legacy observation was not promoted")
+	}
+	if _, err := bank.AddEpisode(ctx, memory.Episode{SessionID: "session-a", EventRange: "event-a:event-z", Author: user.ID, Text: "old user turn text"}); err != nil {
+		t.Fatal(err)
+	}
+	episodesReq := httptest.NewRequest(http.MethodGet, "/api/memory/episodes", nil)
+	loopback(episodesReq)
+	episodesReq.AddCookie(cookie)
+	episodesRec := httptest.NewRecorder()
+	h.ServeHTTP(episodesRec, episodesReq)
+	if episodesRec.Code != 200 || !strings.Contains(episodesRec.Body.String(), "old user turn text") {
+		t.Fatalf("episodes: %d %s", episodesRec.Code, episodesRec.Body.String())
+	}
 }

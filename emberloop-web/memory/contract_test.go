@@ -629,3 +629,32 @@ func TestMemoriesAndEpisodes(t *testing.T) {
 		})
 	}
 }
+
+func TestMemoryRevisionContract(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			ctx := context.Background()
+			bank := fac.open(t, newTestClock())
+			oldID, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s1", EventID: "e1", Author: "u1", Kind: KindPreference, Text: "Use concise answers", Quote: "Please use concise answers"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, err := bank.GetMemory(ctx, oldID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextID, err := bank.ReviseMemory(ctx, oldID, MemoryItem{SessionID: old.SessionID, EventID: old.EventID, Author: old.Author, Kind: old.Kind, Text: "Prefer concise answers", Quote: old.Quote, Importance: old.Importance, Veracity: old.Veracity, ExtractorJSON: old.ExtractorJSON})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, _ = bank.GetMemory(ctx, oldID)
+			next, _ := bank.GetMemory(ctx, nextID)
+			if old.Status != StatusSuperseded || old.SupersededBy != nextID || old.Text != "Use concise answers" || next.Status != StatusActive || next.Text != "Prefer concise answers" {
+				t.Fatalf("revision old=%+v next=%+v", old, next)
+			}
+			if _, err = bank.ReviseMemory(ctx, 999, MemoryItem{SessionID: "s1", EventID: "e2", Author: "u1", Kind: KindFact, Text: "orphan", Quote: "source"}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing source revise error=%v", err)
+			}
+		})
+	}
+}

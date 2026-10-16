@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,20 +11,10 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
-// Memory page: the User's own bank behind five routes. Every route resolves
-// the signed-in User and opens that User's bank only, so a User never reads
-// another User's Rules or observations; admins get no extra read access. The
-// machine token is no User and answers 401 like /api/users.
-//
-//   - GET /api/rules?q=&limit=: list (empty q, newest first) or FTS5 search
-//     the User's Rules, live versions only.
-//   - GET /api/observations?q=&limit=: the same for observations.
-//   - GET /api/memory/ledger: every ledger row, oldest first.
-//   - GET /api/memory/status: the engine status chip plus the stats the page
-//     shows (queue budget and latency, ledger size, last row, last nightly).
-//     A failing engine answers 503 with available false.
-//   - POST /api/memory/purge {"selection","confirm":"PURGE"}: the human purge.
-//     The typed confirmation is required; the result reports what it removed.
+// Memory page endpoints are scoped to the signed-in User's bank. Memories are
+// newest-first and filterable; action routes soft-forget, park, pin, propose a
+// pending Rule, or create a superseding version. Legacy observations can be
+// promoted and Episodes are read-only. Purge remains the only deletion path.
 
 // ruleView is one Rule on the Memory page. Keys are lowercase for the UI;
 // the engine structs keep their Go names. Times are always set by the bank,
@@ -125,6 +116,8 @@ type memoryStatus struct {
 // human chose on the page; Confirm must be the typed word PURGE.
 type purgeRequest struct {
 	Observations []int64  `json:"observations"`
+	Memories     []int64  `json:"memories"`
+	Episodes     []int64  `json:"episodes"`
 	Rules        []string `json:"rules"`
 	Queue        []int64  `json:"queue"`
 	Ledger       []int64  `json:"ledger"`
@@ -134,6 +127,8 @@ type purgeRequest struct {
 // purgeResultView reports what the purge removed, in UI keys.
 type purgeResultView struct {
 	Observations int `json:"observations"`
+	Memories     int `json:"memories"`
+	Episodes     int `json:"episodes"`
 	Rules        int `json:"rules"`
 	Queue        int `json:"queue"`
 	Ledger       int `json:"ledger"`
@@ -325,11 +320,13 @@ func (d *Daemon) handleMemoryPurge(w http.ResponseWriter, r *http.Request) {
 	}
 	sel := memory.Selection{
 		Observations: body.Observations,
+		Memories:     body.Memories,
+		Episodes:     body.Episodes,
 		Rules:        body.Rules,
 		Queue:        body.Queue,
 		Ledger:       body.Ledger,
 	}
-	if len(sel.Observations)+len(sel.Rules)+len(sel.Queue)+len(sel.Ledger) == 0 {
+	if len(sel.Observations)+len(sel.Memories)+len(sel.Episodes)+len(sel.Rules)+len(sel.Queue)+len(sel.Ledger) == 0 {
 		http.Error(w, "nothing selected", http.StatusBadRequest)
 		return
 	}
@@ -340,10 +337,185 @@ func (d *Daemon) handleMemoryPurge(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, purgeResultView{
 		Observations: res.Observations,
+		Memories:     res.Memories,
+		Episodes:     res.Episodes,
 		Rules:        res.Rules,
 		Queue:        res.Queue,
 		Ledger:       res.Ledger,
 		Scrubbed:     res.Scrubbed,
 		Snapshots:    res.Snapshots,
 	})
+}
+
+type memoryItemView struct {
+	ID           int64     `json:"id"`
+	SessionID    string    `json:"sessionId"`
+	EventID      string    `json:"eventId"`
+	Author       string    `json:"author"`
+	Kind         string    `json:"kind"`
+	Text         string    `json:"text"`
+	Quote        string    `json:"quote"`
+	Importance   float64   `json:"importance"`
+	Veracity     string    `json:"veracity"`
+	MentionCount int       `json:"mentionCount"`
+	Status       string    `json:"status"`
+	SupersededBy int64     `json:"supersededBy,omitempty"`
+	Pinned       bool      `json:"pinned"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+func toMemoryItemView(m memory.MemoryItem) memoryItemView {
+	return memoryItemView{m.ID, m.SessionID, m.EventID, m.Author, m.Kind, m.Text, m.Quote, m.Importance, m.Veracity, m.MentionCount, m.Status, m.SupersededBy, m.Pinned != 0, m.CreatedAt}
+}
+
+func (d *Daemon) handleMemories(w http.ResponseWriter, r *http.Request) {
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusInternalServerError)
+	if !ok {
+		return
+	}
+	rows, err := bank.SearchMemories(r.Context(), memory.Redact(memoryQuery(r)), r.URL.Query().Get("kind"), r.URL.Query().Get("status"), memoryLimit(r, 50))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	out := make([]memoryItemView, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, toMemoryItemView(m))
+	}
+	writeJSON(w, 200, out)
+}
+
+func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
+	bank, ok := d.memoryBank(w, r, http.MethodPost, http.StatusInternalServerError)
+	if !ok {
+		return
+	}
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/memory/memories/"), "/"), "/")
+	if len(parts) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid memory id", 400)
+		return
+	}
+	var body struct {
+		Pinned *bool  `json:"pinned"`
+		Text   string `json:"text"`
+	}
+	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json", 400)
+		return
+	}
+	switch parts[1] {
+	case "forget":
+		err = bank.SetMemoryStatus(r.Context(), id, memory.StatusForgotten)
+	case "park":
+		err = bank.SetMemoryStatus(r.Context(), id, memory.StatusParked)
+	case "pin":
+		if body.Pinned == nil {
+			http.Error(w, "pinned is required", 400)
+			return
+		}
+		err = bank.SetMemoryPinned(r.Context(), id, *body.Pinned)
+	case "promote":
+		m, e := bank.GetMemory(r.Context(), id)
+		if e != nil {
+			err = e
+			break
+		}
+		payload, _ := json.Marshal(map[string]any{"text": m.Text, "kind": m.Kind, "source_memory_id": m.ID, "quote": m.Quote, "sessions": []string{m.SessionID}})
+		_, err = bank.Enqueue(r.Context(), memory.QueueItem{Kind: memory.QueueRule, Payload: string(payload), Status: memory.QueuePending})
+	case "edit":
+		m, e := bank.GetMemory(r.Context(), id)
+		if e != nil {
+			err = e
+			break
+		}
+		if strings.TrimSpace(body.Text) == "" {
+			http.Error(w, "text is required", 400)
+			return
+		}
+		m.Text = strings.TrimSpace(body.Text)
+		_, err = bank.ReviseMemory(r.Context(), id, m)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		code := 500
+		if errors.Is(err, memory.ErrNotFound) {
+			code = 404
+		}
+		if errors.Is(err, memory.ErrInvalid) {
+			code = 400
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (d *Daemon) handleObservationPromote(w http.ResponseWriter, r *http.Request) {
+	bank, ok := d.memoryBank(w, r, http.MethodPost, http.StatusInternalServerError)
+	if !ok {
+		return
+	}
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/memory/observations/"), "/"), "/")
+	if len(parts) != 2 || parts[1] != "promote" {
+		http.NotFound(w, r)
+		return
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid observation id", 400)
+		return
+	}
+	o, err := bank.ObservationByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	newID, err := bank.AddMemory(r.Context(), memory.MemoryItem{SessionID: o.SessionID, EventID: o.EventID, Author: o.Author, Kind: memoryMemoryKind(o.Kind), Text: o.Quote, Quote: o.Quote, Importance: .7, Veracity: memory.VeracityStated})
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	writeJSON(w, 201, map[string]int64{"id": newID})
+}
+
+func memoryMemoryKind(kind string) string {
+	switch kind {
+	case memory.KindPreference, memory.KindInstruction, memory.KindDecision, memory.KindFact:
+		return kind
+	default:
+		return memory.KindFact
+	}
+}
+
+func (d *Daemon) handleEpisodes(w http.ResponseWriter, r *http.Request) {
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusInternalServerError)
+	if !ok {
+		return
+	}
+	rows, err := bank.ListEpisodes(r.Context(), memoryLimit(r, 50))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	out := make([]episodeView, 0, len(rows))
+	for _, ep := range rows {
+		out = append(out, episodeView{ID: ep.ID, SessionID: ep.SessionID, EventRange: ep.EventRange, Text: ep.Text, Importance: ep.Importance, CreatedAt: ep.CreatedAt})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type episodeView struct {
+	ID         int64     `json:"id"`
+	SessionID  string    `json:"sessionId"`
+	EventRange string    `json:"eventRange"`
+	Text       string    `json:"text"`
+	Importance float64   `json:"importance"`
+	CreatedAt  time.Time `json:"createdAt"`
 }

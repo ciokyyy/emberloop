@@ -50,8 +50,9 @@ child it belongs to, and every entry must resolve to a file.
   Jev draft Project picks; per-concern Settings and model/effort chains; and
   admin-only host-global Memory extraction, embedding and recall settings that
   reconfigure live; hybrid Memory recall/injection with Episode-only tool
-  search; panic-safe Run-test cleanup, slot watchdog and per-test deadlines.
-  Indexes the el library, memory, web source and Backend spikes
+  search; panic-safe Run-test cleanup, slot watchdog and per-test deadlines;
+  the Memories page action APIs. Indexes the el library, memory, web source
+  and Backend spikes
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
