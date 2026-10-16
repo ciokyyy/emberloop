@@ -102,6 +102,10 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `runs_test.go` covers both HTTP shapes and a bounded 40-Run, 8-Ticket list;
   `runs_session_index_test.go` covers indexed HTTP results and restart recovery.
   `runs_git_cache_test.go` covers cache hits, expiry and Run-event invalidation.
+  `PUT /api/runs/<id>/tickets/<ticket>/type` stores a per-Run `code` or
+  `design` override (empty clears it) in the Run file; it never edits the
+  Ticket file and is refused once that Ticket has a Worker. Run detail reports
+  file, override and effective types; the driver uses the effective type.
 - Pig model catalog: `catalogsync.go` (`StartPigCatalogSync`, boot +45s then
   every 4h, `EL_PIG_CATALOG_SYNC=0` disables) copies pi.dev's per-provider
   catalog into the host pig `models-store.json` through pig's locked

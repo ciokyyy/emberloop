@@ -170,6 +170,7 @@ type runState struct {
 	Error           string            `json:"error,omitempty"`
 	FinalMergeFiles []string          `json:"finalMergeFiles,omitempty"`
 	Owner           string            `json:"owner,omitempty"`
+	TypeOverrides   map[string]string `json:"typeOverrides,omitempty"`
 	Tickets         []staticTicket    `json:"tickets"`
 	Sessions        map[string]string `json:"sessions"`
 	// TicketSessions is the persisted Ticket-to-Session index, including
@@ -673,6 +674,14 @@ func (d *Daemon) handleRunSub(w http.ResponseWriter, r *http.Request) {
 		d.rebaseRun(w, r, id)
 	case sub == "abandon" && r.Method == "POST":
 		d.abandonRun(w, r, id)
+	case strings.HasPrefix(sub, "tickets/") && r.Method == http.MethodPut:
+		rest := strings.TrimPrefix(sub, "tickets/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[1] != "type" {
+			http.NotFound(w, r)
+			return
+		}
+		d.setTicketType(w, r, id, parts[0])
 	case strings.HasPrefix(sub, "tickets/") && r.Method == "POST":
 		rest := strings.TrimPrefix(sub, "tickets/")
 		parts := strings.SplitN(rest, "/", 2)
@@ -947,7 +956,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		max = defaultMaxTickets
 	}
 	return el.DriverWorld{
-		Files:      files,
+		Files:      applyRunTypeOverrides(rs, files),
 		MaxTickets: max,
 		// The Daemon spawns the Reviewers after a done submit, so a stalled
 		// Worker is told to finish, never to spawn its own reviewers.
@@ -3075,6 +3084,7 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("run %s was abandoned", runID)
 	}
+	tk.Type = effectiveRunTicketType(rs, staticTicket{ID: tk.ID, Type: tk.Type})
 	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID, "worker")...)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
@@ -4254,14 +4264,11 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		}
 		tickets = append(tickets, map[string]any{
 			"id": t.ID, "num": t.Num, "title": title, "blockers": blockers,
-			"type": func() string {
-				v := t.Type
-				if v == "" {
-					return "code"
-				}
-				return v
-			}(),
-			"state": state, "stateSince": stateSince, "workerSession": rs.Sessions[t.ID],
+			"type":          effectiveRunTicketType(rs, t),
+			"fileType":      normalizedTicketType(t.Type),
+			"typeOverride":  rs.TypeOverrides[t.ID],
+			"effectiveType": effectiveRunTicketType(rs, t),
+			"state":         state, "stateSince": stateSince, "workerSession": rs.Sessions[t.ID],
 			"reviewerSessions": reviewers, "verdicts": verdicts, "gate": gate, "tip": tip,
 			"branch": rs.Branches[t.ID], "body": body, "boxes": boxes,
 			"effort": rs.Effort, "lastRefusal": lastRefusal, "needsYou": needsYou,
@@ -5265,6 +5272,99 @@ func runTicketStatic(rs *runState, ticketID string) (staticTicket, bool) {
 		}
 	}
 	return staticTicket{}, false
+}
+
+func normalizedTicketType(value string) string {
+	if value == "design" {
+		return "design"
+	}
+	return "code"
+}
+
+func effectiveRunTicketType(rs *runState, ticket staticTicket) string {
+	if override := rs.TypeOverrides[ticket.ID]; override != "" {
+		return override
+	}
+	return normalizedTicketType(ticket.Type)
+}
+
+// applyRunTypeOverrides gives the driver an in-memory view of overridden
+// Ticket headers. The Run's source Ticket files remain untouched.
+func applyRunTypeOverrides(rs *runState, files map[string]string) map[string]string {
+	if len(rs.TypeOverrides) == 0 {
+		return files
+	}
+	out := make(map[string]string, len(files))
+	for path, body := range files {
+		out[path] = body
+	}
+	for _, ticket := range rs.Tickets {
+		typ := rs.TypeOverrides[ticket.ID]
+		if typ == "" {
+			continue
+		}
+		body, ok := out[ticket.Path]
+		if !ok {
+			continue
+		}
+		lines := strings.Split(body, "\n")
+		found := false
+		for i, line := range lines {
+			if strings.HasPrefix(line, "**Type:**") {
+				lines[i] = "**Type:** " + typ
+				found = true
+				break
+			}
+		}
+		if !found {
+			body = "**Type:** " + typ + "\n\n" + body
+		} else {
+			body = strings.Join(lines, "\n")
+		}
+		out[ticket.Path] = body
+	}
+	return out
+}
+
+func (d *Daemon) setTicketType(w http.ResponseWriter, r *http.Request, runID, ticketID string) {
+	var req struct {
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Type != "" && req.Type != "code" && req.Type != "design") {
+		http.Error(w, "type must be code, design or empty", http.StatusBadRequest)
+		return
+	}
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := runTicketStatic(rs, ticketID); !ok {
+		d.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if rs.Status != runStatusRunning && rs.Status != runStatusPaused && rs.Status != runStatusNeedsYou {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "run is finished"})
+		return
+	}
+	if rs.Sessions[ticketID] != "" {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "Ticket already has a Worker"})
+		return
+	}
+	if req.Type == "" {
+		delete(rs.TypeOverrides, ticketID)
+	} else {
+		if rs.TypeOverrides == nil {
+			rs.TypeOverrides = map[string]string{}
+		}
+		rs.TypeOverrides[ticketID] = req.Type
+	}
+	d.writeTicketRun(w, rs)
 }
 
 // ticketActionLocked validates a per-ticket action: the Run exists, the
