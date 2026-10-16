@@ -48,7 +48,7 @@ child it belongs to, and every entry must resolve to a file.
   Claude, ChatGPT Plus, OpenCode-Go, OpenRouter and both Antigravity pools;
   provider status/connect flows; Project Dashboard and stable scope routes;
   Jev draft Project picks; per-concern Settings and model/effort chains; and
-  panic-safe Run-test cleanup, slot watchdog and per-test deadlines. Indexes the
+  panic-safe Run-test cleanup, slot watchdog and per-test deadlines; and hybrid Memory recall/injection with Episode-only tool search. Indexes the
   el library, memory, web source and Backend spikes
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges

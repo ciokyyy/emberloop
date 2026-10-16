@@ -224,4 +224,4 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary
-- `emberloop-web/memory/AGENTS.md` — memory engine, tests, redacted embedding client, bounded worker, model-isolated cosine search and FTS timeout fallback
+- `emberloop-web/memory/AGENTS.md` — memory engine, tests, embeddings, hybrid Memory and Episode recall scoring, and injection contracts
