@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"testing"
@@ -48,15 +50,44 @@ func TestDesignSessionMCPGetsUniquePortsOnlyForDesignRoles(t *testing.T) {
 		}
 	}
 }
+func TestRestoredDesignPortsAreLoadedBeforeAllocation(t *testing.T) {
+	stateDir := tempDir(t)
+	const restoredPort = 45679
+	sessionDir := filepath.Join(stateDir, "enderbloom", "sessions", "restored-design")
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := json.Marshal(SessionMeta{ID: "restored-design", Status: "idle", DesignSession: true, PreviewPort: restoredPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "meta.json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := NewDaemon(stateDir, nil)
+	if !d.persistedPreviewPortInUse("new-design", restoredPort) {
+		t.Fatal("restored design port was not reserved before new Session allocation")
+	}
+	if port, ok := d.previewPortFor("restored-design"); !ok || port != restoredPort {
+		t.Fatalf("restored port = %d, %v", port, ok)
+	}
+}
 
 func TestFailedDesignSessionStartReleasesPort(t *testing.T) {
-	d := NewDaemon(tempDir(t), nil)
-	meta := SessionMeta{ID: "failed-design", Harness: "missing", WorkDir: tempDir(t), Status: "idle", DesignSession: true}
+	stateDir := tempDir(t)
+	d := NewDaemon(stateDir, nil)
+	meta := SessionMeta{ID: "failed-design", Harness: "claude", WorkDir: tempDir(t), Status: "idle", DesignSession: true}
 	if _, err := d.startSession(meta); err == nil {
-		t.Fatal("expected missing backend to fail Session start")
+		t.Fatal("expected unconfigured Claude Session start to fail")
 	}
 	if _, ok := d.previewPortFor(meta.ID); ok {
 		t.Fatal("failed Session retained its preview port")
+	}
+	if _, ok := d.sessions[meta.ID]; ok {
+		t.Fatal("failed Session metadata remained live")
+	}
+	if _, err := os.Stat(d.sessionDir(meta.ID)); !os.IsNotExist(err) {
+		t.Fatalf("failed Session metadata directory remains: %v", err)
 	}
 }
 

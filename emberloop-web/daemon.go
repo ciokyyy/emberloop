@@ -350,6 +350,8 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 	}
 	d.machineToken = tok
 	d.summarizer = pigSummarizer{}
+	// Load persisted design PORTs before returning the Daemon to start requests,
+	// so concurrent allocations account for Sessions restored from disk.
 	d.load()
 	d.loadGroups()
 	d.loadRuns()
@@ -613,6 +615,7 @@ func (d *Daemon) removeSession(id string) {
 	delete(d.sessions, id)
 	d.removeRunSessionIndexLocked(id)
 	d.mu.Unlock()
+	d.releasePreviewPort(id)
 	if d.claude != nil {
 		d.claude.DropSession(id)
 	}

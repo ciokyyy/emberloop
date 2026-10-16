@@ -95,35 +95,77 @@ func stopPreviewProcesses(sessionID, workDir string) {
 	if err != nil {
 		return
 	}
-	var pids []int
+	type process struct {
+		pid     int
+		started string
+	}
+	var pids []process
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
-		if err != nil || pid == os.Getpid() {
+		if err != nil || pid == os.Getpid() || !previewProcessMatches(pid, sessionID, root) {
 			continue
 		}
-		env, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "environ"))
-		if err != nil || !hasEnvValue(env, "EL_PREVIEW_SESSION", sessionID) {
-			continue
-		}
-		cwd, err := os.Readlink(filepath.Join("/proc", entry.Name(), "cwd"))
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(root, cwd)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			pids = append(pids, pid)
+		started, _, ok := processStartTime(pid)
+		if ok {
+			pids = append(pids, process{pid, started})
 		}
 	}
-	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+	for _, p := range pids {
+		_ = syscall.Kill(p.pid, syscall.SIGTERM)
 	}
-	if len(pids) == 0 {
-		return
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		alive := false
+		for _, p := range pids {
+			started, state, ok := processStartTime(p.pid)
+			if ok && started == p.started && state != "Z" {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(250 * time.Millisecond)
-	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+	for _, p := range pids {
+		started, state, ok := processStartTime(p.pid)
+		if ok && started == p.started && state != "Z" && previewProcessMatches(p.pid, sessionID, root) {
+			_ = syscall.Kill(p.pid, syscall.SIGKILL)
+		}
 	}
+}
+
+func previewProcessMatches(pid int, sessionID, root string) bool {
+	base := filepath.Join("/proc", strconv.Itoa(pid))
+	env, err := os.ReadFile(filepath.Join(base, "environ"))
+	if err != nil || !hasEnvValue(env, "EL_PREVIEW_SESSION", sessionID) {
+		return false
+	}
+	cwd, err := os.Readlink(filepath.Join(base, "cwd"))
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, cwd)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// processStartTime reads Linux proc stat's starttime field, which distinguishes
+// a surviving PID from one recycled while waiting for SIGTERM to take effect.
+func processStartTime(pid int) (started, state string, ok bool) {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", "", false
+	}
+	end := strings.LastIndexByte(string(raw), ')')
+	if end < 0 {
+		return "", "", false
+	}
+	fields := strings.Fields(string(raw[end+1:]))
+	if len(fields) <= 19 {
+		return "", "", false
+	}
+	return fields[19], fields[0], true
 }
 
 func hasEnvValue(env []byte, key, value string) bool {
