@@ -2,8 +2,11 @@ package web
 
 import (
 	"encoding/json"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"example.com/emberloop-web/el/tools"
@@ -19,14 +22,13 @@ func (d *Daemon) browserSessionEnv(id string) [][2]string {
 	if _, err := os.Stat(bin); err != nil {
 		return nil
 	}
-	allowed := d.browserAllowedDomains()
 	shotDir := filepath.Join(d.stateDir, "agent-browser", "screenshots", id)
 	_ = os.MkdirAll(shotDir, 0o700)
 	return [][2]string{
 		{"AGENT_BROWSER_SESSION", id},
 		{"AGENT_BROWSER_NAMESPACE", browserNamespace(d.stateDir)},
 		{"AGENT_BROWSER_SCREENSHOT_DIR", shotDir},
-		{"AGENT_BROWSER_ALLOWED_DOMAINS", strings.Join(allowed, ",")},
+		{"AGENT_BROWSER_ALLOWED_DOMAINS", strings.Join(d.browserAllowedDomains(), ",")},
 		{"AGENT_BROWSER_MAX_OUTPUT", "10000"},
 		{"AGENT_BROWSER_CONTENT_BOUNDARIES", "true"},
 		{"AGENT_BROWSER_IDLE_TIMEOUT_MS", browserIdleTimeoutMS},
@@ -62,4 +64,47 @@ func (d *Daemon) browserAllowedDomains() []string {
 		return []string{"localhost", "127.0.0.1"}
 	}
 	return domains
+}
+
+func (d *Daemon) closeBrowser(id string, all bool) {
+	if !browserEnabled() {
+		return
+	}
+	bin := filepath.Join(tools.BinDir(), "agent-browser")
+	if _, err := os.Stat(bin); err != nil {
+		return
+	}
+	args := []string{"close"}
+	if all {
+		args = append(args, "--all")
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(), "AGENT_BROWSER_NAMESPACE="+browserNamespace(d.stateDir))
+	if !all {
+		cmd.Env = append(cmd.Env, "AGENT_BROWSER_SESSION="+id)
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("el-web: close browser session %s: %v: %s", id, err, output)
+	}
+}
+
+var browserDomainPattern = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?))*$`)
+
+func validateBrowserDomains(raw json.RawMessage) string {
+	var domains []string
+	if err := json.Unmarshal(raw, &domains); err != nil || len(domains) == 0 {
+		return "browser.allowed_domains must be a non-empty list of domains"
+	}
+	seen := map[string]bool{}
+	for _, domain := range domains {
+		domain = strings.TrimSpace(domain)
+		if domain == "" || !browserDomainPattern.MatchString(domain) {
+			return "browser.allowed_domains must contain valid domain names"
+		}
+		if seen[strings.ToLower(domain)] {
+			return "browser.allowed_domains must not contain duplicates"
+		}
+		seen[strings.ToLower(domain)] = true
+	}
+	return ""
 }

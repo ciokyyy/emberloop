@@ -234,10 +234,11 @@ func decodeStringSetting(all map[string]json.RawMessage, key string, value *stri
 }
 
 func (d *Daemon) settingsViewFor(r *http.Request) map[string]any {
+	view := settingsView()
 	if who, ok := d.requesterOf(r); ok && who.user != nil && who.user.Admin {
-		return settingsView(d.memorySettingsView())
+		view["browser.allowed_domains"] = d.browserAllowedDomains()
 	}
-	return settingsView()
+	return view
 }
 
 func validateMemoryRecallWeights(raw json.RawMessage) string {
@@ -270,24 +271,25 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case "PUT":
 		defer d.live.publish("settings")
 		var body struct {
-			OAuthRedirectBaseURL *string                 `json:"oauth_redirect_base_url"`
-			Roles                map[string]roleSetting  `json:"roles"`
-			RunSkills            json.RawMessage         `json:"run_skills"`
-			Chains               map[string][]chainEntry `json:"chains"`
-			MaxTickets           *int                    `json:"max_tickets"`
-			MaxWorkers           *int                    `json:"max_workers"`
-			SessionTitles        *bool                   `json:"session_titles"`
-			SignupEnabled        *bool                   `json:"signup_enabled"`
-			DiskGoCacheCapGB     *int64                  `json:"disk_go_cache_cap_gb"`
-			Compress             *compressPatch          `json:"compress"`
-			Decider              *deciderPatch           `json:"decider"`
-			Jev                  *jevPatch               `json:"jev"`
-			MemoryExtractModel   *string                 `json:"memory_extract_model"`
-			MemoryExtractEffort  *string                 `json:"memory_extract_effort"`
-			MemoryEmbeddingModel *string                 `json:"memory_embedding_model"`
-			MemoryRecallWeights  json.RawMessage         `json:"memory_recall_weights"`
-			MemoryAutoExtract    *bool                   `json:"memory_auto_extract"`
-			Find                 *findPatch              `json:"find"`
+			OAuthRedirectBaseURL  *string                 `json:"oauth_redirect_base_url"`
+			Roles                 map[string]roleSetting  `json:"roles"`
+			RunSkills             json.RawMessage         `json:"run_skills"`
+			Chains                map[string][]chainEntry `json:"chains"`
+			MaxTickets            *int                    `json:"max_tickets"`
+			MaxWorkers            *int                    `json:"max_workers"`
+			SessionTitles         *bool                   `json:"session_titles"`
+			SignupEnabled         *bool                   `json:"signup_enabled"`
+			DiskGoCacheCapGB      *int64                  `json:"disk_go_cache_cap_gb"`
+			Compress              *compressPatch          `json:"compress"`
+			Decider               *deciderPatch           `json:"decider"`
+			Jev                   *jevPatch               `json:"jev"`
+			MemoryExtractModel    *string                 `json:"memory_extract_model"`
+			MemoryExtractEffort   *string                 `json:"memory_extract_effort"`
+			MemoryEmbeddingModel  *string                 `json:"memory_embedding_model"`
+			MemoryRecallWeights   json.RawMessage         `json:"memory_recall_weights"`
+			MemoryAutoExtract     *bool                   `json:"memory_auto_extract"`
+			Find                  *findPatch              `json:"find"`
+			BrowserAllowedDomains json.RawMessage         `json:"browser.allowed_domains"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -328,6 +330,16 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.MemoryRecallWeights != nil {
 			if msg := validateMemoryRecallWeights(body.MemoryRecallWeights); msg != "" {
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
+		}
+		if body.BrowserAllowedDomains != nil {
+			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
+				http.Error(w, "only the admin can change browser.allowed_domains", http.StatusForbidden)
+				return
+			}
+			if msg := validateBrowserDomains(body.BrowserAllowedDomains); msg != "" {
 				http.Error(w, msg, http.StatusBadRequest)
 				return
 			}
@@ -460,6 +472,9 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.MemoryExtractEffort != nil {
 			raw, _ := json.Marshal(*body.MemoryExtractEffort)
 			all["memory_extract_effort"] = raw
+		}
+		if body.BrowserAllowedDomains != nil {
+			all["browser.allowed_domains"] = body.BrowserAllowedDomains
 		}
 		if body.MemoryEmbeddingModel != nil {
 			raw, _ := json.Marshal(strings.TrimSpace(*body.MemoryEmbeddingModel))

@@ -47,6 +47,7 @@ func (d *Daemon) Shutdown() {
 			l.be.CloseSession(l.id)
 		}
 	}
+	d.closeBrowser("", true)
 }
 
 // RestartCh fires once after RequestRestart; the binary waits on it, drains

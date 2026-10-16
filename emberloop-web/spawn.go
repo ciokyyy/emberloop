@@ -478,6 +478,7 @@ func (d *Daemon) endSession(id string) (SessionMeta, int) {
 	if wasLive && be != nil {
 		be.CloseSession(id)
 	}
+	d.closeBrowser(id, false)
 	// Attached images die with the Session (see above).
 	_ = os.RemoveAll(d.sessionImagesDir(id))
 	d.appendEvent(id, "status", "", "ended")
