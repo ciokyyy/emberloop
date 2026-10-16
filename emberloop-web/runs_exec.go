@@ -323,6 +323,9 @@ type runState struct {
 	// Worker sits idle while the Daemon checks its tip, so the idle alert
 	// reads a running check as activity. Guarded by d.mu.
 	tipChecking map[string]int `json:"-"`
+	// startingWorkers is the in-flight Worker-start guard; always accessed
+	// under d.mu so type overrides serialize with the start decision.
+	startingWorkers map[string]bool `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -3084,6 +3087,21 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 		d.mu.Unlock()
 		return fmt.Errorf("run %s was abandoned", runID)
 	}
+	if rs.startingWorkers[tk.ID] {
+		d.mu.Unlock()
+		return fmt.Errorf("Worker start for ticket %s is already in progress", tk.ID)
+	}
+	if rs.startingWorkers == nil {
+		rs.startingWorkers = make(map[string]bool)
+	}
+	rs.startingWorkers[tk.ID] = true
+	defer func() {
+		d.mu.Lock()
+		if current := d.runs[runID]; current == rs {
+			delete(rs.startingWorkers, tk.ID)
+		}
+		d.mu.Unlock()
+	}()
 	tk.Type = effectiveRunTicketType(rs, staticTicket{ID: tk.ID, Type: tk.Type})
 	chain := append([]chainEntry(nil), workerRunChain(rs, tk.ID, "worker")...)
 	if len(chain) == 0 {
@@ -5334,11 +5352,21 @@ func (d *Daemon) setTicketType(w http.ResponseWriter, r *http.Request, runID, ti
 		http.Error(w, "type must be code, design or empty", http.StatusBadRequest)
 		return
 	}
+	rq, authenticated := d.requesterOf(r)
+	if !authenticated || rq.user == nil {
+		http.Error(w, "only the Run owner or an admin can change Ticket type", http.StatusForbidden)
+		return
+	}
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
 		d.mu.Unlock()
 		http.NotFound(w, r)
+		return
+	}
+	if !rq.user.Admin && rq.user.ID != rs.Owner {
+		d.mu.Unlock()
+		http.Error(w, "only the Run owner or an admin can change Ticket type", http.StatusForbidden)
 		return
 	}
 	if _, ok := runTicketStatic(rs, ticketID); !ok {
@@ -5354,6 +5382,11 @@ func (d *Daemon) setTicketType(w http.ResponseWriter, r *http.Request, runID, ti
 	if rs.Sessions[ticketID] != "" {
 		d.mu.Unlock()
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "Ticket already has a Worker"})
+		return
+	}
+	if rs.startingWorkers[ticketID] {
+		d.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "Ticket Worker start is in progress"})
 		return
 	}
 	if req.Type == "" {

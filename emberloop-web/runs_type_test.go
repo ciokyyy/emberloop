@@ -1,19 +1,33 @@
 package web
 
 import (
-	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	el "example.com/emberloop-web/el"
 )
 
 func TestRunTicketTypeOverrideRoundTripAndClear(t *testing.T) {
-	file := "# Ticket\n\n**Type:** code\n"
+	repo, specPath := initRunRepo(t, map[string]string{
+		"01-ticket.md": "# 01: Ticket\n\n**Blocked by:** None\n\n**Type:** code\n",
+	})
+	ticketPath := filepath.Join(repo, ".scratch", "demo", "issues", "01-ticket.md")
+	file := "# 01: Ticket\n\n**Blocked by:** None\n\n**Type:** code\n"
+	specRun, err := el.ResolveSpec(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseFiles, err := el.ReadDriverFiles(specRun)
+	if err != nil {
+		t.Fatal(err)
+	}
 	run := &runState{
-		ID: "type-run", Status: runStatusPaused,
-		Tickets:       []staticTicket{{ID: "01-ticket", Type: "code", Path: "ticket.md"}},
+		ID: "type-run", Status: runStatusPaused, Repo: repo, Spec: specPath,
+		Tickets:       []staticTicket{{ID: "01-ticket", Type: "code", Path: ticketPath}},
 		TypeOverrides: map[string]string{"01-ticket": "design"},
 	}
 	stateDir := tempDir(t)
@@ -33,57 +47,98 @@ func TestRunTicketTypeOverrideRoundTripAndClear(t *testing.T) {
 	if restored == nil {
 		t.Fatal("Run was not restored")
 	}
-	if got := effectiveRunTicketType(restored, restored.Tickets[0]); got != "design" {
-		t.Fatalf("effective type after restart = %q, want design", got)
+	files := applyRunTypeOverrides(restored, baseFiles)
+	result, err := el.RunDriver(specRun, el.DriverWorld{Files: files})
+	if err != nil {
+		t.Fatal(err)
 	}
-	files := applyRunTypeOverrides(restored, map[string]string{"ticket.md": file})
-	if got := files["ticket.md"]; got != "# Ticket\n\n**Type:** design\n" {
+	if len(result.Order) != 1 || result.Order[0].Type != "design" {
+		t.Fatalf("driver order after restart = %+v, want design Ticket", result.Order)
+	}
+	if got := files[ticketPath]; got != "# 01: Ticket\n\n**Blocked by:** None\n\n**Type:** design\n" {
 		t.Fatalf("driver file = %q, want overridden type", got)
 	}
-	if file != "# Ticket\n\n**Type:** code\n" {
+	if file != "# 01: Ticket\n\n**Blocked by:** None\n\n**Type:** code\n" {
 		t.Fatalf("source ticket file was mutated: %q", file)
 	}
 
 	delete(restored.TypeOverrides, "01-ticket")
-	if got := effectiveRunTicketType(restored, restored.Tickets[0]); got != "code" {
-		t.Fatalf("effective type after clear = %q, want code", got)
+	files = applyRunTypeOverrides(restored, baseFiles)
+	result, err = el.RunDriver(specRun, el.DriverWorld{Files: files})
+	if err != nil {
+		t.Fatal(err)
 	}
-	files = applyRunTypeOverrides(restored, map[string]string{"ticket.md": file})
-	if files["ticket.md"] != file {
-		t.Fatalf("cleared driver file = %q, want original", files["ticket.md"])
+	if len(result.Order) != 1 || result.Order[0].Type != "code" {
+		t.Fatalf("driver order after clear = %+v, want code Ticket", result.Order)
+	}
+	if files[ticketPath] != file {
+		t.Fatalf("cleared driver file = %q, want original", files[ticketPath])
 	}
 }
 
-func TestSetTicketTypeRouteValidationAndWorkerGuard(t *testing.T) {
+func TestSetTicketTypeRouteAuthorizationAndWorkerGuard(t *testing.T) {
 	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	h := d.Handler()
+	adminCookie := signedIn(t, h, "admin")
+	ownerCookie := signedIn(t, h, "owner")
+	otherCookie := signedIn(t, h, "other")
+	ownerID := userOf(t, h, ownerCookie).ID
+	asAdmin := httptest.NewServer(withCookie(h, adminCookie))
+	defer asAdmin.Close()
+	asOwner := httptest.NewServer(withCookie(h, ownerCookie))
+	defer asOwner.Close()
+	asOther := httptest.NewServer(withCookie(h, otherCookie))
+	defer asOther.Close()
+
 	run := &runState{
-		ID: "type-run", Status: runStatusPaused, Owner: "owner",
+		ID: "type-run", Status: runStatusPaused, Owner: ownerID,
 		Tickets:  []staticTicket{{ID: "01-ticket", Type: "code"}},
 		Sessions: map[string]string{}, notify: make(chan struct{}),
 	}
+	d.mu.Lock()
 	d.runs[run.ID] = run
-
-	call := func(body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("PUT", "/api/runs/type-run/tickets/01-ticket/type", bytes.NewBufferString(body))
-		w := httptest.NewRecorder()
-		d.handleRunSub(w, req)
-		return w
-	}
-	if got := call(`{"type":"invalid"}`).Code; got != 400 {
+	d.mu.Unlock()
+	urlPath := "/api/runs/type-run/tickets/01-ticket/type"
+	if got := statusOf(t, http.MethodPut, asOwner.URL+urlPath, `{"type":"invalid"}`); got != http.StatusBadRequest {
 		t.Fatalf("invalid type status = %d, want 400", got)
 	}
-	if got := call(`{"type":"design"}`).Code; got != 200 {
-		t.Fatalf("set type status = %d, want 200", got)
+	if got := statusOf(t, http.MethodPut, asOwner.URL+urlPath, `{"type":"design"}`); got != http.StatusOK {
+		t.Fatalf("owner update status = %d, want 200", got)
 	}
 	if run.TypeOverrides["01-ticket"] != "design" {
-		t.Fatalf("override = %q, want design", run.TypeOverrides["01-ticket"])
+		t.Fatalf("owner override = %q, want design", run.TypeOverrides["01-ticket"])
 	}
+	if got := statusOf(t, http.MethodPut, asOther.URL+urlPath, `{"type":"code"}`); got != http.StatusForbidden {
+		t.Fatalf("non-owner update status = %d, want 403", got)
+	}
+	if run.TypeOverrides["01-ticket"] != "design" {
+		t.Fatalf("unauthorized request changed override to %q", run.TypeOverrides["01-ticket"])
+	}
+	if got := statusOf(t, http.MethodPut, asAdmin.URL+urlPath, `{"type":"code"}`); got != http.StatusOK {
+		t.Fatalf("admin update status = %d, want 200", got)
+	}
+
+	// runStartWorker sets this under d.mu before capturing the effective type.
+	d.mu.Lock()
+	run.startingWorkers = map[string]bool{"01-ticket": true}
+	d.mu.Unlock()
+	if got := statusOf(t, http.MethodPut, asOwner.URL+urlPath, `{"type":"design"}`); got != http.StatusConflict {
+		t.Fatalf("in-progress start status = %d, want 409", got)
+	}
+	if run.TypeOverrides["01-ticket"] != "code" {
+		t.Fatalf("in-progress start changed override to %q", run.TypeOverrides["01-ticket"])
+	}
+	d.mu.Lock()
+	delete(run.startingWorkers, "01-ticket")
 	run.Sessions["01-ticket"] = "worker"
-	if got := call(`{"type":"code"}`).Code; got != 409 {
+	d.mu.Unlock()
+	if got := statusOf(t, http.MethodPut, asOwner.URL+urlPath, `{"type":"design"}`); got != http.StatusConflict {
 		t.Fatalf("started Ticket status = %d, want 409", got)
 	}
+	d.mu.Lock()
 	delete(run.Sessions, "01-ticket")
-	if got := call(`{"type":""}`).Code; got != 200 {
+	d.mu.Unlock()
+	if got := statusOf(t, http.MethodPut, asOwner.URL+urlPath, `{"type":""}`); got != http.StatusOK {
 		t.Fatalf("clear type status = %d, want 200", got)
 	}
 	if _, ok := run.TypeOverrides["01-ticket"]; ok {
