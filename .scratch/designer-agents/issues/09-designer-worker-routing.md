@@ -4,11 +4,11 @@
 
 **Blocked by:** 02-ticket-type-parse, 08-design-chain-roles, 06-run-type-override-api
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A `design` Ticket's Worker uses the `worker-design` primary; a `code` Ticket still uses `worker`
-- [ ] Empty `worker-design` falls back to `worker` and records a Ticket-level warning in the Run snapshot
-- [ ] The Designer prompt carries the Designer section; the `code` prompt is byte-identical to today
-- [ ] Quota failure on the Designer advances the `worker-design` Chain with a Handoff; position persists across restart
-- [ ] The Run override (06) changes routing before Start
-- [ ] Run driver tests with the fake Backend cover routing, fallback warning, prompt section and scope warning; `.emberloop/check` passes
+- [x] A `design` Ticket's Worker uses the `worker-design` primary; a `code` Ticket still uses `worker`
+- [x] Empty `worker-design` falls back to `worker` and records a Ticket-level warning in the Run snapshot
+- [x] The Designer prompt carries the Designer section; the `code` prompt is byte-identical to today
+- [x] Quota failure on the Designer advances the `worker-design` Chain with a Handoff; position persists across restart
+- [x] The Run override (06) changes routing before Start
+- [x] Run driver tests with the fake Backend cover routing, fallback warning, prompt section and scope warning; `.emberloop/check` passes
