@@ -74,6 +74,7 @@ type Daemon struct {
 	// subscriber and cancels it when the last subscriber leaves.
 	quotaLiveMu          sync.Mutex
 	quotaLiveSubscribers int
+	profileReminderMu    sync.Mutex
 	quotaLiveCancel      context.CancelFunc
 	quotaLiveWG          sync.WaitGroup
 	// hostClaudeDir and hostPigDir are the host's own harness dirs. Owner

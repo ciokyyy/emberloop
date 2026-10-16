@@ -709,6 +709,8 @@ func (d *Daemon) remindOldProfilePatches(ctx context.Context, bank memory.Memory
 }
 
 func (d *Daemon) remindOldProfilePatchesAt(ctx context.Context, bank memory.Memory, owner string, now time.Time) {
+	d.profileReminderMu.Lock()
+	defer d.profileReminderMu.Unlock()
 	items, err := bank.Queue(ctx)
 	if err != nil {
 		return
@@ -731,10 +733,13 @@ func (d *Daemon) remindOldProfilePatchesAt(ctx context.Context, bank memory.Memo
 		if reminded[key] {
 			continue
 		}
-		d.pushProfilePatch(owner, "", item.ID, "Reminder: this Profile patch is still awaiting your review.")
-		if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "profile_patch_reminder", Status: memory.LedgerSuccess, Detail: key}); err == nil {
-			reminded[key] = true
+		// Persist the claim before attempting delivery. The lock serializes
+		// concurrent nightly invocations; a failed ledger write sends nothing.
+		if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "profile_patch_reminder", Status: memory.LedgerSuccess, Detail: key}); err != nil {
+			continue
 		}
+		reminded[key] = true
+		d.pushProfilePatch(owner, "", item.ID, "Reminder: this Profile patch is still awaiting your review.")
 	}
 }
 

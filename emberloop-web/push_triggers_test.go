@@ -195,7 +195,15 @@ func TestProfilePatchReminderSendsOnceAfter48Hours(t *testing.T) {
 		t.Fatal(err)
 	}
 	cap, decrypt := capturePush(t, d)
-	d.remindOldProfilePatchesAt(context.Background(), bank, "reminder-user", reminderAt)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d.remindOldProfilePatchesAt(context.Background(), bank, "reminder-user", reminderAt)
+		}()
+	}
+	wg.Wait()
 	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
 	if m.ProfilePatchID != 1 || !strings.Contains(m.Body, "Reminder") {
 		t.Fatalf("reminder push = %+v", m)
