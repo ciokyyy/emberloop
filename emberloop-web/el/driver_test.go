@@ -1946,7 +1946,7 @@ func TestDriverTellFailureStillFailsTheRun(t *testing.T) {
 func TestDriverTicketTypeParsing(t *testing.T) {
 	spec, world, _ := driverWorld(t, map[string]string{
 		"01-first.md":  "# 01: Test ticket\n\n**Blocked by:** None\n",
-		"02-second.md": "# 02: Test ticket\n\n**Blocked by:** None\n\n**Type:** design\n",
+		"02-second.md": "# 02: Test ticket\n\n**Blocked by:** None\n\n**Type:** Design\n",
 	})
 	tickets, err := readDriverTickets(spec, world.Files)
 	if err != nil {
