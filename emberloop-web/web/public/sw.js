@@ -1,8 +1,6 @@
-// App shell cache: network-first for navigations and same-origin GETs so the
-// Daemon's version badge and every Session stream stay correct. /api/* (SSE
-// streams, version, prompts) is never cached: those requests always hit the
-// network. Push handling below is unchanged.
-const SHELL = 'el-shell-v1';
+// Cache only content-addressed build assets. HTML is user-specific (SSR) and
+// must always reach the Daemon; /api/* and cross-origin requests are untouched.
+const SHELL = 'el-assets-v1';
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
 });
@@ -23,6 +21,8 @@ self.addEventListener('fetch', (event) => {
   // version badge lies. Cross-origin (fonts, etc.) is left alone.
   if (url.pathname.startsWith('/api/')) return;
   if (url.origin !== self.location.origin) return;
+  if (req.mode === 'navigate') return;
+  if (!/^\/assets\/.+[-.][a-f0-9]{8,}\./i.test(url.pathname)) return;
   event.respondWith(
     (async () => {
       try {
@@ -35,10 +35,6 @@ self.addEventListener('fetch', (event) => {
       } catch {
         const cached = await caches.match(req, { ignoreSearch: false });
         if (cached) return cached;
-        if (req.mode === 'navigate') {
-          const shell = await caches.match('/index.html');
-          if (shell) return shell;
-        }
         throw new Error('offline');
       }
     })(),

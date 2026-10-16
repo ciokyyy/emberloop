@@ -180,9 +180,10 @@ Real paths recognized by the Daemon route table mirror `src/lib/router.js` and s
 The UI installs as a phone app (PWA): `index.html` links
 `manifest.webmanifest` (Emberloop, standalone, `#212121`) and the iOS meta
 (`apple-touch-icon`, `mobile-web-app-capable`, `viewport-fit=cover`), and
-`main.js` registers `sw.js` on boot. The worker caches the shell
-network-first and never caches `/api/*`, so Session streams and the Daemon
-version badge stay correct; the Daemon serves the manifest as
+`main.js` registers `sw.js` on boot. The worker leaves navigation documents
+uncached so user-specific SSR HTML always reaches the Daemon, caches only
+hashed build assets, and never intercepts `/api/*`; Session streams and the
+Daemon version badge therefore stay live. The Daemon serves the manifest as
 `application/manifest+json` and `sw.js` with `Service-Worker-Allowed: /` and
 `no-store`. The settings Install app card sits next to Notifications and
 shows the `beforeinstallprompt` button, or the Share-then-Add-to-Home-Screen

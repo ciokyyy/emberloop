@@ -118,6 +118,27 @@ func TestIndexAdvertisesPWA(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+	if cc := resp.Header.Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("HTML Cache-Control = %q, want private, no-store", cc)
+	}
+	if vary := resp.Header.Get("Vary"); vary != "Cookie" {
+		t.Fatalf("HTML Vary = %q, want Cookie", vary)
+	}
+	// A route using the plain shell fallback carries the same private policy.
+	fallback, err := http.Get(srv.URL + "/p/none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fallback.Body.Close()
+	if fallback.StatusCode != http.StatusOK {
+		t.Fatalf("fallback status = %d", fallback.StatusCode)
+	}
+	if cc := fallback.Header.Get("Cache-Control"); cc != "private, no-store" {
+		t.Fatalf("fallback Cache-Control = %q, want private, no-store", cc)
+	}
+	if vary := fallback.Header.Get("Vary"); vary != "Cookie" {
+		t.Fatalf("fallback Vary = %q, want Cookie", vary)
+	}
 	b := make([]byte, 1<<20)
 	n, _ := resp.Body.Read(b)
 	body := string(b[:n])

@@ -35,3 +35,50 @@ describe('Profile patch push actions', () => {
     expect(client.focus).toHaveBeenCalledOnce();
   });
 });
+
+const source = serviceWorker;
+
+function worker() {
+  const handlers = {};
+  const put = vi.fn(() => Promise.resolve());
+  const fetch = vi.fn(async () => ({ ok: true, clone: () => ({}) }));
+  const self = {
+    location: { origin: 'https://emberloop.test' },
+    addEventListener: (name, callback) => { handlers[name] = callback; },
+  };
+  const caches = { open: vi.fn(async () => ({ put })) };
+  runInNewContext(source, { self, caches, fetch, URL, Promise });
+  return { handlers, put, fetch };
+}
+
+describe('service worker fetch caching', () => {
+  it('leaves navigations and API requests to the network without caching', () => {
+    const { handlers, put, fetch } = worker();
+    for (const [url, mode] of [
+      ['https://emberloop.test/p/private-project', 'navigate'],
+      ['https://emberloop.test/api/sessions', 'cors'],
+    ]) {
+      const event = { request: { method: 'GET', url, mode } };
+      handlers.fetch(event);
+      expect(event.respondWith).toBeUndefined();
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('caches hashed assets but ignores unhashed files', async () => {
+    const { handlers, put, fetch } = worker();
+    const assetEvent = {
+      request: { method: 'GET', url: 'https://emberloop.test/assets/app-a1b2c3d4.js', mode: 'cors' },
+      respondWith: (promise) => { assetEvent.response = promise; },
+    };
+    handlers.fetch(assetEvent);
+    await assetEvent.response;
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(put).toHaveBeenCalledOnce();
+
+    const plainEvent = { request: { method: 'GET', url: 'https://emberloop.test/manifest.webmanifest', mode: 'cors' } };
+    handlers.fetch(plainEvent);
+    expect(plainEvent.respondWith).toBeUndefined();
+  });
+});
