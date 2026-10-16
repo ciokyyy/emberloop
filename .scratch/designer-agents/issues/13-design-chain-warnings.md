@@ -4,9 +4,9 @@
 
 **Blocked by:** 07-type-badge-and-flip-ui, 09-designer-worker-routing, 10-design-reviewer-seat
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The Run snapshot's per-Ticket warnings from tickets 09 and 10 render in the preview and detail views, phone and desktop
-- [ ] `/api/models` exposes image-input capability where the catalog knows it; Settings flags design Chain entries whose model lacks it
-- [ ] Saving such a Chain still succeeds; the warning copy says it is advisory
-- [ ] Tests cover the Run warning rendering, the capability flag in the API and the Settings flag; `npm test`, `npm run build` and `.emberloop/check` pass
+- [x] The Run snapshot's per-Ticket warnings from tickets 09 and 10 render in the preview and detail views, phone and desktop
+- [x] `/api/models` exposes image-input capability where the catalog knows it; Settings flags design Chain entries whose model lacks it
+- [x] Saving such a Chain still succeeds; the warning copy says it is advisory
+- [x] Tests cover the Run warning rendering, the capability flag in the API and the Settings flag; `npm test`, `npm run build` and `.emberloop/check` pass
