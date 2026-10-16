@@ -154,32 +154,39 @@ print('PASS - code Worker, worker-design Designer, injected skill and phone/desk
 PY
 
 echo "checking no leftover browser or preview process" >&2
-python3 - "$PROBE_BASE" "$PROBE_JAR" "$PROBE_DIR/state" "$snapshot" <<'PY' || fail "leftover browser or preview process check"
+python3 - "$PROBE_BASE" "$PROBE_JAR" "$PROBE_DIR/state" "$snapshot" "$browser_bin" <<'PY' || fail "leftover browser or preview process check"
 import hashlib,json,os,re,subprocess,sys
-base,jar,state,raw=sys.argv[1:]
-run=json.loads(raw)['run']; sessions=set()
+base,jar,state,raw,browser=sys.argv[1:]
+run=json.loads(raw)['run']; sessions=set(); ports=set()
 for ticket in run.get('tickets',[]):
     if ticket.get('workerSession'): sessions.add(ticket['workerSession'])
     sessions.update(ticket.get('reviewerSessions',{}).values())
-ports=set()
 for sid in sessions:
     data=json.loads(subprocess.check_output(['curl','-fsS','-b',jar,base+'/api/sessions/'+sid]))
-    port=data.get('session',{}).get('previewPort')
-    if port: ports.add(int(port))
+    session=data.get('session',{})
+    port=session.get('previewPort')
+    if session.get('designSession'):
+        assert port, {'session':sid,'metadata':session}
+        ports.add(int(port))
+assert ports, 'no Designer/design Reviewer PORT was assigned'
 namespace=hashlib.sha256(os.path.normpath(state).encode()).digest()[:8].hex()
-left=[]
+env=dict(os.environ,AGENT_BROWSER_NAMESPACE=namespace,AGENT_BROWSER_SESSION='designer-run-probe-closeout')
+listing=subprocess.check_output([browser,'--json','session','list'],env=env,text=True,stderr=subprocess.STDOUT)
+active=[sid for sid in sessions if sid in listing]
+assert not active, {'activeBrowserSessions':active,'sessionList':listing}
+# Preview processes inherit the assigned PORT. Match those exact ports and
+# process identity, then independently confirm none still owns a LISTEN socket.
+left=[]; listeners=set()
 for entry in os.listdir('/proc'):
     if not entry.isdigit(): continue
     try:
-        with open('/proc/'+entry+'/environ','rb') as f: env=f.read().split(bytes([0]))
+        with open('/proc/'+entry+'/environ','rb') as f: envbytes=f.read().split(bytes([0]))
         with open('/proc/'+entry+'/cmdline','rb') as f: cmd=f.read().replace(bytes([0]),b' ').decode(errors='replace').lower()
     except (OSError,ProcessLookupError): continue
-    values={item.split(b'=',1)[0]:item.split(b'=',1)[1] for item in env if b'=' in item}
-    ns=values.get(b'AGENT_BROWSER_NAMESPACE',b'').decode(errors='ignore')
-    preview_session=values.get(b'EL_PREVIEW_SESSION',b'').decode(errors='ignore')
-    if ns==namespace and re.search(r'agent-browser|chrom(e|ium)',cmd): left.append((entry,'browser',cmd[:180]))
-    if preview_session in sessions and re.search(r'preview-server|go run',cmd): left.append((entry,'preview',cmd[:180]))
-listeners=set()
+    values={item.split(b'=',1)[0]:item.split(b'=',1)[1] for item in envbytes if b'=' in item}
+    port=values.get(b'PORT',b'').decode(errors='ignore')
+    if port.isdigit() and int(port) in ports and re.search(r'preview-server|go run',cmd):
+        left.append((entry,port,cmd[:180]))
 for table in ('/proc/net/tcp','/proc/net/tcp6'):
     try:
         with open(table) as f:
@@ -188,7 +195,7 @@ for table in ('/proc/net/tcp','/proc/net/tcp6'):
                 if len(fields)>3 and fields[3]=='0A': listeners.add(int(fields[1].rsplit(':',1)[1],16))
     except OSError: pass
 bound=ports & listeners
-assert not left and not bound, {'processes':left,'previewPortsStillListening':sorted(bound)}
-print('PASS - isolated browser namespace and assigned preview ports have no surviving processes/listeners')
+assert not left and not bound, {'previewProcesses':left,'previewPortsStillListening':sorted(bound)}
+print('PASS - isolated agent-browser registry is empty and assigned preview processes/ports are gone')
 PY
 printf 'PASS - Run %s merged after worker/reviewer chain and left no browser or preview process\n' "$runid"

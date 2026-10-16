@@ -67,7 +67,8 @@ Anything a script verifies in another package is owned there.
   `EL_LIVE_CLAUDE_MODEL`, `EL_LIVE_PIG_ACP_MODEL` and `EL_LIVE_PIG_SDK_MODEL`;
   `designer-run-probe.sh` needs `EL_LIVE_DESIGNER_RUN=1`, a Claude or Pig
   harness, `EL_LIVE_DESIGNER_MODEL` and optionally
-  `EL_LIVE_DESIGNER_CODE_MODEL`; it uses real Sessions and never joins the check.
+  `EL_LIVE_DESIGNER_CODE_MODEL`; it needs Linux `/proc`, uses real Sessions,
+  and never joins the check.
 
 ## Work Guidance
 
