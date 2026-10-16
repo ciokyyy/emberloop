@@ -4,11 +4,11 @@
 
 **Blocked by:** 01-remove-grok
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `GET/PUT /api/settings` serve and validate both roles with the existing entry rules; an old settings file without them loads with both empty
-- [ ] Settings > Agents lists both roles in the Run group with copy that says what they are for, with the existing save bar and effort lists
-- [ ] `el settings role worker-design|reviewer-design harness|model|effort <value>` works
-- [ ] `runRoles` includes both so ChainPositions, Switch, Pause and Resume handle them; a Run test with a scripted quota failure on each advances its Chain
-- [ ] Chain tests cover migration, aliases, the three-entry cap and the legacy-role mirror untouched for existing roles
-- [ ] `SettingsPage.test.js`, `chains_test.go`, `settings_test.go`, `runs_chain_test.go` cover the new roles; `emberloop-web/AGENTS.md` role list is updated; `.emberloop/check`, `npm test` and `npm run build` pass
+- [x] `GET/PUT /api/settings` serve and validate both roles with the existing entry rules; an old settings file without them loads with both empty
+- [x] Settings > Agents lists both roles in the Run group with copy that says what they are for, with the existing save bar and effort lists
+- [x] `el settings role worker-design|reviewer-design harness|model|effort <value>` works
+- [x] `runRoles` includes both so ChainPositions, Switch, Pause and Resume handle them; a Run test with a scripted quota failure on each advances its Chain
+- [x] Chain tests cover migration, aliases, the three-entry cap and the legacy-role mirror untouched for existing roles
+- [x] `SettingsPage.test.js`, `chains_test.go`, `settings_test.go`, `runs_chain_test.go` cover the new roles; `emberloop-web/AGENTS.md` role list is updated; `.emberloop/check`, `npm test` and `npm run build` pass
