@@ -4,9 +4,9 @@
 
 **Blocked by:** 03-browser-cli-install, 04-browser-session-env-and-cleanup
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `scripts/browser-probe.sh` (or the repo's probe convention) runs against a real Daemon, gated by an `EL_LIVE_*` variable, with a cheap vision-capable model per Backend
-- [ ] The probe passes or reports a per-Backend verdict: env inherited, snapshot works, screenshot `read` reaches the model
-- [ ] If a Backend drops the image, the probe says so and a follow-up note names the fallback (snapshot-only Designer on that Backend); no silent pass
-- [ ] `scripts/AGENTS.md` lists the probe and its env gate
+- [x] `scripts/browser-probe.sh` (or the repo's probe convention) runs against a real Daemon, gated by an `EL_LIVE_*` variable, with a cheap vision-capable model per Backend
+- [x] The probe passes or reports a per-Backend verdict: env inherited, snapshot works, screenshot `read` reaches the model
+- [x] If a Backend drops the image, the probe says so and a follow-up note names the fallback (snapshot-only Designer on that Backend); no silent pass
+- [x] `scripts/AGENTS.md` lists the probe and its env gate
