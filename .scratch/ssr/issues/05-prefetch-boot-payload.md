@@ -4,11 +4,11 @@
 
 **Blocked by:** 04
 
-**Status:** open
+**Status:** done
 
-- [ ] Signed-in refresh paints content with no first-load fetch for the prefetched routes
-- [ ] Signed-out request renders the `AuthScreen` shell
-- [ ] Render error, panic or over 200ms falls back with a logged error, never 500
-- [ ] The client bundle works with no Boot payload
-- [ ] Tests cover prefetch per route, auth, and the fallback
-- [ ] `GLOSSARY.md` terms match the code
+- [x] Signed-in refresh paints content with no first-load fetch for the prefetched routes
+- [x] Signed-out request renders the `AuthScreen` shell
+- [x] Render error, panic or over 200ms falls back with a logged error, never 500
+- [x] The client bundle works with no Boot payload
+- [x] Tests cover prefetch per route, auth, and the fallback
+- [x] `GLOSSARY.md` terms match the code
