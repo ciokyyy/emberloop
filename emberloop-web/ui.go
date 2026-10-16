@@ -133,8 +133,7 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 			boot["/api/auth/state"] = json.RawMessage(stateResp.Body.Bytes())
 		}
 	}
-	raw, _ := json.Marshal(boot)
-	raw = []byte(strings.NewReplacer("<", "\\u003c", ">", "\\u003e", "&", "\\u0026", "\u2028", "\\u2028", "\u2029", "\\u2029").Replace(string(raw)))
+	raw := marshalBootPayload(boot)
 	index, err := fs.ReadFile(sub, "index.html")
 	if err != nil {
 		http.Error(w, "ui unavailable", http.StatusInternalServerError)
@@ -161,6 +160,23 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(index)
 }
 
+// marshalBootPayload round-trips RawMessages through ordinary Go values so
+// encoding/json applies script-safe escaping to strings nested in API output.
+func marshalBootPayload(boot map[string]json.RawMessage) []byte {
+	raw, err := json.Marshal(boot)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return []byte(`{}`)
+	}
+	safe, err := json.Marshal(value)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return safe
+}
 func apiHandler(d *Daemon, p string) http.Handler {
 	switch {
 	case p == "/api/auth/me":

@@ -13,6 +13,10 @@
   let user = $state(null);
   let status = $state({ empty: false, signup_enabled: false });
 
+
+  function removeServerSnapshot() {
+    if (typeof document !== 'undefined') requestAnimationFrame(() => document.getElementById('el-ssr-dashboard')?.remove());
+  }
   async function showSignIn() {
     try {
       status = await getAuthState();
@@ -27,7 +31,8 @@
     phase = 'checking';
     try {
       user = await getMe();
-      phase = 'in';
+	  phase = 'in';
+	  removeServerSnapshot();
     } catch (err) {
       if (err.status === 401) await showSignIn();
       else phase = 'offline';
@@ -36,7 +41,8 @@
 
   function signedIn(who) {
     user = who;
-    phase = 'in';
+	  phase = 'in';
+	  removeServerSnapshot();
   }
 
   async function signOut() {
