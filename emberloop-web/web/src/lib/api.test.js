@@ -182,3 +182,22 @@ describe('Project suggestion client', () => {
     }]);
   });
 });
+
+describe('route Boot payload', () => {
+  afterEach(() => { delete window.__EL_BOOT__; history.replaceState({}, '', '/'); });
+
+  it('uses the exact scoped Runs key and prefetched Session users without fetching', async () => {
+    const scopedKey = '/api/runs?projectId=project-1';
+    window.__EL_BOOT__ = {
+      [scopedKey]: { runs: [{ id: 'r1', projectId: 'project-1' }] },
+      '/api/users': [{ id: 'u1', username: 'alice' }],
+    };
+    history.replaceState({}, '', '/p/project-1/runs');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.listRuns()).resolves.toEqual(window.__EL_BOOT__[scopedKey]);
+    await expect(api.listUsers()).resolves.toEqual(window.__EL_BOOT__['/api/users']);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

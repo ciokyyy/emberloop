@@ -297,11 +297,11 @@ export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encode
 
 export const listRuns = () => {
 	const parts = typeof window === 'undefined' ? [] : window.location.pathname.split('/');
-	const scoped = parts[1] === 'p' && parts[3] === 'runs' ? `/api/runs?projectId=${encodeURIComponent(parts[2])}` : null;
+	const scoped = parts[1] === 'p' && parts[3] === 'runs' ? `/api/runs?${new URLSearchParams({ projectId: parts[2] }).toString()}` : null;
 	const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
 	return getJSON(scoped && boot && Object.hasOwn(boot, scoped) ? scoped : '/api/runs');
 };
-export const listUsers = () => fetch(url('/api/users')).then(json);
+export const listUsers = () => getJSON('/api/users');
 
 export const startRun = (body) =>
   fetch(url('/api/runs'), {
