@@ -1942,3 +1942,43 @@ func TestDriverTellFailureStillFailsTheRun(t *testing.T) {
 		t.Fatalf("RunDriver err = %v, want could not tell", err)
 	}
 }
+
+func TestDriverTicketTypeParsing(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md":  "# 01: Test ticket\n\n**Blocked by:** None\n",
+		"02-second.md": "# 02: Test ticket\n\n**Blocked by:** None\n\n**Type:** design\n",
+	})
+	tickets, err := readDriverTickets(spec, world.Files)
+	if err != nil {
+		t.Fatalf("readDriverTickets: %v", err)
+	}
+	if tickets["01-first"].Type != "code" {
+		t.Errorf("01 type = %q, want code", tickets["01-first"].Type)
+	}
+	if tickets["02-second"].Type != "design" {
+		t.Errorf("02 type = %q, want design", tickets["02-second"].Type)
+	}
+	if tickets["02-second"].Type != "design" {
+		t.Errorf("case normalization not applied")
+	}
+}
+
+func TestDriverCheckFailsOnBadType(t *testing.T) {
+	spec, world, started := driverWorld(t, map[string]string{
+		"01-first.md": "# 01: Test ticket\n\n**Blocked by:** None\n\n**Type:** bogus\n",
+	})
+	_, err := RunDriver(spec, world)
+	if err == nil {
+		t.Fatal("RunDriver must fail on a bad Type")
+	}
+	path := filepath.Join(spec.Tickets, "01-first.md")
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error must name the file, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "code") || !strings.Contains(err.Error(), "design") {
+		t.Errorf("error must name allowed values, got: %v", err)
+	}
+	if len(*started) != 0 {
+		t.Errorf("a bad Type started workers %v; none may start", *started)
+	}
+}
