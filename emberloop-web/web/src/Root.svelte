@@ -1,7 +1,7 @@
 <!-- Root gate. Signed out, the sign-in screen is the whole app. Signed in, App
      mounts with the User; sign out unmounts App, which closes its live stream. -->
 <script>
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import App from './App.svelte';
   import AuthScreen from './lib/AuthScreen.svelte';
   import Button from './lib/ui/button.svelte';
@@ -13,10 +13,6 @@
   let user = $state(null);
   let status = $state({ empty: false, signup_enabled: false });
 
-
-  function removeServerSnapshot() {
-    if (typeof document !== 'undefined') document.getElementById('el-ssr-dashboard')?.remove();
-  }
   async function showSignIn() {
     try {
       status = await getAuthState();
@@ -32,19 +28,15 @@
     try {
       user = await getMe();
       phase = 'in';
-      await tick();
-      removeServerSnapshot();
     } catch (err) {
       if (err.status === 401) await showSignIn();
       else phase = 'offline';
     }
   }
 
-  async function signedIn(who) {
+  function signedIn(who) {
     user = who;
     phase = 'in';
-    await tick();
-    removeServerSnapshot();
   }
 
   async function signOut() {

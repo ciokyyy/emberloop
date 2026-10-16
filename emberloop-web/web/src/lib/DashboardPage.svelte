@@ -53,6 +53,7 @@
   }
 
   onMount(() => {
+	if (typeof document !== 'undefined') document.getElementById('el-ssr-dashboard')?.remove();
     mounted = true;
     void refresh();
     const stopSessions = watch('sessions', onLiveChange);

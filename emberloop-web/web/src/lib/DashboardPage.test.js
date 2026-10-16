@@ -68,4 +68,16 @@ describe('All projects Dashboard', () => {
     render(DashboardPage);
     expect(await screen.findByText(/Nothing needs attention/)).toBeTruthy();
   });
+  it('hands off the server Dashboard snapshot after the client Dashboard mounts', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('fetch', vi.fn(async () => response({ groups: {} })));
+    const snapshot = document.createElement('div');
+    snapshot.id = 'el-ssr-dashboard';
+    document.body.append(snapshot);
+
+    render(DashboardPage);
+
+    await waitFor(() => expect(document.getElementById('el-ssr-dashboard')).toBeNull());
+    expect(await screen.findByText(/Nothing needs attention/)).toBeTruthy();
+  });
 });
