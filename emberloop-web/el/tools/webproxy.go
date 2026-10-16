@@ -116,8 +116,9 @@ func WebProxyTool(name string) Tool {
 			"quote":  map[string]any{"type": "string"},
 		}, "text", "reason"), run: webProxyRemember}
 	case "recall":
-		return webProxy{name: "recall", desc: "Search the User's memory bank and the Project notes for the query. Returns matching Rules and notes, best match first, with a verify flag when the anchored code changed since the note was observed. Every role may search; the bank is always the caller's User bank, so no other User's notes ever show.", schema: webProxySchema(map[string]any{
-			"query": map[string]any{"type": "string"},
+		return webProxy{name: "recall", desc: "Search the User's memory bank and Project notes. Returns matching Rules, notes, observations and Memories. Superseded Memories are excluded unless include_superseded is true. Every role searches only the caller's User bank.", schema: webProxySchema(map[string]any{
+			"query":              map[string]any{"type": "string"},
+			"include_superseded": map[string]any{"type": "boolean", "description": "Include superseded Memories in results; off by default."},
 		}, "query"), readOnly: true, run: webProxyRecall}
 	}
 	return nil
@@ -590,7 +591,8 @@ func webProxyRemember(ctx context.Context, daemonURL, sessionID string, args jso
 // scopes the bank to the Session owner, so no other User's notes ever show.
 func webProxyRecall(ctx context.Context, daemonURL, sessionID string, args json.RawMessage) (string, error) {
 	var req struct {
-		Query string `json:"query"`
+		Query             string `json:"query"`
+		IncludeSuperseded bool   `json:"include_superseded"`
 	}
 	if err := json.Unmarshal(args, &req); err != nil {
 		return "", fmt.Errorf("recall: bad arguments")
@@ -598,7 +600,11 @@ func webProxyRecall(ctx context.Context, daemonURL, sessionID string, args json.
 	if strings.TrimSpace(req.Query) == "" {
 		return "", fmt.Errorf("recall: query is required")
 	}
-	resp, err := webProxyGet(ctx, daemonURL+"/api/sessions/"+sessionID+"/recall?query="+url.QueryEscape(req.Query))
+	queryURL := daemonURL + "/api/sessions/" + sessionID + "/recall?query=" + url.QueryEscape(req.Query)
+	if req.IncludeSuperseded {
+		queryURL += "&include_superseded=true"
+	}
+	resp, err := webProxyGet(ctx, queryURL)
 	if err != nil {
 		return "", fmt.Errorf("recall: %s", err.Error())
 	}

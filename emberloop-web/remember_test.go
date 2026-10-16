@@ -73,6 +73,37 @@ func getRecall(t *testing.T, base, id, query string) (int, string, []map[string]
 	return resp.StatusCode, out.Text, out.Results
 }
 
+func TestRecallOnlyIncludesSupersededMemoriesOnRequest(t *testing.T) {
+	d, base, sid, owner := rememberDaemon(t)
+	bank := ownerBank(t, d, owner)
+	ctx := context.Background()
+	old, err := bank.DedupAndStoreMemory(ctx, memory.MemoryItem{SessionID: sid, EventID: "old-memory", Author: owner, Kind: memory.KindInstruction, Text: "always return wrapped errors", Quote: "always return wrapped errors"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := bank.DedupAndStoreMemory(ctx, memory.MemoryItem{SessionID: sid, EventID: "new-memory", Author: owner, Kind: memory.KindInstruction, Text: "never return wrapped errors", Quote: "never return wrapped errors"})
+	if err != nil || !newer.Superseded {
+		t.Fatalf("supersession = %+v, %v", newer, err)
+	}
+	if code, text, _ := getRecall(t, base, sid, "wrapped errors"); code != http.StatusOK || strings.Contains(text, "always return wrapped errors") {
+		t.Fatalf("default recall = %d %q, superseded Memory must be hidden", code, text)
+	}
+	resp, err := http.Get(base + "/api/sessions/" + sid + "/recall?query=" + url.QueryEscape("wrapped errors") + "&include_superseded=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(out.Text, "always return wrapped errors") || old.ID == newer.ID {
+		t.Fatalf("include-superseded recall = %d %q, old=%d new=%d", resp.StatusCode, out.Text, old.ID, newer.ID)
+	}
+}
+
 func ownerBank(t *testing.T, d *Daemon, owner string) memory.Memory {
 	t.Helper()
 	bank, err := d.profileBankFor(owner)

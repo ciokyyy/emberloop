@@ -270,7 +270,7 @@ func (d *Daemon) handleSessionRemember(w http.ResponseWriter, r *http.Request, i
 // returns another User's bank: the bank is always the owner's. A notes or
 // verification failure still returns the bank hits; only a bank failure
 // errors.
-func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (string, []recallHit, error) {
+func (d *Daemon) recallText(ctx context.Context, sessionID, query string, includeSuperseded bool) (string, []recallHit, error) {
 	d.mu.Lock()
 	s, ok := d.sessions[sessionID]
 	meta := SessionMeta{}
@@ -310,9 +310,9 @@ func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (strin
 			liveNotes, _ = memory.RecallNotes(ctx, meta.WorkDir, idx, query, memory.MaxRecall)
 		}
 	}
-	hits := memory.FuseRecall(liveRules, liveNotes)
-	if len(hits) > 10 {
-		hits = hits[:10]
+	fused := memory.FuseRecall(liveRules, liveNotes)
+	if len(fused) > 10 {
+		fused = fused[:10]
 	}
 	obs, obsErr := bank.SearchObservations(ctx, memory.Redact(query), 10)
 	memories, memErr := bank.RecallMemories(ctx, memory.Redact(query), d.memoryRecallWeights(), 10)
@@ -323,8 +323,22 @@ func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (strin
 	if episodeErr != nil {
 		episodes = nil
 	}
-	text, results := fuseRecallToolResults(hits, obs, obsErr, memories, episodes)
-	return text, results, nil
+	text, results := fuseRecallToolResults(fused, obs, obsErr, memories, episodes)
+	if includeSuperseded {
+		items, itemErr := bank.RecallMemoryItems(ctx, memory.Redact(query), memory.MaxRecall, true)
+		if itemErr != nil {
+			return "", nil, itemErr
+		}
+		for _, item := range items {
+			if item.Status != memory.StatusSuperseded {
+				continue
+			}
+			text += "\nmemory: " + item.Text + " (superseded)"
+			results = append(results, recallHit{Source: "memory", ID: strconv.FormatInt(item.ID, 10), Text: item.Text})
+		}
+	}
+
+	return strings.TrimSpace(text), results, nil
 }
 
 // fuseRecallToolResults combines each independently ranked source by RRF.
@@ -420,7 +434,7 @@ func formatRecallResults(hits []memory.MergedHit, obs []memory.Observation, obsE
 // RecallForSession is the pig in-process search path: the Session owner's
 // bank plus Project notes, without the HTTP round-trip.
 func (d *Daemon) RecallForSession(sessionID, query string) (string, error) {
-	text, _, err := d.recallText(context.Background(), sessionID, query)
+	text, _, err := d.recallText(context.Background(), sessionID, query, false)
 	return text, err
 }
 
@@ -440,7 +454,7 @@ func (d *Daemon) handleSessionRecall(w http.ResponseWriter, r *http.Request, id 
 		http.NotFound(w, r)
 		return
 	}
-	text, hits, err := d.recallText(r.Context(), id, r.URL.Query().Get("query"))
+	text, hits, err := d.recallText(r.Context(), id, r.URL.Query().Get("query"), r.URL.Query().Get("include_superseded") == "true")
 	if err != nil {
 		switch {
 		case errors.Is(err, memory.ErrNotFound):
