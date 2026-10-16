@@ -36,7 +36,7 @@ func (d *Daemon) nightlyReembed(ctx context.Context, runID string, owners []stri
 			continue
 		}
 		for _, status := range []string{memory.StatusActive, memory.StatusParked, memory.StatusSuperseded, memory.StatusForgotten} {
-			ms, err := bank.ListMemories(ctx, "", status, memory.MaxList)
+			ms, err := bank.ListMemories(ctx, "", status, -1)
 			if err != nil {
 				failed++
 				continue
@@ -53,7 +53,7 @@ func (d *Daemon) nightlyReembed(ctx context.Context, runID string, owners []stri
 				memories++
 			}
 		}
-		eps, err := bank.ListEpisodes(ctx, memory.MaxList)
+		eps, err := bank.ListEpisodes(ctx, -1)
 		if err != nil {
 			failed++
 			continue
@@ -95,7 +95,7 @@ func (d *Daemon) nightlyFold(ctx context.Context, runID string, owners []string)
 			failed++
 			continue
 		}
-		episodes, err := bank.ListEpisodes(ctx, memory.MaxList)
+		episodes, err := bank.ListEpisodes(ctx, -1)
 		if err != nil {
 			failed++
 			continue
@@ -210,7 +210,7 @@ func (d *Daemon) nightlyPromote(ctx context.Context, runID string, owners []stri
 			failed++
 			continue
 		}
-		items, err := bank.ListMemories(ctx, "", memory.StatusActive, memory.MaxList)
+		items, err := bank.ListMemories(ctx, "", memory.StatusActive, -1)
 		if err != nil {
 			failed++
 			continue

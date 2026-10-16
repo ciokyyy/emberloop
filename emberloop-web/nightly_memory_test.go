@@ -49,6 +49,36 @@ func TestNightlyFoldRetainsAndMarksEpisodes(t *testing.T) {
 		t.Fatalf("re-fold created %d memories", len(ms))
 	}
 }
+func TestNightlyFoldScansBeyondPageLimit(t *testing.T) {
+	t.Parallel()
+	d, clock := nightlyTestDaemon(t, nil, nil)
+	d.foldOneShot = func(_, _, _ string) (string, error) {
+		return `{"items":[{"kind":"preference","text":"Prefers tabs.","quote":"I prefer tabs","episode_ids":[1]}]}`, nil
+	}
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < memory.MaxList+1; i++ {
+		_, err := bank.AddEpisode(context.Background(), memory.Episode{SessionID: "s1", EventRange: fmt.Sprintf("event-%d", i), Author: "alice", Text: "I prefer tabs", CreatedAt: clock.get().Add(-13 * time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := d.nightlyFold(context.Background(), "fold-large-run", []string{"alice"})
+	if res.Counts["episodes"] != memory.MaxList+1 {
+		t.Fatalf("fold counts=%+v, want all %d episodes", res.Counts, memory.MaxList+1)
+	}
+	episodes, err := bank.ListEpisodes(context.Background(), -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ep := range episodes {
+		if ep.ConsolidatedAt.IsZero() {
+			t.Fatalf("episode %d was omitted from fold", ep.ID)
+		}
+	}
+}
 
 func TestNightlyPromoteCreatesPendingQuotedRule(t *testing.T) {
 	t.Parallel()

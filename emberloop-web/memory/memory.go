@@ -62,8 +62,9 @@ const (
 	MaxRuleChars = 300
 	// MaxRecall caps the result size of one search.
 	MaxRecall = 20
-	// MaxList caps one Memory page list. Search stays at MaxRecall;
-	// an empty query lists the newest records instead.
+	// MaxList caps one Memory page list. Search stays at MaxRecall; an empty
+	// query lists the newest records instead. A negative list limit is reserved
+	// for internal maintenance and means all rows.
 	MaxList = 100
 	// SnapshotKeep is how many snapshots a bank keeps.
 	SnapshotKeep = 10
@@ -126,6 +127,8 @@ type Memory interface {
 	InsertMemory(ctx context.Context, m MemoryItem) (int64, error)
 	GetMemory(ctx context.Context, id int64) (MemoryItem, error)
 	MemoryByID(ctx context.Context, id int64) (MemoryItem, error)
+	// ListMemories returns at most MaxList rows; a negative limit requests all
+	// matching rows for internal maintenance scans.
 	ListMemories(ctx context.Context, kind, status string, limit int) ([]MemoryItem, error)
 	RecallMemoryItems(ctx context.Context, text string, limit int, includeSuperseded bool) ([]MemoryItem, error)
 	SearchMemories(ctx context.Context, text string, kind, status string, limit int) ([]MemoryItem, error)
@@ -147,6 +150,7 @@ type Memory interface {
 	InsertEpisode(ctx context.Context, e Episode) (int64, error)
 	GetEpisode(ctx context.Context, id int64) (Episode, error)
 	EpisodeByID(ctx context.Context, id int64) (Episode, error)
+	// ListEpisodes uses the same limit contract as ListMemories.
 	ListEpisodes(ctx context.Context, limit int) ([]Episode, error)
 	SetEpisodeEmbedding(ctx context.Context, id int64, embedding []byte, model string) error
 	SetEpisodeConsolidated(ctx context.Context, id int64, at time.Time) error
@@ -477,13 +481,22 @@ func clampLimit(n int) int {
 	return n
 }
 
-// clampList caps a Memory page list limit to MaxList; zero and negative mean
-// the cap. Lists show more than one search page.
+// clampList caps a Memory page list limit to MaxList. Lists show more than one
+// search page.
 func clampList(n int) int {
 	if n <= 0 || n > MaxList {
 		return MaxList
 	}
 	return n
+}
+
+// listLimit preserves the page cap while allowing maintenance callers to
+// request a complete scan with a negative limit.
+func listLimit(n int) int {
+	if n < 0 {
+		return -1
+	}
+	return clampList(n)
 }
 
 func validMemory(m MemoryItem) error {

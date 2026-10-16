@@ -54,7 +54,7 @@ func (f *Fake) getMemory(id int64) (MemoryItem, error) {
 func (f *Fake) ListMemories(_ context.Context, kind, status string, limit int) ([]MemoryItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	n := clampList(limit)
+	n := listLimit(limit)
 	var out []MemoryItem
 	for _, m := range f.mems {
 		if kind != "" && m.Kind != kind {
@@ -70,7 +70,7 @@ func (f *Fake) ListMemories(_ context.Context, kind, status string, limit int) (
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
-	if len(out) > n {
+	if n >= 0 && len(out) > n {
 		out = out[:n]
 	}
 	return out, nil
@@ -259,10 +259,10 @@ func (f *Fake) getEpisode(id int64) (Episode, error) {
 func (f *Fake) ListEpisodes(_ context.Context, limit int) ([]Episode, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	n := clampList(limit)
+	n := listLimit(limit)
 	out := append([]Episode(nil), f.eps...)
 	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
-	if len(out) > n {
+	if n >= 0 && len(out) > n {
 		out = out[:n]
 	}
 	return out, nil

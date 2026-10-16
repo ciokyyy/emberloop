@@ -72,6 +72,9 @@ func (b *Bank) GetMemory(ctx context.Context, id int64) (MemoryItem, error) {
 func (b *Bank) MemoryByID(ctx context.Context, id int64) (MemoryItem, error) {
 	return b.getMemory(ctx, id)
 }
+
+// ListMemories supports all-row scans with a negative limit for nightly
+// maintenance; public page limits remain capped at MaxList.
 func (b *Bank) ListMemories(ctx context.Context, kind, status string, limit int) ([]MemoryItem, error) {
 	q := `SELECT id, session_id, event_id, author, kind, text, quote, importance, veracity, mention_count, status, superseded_by, pinned, embedding, embedding_model, extractor_json, observed_commit, created_at, last_seen_at FROM memories WHERE 1=1`
 	var args []any
@@ -86,7 +89,7 @@ func (b *Bank) ListMemories(ctx context.Context, kind, status string, limit int)
 		q += " AND status != 'forgotten'"
 	}
 	q += " ORDER BY id DESC LIMIT ?"
-	args = append(args, clampList(limit))
+	args = append(args, listLimit(limit))
 	rows, err := b.rdb.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -354,7 +357,7 @@ func (b *Bank) EpisodeByID(ctx context.Context, id int64) (Episode, error) {
 	return b.getEpisode(ctx, id)
 }
 func (b *Bank) ListEpisodes(ctx context.Context, limit int) ([]Episode, error) {
-	rows, err := b.rdb.QueryContext(ctx, `SELECT id, session_id, event_range, author, text, importance, embedding, embedding_model, consolidated_at, created_at FROM episodes ORDER BY id DESC LIMIT ?`, clampList(limit))
+	rows, err := b.rdb.QueryContext(ctx, `SELECT id, session_id, event_range, author, text, importance, embedding, embedding_model, consolidated_at, created_at FROM episodes ORDER BY id DESC LIMIT ?`, listLimit(limit))
 	if err != nil {
 		return nil, err
 	}
