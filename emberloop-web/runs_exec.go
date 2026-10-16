@@ -39,6 +39,7 @@ type staticTicket struct {
 	ID       string   `json:"id"`
 	Num      int      `json:"num"`
 	Title    string   `json:"title"`
+	Type     string   `json:"type"`
 	Blockers []string `json:"blockers"`
 	Path     string   `json:"path"`
 }
@@ -869,7 +870,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 			blockers = []string{}
 		}
 		rs.Tickets = append(rs.Tickets, staticTicket{
-			ID: p.ID, Num: p.Num, Title: p.Title, Blockers: blockers, Path: pathByID[p.ID],
+			ID: p.ID, Num: p.Num, Title: p.Title, Type: p.Type, Blockers: blockers, Path: pathByID[p.ID],
 		})
 	}
 	world := d.webDriverWorld(rs, files, max)
@@ -4253,6 +4254,13 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		}
 		tickets = append(tickets, map[string]any{
 			"id": t.ID, "num": t.Num, "title": title, "blockers": blockers,
+			"type": func() string {
+				v := t.Type
+				if v == "" {
+					return "code"
+				}
+				return v
+			}(),
 			"state": state, "stateSince": stateSince, "workerSession": rs.Sessions[t.ID],
 			"reviewerSessions": reviewers, "verdicts": verdicts, "gate": gate, "tip": tip,
 			"branch": rs.Branches[t.ID], "body": body, "boxes": boxes,

@@ -11,8 +11,9 @@ web app and embedded el library; see the Child DOX Index below.
 Owns `emberloop-web/` as one Go module: the Daemon and browser UI, `el/`
 (the el library with its own doc), and `cmd/` with the three entry points
 (`el`, `el-mcp`, `el-web`). The el library never imports the Daemon package;
-the Daemon-side packages import el. No herdr. Ticket files are preview input;
-only the Run driver writes them, ticking boxes and marking Tickets done.
+the Daemon-side packages import el. No herdr. Ticket files are preview input and may carry a `**Type:** code|design`
+header beside `**Blocked by:**` (default `code`), parsed by el; only the
+Run driver writes them, ticking boxes and marking Tickets done.
 Runs start at most max_tickets concurrent tickets (a spec's max_tickets
 frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 

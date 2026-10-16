@@ -157,11 +157,13 @@ type DriverWorld struct {
 }
 
 // DriverTicket is one ticket as the driver sees it: its id (the file base),
-// its number (the leading digits), and its blockers as resolved ticket ids.
+// its number (the leading digits), its type (code or design, default code),
+// and its blockers as resolved ticket ids.
 type DriverTicket struct {
 	ID       string
 	Num      int
 	Path     string
+	Type     string
 	Blockers []string
 }
 
@@ -1117,7 +1119,19 @@ func readDriverTickets(spec SpecRun, files map[string]string) (map[string]*Drive
 		if err != nil {
 			return nil, fmt.Errorf("%s:%d: %w", path, line, err)
 		}
-		tickets[base] = &DriverTicket{ID: base, Num: num, Path: path}
+		tkType := "code"
+		typeValue, typeLine, typeFound, err := driverTypeValue(files[path])
+		if err != nil {
+			return nil, fmt.Errorf("%s:%d: %w", path, typeLine, err)
+		}
+		if typeFound {
+			tt, err := parseTicketType(typeValue)
+			if err != nil {
+				return nil, fmt.Errorf("%s:%d: %w", path, typeLine, err)
+			}
+			tkType = tt
+		}
+		tickets[base] = &DriverTicket{ID: base, Num: num, Path: path, Type: tkType}
 		tickets[base].Blockers = refs
 	}
 	if err := resolveDriverRefs(tickets); err != nil {
@@ -1153,6 +1167,35 @@ func driverBlockedValue(content string) (value string, line int, found bool, err
 		return value, i + 1, true, nil
 	}
 	return "", 0, false, nil
+}
+
+// driverTypeValue mirrors driverBlockedValue for the Ticket's Type header: the
+// same field-line reading, tolerant of bold markers and list dashes.
+func driverTypeValue(content string) (value string, line int, found bool, err error) {
+	for i, raw := range strings.Split(content, "\n") {
+		field := strings.TrimSpace(raw)
+		field = strings.TrimSpace(strings.TrimLeft(field, ">-"))
+		field = strings.TrimLeft(field, "*_")
+		if !strings.HasPrefix(field, "Type") {
+			continue
+		}
+		rest := strings.TrimSpace(field[len("Type"):])
+		if !strings.HasPrefix(rest, ":") {
+			return "", i + 1, true, fmt.Errorf("cannot parse Type line %q", strings.TrimSpace(raw))
+		}
+		value := strings.TrimSpace(strings.Trim(strings.TrimSpace(rest[1:]), "*_"))
+		return value, i + 1, true, nil
+	}
+	return "", 0, false, nil
+}
+
+func parseTicketType(value string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(value))
+	switch v {
+	case "code", "design":
+		return v, nil
+	}
+	return "", fmt.Errorf("unknown Type %q (allowed: code, design)", strings.TrimSpace(value))
 }
 
 // parseBlockerRefs reads the ticket ids at the start of a Blocked by value.

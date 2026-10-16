@@ -42,14 +42,16 @@ func headingTitle(content string) string {
 }
 
 // TicketPreview is one ticket as the Runs preview shows it: its id, number
-// and title, its blockers as resolved ticket ids, and its checkbox progress.
-// Error names a ticket the preview could not parse; it blocks nothing else
-// in the list. An error row carries no blockers.
+// and title, its blockers as resolved ticket ids, its type (code or design,
+// default code), and its checkbox progress. Error names a ticket the preview
+// could not parse; it blocks nothing else in the list. An error row carries
+// no blockers.
 type TicketPreview struct {
 	ID       string   `json:"id"`
 	Num      int      `json:"num"`
 	Title    string   `json:"title"`
 	Blockers []string `json:"blockers"`
+	Type     string   `json:"type"`
 	Done     int      `json:"done"`
 	Total    int      `json:"total"`
 	Error    string   `json:"error,omitempty"`
@@ -110,6 +112,22 @@ func PreviewTickets(spec SpecRun, files map[string]string) []TicketPreview {
 			continue
 		}
 		p.preview.Num = num
+		p.preview.Type = "code"
+		typeValue, typeLine, typeFound, err := driverTypeValue(files[path])
+		if err != nil {
+			p.preview.Error = fmt.Sprintf("%s:%d: %s", path, typeLine, err)
+			tickets = append(tickets, p)
+			continue
+		}
+		if typeFound {
+			tt, err := parseTicketType(typeValue)
+			if err != nil {
+				p.preview.Error = fmt.Sprintf("%s:%d: %s", path, typeLine, err)
+				tickets = append(tickets, p)
+				continue
+			}
+			p.preview.Type = tt
+		}
 		value, line, found, err := driverBlockedValue(files[path])
 		if err != nil {
 			p.preview.Error = fmt.Sprintf("%s:%d: %s", path, line, err)

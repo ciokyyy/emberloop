@@ -71,9 +71,9 @@ durable boundaries with their own docs. File map (non-test file owns its
   redo the rebase in its worktree and resolve it), the worker id `WorkerID`,
   and the reviewer vocabulary), `driver_run.go` (the shared run state
   `DriverRun`, published every pass; `ParkDriverTicketFile` is the park
-  command), `ticketview.go` (the Runs preview surface: per-ticket title,
-  resolved blockers and checkbox progress where one bad ticket fails only
-  its own row)
+  command), `ticketview.go` (the Runs preview surface: per-ticket title, resolved
+  blockers, Type (code or design, default code) and checkbox progress where
+  one bad ticket fails only its own row)
 - Tools served to agents: `tools/` (child doc)
 - Transport: `mcp/` (child doc); binaries are `../cmd/el/main.go`
   (operator CLI: settings, update/install, restart, logs, deps, skills,
