@@ -245,13 +245,51 @@ func (d *Daemon) proposeProfilePatch(ctx context.Context, owner string, patch me
 	if err := memory.ValidateProfilePatch(patch, current.Lines); err != nil {
 		return 0, err
 	}
-	if next, err := memory.ApplyProfilePatch(current.Lines, patch); err != nil {
-		return 0, err
-	} else if _, err := memory.RenderProfile(memory.ProfileVersion{Lines: next}); err != nil {
+	next, err := memory.ApplyProfilePatch(current.Lines, patch)
+	if err != nil {
 		return 0, err
 	}
+	if _, err := memory.RenderProfile(memory.ProfileVersion{Lines: next}); err != nil {
+		return 0, err
+	}
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		if item.Kind != memory.QueueProfilePatch || item.Status != memory.QueueRejected {
+			continue
+		}
+		var previous profileQueuePayload
+		if json.Unmarshal([]byte(item.Payload), &previous) == nil && sameProfileOps(previous.Ops, patch.Ops) {
+			return 0, nil
+		}
+	}
 	raw, _ := json.Marshal(profileQueuePayload{Ops: patch.Ops, Reason: reason, SessionID: sessionID, Author: author})
-	return bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: string(raw)})
+	id, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: string(raw)})
+	if err != nil {
+		return 0, err
+	}
+	event, _ := json.Marshal(map[string]any{"id": id, "ops": patch.Ops, "reason": reason, "state": memory.QueuePending})
+	d.broadcastProfilePatchProposal(owner, sessionID, string(event))
+	d.pushProfilePatch(owner, sessionID, id, reason)
+	return id, nil
+}
+
+func sameProfileOps(a, b []memory.ProfileOp) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+func (d *Daemon) broadcastProfilePatchProposal(owner, source, text string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for sid, sess := range d.sessions {
+		if sess.meta.Owner == owner && (source == "" || source == sid) {
+			d.appendEventExtraLocked(sid, "profile_patch", text, "pending", "", 0, nil, nil)
+		}
+	}
 }
 
 // approveProfileQueueItem approves (or edits then approves) one profile_patch
@@ -512,6 +550,17 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	itemsBefore, _ := bank.Queue(r.Context())
+	var sourceSession string
+	for _, queued := range itemsBefore {
+		if queued.ID == id && queued.Kind == memory.QueueProfilePatch {
+			var payload profileQueuePayload
+			if json.Unmarshal([]byte(queued.Payload), &payload) == nil {
+				sourceSession = payload.SessionID
+			}
+			break
+		}
+	}
 	switch body.Status {
 	case memory.QueueRejected:
 		if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
@@ -522,6 +571,7 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		d.broadcastProfilePatchDecision(user.ID, sourceSession, id, memory.QueueRejected)
 		writeJSON(w, http.StatusOK, map[string]any{"status": memory.QueueRejected})
 	case memory.QueueApproved:
 		var edited *memory.ProfilePatch
@@ -538,6 +588,7 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 			return
 		}
 		d.broadcastProfileUpdated(user.ID, v, user.ID)
+		d.broadcastProfilePatchDecision(user.ID, sourceSession, id, memory.QueueApproved)
 		rendered, _ := memory.RenderProfile(v)
 		writeJSON(w, http.StatusOK, profileView{
 			Version: v.Version, Lines: nonNilLines(v.Lines),
@@ -545,6 +596,16 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 		})
 	default:
 		http.Error(w, "status must be approved or rejected", http.StatusBadRequest)
+	}
+}
+func (d *Daemon) broadcastProfilePatchDecision(owner, source string, id int64, status string) {
+	raw, _ := json.Marshal(map[string]any{"id": id, "status": status})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for sid, sess := range d.sessions {
+		if sess.meta.Owner == owner && (source == "" || sid == source) {
+			d.appendEventExtraLocked(sid, "profile_patch_resolved", string(raw), status, "", 0, nil, nil)
+		}
 	}
 }
 

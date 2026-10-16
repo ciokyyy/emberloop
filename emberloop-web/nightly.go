@@ -618,6 +618,7 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 		if !ok {
 			continue
 		}
+		d.remindOldProfilePatches(ctx, bank, owner)
 		notes := byOwner[owner]
 		if len(notes) == 0 || needModel {
 			none++
@@ -700,6 +701,37 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 	return NightlyStageResult{Stage: nightlyStageProfile, Status: status,
 		Counts: map[string]any{"owners": len(owners), "proposed": proposed, "none": none, "failed": failed},
 		Detail: detail}
+}
+
+func (d *Daemon) remindOldProfilePatches(ctx context.Context, bank memory.Memory, owner string) {
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return
+	}
+	ledger, err := bank.Ledger(ctx)
+	if err != nil {
+		return
+	}
+	reminded := make(map[string]bool)
+	for _, row := range ledger {
+		if row.Stage == "profile_patch_reminder" {
+			reminded[row.Detail] = true
+		}
+	}
+	now := d.now()
+	for _, item := range items {
+		if item.Kind != memory.QueueProfilePatch || item.Status != memory.QueuePending || item.CreatedAt.IsZero() || now.Sub(item.CreatedAt) < 48*time.Hour {
+			continue
+		}
+		key := itoa(item.ID)
+		if reminded[key] {
+			continue
+		}
+		d.pushProfilePatch(owner, "", item.ID, "Reminder: this Profile patch is still awaiting your review.")
+		if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "profile_patch_reminder", Status: memory.LedgerSuccess, Detail: key}); err == nil {
+			reminded[key] = true
+		}
+	}
 }
 
 // nightlyMainRepoDir resolves dir to its main repo workdir through the git

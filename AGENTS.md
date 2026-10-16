@@ -44,16 +44,12 @@ child it belongs to, and every entry must resolve to a file.
 
 - `emberloop-web/AGENTS.md` — browser UI and Daemon seams: summary-only Runs,
   git caching, Ticket-to-Session index and non-blocking boot; cache-only quota
-  API, subscriber-gated `quota` live refresher and percent-first cards for
-  Claude, ChatGPT Plus, OpenCode-Go, OpenRouter and both Antigravity pools;
+  API, subscriber-gated `quota` live refresher and percent-first provider cards;
   provider status/connect flows; Project Dashboard and stable scope routes;
-  Jev draft Project picks; per-concern Settings and model/effort chains; and
-  admin-only host-global Memory extraction, embedding and recall settings that
-  reconfigure live; hybrid Memory recall/injection with Episode-only tool
-  search; the Memories page action APIs; nightly ledger-backed catch-up,
-  reembedding and Episode folding, consolidation and pending Rule candidates;
-  panic-safe Run-test cleanup, slot watchdog and per-test deadlines. Indexes
-  the el library, memory, web source and Backend spikes
+  Jev draft Project picks; per-concern Settings and model/effort chains; admin-
+  only host-global Memory settings, hybrid recall/injection and nightly stages;
+  Profile patch push actions, inline Session approval, rejected-patch dedup and
+  one-time 48-hour reminders; Memory page APIs and panic-safe Run-test cleanup.
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)

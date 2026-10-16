@@ -291,6 +291,13 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 	if _, view := getProfile(t, base); view.Version != 1 {
 		t.Fatalf("reject wrote v%d, want still v1", view.Version)
 	}
+	if code, _ := proposeViaSession(t, base, id, ops2, "unchanged retry"); code != http.StatusCreated {
+		t.Fatalf("unchanged rejected patch retry = %d, want successful no-op response", code)
+	}
+	queue = getProfileQueue(t, base)
+	if len(queue) != 2 {
+		t.Fatalf("rejected identical patch was proposed again: %+v", queue)
+	}
 	// Direct settings edits also append a version and an Event.
 	direct := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "direct line", Tag: memory.ProfileOther}}
 	if code, _ := putProfile(t, base, direct); code != http.StatusOK {

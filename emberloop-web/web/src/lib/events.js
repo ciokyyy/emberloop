@@ -202,6 +202,13 @@ export function cardForEvent(e) {
     }
     case 'sudo_resolved':
       return { card: 'none', title: 'sudo', body: '', collapsed: false, sudo: parseSudoRequest(text) };
+    case 'profile_patch': {
+      let patch = {};
+      try { patch = JSON.parse(text); } catch { /* malformed event */ }
+      return { card: 'profilePatch', title: 'Profile update proposed', body: patch.reason || '', collapsed: false, profilePatch: patch };
+    }
+    case 'profile_patch_resolved':
+      return { card: 'profilePatchResolved', title: 'Profile update decided', body: text, collapsed: false };
     case 'usage':
       return { card: 'none', title: 'usage', body: text, collapsed: false };
     case 'diff':
@@ -254,6 +261,13 @@ export function groupTranscript(events, sessionsById = {}, opts = {}) {
   const blocks = [];
   for (const e of events) {
     const c = cardForEvent(e);
+    if (e.kind === 'profile_patch_resolved') {
+      let payload = {};
+      try { payload = JSON.parse(e.text); } catch { /* malformed event */ }
+      const open = blocks.findLast((b) => b.card === 'profilePatch' && b.profilePatch?.id === payload.id);
+      if (open) { open.profilePatch = { ...open.profilePatch, state: payload.status }; open.events.push(e); }
+      continue;
+    }
     // A resolved Event updates its request card in place.
     if (e.kind === 'sudo_resolved') {
       const open = blocks.findLast((b) => b.card === 'sudo' && b.sudo?.id === c.sudo?.id);
@@ -392,7 +406,7 @@ export function groupTranscript(events, sessionsById = {}, opts = {}) {
       continue;
     }
     if (c.card === 'tool' && last?.card === 'tool') last.open = false;
-    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, imageIds: c.imageIds, rules: c.rules, open: e.kind === 'tool_call_started', events: [e] });
+    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, profilePatch: c.profilePatch, imageIds: c.imageIds, rules: c.rules, open: e.kind === 'tool_call_started', events: [e] });
   }
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];

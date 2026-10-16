@@ -186,6 +186,18 @@ describe('sudo cards', () => {
   });
 });
 
+describe('Profile patch cards', () => {
+  it('renders proposals and updates the inline card after approval or rejection', async () => {
+    const { groupTranscript } = await import('./events.js');
+    const blocks = groupTranscript([
+      ev(1, 'profile_patch', JSON.stringify({ id: 7, ops: [{ op: 'add', text: 'Prefer tabs' }], reason: 'Repeated preference', state: 'pending' })),
+      ev(2, 'profile_patch_resolved', JSON.stringify({ id: 7, status: 'approved' })),
+    ]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ card: 'profilePatch', profilePatch: { id: 7, state: 'approved' } });
+  });
+});
+
 describe('subagent status and grouping', () => {
   it('drops idle and working status pills, keeps failed and ended', async () => {
     const { cardForEvent } = await import('./events.js');

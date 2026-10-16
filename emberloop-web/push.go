@@ -266,13 +266,40 @@ func encryptPush(s pushSub, payload []byte) ([]byte, error) {
 // the event, so a tab that already sounded it over its live stream stays
 // silent. Path is the exact client route the notification opens.
 type pushMessage struct {
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Tag       string `json:"tag,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	Cue       string `json:"cue,omitempty"`
-	Key       string `json:"key,omitempty"`
-	Path      string `json:"path,omitempty"`
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	Tag            string `json:"tag,omitempty"`
+	SessionID      string `json:"sessionId,omitempty"`
+	Cue            string `json:"cue,omitempty"`
+	Key            string `json:"key,omitempty"`
+	Path           string `json:"path,omitempty"`
+	ProfilePatchID int64  `json:"profilePatchId,omitempty"`
+}
+
+func (d *Daemon) pushProfilePatch(owner, sessionID string, id int64, reason string) {
+	var meta SessionMeta
+	d.mu.Lock()
+	if sessionID == "" {
+		for sid, s := range d.sessions {
+			if s.meta.Owner == owner {
+				sessionID, meta = sid, s.meta
+				break
+			}
+		}
+	} else if s := d.sessions[sessionID]; s != nil {
+		meta = s.meta
+	}
+	d.mu.Unlock()
+	title := "Profile patch needs approval"
+	if meta.ID != "" {
+		title = sessionTitle(meta)
+	}
+	path := "/"
+	if sessionID != "" {
+		path = "/s/" + sessionID
+	}
+	payload := pushPayload(pushMessage{Title: title, Body: "Approve or reject a proposed Profile update. " + truncatePush(reason, 100), Tag: "profile:" + itoa(id), SessionID: sessionID, Cue: "mention", Key: "profile:" + itoa(id), Path: path, ProfilePatchID: id})
+	go d.push.notify(payload)
 }
 
 func pushPayload(m pushMessage) []byte {

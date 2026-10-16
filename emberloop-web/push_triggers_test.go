@@ -108,6 +108,17 @@ func TestPushTurnFailedUsesErrorCue(t *testing.T) {
 	}
 }
 
+func TestPushProfilePatchCarriesActionTarget(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	cap, decrypt := capturePush(t, d)
+	d.pushProfilePatch("owner", "", 42, "test proposal")
+	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
+	if m.ProfilePatchID != 42 || m.Path != "/" || m.Key != "profile:42" {
+		t.Fatalf("Profile patch push = %+v", m)
+	}
+}
+
 func TestPushSudoRequestUsesMentionCue(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
