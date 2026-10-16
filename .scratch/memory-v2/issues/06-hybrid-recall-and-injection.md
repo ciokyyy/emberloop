@@ -4,12 +4,12 @@
 
 **Blocked by:** 01, 04
 
-**Status:** todo
+**Status:** done
 
-- [ ] A paraphrase of a stored Memory is found with no shared keyword
-- [ ] Forgotten, parked and superseded Memories never appear in the block or in recall
-- [ ] Weights renormalize without a vector; FTS-only fallback works
-- [ ] Preference never decays; a 400-day-old fact scores lower than a fresh one
-- [ ] BM25 scores from separate tables are never compared
-- [ ] Episodes appear only through `recall`, never in the injected block
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A paraphrase of a stored Memory is found with no shared keyword
+- [x] Forgotten, parked and superseded Memories never appear in the block or in recall
+- [x] Weights renormalize without a vector; FTS-only fallback works
+- [x] Preference never decays; a 400-day-old fact scores lower than a fresh one
+- [x] BM25 scores from separate tables are never compared
+- [x] Episodes appear only through `recall`, never in the injected block
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
