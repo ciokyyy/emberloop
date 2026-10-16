@@ -463,7 +463,8 @@ func (d *Daemon) WithClaudeBackend(b *ClaudeBackend) *Daemon {
 }
 
 // modelEffortOptions is the effort list for one offered model. Pig uses its
-// adapters validate.
+// model registry's supported levels; Claude exposes the levels its adapter
+// validates.
 func modelEffortOptions(harness, model string, offered []string) []string {
 	switch harness {
 	case "pig":
@@ -705,8 +706,6 @@ func (d *Daemon) resumeBackendLocked(meta SessionMeta) (Backend, string) {
 	return d.backendForLocked(meta.Harness), ""
 }
 
-// resumeViewLocked reports whether a new prompt would be accepted now: live
-// Sessions take one, ended Sessions never do, and released Sessions defer
 // resumeViewLocked reports whether a new prompt would be accepted now: live
 // Sessions take one, ended Sessions never do, and released Sessions defer
 // to the Backend. Callers hold d.mu.

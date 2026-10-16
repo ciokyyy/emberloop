@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 // Agent chains store each role's harness, model and effort in one ordered
@@ -236,10 +237,13 @@ func parseChains(all map[string]json.RawMessage) map[string][]chainEntry {
 			}
 			out = append(out, e)
 		}
-		if removed && len(out) == 0 {
-			delete(chains, name)
-		} else if removed {
-			chains[name] = out
+		if removed {
+			log.Printf("emberloop: dropped grok Chain entries from %s", name)
+			if len(out) == 0 {
+				delete(chains, name)
+			} else {
+				chains[name] = out
+			}
 		}
 	}
 	return chains
@@ -286,6 +290,9 @@ func lookupChain(chains map[string][]chainEntry, roles map[string]roleSetting, r
 	}
 	for _, name := range names {
 		if r, ok := roles[name]; ok && r.Harness != "" && r.Model != "" {
+			if r.Harness == "grok" {
+				continue
+			}
 			if r.Harness == "claude" && !validClaudeModel(r.Model) {
 				continue
 			}

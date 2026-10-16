@@ -3,7 +3,7 @@ package web
 import "fmt"
 
 // Role memory and DOX guidance lives here, one function per role. Every
-// harness (claude system prompt, grok override, pig appended resources)
+// harness (claude system prompt, pig appended resources)
 // reads from these builders, so the wording cannot drift between backends.
 // Run tasks do not repeat the text: a Worker's system prompt already carries
 // the worker extra and a Reviewer's carries the reviewer extra, so the task

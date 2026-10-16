@@ -284,7 +284,7 @@ func TestRunWorkerFallbackChainFailureClasses(t *testing.T) {
 				t.Fatalf("fallback Worker worktree = %q, want same Ticket worktree %q", fallback.Meta.WorkDir, oldSession.Meta.WorkDir)
 			}
 			if fallback.Meta.Harness != "pig" || fallback.Meta.Model != "worker-fallback" {
-				t.Fatalf("fallback entry = %s/%s, want grok/worker-fallback", fallback.Meta.Harness, fallback.Meta.Model)
+				t.Fatalf("fallback entry = %s/%s, want pig/worker-fallback", fallback.Meta.Harness, fallback.Meta.Model)
 			}
 			if got := after.Chain["worker"]; got.Position != 2 || got.Total != 2 || got.Backend != "pig" || got.Model != "worker-fallback" {
 				t.Fatalf("active Chain entry = %+v", got)
@@ -317,7 +317,7 @@ func TestRunWorkerFallbackChainStartFailure(t *testing.T) {
 		return s.Meta.Status == "idle"
 	}, "started fallback Worker")
 	if fallback.Meta.Harness != "pig" || fallback.Meta.Model != "worker-fallback" {
-		t.Fatalf("fallback config = %s/%s, want grok/worker-fallback", fallback.Meta.Harness, fallback.Meta.Model)
+		t.Fatalf("fallback config = %s/%s, want pig/worker-fallback", fallback.Meta.Harness, fallback.Meta.Model)
 	}
 	worktrees, err := runGit(repo, "worktree", "list", "--porcelain")
 	if err != nil {

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -92,6 +93,12 @@ func parseRoles(all map[string]json.RawMessage) map[string]roleSetting {
 	roles := map[string]roleSetting{}
 	if raw, ok := all["roles"]; ok {
 		_ = json.Unmarshal(raw, &roles)
+	}
+	for name, rs := range roles {
+		if rs.Harness == "grok" {
+			log.Printf("emberloop: dropped grok role setting %s", name)
+			delete(roles, name)
+		}
 	}
 	return roles
 }

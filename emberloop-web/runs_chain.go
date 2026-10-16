@@ -67,7 +67,11 @@ func workerRunChain(rs *runState, ticketID string) []chainEntry {
 	}
 	position := clampChainPosition(chainPosition(rs, ticketID, "worker"), len(entries))
 	if override, ok := rs.WorkerOverrides[ticketID]; ok {
-		entries[position] = override
+		if override.Backend == "grok" {
+			delete(rs.WorkerOverrides, ticketID)
+		} else {
+			entries[position] = override
+		}
 	}
 	return entries
 }
@@ -83,8 +87,12 @@ func runRoleChain(rs *runState, ticketID, role string) []chainEntry {
 		return entries
 	}
 	if override, ok := rs.ReviewerOverrides[ticketID][role]; ok {
-		position := clampChainPosition(chainPosition(rs, ticketID, role), len(entries))
-		entries[position] = override
+		if override.Backend == "grok" {
+			delete(rs.ReviewerOverrides[ticketID], role)
+		} else {
+			position := clampChainPosition(chainPosition(rs, ticketID, role), len(entries))
+			entries[position] = override
+		}
 	}
 	return entries
 }

@@ -182,7 +182,7 @@ type ClaudeBackend struct {
 	mcpName    string
 	mcpCommand string
 	mcpArgs    []string
-	// mcpEnv is extra environment for the el MCP server (grok: the real
+	// mcpEnv is extra environment for the el MCP server (the real
 	// HOME, since the adapter itself runs under a temp one).
 	mcpEnv [][2]string
 	// daemonAddr is the loopback Daemon the single el MCP server calls back
@@ -218,27 +218,27 @@ type ClaudeBackend struct {
 	// the process can carry per-Session environment, role and the owner's dirs.
 	newConnFor func(sessionID, role string, dirs ownerDirs) (acpConn, error)
 	// metaHook, when set, builds the session/new and session/load _meta
-	// for a plain adapter (grok: system prompt override, yolo mode) from
+	// for a plain adapter (system prompt override, yolo mode) from
 	// the Daemon Session id, model, effort, WorkDir, role and owner dirs.
 	// extra carries the role's memory/DOX text (prompts.go); empty leaves
 	// the prompt without it (title calls, back-compat loads).
 	metaHook func(daemonID, model, effort, workDir, role string, dirs ownerDirs, extra string) map[string]any
 	// promptWrap, when set, rewrites each prompt before it goes on the wire
-	// (grok: the per-turn register reminder, since ACP has no hook). The
+	// (the per-turn register reminder, since ACP has no hook). The
 	// stored prompt Event keeps the user's own text.
 	promptWrap func(text string) string
 	// waitMCP makes start and load wait for the adapter's MCP-ready
-	// notification before the Session counts as ready (grok connects its MCP
+	// notification before the Session counts as ready (
 	// servers after session/new answers).
 	waitMCP bool
 	// windowFor, when set, sizes fallback usage readings for one model
-	// (pig-acp: the pig catalog window; grok: its known window). Unset
+	// (pig-acp: the pig catalog window). Unset
 	// means the claude window. A plain struct field (not a method) because
 	// OnPromptImages runs on the embedded *ClaudeBackend, where an outer
 	// override method would never dispatch.
 	windowFor func(model string) int
 	// resumer, when set, respawns a dead adapter around the saved ACP
-	// session id (pig-acp and grok point it at their outer ResumeSession,
+	// session id (pig-acp point it at their outer ResumeSession,
 	// which also restages the steer socket and the effort). Unset respawns
 	// through ResumeSession. A plain struct field for the same embedding
 	// reason as windowFor.
@@ -830,7 +830,7 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 	// so no Daemon guard serializes them.
 	appendEvent("status", "", "working")
 	// usageTap watches the turn for an adapter usage_update: some adapters
-	// (grok always, older claude builds at times) send none, which would
+	// (older claude builds at times) send none, which would
 	// leave the meter and the auto-compress gates blind. The tap records a
 	// sighting, banks the highest used count (so the fallback never
 	// regresses the meter), and sizes model text for the estimate.
@@ -922,7 +922,7 @@ func (b *ClaudeBackend) OnPromptImages(sessionID, text string, images []Image, a
 	}
 	tracker.closeOpen(tap)
 	// Without an adapter reading, estimate one from the known window so the
-	// meter moves on every ACP Backend (claude, pig-acp, grok) even mid
+	// meter moves on every ACP Backend (claude, pig-acp) even mid
 	// first turn. The estimate never regresses the banked high.
 	if fb, ok := uw.fallback(b.UsageWindow(uw.model)); ok {
 		tap("usage", fb, "")
@@ -1307,7 +1307,7 @@ type acpProcessConn struct {
 	// steering is set by Initialize from _meta.steering.supported.
 	steering bool
 	// mcpReady closes once on the adapter's _x.ai/mcp_initialized
-	// notification (grok); WaitMCPReady reads it.
+	// notification; WaitMCPReady reads it.
 	mcpReady chan struct{}
 	mcpOnce  sync.Once
 }
@@ -1322,8 +1322,8 @@ func spawnACPConn(command []string) (acpConn, error) {
 // Daemon resolves it env-over-file on every start) or, for paths that never
 // went through ownerDirsFor, from the Daemon process env. The last entry
 // wins, so both override a host CLAUDE_CONFIG_DIR or token. An empty owner
-// dir keeps the host's. The grok and pig-acp paths need none of this: they
-// start non-claude adapters (grok agent, pi-acp) that never read
+// dir keeps the host's. The pig-acp paths need none of this: they
+// start non-claude adapters (pi-acp) that never read
 // CLAUDE_CODE_OAUTH_TOKEN. Title calls use this too, through ownerDirsFor.
 func claudeEnv(dirs ownerDirs) []string {
 	env := append(os.Environ(), claudeAdapterEnv()...)

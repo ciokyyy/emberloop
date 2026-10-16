@@ -53,7 +53,7 @@ func (b *ClaudeBackend) promptHandleClosed(sessionID string, conn acpConn) bool 
 // respawnAdapter restarts a dead adapter around the saved ACP session id
 // through the existing resume path (role, WorkDir and owner dirs come from
 // the stored record), so the retried prompt continues the same adapter
-// session. Pig-acp and grok respawn through their outer ResumeSession,
+// session. Pig-acp respawn through their outer ResumeSession,
 // which also restages the steer socket and the effort; plain claude
 // respawns through ResumeSession directly. A missing entry means a
 // deliberate close won the race: errAdapterSessionClosed, drop quietly.

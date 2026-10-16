@@ -315,7 +315,7 @@ func (f *fakeAgent) handleCall(id json.RawMessage, method string, raw json.RawMe
 		f.sessions[sid] = s
 		f.mu.Unlock()
 		f.reply(id, f.newResult(sid))
-		// Let clients exercise the MCP-ready wait, like grok's notification.
+		// Let clients exercise the MCP-ready wait.
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			f.notify("_x.ai/mcp_initialized", map[string]any{"sessionId": sid})
