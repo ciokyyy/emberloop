@@ -150,3 +150,28 @@ func TestBankWideDuplicatePrecedesSameAuthorSupersession(t *testing.T) {
 		})
 	}
 }
+
+func TestDistinctMemoriesFromSameEventAreNotDeduplicatedByIdentity(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			m := fac.open(t, newTestClock())
+			ctx := context.Background()
+			store := func(text string) MemoryStoreResult {
+				result, err := m.DedupAndStoreMemory(ctx, MemoryItem{SessionID: "s", EventID: "e", Author: "alice", Kind: KindInstruction, Text: text, Quote: text})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			first := store("always return wrapped errors")
+			second := store("use tabs for indentation")
+			if first.Duplicate || second.Duplicate || first.ID == second.ID {
+				t.Fatalf("distinct same-event memories were deduplicated: first=%+v second=%+v", first, second)
+			}
+			rows, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(rows) != 2 {
+				t.Fatalf("distinct same-event rows = %d, %v; want 2", len(rows), err)
+			}
+		})
+	}
+}

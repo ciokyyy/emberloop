@@ -107,12 +107,6 @@ func (b *Bank) DedupAndStoreMemory(ctx context.Context, item MemoryItem) (result
 			return e
 		}
 		for _, old := range active {
-			if old.SessionID == item.SessionID && old.EventID == item.EventID {
-				result = MemoryStoreResult{ID: old.ID, Relation: RelDuplicate, Duplicate: true}
-				return nil
-			}
-		}
-		for _, old := range active {
 			relation := memoryRelation(item, old)
 			if relation != RelDuplicate {
 				continue
