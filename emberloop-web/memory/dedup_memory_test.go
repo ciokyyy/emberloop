@@ -83,42 +83,30 @@ func TestMemoryRelationVectorThresholdsAndNullFallback(t *testing.T) {
 	}
 }
 
-func TestBankDedupEmbedsBeforeInsertForVectorComparison(t *testing.T) {
-	ctx := context.Background()
-	embedder := &FakeEmbedder{Vector: []float32{1, 0}}
-	eng, err := Open(tempDir(t), Options{Embedder: embedder, EmbeddingModel: "dedup-model"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer eng.Close()
-	bank, err := eng.Bank("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	put := func(event, text string) MemoryStoreResult {
-		result, err := bank.DedupAndStoreMemory(ctx, MemoryItem{SessionID: "session", EventID: event, Author: "alice", Kind: KindInstruction, Text: text, Quote: text, Importance: .7})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result
-	}
-	first := put("one", "always return wrapped errors")
-	second := put("two", "always return wrapped errors carefully")
-	if second.Relation != RelDuplicate || !second.Duplicate || second.ID != first.ID {
-		t.Fatalf("vector duplicate = %+v, want original id %d", second, first.ID)
-	}
-	rows, err := bank.ListMemories(ctx, "", "", 10)
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("vector duplicate inserted row: %d, %v", len(rows), err)
-	}
-	stored, err := bank.GetMemory(ctx, first.ID)
-	if err != nil || len(stored.Embedding) == 0 || stored.EmbeddingModel != "dedup-model" {
-		t.Fatalf("new row missing precomputed vector: %+v, %v", stored, err)
-	}
-	embedder.mu.Lock()
-	defer embedder.mu.Unlock()
-	if len(embedder.Inputs) != 2 {
-		t.Fatalf("embed requests = %d, want one per candidate", len(embedder.Inputs))
+func TestDedupAndStoreUsesSuppliedCandidateVector(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			m := fac.open(t, newTestClock())
+			ctx := context.Background()
+			first, err := m.AddMemory(ctx, MemoryItem{SessionID: "s1", EventID: "e1", Author: "alice", Kind: KindInstruction, Text: "always return wrapped errors", Quote: "always return wrapped errors"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemoryEmbedding(ctx, first, EncodeVector([]float32{1, 0}), "dedup-model"); err != nil {
+				t.Fatal(err)
+			}
+			result, err := m.DedupAndStoreMemory(ctx, MemoryItem{SessionID: "s2", EventID: "e2", Author: "alice", Kind: KindInstruction, Text: "always return wrapped errors carefully", Quote: "always return wrapped errors carefully", Importance: .7, Embedding: EncodeVector([]float32{.98, .2}), EmbeddingModel: "dedup-model"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Duplicate || result.ID != first {
+				t.Fatalf("vector duplicate = %+v, want original id %d", result, first)
+			}
+			rows, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("vector duplicate inserted row: %d, %v", len(rows), err)
+			}
+		})
 	}
 }
 

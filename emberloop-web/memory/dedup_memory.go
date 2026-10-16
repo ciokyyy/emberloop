@@ -79,11 +79,6 @@ func (b *Bank) DedupAndStoreMemory(ctx context.Context, item MemoryItem) (result
 	if err = validMemory(item); err != nil {
 		return result, err
 	}
-	if item.Embedding == nil && b.embedWorker != nil {
-		if vector, model, embedErr := b.embedWorker.EmbedText(ctx, item.Text); embedErr == nil {
-			item.Embedding, item.EmbeddingModel = vector, model
-		}
-	}
 	err = b.write(ctx, func(db *sql.DB) error {
 		rows, e := db.QueryContext(ctx, `SELECT id, session_id, event_id, author, kind, text, quote, importance, veracity, mention_count, status, superseded_by, pinned, embedding, embedding_model, extractor_json, observed_commit, created_at, last_seen_at FROM memories WHERE status = 'active' ORDER BY id DESC`)
 		if e != nil {

@@ -180,7 +180,6 @@ type EmbeddingWorker struct {
 	done     chan struct{}
 	stopped  chan struct{}
 	mu       sync.RWMutex
-	embedMu  sync.Mutex
 	once     sync.Once
 }
 type EmbeddingJob struct {
@@ -197,30 +196,6 @@ func NewEmbeddingWorker(embedder Embedder, model string, capacity int) *Embeddin
 	w := &EmbeddingWorker{embedder: embedder, model: model, jobs: make(chan EmbeddingJob, capacity), done: make(chan struct{}), stopped: make(chan struct{})}
 	go w.run()
 	return w
-}
-
-// EmbedText computes one redacted vector for pre-insert deduplication. A
-// successful vector is stored on the inserted row so the worker need not
-// issue a second request.
-func (w *EmbeddingWorker) EmbedText(ctx context.Context, text string) ([]byte, string, error) {
-	if w == nil || w.embedder == nil || w.model == "" {
-		return nil, "", errors.New("memory: embedding unavailable")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(ctx, EmbeddingRequestTimeout)
-	defer cancel()
-	w.embedMu.Lock()
-	defer w.embedMu.Unlock()
-	vectors, err := w.embedder.Embed(ctx, w.model, []string{ForEmbedder(text)})
-	if err != nil {
-		return nil, "", err
-	}
-	if len(vectors) != 1 {
-		return nil, "", errors.New("memory: embedding provider returned an unexpected vector count")
-	}
-	return EncodeVector(vectors[0]), w.model, nil
 }
 func (w *EmbeddingWorker) Enqueue(job EmbeddingJob) bool {
 	if w == nil || w.embedder == nil || w.model == "" || job.Store == nil {
@@ -275,9 +250,7 @@ func (w *EmbeddingWorker) run() {
 }
 func (w *EmbeddingWorker) process(job EmbeddingJob) {
 	ctx, cancel := context.WithTimeout(job.Context, EmbeddingRequestTimeout)
-	w.embedMu.Lock()
 	vectors, err := w.embedder.Embed(ctx, w.model, []string{ForEmbedder(job.Text)})
-	w.embedMu.Unlock()
 	if err == nil && len(vectors) != 1 {
 		err = errors.New("embedding provider returned an unexpected vector count")
 	}
