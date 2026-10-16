@@ -240,6 +240,7 @@ export const getMemories = ({ q = '', kind = '', status = '' } = {}) => {
 	if (status) params.set('status', status);
 	return fetch(url(`/api/memory/memories?${params}`)).then(json);
 };
+export const getNewMemoryCount = (since = 0) => fetch(url(`/api/memory/memories/count?since=${encodeURIComponent(since)}`)).then(json);
 const memoryAction = (id, action, body = {}) => fetch(url(`/api/memory/memories/${id}/${action}`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(json);
 export const forgetMemory = (id) => memoryAction(id, 'forget');
 export const parkMemory = (id) => memoryAction(id, 'park');

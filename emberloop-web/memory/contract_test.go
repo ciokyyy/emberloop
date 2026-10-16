@@ -658,3 +658,31 @@ func TestMemoryRevisionContract(t *testing.T) {
 		})
 	}
 }
+
+func TestMemorySearchFiltersBeforeLimit(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			ctx := context.Background()
+			bank := fac.open(t, newTestClock())
+			for i := 0; i < 25; i++ {
+				if _, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: strconv.Itoa(i), Author: "u1", Kind: KindFact, Text: "shared searchable memory", Quote: "shared searchable memory"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: "preferred", Author: "u1", Kind: KindPreference, Text: "shared searchable memory", Quote: "shared searchable memory"}); err != nil {
+				t.Fatal(err)
+			}
+			count, err := bank.CountMemoriesSince(ctx, time.Time{})
+			if err != nil || count != 26 {
+				t.Fatalf("count since epoch = %d err=%v", count, err)
+			}
+			got, err := bank.SearchMemories(ctx, "shared searchable", "preference", "", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Kind != KindPreference {
+				t.Fatalf("filtered top-one search = %+v", got)
+			}
+		})
+	}
+}

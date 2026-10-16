@@ -404,6 +404,7 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/memory/purge", d.handleMemoryPurge)
 	mux.HandleFunc("/api/memory/nightly", d.handleNightly)
 	mux.HandleFunc("/api/memory/memories", d.handleMemories)
+	mux.HandleFunc("/api/memory/memories/count", d.handleMemoryCount)
 	mux.HandleFunc("/api/memory/memories/", d.handleMemoryAction)
 	mux.HandleFunc("/api/memory/observations/", d.handleObservationPromote)
 	mux.HandleFunc("/api/memory/episodes", d.handleEpisodes)

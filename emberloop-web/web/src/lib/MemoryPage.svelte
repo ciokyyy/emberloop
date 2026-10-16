@@ -18,6 +18,7 @@
   import PromotionQueue from './PromotionQueue.svelte';
   import {
     getMemories, getEpisodes, forgetMemory, parkMemory, pinMemory,
+    getNewMemoryCount,
     promoteMemoryRule, editMemory, promoteObservationMemory,
     getRules, getObservations, getRulesQueue, decideRuleQueue, batchRuleQueue,
     getMemoryLedger, getMemoryStatus, purgeMemory, proposePromotion,
@@ -88,9 +89,14 @@
     loading = true;
     error = '';
     statusError = '';
+    const visitKey = `emberloop.memory.lastVisit.${userId}`;
+    const previousVisit = !counterInitialized && typeof localStorage !== 'undefined'
+      ? Number(localStorage.getItem(visitKey) || 0)
+      : 0;
     try {
-      const [st, r, o, q, l, m, ep] = await Promise.all([
+      const [st, r, o, q, l, m, ep, newCount] = await Promise.all([
         getMemoryStatus(), getRules(), getObservations(), getRulesQueue(), getMemoryLedger(), getMemories(), getEpisodes(),
+        counterInitialized ? Promise.resolve({ count: newSinceVisit }) : getNewMemoryCount(previousVisit),
       ]);
       status = st;
       rules = Array.isArray(r) ? r.map(normalizeRule) : [];
@@ -98,11 +104,10 @@
       queue = Array.isArray(q) ? q.map(normalizeQueueItem) : [];
       ledger = Array.isArray(l) ? l.map(normalizeLedger) : [];
       memories = Array.isArray(m) ? m : [];
+      episodes = Array.isArray(ep) ? ep : [];
       if (!counterInitialized && typeof localStorage !== 'undefined') {
-		const key = `emberloop.memory.lastVisit.${userId}`;
-        const previous = Number(localStorage.getItem(key) || 0);
-        newSinceVisit = memories.filter((item) => Date.parse(item.createdAt) > previous).length;
-        localStorage.setItem(key, String(Date.now()));
+        newSinceVisit = Number(newCount?.count) || 0;
+        localStorage.setItem(visitKey, String(Date.now()));
         counterInitialized = true;
       }
     } catch (e) {
@@ -285,6 +290,9 @@
           <Button variant="outline" size="sm" onclick={load} aria-label="Refresh memory"><RefreshCw /></Button>
         </div>
       </div>
+      <p class="text-xs text-muted-foreground" data-testid="memory-header-summary">
+        {newSinceVisit} new since last visit · Queue {status?.queue?.pending ?? pendingCount} pending · Oldest pending {status?.queue?.oldestPendingAgeHours ? `${Number(status.queue.oldestPendingAgeHours).toFixed(1)} hours` : '—'}
+      </p>
         <nav class="flex flex-wrap gap-2" aria-label="Memory tabs">
           <Button size="sm" variant={tab === 'memories' ? 'default' : 'outline'} onclick={() => (tab = 'memories')}>Memories · {newSinceVisit} new</Button>
           <Button size="sm" variant={tab === 'legacy' ? 'default' : 'outline'} onclick={() => (tab = 'legacy')}>Legacy observations</Button>

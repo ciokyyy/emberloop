@@ -116,7 +116,22 @@ func (b *Bank) SearchMemories(ctx context.Context, text, kind, status string, li
 	if q == "" {
 		return b.ListMemories(ctx, kind, status, limit)
 	}
-	rows, err := b.rdb.QueryContext(ctx, `SELECT m.id FROM memories_fts JOIN memories m ON m.id=memories_fts.rowid WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts),m.id DESC LIMIT ?`, q, clampLimit(limit))
+	query := `SELECT m.id FROM memories_fts JOIN memories m ON m.id=memories_fts.rowid WHERE memories_fts MATCH ?`
+	args := []any{q}
+	if kind != "" {
+		query += ` AND m.kind = ?`
+		args = append(args, kind)
+	}
+	if status != "" {
+		query += ` AND m.status = ?`
+		args = append(args, status)
+	} else {
+		query += ` AND m.status != ?`
+		args = append(args, StatusForgotten)
+	}
+	query += ` ORDER BY bm25(memories_fts),m.id DESC LIMIT ?`
+	args = append(args, clampLimit(limit))
+	rows, err := b.rdb.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +159,12 @@ func (b *Bank) SearchMemories(ctx context.Context, text, kind, status string, li
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+func (b *Bank) CountMemoriesSince(ctx context.Context, since time.Time) (int, error) {
+	var count int
+	err := b.rdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM memories WHERE created_at > ?`, timeText(since)).Scan(&count)
+	return count, err
 }
 
 func (b *Bank) ReviseMemory(ctx context.Context, oldID int64, m MemoryItem) (int64, error) {

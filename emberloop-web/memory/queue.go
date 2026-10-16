@@ -187,6 +187,8 @@ type RuleProposal struct {
 	SourceObservationIDs []int64  `json:"source_observation_ids,omitempty"`
 	Relation             string   `json:"relation,omitempty"`
 	RelatedRuleID        string   `json:"related_rule_id,omitempty"`
+	SourceMemoryIDs      []int64  `json:"source_memory_ids,omitempty"`
+	Importance           float64  `json:"importance,omitempty"`
 }
 
 // EncodeRuleProposal marshals p with a normalized subject key.

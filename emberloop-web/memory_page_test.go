@@ -493,6 +493,17 @@ func TestMemoryPageMemoryActions(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Use concise replies") {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
 	}
+	countReq := httptest.NewRequest(http.MethodGet, "/api/memory/memories/count?since=0", nil)
+	loopback(countReq)
+	countReq.AddCookie(cookie)
+	countRec := httptest.NewRecorder()
+	h.ServeHTTP(countRec, countReq)
+	var countResp struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(countRec.Body.Bytes(), &countResp); err != nil || countResp.Count != 1 {
+		t.Fatalf("new memory count: %d %s err=%v", countRec.Code, countRec.Body.String(), err)
+	}
 	for _, action := range []string{"pin", "park"} {
 		body := map[string]any{}
 		if action == "pin" {
@@ -515,12 +526,16 @@ func TestMemoryPageMemoryActions(t *testing.T) {
 	items, _ := bank.Queue(ctx)
 	found := false
 	for _, item := range items {
-		if item.Kind == memory.QueueRule && item.Status == memory.QueuePending && strings.Contains(item.Payload, `"source_memory_id"`) {
+		if item.Kind != memory.QueueRule || item.Status != memory.QueuePending {
+			continue
+		}
+		proposal, decodeErr := memory.DecodeRememberProposal(item.Payload)
+		if decodeErr == nil && len(proposal.SourceMemoryIDs) == 1 && proposal.SourceMemoryIDs[0] == old.SupersededBy && proposal.Importance == .7 && proposal.Author == user.ID && len(proposal.Quotes) == 1 && proposal.Quotes[0] == "Please use concise replies" && len(proposal.Sessions) == 1 && proposal.Sessions[0] == "session-a" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("pending source Rule not queued: %+v", items)
+		t.Fatalf("pending Rule omitted Memory provenance: %+v", items)
 	}
 	if got := post("/api/memory/memories/"+strconv.FormatInt(old.SupersededBy, 10)+"/forget", map[string]any{}); got.Code != 200 {
 		t.Fatalf("forget: %d %s", got.Code, got.Body.String())
@@ -543,16 +558,23 @@ func TestMemoryPageMemoryActions(t *testing.T) {
 	if strings.Contains(listed.Body.String(), `"id":`+strconv.FormatInt(forgot.ID, 10)) {
 		t.Fatalf("forgotten row visible in default list: %s", listed.Body.String())
 	}
-	obsID, err := bank.AddObservation(ctx, memory.Observation{SessionID: "session-a", EventID: "legacy-event", Author: user.ID, Quote: "I prefer compact summaries", Kind: memory.KindPreference})
+	obsID, err := bank.AddObservation(ctx, memory.Observation{SessionID: "session-a", EventID: "legacy-event", Author: user.ID, Quote: "I prefer compact summaries", Kind: memory.KindPreference, DeciderJSON: `{"candidate_text":"We chose compact summaries","kind":"decision"}`})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := post("/api/memory/observations/"+strconv.FormatInt(obsID, 10)+"/promote", map[string]any{}); got.Code != 201 {
-		t.Fatalf("legacy promote: %d %s", got.Code, got.Body.String())
+	promoted := post("/api/memory/observations/"+strconv.FormatInt(obsID, 10)+"/promote", map[string]any{})
+	if promoted.Code != http.StatusCreated {
+		t.Fatalf("legacy promote: %d %s", promoted.Code, promoted.Body.String())
 	}
-	legacy, _ := bank.ListMemories(ctx, "", "", 100)
-	if len(legacy) == 0 {
-		t.Fatal("legacy observation was not promoted")
+	var promotedResult struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(promoted.Body.Bytes(), &promotedResult); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := bank.GetMemory(ctx, promotedResult.ID)
+	if err != nil || legacy.Text != "We chose compact summaries" || legacy.Quote != "I prefer compact summaries" || legacy.Kind != memory.KindDecision {
+		t.Fatalf("legacy content lost: %+v err=%v", legacy, err)
 	}
 	if _, err := bank.AddEpisode(ctx, memory.Episode{SessionID: "session-a", EventRange: "event-a:event-z", Author: user.ID, Text: "old user turn text"}); err != nil {
 		t.Fatal(err)

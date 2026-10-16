@@ -347,6 +347,28 @@ func (d *Daemon) handleMemoryPurge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (d *Daemon) handleMemoryCount(w http.ResponseWriter, r *http.Request) {
+	bank, ok := d.memoryBank(w, r, http.MethodGet, http.StatusInternalServerError)
+	if !ok {
+		return
+	}
+	var since time.Time
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		ms, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || ms < 0 {
+			http.Error(w, "invalid since", http.StatusBadRequest)
+			return
+		}
+		since = time.UnixMilli(ms).UTC()
+	}
+	count, err := bank.CountMemoriesSince(r.Context(), since)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
 type memoryItemView struct {
 	ID           int64     `json:"id"`
 	SessionID    string    `json:"sessionId"`
@@ -425,8 +447,13 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 			err = e
 			break
 		}
-		payload, _ := json.Marshal(map[string]any{"text": m.Text, "kind": m.Kind, "source_memory_id": m.ID, "quote": m.Quote, "sessions": []string{m.SessionID}})
-		_, err = bank.Enqueue(r.Context(), memory.QueueItem{Kind: memory.QueueRule, Payload: string(payload), Status: memory.QueuePending})
+		payload := memory.EncodeRuleProposal(memory.RuleProposal{
+			Text: m.Text, Kind: m.Kind, SubjectKey: memory.NormalizeSubjectKey(memory.ProposeSubjectKey(m.Text)),
+			Quotes: []string{m.Quote}, Sessions: []string{m.SessionID}, Author: m.Author,
+			Origin: "memory", Reason: "Promoted from Memory #" + strconv.FormatInt(m.ID, 10) + " (importance " + strconv.FormatFloat(m.Importance, 'f', -1, 64) + ")",
+			SourceMemoryIDs: []int64{m.ID}, Importance: m.Importance,
+		})
+		_, err = bank.Enqueue(r.Context(), memory.QueueItem{Kind: memory.QueueRule, Payload: payload, Status: memory.QueuePending})
 	case "edit":
 		m, e := bank.GetMemory(r.Context(), id)
 		if e != nil {
@@ -474,15 +501,38 @@ func (d *Daemon) handleObservationPromote(w http.ResponseWriter, r *http.Request
 	}
 	o, err := bank.ObservationByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), 404)
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	newID, err := bank.AddMemory(r.Context(), memory.MemoryItem{SessionID: o.SessionID, EventID: o.EventID, Author: o.Author, Kind: memoryMemoryKind(o.Kind), Text: o.Quote, Quote: o.Quote, Importance: .7, Veracity: memory.VeracityStated})
+	legacyText, legacyKind := legacyObservationMeaning(o)
+	newID, err := bank.AddMemory(r.Context(), memory.MemoryItem{SessionID: o.SessionID, EventID: o.EventID, Author: o.Author, Kind: legacyKind, Text: legacyText, Quote: o.Quote, Importance: .7, Veracity: memory.VeracityStated})
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, 201, map[string]int64{"id": newID})
+	writeJSON(w, http.StatusCreated, map[string]int64{"id": newID})
+}
+
+func legacyObservationMeaning(o memory.Observation) (string, string) {
+	var prior struct {
+		Text          string `json:"text"`
+		CandidateText string `json:"candidate_text"`
+		Statement     string `json:"statement"`
+		Kind          string `json:"kind"`
+	}
+	_ = json.Unmarshal([]byte(o.DeciderJSON), &prior)
+	text := firstNonBlank(prior.Text, prior.CandidateText, prior.Statement, o.Quote)
+	kind := memoryMemoryKind(firstNonBlank(prior.Kind, o.Kind))
+	return text, kind
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func memoryMemoryKind(kind string) string {

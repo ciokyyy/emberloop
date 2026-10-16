@@ -76,21 +76,39 @@ func (f *Fake) ListMemories(_ context.Context, kind, status string, limit int) (
 	return out, nil
 }
 func (f *Fake) SearchMemories(ctx context.Context, text, kind, status string, limit int) ([]MemoryItem, error) {
-	rows, err := f.ListMemories(ctx, kind, status, limit)
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(text) == "" {
+		return f.ListMemories(ctx, kind, status, limit)
 	}
 	q := strings.ToLower(text)
-	if q == "" {
-		return rows, nil
-	}
-	out := rows[:0]
-	for _, m := range rows {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]MemoryItem, 0)
+	for _, m := range f.mems {
+		if kind != "" && m.Kind != kind || status != "" && m.Status != status || status == "" && m.Status == StatusForgotten {
+			continue
+		}
 		if strings.Contains(strings.ToLower(m.Text+" "+m.Quote), q) {
 			out = append(out, m)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	limit = clampLimit(limit)
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
+}
+
+func (f *Fake) CountMemoriesSince(_ context.Context, since time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, m := range f.mems {
+		if m.CreatedAt.After(since) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (f *Fake) ReviseMemory(_ context.Context, oldID int64, m MemoryItem) (int64, error) {
