@@ -421,7 +421,7 @@ func (d *Daemon) runFallbackTaskPrompt(runID, ticketID, role, branch, worktree, 
 		if out, err := runGit(worktree, "status", "--porcelain", "--", "AGENTS.md"); err == nil {
 			seeded = strings.HasPrefix(out, "??")
 		}
-		prompt := buildWorkerFirstPrompt(ticketID, spec, ticketFile, branch, seeded, worktree)
+		prompt := buildWorkerFirstPrompt(ticketID, spec, ticketFile, branch, seeded, worktree, role)
 		if role == "worker-design" {
 			prompt = appendDesignerPrompt(prompt)
 		}

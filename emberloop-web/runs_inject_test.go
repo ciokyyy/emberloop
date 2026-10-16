@@ -106,6 +106,35 @@ func TestRunSkillsFirstEntriesAreBriefs(t *testing.T) {
 	}
 }
 
+func TestDesignerBrowserSkillsAndCodeMention(t *testing.T) {
+	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "missing.json"))
+	designer := runSkillsFor("designer")
+	designReviewer := runSkillsFor(reviewerDesignType)
+	for name, skills := range map[string][]string{"designer": designer, "design reviewer": designReviewer} {
+		if len(skills) == 0 || !strings.Contains(skills[len(skills)-1], "Browser skill (local UI only)") {
+			t.Errorf("%s lacks the default browser skill: %#v", name, skills)
+		}
+	}
+	for _, role := range []string{"worker", reviewerSpecType, reviewerStandardsType} {
+		skills := runSkillsFor(role)
+		count := 0
+		for _, skill := range skills {
+			if skill == browserMention {
+				count++
+			}
+			if strings.Contains(skill, "Browser skill (local UI only)") {
+				t.Errorf("%s got design browser section", role)
+			}
+		}
+		if count != 1 {
+			t.Errorf("%s mention count = %d, want one", role, count)
+		}
+	}
+	if got := runSkillsFor("designer"); !strings.Contains(strings.Join(got, "\n"), "Snapshot first") || !strings.Contains(strings.Join(got, "\n"), "localhost only") {
+		t.Fatalf("designer skill lacks core rules: %q", got)
+	}
+}
+
 // Custom skills append after the briefs, trimmed, with alias keys merged.
 func TestRunSkillsCustomAppendAndTrim(t *testing.T) {
 	settings := filepath.Join(tempDir(t), "settings.json")
@@ -122,18 +151,19 @@ func TestRunSkillsCustomAppendAndTrim(t *testing.T) {
 	t.Setenv("EL_SETTINGS", settings)
 
 	worker := runSkillsFor("worker")
-	if len(worker) != 3 || !strings.Contains(worker[2], "worker core") || strings.Contains(worker[2], "drop me") {
+	if len(worker) != 4 || !strings.Contains(worker[3], "worker core") || strings.Contains(worker[3], "drop me") {
 		t.Fatalf("worker custom = %q, want trimmed core without the optional section", worker)
 	}
 	spec := runSkillsFor(reviewerSpecType)
-	if len(spec) != 2 || !strings.Contains(spec[1], "keep") || strings.Contains(spec[1], "drop") {
-		t.Fatalf("spec custom = %q, want the alias skill trimmed", spec)
+	if len(spec) != 3 || !strings.Contains(spec[2], "keep") || strings.Contains(spec[2], "drop") {
+		t.Fatalf("spec custom = %q, want trimmed alias skill", spec)
 	}
 	// The canonical key wins the same way: both keys merge.
 	std := runSkillsFor(reviewerStandardsType)
-	if len(std) != 2 || !strings.Contains(std[1], "std custom") {
-		t.Fatalf("standards custom = %q, want the custom skill after the brief", std)
+	if len(std) != 3 || !strings.Contains(std[2], "std custom") {
+		t.Fatalf("standards custom = %q, want custom after default skills", std)
 	}
+
 }
 
 // run_skills round-trips through the settings API and validates shapes.
@@ -240,7 +270,7 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	worker := buildWorkerFirstPrompt("01-x", specPath, ticketPath, "implement/01-x", false, worktree)
+	worker := buildWorkerFirstPrompt("01-x", specPath, ticketPath, "implement/01-x", false, worktree, "worker")
 	for _, want := range []string{"Ticket body alpha", "Spec body beta", "AGENTS.md", "worker", "Spec axis.", "Standards axis."} {
 		if !strings.Contains(worker, want) {
 			t.Errorf("worker prompt lacks %q:\n%s", want, worker)
@@ -249,6 +279,18 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 	if !strings.Contains(worker, ticketPath) || !strings.Contains(worker, specPath) {
 		t.Errorf("worker prompt lacks the ticket or spec path:\n%s", worker)
 	}
+	if strings.Count(worker, "agent-browser skills get core") != 1 || strings.Contains(worker, "Browser skill (local UI only)") {
+		t.Errorf("code Worker has wrong browser guidance: %q", worker)
+	}
+	designerPrompt := buildWorkerFirstPrompt("01-x", specPath, ticketPath, "implement/01-x", false, worktree, "worker-design")
+	if !strings.Contains(designerPrompt, "Snapshot first") || !strings.Contains(designerPrompt, "localhost only") || strings.Contains(designerPrompt, "agent-browser skills get core") {
+		t.Errorf("Designer prompt has wrong browser skill: %q", designerPrompt)
+	}
+	designReviewerPrompt := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerDesignType, "b", "tip", worktree, repo, "")
+	if !strings.Contains(designReviewerPrompt, "Browser skill (local UI only)") || !strings.Contains(designReviewerPrompt, "a11y") {
+		t.Errorf("design Reviewer prompt lacks browser skill: %q", designReviewerPrompt)
+	}
+
 
 	spec := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerSpecType, "b", "tip", worktree, repo, "")
 	for _, want := range []string{"Ticket body alpha", "Spec body beta", "AGENTS.md", "Spec axis."} {

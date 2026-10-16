@@ -61,19 +61,21 @@ func skillAliases(canonical string) []string {
 	}
 }
 
-// defaultRunSkills returns the built-in first entries per role: both briefs
-// for the Worker (it must meet both axes), one brief for each Reviewer.
-// Reviewer briefs live in runs_exec.go next to reviewerPrompt.
+// defaultRunSkills returns the built-in first entries per role: the Worker gets
+// both review briefs; each Reviewer gets its axis. Reviewer briefs live in
+// runs_exec.go next to reviewerPrompt.
 func defaultRunSkills(canonical string) []string {
 	switch canonical {
 	case "worker":
-		return []string{specBrief, standardsBrief}
+		return []string{specBrief, standardsBrief, browserMention}
 	case reviewerSpecType:
-		return []string{specBrief}
+		return []string{specBrief, browserMention}
 	case reviewerStandardsType:
-		return []string{standardsBrief}
+		return []string{standardsBrief, browserMention}
+	case "designer":
+		return []string{designerBrowserSkill}
 	case reviewerDesignType:
-		return []string{designBrief}
+		return []string{designBrief, designerBrowserSkill}
 	default:
 		return nil
 	}
@@ -387,9 +389,13 @@ func formatRunFirstPrompt(base, ticketPath, ticketContent, specPath, specContent
 
 // buildWorkerFirstPrompt reads the Ticket, spec, root chain and worker
 // skills for a Worker start. A read failure still names the path.
-func buildWorkerFirstPrompt(ticketID, specPath, ticketPath, branch string, seeded bool, worktree string) string {
+func buildWorkerFirstPrompt(ticketID, specPath, ticketPath, branch string, seeded bool, worktree, role string) string {
 	base := workerTaskPrompt(ticketID, specPath, ticketPath, branch, seeded)
-	return formatRunFirstPrompt(base, ticketPath, readRunFile(ticketPath), specPath, readRunFile(specPath), agentsChainForWorker(worktree), "worker", runSkillsFor("worker"))
+	skillRole := "worker"
+	if role == "worker-design" {
+		skillRole = "designer"
+	}
+	return formatRunFirstPrompt(base, ticketPath, readRunFile(ticketPath), specPath, readRunFile(specPath), agentsChainForWorker(worktree), skillRole, runSkillsFor(skillRole))
 }
 
 // buildReviewerFirstPrompt reads the Ticket, spec, changed-paths chain and

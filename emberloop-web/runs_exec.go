@@ -1720,6 +1720,9 @@ func (d *Daemon) runSubmitCount(runID, ticketID string) int {
 // never spawns reviewers of its own.
 const workerReviewNote = "Do not spawn reviewers: after you submit done, the Daemon starts every required reviewer itself and sends you every recorded finding, including minors, marked blocking or non-blocking. When you receive findings, answer every blocker/major in your next done submit using dispositions with the exact findingId and disposition; declined also needs reason, deferred also needs ticket (the Ticket number). Minor dispositions are optional. Spawn scouts only for read-only research."
 
+// browserMention is the only browser-tool guidance in non-design Run briefs.
+const browserMention = `The agent-browser CLI is available for local UI checks; for its core guidance run ` + "`agent-browser skills get core`" + `.`
+
 // webStallNudge is the fixed nudge for a Worker that went idle with no submit.
 const webStallNudge = "Nudge: you have not submitted. Finish the ticket and submit done with the completed checkboxes; the reviewers start after your submit."
 
@@ -1774,6 +1777,9 @@ func reviewerPrompt(ticketID, spec, reviewerType, branch, tip string) string {
 func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string, declined []declinedReviewFinding) string {
 	return reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip, declined, "", "", "")
 }
+
+// designerBrowserSkill is injected only for Designers and design Reviewers.
+const designerBrowserSkill = "Browser skill (local UI only). Use the agent-browser CLI command shapes verified by the live probe: agent-browser open <url>, agent-browser snapshot, set the viewport, and save a JPEG screenshot. Start the Ticket's dev server with .emberloop/preview and use its printed URL, or follow the repo's AGENTS.md dev command. Stay on localhost only; never navigate to the public internet. Snapshot first with depth and element limits; use screenshots only to judge visuals, at 390 px and 1280 px, JPEG at capped scale, never full-page by default. Read saved screenshots with el read. Before submit, check the console and run a11y. If agent-browser is missing, report it and continue with available local checks; do not install ad hoc or claim visual verification."
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
 // into the Reviewer prompt: Reviewer Sessions load no skills, so the brief
@@ -3374,7 +3380,11 @@ func (d *Daemon) runStartWorker(runID string, tk el.DriverTicket) error {
 
 		d.persistResumeToken(be, meta.ID)
 		d.appendEvent(meta.ID, "status", "", "idle")
-		prompt := buildWorkerFirstPrompt(tk.ID, spec, tk.Path, branch, seeded, worktree)
+		role := "worker"
+		if tk.Type == "design" {
+			role = "worker-design"
+		}
+		prompt := buildWorkerFirstPrompt(tk.ID, spec, tk.Path, branch, seeded, worktree, role)
 		if tk.Type == "design" {
 			prompt = appendDesignerPrompt(prompt)
 		}
