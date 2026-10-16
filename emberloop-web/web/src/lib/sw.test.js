@@ -75,7 +75,7 @@ describe('service worker fetch caching', () => {
     handlers.fetch(assetEvent);
     await assetEvent.response;
     expect(fetch).toHaveBeenCalledOnce();
-    const builtHTML = readFileSync(new URL('../../dist/index.html', import.meta.url), 'utf8');
+    const builtHTML = readFileSync(resolve(process.cwd(), 'dist/index.html'), 'utf8');
     const emitted = [...builtHTML.matchAll(/(?:src|href)="(\/[^"?#]+\.(?:js|css))"/g)].map((match) => match[1]);
     for (const path of emitted) {
       const event = {

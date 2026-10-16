@@ -9583,8 +9583,18 @@ var SETTINGS_GROUPS = [{
 			id: "memory",
 			label: "Memory",
 			icon: "brain",
-			hint: "Deciders and Jev",
-			scope: "Global"
+			hint: "Automatic extraction, embeddings, recall weights, deciders and Jev",
+			searchTerms: [
+				"memory_extract_model",
+				"memory_extract_effort",
+				"memory_embedding_model",
+				"memory_recall_weights",
+				"memory_auto_extract",
+				"automatic extraction",
+				"embeddings",
+				"recall weights"
+			],
+			scope: "Admin"
 		},
 		{
 			id: "access",
