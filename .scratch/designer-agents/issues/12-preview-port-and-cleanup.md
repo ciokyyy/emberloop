@@ -4,11 +4,11 @@
 
 **Blocked by:** 04-browser-session-env-and-cleanup, 09-designer-worker-routing
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Designer and design Reviewer Sessions receive a free `PORT`; two parallel Sessions never get the same port (test)
-- [ ] A background preview started by a Session is stopped on Session end, pause, merge end and abandon; a test starts a fake long-running process and sees it gone
-- [ ] No other role's environment gains `PORT`
-- [ ] `.emberloop/preview` contract (reads `PORT`, prints the URL) is documented in `emberloop-web/AGENTS.md` and, for repo authors, in the area `AGENTS.md`
-- [ ] The Emberloop repo itself gains a `.emberloop/preview` that serves its web UI for a worktree, so the flow can be exercised here
-- [ ] `.emberloop/check` passes
+- [x] Designer and design Reviewer Sessions receive a free `PORT`; two parallel Sessions never get the same port (test)
+- [x] A background preview started by a Session is stopped on Session end, pause, merge end and abandon; a test starts a fake long-running process and sees it gone
+- [x] No other role's environment gains `PORT`
+- [x] `.emberloop/preview` contract (reads `PORT`, prints the URL) is documented in `emberloop-web/AGENTS.md` and, for repo authors, in the area `AGENTS.md`
+- [x] The Emberloop repo itself gains a `.emberloop/preview` that serves its web UI for a worktree, so the flow can be exercised here
+- [x] `.emberloop/check` passes
