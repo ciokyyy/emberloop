@@ -4,11 +4,11 @@
 
 **Blocked by:** 02-ticket-type-parse
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `PUT /api/runs/<id>/tickets/<ticket>/type` accepts `code`, `design` or an empty value to clear; other values are 400; owner and admin rules match the other Run actions
-- [ ] The override persists in the Run file, round-trips through restart, and is cleared on empty
-- [ ] Refused with 409 once the Ticket has a Worker, with a message naming that
-- [ ] Run detail shows file type, override and effective type; summaries are unchanged
-- [ ] Run driver tests: override wins over the file line; clear returns to the file line; restart keeps it
-- [ ] `emberloop-web/AGENTS.md` states the override contract; `.emberloop/check` passes
+- [x] `PUT /api/runs/<id>/tickets/<ticket>/type` accepts `code`, `design` or an empty value to clear; other values are 400; owner and admin rules match the other Run actions
+- [x] The override persists in the Run file, round-trips through restart, and is cleared on empty
+- [x] Refused with 409 once the Ticket has a Worker, with a message naming that
+- [x] Run detail shows file type, override and effective type; summaries are unchanged
+- [x] Run driver tests: override wins over the file line; clear returns to the file line; restart keeps it
+- [x] `emberloop-web/AGENTS.md` states the override contract; `.emberloop/check` passes
