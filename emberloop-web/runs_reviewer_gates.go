@@ -538,8 +538,11 @@ func reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip string, 
 		}
 	}
 	brief := standardsBrief
-	if reviewerType == reviewerSpecType {
+	switch reviewerType {
+	case reviewerSpecType:
 		brief = specBrief
+	case reviewerDesignType:
+		brief = designBrief
 	}
 	return prefix + "\n\n" + brief
 }

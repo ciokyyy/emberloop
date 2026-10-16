@@ -692,3 +692,13 @@ func TestSelectiveRereviewLineThresholdValue(t *testing.T) {
 		t.Fatalf("selectiveRereviewLineThreshold = %d, want 40", selectiveRereviewLineThreshold)
 	}
 }
+
+// Persistent design Reviewer re-prompts keep the visual brief separate from
+// the standards axis instead of reverting to the code-review default.
+func TestDesignReviewerRereviewUsesDesignBrief(t *testing.T) {
+	t.Parallel()
+	prompt := reviewerPromptWithExtras("10-design", "spec.md", reviewerDesignType, "branch", "tip", nil, "", "", "")
+	if !strings.Contains(prompt, designBrief) || strings.Contains(prompt, standardsBrief) {
+		t.Fatalf("design re-review prompt has the wrong brief: %s", prompt)
+	}
+}
