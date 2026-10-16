@@ -308,6 +308,7 @@ type runState struct {
 	Rows                   map[string]savedRow     `json:"rows,omitempty"`
 	Chains                 map[string][]chainEntry `json:"chains,omitempty"`
 	DesignReviewerFallback bool                    `json:"designReviewerFallback,omitempty"`
+	DesignWorkerFallback   bool                    `json:"designWorkerFallback,omitempty"`
 	ChainExhausted         map[string]bool         `json:"chainExhausted,omitempty"`
 	// ChainPendingSubmit invalidates an old Worker done submit on a provider
 	// Chain failure until the replacement Worker submits done.
@@ -882,6 +883,7 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		Rows:                   map[string]savedRow{},
 		Chains:                 d.daemonConfiguredRunChains(harness, model, effort),
 		DesignReviewerFallback: len(d.daemonChainFor(reviewerDesignType)) == 0,
+		DesignWorkerFallback:   len(d.daemonChainFor("worker-design")) == 0,
 		ChainExhausted:         map[string]bool{},
 		ChainPendingSubmit:     map[string]bool{},
 		StartBlocked:           map[string]string{},
@@ -4326,7 +4328,11 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			rounds = []ticketRound{}
 		}
 		ticketWarnings := []string{}
-		if t.Type == "design" && rs.DesignReviewerFallback {
+		effectiveType := effectiveRunTicketType(rs, t)
+		if effectiveType == "design" && rs.DesignWorkerFallback {
+			ticketWarnings = append(ticketWarnings, "Designer worker Chain is empty; using worker Chain.")
+		}
+		if effectiveType == "design" && rs.DesignReviewerFallback {
 			ticketWarnings = append(ticketWarnings, "Design reviewer Chain is empty; using reviewer-standards Chain.")
 		}
 		tickets = append(tickets, map[string]any{

@@ -1304,8 +1304,9 @@ func TestDesignReviewerSeatBlocksAndThenPasses(t *testing.T) {
 	if len(tk.Verdicts) != 3 || tk.State == "merged" {
 		t.Fatalf("design ticket gate = %+v, state %q; want three required seats and no merge", tk.Verdicts, tk.State)
 	}
-	if len(tk.Warnings) == 0 || !strings.Contains(tk.Warnings[0], "reviewer-standards") {
-		t.Fatalf("design fallback warnings = %v, want standards Chain fallback", tk.Warnings)
+	warnings := strings.Join(tk.Warnings, " ")
+	if !strings.Contains(warnings, "reviewer-standards") || !strings.Contains(warnings, "worker Chain") {
+		t.Fatalf("design fallback warnings = %v, want worker and standards Chain fallbacks", tk.Warnings)
 	}
 	if !strings.Contains(sessTranscript(getSession(t, srv.URL, tk.ReviewerSessions[reviewerDesignType])), "rendered page") {
 		t.Fatal("design reviewer prompt does not ask it to judge the rendered page")

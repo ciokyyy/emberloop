@@ -486,6 +486,20 @@ func scopeWarningFiles(ticketBody string, changed []string) []string {
 	return out
 }
 
+// designerOutOfScopeFiles identifies test and backend/logic files in a design diff.
+func designerOutOfScopeFiles(changed []string) []string {
+	var out []string
+	for _, file := range changed {
+		lower := strings.ToLower(filepath.ToSlash(file))
+		base := filepath.Base(lower)
+		if strings.Contains(lower, "/test/") || strings.Contains(lower, "/tests/") || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.go") || strings.HasSuffix(base, ".spec.js") || strings.HasSuffix(base, ".test.js") || strings.HasSuffix(base, ".go") || strings.HasSuffix(base, ".py") || strings.HasSuffix(base, ".rs") || strings.HasSuffix(base, ".sql") {
+			out = append(out, file)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // scopeWarningPrompt renders the non-blocking scope warning for a Reviewer
 // prompt: the listed files never block the ticket by themselves.
 func scopeWarningPrompt(files []string) string {
@@ -562,6 +576,13 @@ func (d *Daemon) reviewerPromptExtras(runID, ticketID, tip string) (evidence, sc
 	ticketFile := ticketPath(rs, ticketID)
 	specBranch := rs.SpecBranch
 	rounds := append([]ticketRound(nil), rs.Rounds[ticketID]...)
+	designTicket := false
+	for _, t := range rs.Tickets {
+		if t.ID == ticketID {
+			designTicket = effectiveRunTicketType(rs, t) == "design"
+			break
+		}
+	}
 	if res, exists := rs.TipCheckCache[tip]; exists && res.OK && tip != "" {
 		evidence = tipCheckEvidenceLine(tip)
 	}
@@ -588,6 +609,15 @@ func (d *Daemon) reviewerPromptExtras(runID, ticketID, tip string) (evidence, sc
 	changed := reviewChangedFiles(repo, base, tip)
 	if warn := scopeWarningFiles(body, changed); len(warn) > 0 {
 		scope = scopeWarningPrompt(warn)
+	}
+	if designTicket {
+		if files := designerOutOfScopeFiles(changed); len(files) > 0 {
+			note := "Designer scope note (non-blocking): logic and test files are out of scope: " + strings.Join(files, ", ") + ". This note alone never blocks the Ticket."
+			if scope != "" {
+				scope += "\n\n"
+			}
+			scope += note
+		}
 	}
 	if note := diffBasePrompt(base, tip); note != "" {
 		if scope != "" {

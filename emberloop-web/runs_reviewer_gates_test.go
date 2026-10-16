@@ -666,6 +666,14 @@ func TestFileInTicketScope(t *testing.T) {
 	}
 }
 
+func TestDesignerOutOfScopeFiles(t *testing.T) {
+	got := designerOutOfScopeFiles([]string{"src/Card.svelte", "server/api.go", "src/Card.test.js", "src/Card.css"})
+	want := []string{"server/api.go", "src/Card.test.js"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("designerOutOfScopeFiles = %q, want %q", got, want)
+	}
+}
+
 // The round-4+ rule is prompt-only: no note before round 4, and from round 4
 // on the prompt says restated majors do not block while blockers still do.
 func TestLateRoundReviewNote(t *testing.T) {

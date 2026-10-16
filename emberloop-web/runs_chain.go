@@ -17,6 +17,9 @@ func configuredRunChains(harness, model, effort string) map[string][]chainEntry 
 	chains := make(map[string][]chainEntry, len(runRoles))
 	for _, role := range runRoles {
 		entries := chainFor(role)
+		if role == "worker-design" && len(entries) == 0 {
+			entries = chainFor("worker")
+		}
 		if role == reviewerDesignType && len(entries) == 0 {
 			entries = chainFor(reviewerStandardsType)
 		}
@@ -28,13 +31,14 @@ func configuredRunChains(harness, model, effort string) map[string][]chainEntry 
 	return chains
 }
 
-// daemonConfiguredRunChains snapshots this Daemon's configured chains, so a
-// settings edit or Daemon restart cannot change a Ticket's fallback order
-// mid-run.
+// daemonConfiguredRunChains snapshots the configured Run chains.
 func (d *Daemon) daemonConfiguredRunChains(harness, model, effort string) map[string][]chainEntry {
 	chains := make(map[string][]chainEntry, len(runRoles))
 	for _, role := range runRoles {
 		entries := d.daemonChainFor(role)
+		if role == "worker-design" && len(entries) == 0 {
+			entries = d.daemonChainFor("worker")
+		}
 		if role == reviewerDesignType && len(entries) == 0 {
 			entries = d.daemonChainFor(reviewerStandardsType)
 		}
@@ -46,6 +50,7 @@ func (d *Daemon) daemonConfiguredRunChains(harness, model, effort string) map[st
 	return chains
 }
 
+// runChain returns a copy of a Run's snapshotted Chain. Old Run files without
 // runChain returns a copy of a Run's snapshotted Chain. Old Run files without
 // chains fall back to current settings, then to the Run's Start configuration.
 func runChain(rs *runState, role string) []chainEntry {
@@ -75,13 +80,11 @@ func workerRunChain(rs *runState, ticketID, role string) []chainEntry {
 		return nil
 	}
 	position := clampChainPosition(chainPosition(rs, ticketID, role), len(entries))
-	if role != "worker-design" {
-		if override, ok := rs.WorkerOverrides[ticketID]; ok {
-			if override.Backend == "grok" {
-				delete(rs.WorkerOverrides, ticketID)
-			} else {
-				entries[position] = override
-			}
+	if override, ok := rs.WorkerOverrides[ticketID]; ok {
+		if override.Backend == "grok" {
+			delete(rs.WorkerOverrides, ticketID)
+		} else {
+			entries[position] = override
 		}
 	}
 	return entries
@@ -198,6 +201,14 @@ func (d *Daemon) handleRunChainFailure(id string) bool {
 		runID, ticketID = d.findWorkerLocked(id)
 		if runID != "" {
 			role = "worker"
+			if rs := d.runs[runID]; rs != nil {
+				for _, t := range rs.Tickets {
+					if t.ID == ticketID && effectiveRunTicketType(rs, staticTicket{ID: t.ID, Type: t.Type}) == "design" {
+						role = "worker-design"
+						break
+					}
+				}
+			}
 		}
 	}
 	rs := d.runs[runID]
@@ -219,7 +230,7 @@ func (d *Daemon) handleRunChainFailure(id string) bool {
 	}
 	rs.chainHandling[id] = true
 	paused := rs.Status == runStatusPaused || rs.TicketPaused[ticketID]
-	if !paused && role == "worker" {
+	if !paused && (role == "worker" || role == "worker-design") {
 		if rs.ChainPendingSubmit == nil {
 			rs.ChainPendingSubmit = map[string]bool{}
 		}
@@ -322,7 +333,7 @@ func (d *Daemon) startRunChainFallback(runID, ticketID, role, failedID, detail s
 			return
 		}
 		setChainPosition(rs, ticketID, role, next)
-		if role == "worker" {
+		if role == "worker" || role == "worker-design" {
 			delete(rs.WorkerOverrides, ticketID)
 			rs.Sessions[ticketID] = meta.ID
 			if rs.SubmitRecs != nil {
@@ -396,12 +407,16 @@ func (d *Daemon) runRoleSessionLocked(rs *runState, ticketID, role, sessionID st
 // runFallbackTaskPrompt rebuilds the normal injected role task for a fallback
 // Session, after its Handoff turn has established the prior context.
 func (d *Daemon) runFallbackTaskPrompt(runID, ticketID, role, branch, worktree, repo, spec, ticketFile, base, tip string) string {
-	if role == "worker" {
+	if role == "worker" || role == "worker-design" {
 		seeded := false
 		if out, err := runGit(worktree, "status", "--porcelain", "--", "AGENTS.md"); err == nil {
 			seeded = strings.HasPrefix(out, "??")
 		}
-		return buildWorkerFirstPrompt(ticketID, spec, ticketFile, branch, seeded, worktree)
+		prompt := buildWorkerFirstPrompt(ticketID, spec, ticketFile, branch, seeded, worktree)
+		if role == "worker-design" {
+			prompt = appendDesignerPrompt(prompt)
+		}
+		return prompt
 	}
 	if tip == "" {
 		tip, _ = runGit(repo, "rev-parse", branch)

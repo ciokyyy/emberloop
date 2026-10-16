@@ -1095,3 +1095,19 @@ func TestDeadWorkerTurnFailsWithoutChainAdvance(t *testing.T) {
 	}
 	pauseTestRun(t, srv.URL, run.ID)
 }
+
+func TestDesignerPromptAndChainRouting(t *testing.T) {
+	base := workerTaskPrompt("01", "spec.md", "ticket.md", "branch", false)
+	if got := appendDesignerPrompt(base); !strings.Contains(got, "## Designer") || !strings.Contains(got, "not logic or test behaviour") {
+		t.Fatalf("designer prompt missing constraints: %s", got)
+	}
+	rs := &runState{Chains: map[string][]chainEntry{"worker": {{Backend: "pig", Model: "code"}}, "worker-design": {{Backend: "pig", Model: "design"}, {Backend: "claude", Model: "fallback"}}}, Rows: map[string]savedRow{}}
+	got := workerRunChain(rs, "01", "worker-design")
+	if len(got) != 2 || got[0].Model != "design" {
+		t.Fatalf("design chain = %#v", got)
+	}
+	setChainPosition(rs, "01", "worker-design", 1)
+	if pos := chainPosition(rs, "01", "worker-design"); pos != 1 {
+		t.Fatalf("designer chain position = %d", pos)
+	}
+}
