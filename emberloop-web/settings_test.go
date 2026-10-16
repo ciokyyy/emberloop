@@ -34,11 +34,12 @@ func settingsServer(t *testing.T, settingsBody string) (*httptest.Server, string
 }
 
 type settingsResp struct {
-	Roles                map[string]roleSetting  `json:"roles"`
-	Chains               map[string][]chainEntry `json:"chains"`
-	MaxTickets           int                     `json:"max_tickets"`
-	MaxTicketsFromEnv    bool                    `json:"max_tickets_from_env"`
-	OAuthRedirectBaseURL string                  `json:"oauth_redirect_base_url"`
+	Roles                 map[string]roleSetting  `json:"roles"`
+	Chains                map[string][]chainEntry `json:"chains"`
+	MaxTickets            int                     `json:"max_tickets"`
+	MaxTicketsFromEnv     bool                    `json:"max_tickets_from_env"`
+	OAuthRedirectBaseURL  string                  `json:"oauth_redirect_base_url"`
+	BrowserAllowedDomains []string                `json:"browser.allowed_domains"`
 }
 
 func getSettingsView(t *testing.T, base string) (settingsResp, int) {
@@ -624,5 +625,27 @@ func TestMemoryRecallWeightsValidation(t *testing.T) {
 	}
 	if msg := validateMemoryRecallWeights(json.RawMessage(`{"vector":0.2,"fts":0.3,"importance":0.5}`)); msg != "" {
 		t.Fatalf("valid weights rejected: %s", msg)
+	}
+}
+
+func TestBrowserAllowedDomainsAdminSettingsRoundTrip(t *testing.T) {
+	srv, settings := settingsServer(t, `{}`)
+	_, code := putSettingsBody(t, srv.URL, `{"browser.allowed_domains":["localhost","example.com"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("admin settings write status = %d", code)
+	}
+	out, code := getSettingsView(t, srv.URL)
+	if code != http.StatusOK || !reflect.DeepEqual(out.BrowserAllowedDomains, []string{"localhost", "example.com"}) {
+		t.Fatalf("settings view = %+v status=%d", out, code)
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"browser.allowed_domains"`) {
+		t.Fatalf("domains were not persisted: %s", raw)
+	}
+	if _, code = putSettingsBody(t, srv.URL, `{"browser.allowed_domains":["bad domain"]}`); code != http.StatusBadRequest {
+		t.Fatalf("invalid domain status = %d", code)
 	}
 }

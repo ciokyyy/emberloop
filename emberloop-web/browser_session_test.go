@@ -102,3 +102,26 @@ func TestBrowserSessionEnvAbsentBinary(t *testing.T) {
 		t.Fatalf("environment without binary = %v", got)
 	}
 }
+
+func TestBrowserDisabledSuppressesEnvironmentButStillCleans(t *testing.T) {
+	bin := tempDir(t)
+	t.Setenv("EL_BIN_DIR", bin)
+	callLog := filepath.Join(bin, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> \"" + callLog + "\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "agent-browser"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(tempDir(t), "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"browser.enabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EL_SETTINGS", settings)
+	d := &Daemon{stateDir: filepath.Join(tempDir(t), "state")}
+	if got := d.browserSessionEnv("s"); len(got) != 0 {
+		t.Fatalf("disabled environment = %v", got)
+	}
+	d.closeBrowser("s", false)
+	if _, err := os.Stat(callLog); err != nil {
+		t.Fatalf("cleanup skipped while disabled: %v", err)
+	}
+}

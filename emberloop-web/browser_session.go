@@ -79,9 +79,6 @@ func (d *Daemon) browserAllowedDomains() []string {
 }
 
 func (d *Daemon) closeBrowser(id string, all bool) {
-	if !browserEnabled() {
-		return
-	}
 	bin := filepath.Join(tools.BinDir(), "agent-browser")
 	if _, err := os.Stat(bin); err != nil {
 		return
@@ -109,9 +106,8 @@ func validateBrowserDomains(raw json.RawMessage) string {
 	}
 	seen := map[string]bool{}
 	for _, domain := range domains {
-		domain = strings.TrimSpace(domain)
-		if domain == "" || !browserDomainPattern.MatchString(domain) {
-			return "browser.allowed_domains must contain valid domain names"
+		if domain != strings.TrimSpace(domain) || domain == "" || !browserDomainPattern.MatchString(domain) {
+			return "browser.allowed_domains must contain valid domain names without surrounding whitespace"
 		}
 		if seen[strings.ToLower(domain)] {
 			return "browser.allowed_domains must not contain duplicates"
