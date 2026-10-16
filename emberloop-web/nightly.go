@@ -733,13 +733,13 @@ func (d *Daemon) remindOldProfilePatchesAt(ctx context.Context, bank memory.Memo
 		if reminded[key] {
 			continue
 		}
-		// Persist the claim before attempting delivery. The lock serializes
-		// concurrent nightly invocations; a failed ledger write sends nothing.
-		if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "profile_patch_reminder", Status: memory.LedgerSuccess, Detail: key}); err != nil {
+		payload := d.profilePatchPushPayload(owner, "", item.ID, "Reminder: this Profile patch is still awaiting your review.")
+		if !d.push.notifyDelivered(payload) {
 			continue
 		}
-		reminded[key] = true
-		d.pushProfilePatch(owner, "", item.ID, "Reminder: this Profile patch is still awaiting your review.")
+		if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "profile_patch_reminder", Status: memory.LedgerSuccess, Detail: key}); err == nil {
+			reminded[key] = true
+		}
 	}
 }
 
@@ -770,11 +770,14 @@ func (d *Daemon) sendMemoryDigest(ctx context.Context, bank memory.Memory, owner
 			learned += counts["stored"] + counts["memories"]
 		}
 	}
-	if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "memory_digest_sent", Status: memory.LedgerSuccess, Detail: today}); err != nil {
+	if learned <= 0 {
 		return
 	}
 	payload := pushPayload(pushMessage{Title: "Memory daily digest", Body: fmt.Sprintf("learned %d things today, tap to review", learned), Tag: "memory-digest:" + today, Key: "memory-digest:" + today, Path: "/memory"})
-	go d.push.notify(payload)
+	if !d.push.notifyDelivered(payload) {
+		return
+	}
+	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{Stage: "memory_digest_sent", Status: memory.LedgerSuccess, Detail: today})
 }
 
 // nightlyMainRepoDir resolves dir to its main repo workdir through the git

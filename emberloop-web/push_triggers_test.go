@@ -159,6 +159,41 @@ func TestMemoryDigestPreferenceDefaultsOffAndGatesDailyPush(t *testing.T) {
 	}
 }
 
+func TestMemoryDigestSkipsEmptyAndRetriesWithoutSubscriptions(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	bank, err := d.profileBankFor("digest-retry-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := d.push.setDigestEnabled("digest-retry-user", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "ingest", Status: memory.LedgerSuccess, CountsJSON: `{"stored":0}`}); err != nil {
+		t.Fatal(err)
+	}
+	d.sendMemoryDigest(ctx, bank, "digest-retry-user")
+	if rows, err := bank.Ledger(ctx); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, row := range rows {
+			if row.Stage == "memory_digest_sent" {
+				t.Fatal("empty digest recorded as sent")
+			}
+		}
+	}
+	if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "ingest", Status: memory.LedgerSuccess, CountsJSON: `{"stored":2}`}); err != nil {
+		t.Fatal(err)
+	}
+	cap, decrypt := capturePush(t, d)
+	d.sendMemoryDigest(ctx, bank, "digest-retry-user")
+	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
+	if m.Body != "learned 2 things today, tap to review" {
+		t.Fatalf("digest after retry = %+v", m)
+	}
+}
+
 func TestMemoryDigestPreferenceAPIIsAuthenticatedAndPersists(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
@@ -201,6 +236,16 @@ func TestProfilePatchReminderSendsOnceAfter48Hours(t *testing.T) {
 	}
 	if _, err := bank.Enqueue(context.Background(), memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: `{"ops":[]}`}); err != nil {
 		t.Fatal(err)
+	}
+	d.remindOldProfilePatchesAt(context.Background(), bank, "reminder-user", reminderAt)
+	if rows, err := bank.Ledger(context.Background()); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, row := range rows {
+			if row.Stage == "profile_patch_reminder" {
+				t.Fatal("reminder claim recorded without a push subscription")
+			}
+		}
 	}
 	cap, decrypt := capturePush(t, d)
 	var wg sync.WaitGroup

@@ -177,18 +177,29 @@ func (p *pushStore) remove(endpoint string) {
 // notify sends the payload to every subscription. Gone subscriptions
 // (404, 410) are dropped.
 func (p *pushStore) notify(payload []byte) {
+	p.notifyDelivered(payload)
+}
+
+// notifyDelivered reports whether at least one subscription accepted the
+// payload. Failed and gone subscriptions do not count as a delivery.
+func (p *pushStore) notifyDelivered(payload []byte) bool {
 	if p.load() != nil {
-		return
+		return false
 	}
 	p.mu.Lock()
 	subs := append([]pushSub(nil), p.subs...)
 	p.mu.Unlock()
+	delivered := false
 	for _, s := range subs {
 		code, err := p.send(s, payload)
+		if err == nil && code >= http.StatusOK && code < http.StatusMultipleChoices {
+			delivered = true
+		}
 		if err == nil && (code == http.StatusNotFound || code == http.StatusGone) {
 			p.remove(s.Endpoint)
 		}
 	}
+	return delivered
 }
 
 func (p *pushStore) send(s pushSub, payload []byte) (int, error) {
@@ -314,6 +325,10 @@ type pushMessage struct {
 }
 
 func (d *Daemon) pushProfilePatch(owner, sessionID string, id int64, reason string) {
+	go d.push.notify(d.profilePatchPushPayload(owner, sessionID, id, reason))
+}
+
+func (d *Daemon) profilePatchPushPayload(owner, sessionID string, id int64, reason string) []byte {
 	var meta SessionMeta
 	d.mu.Lock()
 	if sessionID == "" {
@@ -335,8 +350,7 @@ func (d *Daemon) pushProfilePatch(owner, sessionID string, id int64, reason stri
 	if sessionID != "" {
 		path = "/s/" + sessionID
 	}
-	payload := pushPayload(pushMessage{Title: title, Body: "Approve or reject a proposed Profile update. " + truncatePush(reason, 100), Tag: "profile:" + itoa(id), SessionID: sessionID, Cue: "mention", Key: "profile:" + itoa(id), Path: path, ProfilePatchID: id})
-	go d.push.notify(payload)
+	return pushPayload(pushMessage{Title: title, Body: "Approve or reject a proposed Profile update. " + truncatePush(reason, 100), Tag: "profile:" + itoa(id), SessionID: sessionID, Cue: "mention", Key: "profile:" + itoa(id), Path: path, ProfilePatchID: id})
 }
 
 func pushPayload(m pushMessage) []byte {
