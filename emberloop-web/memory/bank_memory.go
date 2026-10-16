@@ -26,11 +26,16 @@ func (b *Bank) insertMemory(ctx context.Context, m MemoryItem) (int64, error) {
 	split := SplitText(m.Text + " " + m.Quote)
 	var id int64
 	err := b.write(ctx, func(db *sql.DB) error {
-		res, err := db.ExecContext(ctx, `INSERT INTO memories (session_id, event_id, author, kind, text, quote, split_text, importance, veracity, mention_count, status, superseded_by, pinned, embedding, embedding_model, extractor_json, observed_commit, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.SessionID, m.EventID, m.Author, m.Kind, m.Text, m.Quote, split, m.Importance, m.Veracity, m.MentionCount, m.Status, nullableInt(m.SupersededBy), m.Pinned, m.Embedding, m.EmbeddingModel, m.ExtractorJSON, m.ObservedCommit, timeText(b.now()), timeText(orNow(m.LastSeenAt, b.now())))
+		createdAt := timeText(b.now())
+		res, err := db.ExecContext(ctx, `INSERT INTO memories (session_id, event_id, author, kind, text, quote, split_text, importance, veracity, mention_count, status, superseded_by, pinned, embedding, embedding_model, extractor_json, observed_commit, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.SessionID, m.EventID, m.Author, m.Kind, m.Text, m.Quote, split, m.Importance, m.Veracity, m.MentionCount, m.Status, nullableInt(m.SupersededBy), m.Pinned, m.Embedding, m.EmbeddingModel, m.ExtractorJSON, m.ObservedCommit, createdAt, timeText(orNow(m.LastSeenAt, b.now())))
 		if err != nil {
 			return err
 		}
 		id, err = res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO ledger (run_id, stage, status, counts_json, detail, created_at) VALUES (?, 'memory_stored', ?, ?, '', ?)`, fmt.Sprintf("memory-%d", id), LedgerSuccess, fmt.Sprintf(`{"count":1,"memory_id":%d}`, id), createdAt)
 		return err
 	})
 	if err == nil {
@@ -40,6 +45,7 @@ func (b *Bank) insertMemory(ctx context.Context, m MemoryItem) (int64, error) {
 	}
 	return id, err
 }
+
 func (b *Bank) AddMemory(ctx context.Context, m MemoryItem) (int64, error) {
 	return b.insertMemory(ctx, m)
 }

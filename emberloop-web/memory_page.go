@@ -282,24 +282,31 @@ func (d *Daemon) handleMemoryLedger(w http.ResponseWriter, r *http.Request) {
 // shows as the Unavailable chip and never blocks the turn.
 func calculateMemoryStats(rows []memory.LedgerRow, now time.Time) memoryMetrics {
 	var m memoryMetrics
-	var stored, stored7d, forgotten7d, promoted, injections, creates int
+	var stored, promoted, injections, creates int
+	cohortCutoff := now.Add(-7 * 24 * time.Hour)
+	cohort := make(map[int64]struct{})
+	forgotten := make(map[int64]struct{})
 	for _, row := range rows {
 		counts := map[string]float64{}
 		_ = json.Unmarshal([]byte(row.CountsJSON), &counts)
 		switch row.Stage {
 		case "ingest":
 			stored += int(counts["stored"])
-			if row.CreatedAt.After(now.Add(-7 * 24 * time.Hour)) {
-				stored7d += int(counts["stored"])
-			}
 			if row.CreatedAt.After(now.Add(-24 * time.Hour)) {
 				m.MemoriesPerDay += int(counts["stored"])
 				m.ExtractorCostUSD += ledgerCost(row.Detail, "cost_usd")
 			}
+		case "memory_stored":
+			id := int64(counts["memory_id"])
+			if id > 0 && !row.CreatedAt.After(cohortCutoff) {
+				cohort[id] = struct{}{}
+			}
 		case "memory_forgotten":
 			ageHours := counts["age_hours"]
-			if ageHours >= 0 && ageHours <= 168 && row.CreatedAt.After(now.Add(-7*24*time.Hour)) {
-				forgotten7d += int(counts["count"])
+			id := int64(counts["memory_id"])
+			createdAt, err := time.Parse(time.RFC3339Nano, row.Detail)
+			if err == nil && id > 0 && !createdAt.After(cohortCutoff) && ageHours >= 0 && ageHours <= 168 {
+				forgotten[id] = struct{}{}
 			}
 		case "memory_promoted":
 			promoted += int(counts["count"])
@@ -314,11 +321,16 @@ func calculateMemoryStats(rows []memory.LedgerRow, now time.Time) memoryMetrics 
 			}
 		}
 	}
+	for id := range forgotten {
+		if _, ok := cohort[id]; ok {
+			m.Forgotten7Day++
+		}
+	}
 	if stored > 0 {
 		m.PromotedShare = float64(promoted) / float64(stored)
 	}
-	if stored7d > 0 {
-		m.Forgotten7Day = float64(forgotten7d) / float64(stored7d)
+	if len(cohort) > 0 {
+		m.Forgotten7Day /= float64(len(cohort))
 	}
 	if creates > 0 {
 		m.InjectionHitRate = float64(injections) / float64(creates)
@@ -499,8 +511,9 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", 400)
 		return
 	}
-	forgottenWithin7Days := false
+	recordForget := false
 	forgetAgeHours := -1
+	var forgottenMemory memory.MemoryItem
 	switch parts[1] {
 	case "forget":
 		m, e := bank.GetMemory(r.Context(), id)
@@ -510,7 +523,8 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 		}
 		age := d.now().Sub(m.CreatedAt)
 		forgetAgeHours = int(age.Hours())
-		forgottenWithin7Days = age >= 0 && age <= 7*24*time.Hour
+		forgottenMemory = m
+		recordForget = m.Status != memory.StatusForgotten
 		err = bank.SetMemoryStatus(r.Context(), id, memory.StatusForgotten)
 	case "park":
 		err = bank.SetMemoryStatus(r.Context(), id, memory.StatusParked)
@@ -560,9 +574,9 @@ func (d *Daemon) handleMemoryAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	if forgottenWithin7Days {
-		counts, _ := json.Marshal(map[string]int{"count": 1, "age_hours": forgetAgeHours})
-		_, _ = bank.RecordLedger(r.Context(), memory.LedgerRow{Stage: "memory_forgotten", Status: memory.LedgerSuccess, CountsJSON: string(counts)})
+	if recordForget {
+		counts, _ := json.Marshal(map[string]any{"count": 1, "memory_id": forgottenMemory.ID, "age_hours": forgetAgeHours})
+		_, _ = bank.RecordLedger(r.Context(), memory.LedgerRow{Stage: "memory_forgotten", Status: memory.LedgerSuccess, CountsJSON: string(counts), Detail: forgottenMemory.CreatedAt.UTC().Format(time.RFC3339Nano)})
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
@@ -580,6 +594,7 @@ func (d *Daemon) handleObservationPromote(w http.ResponseWriter, r *http.Request
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || id <= 0 {
 		http.Error(w, "invalid observation id", 400)
+		return
 	}
 	o, err := bank.ObservationByID(r.Context(), id)
 	if err != nil {

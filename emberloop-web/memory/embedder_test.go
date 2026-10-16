@@ -261,8 +261,12 @@ func TestEmbeddingFailuresAreRecorded(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		rows, err := bank.Ledger(context.Background())
-		if err == nil && len(rows) == 1 && rows[0].Stage == "embedding" && rows[0].Status == LedgerFailed {
-			return
+		if err == nil {
+			for _, row := range rows {
+				if row.Stage == "embedding" && row.Status == LedgerFailed {
+					return
+				}
+			}
 		}
 		time.Sleep(time.Millisecond)
 	}

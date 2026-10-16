@@ -123,6 +123,39 @@ func scanText(s rowScanner) (string, error) {
 	return t, err
 }
 
+func memoryLedgerRows(ctx context.Context, tx *sql.Tx, memoryIDs []int64) ([]int64, error) {
+	if len(memoryIDs) == 0 {
+		return nil, nil
+	}
+	selected := make(map[int64]struct{}, len(memoryIDs))
+	for _, id := range memoryIDs {
+		selected[id] = struct{}{}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, counts_json FROM ledger WHERE stage IN ('memory_stored', 'memory_forgotten')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var ledgerID int64
+		var raw string
+		if err := rows.Scan(&ledgerID, &raw); err != nil {
+			return nil, err
+		}
+		var counts struct {
+			MemoryID int64 `json:"memory_id"`
+		}
+		if err := json.Unmarshal([]byte(raw), &counts); err != nil {
+			return nil, err
+		}
+		if _, ok := selected[counts.MemoryID]; ok {
+			out = append(out, ledgerID)
+		}
+	}
+	return out, rows.Err()
+}
+
 // purgeDB deletes the selected rows and scrubs the texts, in one transaction.
 // It drops the DELETE aborts for that transaction and recreates them before
 // commit, so the purge is the only window where a delete succeeds.
@@ -137,6 +170,20 @@ func purgeDB(ctx context.Context, db *sql.DB, sel Selection, texts []string) (Pu
 		if _, err := tx.ExecContext(ctx, "DROP TRIGGER IF EXISTS "+noDeleteName(t)); err != nil {
 			return res, err
 		}
+	}
+	linkedMemoryLedger, err := memoryLedgerRows(ctx, tx, sel.Memories)
+	if err != nil {
+		return res, err
+	}
+	ledgerIDs := append(append([]int64(nil), sel.Ledger...), linkedMemoryLedger...)
+	ledgerSeen := make(map[int64]struct{}, len(ledgerIDs))
+	uniqueLedgerIDs := ledgerIDs[:0]
+	for _, id := range ledgerIDs {
+		if _, ok := ledgerSeen[id]; ok {
+			continue
+		}
+		ledgerSeen[id] = struct{}{}
+		uniqueLedgerIDs = append(uniqueLedgerIDs, id)
 	}
 	if res.Observations, err = deleteIDs(ctx, tx, "observations", sel.Observations); err != nil {
 		return res, err
@@ -153,7 +200,7 @@ func purgeDB(ctx context.Context, db *sql.DB, sel Selection, texts []string) (Pu
 	if res.Queue, err = deleteIDs(ctx, tx, "queue", sel.Queue); err != nil {
 		return res, err
 	}
-	if res.Ledger, err = deleteIDs(ctx, tx, "ledger", sel.Ledger); err != nil {
+	if res.Ledger, err = deleteIDs(ctx, tx, "ledger", uniqueLedgerIDs); err != nil {
 		return res, err
 	}
 	for _, c := range scrubColumns {
