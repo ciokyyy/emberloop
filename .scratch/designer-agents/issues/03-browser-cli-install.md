@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `el deps` downloads the right asset for linux amd64/arm64 and darwin arm64/amd64, verifies sha256, and writes an executable into the el bin dir; the binary resolves through the shared bin-dir-then-PATH resolver
-- [ ] A second run changes nothing and says so; a bad checksum or failed download warns and leaves the exit status zero
-- [ ] `browser.enabled: false` skips the install and the deps line says so
-- [ ] Tests use a fake release server and fake binary; no test downloads for real
-- [ ] `el/AGENTS.md` and the `el deps` header comment name the browser CLI; `.emberloop/check` passes
+- [x] `el deps` downloads the right asset for linux amd64/arm64 and darwin arm64/amd64, verifies sha256, and writes an executable into the el bin dir; the binary resolves through the shared bin-dir-then-PATH resolver
+- [x] A second run changes nothing and says so; a bad checksum or failed download warns and leaves the exit status zero
+- [x] `browser.enabled: false` skips the install and the deps line says so
+- [x] Tests use a fake release server and fake binary; no test downloads for real
+- [x] `el/AGENTS.md` and the `el deps` header comment name the browser CLI; `.emberloop/check` passes
