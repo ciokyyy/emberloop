@@ -8,6 +8,18 @@ export function apiBase() {
 
 const url = (path) => apiBase() + path;
 
+// Consume each server-prefetched GET once; standalone builds and unmatched
+// requests naturally fall through to fetch.
+const consumedBoot = new Set();
+function getJSON(path) {
+  const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
+  if (boot && Object.prototype.hasOwnProperty.call(boot, path) && !consumedBoot.has(path)) {
+    consumedBoot.add(path);
+    return Promise.resolve(boot[path]);
+  }
+  return fetch(url(path)).then(json);
+}
+
 // Fired on window when a Daemon route outside the auth routes answers 401: the
 // session has ended, so the app returns to the sign-in screen (Root.svelte).
 export const UNAUTHORIZED = 'el:unauthorized';
@@ -22,10 +34,10 @@ async function json(res) {
   return res.json();
 }
 
-export const listSessions = () => fetch(url('/api/sessions')).then(json);
+export const listSessions = () => getJSON('/api/sessions');
 
 // Active Session and Run summaries grouped by stable Project id for the home Dashboard.
-export const getDashboard = () => fetch(url('/api/dashboard')).then(json);
+export const getDashboard = () => getJSON('/api/dashboard');
 
 export const createSession = (body) =>
   fetch(url('/api/sessions'), {
@@ -44,9 +56,9 @@ export const getSession = (id, params = null) => {
       if (params[k] != null && params[k] !== '') q.set(k, String(params[k]));
     }
     const s = q.toString();
-    if (s) qs = `?${s}`;
+	if (s) qs = `?${s}`;
   }
-  return fetch(url(`/api/sessions/${id}${qs}`)).then(json);
+  return getJSON(`/api/sessions/${id}${qs}`);
 };
 
 // opts: { mode, images } where images are { mime, data (base64) }.
@@ -131,7 +143,6 @@ export function openStream(id, since, onEvent, opts = {}) {
     }
   };
   source.onopen = () => {
-    try {
       opts.onOpen?.();
     } catch {
       // Hook must never break the stream.
@@ -143,7 +154,7 @@ export function openStream(id, since, onEvent, opts = {}) {
 export const getModels = (harness, current = '') =>
   fetch(url(`/api/models?harness=${encodeURIComponent(harness)}${current ? `&current=${encodeURIComponent(current)}` : ''}`)).then(json);
 
-export const getSettings = () => fetch(url('/api/settings')).then(json);
+export const getSettings = () => getJSON('/api/settings');
 
 export const getDisk = () => fetch(url('/api/disk')).then(json);
 
@@ -287,7 +298,7 @@ export const listSpecs = (repo) => fetch(url(`/api/specs?repo=${encodeURICompone
 
 export const previewSpec = (spec) => fetch(url(`/api/specs/preview?spec=${encodeURIComponent(spec)}`)).then(json);
 
-export const listRuns = () => fetch(url('/api/runs')).then(json);
+export const listRuns = () => getJSON('/api/runs');
 export const listUsers = () => fetch(url('/api/users')).then(json);
 
 export const startRun = (body) =>
@@ -411,7 +422,7 @@ export const discardTicket = (runId, ticketId) =>
     headers: { 'Content-Type': 'application/json' },
   }).then(json);
 
-export const listProjects = () => fetch(url('/api/projects')).then(json);
+export const listProjects = () => getJSON('/api/projects');
 // Ask Jev which Project fits the first prompt in a projectless draft. A null
 // suggestedProject means the draft should start with its existing home path.
 export const suggestProject = (prompt) =>
@@ -573,9 +584,16 @@ const postCredentials = (path, username, password) =>
   }).then(authJSON);
 
 // { empty, signup_enabled }: which mode the sign-in screen shows.
-export const getAuthState = () => fetch(url('/api/auth/state')).then(authJSON);
+export const getAuthState = () => {
+  const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
+  return boot?.['/api/auth/state'] ? Promise.resolve(boot['/api/auth/state']) : fetch(url('/api/auth/state')).then(authJSON);
+};
 // The signed-in User. Rejects with status 401 when signed out.
-export const getMe = () => fetch(url('/api/auth/me')).then(authJSON);
+export const getMe = () => {
+  const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
+  if (boot?.auth?.signedIn === false) return Promise.reject(Object.assign(new Error('signed out'), { status: 401 }));
+  return boot?.['/api/auth/me'] ? Promise.resolve(boot['/api/auth/me']) : fetch(url('/api/auth/me')).then(authJSON);
+};
 export const login = (username, password) => postCredentials('/api/auth/login', username, password);
 export const signup = (username, password) => postCredentials('/api/auth/signup', username, password);
 export const logout = () =>

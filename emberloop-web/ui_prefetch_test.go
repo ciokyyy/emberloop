@@ -10,11 +10,11 @@ func TestPrefetchPathsByRoute(t *testing.T) {
 		route string
 		want  []string
 	}{
-		{"/", []string{"/api/dashboard", "/api/projects"}},
-		{"/s/session-1", []string{"/api/sessions/session-1?tail=40", "/api/users", "/api/projects"}},
-		{"/p/project-1/runs", []string{"/api/runs", "/api/projects"}},
-		{"/settings/profile", []string{"/api/settings", "/api/projects"}},
-		{"/p/project-1", []string{"/api/projects", "/api/sessions"}},
+		{"/", []string{"/api/auth/me", "/api/dashboard", "/api/projects"}},
+		{"/s/session-1", []string{"/api/auth/me", "/api/sessions/session-1?tail=40", "/api/users", "/api/projects"}},
+		{"/p/project-1/runs", []string{"/api/auth/me", "/api/runs", "/api/projects"}},
+		{"/settings/profile", []string{"/api/auth/me", "/api/settings", "/api/projects"}},
+		{"/p/project-1", []string{"/api/auth/me", "/api/projects", "/api/sessions"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.route, func(t *testing.T) {

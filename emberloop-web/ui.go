@@ -1,18 +1,23 @@
 package web
 
-// Route entries declare their page data requirements alongside the URL table.
 import (
 	"bytes"
 	"compress/gzip"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
+	"time"
+
+	"modernc.org/quickjs"
 )
 
 //go:embed web/dist
@@ -25,7 +30,11 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := path.Clean(r.URL.Path)
-	if p == "/" || p == "/index.html" {
+	if p == "/" {
+		serveBootShell(d, sub, w, r, p)
+		return
+	}
+	if p == "/index.html" {
 		serveFile(sub, w, r, "index.html")
 		return
 	}
@@ -54,15 +63,15 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 func prefetchPaths(route, sessionID string) []string {
 	switch {
 	case route == "/":
-		return []string{"/api/dashboard", "/api/projects"}
+		return []string{"/api/auth/me", "/api/dashboard", "/api/projects"}
 	case strings.HasPrefix(route, "/s/"):
-		return []string{"/api/sessions/" + sessionID + "?tail=40", "/api/users", "/api/projects"}
+		return []string{"/api/auth/me", "/api/sessions/" + sessionID + "?tail=40", "/api/users", "/api/projects"}
 	case strings.HasSuffix(route, "/runs") || strings.Contains(route, "/runs/"):
-		return []string{"/api/runs", "/api/projects"}
+		return []string{"/api/auth/me", "/api/runs", "/api/projects"}
 	case strings.HasSuffix(route, "/settings") || strings.HasPrefix(route, "/settings"):
-		return []string{"/api/settings", "/api/projects"}
+		return []string{"/api/auth/me", "/api/settings", "/api/projects"}
 	case strings.HasPrefix(route, "/p/"):
-		return []string{"/api/projects", "/api/sessions"}
+		return []string{"/api/auth/me", "/api/projects", "/api/sessions"}
 	default:
 		return nil
 	}
@@ -72,28 +81,34 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("Vary", "Cookie")
 	boot := map[string]json.RawMessage{}
-	if _, ok := d.requesterOf(r); ok {
-		parts := strings.Split(strings.Trim(route, "/"), "/")
-		sessionID := ""
-		if len(parts) == 2 && parts[0] == "s" {
-			sessionID = parts[1]
+	parts := strings.Split(strings.Trim(route, "/"), "/")
+	sessionID := ""
+	if len(parts) == 2 && parts[0] == "s" {
+		sessionID = parts[1]
+	}
+	for _, apiPath := range prefetchPaths(route, sessionID) {
+		u, err := url.Parse(apiPath)
+		if err != nil {
+			continue
 		}
-		for _, apiPath := range prefetchPaths(route, sessionID) {
-			req := httptest.NewRequest(http.MethodGet, apiPath, nil)
-			if c, err := r.Cookie(sessionCookie); err == nil {
-				req.AddCookie(c)
-			}
-			if tok := bearerToken(r); tok != "" {
-				req.Header.Set("Authorization", "Bearer "+tok)
-			}
-			rw := httptest.NewRecorder()
-			apiHandler(d, apiPath).ServeHTTP(rw, req)
-			if rw.Code >= 200 && rw.Code < 300 {
-				boot[apiPath] = json.RawMessage(rw.Body.Bytes())
-			}
+		req := r.Clone(r.Context())
+		req.Method, req.URL = http.MethodGet, u
+		req.Body = http.NoBody
+		rw := httptest.NewRecorder()
+		apiHandler(d, u.Path).ServeHTTP(rw, req)
+		if rw.Code >= 200 && rw.Code < 300 {
+			boot[apiPath] = json.RawMessage(rw.Body.Bytes())
 		}
-	} else {
+	}
+	if _, ok := boot["/api/auth/me"]; !ok {
 		boot["auth"] = json.RawMessage(`{"signedIn":false}`)
+		stateReq := r.Clone(r.Context())
+		stateReq.Method, stateReq.URL = http.MethodGet, &url.URL{Path: "/api/auth/state"}
+		stateResp := httptest.NewRecorder()
+		d.handleAuthState(stateResp, stateReq)
+		if stateResp.Code == http.StatusOK {
+			boot["/api/auth/state"] = json.RawMessage(stateResp.Body.Bytes())
+		}
 	}
 	raw, _ := json.Marshal(boot)
 	index, err := fs.ReadFile(sub, "index.html")
@@ -110,11 +125,20 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 	loader := []byte("<script>window.__EL_BOOT__=" + string(raw) + ";</script>")
 	index = append(index[:idx], append(loader, index[idx:]...)...)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if route == "/" {
+		if html, err := renderDashboardWithin(200 * time.Millisecond); err == nil {
+			index = bytes.Replace(index, []byte(`<script type="module" src="/src/main.js"></script>`), []byte(`<div id="el-ssr-dashboard">`+html+`</div><script type="module" src="/src/main.js"></script>`), 1)
+		} else {
+			log.Printf("SSR render fallback for %s: %v", route, err)
+		}
+	}
 	_, _ = w.Write(index)
 }
 
 func apiHandler(d *Daemon, p string) http.Handler {
 	switch {
+	case p == "/api/auth/me":
+		return http.HandlerFunc(d.handleMe)
 	case p == "/api/dashboard":
 		return http.HandlerFunc(d.handleDashboard)
 	case p == "/api/projects":
@@ -131,6 +155,55 @@ func apiHandler(d *Daemon, p string) http.Handler {
 		return http.HandlerFunc(d.handleUsers)
 	default:
 		return http.NotFoundHandler()
+	}
+}
+
+func renderDashboardWithin(limit time.Duration) (html string, err error) {
+	type result struct {
+		html string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				done <- result{err: fmt.Errorf("panic: %v", recovered)}
+			}
+		}()
+		bundle, e := dist.ReadFile("web/dist/ssr/ssr.js")
+		if e != nil {
+			done <- result{err: e}
+			return
+		}
+		vm, e := quickjs.NewVM()
+		if e != nil {
+			done <- result{err: e}
+			return
+		}
+		defer vm.Close()
+		if _, e = vm.Eval(string(bundle), quickjs.EvalModule); e != nil {
+			done <- result{err: e}
+			return
+		}
+		value, e := vm.Call("__elRenderDashboard")
+		if e != nil {
+			done <- result{err: e}
+			return
+		}
+		s, ok := value.(string)
+		if !ok || s == "" {
+			done <- result{err: fmt.Errorf("empty SSR output")}
+			return
+		}
+		done <- result{html: s}
+	}()
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case got := <-done:
+		return got.html, got.err
+	case <-timer.C:
+		return "", fmt.Errorf("render exceeded %s", limit)
 	}
 }
 
