@@ -140,9 +140,17 @@ func (d *Daemon) ingestSession(sessionID string) error {
 				if !item.Stated {
 					veracity = memory.VeracityInferred
 				}
-				_, err = bank.AddMemory(ctx, memory.MemoryItem{SessionID: sessionID, EventID: ev.ID, Author: owner, Kind: item.Kind, Text: item.Text, Quote: item.Quote, Importance: memory.MemoryImportance(item.Text, item.Stated), Veracity: veracity, ExtractorJSON: fmt.Sprintf(`{"model":%q,"effort":%q,"prompt":"x1"}`, model, effort)})
+				result, storeErr := memory.DedupAndStoreMemory(ctx, bank, memory.MemoryItem{SessionID: sessionID, EventID: ev.ID, Author: owner, Kind: item.Kind, Text: item.Text, Quote: item.Quote, Importance: memory.MemoryImportance(item.Text, item.Stated), Veracity: veracity, ExtractorJSON: fmt.Sprintf(`{"model":%q,"effort":%q,"prompt":"x1"}`, model, effort)})
+				err = storeErr
 				if err == nil {
-					counts.Stored++
+					if result.Duplicate {
+						counts.Duplicates++
+					} else {
+						counts.Stored++
+					}
+					if result.Superseded {
+						counts.Superseded++
+					}
 				} else {
 					counts.DroppedUngrounded++
 				}
@@ -151,7 +159,10 @@ func (d *Daemon) ingestSession(sessionID string) error {
 	}
 	// The heuristic runs only when automatic extraction is enabled and the model is unavailable or fails.
 	if extractionFailed || (fallbackEnabled && extractor == nil) {
-		counts.Stored += d.storeIngestFallback(ctx, sessionID, chosen, banks)
+		stored, duplicates, superseded := d.storeIngestFallback(ctx, sessionID, chosen, banks)
+		counts.Stored += stored
+		counts.Duplicates += duplicates
+		counts.Superseded += superseded
 	}
 	countsJSON, _ := json.Marshal(counts)
 	if len(banks) == 0 {
@@ -198,8 +209,8 @@ func ingestEventID(e Event, index int) string {
 	}
 	return fmt.Sprintf("line-%d", index)
 }
-func (d *Daemon) storeIngestFallback(ctx context.Context, sessionID string, chosen []ingestEvent, banks map[string]memory.Memory) int {
-	stored := 0
+
+func (d *Daemon) storeIngestFallback(ctx context.Context, sessionID string, chosen []ingestEvent, banks map[string]memory.Memory) (stored, duplicates, superseded int) {
 	for n, item := range chosen {
 		if _, ok := memory.ClassifyHeuristic(item.text); !ok {
 			continue
@@ -210,12 +221,19 @@ func (d *Daemon) storeIngestFallback(ctx context.Context, sessionID string, chos
 		if bank == nil || text == "" {
 			continue
 		}
-		_, err := bank.AddMemory(ctx, memory.MemoryItem{SessionID: sessionID, EventID: ingestEventID(item.event, n), Author: owner, Kind: memory.KindPreference, Text: text, Quote: item.text, Importance: 0.4, Veracity: memory.VeracityInferred, ExtractorJSON: `{"model":"heuristic","prompt":"x1"}`})
+		result, err := memory.DedupAndStoreMemory(ctx, bank, memory.MemoryItem{SessionID: sessionID, EventID: ingestEventID(item.event, n), Author: owner, Kind: memory.KindPreference, Text: text, Quote: item.text, Importance: 0.4, Veracity: memory.VeracityInferred, ExtractorJSON: `{"model":"heuristic","prompt":"x1"}`})
 		if err == nil {
-			stored++
+			if result.Duplicate {
+				duplicates++
+			} else {
+				stored++
+			}
+			if result.Superseded {
+				superseded++
+			}
 		}
 	}
-	return stored
+	return stored, duplicates, superseded
 }
 func truncateIngestRunes(s string, limit int) string {
 	if utf8.RuneCountInString(s) <= limit {

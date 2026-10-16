@@ -65,7 +65,7 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/workspace-overhaul/AGENTS.md` — the combined spec of the 2026-10-13 grilling Session (Quota, Speed, Providers, Project scope, draft Project pick, Settings redesign, stall-proof Run tests; tickets for all Parts, Quota included)
 - `.scratch/web-v1/AGENTS.md` — the spec and ticket area for web v1 in `emberloop-web` (Handoff compress, Users, Memory with Profile, Rules and Deciders)
 - `.scratch/run-upgrade/AGENTS.md` — the spec and ticket area for the Run upgrade (Reviewer submit tool, Chains and Switch, spec branches, hygiene guards, `find` graph hits)
-- `.scratch/memory-v2/AGENTS.md` — Memory v2 automatic retention spec and Tickets 01 to 11
+- `.scratch/memory-v2/AGENTS.md` — the spec and ticket area for Memory v2 (automatic extraction, embedding-backed Memories and hybrid recall, deduplication and same-author supersession, narrowed human gate, nightly fold/promote stages and scheduler fix; tickets 01 to 11)
 - `.scratch/emberplugins/AGENTS.md` — the spec and ticket area for Emberplugins (runtime-added pages, jobs and servers in `emberloop-web`)
 - `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)

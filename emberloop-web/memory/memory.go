@@ -132,6 +132,7 @@ type Memory interface {
 	SetMemoryPinned(ctx context.Context, id int64, pinned bool) error
 	BumpMemory(ctx context.Context, id int64) (MemoryItem, error)
 	BumpMemoryMention(ctx context.Context, id int64) (MemoryItem, error)
+	DedupAndStoreMemory(ctx context.Context, m MemoryItem) (MemoryStoreResult, error)
 	SetMemoryEmbedding(ctx context.Context, id int64, embedding []byte, model string) error
 	RecallMemories(ctx context.Context, text string, weights RecallWeights, limit int) ([]MemoryHit, error)
 	RecallEpisodes(ctx context.Context, text string, weights RecallWeights, limit int) ([]EpisodeHit, error)
