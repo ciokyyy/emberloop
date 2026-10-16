@@ -22,7 +22,7 @@ func TestMemoryRecallFiltersAndKindDecay(t *testing.T) {
 		}
 		return id
 	}
-	add(KindFact, StatusActive, "A durable fact about blue lanterns", now.AddDate(-1, 0, 0))
+	add(KindFact, StatusActive, "A durable fact about blue lanterns", now.Add(-400*24*time.Hour))
 	add(KindFact, StatusActive, "A durable fact about blue lanterns", now)
 	add(KindPreference, StatusActive, "A preference for blue lanterns", now.AddDate(-5, 0, 0))
 	add(KindFact, StatusParked, "A parked fact about blue lanterns", now)

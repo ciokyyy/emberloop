@@ -156,11 +156,14 @@ func TestRecallBlockInjectsOnlyActiveMemoriesAndTracksIDs(t *testing.T) {
 	add("Forgot blue lanterns", memory.StatusForgotten)
 	add("Parked blue lanterns", memory.StatusParked)
 	add("Superseded blue lanterns", memory.StatusSuperseded)
+	if _, err := bank.AddEpisode(context.Background(), memory.Episode{SessionID: "s", Author: "u1", Text: "Episode-only blue lantern detail"}); err != nil {
+		t.Fatal(err)
+	}
 	rb, refs, err := d.recallBlockFor(context.Background(), SessionMeta{Owner: "u1"}, "blue lanterns")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rb) != 1 || !strings.Contains(rb[0], "Prefer blue lanterns") || strings.Contains(rb[0], "Forgot blue lanterns") || strings.Contains(rb[0], "Parked blue lanterns") || strings.Contains(rb[0], "Superseded blue lanterns") {
+	if len(rb) != 1 || !strings.Contains(rb[0], "Prefer blue lanterns") || strings.Contains(rb[0], "Forgot blue lanterns") || strings.Contains(rb[0], "Parked blue lanterns") || strings.Contains(rb[0], "Superseded blue lanterns") || strings.Contains(rb[0], "Episode-only") {
 		t.Fatalf("block=%v", rb)
 	}
 	if len(refs) != 1 || refs[0].MemoryID == 0 {
