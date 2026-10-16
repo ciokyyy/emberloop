@@ -4,8 +4,8 @@
 
 **Blocked by:** 05
 
-**Status:** open
+**Status:** done
 
-- [ ] Header test on SSR and fallback responses
-- [ ] Service worker test: no cached navigation document, assets still cached
-- [ ] `web/README.md` Installable app text updated
+- [x] Header test on SSR and fallback responses
+- [x] Service worker test: no cached navigation document, assets still cached
+- [x] `web/README.md` Installable app text updated
