@@ -467,6 +467,9 @@ func TestClaudeMCPServesSingleBoundServer(t *testing.T) {
 	t.Parallel()
 	b := newStubClaudeBackend(nil)
 	b.SetDaemonAddr("http://127.0.0.1:9")
+	b.browserEnv = func(id string) [][2]string {
+		return [][2]string{{"AGENT_BROWSER_SESSION", id}, {"AGENT_BROWSER_SCREENSHOT_DIR", filepath.Join("screens", id)}}
+	}
 	for _, tc := range []struct {
 		meta SessionMeta
 		role string
@@ -495,6 +498,9 @@ func TestClaudeMCPServesSingleBoundServer(t *testing.T) {
 		}
 		if env["EL_WEB_PARENT"] != tc.meta.ID || env["EL_WEB_DAEMON_URL"] != "http://127.0.0.1:9" {
 			t.Errorf("server env = %v, want the Session plus the Daemon URL", env)
+		}
+		if env["AGENT_BROWSER_SESSION"] != tc.meta.ID || env["AGENT_BROWSER_SCREENSHOT_DIR"] != filepath.Join("screens", tc.meta.ID) {
+			t.Errorf("browser env = %v", env)
 		}
 	}
 	// Unbound, the listing is still the bare base server.
