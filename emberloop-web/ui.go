@@ -1,12 +1,15 @@
 package web
 
+// Route entries declare their page data requirements alongside the URL table.
 import (
 	"bytes"
 	"compress/gzip"
 	"embed"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"path"
 	"strings"
 	"sync"
@@ -26,8 +29,6 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 		serveFile(sub, w, r, "index.html")
 		return
 	}
-	// Static bundle assets (hashed JS/CSS, favicon) serve by file. Missing
-	// assets remain ordinary 404s; only recognized client routes get the shell.
 	name := strings.TrimPrefix(p, "/")
 	if name == "" || strings.Contains(name, "..") {
 		http.NotFound(w, r)
@@ -42,10 +43,95 @@ func (d *Daemon) serveUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if matchUIRoute(p) {
-		serveFile(sub, w, r, "index.html")
+		serveBootShell(d, sub, w, r, p)
 		return
 	}
 	serveNotFoundPage(w, r)
+}
+
+// Prefetch runs the route's read-only API requests in-process with the same
+// cookie as the page request. Results are keyed by API path for the browser.
+func prefetchPaths(route, sessionID string) []string {
+	switch {
+	case route == "/":
+		return []string{"/api/dashboard", "/api/projects"}
+	case strings.HasPrefix(route, "/s/"):
+		return []string{"/api/sessions/" + sessionID + "?tail=40", "/api/users", "/api/projects"}
+	case strings.HasSuffix(route, "/runs") || strings.Contains(route, "/runs/"):
+		return []string{"/api/runs", "/api/projects"}
+	case strings.HasSuffix(route, "/settings") || strings.HasPrefix(route, "/settings"):
+		return []string{"/api/settings", "/api/projects"}
+	case strings.HasPrefix(route, "/p/"):
+		return []string{"/api/projects", "/api/sessions"}
+	default:
+		return nil
+	}
+}
+
+func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request, route string) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Vary", "Cookie")
+	boot := map[string]json.RawMessage{}
+	if _, ok := d.requesterOf(r); ok {
+		parts := strings.Split(strings.Trim(route, "/"), "/")
+		sessionID := ""
+		if len(parts) == 2 && parts[0] == "s" {
+			sessionID = parts[1]
+		}
+		for _, apiPath := range prefetchPaths(route, sessionID) {
+			req := httptest.NewRequest(http.MethodGet, apiPath, nil)
+			if c, err := r.Cookie(sessionCookie); err == nil {
+				req.AddCookie(c)
+			}
+			if tok := bearerToken(r); tok != "" {
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+			rw := httptest.NewRecorder()
+			apiHandler(d, apiPath).ServeHTTP(rw, req)
+			if rw.Code >= 200 && rw.Code < 300 {
+				boot[apiPath] = json.RawMessage(rw.Body.Bytes())
+			}
+		}
+	} else {
+		boot["auth"] = json.RawMessage(`{"signedIn":false}`)
+	}
+	raw, _ := json.Marshal(boot)
+	index, err := fs.ReadFile(sub, "index.html")
+	if err != nil {
+		http.Error(w, "ui unavailable", http.StatusInternalServerError)
+		return
+	}
+	marker := []byte("</head>")
+	idx := bytes.Index(index, marker)
+	if idx < 0 {
+		_, _ = w.Write(index)
+		return
+	}
+	loader := []byte("<script>window.__EL_BOOT__=" + string(raw) + ";</script>")
+	index = append(index[:idx], append(loader, index[idx:]...)...)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(index)
+}
+
+func apiHandler(d *Daemon, p string) http.Handler {
+	switch {
+	case p == "/api/dashboard":
+		return http.HandlerFunc(d.handleDashboard)
+	case p == "/api/projects":
+		return http.HandlerFunc(d.handleProjects)
+	case p == "/api/sessions":
+		return http.HandlerFunc(d.handleSessions)
+	case strings.HasPrefix(p, "/api/sessions/"):
+		return http.HandlerFunc(d.handleSessionSub)
+	case p == "/api/runs":
+		return http.HandlerFunc(d.handleRuns)
+	case p == "/api/settings":
+		return http.HandlerFunc(d.handleSettings)
+	case p == "/api/users":
+		return http.HandlerFunc(d.handleUsers)
+	default:
+		return http.NotFoundHandler()
+	}
 }
 
 // uiRoutePatterns mirrors every route shape parsed by web/src/lib/router.js.

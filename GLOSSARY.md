@@ -165,3 +165,7 @@ _Avoid_: Preload, hydration data, initial state
 **Prefetch table**:
 The Daemon's list of routes, each naming the data its page needs on first load.
 _Avoid_: Route loader, route map
+The route-to-API mapping the Daemon uses to load page data in-process before serving a page shell.
+_Avoid_: Route fetch list
+The user-specific JSON results of route prefetch, embedded as `window.__EL_BOOT__` for the browser to consume.
+_Avoid_: Bootstrap data
